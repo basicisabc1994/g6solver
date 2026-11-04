@@ -24,7 +24,7 @@ import subprocess
 import tarfile
 import time
 import uuid
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -366,14 +366,18 @@ def write_whole(path: Path, text: str) -> None:
     part.replace(path)
 
 
-def waiting(root: Path, tasks: Sequence[str], folder: str = FOLDER) -> list[dict[str, Any]]:
-    """The finished runs of these bugs with a patch no review has spoken on, one run for each distinct patch, in digest order."""
+def waiting(root: Path, tasks: Sequence[str], folder: str = FOLDER,
+            spoken: Callable[[Mapping[str, Any] | None, Mapping[str, Any]], bool] | None = None) -> list[dict[str, Any]]:
+    """The finished runs of these bugs with a patch no review has spoken on, one run for each distinct patch, in digest order.
+    ``spoken``: whether the review saved for a run's patch speaks on it, given that review and the run's row; where none is
+    given, a review that ``counts`` does. Replay 3's instructions also ask that it be the bug's own, made under their gate
+    (``replay3.reused``)."""
     found: dict[str, dict[str, Any]] = {}
     for path in sorted((root / "loop").glob("*-*.json")):
         row = json.loads(path.read_text("utf-8"))
         patch = root / str(row.get("run")) / "final.patch"
         if row.get("task") in tasks and row.get("status") == "finished" and patch.is_file() and patch.stat().st_size \
-                and said_of(root, row, folder) is None:
+                and not (spoken(saved(root, row, folder), row) if spoken else said_of(root, row, folder) is not None):
             found.setdefault(c.sha256_file(patch), row)
     return [found[sha] for sha in sorted(found)]
 

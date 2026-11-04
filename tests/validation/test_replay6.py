@@ -8,6 +8,8 @@ import ast
 import hashlib
 import inspect
 import json
+import os
+import subprocess
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -238,7 +240,7 @@ def test_the_compiled_file_embeds_no_model_text_but_the_probe():
     assert got["status"] == "stands"
     tree = ast.parse(src)
     assert {alias.name for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names} == {
-        "json", "sys", "types", "Decimal", "pytest"}            # G6's own; the probe's are in its text
+        "json", "subprocess", "sys", "Decimal", "pytest"}       # G6's own; the probe's are in its text
     strings = [node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)]
     assert strings.count(PROBE) == 1                  # the probe, as one text
     assert len([text for text in strings if "import os" in text]) == 1    # the one JSON text json.loads reads
@@ -298,8 +300,8 @@ def test_one_spelling_compares_numbers_by_their_exact_value_and_a_boolean_never_
     got, why = r6.parse_model(model(factors={"n": [2, 2.0], "width": [3]}))
     assert got is None and "repeats" in why                      # one value, by the one rule
     text = model(factors={"n": ["A", "B"], "width": [3]}).replace('"A"', "9007199254740992.0").replace('"B"', "9007199254740993.0")
-    got, _ = r6.parse_model(text)
-    assert len(r6.cases(got["factors"])) == 2                    # two values, read exactly
+    got, why = r6.parse_model(text)
+    assert got is None and "exactly" in why                      # two values to the tables, and one float to the probe
 
 
 @pytest.mark.parametrize("big", ["1e309", "-1e309", "1e9999999999999999999"])
@@ -324,7 +326,7 @@ def test_the_compiled_assertion_compares_an_observation_by_the_tables_one_rule()
             {"when": {}, "expect": {"size": {"equals": "length"}}, "quote": QUOTE}]
     first = model(factors={"kind": ["float", "bool", "big"]}, probe=probe, rules=rows).replace('"BIG"', "9007199254740993.0")
     got = r6.formal(wrote(first), TITLE, TEXT, Caller(rules(*rows).replace('"BIG"', "9007199254740993.0")))
-    assert got["status"] == "stands"
+    assert got["status"] == "stands" and got["comparison"]["cells_unholdable"] == 1     # big's length: no float holds it
     space, held = _load(got["test"]), {}
     for cell in space["_G6_CELLS"]:
         try:
@@ -332,7 +334,7 @@ def test_the_compiled_assertion_compares_an_observation_by_the_tables_one_rule()
             held[cell["case"]["kind"], cell["observation"]] = True
         except AssertionError:
             held[cell["case"]["kind"], cell["observation"]] = False
-    assert held == {("float", "length"): True, ("bool", "length"): False, ("big", "length"): False,
+    assert held == {("float", "length"): True, ("bool", "length"): False,
                     ("float", "size"): True, ("bool", "size"): False, ("big", "size"): False}
 
 
@@ -537,3 +539,236 @@ def test_the_formal_model_is_counted_and_paired_with_the_others_which_are_unchan
     assert rc.REVIEWERS[6:] == ((rc.FORMAL, r6.FOLDER),) and rc.FORMAL == "formal model"
     assert rc.PAIRED == (rc.REPRODUCE, rc.RULE, rc.SYMPTOM, rc.RELATION, rc.FORMAL)
     assert len({folder for _, folder in rc.REVIEWERS}) == len(rc.REVIEWERS)
+
+
+# --- the probe, in a process of its own that is never given an expectation ---------------------------------------------------
+def _pytest(folder: Path, source: str) -> we.ProbeRun:
+    """The compiled file run by real pytest in a process of its own, in ``folder``, as ``run_on`` runs it in a container."""
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "test_formal.py").write_text(source, "utf-8")
+    (folder / "pytest.ini").write_text("[pytest]\n", "utf-8")
+    report = folder / "report.xml"
+    env = {**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTHONDONTWRITEBYTECODE": "1"}
+    done = subprocess.run([sys.executable, "-m", "pytest", "test_formal.py", "-q", "-p", "no:cacheprovider", "-c", "pytest.ini",
+                           "--rootdir", str(folder), f"--junitxml={report}", "-o", "junit_family=xunit2"],
+                          cwd=folder, env=env, capture_output=True, timeout=120)
+    xml = report.read_text("utf-8") if report.is_file() else ""
+    return we.ProbeRun(done.returncode, we.parse_junit(xml) if xml else {}, {}, done.stdout.decode("utf-8", "replace"))
+
+
+def test_a_probe_that_reaches_for_the_expectations_finds_none_and_changes_none():
+    """Review 2 finding 2: a probe run in the assertion's process reached its caller's frame and rewrote what each cell
+    expects. The probe runs in a child process given the cases alone, so its frames hold no expectation."""
+    tamper = ("import sys\nframe = sys._getframe()\nwhile frame is not None:\n"
+              "    for cell in frame.f_globals.get('_G6_CELLS', []):\n        cell['want'] = '0'\n"
+              "    frame = frame.f_back\n"
+              "def observe(case):\n    return {'length': 0, 'size': 0, 'out': ''}\n")
+    got = r6.formal(wrote(model(probe=tamper)), TITLE, TEXT, Caller(rules(PADDED)))
+    space = _load(got["test"])
+    for cell in space["_G6_CELLS"]:
+        with pytest.raises(AssertionError):
+            space["test_formal"](cell)                # length 0 where the tables agree on 3
+    assert [cell["want"] for cell in space["_G6_CELLS"]] == [r6.canon(3)] * 2
+
+
+def test_the_probe_runs_as_the_main_code_of_a_process_of_its_own():
+    probe = (f"import os\nPARENT = {os.getpid()}\n"
+             "def observe(case):\n"
+             "    apart = __name__ == '__main__' and os.getpid() != PARENT\n"
+             "    return {'length': 3 if apart else 0, 'size': 0, 'out': ''}\n")
+    space = _load(r6.formal(wrote(model(probe=probe)), TITLE, TEXT, Caller(rules(PADDED)))["test"])
+    for cell in space["_G6_CELLS"]:
+        space["test_formal"](cell)
+
+
+def test_a_project_module_of_any_name_imports_as_it_does_for_any_test(tmp_path, monkeypatch):
+    """Review 2 finding 3: the probe was registered as ``formal_probe``, which hid a project module of that name."""
+    (tmp_path / "formal_probe.py").write_text("def result():\n    return 3\n", "utf-8")
+    monkeypatch.chdir(tmp_path)                       # the directory pytest runs in, where the project is
+    probe = "from formal_probe import result\ndef observe(case):\n    return {'length': result(), 'size': 0, 'out': ''}\n"
+    space = _load(r6.formal(wrote(model(probe=probe)), TITLE, TEXT, Caller(rules(PADDED)))["test"])
+    for cell in space["_G6_CELLS"]:
+        try:
+            space["test_formal"](cell)
+        except pytest.skip.Exception as exc:
+            pytest.fail(f"the agreed case was skipped: {exc}")
+
+
+def test_a_probe_that_overruns_its_bound_is_killed_and_every_cell_skips():
+    probe = "import time\ntime.sleep(5)\n" + PROBE
+    space = _load(r6.formal(wrote(model(probe=probe)), TITLE, TEXT, Caller(rules(PADDED)))["test"])
+    space["_G6_SECONDS"] = 1
+    for cell in space["_G6_CELLS"]:
+        with pytest.raises(pytest.skip.Exception, match="past 1 seconds"):
+            space["test_formal"](cell)
+
+
+@pytest.mark.parametrize("probe", ["import os\nos._exit(0)\n", "import os\ndef observe(case):\n    os._exit(0)\n"])
+def test_a_probe_process_that_gives_no_answer_skips_every_cell_and_fails_none(tmp_path, probe):
+    got = r6.formal(wrote(model(probe=probe)), TITLE, TEXT, Caller(rules(PADDED)))
+    assert list(_pytest(tmp_path, got["test"]).results.values()) == ["skipped", "skipped"]
+
+
+def test_what_the_probe_prints_spoils_no_answer(tmp_path):
+    probe = ("import os, sys\nprint('{}')\nos.write(1, b'not json')\n"
+             "def observe(case):\n    print('[]')\n    sys.stdout.flush()\n    os.write(1, b'{')\n"
+             "    out = str(case['n']).rjust(case['width'])\n    return {'length': len(out), 'size': len(out), 'out': out}\n")
+    got = r6.formal(wrote(model(probe=probe)), TITLE, TEXT, Caller(rules(PADDED)))
+    assert list(_pytest(tmp_path, got["test"]).results.values()) == ["passed", "passed"]
+
+
+# --- one exact value, from the readers to the probe --------------------------------------------------------------------------
+@pytest.mark.parametrize(("first", "second", "says"), [
+    (model().replace('"expect": {"length": 3}', '"expect": {"length": 4, "len\\u0067th": 3}'), rules(PADDED), "the model holds"),
+    (model().replace('"when": {"width": 3}', '"when": {"width": 4, "width": 3}'), rules(PADDED), "the model holds"),
+    (model().replace('{"factors"', '{"probe": "x", "factors"', 1), rules(PADDED), "the model holds"),
+    (model(), rules(PADDED).replace('"expect": {"length": 3}', '"expect": {"length": 4, "length": 3}'), "reader 2"),
+])
+def test_an_object_that_names_one_key_twice_at_any_depth_makes_the_bug_invalid(first, second, says):
+    """Review 2 finding 4: Python's reader keeps the last of two values under one name, so the first was never checked."""
+    got = r6.formal(wrote(first), TITLE, TEXT, Caller(second))
+    assert got["status"] == "invalid" and got["test"] == "" and says in got["status_reason"]
+    assert "twice" in got["status_reason"]
+
+
+@pytest.mark.parametrize(("first", "second", "says"), [
+    (model(probe="# \ud800\n" + PROBE), rules(PADDED), "the model holds"),
+    (model(factors={"n": [1, "\udfff"], "width": [3, 4]}), rules(PADDED), "the model holds"),
+    (model(), rules({**PADDED, "quote": QUOTE + " \ud800"}), "reader 2"),
+])
+def test_a_string_that_is_no_unicode_text_makes_the_bug_invalid(first, second, says):
+    """Review 2 finding 7: a lone surrogate is valid JSON and no UTF-8 text, so it aborted reader 2's request."""
+    got = r6.formal(wrote(first), TITLE, TEXT, Caller(second))
+    assert got["status"] == "invalid" and got["test"] == "" and says in got["status_reason"]
+    assert "Unicode" in got["status_reason"]
+
+
+@pytest.mark.parametrize("number", ["9007199254740993.0", "0.1000000000000000055511151231257827", "1.00000000000000001"])
+def test_a_factor_number_no_float_holds_as_written_makes_the_bug_invalid(number):
+    """Review 2 finding 1: the probe is given a float, so two values the tables tell apart were one input to it."""
+    got = r6.formal(wrote(model(factors={"n": [1, "A"], "width": [3, 4]}).replace('"A"', number)), TITLE, TEXT,
+                    Caller(rules(PADDED)))
+    assert got["status"] == "invalid" and got["test"] == "" and "exactly" in got["status_reason"]
+    nested = r6.formal(wrote(model(factors={"n": [1, ["A"]], "width": [3]}).replace('"A"', number)), TITLE, TEXT,
+                       Caller(rules(PADDED)))
+    assert nested["status"] == "invalid" and "exactly" in nested["status_reason"]
+
+
+def test_a_factor_number_a_float_holds_as_written_is_given_to_the_probe_as_that_float():
+    text = model(factors={"n": ["A", "B", "C", "D", 7], "width": [3]})
+    for name, number in zip("ABCD", ("0.1", "2.5", "1E+2", "9007199254740992.0")):
+        text = text.replace(f'"{name}"', number)
+    got = r6.formal(wrote(text), TITLE, TEXT, Caller(rules(PADDED)))
+    assert got["status"] == "stands"
+    given = [cell["case"]["n"] for cell in _load(got["test"])["_G6_CELLS"]]
+    assert given == [0.1, 2.5, 100.0, 9007199254740992.0, 7] and [type(n) for n in given] == [float] * 4 + [int]
+    shown = json.loads(r6.reader_2_text(ISSUE, r6.parse_model(text)[0]).split("<factors>\n")[1].split("\n</factors>")[0])
+    assert shown["n"] == given                        # reader 2 is shown the values the probe is given
+
+
+def _agreed(*rows) -> dict:
+    """Both readers giving these rows, each row's expectation of ``length`` written as the JSON text beside it."""
+    text = rules(*({**row, "expect": {"length": f"W{n}"}} for n, (row, _) in enumerate(rows)))
+    for n, (_, want) in enumerate(rows):
+        text = text.replace(f'"W{n}"', want)
+    return r6.formal(wrote(model(rules=[]).replace('"rules": []', text[1:-1])), TITLE, TEXT, Caller(text))
+
+
+def test_an_agreed_expectation_no_float_holds_as_written_is_dropped_and_counted_and_never_compiled():
+    """An agreed expected number that no float holds exactly can never equal what observe returns, so its cell would fail on
+    the parent and on every patch alike, and the gate flag every patch: it is dropped after the comparison, and counted."""
+    one = {"when": {"width": 3, "n": 1}, "quote": QUOTE}
+    two = {"when": {"width": 3, "n": 22}, "quote": QUOTE}
+    got = _agreed((one, "9007199254740993.0"), (two, "0.5"))
+    assert got["status"] == "stands" and got["comparison"]["cells_agree"] == 2 and got["comparison"]["cells_unholdable"] == 1
+    cells = _load(got["test"])["_G6_CELLS"]
+    assert [(cell["case"]["n"], cell["want"]) for cell in cells] == [(22, r6.canon(0.5))]
+    got = _agreed((one, "9007199254740993"), (two, "[9007199254740993.0]"))         # an int is exact; a list holds its numbers
+    assert got["status"] == "stands" and got["comparison"]["cells_unholdable"] == 1
+    assert [cell["want"] for cell in _load(got["test"])["_G6_CELLS"]] == [r6.canon(9007199254740993)]
+    got = _agreed((one, "9007199254740993.0"))
+    assert got["status"] == "no_agreed_case" and got["test"] == "" and got["comparison"]["cells_unholdable"] == 1
+    assert "no float" in got["status_reason"]
+
+
+def test_readers_who_differ_on_an_expectation_no_float_holds_stay_ambiguous():
+    first = model(rules=[{**PADDED, "expect": {"length": "A"}}]).replace('"A"', "9007199254740992.0")
+    second = rules({**PADDED, "expect": {"length": "B"}}).replace('"B"', "9007199254740993.0")
+    got = r6.formal(wrote(first), TITLE, TEXT, Caller(second))
+    assert got["status"] == "ambiguous" and got["test"] == "" and got["comparison"]["cells_differ"] == 2
+
+
+def test_a_reader_2_whose_call_cannot_encode_or_decode_its_text_is_no_answer():
+    got = r6.formal(wrote(model()), TITLE, TEXT, Caller(UnicodeEncodeError("utf-8", "\ud800", 0, 1, "surrogates not allowed")))
+    assert got["status"] == "no_answer" and "reader 2" in got["error"] and r3.no_answer(got)
+
+
+# --- a reader's failure, kept for the counts ---------------------------------------------------------------------------------
+def test_each_attempt_that_ends_in_no_answer_is_kept_apart_counted_and_asked_again(tmp_path):
+    """Review 2 finding 5: a reader that failed left no record, so the counts called an attempted bug "no record"."""
+    rows, task, asked = _rows(tmp_path, 1), we.task_by_id("black-5634"), []
+
+    def step(*args, **kwargs):
+        asked.append(1)
+        return wrote(model()), None, None
+
+    for _ in range(2):
+        got = r6.review_bug(SimpleNamespace(), tmp_path, task, rows, TITLE, TEXT, step=step,
+                            caller=Caller(LLMError("G6_E_LLM_HOST_FAILED: claude exited 1")), run=lambda *a: pytest.fail("ran"))
+        assert [g["said"] for g in got] == ["failed"]
+    assert len(asked) == 2 and fr.read(r3.bug_record(tmp_path, task.id, r6.FORMAL)) is None     # never read as an answer
+    kept = [json.loads(path.read_text("utf-8")) for path in r6.no_answers(tmp_path, task.id)]
+    assert len(kept) == 2 and all(one["status"] == "no_answer" and "reader 2" in one["status_reason"] for one in kept)
+    assert all(path.parent == r3.bug_record(tmp_path, task.id, r6.FORMAL).parent for path in r6.no_answers(tmp_path, task.id))
+    assert r6.summary(tmp_path, [task.id])["by_status"] == {"no_answer": 1}
+    r6.review_bug(SimpleNamespace(), tmp_path, task, rows, TITLE, TEXT, step=step, caller=Caller(rules(PADDED)),
+                  run=lambda *a: (FAILS, FAILS))
+    assert len(asked) == 3 and r6.summary(tmp_path, [task.id])["by_status"] == {"stands": 1}
+
+
+# --- a saved verdict, reused only with its identity ----------------------------------------------------------------------------
+def _finished(root: Path, row: dict[str, str]) -> None:
+    (root / "loop" / f"L9-{row['task']}-0.json").write_text(json.dumps({**row, "status": "finished"}), "utf-8")
+
+
+def test_a_saved_verdict_is_reused_only_for_its_own_bug_under_its_own_gate(tmp_path):
+    """Review 2 finding 8: replay 5's gate changed with its digest kept, so a verdict made without it was reused."""
+    [row] = _rows(tmp_path, 1)
+    _finished(tmp_path, row)
+    sha = hashlib.sha256((tmp_path / "run0" / "final.patch").read_bytes()).hexdigest()
+    for ins in (r3.rule(), r5.RELATION, r6.FORMAL):
+        gate = {"same_case": True} if ins.same_case else {}
+        for record, reused in (({}, not ins.same_case), ({"same_case": True}, ins.same_case), ({**gate, "task": "other-1"}, False)):
+            fr.keep(tmp_path, row, {"said": "reproduced", "verdict": "defect", **record}, ins.folder, sha=sha)
+            assert (r3.waiting(tmp_path, [row["task"]], ins) == []) == reused, (ins.folder, record)
+            assert fr.waiting(tmp_path, [row["task"]], ins.folder) == []                # the frozen review's rule is as it was
+
+
+def test_a_verdict_names_its_gate_where_one_is_on_and_replay_3s_and_4s_records_are_as_they_were(tmp_path):
+    for ins, n in ((r3.rule(), 0), (r4.SYMPTOM, 1), (r6.FORMAL, 2)):
+        root = tmp_path / str(n)
+        root.mkdir()
+        rows = _rows(root, 1)
+        r3.review_bug(SimpleNamespace(), root, we.task_by_id("black-5634"), rows, "t", "x",
+                      ask=lambda *a, **k: (wrote("def test_a():\n    assert 0\n"), None, None), run=lambda *a: (FAILS, FAILS), ins=ins)
+        record = fr.saved(root, rows[0], ins.folder)
+        assert ("same_case" in record) == ins.same_case and record.get("same_case", True) is True
+
+
+def test_a_patch_whose_bytes_change_while_its_bug_is_asked_has_no_verdict_under_the_new_bytes(tmp_path):
+    """Review 2 finding 10: a patch swapped for another bug's while its bug was asked had its verdict saved under that bug's
+    digest. A verdict is saved only under the digest its patch had when its bug's review began."""
+    rows = _rows(tmp_path, 1)
+    path = tmp_path / "run0" / "final.patch"
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def step(*args, **kwargs):
+        path.write_text("another bug's patch\n", "utf-8")
+        return wrote(model()), None, None
+
+    got = r6.review_bug(SimpleNamespace(), tmp_path, we.task_by_id("black-5634"), rows, TITLE, TEXT, step=step,
+                        caller=Caller(rules(PADDED)), run=lambda ctx, task, test, patch: (FAILS, FAILS))
+    after = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert not (tmp_path / "loop" / r6.FOLDER / f"{after}.json").exists()
+    kept = json.loads((tmp_path / "loop" / r6.FOLDER / f"{before}.json").read_text("utf-8"))
+    assert got[0]["said"] == kept["said"] == "failed" and "changed" in kept["error"] and not fr.counts(kept)

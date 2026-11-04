@@ -13,10 +13,11 @@ probe, never reader 1's rules, the parent or any output of the code, and writes 
 before anything runs: the model's form, rows whose quote is not the issue's own words dropped, a table that gives one case two
 values for one observation refused, and the two tables compared on every case both cover, where any difference leaves the bug
 ambiguous and nothing is flagged on it. Every comparison of two values, a table's with a factor's, the two tables', and the
-compiled file's of an observation with its expectation, is by one rule (``canon``). Where the model stands, the agreed cells are
-compiled to one pytest file (G6's own text, the probe as one text run in a module of its own, the cells as JSON data) and replay
-3's ``run_on`` runs it on the parent and on each patch, so replay 3's ``verdict`` gives the parent gate, by case. Each bug's
-record holds its status (``STATUSES``), the counts and both tables.
+compiled file's of an observation with its expectation, is by one rule (``canon``), and every value the probe is given is the one
+the tables read (``_loads``, ``_exact``). Where the model stands, the agreed cells are compiled to one pytest file (G6's own
+text, the probe as one text, run in a process of its own that is given the cases and never an expectation, the cells as JSON
+data) and replay 3's ``run_on`` runs it on the parent and on each patch, so replay 3's ``verdict`` gives the parent gate, by
+case. Each bug's record holds its status (``STATUSES``), the counts and both tables.
 """
 from __future__ import annotations
 
@@ -29,6 +30,7 @@ import json
 import math
 import re
 import subprocess
+import uuid
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
@@ -48,7 +50,8 @@ MAX_CASES = 512
 #: name (``host_models._environment``), so they go where a settings file's ``env`` sets them.
 READER_2_MODEL = "claude-opus-5-5"
 READER_2_ENV = {"ENABLE_CLAUDEAI_MCP_SERVERS": "false", "CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK": "1"}
-#: What a bug's record says of its model. ``no_answer`` is never kept as a bug's record: replay 3 asks again on a no answer.
+#: What a bug's record says of its model. ``no_answer`` is never kept as a bug's record, as replay 3 asks again on a no answer:
+#: each attempt that ends in it is kept in a record of its own beside it (``no_answers``), which ``summary`` counts.
 STATUSES = ("stands", "ambiguous", "conflict", "no_model", "no_answer", "invalid", "no_agreed_case")
 
 
@@ -149,9 +152,11 @@ def canon(value: object) -> str:
     raise ValueError(f"a {type(value).__name__} is not a JSON value")
 
 
-class _Unheld(ValueError):
-    """A JSON number no float holds, as 1e309, which Python's own reader makes infinite: a model or a row holding one is
-    invalid, as no value observe returns can be compared with it."""
+class _Refused(ValueError):
+    """JSON that reads but holds no one exact value, so a model or a row holding it is invalid: a number no float holds, as
+    1e309, which Python's own reader makes infinite, so no value observe returns can be compared with it; an object that names
+    one key twice, of which Python's reader keeps the last, so the first is never checked; a string that is no Unicode text,
+    as a lone surrogate, which no UTF-8 text holds."""
 
 
 def _no_constant(name: str) -> Any:
@@ -159,22 +164,36 @@ def _no_constant(name: str) -> Any:
 
 
 def _number(text: str) -> Decimal:
-    """A JSON number with a fraction or an exponent, as its exact decimal value; ``_Unheld`` where no float holds it."""
+    """A JSON number with a fraction or an exponent, as its exact decimal value; ``_Refused`` where no float holds it."""
     try:
         number = Decimal(text)
     except ArithmeticError:                           # an exponent beyond any Decimal's
-        raise _Unheld(f"a number no float holds ({text[:40]})") from None
+        raise _Refused(f"a number no float holds ({text[:40]})") from None
     if not math.isfinite(float(number)):
-        raise _Unheld(f"a number no float holds ({text[:40]})")
+        raise _Refused(f"a number no float holds ({text[:40]})")
     return number
+
+
+def _object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """A JSON object, at any depth; ``_Refused`` where it names one key twice."""
+    got: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in got:
+            raise _Refused(f"an object that names {key[:40]!r} twice")
+        got[key] = value
+    return got
 
 
 def _loads(text: str) -> Any:
     """JSON as JSON has it, read exactly: NaN and Infinity, which Python's reader takes, are refused; a number with a fraction or
-    an exponent is its exact ``Decimal`` (an integer is Python's int, as exact), and one no float holds is ``_Unheld``. What it
-    gives ``canon`` spells: a value nested too deep for it is a RecursionError here, as one too deep for the reader is."""
-    value = json.loads(text, parse_float=_number, parse_constant=_no_constant)
-    canon(value)
+    an exponent is its exact ``Decimal`` (an integer is Python's int, as exact); a number no float holds, an object that names
+    a key twice and a string that is no Unicode text are ``_Refused``. What it gives ``canon`` spells: a value nested too deep
+    for it is a RecursionError here, as one too deep for the reader is."""
+    value = json.loads(text, parse_float=_number, parse_constant=_no_constant, object_pairs_hook=_object)
+    try:
+        canon(value).encode("utf-8")                  # its spelling holds every string and key of it as it is
+    except UnicodeEncodeError:
+        raise _Refused("a string that is no Unicode text (a lone surrogate)") from None
     return value
 
 
@@ -195,6 +214,18 @@ def _plain(value: Any) -> bool:
     if isinstance(value, list):
         return all(map(_plain, value))
     return value is None or isinstance(value, (bool, int, float, Decimal, str))
+
+
+def _exact(value: Any) -> bool:
+    """Whether every number a value holds is one a float or an int holds as written: an integer is, as Python's int; a number
+    with a fraction or an exponent is where its float has its spelling (``canon``). A factor's value is given to the probe so,
+    so no two values the tables tell apart are one float to the probe, and reader 2 is shown what the probe is given; an
+    agreed expectation that is not so can never equal what observe returns, so its cell is dropped (``formal``)."""
+    if isinstance(value, list):
+        return all(map(_exact, value))
+    if isinstance(value, dict):
+        return all(map(_exact, value.values()))
+    return not isinstance(value, Decimal) or canon(float(value)) == canon(value)
 
 
 def _covers(spec: Any, values: Sequence[Any]) -> set[str] | None:
@@ -242,7 +273,7 @@ def parse_model(text: str) -> tuple[dict[str, Any] | None, str]:
     in their product, observations distinct identifiers, a probe of some source, and a table ``check_rows`` passes."""
     try:
         got = _loads(text)
-    except _Unheld as exc:
+    except _Refused as exc:
         return None, f"the model holds {exc}"
     except (ValueError, RecursionError) as exc:
         return None, f"the model is not JSON ({type(exc).__name__})"
@@ -254,6 +285,8 @@ def parse_model(text: str) -> tuple[dict[str, Any] | None, str]:
     for name, values in factors.items():
         if not all(map(_plain, values)):
             return None, f"a value of factor {name!r} is not a JSON scalar or list"
+        if not all(map(_exact, values)):
+            return None, f"factor {name!r} holds a number no float holds exactly as written, so the probe cannot be given it"
         if len({canon(value) for value in values}) != len(values):
             return None, f"factor {name!r} repeats a value"
     size = math.prod(len(values) for values in factors.values())
@@ -319,13 +352,14 @@ def compare(one: Mapping[tuple[str, str], Any], two: Mapping[tuple[str, str], An
 
 # --- the compiled file -------------------------------------------------------------------------------------------------------
 #: The compiled file's own text, the same for every bug: these imports, then ``canon`` as this module has it, then the probe as one
-#: text and the agreed cells as one JSON text, then ``_TEST``. The probe runs at the first cell, in a module of its own, so no name
-#: it defines is this file's and pytest sees none of them: the file's cases are the cells and no others.
+#: text and the agreed cells as one JSON text, then ``_TEST``. At the first cell the probe runs in a process of its own, given the
+#: cases and never an expectation, so nothing it does reaches what a cell expects, and no name it defines is this file's: the
+#: file's cases are the cells and no others.
 _HEAD = '''# G6's cases: the cells both readers' tables agree on, as JSON data, each expectation by its one spelling (canon, below), and
-# the probe, as one text.
+# the probe, as one text, run in a process of its own that is given the cases and never an expectation.
 import json
+import subprocess
 import sys
-import types
 from decimal import Decimal
 
 import pytest
@@ -333,36 +367,74 @@ import pytest
 
 '''
 _TEST = '''
-_g6_ran = []
+#: The probe's process: G6's own program, run by this file's interpreter in the directory pytest runs in, so the project imports
+#: as it does for any test. It reads the probe and the cases from its input, never an expectation, runs the probe as its main
+#: code, under no module name of its own, and writes one JSON answer: the type name of what the probe raised as it ran, or for
+#: each case its observations or the type name of what observe raised. What the probe prints goes nowhere, and the process
+#: ends once it has answered.
+_G6_CHILD = """
+def _g6_child(json, os, sys):
+    sent = json.loads(sys.stdin.buffer.read())
+    answer = os.fdopen(os.dup(1), "w", encoding="ascii")
+    os.dup2(2, 1)
+    main = sys.modules["__main__"].__dict__
+    try:
+        exec(compile(sent["probe"], "probe.py", "exec", dont_inherit=True), main)
+        observe, seen = main.get("observe"), []
+        for case in sent["cases"]:
+            try:
+                seen.append({"seen": json.loads(json.dumps(observe(case), default=repr))})
+            except BaseException as exc:
+                seen.append({"raised": type(exc).__name__})
+        said = {"seen": seen}
+    except BaseException as exc:
+        said = {"raised": type(exc).__name__}
+    answer.write(json.dumps(said))
+    answer.flush()
+    os._exit(0)
 
 
-def _g6_probe():
-    """The probe's module, run once, at the first cell, or None and why where running it raised: then every cell is skipped,
-    and none fails."""
-    if not _g6_ran:
-        module = types.ModuleType("formal_probe")
-        sys.modules[module.__name__] = module        # as a file's module is, for what looks a class's module up by name
-        try:
-            exec(compile(_G6_PROBE, "formal_probe.py", "exec", dont_inherit=True), module.__dict__)
-            _g6_ran.append((module, ""))
-        except KeyboardInterrupt:
-            raise
-        except BaseException as exc:
-            _g6_ran.append((None, f"the probe raised {type(exc).__name__}"))
-    return _g6_ran[0]
+_g6_child(__import__("json"), __import__("os"), __import__("sys"))
+"""
+#: How long the probe's process may run, in seconds, before it is killed and every cell skipped.
+_G6_SECONDS = 120
+_g6_answer = []
+
+
+def _g6_ask():
+    """The probe's process, run once: each case's entry by the case's canon, or None and why, where the probe raised as it ran,
+    or the process overran _G6_SECONDS and was killed, or gave no answer this file reads. Then every cell is skipped, and
+    none fails."""
+    cases = {canon(cell["case"]): cell["case"] for cell in _G6_CELLS}
+    sent = json.dumps({"probe": _G6_PROBE, "cases": list(cases.values())}).encode("ascii")
+    try:
+        done = subprocess.run([sys.executable, "-c", _G6_CHILD], input=sent, stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL, timeout=_G6_SECONDS)
+        said = json.loads(done.stdout.decode("ascii"))
+    except subprocess.TimeoutExpired:                 # run kills the process before it raises this
+        return None, f"the probe's process ran past {_G6_SECONDS} seconds"
+    except (OSError, ValueError):                     # no process, or no JSON: a UnicodeError is a ValueError
+        said = None
+    if isinstance(said, dict) and isinstance(said.get("raised"), str):
+        return None, f"the probe raised {said['raised']}"
+    seen = said.get("seen") if isinstance(said, dict) else None
+    if not isinstance(seen, list) or len(seen) != len(cases) or not all(
+            isinstance(one, dict) and ("seen" in one or isinstance(one.get("raised"), str)) for one in seen):
+        return None, "the probe's process gave no answer"
+    return dict(zip(cases, seen)), ""
 
 
 @pytest.mark.parametrize("cell", _G6_CELLS, ids=[cell["id"] for cell in _G6_CELLS])
 def test_formal(cell):
-    probe, why = _g6_probe()
-    if probe is None:
+    if not _g6_answer:
+        _g6_answer.append(_g6_ask())
+    answer, why = _g6_answer[0]
+    if answer is None:
         pytest.skip(why)
-    try:
-        seen = json.loads(json.dumps(probe.observe(cell["case"]), default=repr))
-    except KeyboardInterrupt:
-        raise
-    except BaseException as exc:
-        pytest.skip(f"observe raised {type(exc).__name__}")
+    one = answer[canon(cell["case"])]
+    if "seen" not in one:
+        pytest.skip(f"observe raised {one['raised']}")
+    seen = one["seen"]
     names = [cell["observation"], *([cell["equals"]] if "equals" in cell else [])]
     if not isinstance(seen, dict) or any(name not in seen for name in names):
         pytest.skip("observe gave no such observation")
@@ -377,9 +449,10 @@ def _case_id(number: int, name: str, case: Mapping[str, Any]) -> str:
 
 
 def compile_test(probe: str, factors: Mapping[str, Sequence[Any]], agreed: Mapping[tuple[str, str], Any]) -> str:
-    """One pytest file: G6's own text with ``canon`` in it, the probe as one string, the agreed cells as one JSON text read by
-    ``json.loads``, each case as Python's reader gives it and each expectation by its ``canon``, then one test with a case for
-    each cell, in the domain's order, observations by name. No other text of a model is in it."""
+    """One pytest file: G6's own text with ``canon`` in it, the probe as one string, sent with the cases to a process of its own
+    and never with an expectation, the agreed cells as one JSON text read by ``json.loads``, each case as Python's reader gives
+    it and each expectation by its ``canon``, then one test with a case for each cell, in the domain's order, observations by
+    name. No other text of a model is in it."""
     cells = []
     for number, case in enumerate(cases(factors)):
         key = canon(case)
@@ -426,12 +499,13 @@ def reader_2_text(issue: str, model: Mapping[str, Any]) -> str:
 
 def reader_2_rules(reply: str) -> list[Any] | None:
     """Reader 2's table: its reply as one JSON object with a ``rules`` list, bare or in one fence; None if it is not one. A
-    reply that holds a number no float holds is JSON, and raises ``_Unheld``: its table is invalid (``formal``)."""
+    reply that holds a number no float holds, an object naming a key twice or a string that is no Unicode text is JSON, and
+    raises ``_Refused``: its table is invalid (``formal``)."""
     text = reply.strip()
     fenced = re.fullmatch(r"```(?:json)?[ \t]*\n(.*?)\n?```", text, re.S)
     try:
         got = _loads(fenced[1] if fenced else text)
-    except _Unheld:
+    except _Refused:
         raise
     except (ValueError, RecursionError):
         return None
@@ -463,11 +537,12 @@ def formal(found: Mapping[str, Any], title: str, text: str, caller: Any) -> dict
         return _closed(record, "conflict", "reader 1's table gives one case two values for one observation")
     try:
         reply = caller.complete(READER_2_SYSTEM, reader_2_text(issue, model))
-    except (RuntimeError, OSError, subprocess.SubprocessError) as exc:    # an LLMError is a RuntimeError
+    except (RuntimeError, OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        # an LLMError is a RuntimeError, and a text its call cannot encode or decode a UnicodeError
         return {**record, "status": "no_answer", "error": f"reader 2: {type(exc).__name__}: {exc}"[:400]}
     try:
         rows = reader_2_rules(reply)
-    except _Unheld as exc:
+    except _Refused as exc:
         return _closed(record, "invalid", f"reader 2: its reply holds {exc}")
     if rows is None:
         return {**record, "status": "no_answer", "error": "reader 2 gave no JSON object with a rules list"}
@@ -484,33 +559,59 @@ def formal(found: Mapping[str, Any], title: str, text: str, caller: Any) -> dict
         return _closed(record, "ambiguous", "the two tables differ on a case both cover")
     if not agreed:
         return _closed(record, "no_agreed_case", "the two tables agree on no case")
-    return {**record, "test": compile_test(model["probe"], model["factors"], agreed), "status": "stands", "status_reason": ""}
+    # An agreed number no float holds exactly as written can never equal what observe returns: its cell would fail on the
+    # parent and on every patch alike, and the gate flag every patch. It is dropped and counted; an int is exact and stays.
+    held = {cell: want for cell, want in agreed.items() if _exact(want)}
+    record["comparison"]["cells_unholdable"] = len(agreed) - len(held)
+    if not held:
+        return _closed(record, "no_agreed_case", "every agreed cell expects a number no float holds exactly as written")
+    return {**record, "test": compile_test(model["probe"], model["factors"], held), "status": "stands", "status_reason": ""}
+
+
+#: What names an attempt's record beside a bug's: the bug record's name, this, and the attempt's own nonce.
+_NO_ANSWER = ".no_answer."
+
+
+def no_answers(root: Path, task: str) -> list[Path]:
+    """The records of a bug's attempts that ended in no answer, one an attempt, beside the bug's record and never at its
+    place, so none is read as an answer and the bug is still asked again."""
+    saved = r3.bug_record(root, task, FORMAL)
+    return sorted(path for path in saved.parent.glob("*.json") if path.name.startswith(saved.stem + _NO_ANSWER))
 
 
 def ask(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, prompt: str, where: str, file: str, *,
-        candidate: bool, run: bool, caller: Any, step: Callable[..., Any]) -> tuple[dict[str, Any], None, None]:
-    """Replay 3's ``ask`` for replay 6: reader 1 through ``step`` as replay 3 asks its reviewer, then ``formal``."""
+        candidate: bool, run: bool, caller: Any, step: Callable[..., Any], root: Path) -> tuple[dict[str, Any], None, None]:
+    """Replay 3's ``ask`` for replay 6: reader 1 through ``step`` as replay 3 asks its reviewer, then ``formal``. An attempt that
+    ends in no answer is kept in a record of its own, with its reason (``no_answers``)."""
     found, _, _ = step(ctx, task, patch, title, text, prompt, where, file, candidate=candidate, run=run)
-    return formal(found, title, text, caller), None, None
+    got = formal(found, title, text, caller)
+    if got["status"] == "no_answer":
+        saved = r3.bug_record(root, task.id, FORMAL)
+        saved.parent.mkdir(parents=True, exist_ok=True)
+        fr.write_whole(saved.with_name(f"{saved.stem}{_NO_ANSWER}{uuid.uuid4().hex}.json"),
+                       json.dumps({"task": task.id, "instruction": FORMAL.digest, "status": "no_answer",
+                                   "status_reason": r3.no_answer(got)}, indent=1))
+    return got, None, None
 
 
 def review_bug(ctx: we.Context, root: Path, task: we.Task, rows: Sequence[Mapping[str, Any]], title: str, text: str, *,
                step: Callable[..., Any] | None = None, caller: Any = None, run: r3.Run | None = None) -> list[dict[str, Any]]:
     """Replay 3's ``review_bug`` under ``FORMAL``, unchanged, with ``ask`` as its reviewer: the bug's record saved whole before
     anything runs, then the compiled file run on the parent and on each patch by ``run_on``."""
-    asking = functools.partial(ask, caller=caller or reader_2(), step=step or fr._step)
+    asking = functools.partial(ask, caller=caller or reader_2(), step=step or fr._step, root=root)
     return r3.review_bug(ctx, root, task, rows, title, text, ask=asking, run=run, ins=FORMAL)
 
 
 # --- the counts --------------------------------------------------------------------------------------------------------------
 def summary(root: Path, tasks: Sequence[str]) -> dict[str, Any]:
     """Prediction 5's counts, and nothing of any text: each bug's status and whether its two readers disagreed (ambiguous, or any
-    cell both cover differs; None where the tables were never compared), by status, and in all."""
+    cell both cover differs; None where the tables were never compared), by status, and in all. A bug with no record whose
+    attempts ended in no answer (``no_answers``) is ``no_answer``; one never attempted is "no record"."""
     bugs = []
     for task in tasks:
         found = (fr.read(r3.bug_record(root, task, FORMAL)) or {}).get("found")
         if not isinstance(found, dict):
-            bugs.append({"task": task, "status": "no record", "disagreed": None})
+            bugs.append({"task": task, "status": "no_answer" if no_answers(root, task) else "no record", "disagreed": None})
             continue
         status, compared = str(found.get("status")), found.get("comparison")
         disagreed = (status == "ambiguous" or bool(compared.get("cells_differ"))) if isinstance(compared, dict) else None
@@ -539,7 +640,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     caller = reader_2()
     with r3.one_runner(root / "loop" / FORMAL.folder):
         for name in args.tasks:
-            rows = fr.waiting(root, [name], FORMAL.folder)
+            rows = r3.waiting(root, [name], FORMAL)
             if not rows:
                 continue
             task = we.task_by_id(name)
@@ -547,8 +648,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             for record in review_bug(ctx, root, task, rows, title, text + we.read_thread(task), caller=caller):
                 print(json.dumps({"task": name, "said": record["said"], "reason": record["reason"],
                                   "seconds": record["seconds"], "error": record["error"]}), flush=True)
-            found = (fr.read(r3.bug_record(root, name, FORMAL)) or {}).get("found") or {}
-            print(json.dumps({"task": name, "status": found.get("status", "no record")}), flush=True)
+            print(json.dumps({"task": name, "status": summary(root, [name])["bugs"][0]["status"]}), flush=True)
 
 
 if __name__ == "__main__":

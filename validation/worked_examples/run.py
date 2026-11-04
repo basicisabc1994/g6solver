@@ -499,9 +499,15 @@ class ProbeRun:
         return self.exit in (0, 1) and self.ran > 0
 
 
-def probe_script(where: str) -> str:
+def junit_mark() -> str:
+    """The line ``probe_script`` echoes between pytest's console and its report, for one run: ``JUNIT_MARK`` and a nonce G6
+    draws for that run, so no text a test prints, and no value pytest renders, is that line (``read_probes``)."""
+    return f"{JUNIT_MARK} {uuid.uuid4().hex}"
+
+
+def probe_script(where: str, mark: str = JUNIT_MARK) -> str:
     return (f"rm -f {JUNIT_OUT}; {probes_at(where)} --junitxml={JUNIT_OUT} -o junit_family=xunit2 > /tmp/we-console.txt 2>&1; "
-            f'code=$?; tail -c 4000 /tmp/we-console.txt; echo "exit=$code"; echo "{JUNIT_MARK}"; cat {JUNIT_OUT} 2>/dev/null; '
+            f'code=$?; tail -c 4000 /tmp/we-console.txt; echo "exit=$code"; echo "{mark}"; cat {JUNIT_OUT} 2>/dev/null; '
             f"rm -f {JUNIT_OUT} /tmp/we-console.txt")
 
 
@@ -516,10 +522,15 @@ def failure_texts(xml: str) -> dict[str, str]:
     return found
 
 
-def read_probes(said: str) -> ProbeRun:
-    """What ``probe_script`` printed. A report that cannot be read has no results, so the run is not usable."""
-    head, _, xml = said.partition(JUNIT_MARK)
-    code = re.search(r"^exit=(\d+)$", head, re.M)
+def read_probes(said: str, mark: str = JUNIT_MARK) -> ProbeRun:
+    """What ``probe_script`` printed with ``mark``, read by the one line that is ``mark`` exactly, never by text a line holds:
+    the report is what follows it and pytest's exit the line before it, as the script echoes them, since pytest's console
+    above can show any text a test printed or rendered. A run's mark carries its own nonce (``junit_mark``). With no such
+    line, or a report that cannot be read, the run has no results, so it is not usable."""
+    lines = said.split("\n")
+    at = next((n for n, line in enumerate(lines) if line.rstrip("\r") == mark), None)
+    head, xml = ("\n".join(lines[:at]), "\n".join(lines[at + 1:])) if at is not None else (said, "")
+    code = re.fullmatch(r"exit=(\d+)", lines[at - 1].rstrip("\r")) if at else None
     try:
         results, texts = parse_junit(xml.strip()), failure_texts(xml.strip())
     except ET.ParseError:
@@ -567,8 +578,12 @@ def failures_of(sets: Iterable[tuple[str, ProbeRun, ProbeRun | None]]) -> tuple[
 def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
     """The critic's reply: its rule, verdict, reasons and test. Progress lines say nothing, so only what follows them counts,
     and a test comes with a verdict of defect or not at all. ``proof``: the line it must quote from inside the pack, because
-    a critic that could not read the pack still answers, and "none" from it looks like a clean review (L8's smoke run)."""
-    body = said[said.rfind("[codex]"):].split("\n", 1)[-1] if "[codex]" in said else said
+    a critic that could not read the pack still answers, and "none" from it looks like a clean review (L8's smoke run).
+    The progress lines are the ones the Codex companion writes, each ``[codex] <message>`` on a line of its own, before its
+    final message: only lines that lead the reply are skipped, so text the reply holds further on, however it reads, is the
+    reply's own. The companion writes them to its error stream, which ``run_codex`` does not read, so none leads its replies."""
+    lines = said.split("\n")
+    body = "\n".join(lines[next((n for n, line in enumerate(lines) if not line.startswith("[codex] ")), len(lines)):])
     if proof and not re.search(rf"^READ:\s*{re.escape(proof)}\s*$", body, re.M):
         return {"verdict": "unread", "rule": "", "why": "", "test": "", "error": f"the reply does not quote {proof}"}
     verdict = re.search(r"^VERDICT:\s*(\w+)", body, re.M)
@@ -1625,7 +1640,8 @@ def probe_gate(ctx: Context, task: Task, agent: str, where: str, tree: str) -> l
     """``scout_gate`` on the probes in ``where``: pytest's exit, the cross test's cases, and failures that are not
     assertions, as the container reports them."""
     if qualified(ctx.arm):
-        got = read_probes(out(ctx.docker.sh(agent, probe_script(where), workdir=task.repo, timeout=300)))
+        mark = junit_mark()
+        got = read_probes(out(ctx.docker.sh(agent, probe_script(where, mark), workdir=task.repo, timeout=300)), mark)
 
         def cases(test: str) -> list[str]:
             return [v for k, v in got.results.items() if k.rsplit("::", 1)[-1].split("[")[0] == test]
@@ -1659,10 +1675,11 @@ def run_set(ctx: Context, task: Task, agent: str, where: str) -> ProbeRun:
     if held:
         ctx.docker.sh(agent, f"rm -rf {HELD_COPY}; [ -d {where} ] && cp -r {where} {HELD_COPY} && chown -R {USER} {HELD_COPY}; "
                              "true", user="root", timeout=60)
-    said = out(ctx.docker.sh(agent, probe_script(HELD_COPY if held else where), workdir=task.repo, timeout=300))
+    mark = junit_mark()
+    said = out(ctx.docker.sh(agent, probe_script(HELD_COPY if held else where, mark), workdir=task.repo, timeout=300))
     if held:
         ctx.docker.sh(agent, f"rm -rf {HELD_COPY}", user="root", timeout=60)
-    return read_probes(said)
+    return read_probes(said, mark)
 
 
 def critic_files(n: int) -> tuple[str, str]:

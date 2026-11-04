@@ -422,7 +422,10 @@ class _Docker:
 
     def sh(self, ctr, script, *args, **kw):
         self.scripts.append(script)
-        return _Reply(self.said if "junitxml" in script else CROSS)
+        if "junitxml" not in script:
+            return _Reply(CROSS)
+        mark = script.split('echo "exit=$code"; echo "', 1)[1].split('"', 1)[0]     # the run's own mark, echoed
+        return _Reply(self.said.replace(f"\n{we.JUNIT_MARK}\n", f"\n{mark}\n", 1))
 
 
 def _gate(said, arm="L8"):

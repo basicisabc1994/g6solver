@@ -218,7 +218,8 @@ def test_the_bug_tests_folder_holds_only_what_the_reviewer_wrote_at_each_check(m
                 done = subprocess.run([sys.executable, "-m", "pytest", str(copied / ins.file), "-q", "-p", "no:cacheprovider",
                                        f"--rootdir={copied}", f"--confcutdir={copied}", f"--junitxml={xml}",
                                        "-o", "junit_family=xunit2"], cwd=repo, env=env, capture_output=True, timeout=60)
-                output = done.stdout + f"\nexit={done.returncode}\n{we.JUNIT_MARK}\n".encode() + xml.read_bytes()
+                mark = script.split('echo "exit=$code"; echo "', 1)[1].split('"', 1)[0]     # the run's own mark, echoed
+                output = done.stdout + f"\nexit={done.returncode}\n{mark}\n".encode() + xml.read_bytes()
             elif "sha256sum " in script:
                 output = hashlib.sha256(module.read_bytes()).hexdigest().encode()
             elif script.startswith(f"rm -rf {we.HELD_COPY}"):
