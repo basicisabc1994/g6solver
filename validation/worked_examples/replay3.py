@@ -105,6 +105,9 @@ class Instruction:
     #: The parent gate by case (PLAN.md, 2026-11-04, evening): a patch is reproduced only when a case that fails on the parent
     #: still fails on it. Off for replays 3 and 4, which were scored without it; on where a registration states it.
     same_case: bool = False
+    #: The parent's run and the patch's each in a container of its own (PLAN.md, 2026-11-04, night), so nothing one run leaves in
+    #: its container reaches the other. Off for replays 3, 4 and 5, which run both in one; on for replay 6.
+    own_containers: bool = False
 
 
 def rule() -> Instruction:
@@ -195,11 +198,14 @@ class Checked:
 
 def run_on(ctx: we.Context, task: we.Task, test: str, patch: Path, ins: Instruction | None = None
            ) -> tuple[we.ProbeRun, we.ProbeRun]:
-    """A saved test of the rule on the parent and with ``patch``, in a container of its own, as replay 1 runs its tests, with an
-    exec that failed raising (``Checked``)."""
+    """A saved test of the rule on the parent and with ``patch``, in a container of its own, or with ``ins.own_containers`` each
+    run in one of its own, as replay 1 runs its tests, with an exec that failed raising (``Checked``)."""
     ins = ins or rule()
     ctx = copy.copy(ctx)                              # the caller's context keeps its own docker
     ctx.docker = Checked(ctx.docker)
+    if ins.own_containers:
+        base = _apart(ctx, task, lambda name: fr.parent_run(ctx, task, name, test, ins.at, ins.file))
+        return base, _apart(ctx, task, lambda name: _patched(ctx, task, name, test, patch, ins))
     name = f"g6we-review-{uuid.uuid4().hex[:10]}"
     try:
         fr.container(ctx, task, name)
@@ -207,6 +213,22 @@ def run_on(ctx: we.Context, task: we.Task, test: str, patch: Path, ins: Instruct
         return base, fr.patch_run(ctx, task, name, patch, ins.at)
     finally:
         ctx.docker("rm", "-f", name, timeout=300)
+
+
+def _apart(ctx: we.Context, task: we.Task, run: Callable[[str], we.ProbeRun]) -> we.ProbeRun:
+    """``run`` in a container made for it alone and removed once it ends, so one is removed before the next is made."""
+    name = f"g6we-review-{uuid.uuid4().hex[:10]}"
+    try:
+        fr.container(ctx, task, name)
+        return run(name)
+    finally:
+        ctx.docker("rm", "-f", name, timeout=300)
+
+
+def _patched(ctx: we.Context, task: we.Task, name: str, test: str, patch: Path, ins: Instruction) -> we.ProbeRun:
+    """The test written in ``name`` as ``final_review.parent_run`` writes it, then ``patch`` applied and the test run there."""
+    we.write_in(ctx.docker, name, f"{ins.at}/{ins.file}", test + "\n", user="root")
+    return fr.patch_run(ctx, task, name, patch, ins.at)
 
 
 def review_bug(ctx: we.Context, root: Path, task: we.Task, rows: Sequence[Mapping[str, Any]], title: str, text: str, *,

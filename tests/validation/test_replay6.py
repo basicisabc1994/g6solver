@@ -240,7 +240,7 @@ def test_the_compiled_file_embeds_no_model_text_but_the_probe():
     assert got["status"] == "stands"
     tree = ast.parse(src)
     assert {alias.name for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names} == {
-        "json", "subprocess", "sys", "Decimal", "pytest"}       # G6's own; the probe's are in its text
+        "json", "math", "os", "signal", "subprocess", "sys", "Decimal", "pytest"}  # G6's own; the probe's are in its text
     strings = [node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)]
     assert strings.count(PROBE) == 1                  # the probe, as one text
     assert len([text for text in strings if "import os" in text]) == 1    # the one JSON text json.loads reads
@@ -370,8 +370,9 @@ def test_the_probe_runs_in_a_module_of_its_own_so_no_name_it_defines_reaches_pyt
 
 
 @pytest.mark.parametrize("probe", ["raise ImportError('no such module')\n" + PROBE, "import sys\nsys.exit(3)\n",
-                                   PROBE + "import pytest\npytest.fail('as it runs')\n", "def observe(case) return {}\n"])
+                                   PROBE + "import pytest\npytest.fail('as it runs')\n"])
 def test_a_probe_that_raises_as_it_runs_skips_every_cell_and_fails_none(probe):
+    """A probe the parser cannot read never runs: the follow-up makes it invalid (``test_replay6_followup``)."""
     got = r6.formal(wrote(model(probe=probe)), TITLE, TEXT, Caller(rules(PADDED)))
     space = _load(got["test"])                        # the probe has not run: no name of it is this file's
     assert len(space["_G6_CELLS"]) == 2
@@ -523,11 +524,11 @@ def test_the_summary_counts_each_bugs_status_and_whether_the_readers_disagreed(t
     keep("c-3", r6.formal(wrote(model()), TITLE, TEXT, Caller(rules(SAME))))
     keep("d-4", {"verdict": "none", "status": "no_model"})
     got = r6.summary(tmp_path, ["a-1", "b-2", "c-3", "d-4", "e-5"])
-    assert got["bugs"] == [{"task": "a-1", "status": "stands", "disagreed": False},
-                           {"task": "b-2", "status": "ambiguous", "disagreed": True},
-                           {"task": "c-3", "status": "no_agreed_case", "disagreed": False},
-                           {"task": "d-4", "status": "no_model", "disagreed": None},
-                           {"task": "e-5", "status": "no record", "disagreed": None}]
+    assert got["bugs"] == [{"task": "a-1", "status": "stands", "disagreed": False, "masked": 0},
+                           {"task": "b-2", "status": "ambiguous", "disagreed": True, "masked": 0},
+                           {"task": "c-3", "status": "no_agreed_case", "disagreed": False, "masked": 0},
+                           {"task": "d-4", "status": "no_model", "disagreed": None, "masked": None},
+                           {"task": "e-5", "status": "no record", "disagreed": None, "masked": None}]
     assert got["by_status"] == {"ambiguous": 1, "no record": 1, "no_agreed_case": 1, "no_model": 1, "stands": 1}
     assert got["compared"] == 3 and got["disagreed"] == 1
     assert QUOTE not in json.dumps(got) and PROBE not in json.dumps(got)
@@ -581,17 +582,14 @@ def test_the_probe_runs_as_the_main_code_of_a_process_of_its_own():
         space["test_formal"](cell)
 
 
-def test_a_project_module_of_any_name_imports_as_it_does_for_any_test(tmp_path, monkeypatch):
-    """Review 2 finding 3: the probe was registered as ``formal_probe``, which hid a project module of that name."""
+def test_a_project_module_of_any_name_imports_as_it_does_for_any_test(tmp_path):
+    """Review 2 finding 3: the probe was registered as ``formal_probe``, which hid a project module of that name. The probe
+    imports on pytest's own path (the follow-up), so the file runs in real pytest in the project's folder, as ``run_on`` runs it
+    there, where pytest's path has that folder."""
     (tmp_path / "formal_probe.py").write_text("def result():\n    return 3\n", "utf-8")
-    monkeypatch.chdir(tmp_path)                       # the directory pytest runs in, where the project is
     probe = "from formal_probe import result\ndef observe(case):\n    return {'length': result(), 'size': 0, 'out': ''}\n"
-    space = _load(r6.formal(wrote(model(probe=probe)), TITLE, TEXT, Caller(rules(PADDED)))["test"])
-    for cell in space["_G6_CELLS"]:
-        try:
-            space["test_formal"](cell)
-        except pytest.skip.Exception as exc:
-            pytest.fail(f"the agreed case was skipped: {exc}")
+    ran = _pytest(tmp_path, r6.formal(wrote(model(probe=probe)), TITLE, TEXT, Caller(rules(PADDED)))["test"])
+    assert list(ran.results.values()) == ["passed", "passed"], ran.tail
 
 
 def test_a_probe_that_overruns_its_bound_is_killed_and_every_cell_skips():
@@ -823,9 +821,9 @@ def test_reader_2_is_shown_the_probe_with_no_comment_or_docstring_and_the_file_r
     space = _load(got["test"])
     for cell in space["_G6_CELLS"]:
         space["test_formal"](cell)                    # and it runs as written: each agreed case is padded
-    unparsed = Caller(rules(PADDED))                  # one the tokenizer reads and the parser cannot still loses its comments
+    unparsed = Caller(rules(PADDED))                  # one the tokenizer reads and the parser cannot is shown nothing (follow-up)
     got = r6.formal(wrote(model(probe="# R1_COMMENT\ndef observe(case) return {}\n")), TITLE, TEXT, unparsed)
-    assert got["status"] == "stands" and "R1_COMMENT" not in unparsed.calls[0][1] and "def observe(case) return {}" in unparsed.calls[0][1]
+    assert got["status"] == "invalid" and "parser" in got["status_reason"] and unparsed.calls == []
 
 
 @pytest.mark.parametrize("probe", ['def observe(case):\n    return """\n', "if 1:\n    x = 1\n  y = 2\n", "x = (1,\n", "x = 1\x00\n"])
