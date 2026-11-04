@@ -1944,3 +1944,34 @@ Like replay 4, it is developed on stage 1 and 2 and scored on bugs not yet used.
   is the reading this table intends.
 - **A third review** runs on f2fce3b. Any finding is reported against the runs it touches, and no run is redone for a better
   result.
+## 2026-11-04 (afternoon): replay 5, relations between outputs, registered before it runs
+
+**What it is.** Replay 3's machinery with instruction fd779fd79374dfe4, at `claude/replay5` c42cb9c.
+- One test per bug, written from the issue and the parent alone, then run on the parent and on each distinct patch.
+- Each case asserts only a relation the issue or the repository states: two paths agree, a round trip returns its input,
+  equivalent inputs agree, or the same change of input moves the output the same way.
+- Both sides come from calls to the code. The test writes no expected value, so no model writes what a right result is.
+- A patch is "reproduced" when a case that fails on the parent still fails on it.
+
+**Why.**
+- Replay 4's symptom test flagged no right patch, but flagged only 28 of 141 wrong ones (19.9%, amended tests). Most wrong
+  patches remove the symptom and return a wrong value.
+- A relation can see a wrong value without anyone stating the right one.
+
+**Development check.**
+- **Bugs:** the 34 of stage 1 and 2, all 420 distinct patches, as replay 4 was checked.
+- **Cost:** Codex sign-in, no API credit.
+- **When:** after stage 4's runs, since it needs containers and memory is the limit.
+
+**Prediction, amended tests, distinct patches.**
+1. False alarms on right patches at most 5%, with the 95% upper bound under 10%.
+2. At least 30% of wrong patches flagged.
+3. At least 10 wrong patches flagged that the symptom test passed.
+
+The maintainers' tests are reported beside. So is the union of the symptom and relation tests, as the Swiss cheese table
+reads two precise layers with different holes.
+
+**Kill rule.** Under 15% of wrong patches flagged, or false alarms over 15%: replay 5 goes no further.
+
+**If it passes,** it is scored unchanged on stage 4's arm A patches, bugs it was not developed on, with the same three
+measures.
