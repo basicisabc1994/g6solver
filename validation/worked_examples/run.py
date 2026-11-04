@@ -56,6 +56,7 @@ TASKS = HERE / "tasks.json"
 TASKS_FRESH = HERE / "tasks_fresh.json"   # bugs the loop has not seen (PLAN.md, 2026-10-31)
 TASKS_UNSEEN = HERE / "tasks_unseen.json"   # stage 2: bugs in repositories never used in training (PLAN.md, 2026-10-31 evening)
 TASKS_STAGE4 = HERE / "tasks_stage4.json"   # stage 4: unseen bugs drawn by stage 2's rule from ranks 45 to 100 (PLAN.md, 2026-11-04)
+TASKS_STAGE5 = HERE / "tasks_stage5.json"   # stage 5: 130 bugs drawn by stage 4's T2 rule from three screens (PLAN.md, 2026-11-04)
 TASKS_DEV = HERE / "tasks_dev.json"   # stage 3: new bugs for G6 to learn from, none of them judged on
 AMENDMENTS = HERE / "amendments"   # the owner's scoring change: one test diff per bug its task does not determine
 PROXY = REPO_ROOT / "validation" / "v7_swebench" / "egress_proxy.py"
@@ -353,7 +354,7 @@ def load_tasks(path: Path = TASKS) -> list[Task]:
 
 def task_by_id(task_id: str, path: Path = TASKS) -> Task:
     for task in (*load_tasks(path), *load_tasks(TASKS_FRESH), *load_tasks(TASKS_UNSEEN), *load_tasks(TASKS_DEV),
-                 *load_tasks(TASKS_STAGE4)):
+                 *load_tasks(TASKS_STAGE4), *load_tasks(TASKS_STAGE5)):
         if task.id == task_id:
             return task
     raise SystemExit(f"no task {task_id!r} in {path.name}")
@@ -362,7 +363,7 @@ def task_by_id(task_id: str, path: Path = TASKS) -> Task:
 def fresh_sets() -> tuple[Path, ...]:
     """Every set of bugs judged on and never trained on: one list, read by ``is_fresh`` and by harness training's guard, from
     this module's names when called."""
-    return (TASKS_FRESH, TASKS_UNSEEN, TASKS_STAGE4)
+    return (TASKS_FRESH, TASKS_UNSEEN, TASKS_STAGE4, TASKS_STAGE5)
 
 
 def is_fresh(task_id: str) -> bool:

@@ -85,6 +85,15 @@ def test_stage_4s_bugs_load_are_fresh_and_new_and_take_the_unseen_bugs_arms_twic
     assert not we.r3_loop_key((SONNET, one, "A", 3)) and not we.r3_loop_key((SONNET, one, "S", 1))
 
 
+def test_stage_5s_bugs_load_are_fresh_and_new_to_every_earlier_set():
+    tasks = we.load_tasks(we.TASKS_STAGE5)
+    earlier = {t.id for path in (we.TASKS, we.TASKS_FRESH, we.TASKS_UNSEEN, we.TASKS_DEV, we.TASKS_STAGE4)
+               for t in we.load_tasks(path)}
+    assert len(tasks) == 130 and not {t.id for t in tasks} & earlier and len({t.id for t in tasks}) == len(tasks)
+    assert all(we.is_fresh(t.id) and we.task_by_id(t.id) == t for t in tasks)
+    assert we.TASKS_STAGE5 in we.fresh_sets()
+
+
 def test_each_bug_test_arm_asks_under_its_replays_own_instruction():
     assert we.bug_instruction("V3") == r3.rule() and we.bug_instruction("V4") == r4.SYMPTOM
     with pytest.raises(KeyError):
