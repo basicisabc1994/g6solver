@@ -2222,3 +2222,78 @@ candidates.
   - Ranks 1 to 100 are taken first, then 101 to 250, in rank order.
   - The draw stops at 130.
 - **If the supply still falls short,** the study runs on what there is. Its power is reported for the number reached.
+## 2026-11-04 (evening): replay 6, a formal model of the issue's rule checked on every case, registered before it is built
+
+**Owner's direction, 2026-11-04 (evening).** Push further: let the model use formal methods to model the problem, and so
+find what "the LLM alone is literally unable to with any combination of looping/tools and or prompt engineering".
+
+**What can be claimed, decided now.**
+- A solver is itself a tool, so "no combination of tools could do it" cannot be measured.
+- What can be measured is narrower: on held-out bugs, a formal route catches, and later fixes, what every LLM-only arm
+  recorded here missed.
+- Every claim is over a stated finite domain, never for all inputs.
+
+**Why this class.** The two generation bugs (the 2026-11-04 afternoon section) failed the same way in 20 runs across five
+arms. Each run fixed the issue's example and left the rest of a stated rule to the old code. A formal model must give every
+case in its domain a value, and G6 then runs every case, not only the cases a test happens to sample.
+
+**What it is.** Replay 3's machinery: one reviewer pass per bug, from the issue and the parent alone, then the same check on
+the parent and on each distinct patch. Its three parts:
+1. **The domain and the probe.** Reader 1 (Codex) writes the input domain as named factors, each with a few values and at
+   most 512 cases in their product. It also writes a probe file whose `observe(case)` calls the code and returns named JSON
+   observations. The probe runs only in the bug's container.
+2. **The rule, as data, twice.** Reader 1 and reader 2 each write a rule table over that domain, independently. Reader 2 is
+   Claude, `claude -p` with no tools, on the subscription. Neither reader sees the parent's outputs. Each row of a table has:
+   - `when`: factor values;
+   - `expect`: a JSON value, or equality with another observation of the same case;
+   - `quote`: the issue's words the row rests on.
+3. **G6's checks, in plain code, before anything runs on a patch.**
+   - A row whose quote is not a verbatim span of the issue or its discussion is dropped.
+   - If two rows of one table match a case with different expectations, the table conflicts with itself and is refused.
+   - The two tables are compared on every case both cover. Where they differ, the bug is reported as ambiguous and nothing is
+     flagged on it. This is the afternoon section's rule for blind readers who disagree.
+   - At least one agreed case must fail on the parent. Otherwise the model reproduces nothing and the bug is left out: the
+     parent gate.
+
+**The finding rule.** A patch is flagged when an agreed case that fails on the parent still fails on it, which is K2's gate.
+The ungated count is reported beside.
+
+**Components.**
+- The run and container steps are replay 3's.
+- On a finite domain, enumerating every case decides coverage, conflict and the two tables' agreement exactly, so no solver is
+  added. `formal.check_contract` and `check_equivalence` (Z3) come in only if a test shows a domain too large to enumerate.
+- The probe is the only code a model writes, and it never runs in G6's process.
+
+**Development check.**
+- **Bugs:** stage 1 and 2's 34, all 420 distinct patches, on the amended tests, as replays 4 and 5 were checked.
+- **Cost:** Codex sign-in and subscription calls, no API credit.
+- **When:** after replay 5, since both need containers and memory is the limit.
+- **Where:** built on `claude/replay6` from `claude/replay5`, test first with fakes, with its own Codex review loop.
+
+**Prediction.**
+1. Where the model stands, false alarms on right patches are at most 5%, with the 95% upper bound under 10%.
+2. Where the model stands, at least 30% of wrong patches are flagged.
+3. On at least one of click-3404 and starlette-3189, at least half the distinct wrong patches are flagged.
+4. At least 5 wrong patches are flagged that replays 3 and 4 both passed.
+5. The two readers disagree on a larger share of the 14 undetermined bugs than of the 20 determined ones, by at least 10
+   points. If so, disagreement between formal readers is a mechanical determinacy check, cheaper than the blind audit. It
+   would also let G6 itself say where no uplift is possible.
+
+Reported beside:
+- on how many bugs the model stands, is ambiguous, or reproduces nothing;
+- the maintainers' tests;
+- the union with replays 4 and 5.
+
+**Kill rule.** If false alarms are over 15% where the model stands, or no wrong patch is flagged on either generation bug,
+replay 6 goes no further and arm F is not built.
+
+**If it passes.**
+- It is scored unchanged on stage 4's patches, bugs it was not developed on, with the same measures.
+- Then arm F is registered, with its own prediction, before any run. It is K2's loop in which, on bugs whose model stands, the
+  reviewer's finding is the table of failing cases. That is the step that could show a fix no LLM-only arm reached. It runs
+  on stage 5 in host mode.
+
+**What it cannot do.**
+- The model is only as right as the readers' reading of the issue. Two readers who misread it the same way give a confident
+  wrong model, so false alarms are always read against the maintainers' tests, never against the model.
+- Undetermined bugs stay undetermined.
