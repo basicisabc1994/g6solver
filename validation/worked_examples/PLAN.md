@@ -2209,3 +2209,16 @@ project, and only 53 are unused: 48 under the cap of two per project.
   and T2's one-issue part, over the same window (2026-06-01 to 2026-10-29), up to 10 passing candidates each.
 - **Then the rule above.** Each project gives its next two newest unused candidates, and stops at 130.
 - **The window does not widen.** An earlier merge risks bugs already in the model's training data.
+**Second addendum, still before any candidate is read.** The deeper screen ended with no errors and gives too few
+candidates.
+- **What it gave.** 190 mechanically passing candidates in the 63 projects. 127 are unused, but they sit in 26 projects, so
+  the cap of two per project leaves 46.
+- **What that comes to.** At past rates (T2, preparation, then the determined share), 46 candidates come to about 13
+  determined bugs, or about 34 with stage 4's 21. The study needs about 100.
+- **The fix: more projects, not more bugs per project.** More per project would correlate the sample.
+  - The next PyPI ranks, 101 to 250, are screened with the same project rules (P1, P2, P4) and the same mechanical rules,
+    over the same window.
+  - Each kept project gives at most its two newest unused candidates, as before.
+  - Ranks 1 to 100 are taken first, then 101 to 250, in rank order.
+  - The draw stops at 130.
+- **If the supply still falls short,** the study runs on what there is. Its power is reported for the number reached.
