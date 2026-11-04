@@ -1908,3 +1908,39 @@ supplies. The candidate is relations between outputs (G6's `relation.v1` design)
 - the same change of input moves the output the same way.
 
 Like replay 4, it is developed on stage 1 and 2 and scored on bugs not yet used.
+
+## 2026-11-04 (afternoon): stage 4's order, changed before any of its runs, and V4's go
+
+**Why the order changes.**
+- Preparation runs at the memory floor of 6.5 GB free. After three hours it had passed 2 bugs and refused 2, of 31.
+- The API credit is recorded as expiring today.
+- Run in the registered order, arm A on every bug first, V4 could end with no bug at all, so prediction 2 could not be
+  tested. Cost is not the limit: recorded runs average $0.064 for A and $0.124 for K1, about $12 for both arms twice on
+  31 bugs, against $17.73 left to the stop.
+
+**The new order: whole bugs, as stage 2 ran them.**
+- Each bug is taken in draw order as soon as preparation passes its four steps. It runs A twice, then V4 twice.
+- Once preparation has ended and every prepared bug has run, or the stop is reached, replay 4 and replay 3 run on A's
+  patches of those bugs. They use Codex sign-in, not the API.
+- Prediction 2 is read on the bugs where all four runs finished; a bug the stop cuts short counts for neither
+  prediction. Prediction 1 is read on A's patches of the whole bugs.
+- The stop, the scoring and both predictions are unchanged.
+- Bugs whose image does not build give way under the rule. So far that is yarl-1852 and yarl-1919.
+
+**V4's go.** The registered condition was its second review. That review, on 6fe39a3, found three, all reproduced.
+- **Finding 2, repaired at `claude/stage4` f2fce3b.** The bug's test before the agent now comes out of the run's one
+  wall-clock allowance. The first session's deadline had counted from after it.
+- **Finding 3, repaired at f2fce3b.** Each check removes the test's folder as root and writes the test alone. A check copies
+  the whole folder, so a `conftest.py` left beside the test could have replaced every case.
+- **Finding 1 stays open, for its own change.** The layer table's per-line reading can merge two different multiline-string
+  changes. On stage 1 and 2's recorded runs, every patch the tokenised change merges, where exact bytes would not, differs
+  only in comment, blank or layout lines: 16 patches on amended tests, 28 on maintainers'. None differs at a line the
+  tokenizer cannot finish, so no recorded count moves. This is the third time the class has been met, so the repair is
+  a whole-file token identity read from the bug's image, not another rule for single lines. V4 does not use the layer
+  table.
+- **Exact bytes would be wrong in the other direction.** It splits those same comment-only duplicates. It would put the
+  symptom test's share of the commonest wrong change at 1 of 21, where the tokenised identity gives 8 of 37. So the replay
+  4 entry's "as often as other wrong patches" holds only where comment-only differences count as one change, and that
+  is the reading this table intends.
+- **A third review** runs on f2fce3b. Any finding is reported against the runs it touches, and no run is redone for a better
+  result.
