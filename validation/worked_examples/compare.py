@@ -71,7 +71,7 @@ def said_of(root: Path, row: Mapping[str, Any]) -> str:
     """What the system said of its own run: "done" for an arm with no loop, "clean" for a loop that ended with nothing failing, and
     "unsure" for any other end, a missing record included. It never decides the rule; it is how the report asks if "done" can be
     trusted."""
-    if row.get("arm", "")[:1] not in ("K", "L", "M", "R"):
+    if row.get("arm", "")[:1] not in ("K", "L", "M", "R", "V"):
         return "done"
     status = (record(root / str(row.get("run")) / "run.json").get("repairs") or {}).get("status")
     return "clean" if status == CLEAN else "unsure"

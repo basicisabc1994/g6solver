@@ -54,6 +54,7 @@ REPO_ROOT = HERE.parents[1]
 TASKS = HERE / "tasks.json"
 TASKS_FRESH = HERE / "tasks_fresh.json"   # bugs the loop has not seen (PLAN.md, 2026-10-31)
 TASKS_UNSEEN = HERE / "tasks_unseen.json"   # stage 2: bugs in repositories never used in training (PLAN.md, 2026-10-31 evening)
+TASKS_STAGE4 = HERE / "tasks_stage4.json"   # stage 4: unseen bugs drawn by stage 2's rule from ranks 45 to 100 (PLAN.md, 2026-11-04)
 TASKS_DEV = HERE / "tasks_dev.json"   # stage 3: new bugs for G6 to learn from, none of them judged on
 AMENDMENTS = HERE / "amendments"   # the owner's scoring change: one test diff per bug its task does not determine
 PROXY = REPO_ROOT / "validation" / "v7_swebench" / "egress_proxy.py"
@@ -350,14 +351,15 @@ def load_tasks(path: Path = TASKS) -> list[Task]:
 
 
 def task_by_id(task_id: str, path: Path = TASKS) -> Task:
-    for task in (*load_tasks(path), *load_tasks(TASKS_FRESH), *load_tasks(TASKS_UNSEEN), *load_tasks(TASKS_DEV)):
+    for task in (*load_tasks(path), *load_tasks(TASKS_FRESH), *load_tasks(TASKS_UNSEEN), *load_tasks(TASKS_DEV),
+                 *load_tasks(TASKS_STAGE4)):
         if task.id == task_id:
             return task
     raise SystemExit(f"no task {task_id!r} in {path.name}")
 
 
 def is_fresh(task_id: str) -> bool:
-    return any(task.id == task_id for task in (*load_tasks(TASKS_FRESH), *load_tasks(TASKS_UNSEEN)))
+    return any(task.id == task_id for task in (*load_tasks(TASKS_FRESH), *load_tasks(TASKS_UNSEEN), *load_tasks(TASKS_STAGE4)))
 
 
 def is_dev(task_id: str) -> bool:
@@ -694,8 +696,8 @@ def scout_again(args: Sequence[str]) -> list[str]:
 
 def gets_thread(arm: str) -> bool:
     """Whether a run's issue carries its discussion: arm L, and arm T, the comparison for it (PLAN.md, 2026-10-31). K0 is K1's
-    loop without it (PLAN.md, 2026-11-02)."""
-    return re.fullmatch(r"T|R|K(?!0$)\d+|X\d+|[LM]\d+", arm) is not None
+    loop without it (PLAN.md, 2026-11-02). Arms V3 and V4 have it, as K1 does (2026-11-04)."""
+    return re.fullmatch(r"T|R|K(?!0$)\d+|V\d+|X\d+|[LM]\d+", arm) is not None
 
 
 def convert_cases() -> list[dict[str, Any]]:
@@ -734,7 +736,7 @@ def prompt(task: Task, title: str, text: str, arm: str = "") -> str:
     addendum."""
     texts = {"": PROMPT, "B": PROMPT, "A": PROMPT_A, "C": PROMPT_C, "D": PROMPT_D, "E": PROMPT_D, "T": PROMPT_A, "R": PROMPT_A,
              "S": PROMPT_A, **dict.fromkeys(CONVERT_ARMS, PROMPT_A)}
-    if re.fullmatch(r"K\d+", arm):
+    if re.fullmatch(r"[KV]\d+", arm):
         texts[arm] = PROMPT_A
     if re.fullmatch(r"[GH]\d+", arm):
         harness = (HARNESS / f"G{arm[1:]}.txt").read_text(encoding="utf-8").strip()
@@ -994,8 +996,8 @@ def r3_loop_key(key: tuple[str, str, str, int]) -> bool:
     if model != R3_MODELS[1] or repeat not in (range(1, R3_HELD_REPEATS + 1) if held_out else (1, 2)):
         return False
     if is_fresh(task):
-        return arm in ("A", "T", "R") or re.fullmatch(r"[KM]\d+", arm) is not None
-    if arm in ("A", "E", "T", "R") or re.fullmatch(r"K\d+", arm):
+        return arm in ("A", "T", "R") or re.fullmatch(r"[KMV]\d+", arm) is not None
+    if arm in ("A", "E", "T", "R") or re.fullmatch(r"[KV]\d+", arm):
         return True
     return re.fullmatch(r"[GHLM]\d+", arm) is not None and (arm[0] in "HM") == (task in R3_HELD)
 
@@ -1579,7 +1581,7 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
     why = "" if dry else refusal(ctx, task)
     cap, stop = c.RUN_CAP_USD, c.RUN_STOP_USD
     if round3:
-        if not re.fullmatch(r"[A-ERST]|[GHKLMX]\d+", str(ctx.arm)) or ctx.model not in R3_MODELS:
+        if not re.fullmatch(r"[A-ERST]|[GHKLMVX]\d+", str(ctx.arm)) or ctx.model not in R3_MODELS:
             why = why or f"round 3 needs an arm ({', '.join(R3_ARMS)}) and a model ({', '.join(R3_MODELS)})"
         elif dry:
             cap, stop = r3_caps(ctx.model, spent=0.0, fable_left=1)
@@ -1920,12 +1922,144 @@ def review_once(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
             "failing": sorted(failing)[:40], "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}}
 
 
+# --- arms V3 and V4: arm K's loop with the reviewer's test written before any patch (PLAN.md, 2026-11-04) ---------------
+BUG_TEST_ARMS = ("V3", "V4")
+BUG_NOTE = """A reviewer from another team read the issue and the repository, but not your patch, and wrote this test of the bug
+before your fix existed. They say:
+
+{rule}
+
+{why}
+
+Their test, whose cases {failing} fail on your code:
+
+```python
+{test}
+```
+
+They can be wrong, as anyone can. Check their expectation against the issue and the repository before you act on it."""
+
+
+def bug_led(arm: str) -> bool:
+    """Arms V3 and V4: arm K's loop, with its reviewer's test written once from the issue and the parent before the agent starts."""
+    return arm in BUG_TEST_ARMS
+
+
+def bug_instruction(arm: str) -> Any:
+    """What arm ``arm``'s reviewer is asked: replay 3's instruction for V3, replay 4's for V4, word for word."""
+    import replay3
+    import replay4
+    return {"V3": replay3.rule(), "V4": replay4.SYMPTOM}[arm]
+
+
+def ask_bug_test(ctx: Context, task: Task, run: Any, agent: str, base: str, title: str, text: str, ins: Any) -> dict[str, Any]:
+    """The bug's reviewer, on the host as ``run_critic`` asks, with what the agent was given and the parent from the agent's own
+    container, and no patch, under ``ins``. Its reply is saved and read; nothing is written in the agent's container."""
+    started = time.monotonic()
+    found: dict[str, Any] = {"verdict": "failed", "rule": "", "why": "", "test": "", "error": ""}
+    proof = f"review {uuid.uuid4().hex}"
+    pack = ctx.archive.root / "critic_packs" / proof.split()[1]      # an ordinary folder, as ``run_critic`` says
+    try:
+        pack.mkdir(parents=True)
+        tree = ctx.docker("exec", "-u", USER, "-w", task.repo, agent, "git", "archive", "--format=tar", base, timeout=300)
+        checked(tree, "the parent's tree")
+        with tarfile.open(fileobj=io.BytesIO(tree.stdout)) as tar:
+            for member in tar.getmembers():
+                if member.isfile():
+                    dest = pack / "parent" / member.name
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(tar.extractfile(member).read())
+        (pack / "issue.txt").write_text(f"{proof}\n\n{title}\n\n{text}", encoding="utf-8")
+        (pack / "critic_prompt.md").write_text(ins.text, encoding="utf-8")
+        said = (ctx.critic or run_codex)(pack)
+        run.write("bug_test_reply.txt", ctx.archive.redact(said))
+        found = critic_report(said, proof=proof)
+    except (RuntimeError, OSError, subprocess.SubprocessError, tarfile.TarError) as exc:
+        found["error"] = f"{type(exc).__name__}: {exc}"[:400]
+    finally:
+        shutil.rmtree(pack, ignore_errors=True)
+    return {**found, "seconds": round(time.monotonic() - started, 1)}
+
+
+def parent_check(ctx: Context, task: Task, agent: str, found: Mapping[str, Any], ins: Any) -> ProbeRun:
+    """The bug's test on the tree before the agent starts, which is the parent, then taken out of the container, so the agent
+    cannot read it while it works."""
+    write_in(ctx.docker, agent, f"{ins.at}/{ins.file}", found["test"] + "\n", user="root")
+    try:
+        return run_set(ctx, task, agent, ins.at)
+    finally:
+        ctx.docker.sh(agent, f"rm -rf {ins.at}", user="root", timeout=60)
+
+
+def bug_test(ctx: Context, task: Task, run: Any, agent: str, base: str, title: str, text: str) -> dict[str, Any]:
+    """Arm V's first step: the bug's test asked (``ask_bug_test``) and run on the parent (``parent_check``), both recorded."""
+    ins = bug_instruction(ctx.arm)
+    found = ask_bug_test(ctx, task, run, agent, base, title, text, ins)
+    at_parent = None
+    if found.get("test"):
+        try:
+            at_parent = parent_check(ctx, task, agent, found, ins)
+            run.write_json("bug_test_at_parent.json", {"exit": at_parent.exit, "ran": at_parent.ran, "results": at_parent.results,
+                                                       "tail": at_parent.tail})
+        except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+            found["error"] = f"{type(exc).__name__}: {exc}"[:400]
+    return {**found, "at_parent": at_parent, "instruction": ins.digest, "arm": ctx.arm}
+
+
+def reviews_with_bug_test(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str,
+                          tally: c.Tally, stop: float, started: float, bug: Mapping[str, Any]) -> dict[str, Any]:
+    """Arms V3 and V4 after the agent's session (PLAN.md, 2026-11-04): the bug's test, written before the patch, run on the tree
+    after each session; while a case fails, the failing cases and the test go back to the same session, as arm K's reviewer's
+    do, up to ``MAX_REPAIRS`` repairs. A fresh copy of the test is put in place before each check. A test that fails nothing on
+    the parent says nothing of any patch, so it sends nothing back, as replays 3 and 4 read it."""
+    import replay3
+
+    ins = bug_instruction(ctx.arm)
+    summary = {"verdict": bug.get("verdict"), "instruction": bug.get("instruction"), "seconds": bug.get("seconds")}
+    if not bug.get("test") or bug.get("error"):
+        failed = bool(replay3.no_answer(bug)) or bool(bug.get("error"))
+        return {"status": "inconclusive" if failed else "no_counterexample_in_domain", "rounds": 0, "failing": [], "critic": summary,
+                "reason": "the bug's reviewer failed" if failed else "no test of the bug was written"}
+    if not replay3.failed_cases(bug.get("at_parent")):
+        return {"status": "no_counterexample_in_domain", "rounds": 0, "failing": [], "critic": summary,
+                "reason": "the bug's test reproduces nothing on the parent"}
+
+    def tree() -> str:
+        return out(ctx.docker.sh(agent, "git status --porcelain; git diff", workdir=task.repo, timeout=120))
+
+    rounds, failing, reason = 0, [], ""
+    for n in range(1, MAX_REPAIRS + 2):
+        rounds = n
+        keep_first_patch(ctx, task, agent, base, n)
+        write_in(ctx.docker, agent, f"{ins.at}/{ins.file}", bug["test"] + "\n", user="root")
+        got = run_set(ctx, task, agent, ins.at)
+        run.write_json(f"repair_check_{n}_bug.json", {"exit": got.exit, "ran": got.ran, "results": got.results, "tail": got.tail})
+        failing = [case.split(":", 1)[1] for case in replay3.failed_cases(got)]
+        if not failing:
+            reason = "the bug's test holds" if got.usable else "the bug's test would not run on the patch"
+            break
+        if n > MAX_REPAIRS:
+            reason = "the repairs ran out with a defect open"
+            break
+        before = tree()
+        note = BUG_NOTE.format(rule=bug.get("rule", ""), why=bug.get("why", ""), test=bug["test"],
+                               failing=", ".join(failing[:MAX_SHOWN]))
+        run_session(ctx, run, agent, scout_again(docker_args), key, tally, note + REVIEW_ASK, f"repair_stream_{n}.jsonl",
+                    seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
+        if tree() == before:
+            reason = "the agent left the code as it was"
+            break
+    return {"status": "inconclusive" if failing else "no_counterexample_in_domain", "rounds": rounds, "reason": reason,
+            "failing": failing[:40], "critic": summary}
+
+
 def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -> dict[str, Any]:
     round3 = ctx.variant == ROUND3
     looped = round3 and re.fullmatch(r"[LM]\d+", ctx.arm) is not None
     model = ctx.model if round3 else c.MODEL
     critic_led = round3 and re.fullmatch(r"K\d+", ctx.arm) is not None
-    no_g6 = round3 and (critic_led or ctx.arm in ("A", "S", "T", "R", *CONVERT_ARMS))       # Claude Code alone: no G6 server, skill or command
+    test_led = round3 and bug_led(ctx.arm)
+    no_g6 = round3 and (critic_led or test_led or ctx.arm in ("A", "S", "T", "R", *CONVERT_ARMS))   # Claude Code alone: no G6 server, skill or command
     key = DRY_KEY if dry else ctx.key_reader()
     ctx.archive.redact = c.Redactor(key, *ctx.archive.redact.secrets)
     task_image, _ = image_names(task, str(ctx.g6["commit"]), ctx.variant)
@@ -2033,6 +2167,10 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                 stop = max(1.0, stop - float(record["scout"]["usd"]))
         if looped and has_hook(ctx.arm):
             write_in(ctx.docker, agent, f"{HOME}/.claude/settings.json", hook_settings(stop=True))
+        bug: dict[str, Any] = {}
+        if test_led and not dry:      # the bug's test, from the issue and the parent, before the agent starts (PLAN.md, 2026-11-04)
+            bug = bug_test(ctx, task, run, agent, base, title, text)
+            record["bug_test"] = {k: bug.get(k) for k in ("verdict", "seconds", "error", "instruction")}
         tally = c.Tally(count_reported=round3)
         started = time.monotonic()
         proc = ctx.docker.popen(*docker_args, env=ctx.client_env(key))
@@ -2066,6 +2204,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         if critic_led and not dry and not ended:
             record["repairs"] = reviews_until_clean(ctx, task, run, agent, base, docker_args, key, tally, stop, started,
                                                     lambda n: run_critic(ctx, task, run, agent, base, title, text, n))
+        if test_led and not dry and not ended:
+            record["repairs"] = reviews_with_bug_test(ctx, task, run, agent, base, docker_args, key, tally, stop, started, bug)
         result = tally.result or {}
         record.update(status_detail=status_of(ended, tally), agent_usd=tally.cost_usd,
                       cost_usd=round(tally.cost_usd + float(record.get("cost_usd") or 0.0)
