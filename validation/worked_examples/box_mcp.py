@@ -14,6 +14,7 @@ import argparse
 import io
 import json
 import os
+import secrets
 import stat
 import subprocess
 import sys
@@ -24,6 +25,9 @@ from typing import Any, BinaryIO
 
 KEPT = (".git", ".venv")    # the container's own, at any depth, as the export's ``--exclude`` leaves them: never sent, never touched
 MAX_OUTPUT = 20000
+START = "g6-box-start"      # the start line's word, before the call's own nonce (``run_command``)
+#: What ``sh -c`` runs in the container, with the start line as ``$0`` and the command as ``$1``: the start line, then the command.
+SHELL = 'printf "%s\\n" "$0"; exec sh -c "$1"'
 TOOL = {"name": "run",
         "description": ("Run a shell command in the repository's test environment: a container holding the repository with its "
                         ".venv and its git history, and no network. Your working folder is mirrored into it before each "
@@ -63,7 +67,8 @@ def stop(uid):
 '''
 
 #: Run in the container as root, ``python3 -I -c MIRROR REPO USER``, with ``pack``'s tar on standard input. First every process of
-#: USER is stopped (``STOP``); then the repository's root must be a folder of its own, not a link, and every member is checked,
+#: USER is stopped (``STOP``); then the repository's root must be a folder of its own, not a link, and its real path, resolved once,
+#: the path it was given, so no ancestor is a link or a junction; every member is checked,
 #: and no folder holding ``.git`` or ``.venv`` at any depth may be removed, all before anything changes. Then what is new or
 #: changed is written: never through a name already there, which is removed (a folder, a link, another name of a file) and the
 #: file made fresh, exclusively, keeping a replaced file's mode and owner; what the tar does not hold removed, ``.git`` and
@@ -99,6 +104,9 @@ def kind(path):
 
 if kind(repo)[0] != "dir":
     sys.exit("refused: the repository's root " + repr(repo) + " is not a folder of its own")
+real = os.path.realpath(repo)      # resolved once, now that nothing of the user's runs: no ancestor may be a link or junction
+if os.path.normcase(real) != os.path.normcase(repo):
+    sys.exit("refused: the repository's path " + repr(repo) + " passes through a link to " + repr(real))
 tar = tarfile.open(fileobj=io.BytesIO(sys.stdin.buffer.read()))
 files, dirs = {}, set()
 for m in tar.getmembers():
@@ -271,13 +279,21 @@ def mirror(workspace: Path, docker: Callable[..., Any], *, container: str, repo:
 
 
 def run_command(command: str, docker: Callable[..., Any], *, container: str, repo: str, user: str, timeout: float) -> tuple[int, str]:
-    """The command in the container, as ``user`` in ``repo``, stopped there (with its children) at ``timeout`` seconds: its exit
-    code, and the last ``MAX_OUTPUT`` characters of its combined output after a line giving the code."""
+    """The command in the container, as ``user`` in ``repo``, stopped there (with its children) at ``timeout`` seconds, behind a
+    start line (``START``) with a nonce chosen for this call, which the container's shell prints before the command runs: its exit
+    code, and the last ``MAX_OUTPUT`` characters of its combined output, the start line taken out, after a line giving the code. A
+    reply without that line, as a line of its own, raises ``BoxError`` whatever its exit code: the command never ran, and what came
+    back is docker's, its daemon's or the container's."""
     seconds = str(max(1, int(timeout)))
-    done = docker("exec", "-u", user, "-w", repo, container, "timeout", "-k", "10", seconds, "sh", "-c", command,
+    start = f"{START} {secrets.token_hex(16)}"
+    done = docker("exec", "-u", user, "-w", repo, container, "timeout", "-k", "10", seconds, "sh", "-c", SHELL, start, command,
                   timeout=timeout + 60, merged=True)
+    said = _text(done.stdout)
+    before, line, after = said.partition(start + "\n")
+    if not line or (before and not before.endswith("\n")):
+        raise BoxError(f"the command never ran: its start line did not come back (exit {done.returncode}): {said.strip()[-2000:]}")
     note = f" (124 is what the box gives a command it stopped at {seconds} seconds)" if done.returncode == 124 else ""
-    return done.returncode, f"exit code {done.returncode}{note}\n{_text(done.stdout)[-MAX_OUTPUT:]}"
+    return done.returncode, f"exit code {done.returncode}{note}\n{(before + after)[-MAX_OUTPUT:]}"
 
 
 def _result(text: str, *, error: bool = False) -> dict[str, Any]:
@@ -285,8 +301,9 @@ def _result(text: str, *, error: bool = False) -> dict[str, Any]:
 
 
 def call(opts: Any, params: dict[str, Any], docker: Callable[..., Any]) -> dict[str, Any]:
-    """One ``tools/call``: the mirror, then the command. A docker failure, docker's own exit 125 included, is a tool error; so is a
-    docker client ended by a signal (a return code below 0, or none)."""
+    """One ``tools/call``: the mirror, then the command. A docker failure is a tool error: a mirror that failed, and a reply without
+    the call's start line, whatever its exit code (``run_command``); so is a docker client ended by a signal (a return code below 0,
+    or none), which gives no exit of the command's."""
     arguments = params.get("arguments") or {}
     if params.get("name") != "run":
         return _result(f"there is no tool {params.get('name')!r}; the one tool is run", error=True)
@@ -301,7 +318,7 @@ def call(opts: Any, params: dict[str, Any], docker: Callable[..., Any]) -> dict[
         return _result(f"nothing was mirrored or run: {exc}", error=True)
     except (BoxError, OSError, subprocess.SubprocessError) as exc:
         return _result(f"{type(exc).__name__}: {exc}", error=True)
-    return _result(text, error=code is None or code < 0 or code == 125)
+    return _result(text, error=code is None or code < 0)
 
 
 def serve(stdin: BinaryIO, stdout: BinaryIO, opts: Any, docker: Callable[..., Any]) -> None:

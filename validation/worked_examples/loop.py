@@ -57,13 +57,15 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
     if rec.get("status") == "refused" and "already made" in str(rec.get("why")):   # made before a crash: check it
         rec = [r for r in distill.main_row(root / "ledger.jsonl")
                if (r.get("task"), r.get("arm"), r.get("repeat")) == (task, arm, repeat)][-1]
-    if not c.scoreable(rec):   # refused, never counted as a failed run; or limited: nothing saved, made again after the reset
-        said = (((rec.get("limit") or {}).get("resets") or "no reset given") if rec.get("status") == "limited"
-                else rec.get("why"))
-        raise SystemExit(f"{rec.get('status')}: {arm} {task} {repeat}: {said}")
-    row = {"arm": arm, "task": task, "repeat": repeat, "run": rec.get("run"), "status": rec.get("status"),
+    end = c.ending(root, rec)      # how the run ended, from its own folder (``wecommon.ending``)
+    if not c.scoreable(end):   # refused, never counted as a failed run; limited: made again after the reset; or no ending at all
+        status = (end or {}).get("status") or "no ending"
+        said = (((rec.get("limit") or {}).get("resets") or "no reset given") if status == "limited"
+                else (end or {}).get("why") or rec.get("why"))
+        raise SystemExit(f"{status}: {arm} {task} {repeat}: {said}")
+    row = {"arm": arm, "task": task, "repeat": repeat, "run": rec.get("run"), "status": end.get("status"),
            "why": rec.get("why"), "cost_usd": rec.get("cost_usd"), "passes": False, "failing": None, "tests": []}
-    if c.on_patch(rec):      # finished, or ended by a model refusal: scored on the patch it left
+    if c.on_patch(end):      # finished, or ended by a model refusal: scored on the patch it left
         final =[x for x in last_json(tool("check", "--task", task, "--g6", g6, "--run", rec["run"], timeout=1200)).get("checks", [])
                  if x.get("patch") == "final"]     # by name: with no run named, check scores the bug's latest run, which a restart may not be
         if not final:       # no verdict is not a failed run: nothing is saved, and a restart checks it again
@@ -85,7 +87,8 @@ def rescore(root: Path, g6: str) -> list[dict[str, Any]]:
     for path in sorted((root / "loop").glob("*-*.json")):
         row, saved = json.loads(path.read_text("utf-8")), root / "loop" / "amended" / path.name
         diff = we.amendment(row["task"])
-        if not diff:
+        end = c.ending(root, row)          # a run that may not be scored has no verdict on either score: none is made or saved
+        if not diff or not c.scoreable(end):
             continue
         sha = c.sha256_file(diff)
         if saved.is_file():
@@ -94,7 +97,7 @@ def rescore(root: Path, g6: str) -> list[dict[str, Any]]:
                 rows.append(kept)
                 continue
         passes = False
-        if c.on_patch(row):
+        if c.on_patch(end):
             final = [x for x in last_json(tool("check", "--task", row["task"], "--g6", g6, "--run", row["run"], "--amended",
                                                timeout=1200)).get("checks", []) if x.get("patch") == "final"]
             passes = final[-1].get("passes") if final else None

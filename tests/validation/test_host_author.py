@@ -7,7 +7,7 @@ from __future__ import annotations
 import io
 import json
 import os
-import signal
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -127,8 +127,10 @@ class Proc:
 
 
 def fake_end(monkeypatch) -> None:
-    """``end_session`` for fake processes: it records the workspace it was given and stops nothing."""
-    monkeypatch.setattr(we, "end_session", lambda proc, workspace: setattr(proc, "ended", workspace), raising=False)
+    """The process tree for fake processes: ``host_start`` starts the fake as it is, and ``end_session`` records the workspace it
+    was given and stops nothing."""
+    monkeypatch.setattr(we, "host_start", lambda start, argv, **kw: SimpleNamespace(proc=start(argv, **kw)), raising=False)
+    monkeypatch.setattr(we, "end_session", lambda proc, workspace, tree=None: setattr(proc, "ended", workspace), raising=False)
 
 
 def starter(sessions: list[tuple]):
@@ -379,7 +381,7 @@ def test_the_box_answers_initialize_lists_one_tool_and_runs_a_command_after_the_
         calls.append((args, merged))
         if box.MIRROR in args:
             return ok(b'{"written": 1, "removed": 0}')
-        return ok(b"x" * 25000 + b"END", code=3)
+        return ok(args[-2].encode() + b"\n" + b"x" * 25000 + b"END", code=3)     # the call's start line, as its shell prints it
 
     replies = _session(box, ws, docker,
                        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
@@ -400,7 +402,8 @@ def test_the_box_answers_initialize_lists_one_tool_and_runs_a_command_after_the_
     assert replies[3]["result"] == {}
     (mirror, _), (command, merged) = calls
     assert mirror[:9] == ("exec", "-i", "-u", "root", "ctr", "python3", "-I", "-c", box.MIRROR) and mirror[9:] == ("/w/r", "tester")
-    assert command[:6] == ("exec", "-u", "tester", "-w", "/w/r", "ctr") and command[-3:] == ("sh", "-c", "pytest -q") and merged
+    assert command[:6] == ("exec", "-u", "tester", "-w", "/w/r", "ctr") and command[-5:-2] == ("sh", "-c", box.SHELL) and merged
+    assert command[-2].startswith(box.START + " ") and command[-1] == "pytest -q"
 
 
 @pytest.mark.parametrize("failure", ["mirror", "exec", "raises"])
@@ -602,8 +605,15 @@ def test_a_host_run_is_refused_when_dry_or_for_an_arm_with_repairs_outside_arm_k
 REFUSAL = {"type": "system", "subtype": "model_refusal", "apiRefusalCategory": "cyber", "originalModel": SONNET, "session_id": "s1"}
 
 
+def with_a_later_init(**other) -> list[str]:
+    """A stream whose first init is exactly the box's and the five file tools, and whose second is not."""
+    lines = stream("s1")
+    return [lines[0], stream("s1", **other)[0], *lines[1:]]
+
+
 @pytest.mark.parametrize(("lines", "code", "status"), [
     (stream("s1")[1:], 0, "refused"),                         # no init: what tools the session had is not known
+    (with_a_later_init(servers=("box", "other")), 0, "refused"),   # every init is read: a later one with another server
     (stream("s1", tools=[*TOOLS, "Bash"]), 0, "refused"),     # a built-in tool more than the six
     (stream("s1", tools=TOOLS[:-1]), 0, "refused"),           # one less: no box
     (stream("s1", extra=(REFUSAL,)), 0, "model_refused"),     # a request the model refused: a run made, not refused
@@ -683,7 +693,7 @@ def test_a_session_g6_ended_after_its_result_keeps_that_results_ending(monkeypat
     record, _, starts, *_ = host_run(monkeypatch, tmp_path, "A", [("s1", "", lines, code, hangs)])
     assert record["status"] == status and record["ended_by_g6"] is hangs
     saved = json.loads((tmp_path / "archive" / record["run"] / "stream_exit.json").read_text("utf-8"))
-    assert saved == {"exit_code": code, "ended_by_g6": hangs}
+    assert saved == {"exit_code": code, "ended_by_g6": hangs, "not_ended": ""}
 
 
 def test_no_repair_starts_once_the_runs_clock_is_spent(monkeypatch, tmp_path):
@@ -906,7 +916,8 @@ def test_the_prompt_goes_in_while_the_sessions_clock_runs(monkeypatch, tmp_path)
 
     proc = Proc([])
     proc.stdin, proc.stdout = Unread(), Quiet()
-    monkeypatch.setattr(we, "end_session", lambda p, ws: (setattr(p, "ended", ws), stopped.set()))
+    fake_end(monkeypatch)
+    monkeypatch.setattr(we, "end_session", lambda p, ws, tree=None: (setattr(p, "ended", ws), stopped.set())[1])
     ctx = SimpleNamespace(starter=lambda argv, **kw: proc, model=SONNET, environ={}, archive=we.c.Archive(tmp_path / "a"))
     begun = time.monotonic()
     ended = we.host_session(ctx, ctx.archive.start("run", "t"), tmp_path, tmp_path / "m.json", tmp_path / "s.json", "go",
@@ -914,30 +925,52 @@ def test_the_prompt_goes_in_while_the_sessions_clock_runs(monkeypatch, tmp_path)
     assert ended == "timeout" and time.monotonic() - begun < 5 and proc.ended == tmp_path and proc.stdin.text == "go"
 
 
-def test_ending_a_session_stops_its_group_or_its_tree_and_each_process_holding_its_workspace(monkeypatch, tmp_path):
-    calls = []
-    ws = tmp_path / "workspaces" / "tag"
-    if os.name != "nt":
-        monkeypatch.setattr(we.os, "killpg", lambda pid, sig: calls.append((pid, sig)))
-        we.end_session(SimpleNamespace(pid=4242), ws)
-        assert calls == [(4242, signal.SIGKILL)]
-        return
+@pytest.mark.skipif(os.name != "nt", reason="a real Windows process tree: its Job Object")
+def test_a_session_starts_in_a_process_tree_of_its_own_whose_end_ends_a_child_its_launcher_left(monkeypatch, tmp_path):
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes, kernel.OpenProcess.restype = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD], wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.TerminateProcess.argtypes, kernel.CloseHandle.argtypes = [wintypes.HANDLE, wintypes.UINT], [wintypes.HANDLE]
+    launcher = tmp_path / "launcher.py"
+    launcher.write_text("import subprocess, sys\nchild = subprocess.Popen([sys.executable, '-I', '-c', 'import time; time.sleep(60)'], "
+                        "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+                        "print(child.pid, flush=True)\n", encoding="utf-8")
+    swept = []
+    monkeypatch.setattr(we.subprocess, "run", lambda *a, **kw: swept.append(a))       # nothing is found by a sweep or by text
+    tree = we.host_start(subprocess.Popen, [sys.executable, "-I", str(launcher)], cwd=str(tmp_path), env=dict(os.environ),
+                         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    said = tree.proc.stdout.readline()
+    assert isinstance(said, bytes)                                                  # the session's pipes carry bytes
+    handle = kernel.OpenProcess(0x00100000 | 0x0001, False, int(said))
+    assert handle, ctypes.get_last_error()
+    try:
+        assert tree.proc.wait(timeout=30) == 0 and kernel.WaitForSingleObject(handle, 0) == 258   # the launcher ended first
+        assert we.end_session(tree.proc, tmp_path, tree) == "" and swept == []
+        assert kernel.WaitForSingleObject(handle, 5000) == 0, "the child the launcher left still runs"
+    finally:
+        kernel.TerminateProcess(handle, 0)
+        kernel.CloseHandle(handle)
+    alone = SimpleNamespace(poll=lambda: 0)
+    assert "not started in a process tree" in we.end_session(alone, tmp_path)      # said, never taken for a confirmed end
 
-    def run(argv, **kw):
-        calls.append((list(argv), kw.get("env")))
-        found = f"111\r\n{os.getpid()}\r\n222\r\n111\r\n".encode() if argv[0] == "powershell" else b""
-        return SimpleNamespace(returncode=0, stdout=found, stderr=b"")
 
-    monkeypatch.setattr(we.subprocess, "run", run)
-    we.end_session(SimpleNamespace(pid=4242), ws)
-    (first, _), (sweep, env), *rest = calls
-    assert first == ["taskkill", "/PID", "4242", "/T", "/F"]
-    assert sweep[0] == "powershell" and "Win32_Process" in sweep[-1] and str(ws) not in " ".join(sweep)
-    assert env["G6_WE_WORKSPACE"] == str(ws)
-    assert [argv for argv, _ in rest] == [["taskkill", "/PID", "111", "/T", "/F"], ["taskkill", "/PID", "222", "/T", "/F"]]
-    calls.clear()
-    we.end_session(SimpleNamespace(pid=4242), Path(ws.anchor))          # a folder this near the root is never swept
-    assert [argv[0] for argv, _ in calls] == ["taskkill"]
+def test_processes_not_confirmed_ended_make_a_sessions_ending_error_and_never_more_scoreable(monkeypatch, tmp_path):
+    fake_end(monkeypatch)
+    monkeypatch.setattr(we, "end_session", lambda proc, ws, tree=None: (setattr(proc, "ended", ws), "the job still has members")[1])
+    limited = stream("s1", extra=({"type": "assistant", "message": {"model": "<synthetic>", "content": [
+        {"type": "text", "text": LIMIT_TEXT}]}},))
+    for n, (lines, status) in enumerate([(stream("s1"), "error"), (stream("s1", extra=(REFUSAL,)), "error"), (limited, "limited")]):
+        start, _ = starter([("s1", "", lines)])
+        ctx = we.Context(archive=we.c.Archive(tmp_path / "a"), docker=None, key_reader=None, issue_reader=None, g6={},
+                         variant=we.ROUND3, arm="A", model=SONNET, environ={"PATH": "p"}, executor="host", starter=start)
+        run = ctx.archive.start("run", f"t{n}", executor="host")
+        ended = we.host_session(ctx, run, tmp_path, tmp_path / "m.json", tmp_path / "s.json", "go", "stream.jsonl", seconds=60.0,
+                                tally=we.c.Tally())
+        assert ended == status
+        assert json.loads((run.path / "stream_exit.json").read_text("utf-8"))["not_ended"] == "the job still has members"
+        assert we.c.ending(ctx.archive.root, {"run": run.rel, "executor": "host"})["status"] == status
 
 
 # R7: no prefix admits a name by itself.
@@ -948,3 +981,172 @@ def test_no_prefix_admits_a_name_by_itself_and_no_name_of_a_key_or_token_passes(
     assert we.host_env(environ) == {"PATH": "p", "DOCKER_HOST": "d", "DOCKER_CONTEXT": "c", "DOCKER_CERT_PATH": "cp",
                                     "DOCKER_TLS_VERIFY": "1", "LC_ALL": "C", "PROCESSOR_ARCHITECTURE": "AMD64", "HTTPS_PROXY": "h",
                                     **FIXED}
+
+
+# --- the second review of the host executor (2026-11-04): each class of its findings removed at its root -----------------------
+# A: a run's ending is written once, the moment it is decided, and every entry point reads it through one function.
+LIMITED = stream("s1", extra=({"type": "assistant", "message": {"model": "<synthetic>", "content": [{"type": "text", "text": LIMIT_TEXT}]}},))
+
+
+@pytest.mark.parametrize(("lines", "failing", "status"), [
+    (LIMITED, 1, "limited"),                                  # the mirror after the session fails: limited stays limited
+    (stream("s1", tools=[*TOOLS, "Bash"]), 1, "refused"),     # and refused stays refused
+    (stream("s1"), 2, "error")])                              # a finished run whose final mirror fails is "error"
+def test_a_runs_ending_is_written_when_decided_and_a_failure_after_it_never_makes_it_more_scoreable(monkeypatch, tmp_path, lines,
+                                                                                                   failing, status):
+    import box_mcp
+    real, seen = box_mcp.mirror, []
+
+    def mirror(workspace, docker, **kw):
+        folder = next((tmp_path / "archive" / "run").glob("*/*"))
+        seen.append(we.c.ending(tmp_path / "archive", {"run": folder.relative_to(tmp_path / "archive").as_posix(), "executor": "host"}))
+        if len(seen) == failing:
+            raise box_mcp.BoxError("the mirror failed (1)")
+        return real(workspace, docker, **kw)
+
+    monkeypatch.setattr(box_mcp, "mirror", mirror)
+    record, *_ = host_run(monkeypatch, tmp_path, "A", [("s1", "", lines)])
+    run = tmp_path / "archive" / record["run"]
+    decided = "finished" if status == "error" else status
+    assert record["status"] == status and "the mirror failed" in record["error"]
+    assert seen[failing - 1]["status"] == decided                    # on record before the mirror that failed
+    assert json.loads((run / "ending.json").read_text("utf-8"))["status"] == decided and (run / "failed_after_ending.json").is_file()
+    assert we.c.ending(tmp_path / "archive", record)["status"] == status and we.c.scoreable(record) is (status == "error")
+
+
+def test_every_entry_point_reads_a_runs_ending_from_its_folder_and_a_host_run_without_one_is_neither_scored_nor_made(monkeypatch,
+                                                                                                                   tmp_path):
+    import compare
+    import loop
+    task, other = we.load_tasks(we.TASKS_STAGE4)[:2]
+    archive = we.c.Archive(tmp_path)
+    archive.start("validate", task.id).finish({"fail_to_pass": ["t::a"], "pass_to_pass": [], "ok": True}, "finished")
+    made = archive.start("run", task.id, model=SONNET, arm="K1", repeat=1, executor="host")
+    made.end("model_refused")                    # its ending was written; its record and the index's end of it never were
+    bare = archive.start("run", task.id, model=SONNET, arm="K1", repeat=2, executor="host")
+    (bare.path / "final.patch").write_text("a patch", encoding="utf-8")            # stopped before any ending
+    limited = archive.start("run", other.id, model=SONNET, arm="K1", repeat=1, executor="host")
+    limited.end("limited")
+    ctx = SimpleNamespace(archive=archive, tasks=None, model=SONNET, arm="K1", repeat=1, g6={"commit": we.R3_LOOP_G6}, rerun_why="",
+                          executor="host")
+    assert "already made (model_refused)" in we.r3_refusal(ctx, task)[0] and we.r3_refusal(ctx, other)[0] == ""
+    ctx.repeat = 2
+    assert we.r3_refusal(ctx, task)[0] == ""
+    monkeypatch.setattr(we, "_oracle_run", lambda *a, **kw: pytest.fail("a run that may not be scored is never checked"))
+    with pytest.raises(SystemExit, match="no ending"):
+        we.check(SimpleNamespace(archive=archive), task, bare.rel)
+    diff = tmp_path / "amendment.patch"
+    diff.write_text("a diff", encoding="utf-8")
+    monkeypatch.setattr(we, "amendment", lambda name: diff)
+    (tmp_path / "loop" / "amended").mkdir(parents=True)
+    keys = [("K1", task.id, 2), ("K1", other.id, 1)]
+    for (arm, name, repeat), rel in zip(keys, (bare.rel, limited.rel)):     # rows that say a pass, each with an amended pass kept
+        saved = f"{arm}-{name}-{repeat}.json"
+        (tmp_path / "loop" / saved).write_text(json.dumps({"arm": arm, "task": name, "repeat": repeat, "run": rel,
+                                                           "status": "finished", "passes": True, "failing": 0}), "utf-8")
+        (tmp_path / "loop" / "amended" / saved).write_text(json.dumps({"run": rel, "amendment_sha256": we.c.sha256_file(diff),
+                                                                       "amended_passes": True}), "utf-8")
+    scores = compare.saved(tmp_path)
+    assert all((scores[key]["maintainers"], scores[key]["amended"]) == (None, None) for key in keys)
+    monkeypatch.setattr(loop, "tool", lambda command, *a, **kw: json.dumps({"status": "finished", "run": limited.rel,
+                                                                           "executor": "host"}) if command == "run"
+                        else pytest.fail("a run that may not be scored is never checked"))
+    assert loop.rescore(tmp_path, "g6") == []
+    with pytest.raises(SystemExit, match="limited"):
+        loop.one(tmp_path, "g6", "K1", "another", 1)                 # the run's record says finished; its ending, limited
+
+
+# B: one figure gives a run's API need, and a host run's is nothing wherever it is asked.
+def test_a_host_runs_api_need_is_nothing_at_admission_at_its_start_in_the_spend_and_at_its_sessions_cost_stop(monkeypatch, tmp_path):
+    assert we.c.api_need({"executor": "host", "stop_usd": 10.5}) == 0.0 and we.c.api_need({"stop_usd": 10.5}) == 10.5
+    assert we.c.api_need({"stop_usd": 0}) == 0.0 and we.c.api_need({}) == we.c.RUN_STOP_USD
+    task = we.load_tasks(we.TASKS_STAGE4)[0]
+    archive = we.c.Archive(tmp_path / "r3")
+    archive.start("run", "prior-api").finish({"cost_usd": we.R3_CAP_USD}, "finished")       # the API's whole round spent
+    ctx = SimpleNamespace(archive=archive, tasks=None, model=SONNET, arm="K1", repeat=1, g6={"commit": we.R3_LOOP_G6}, rerun_why="",
+                          executor="host")
+    assert we.r3_refusal(ctx, task)[0] == ""
+    ctx.executor = "container"
+    assert "the round's $180 stop" in we.r3_refusal(ctx, task)[0]
+    fake_end(monkeypatch)
+    start, _ = starter([("s1", "", stream("s1", cost=50.0))])
+    session = SimpleNamespace(starter=start, model=SONNET, environ={}, archive=archive)
+    tally = we.c.Tally(count_reported=True)
+    assert we.host_session(session, archive.start("run", "t"), tmp_path, tmp_path / "m.json", tmp_path / "s.json", "go", "stream.jsonl",
+                           seconds=60.0, tally=tally, stop_usd=we.c.api_need({"executor": "host"})) == ""
+    assert tally.cost_usd == 50.0                                    # the subscription's estimate, which stopped nothing
+
+
+# D: the filesystem's identity, not a name's rendering, says what a path is.
+def test_the_mirror_refuses_a_repository_reached_through_an_ancestor_that_is_a_link_and_changes_nothing(tmp_path, box):
+    ws, outside, parent = tmp_path / "ws", tmp_path / "outside", tmp_path / "parent"
+    write(ws, {"a.py": "agent\n"})
+    write(outside / "repo", {"a.py": "outside\n", "kept.txt": "k\n"})
+    link(outside, parent)                           # the repository's own folder is plain; the folder above it is a link
+    try:
+        done = mirror_in(box, parent / "repo", box.pack(ws))
+        assert done.returncode != 0 and b"refused" in done.stderr
+        assert sorted(p.name for p in (outside / "repo").iterdir()) == ["a.py", "kept.txt"]
+        assert (outside / "repo" / "a.py").read_text() == "outside\n"
+    finally:
+        unlink(parent)
+    write(parent / "repo", {"a.py": "old\n"})
+    assert mirror_in(box, parent / "repo", box.pack(ws)).returncode == 0 and (parent / "repo" / "a.py").read_text() == "agent\n"
+
+
+def test_an_extracted_export_is_checked_by_exact_name_and_by_file_identity(tmp_path):
+    dest = tmp_path / "dest"
+    write(dest, {"a.txt": "a"})
+    os.link(dest / "a.txt", dest / "b.txt")
+    with pytest.raises(RuntimeError, match="one file"):
+        we.written(dest, [tarfile.TarInfo("./a.txt"), tarfile.TarInfo("./b.txt")])
+    with pytest.raises(RuntimeError, match="own name"):
+        we.written(dest, [tarfile.TarInfo("./A.TXT")])
+    we.written(dest, [tarfile.TarInfo("./"), tarfile.TarInfo("./a.txt")])
+
+
+@pytest.mark.skipif(os.name != "nt", reason="NTFS short names")
+def test_the_export_refuses_a_short_name_alias_and_leaves_the_workspace_empty_before_the_agent_starts(tmp_path):
+    import ctypes
+    write(tmp_path / "probe", {"longfilename.py": "x"})
+    buffer = ctypes.create_unicode_buffer(32768)
+    assert ctypes.windll.kernel32.GetShortPathNameW(str(tmp_path / "probe" / "longfilename.py"), buffer, len(buffer))
+    alias = Path(buffer.value).name
+    if alias.casefold() == "longfilename.py":
+        pytest.skip("this volume gives no short names")
+    archive = tar_of([("./", "dir", b""), ("./longfilename.py", "file", b"first"), ("./" + alias, "file", b"second")])
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    with pytest.raises(RuntimeError, match="nothing of it kept"):
+        we.workspace_from(SimpleNamespace(docker=lambda *a, **kw: ok(archive)), SimpleNamespace(repo="/w/r"), "agent", dest)
+    assert list(dest.iterdir()) == []
+
+
+# E: a docker failure is told from the command's own exit by a start line only the command's shell prints.
+@pytest.mark.parametrize("code", [0, 1, 3, 125])
+def test_a_reply_without_the_calls_own_start_line_is_a_tool_error_whatever_its_exit(tmp_path, box, code):
+    ws = tmp_path / "ws"
+    write(ws, {"a.py": "x\n"})
+    opts = SimpleNamespace(container="ctr", repo="/w/r", workspace=str(ws), user="tester", timeout=30.0)
+    starts = []
+
+    def docker(head):
+        def reply(*args, **kw):
+            if box.MIRROR in args:
+                return ok(b"{}")
+            starts.append(args[-2])
+            return ok(head(args[-2]) + b"Error response from daemon: No such container: ctr\n", code=code)
+        return reply
+
+    for head in (lambda start: b"", lambda start: f"{box.START} {'0' * 32}\n".encode()):     # none, or another call's
+        got = box.call(opts, {"name": "run", "arguments": {"command": "true"}}, docker(head))
+        assert got["isError"] is True and "never ran" in got["content"][0]["text"]
+    got = box.call(opts, {"name": "run", "arguments": {"command": "true"}}, docker(lambda start: start.encode() + b"\n"))
+    assert got["isError"] is False and got["content"][0]["text"].startswith(f"exit code {code}") and box.START not in got["content"][0]["text"]
+    assert len(set(starts)) == 3 and all(s.startswith(box.START + " ") for s in starts)       # a nonce of its own for each call
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="no sh on this host")
+def test_the_box_shell_prints_the_start_line_and_then_runs_the_command(box):
+    done = subprocess.run(["sh", "-c", box.SHELL, f"{box.START} abc", "echo ran; exit 3"], capture_output=True, timeout=60)
+    assert done.returncode == 3 and done.stdout.replace(b"\r\n", b"\n") == f"{box.START} abc\nran\n".encode()

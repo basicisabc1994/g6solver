@@ -216,7 +216,26 @@ class RunFolder:
         target.parent.mkdir(parents=True, exist_ok=True)
         return target
 
+    def end(self, status: str, *, why: str = "", agent_started: bool = True) -> None:
+        """The run's ending, in a file of its own (``ENDING``), written the moment it is decided and never written again: an ending
+        decided later is not written over it, and a failure after it is recorded beside it (``failed``)."""
+        if not (self.path / ENDING).exists():
+            self.write_json(ENDING, {"status": status, "why": why, "agent_started": agent_started, "at": now()})
+
+    def failed(self, why: str, *, agent_started: bool) -> None:
+        """A failure: the run's ending ("error") when none was decided before it, else recorded beside the ending, once
+        (``AFTER``), which can only turn a scoreable ending into "error" (``ending``)."""
+        if not (self.path / ENDING).exists():
+            self.end("error", why=why, agent_started=agent_started)
+        elif not (self.path / AFTER).exists():
+            self.write_json(AFTER, {"why": why, "at": now()})
+
     def finish(self, record: Mapping[str, Any], status: str) -> dict[str, Any]:
+        """The run's record and its end in the index. A host run's status is its ending (``end``, ``ending``), written first if it
+        was not decided before, so a record and an index left unwritten by a stop still have it."""
+        if record.get("executor") == "host":
+            self.end(status, why=str(record.get("why") or ""), agent_started=bool(record.get("agent_started")))
+            status = (ending(self.archive.root, {**record, "run": self.rel}) or {}).get("status") or status
         body = {**record, "status": status, "ended_at": now()}
         self.write_json("run.json", body)
         self.archive.append({"event": "ended", "run": self.rel, "status": status, "at": body["ended_at"],
@@ -256,17 +275,25 @@ class Archive:
         return RunFolder(self, path, rel)
 
 
+def api_need(run: Mapping[str, Any]) -> float:
+    """What a run may spend of the API's money, the one figure round 3's admission, the run's start record, ``spent`` and its
+    sessions' cost stop take: nothing for a host run (``executor`` "host"), whose sessions are the subscription's (PLAN.md,
+    2026-11-04); else its own stop (``stop_usd``, 0 included; ``RUN_STOP_USD`` when it gives none)."""
+    if run.get("executor") == "host":
+        return 0.0
+    stop = run.get("stop_usd")
+    return RUN_STOP_USD if stop is None else float(stop)
+
+
 def spent(rows: Iterable[Mapping[str, Any]]) -> float:
-    """Dollars spent: every ended run's cost; a run started and never ended counts the run's whole stop (its own
-    ``stop_usd`` when its start says one, as in round 3, 0 included) until it is closed with its stream's cost. A host run's
-    start counts nothing: its sessions are the subscription's, never the API's money (PLAN.md, 2026-11-04)."""
+    """Dollars spent: every ended run's cost; a run started and never ended counts what it may spend of the API's money
+    (``api_need``: its whole stop, or nothing for a host run) until it is closed with its stream's cost."""
     rows = list(rows)
     ended = {r["run"]: float(r.get("cost_usd") or 0.0) for r in rows if r.get("event") == "ended"}
     total = sum(ended.values())
     for r in rows:
         if r.get("event") == "started" and r.get("kind") == "run" and r["run"] not in ended:
-            stop = 0.0 if r.get("executor") == "host" else r.get("stop_usd")
-            total += RUN_STOP_USD if stop is None else float(stop)
+            total += api_need(r)
     return round(total, 6)
 
 
@@ -277,17 +304,53 @@ UNSCORED = ("limited", "refused")
 #: How a made run ends when what is scored is its final patch: it finished, or a model refusal ended it, as Claude Code alone
 #: would leave it (PLAN.md, runtime-k ec0f761). Any other made run counts as failed.
 ON_PATCH = ("finished", "model_refused")
+#: A run's ending, in its folder, written once the moment it is decided (``RunFolder.end``); and a failure after it (``AFTER``).
+ENDING = "ending.json"
+AFTER = "failed_after_ending.json"
 
 
-def scoreable(record: Mapping[str, Any]) -> bool:
-    """Whether a run's record may be given a verdict, and whether it was made: the one rule every scoring entry point asks
-    (``run.check``, ``loop.one``, ``compare.saved``), and round 3's refusal to make a run again."""
-    return record.get("status") not in UNSCORED
+def ending(root: Path, row: Mapping[str, Any]) -> dict[str, Any] | None:
+    """How the run ``row["run"]`` ended, read from its folder under the archive ``root``: the one source every entry point asks
+    whether a run may be scored and whether it was made (``scoreable``, ``on_patch``; ``run.check``, ``run.r3_done``,
+    ``loop.one``, ``loop.rescore``, ``compare.saved``). Its ending file when it has one (``ENDING``), its status "error" when a
+    failure was recorded after an ending that would be scored (``AFTER``), while "limited" and "refused" stay as they are. A host
+    run with no ending file has no ending (None, never scored): an empty or missing record says nothing. Any other run's ending is
+    ``row`` itself, its status as its own record gives it, as before; so is that of a row whose run has no folder."""
+    rel = row.get("run")
+    folder = Path(root) / str(rel) if rel else None
+    if folder is None or not folder.is_dir():
+        return dict(row)
+    try:
+        first = json.loads((folder / ENDING).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None if _host(Path(root), str(rel), folder, row) else dict(row)
+    except (OSError, ValueError):
+        return None
+    status = str(first.get("status") or "") if isinstance(first, dict) else ""
+    if not status:
+        return None
+    return {**first, "status": status if status in UNSCORED or not (folder / AFTER).exists() else "error"}
 
 
-def on_patch(record: Mapping[str, Any]) -> bool:
+def _host(root: Path, rel: str, folder: Path, row: Mapping[str, Any]) -> bool:
+    """Whether a run is a host run: as ``row`` says, else as its saved record says, else as its start in the index says."""
+    if "executor" in row:
+        return row.get("executor") == "host"
+    try:
+        return json.loads((folder / "run.json").read_text(encoding="utf-8")).get("executor") == "host"
+    except (OSError, ValueError, AttributeError):
+        return any(r.get("event") == "started" and r.get("run") == rel and r.get("executor") == "host" for r in Archive(root).rows())
+
+
+def scoreable(record: Mapping[str, Any] | None) -> bool:
+    """Whether a run's ending (``ending``) may be given a verdict, and whether it was made: no ending, or "limited" or "refused",
+    may not."""
+    return record is not None and record.get("status") not in UNSCORED
+
+
+def on_patch(record: Mapping[str, Any] | None) -> bool:
     """Whether a run's verdict is its final patch's independent check (``ON_PATCH``), the one rule ``loop`` and ``compare`` ask."""
-    return record.get("status") in ON_PATCH
+    return record is not None and record.get("status") in ON_PATCH
 
 
 def may_start(spent_usd: float, cap: float = CAP_USD, need: float = RUN_STOP_USD) -> tuple[bool, str]:

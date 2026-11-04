@@ -29,7 +29,6 @@ import os
 import queue
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import tarfile
@@ -1036,14 +1035,18 @@ def r3_caps(model: str, *, spent: float, fable_left: int) -> tuple[float, float]
     return cap, round(cap * R3_MARGIN, 6)
 
 
-def r3_done(rows: Iterable[Mapping[str, Any]]) -> dict[tuple[str, str, str, int], str]:
-    """The round 3 runs whose agent started, by (model, task, arm, repeat), with how each ended."""
+def r3_done(rows: Iterable[Mapping[str, Any]], root: Path) -> dict[tuple[str, str, str, int], str]:
+    """The round 3 runs whose agent started, by (model, task, arm, repeat), with how each ended, as its folder under the archive
+    ``root`` says (``wecommon.ending``): a host run's ending file, which a stop before the index's end of the run leaves too."""
+    rows = list(rows)
     ended = {r["run"]: r for r in rows if r.get("event") == "ended"}
     done = {}
     for r in rows:
-        end = ended.get(r.get("run"))
-        if r.get("event") == "started" and r.get("kind") == "run" and r.get("arm") and end and end.get("agent_started"):
-            done[(str(r.get("model")), str(r.get("task")), str(r.get("arm")), int(r.get("repeat") or 1))] = end["status"]
+        if not (r.get("event") == "started" and r.get("kind") == "run" and r.get("arm")):
+            continue
+        end = c.ending(root, {**ended.get(r["run"], {}), "run": r["run"], "executor": r.get("executor", "container")})
+        if end and end.get("agent_started") and end.get("status"):
+            done[(str(r.get("model")), str(r.get("task")), str(r.get("arm")), int(r.get("repeat") or 1))] = str(end["status"])
     return done
 
 
@@ -1061,9 +1064,9 @@ def r3_refusal(ctx: Context, task: Task) -> tuple[str, float, float]:
         return f"the loop's arms run only on the reviewed G6, {R3_LOOP_G6}", 0.0, 0.0
     if ctx.arm == "D" and not str(ctx.g6.get("commit")).startswith(R3_D_G6):
         return f"arm D runs only on the reviewed G6, {R3_D_G6}", 0.0, 0.0
-    done = r3_done(rows)
+    done = r3_done(rows, ctx.archive.root)
     # a host run that met the subscription's usage limit, or that G6 refused at its session's start, gave no verdict, so it is
-    # made again, as a killed run is; a run a model refusal ended was made (PLAN.md, 2026-11-04; ``wecommon.scoreable``)
+    # made again, as a killed run is; a run a model refusal ended was made (PLAN.md, 2026-11-04; ``wecommon.ending``)
     if key in done and c.scoreable({"status": done[key]}) and not (ctx.rerun_why and done[key] == "error"):
         return f"run {key} was already made ({done[key]}); no run is made again for a better result", 0.0, 0.0
     earlier = [k for k in sched if R3_MODELS.index(k[0]) < R3_MODELS.index(ctx.model) and k not in done]
@@ -1072,7 +1075,8 @@ def r3_refusal(ctx: Context, task: Task) -> tuple[str, float, float]:
     spent = c.spent(rows)
     fable_left = sum(1 for k in sched if k[0] == R3_MODELS[2] and k not in done)
     cap, stop = r3_caps(ctx.model, spent=spent, fable_left=fable_left)
-    ok, why = c.may_start(spent, cap=R3_CAP_USD, need=stop)
+    ok, why = c.may_start(spent, cap=R3_CAP_USD, need=c.api_need({"executor": getattr(ctx, "executor", "container"),
+                                                                  "stop_usd": stop}))
     if not ok or cap <= 0:
         return f"the round's ${R3_CAP_USD:.0f} stop: {why or 'no budget left'}", cap, stop
     return "", cap, stop
@@ -1479,11 +1483,6 @@ HOST_FIXED_ENV = {"ENABLE_CLAUDEAI_MCP_SERVERS": "false", "CLAUDE_CODE_DISABLE_R
 HOST_TOOLS = frozenset({"Edit", "Glob", "Grep", "Read", "Write", "mcp__box__run"})
 HOST_SERVERS = frozenset({"box"})
 HOST_EXIT_S = 30           # how long a session whose stream has ended is given to exit by itself before it is stopped
-#: Run by ``powershell`` with the run's workspace in ``G6_WE_WORKSPACE``, never on its command line: the id of every process,
-#: but its own, whose command line holds that path, as the box's does.
-HOST_HOLDING = ("$p = $env:G6_WE_WORKSPACE; if (-not $p) { exit 1 }; Get-CimInstance Win32_Process | Where-Object { "
-                "$_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine.IndexOf($p, [StringComparison]::OrdinalIgnoreCase) "
-                "-ge 0 } | ForEach-Object { $_.ProcessId }")
 #: Claude Code's word that the subscription's usage limit is reached, with when it resets when it says.
 HOST_LIMIT = re.compile(r"You(?:'|’)ve hit your (?:[\w-]+ ){0,3}limit\b\W{0,4}(resets\b[^\n|]*)?", re.I)
 #: A name part Windows would refuse or change (a device name, a reserved character, a trailing dot or space).
@@ -1521,10 +1520,11 @@ def host_init(obj: Any) -> dict[str, Any] | None:
 
 
 def host_facts(path: Path, model: str) -> dict[str, Any]:
-    """What a saved host stream says of its session: its init (``host_init``), its last result, the first usage limit Claude Code
-    gave in it (``limit_of``), the models that wrote its messages (Claude Code's own synthetic ones apart), and each record of a
-    refused request (its subtype, category and models). A model is the one asked for only when it is that name, or that name and
-    a date (``-YYYYMMDD``)."""
+    """What a saved host stream says of its session: its init (``host_init``): every init record is read, and the first one that
+    is not exactly the box's and the five file tools is the session's, else the first; its last result, the first usage limit
+    Claude Code gave in it (``limit_of``), the models that wrote its messages (Claude Code's own synthetic ones apart), and each
+    record of a refused request (its subtype, category and models). A model is the one asked for only when it is that name, or
+    that name and a date (``-YYYYMMDD``)."""
     init, result, limit, seen, refusals = None, None, None, set(), []
     for line in path.read_text(encoding="utf-8").splitlines() if path.is_file() else []:
         limit = limit if limit is not None else limit_of(line)
@@ -1534,7 +1534,9 @@ def host_facts(path: Path, model: str) -> dict[str, Any]:
             continue
         if not isinstance(obj, dict):
             continue
-        init = init or host_init(obj)
+        found = host_init(obj)
+        if found and (init is None or (found["why"] and not init["why"])):
+            init = found
         result = obj if obj.get("type") == "result" else result
         msg = obj.get("message")
         if obj.get("type") == "assistant" and isinstance(msg, dict) and msg.get("model") and msg.get("model") != "<synthetic>":
@@ -1546,14 +1548,17 @@ def host_facts(path: Path, model: str) -> dict[str, Any]:
             "switched": any(not asked.fullmatch(m) for m in seen)}
 
 
-def host_ending(stop: str, facts: Mapping[str, Any], *, code: int | None, limit: str | None, by_g6: bool) -> tuple[str, str]:
+def host_ending(stop: str, facts: Mapping[str, Any], *, code: int | None, limit: str | None, by_g6: bool,
+                left: str = "") -> tuple[str, str]:
     """How a host session ended, decided once from all of its evidence: ("", "") when cleanly, else its status and why. In this
     order: "limited" when Claude Code said the usage limit was reached (with the reset it gave); "refused", G6's own refusal of
     the session, when its stream has no init or an init that is not exactly the box's and the five file tools (``host_init``);
     "model_refused" at a record of a request the model refused, a run made as Claude Code alone would leave it (PLAN.md,
     runtime-k ec0f761), with nothing resent. Then, once the session's own result was read, what it says (``status_of``),
-    whatever ended the process after it; before any result, the stream's own stop ("timeout", "cap_turns") or "error". Last,
-    "error" for a process that ended by itself with a code other than 0; ``by_g6``: G6 ended the process, its code says nothing."""
+    whatever ended the process after it; before any result, the stream's own stop ("timeout", "cap_turns") or "error". Then
+    "error" for a process that ended by itself with a code other than 0; ``by_g6``: G6 ended the process, its code says nothing.
+    Last, ``left``: why the session's processes could not be confirmed ended (``end_session``), which makes any ending but
+    "limited" and "refused" "error", never one more scoreable."""
     if limit is not None:
         return "limited", limit
     init, result = facts.get("init"), facts.get("result")
@@ -1561,6 +1566,8 @@ def host_ending(stop: str, facts: Mapping[str, Any], *, code: int | None, limit:
         return "refused", "the host session's stream had no init, so what tools it had is not known"
     if init["why"]:
         return "refused", init["why"]
+    if left:
+        return "error", left
     if facts.get("refusals"):
         return "model_refused", ""
     got = status_of("" if result else stop, SimpleNamespace(result=result))
@@ -1594,25 +1601,33 @@ def limit_of(line: str) -> str | None:
     return None
 
 
-def end_session(proc: Any, workspace: Path) -> None:
-    """Every process a host session started, ended, whatever happened, and nothing else. On POSIX, the session's process group,
-    which its launcher leads (``start_new_session``). On Windows, the launcher's tree (``taskkill /T``), then each process whose
-    command line holds the run's own workspace, as the box's arguments do, which a launcher that ended first no longer reaches
-    (``HOST_HOLDING``; never for a folder within two steps of a drive's root)."""
-    if os.name != "nt":
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:
-            pass
-        return
-    subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, timeout=60)
-    if len(Path(workspace).parts) < 3:
-        return
-    found = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", HOST_HOLDING], capture_output=True,
-                           timeout=120, env={**os.environ, "G6_WE_WORKSPACE": str(workspace)})
-    for pid in dict.fromkeys(int(x) for x in found.stdout.split() if x.isdigit()):
-        if pid != os.getpid():
-            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=60)
+def host_start(start: Callable[..., Any], argv: list[str], **kw: Any) -> Any:
+    """A host session's launcher, started by ``start`` (as ``subprocess.Popen`` is called) in a process tree of G6's own
+    (``g6.core.process_tree._Tree``, as ``g6.core.component_process`` and ``g6.core.confine`` use it): on Windows suspended
+    inside a Job Object that kills every member when it is closed, on POSIX leading a new session whose group is killed. Its
+    pipes carry bytes. ``kw`` is the tree's (``env``, ``cwd`` and the three pipes). Returns the tree; its ``proc`` is the
+    launcher, and ``end_session`` ends every process in it."""
+    from g6.core.process_tree import _Tree
+
+    return _Tree(argv, spawn=lambda args, **given: start(args, **{**given, "text": False, "encoding": None}), **kw)
+
+
+def end_session(proc: Any, workspace: Path, tree: Any = None) -> str:
+    """Every process of the host session in ``workspace`` whose launcher is ``proc``, ended: its process tree (``host_start``)
+    killed, strictly, so each of its members, a launcher that ended first included, is confirmed gone. No process is chosen by
+    its name, its command line or its folder. Returns "" when all are confirmed ended, else why not, which ``host_ending`` makes
+    the session's "error". A launcher started outside a tree of G6's own is ended alone, and that is said."""
+    from g6.core.process_tree import ProcessTreeError
+
+    if tree is None:
+        if proc.poll() is None:
+            proc.kill()
+        return "the session was not started in a process tree of G6's own: only its launcher could be ended"
+    try:
+        tree.kill(strict=True)
+    except (ProcessTreeError, OSError, subprocess.TimeoutExpired) as exc:
+        return f"the session's processes could not be confirmed ended: {type(exc).__name__}: {exc}"
+    return ""
 
 
 # --- the run -------------------------------------------------------------------------------------------------------------
@@ -1833,7 +1848,10 @@ def workspace_from(ctx: Context, task: Task, agent: str, dest: Path) -> int:
     """The parent's tree, from the agent's container into ``dest`` on the host, where the host's Claude Code works on it: no
     ``.git`` and no ``.venv``, which stay in the container. Only plain files and folders come out: an absolute name, a ``..`` part,
     a link, a device, or a name the host cannot hold as it is (two differing only in case, or one Windows would refuse or change)
-    refuses the whole tree before anything is written. Returns how many files came out."""
+    refuses the whole tree before anything is written. Then, in the empty ``dest``, each member is checked against what was
+    written: it is there under its exact name, and no two files are one file (the same device and inode, which NTFS gives too),
+    so a short-name alias or any other collision refuses the whole tree, and ``dest`` is left empty, before the agent starts.
+    Returns how many files came out."""
     done = ctx.docker("exec", "-u", USER, "-w", task.repo, agent, "tar", "-c", "--exclude=.git", "--exclude=.venv", ".",
                       timeout=900)
     if done.returncode != 0:
@@ -1849,8 +1867,36 @@ def workspace_from(ctx: Context, task: Task, agent: str, dest: Path) -> int:
                 raise RuntimeError(f"the workspace's export holds {member.name!r}, which the host cannot hold as a plain file or "
                                    "folder inside the workspace")
             seen.add(key)
-        tar.extractall(dest, members=members, **({"filter": "data"} if hasattr(tarfile, "data_filter") else {}))
+        try:
+            tar.extractall(dest, members=members, **({"filter": "data"} if hasattr(tarfile, "data_filter") else {}))
+            written(dest, members)
+        except (OSError, RuntimeError, tarfile.TarError) as exc:
+            for child in Path(dest).iterdir():
+                if child.is_dir() and not child.is_symlink():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+            raise RuntimeError(f"the workspace's export was refused, and nothing of it kept: {exc}") from exc
     return sum(member.isfile() for member in members)
+
+
+def written(dest: Path, members: Sequence[tarfile.TarInfo]) -> None:
+    """Each member of an export extracted into ``dest`` is what was written: there under its exact name in its folder's listing,
+    and, for a file, a file no other member is (by device and inode). Raises ``RuntimeError`` at the first that is not."""
+    listed: dict[Path, set[str]] = {}
+    held: dict[tuple[int, int], str] = {}
+    for member in members:
+        parts = PurePosixPath(member.name).parts
+        if not parts:
+            continue
+        path = Path(dest).joinpath(*parts)
+        if parts[-1] not in listed.setdefault(path.parent, set(os.listdir(path.parent))):
+            raise RuntimeError(f"{member.name!r} is not there under its own name: the host gave it another's")
+        if member.isfile():
+            st = os.lstat(path)
+            if (st.st_dev, st.st_ino) in held:
+                raise RuntimeError(f"{member.name!r} and {held[(st.st_dev, st.st_ino)]!r} are one file on the host")
+            held[(st.st_dev, st.st_ino)] = member.name
 
 
 def host_files(ctx: Context, run: Any, task: Task, agent: str, workspace: Path) -> tuple[Path, Path]:
@@ -1866,15 +1912,19 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
                  resume: str = "", seconds: float, tally: c.Tally, stop_usd: float | None = None) -> str:
     """One Claude Code session on the host, on the subscription's sign-in, its stream saved as ``name`` as ``run_session`` saves
     one; its folder the workspace, and the bug's container reached only through the box. ``resume``: the session a repair goes
-    on with. Its clock starts before its prompt goes in, which a thread writes; its turns and time are capped, never its cost:
-    the stream's dollars are the subscription's estimate (``stop_usd`` is not used). The stream stops at once at an init that is
+    on with. Its clock starts before its prompt goes in, which a thread writes; its turns and time are capped. ``stop_usd``: what
+    it may spend of the API's money, its run's need (``wecommon.api_need``): a host run's is nothing, and the stream's dollars are
+    the subscription's estimate, so a need of nothing (or none given) stops nothing. The stream stops at once at an init that is
     not exactly the box's (``host_init``) or at the usage limit. Whatever happened, every process the session started is then
-    ended (``end_session``); its exit code, and whether G6 had to end it, are saved beside the stream. Returns how it ended, as
-    ``host_ending`` decides from all of it ("" when cleanly), with why G6 refused it, or when the limit resets, saved there too."""
+    ended: it started in a process tree of its own (``host_start``), killed strictly (``end_session``); its exit code, whether G6
+    had to end it, and why its processes could not be confirmed ended ("" when they were) are saved beside the stream. Returns
+    how it ended, as ``host_ending`` decides from all of it ("" when cleanly), with why G6 refused it, or when the limit resets,
+    saved there too; an ending that is not clean is its run's, written there at once (``RunFolder.end``)."""
     command = [shutil.which(HOST_CLAUDE) or HOST_CLAUDE, *host_args(mcp_file, settings_file, ctx.model, resume=resume)]
-    proc = (ctx.starter or subprocess.Popen)(command, cwd=str(workspace), env=host_env(os.environ if ctx.environ is None else ctx.environ),
-                                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                             **({} if os.name == "nt" else {"start_new_session": True}))
+    tree = host_start(ctx.starter or subprocess.Popen, command, cwd=str(workspace),
+                      env=host_env(os.environ if ctx.environ is None else ctx.environ),
+                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = tree.proc
     errors: list[bytes] = []
     drain = threading.Thread(target=lambda: errors.append(proc.stderr.read() or b""), daemon=True)
     drain.start()
@@ -1906,7 +1956,8 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
     writer.start()
     try:
         stop = read_stream(lines(), tally, deadline=deadline,
-                           write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()), stop_usd=float("inf"))
+                           write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
+                           stop_usd=stop_usd or float("inf"))
     finally:
         stream.close()
         if not stop and not cut:      # the stream came to its end: the session is given a moment to exit by itself
@@ -1915,7 +1966,7 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
             except subprocess.TimeoutExpired:
                 pass
         by_g6 = proc.poll() is None        # still running: G6 ends it, and its exit code is G6's doing
-        end_session(proc, workspace)
+        left = end_session(proc, workspace, tree) or ""
         if proc.poll() is None:
             proc.kill()
         code = proc.wait(timeout=60)
@@ -1923,12 +1974,14 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
     drain.join(timeout=30)
     stem, said = Path(name).stem, b"".join(errors).decode("utf-8", errors="replace")
     run.write(f"{stem}_stderr.txt", said)
-    run.write_json(f"{stem}_exit.json", {"exit_code": code, "ended_by_g6": by_g6})
+    run.write_json(f"{stem}_exit.json", {"exit_code": code, "ended_by_g6": by_g6, "not_ended": left})
     facts = host_facts(run.path / name, ctx.model)
     limit = facts["limit"] if facts["limit"] is not None else next((x for x in map(limit_of, said.splitlines()) if x is not None), None)
-    ended, why = host_ending(stop, facts, code=code, limit=limit, by_g6=by_g6)
+    ended, why = host_ending(stop, facts, code=code, limit=limit, by_g6=by_g6, left=left)
     if ended in ("refused", "limited"):
         run.write(f"{stem}_{'refused' if ended == 'refused' else 'limit'}.txt", why)
+    if ended:       # a session that did not end cleanly ends its run: the run's ending, before anything after it can fail
+        run.end(ended, why=why)
     return ended
 
 
@@ -2437,11 +2490,11 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
     tag = uuid.uuid4().hex[:10]
     common = {"g6_commit": ctx.g6.get("commit"), "g6_image": ctx.g6.get("image"), "task_image": task_image,
               "model": model}
-    if round3:    # a host run reserves nothing of the API's money, from its start (``wecommon.spent``)
-        common.update(arm=ctx.arm, repeat=ctx.repeat, cap_usd=cap, stop_usd=0.0 if host else stop, label="development",
-                      **({"rerun_why": ctx.rerun_why} if ctx.rerun_why else {}))
     if host:
         common["executor"] = "host"
+    if round3:    # what the run may spend of the API's money, from its start: nothing for a host run (``wecommon.api_need``)
+        common.update(arm=ctx.arm, repeat=ctx.repeat, cap_usd=cap, stop_usd=c.api_need({**common, "stop_usd": stop}),
+                      label="development", **({"rerun_why": ctx.rerun_why} if ctx.rerun_why else {}))
     run = ctx.archive.start("dryrun" if dry else "run", task.id, **common)
     record: dict[str, Any] = {**common, "task": task.id, "run": run.rel, "agent_started": False, "cost_usd": 0.0}
     agent, net, px, status = "", "", "", "error"
@@ -2559,12 +2612,15 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         tally = c.Tally(count_reported=round3)
 
         def turn(note: str, name: str, resume: str = "") -> str:
-            """A host session, then its tree into the container before anything reads it there; how it ended (``host_session``).
-            No session starts once the run's clock is spent: that is the run's "timeout"."""
+            """A host session, then its tree into the container before anything reads it there; how it ended (``host_session``,
+            which writes the run's ending when it is not clean, before this mirror). No session starts once the run's clock is
+            spent: that is the run's "timeout", its ending at once."""
             left = c.WALL_CLOCK_S - (time.monotonic() - started)
             if left <= 0:
+                run.end("timeout")
                 return "timeout"
-            ended = host_session(ctx, run, workspace, mcp_file, settings_file, note, name, resume=resume, seconds=left, tally=tally)
+            ended = host_session(ctx, run, workspace, mcp_file, settings_file, note, name, resume=resume, seconds=left, tally=tally,
+                                 stop_usd=c.api_need(record))
             facts = host_facts(run.path / name, model)      # recorded whatever happens; every session's models and refusals
             if facts["init"] and "host_tools" not in record:
                 record.update(host_tools=facts["init"]["tools"], host_mcp_servers=facts["init"]["servers"])
@@ -2573,11 +2629,11 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             record["model_switched"] = bool(record.get("model_switched")) or facts["switched"]
             exited = json.loads((run.path / f"{Path(name).stem}_exit.json").read_text(encoding="utf-8"))
             record["ended_by_g6"] = bool(record.get("ended_by_g6")) or exited["ended_by_g6"]     # any session G6 had to end
-            box_mcp.mirror(workspace, ctx.docker, container=agent, repo=task.repo, user=USER, timeout=BOX_TIMEOUT_S)
             if ended == "refused" and "why" not in record:
                 record["why"] = (run.path / f"{Path(name).stem}_refused.txt").read_text(encoding="utf-8")
             if ended == "limited" and "limit" not in record:
                 record["limit"] = {"stream": name, "resets": (run.path / f"{Path(name).stem}_limit.txt").read_text(encoding="utf-8")}
+            box_mcp.mirror(workspace, ctx.docker, container=agent, repo=task.repo, user=USER, timeout=BOX_TIMEOUT_S)
             return ended
 
         if host:
@@ -2633,6 +2689,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                       seconds=round(time.monotonic() - started, 1))
         if host:   # the subscription's sessions: what the stream says they would cost, never counted as the API's spend
             record.update(executor="host", subscription_usd_estimate=record["agent_usd"], cost_usd=0.0)
+            run.end(record["status_detail"])     # the run's ending, decided: before the final mirror and the patch's capture
         run.write("final_report.txt", str(result.get("result") or ""))
         if host:   # the agent's tree is the workspace: into the container again, over whatever a review's test left there
             box_mcp.mirror(workspace, ctx.docker, container=agent, repo=task.repo, user=USER, timeout=BOX_TIMEOUT_S)
@@ -2683,6 +2740,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
     except Exception as exc:  # noqa: BLE001 - every failure is recorded and the containers are removed
         record["error"] = ctx.archive.redact(f"{type(exc).__name__}: {exc}")[:2000]
         status = "error"
+        if host:     # the run's ending if none was decided, else a failure beside it, which never makes it more scoreable
+            run.failed(record["error"], agent_started=bool(record["agent_started"]))
     finally:
         for name in (agent, px):
             if name:
@@ -2795,12 +2854,14 @@ def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool
     if src is None:
         raise SystemExit("no run to check")
     src = Path(src)
+    rel = str(src.relative_to(ctx.archive.root)).replace("\\", "/")
     done = json.loads((src / "run.json").read_text(encoding="utf-8")) if (src / "run.json").is_file() else {}
-    if not c.scoreable(done):
-        raise SystemExit(f"{run_rel or src.name} ended {done.get('status')}: it has no verdict to give (wecommon.scoreable)")
+    end = c.ending(ctx.archive.root, {**done, "run": rel})
+    if not c.scoreable(end):
+        raise SystemExit(f"{run_rel or src.name} ended {(end or {}).get('status') or 'with no ending on record'}: it has no verdict "
+                         "to give (wecommon.ending)")
     f2p, p2p = v["record"]["fail_to_pass"], v["record"]["pass_to_pass"]
-    folder = ctx.archive.start("recheck" if amended else "check", task.id,
-                               checked_run=str(src.relative_to(ctx.archive.root)).replace("\\", "/"))
+    folder = ctx.archive.start("recheck" if amended else "check", task.id, checked_run=rel)
     patches = [] if amended else sorted((src / "rounds").glob("**/round-*.patch"), key=lambda p: int(p.stem.split("-")[1]))
     rows = []
     for patch in [*patches, src / "final.patch"]:
@@ -3137,7 +3198,7 @@ def main(argv: list[str] | None = None) -> int:
     prior = c.spent(first.rows()) if variant == ROUND2 else 0.0     # one $100 stop for rounds 1 and 2
     if args.command == "schedule":      # round 3's runs in order, each with how it ended, and the money
         rows = archive.rows()
-        done = r3_done(rows)
+        done = r3_done(rows, archive.root)
         sched = r3_schedule(load_tasks())
         print(json.dumps({"spent_usd": c.spent(rows), "stop_usd": R3_CAP_USD,
                           "runs": [{"model": m, "task": t, "arm": a, "repeat": r, "ended": done.get((m, t, a, r))}

@@ -43,10 +43,11 @@ def saved(root: Path) -> dict[tuple[str, str, int], dict[str, bool | None]]:
     rows: dict[tuple[str, str, int], dict[str, bool | None]] = {}
     for path in (root / "loop").glob("*-*.json"):
         row, again = json.loads(path.read_text("utf-8")), root / "loop" / "amended" / path.name
-        passes = None if (c.on_patch(row) and row.get("failing") is None) or not c.scoreable(row) \
-            else bool(row["passes"])      # a limited or refused run has no verdict (``wecommon.scoreable``, PLAN.md, 2026-11-04)
+        end = c.ending(root, row)          # how the run ended, from its own folder (``wecommon.ending``, PLAN.md, 2026-11-04)
+        scored = c.scoreable(end)          # a run that may not be scored has no verdict on either score
+        passes = None if not scored or (c.on_patch(end) and row.get("failing") is None) else bool(row["passes"])
         amended = passes
-        diff = we.amendment(row["task"])
+        diff = we.amendment(row["task"]) if scored else None
         if diff:
             kept = json.loads(again.read_text("utf-8")) if again.is_file() else {}
             same = (kept.get("amendment_sha256"), kept.get("run")) == (c.sha256_file(diff), row.get("run"))
