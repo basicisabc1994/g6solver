@@ -2463,3 +2463,26 @@ first, with its own review loop. Review 4's tests are its first failing tests.
 
 **When.** The host pilot on development bugs waits for this loop. It needs containers, so it runs after stage 4 and replay 5
 in any case.
+
+## 2026-11-04 (night, later): stage 5's blind audit as it runs, and how its two families combine, set before any label is read
+
+**How each family reads.** The prompt is stage 4's, word for word, in five batches of 26.
+- **Opus.** Five blind auditors read GitHub through `gh`, as stage 4's auditor did.
+- **Codex.** Its sandbox sends every connection to a dead proxy, so it cannot read GitHub. A probe showed this. It reads a folder
+  per bug instead, built by plain code with the same content:
+  - the issue's title and body as filed;
+  - the patches of the test files the fix changed, as the pull request's file list gives them;
+  - the repository's text files at the parent, leaving out binary files and files over 512 KB.
+- **Codex's prompt.** Only the access lines change. Its labels come back in its reply, and plain code reads them. Nobody reads its
+  reasoning.
+
+**How the two combine.**
+- A bug is in stage 5's determined set only where both families label it `determined`.
+- Where they disagree, the bug is disputed. It is counted and reported apart, and is not in the set.
+- Where either family could not read a bug, the bug is not in the set, and the other family's label is reported.
+- `reports_bug` is recorded and reported, and decides nothing. T2 already judged that each issue reports a bug.
+- Agreement between the families is reported (counts and Cohen's kappa), with the determined count under each family alone.
+
+**Why.** Stage 4's determined set came from one auditor. Requiring both families is stricter, so the per-family counts are kept
+for reading the two stages together.
+- **Cost if wrong:** a smaller determined set than one family would give, if one family is the stricter.
