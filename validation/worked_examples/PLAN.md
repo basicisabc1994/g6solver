@@ -1832,3 +1832,79 @@ They run on the API remainder, with the stop at $178 of the $180 limit.
 
 **Audit and amendments: as for stage 2.** A blind auditor labels each bug determined by its task or not. A bug that is
 not determined gets an amendment written without reading any run.
+
+## 2026-11-04 (midday): replay 4's development check, and stage 4's runs registered before any of them
+
+**Replay 4.** It ran on all 420 patches of stage 1 and 2 with instruction 780e81dac0e14cb1, and none failed. The counts
+come from `layers.py` and `replay_compare.py`, plain code.
+
+**Inside the mixed bugs, amended tests: share of distinct patches flagged.**
+
+| Layer | Right | Commonest wrong | Other wrong |
+|---|---|---|---|
+| Symptom test | 0 of 59 | 8 of 37 (22%) | 11 of 55 (20%) |
+| Rule test | 29% | 32% | 73% |
+| Frozen review | 66% | 35% | 53% |
+
+**Over all 34 bugs, amended tests.**
+- **Symptom test:** false alarms 0 of 279, upper bound 1.1%; misses 80.1%; balanced accuracy 59.9%.
+- **By bug, against the frozen review:** better 19, worse 9.
+- **Rule test, for comparison:** balanced accuracy 63.7%.
+
+**Maintainers' tests.**
+- Symptom test: false alarms 0 of 198 and balanced accuracy 56.3%, the best of the three.
+- Rule test: 52.5%. Frozen review: 50.8%.
+
+**The prediction fails.**
+- The gap between the commonest wrong change and right patches is 22 points, where 25 were needed.
+- Balanced accuracy is 59.9%, where 63.7% was needed.
+
+**The kill rule does not fire,** as it needed a gap under 10 points.
+
+**What it shows.**
+- **A precise layer.** A test that asserts only the issue's symptom is absent never flagged a right patch on either
+  truth.
+- **Independent where the others are not.** It catches the commonest wrong change as often as other wrong patches
+  (22% and 20%). Replay 3 is the reverse: it misses the shared reading and catches the patches wrong in their own way
+  (73%).
+- **Why recall is low.** Most wrong patches remove the symptom on every variant and are wrong in the value they return,
+  which a symptom's absence cannot see. So the symptom is a lower bound of correctness, not a test of it.
+- **What it means for a repair loop.** Every patch such a layer sends back is wrong, so its repairs can only be asked of
+  wrong patches. Replay 3's and the frozen review's false alarms (17% and 49%) send right patches back too.
+- **A correction this entry makes.** Review v1 of `claude/stage4` found that the layer table normalised lines by
+  dropping all whitespace, string literals included. It now tokenises them. Recomputed with that change, R0 to R3 of
+  61efa3c are unchanged.
+
+**Stage 4's runs.**
+- **Bugs.** Every drawn bug that passes `images`, `validate`, `selfcheck` and `freecheck`, in draw order.
+- **Scoring: no amendments.** The maintainers' tests are the score on all bugs, with the score on the 21 bugs the blind
+  audit labelled determined beside it. The audit found all 31 report a bug and 10 not determined, so amendments would
+  take rounds that the credit's expiry does not allow.
+- **Order.**
+  1. Arm A twice on every bug: Claude Code alone, Sonnet 5.5.
+  2. Then arm V4 twice on every bug. V4 is arm K's loop, with replay 4's test written from the issue and the parent
+     before the agent starts. Its code is `claude/stage4`, and its first review's twelve findings are repaired at
+     6fe39a3. V4's runs wait for its second review.
+- **Spend.** The API remainder, stopping before a run once the study has spent $178 of the $180 limit.
+
+**Prediction 1, reviewer level, unseen bugs.** Replay 4, unchanged, on arm A's distinct patches of stage 4:
+- false alarms at most 5% on the maintainers' tests, with the 95% upper bound under 10%;
+- at least 10% of wrong patches flagged.
+
+This is the precise-layer claim, on bugs it was not developed on. Replay 3 runs beside it for comparison.
+
+**Prediction 2, harness level.** V4 against A, by bug, on the maintainers' tests:
+- no more bugs worse than better;
+- the share right no lower.
+
+At 20 to 30 bugs, G6's own power function (`metaharness.evaluate.power`) puts the chance of meeting the frozen
+comparison rule under one half at any effect a 20%-recall layer can give. So this is a measured point on the learning
+curve and is not powered to claim uplift. A gain is claimed only if the rule is met.
+
+**Next hypothesis, recorded now.** Recall needs an oracle for the returned value that no model's reading of the issue
+supplies. The candidate is relations between outputs (G6's `relation.v1` design):
+- the same input through two entry points agrees;
+- a round trip holds;
+- the same change of input moves the output the same way.
+
+Like replay 4, it is developed on stage 1 and 2 and scored on bugs not yet used.
