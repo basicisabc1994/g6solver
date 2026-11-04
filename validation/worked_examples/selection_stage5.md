@@ -418,3 +418,7 @@ rounds; the draw reached 130 without needing a third.
 | 10,000 stars | 348 | earthtojake/text-to-cad | 665 | 629 | Not kept: Error text only (node not on PATH). The 'what were you doing' field is blank, with no steps or expected behaviour. | Not a task |
 | 10,000 stars | 348 | earthtojake/text-to-cad | 575 | 564 | Kept: Gives a reproducer script and steps; says 10-16 of 20 parts read STALE after a parallel build, when every part should read current. | Kept, past the stop |
 | 10,000 stars | 348 | earthtojake/text-to-cad | 406 | 404 | Kept: Gives repro steps on fresh Windows 11 with SAC; names the wrong result: OCP import fails (CodeIntegrity 3077). Expects a signed wheel or a documented workaround. | Kept, past the stop |
+
+## The blind audit, combined (2026-11-05)
+
+Both families labelled all 130 bugs, labels only. Opus: 86 determined. Codex: 95 determined. They agree on 117 (90.0%), Cohen's kappa 0.76; Codex alone says determined on 11, Opus alone on 2. By the rule set before any label was read (a bug is determined only if both families say so), **84 bugs are determined**. Preparation follows; a bug that fails it gives way with no replacement.
