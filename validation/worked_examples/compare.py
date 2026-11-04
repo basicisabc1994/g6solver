@@ -39,19 +39,17 @@ def sign_test(wins: int, losses: int) -> float:
 def saved(root: Path) -> dict[tuple[str, str, int], dict[str, bool | None]]:
     """Each saved run's two verdicts; None is missing, and a missing verdict is neither a pass nor a failure. A finished
     run with no independent verdict has none on either score. A bug with no amendment has one score, and an amended bug
-    has an amended verdict only if it was scored for this run on the diff as it stands."""
+    has an amended verdict only if it was scored for this run on the diff as it stands. Each is read by one rule, the run's ending
+    first (``wecommon.verdict``): a verdict saved under an ending the run no longer has is void."""
     rows: dict[tuple[str, str, int], dict[str, bool | None]] = {}
     for path in (root / "loop").glob("*-*.json"):
         row, again = json.loads(path.read_text("utf-8")), root / "loop" / "amended" / path.name
-        end = c.ending(root, row)          # how the run ended, from its own folder (``wecommon.ending``, PLAN.md, 2026-11-04)
-        scored = c.scoreable(end)          # a run that may not be scored has no verdict on either score
-        passes = None if not scored or (c.on_patch(end) and row.get("failing") is None) else bool(row["passes"])
+        passes = c.verdict(root, row, row)       # none for a run that may not be scored, on either score
         amended = passes
-        diff = we.amendment(row["task"]) if scored else None
+        diff = we.amendment(row["task"]) if c.scoreable(c.ending(root, row)) else None
         if diff:
-            kept = json.loads(again.read_text("utf-8")) if again.is_file() else {}
-            same = (kept.get("amendment_sha256"), kept.get("run")) == (c.sha256_file(diff), row.get("run"))
-            amended = kept.get("amended_passes") if same else None
+            kept = json.loads(again.read_text("utf-8")) if again.is_file() else None
+            amended = c.verdict(root, row, kept, amendment=c.sha256_file(diff))
         rows[(row["arm"], row["task"], row["repeat"])] = {"maintainers": passes, "amended": amended, "said": said_of(root, row)}
         review, end = final_review.said_of(root, row), end_of(root, row)
         if review:

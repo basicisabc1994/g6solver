@@ -48,23 +48,30 @@ def last_json(text: str) -> dict[str, Any]:
 
 
 def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]:
-    """One run and its independent check, saved under ``loop/`` once."""
+    """One run and its independent check, saved under ``loop/`` once, with the digest of the ending it was made under. A saved row
+    is given only while it holds (``wecommon.holds``): a row saved under another ending is void, and is made again from the run's
+    ending as it is now, its check included, only if the run may be scored now; the run itself is never made again for it."""
     saved = root / "loop" / f"{arm}-{task}-{repeat}.json"
     if saved.is_file():
-        return json.loads(saved.read_text("utf-8"))
-    said = tool("run", "--task", task, "--g6", g6, "--arm", arm, "--model", SONNET, "--repeat", str(repeat))
-    rec = last_json(said)
-    if rec.get("status") == "refused" and "already made" in str(rec.get("why")):   # made before a crash: check it
-        rec = [r for r in distill.main_row(root / "ledger.jsonl")
-               if (r.get("task"), r.get("arm"), r.get("repeat")) == (task, arm, repeat)][-1]
-    end = c.ending(root, rec)      # how the run ended, from its own folder (``wecommon.ending``)
+        rec = json.loads(saved.read_text("utf-8"))
+        if c.holds(root, rec, rec):
+            return rec
+    else:
+        rec = last_json(tool("run", "--task", task, "--g6", g6, "--arm", arm, "--model", SONNET, "--repeat", str(repeat)))
+        if not rec:          # the runner printed no record: nothing is known of the run, so nothing is saved
+            raise SystemExit(f"no record: {arm} {task} {repeat}: the runner printed none")
+        if rec.get("status") == "refused" and "already made" in str(rec.get("why")):   # made before a crash: check it
+            rec = [r for r in distill.main_row(root / "ledger.jsonl")
+                   if (r.get("task"), r.get("arm"), r.get("repeat")) == (task, arm, repeat)][-1]
+    end, made = c.ending(root, rec), c.ending_sha256(root, rec)     # how the run ended, from its own folder (``wecommon.ending``)
     if not c.scoreable(end):   # refused, never counted as a failed run; limited: made again after the reset; or no ending at all
         status = (end or {}).get("status") or "no ending"
         said = (((rec.get("limit") or {}).get("resets") or "no reset given") if status == "limited"
                 else (end or {}).get("why") or rec.get("why"))
         raise SystemExit(f"{status}: {arm} {task} {repeat}: {said}")
     row = {"arm": arm, "task": task, "repeat": repeat, "run": rec.get("run"), "status": end.get("status"),
-           "why": rec.get("why"), "cost_usd": rec.get("cost_usd"), "passes": False, "failing": None, "tests": []}
+           "why": rec.get("why"), "cost_usd": rec.get("cost_usd"), "passes": False, "failing": None, "tests": [],
+           **({c.MADE_UNDER: made} if made else {})}
     if c.on_patch(end):      # finished, or ended by a model refusal: scored on the patch it left
         final =[x for x in last_json(tool("check", "--task", task, "--g6", g6, "--run", rec["run"], timeout=1200)).get("checks", [])
                  if x.get("patch") == "final"]     # by name: with no run named, check scores the bug's latest run, which a restart may not be
@@ -81,22 +88,21 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
 
 def rescore(root: Path, g6: str) -> list[dict[str, Any]]:
     """Every saved run of a bug with an amendment, its final patch scored on the amended tests, saved beside the
-    maintainers' verdict under ``loop/amended/`` (PLAN.md, 2026-10-31). A verdict holds for one run and one diff, and is
-    scored again if either changes. No model; the saved rows stay as they are."""
+    maintainers' verdict under ``loop/amended/`` (PLAN.md, 2026-10-31). A verdict holds for one run, one diff and the ending it was
+    made under (``wecommon.holds``), and is scored again if any changes. No model; the saved rows stay as they are."""
     rows = []
     for path in sorted((root / "loop").glob("*-*.json")):
         row, saved = json.loads(path.read_text("utf-8")), root / "loop" / "amended" / path.name
         diff = we.amendment(row["task"])
-        end = c.ending(root, row)          # a run that may not be scored has no verdict on either score: none is made or saved
+        end, made = c.ending(root, row), c.ending_sha256(root, row)   # a run that may not be scored has no verdict: none is made
         if not diff or not c.scoreable(end):
             continue
         sha = c.sha256_file(diff)
-        if saved.is_file():
-            kept = json.loads(saved.read_text("utf-8"))
-            if (kept.get("amendment_sha256"), kept.get("run")) == (sha, row.get("run")):
-                rows.append(kept)
-                continue
-        passes = False
+        kept = json.loads(saved.read_text("utf-8")) if saved.is_file() else None
+        if c.holds(root, row, kept, amendment=sha):
+            rows.append(kept)
+            continue
+        passes = False      # a made run that did not end on its patch failed on either score, with no check
         if c.on_patch(end):
             final = [x for x in last_json(tool("check", "--task", row["task"], "--g6", g6, "--run", row["run"], "--amended",
                                                timeout=1200)).get("checks", []) if x.get("patch") == "final"]
@@ -104,7 +110,7 @@ def rescore(root: Path, g6: str) -> list[dict[str, Any]]:
             if not isinstance(passes, bool):       # no verdict is not a failed run
                 raise SystemExit(f"no amended verdict for {path.stem}")
         rows.append({**{k: row.get(k) for k in ("arm", "task", "repeat", "run", "passes")}, "amended_passes": passes,
-                     "amendment_sha256": sha})
+                     "amendment_sha256": sha, **({c.MADE_UNDER: made} if made else {})})
         saved.parent.mkdir(exist_ok=True)
         saved.write_text(json.dumps(rows[-1], indent=1), "utf-8")
     return rows

@@ -442,8 +442,9 @@ def _archive(root, monkeypatch, *rows):
     diff = root / "x-1.patch"
     diff.write_text("a diff", encoding="utf-8")
     monkeypatch.setattr(compare.we, "amendment", lambda task: diff if task == "x-1" else None)
-    for row in rows:
-        row = {"repeat": 1, "run": f"run/{row['task']}/{row['arm']}", **row}
+    for row in rows:     # a saved row names how its run ended, as every row ``loop.one`` saves does: no status, no verdict
+        row = {"repeat": 1, "run": f"run/{row['task']}/{row['arm']}", "status": "finished", "failing": 0 if row.get("passes") else 1,
+               **row}
         (root / "loop" / f"{row['arm']}-{row['task']}-1.json").write_text(json.dumps(row), "utf-8")
     (root / "loop" / "cegis.json").write_text('{"status": "inconclusive"}', "utf-8")
     return compare.c.sha256_file(diff)

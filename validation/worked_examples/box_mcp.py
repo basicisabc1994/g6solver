@@ -196,7 +196,8 @@ print(json.dumps({"written": written, "removed": removed}))
 
 
 class Refused(RuntimeError):
-    """A workspace that cannot be sent: a link, a junction or another reparse point, or an entry that is not inside it."""
+    """A workspace that cannot be sent: a link, a junction or another reparse point, an entry that is not inside it, a folder
+    changed while it was packed, or anything that could not be packed."""
 
 
 class BoxError(RuntimeError):
@@ -232,11 +233,22 @@ def _read(path: Path, checked: os.stat_result, rel: str) -> bytes:
         return f.read()
 
 
+def _same_folder(path: Path, checked: os.stat_result, rel: str) -> None:
+    """A folder the walk went through, checked again once the walk is done: still a folder of its own, not a link, a junction or
+    another reparse point, and the folder that was checked (the same device and inode). Anything else refuses the workspace."""
+    st = os.lstat(path)
+    if (stat.S_ISLNK(st.st_mode) or getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            or not stat.S_ISDIR(st.st_mode) or (st.st_dev, st.st_ino) != (checked.st_dev, checked.st_ino)):
+        raise Refused(f"{rel} is not the folder that was checked: it was changed while the workspace was packed")
+
+
 def pack(workspace: Path) -> bytes:
     """The workspace as a tar, in memory: its plain files and folders, without ``.git`` or ``.venv`` (``KEPT``), each named relative
     to it with ``/``. Anything else refuses the whole workspace (``Refused``), so nothing is sent; so does a workspace that is
     itself a link, a junction or another reparse point, and a folder that cannot be read, which would otherwise look empty and
-    have its files removed in the container. Each file is read as the file that was checked (``_read``)."""
+    have its files removed in the container. Each file is read as the file that was checked (``_read``), and once the walk is
+    done every folder it went through, the workspace's own included, is checked again (``_same_folder``). Any failure to pack it
+    (a name the tar cannot hold, a read that fails, the tar's own error) refuses it too: nothing is sent or run."""
     given = Path(workspace)
     try:
         top = os.lstat(given)
@@ -245,26 +257,35 @@ def pack(workspace: Path) -> bytes:
     if (stat.S_ISLNK(top.st_mode) or getattr(top, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
             or not stat.S_ISDIR(top.st_mode)):
         raise Refused(f"the workspace {given} is a link, a junction or another reparse point, or not a folder")
-    root = given.resolve()
-    out = io.BytesIO()
+    try:
+        root = given.resolve()
+        out = io.BytesIO()
+        walked = [(given, top, "the workspace")]
 
-    def unreadable(exc: OSError) -> None:
-        raise Refused(f"the workspace could not be read: {exc}")
+        def unreadable(exc: OSError) -> None:
+            raise Refused(f"the workspace could not be read: {exc}")
 
-    with tarfile.open(fileobj=out, mode="w", format=tarfile.PAX_FORMAT) as tar:
-        for here, dirs, files in os.walk(root, onerror=unreadable):
-            dirs[:] = sorted(d for d in dirs if d not in KEPT)
-            for name in [*dirs, *sorted(f for f in files if f not in KEPT)]:
-                path = Path(here) / name
-                st = _plain(path, root)
-                info = tarfile.TarInfo(path.relative_to(root).as_posix())
-                if stat.S_ISDIR(st.st_mode):
-                    info.type, info.mode = tarfile.DIRTYPE, 0o755
-                    tar.addfile(info)
-                else:
-                    data = _read(path, st, info.name)
-                    info.size, info.mode = len(data), 0o644
-                    tar.addfile(info, io.BytesIO(data))
+        with tarfile.open(fileobj=out, mode="w", format=tarfile.PAX_FORMAT) as tar:
+            for here, dirs, files in os.walk(root, onerror=unreadable):
+                dirs[:] = sorted(d for d in dirs if d not in KEPT)
+                for name in [*dirs, *sorted(f for f in files if f not in KEPT)]:
+                    path = Path(here) / name
+                    st = _plain(path, root)
+                    info = tarfile.TarInfo(path.relative_to(root).as_posix())
+                    if stat.S_ISDIR(st.st_mode):
+                        walked.append((path, st, info.name))
+                        info.type, info.mode = tarfile.DIRTYPE, 0o755
+                        tar.addfile(info)
+                    else:
+                        data = _read(path, st, info.name)
+                        info.size, info.mode = len(data), 0o644
+                        tar.addfile(info, io.BytesIO(data))
+        for path, st, rel in walked:
+            _same_folder(path, st, rel)
+    except Refused:
+        raise
+    except (OSError, ValueError, tarfile.TarError) as exc:       # UnicodeError is a ValueError
+        raise Refused(f"the workspace could not be packed: {type(exc).__name__}: {exc}") from exc
     return out.getvalue()
 
 

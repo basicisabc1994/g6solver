@@ -1052,7 +1052,8 @@ def r3_done(rows: Iterable[Mapping[str, Any]], root: Path) -> dict[tuple[str, st
 
 def r3_refusal(ctx: Context, task: Task) -> tuple[str, float, float]:
     """Round 3's own rules: the arm, model and repeat are scheduled, not run already, and in order (no Sonnet run while
-    a Haiku run is left, no Fable run while a Sonnet one is); the cap; and the $100 stop. Returns (why, cap, stop)."""
+    a Haiku run is left, no Fable run while a Sonnet one is); the cap; and the $100 stop, which a host run, spending none of the
+    API's money, never asks. Returns (why, cap, stop)."""
     rows = ctx.archive.rows()
     sched = r3_schedule(ctx.tasks if ctx.tasks is not None else load_tasks())
     key = (ctx.model, task.id, ctx.arm, ctx.repeat)
@@ -1072,6 +1073,8 @@ def r3_refusal(ctx: Context, task: Task) -> tuple[str, float, float]:
     earlier = [k for k in sched if R3_MODELS.index(k[0]) < R3_MODELS.index(ctx.model) and k not in done]
     if earlier and key not in R3_SMOKE and key not in R3_PROBE and not r3_loop_key(key):
         return f"out of order: {len(earlier)} run(s) of an earlier model are left, first {earlier[0]}", 0.0, 0.0
+    if getattr(ctx, "executor", "container") == "host":     # its API need is nothing (``wecommon.api_need``): it asks no API budget,
+        return "", R3_RUN_CAP_USD, round(R3_RUN_CAP_USD * R3_MARGIN, 6)    # neither the round's stop nor Fable's share of it
     spent = c.spent(rows)
     fable_left = sum(1 for k in sched if k[0] == R3_MODELS[2] and k not in done)
     cap, stop = r3_caps(ctx.model, spent=spent, fable_left=fable_left)
@@ -1519,6 +1522,13 @@ def host_init(obj: Any) -> dict[str, Any] | None:
     return {"tools": tools, "servers": servers, "why": why}
 
 
+def host_lines(text: str) -> list[str]:
+    """A host session's stream, or its stderr, as its lines. Claude Code's stream is newline-delimited JSON, so it is split at "\\n"
+    alone, never where ``str.splitlines`` splits too (U+2028 and the like, which a JSON string holds as they are): no part of a
+    line is ever read as a line of its own."""
+    return text.split("\n")
+
+
 def host_facts(path: Path, model: str) -> dict[str, Any]:
     """What a saved host stream says of its session: its init (``host_init``): every init record is read, and the first one that
     is not exactly the box's and the five file tools is the session's, else the first; its last result, the first usage limit
@@ -1526,7 +1536,7 @@ def host_facts(path: Path, model: str) -> dict[str, Any]:
     record of a refused request (its subtype, category and models). A model is the one asked for only when it is that name, or
     that name and a date (``-YYYYMMDD``)."""
     init, result, limit, seen, refusals = None, None, None, set(), []
-    for line in path.read_text(encoding="utf-8").splitlines() if path.is_file() else []:
+    for line in host_lines(path.read_bytes().decode("utf-8")) if path.is_file() else []:
         limit = limit if limit is not None else limit_of(line)
         try:
             obj = json.loads(line)
@@ -1921,16 +1931,12 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
     how it ended, as ``host_ending`` decides from all of it ("" when cleanly), with why G6 refused it, or when the limit resets,
     saved there too; an ending that is not clean is its run's, written there at once (``RunFolder.end``)."""
     command = [shutil.which(HOST_CLAUDE) or HOST_CLAUDE, *host_args(mcp_file, settings_file, ctx.model, resume=resume)]
-    tree = host_start(ctx.starter or subprocess.Popen, command, cwd=str(workspace),
-                      env=host_env(os.environ if ctx.environ is None else ctx.environ),
-                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    proc = tree.proc
+    tree = proc = stream = writer = drain = None
     errors: list[bytes] = []
-    drain = threading.Thread(target=lambda: errors.append(proc.stderr.read() or b""), daemon=True)
-    drain.start()
     cut: list[str] = []          # the line the stream was stopped at, before its end
+    stop, by_g6, left, code = "error", False, "", None
 
-    def lines() -> Iterator[bytes]:
+    def lines() -> Iterator[bytes]:      # read from a pipe of bytes, at b"\n" alone, as ``host_lines`` splits a saved stream
         for line in iter(proc.stdout.readline, b""):
             yield line
             said = line.decode("utf-8", errors="replace")
@@ -1949,34 +1955,42 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
         except (OSError, ValueError):
             pass             # a process that ended, or was stopped, before it took its prompt
 
-    stream = open(run.fresh_path(name), "w", encoding="utf-8", newline="\n")
-    stop = "error"
-    deadline = time.monotonic() + seconds
-    writer = threading.Thread(target=feed, daemon=True)
-    writer.start()
-    try:
+    try:        # the process starts inside the try whose finally ends it: nothing that fails after its start leaves it running
+        tree = host_start(ctx.starter or subprocess.Popen, command, cwd=str(workspace),
+                          env=host_env(os.environ if ctx.environ is None else ctx.environ),
+                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc = tree.proc
+        drain = threading.Thread(target=lambda: errors.append(proc.stderr.read() or b""), daemon=True)
+        drain.start()
+        stream = open(run.fresh_path(name), "w", encoding="utf-8", newline="\n")
+        deadline = time.monotonic() + seconds
+        writer = threading.Thread(target=feed, daemon=True)
+        writer.start()
         stop = read_stream(lines(), tally, deadline=deadline,
                            write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
                            stop_usd=stop_usd or float("inf"))
     finally:
-        stream.close()
-        if not stop and not cut:      # the stream came to its end: the session is given a moment to exit by itself
-            try:
-                proc.wait(timeout=HOST_EXIT_S)
-            except subprocess.TimeoutExpired:
-                pass
-        by_g6 = proc.poll() is None        # still running: G6 ends it, and its exit code is G6's doing
-        left = end_session(proc, workspace, tree) or ""
-        if proc.poll() is None:
-            proc.kill()
-        code = proc.wait(timeout=60)
-        writer.join(timeout=30)
+        if stream is not None:
+            stream.close()
+        if proc is not None:
+            if not stop and not cut:      # the stream came to its end: the session is given a moment to exit by itself
+                try:
+                    proc.wait(timeout=HOST_EXIT_S)
+                except subprocess.TimeoutExpired:
+                    pass
+            by_g6 = proc.poll() is None        # still running: G6 ends it, and its exit code is G6's doing
+            left = end_session(proc, workspace, tree) or ""
+            if proc.poll() is None:
+                proc.kill()
+            code = proc.wait(timeout=60)
+        if writer is not None:
+            writer.join(timeout=30)
     drain.join(timeout=30)
     stem, said = Path(name).stem, b"".join(errors).decode("utf-8", errors="replace")
     run.write(f"{stem}_stderr.txt", said)
     run.write_json(f"{stem}_exit.json", {"exit_code": code, "ended_by_g6": by_g6, "not_ended": left})
     facts = host_facts(run.path / name, ctx.model)
-    limit = facts["limit"] if facts["limit"] is not None else next((x for x in map(limit_of, said.splitlines()) if x is not None), None)
+    limit = facts["limit"] if facts["limit"] is not None else next((x for x in map(limit_of, host_lines(said)) if x is not None), None)
     ended, why = host_ending(stop, facts, code=code, limit=limit, by_g6=by_g6, left=left)
     if ended in ("refused", "limited"):
         run.write(f"{stem}_{'refused' if ended == 'refused' else 'limit'}.txt", why)

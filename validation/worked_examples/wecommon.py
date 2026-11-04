@@ -304,9 +304,16 @@ UNSCORED = ("limited", "refused")
 #: How a made run ends when what is scored is its final patch: it finished, or a model refusal ended it, as Claude Code alone
 #: would leave it (PLAN.md, runtime-k ec0f761). Any other made run counts as failed.
 ON_PATCH = ("finished", "model_refused")
+#: Every ending that has a verdict to give, by name: on the final patch (``ON_PATCH``), else a failure, which needs no check (an
+#: error, a cap or the clock reached, or a run its key check, its tree or its arm stopped before its agent, as they always were).
+#: Any status not named here, or none, has no verdict (``scoreable``).
+SCORED = (*ON_PATCH, "error", "timeout", "cap_turns", "cap_cost", "key_check_failed", "tree_mismatch", "arm_mismatch")
 #: A run's ending, in its folder, written once the moment it is decided (``RunFolder.end``); and a failure after it (``AFTER``).
 ENDING = "ending.json"
 AFTER = "failed_after_ending.json"
+#: What every saved verdict records (``loop.one``'s row, ``loop.rescore``'s amended one): the digest of the ending it was made
+#: under (``ending_sha256``), so a verdict saved under another ending is void (``verdict``).
+MADE_UNDER = "ending_sha256"
 
 
 def ending(root: Path, row: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -342,10 +349,58 @@ def _host(root: Path, rel: str, folder: Path, row: Mapping[str, Any]) -> bool:
         return any(r.get("event") == "started" and r.get("run") == rel and r.get("executor") == "host" for r in Archive(root).rows())
 
 
+def ending_sha256(root: Path, row: Mapping[str, Any]) -> str | None:
+    """The digest of the run's durable ending, the files ``ending`` reads in its folder (``ENDING`` and ``AFTER``), so a failure
+    recorded after the ending changes it. None for a run whose folder holds neither: its ending is its own record, as it always
+    was for a run not made on the host."""
+    rel = row.get("run")
+    folder = Path(root) / str(rel) if rel else None
+    if folder is None or not folder.is_dir():
+        return None
+    digest, found = hashlib.sha256(), False
+    for name in (ENDING, AFTER):
+        try:
+            data = (folder / name).read_bytes()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:          # there, but not readable: an ending of its own, never taken for none
+            data = f"unreadable: {type(exc).__name__}".encode()
+        found = True
+        digest.update(f"{name}\0{len(data)}\0".encode() + data)
+    return digest.hexdigest() if found else None
+
+
+def verdict(root: Path, row: Mapping[str, Any], kept: Mapping[str, Any] | None, *, amendment: str | None = None) -> bool | None:
+    """A run's verdict on one score, its ending read first (``ending``): the one rule ``loop.one``, ``loop.rescore`` and
+    ``compare.saved`` read a saved verdict by. ``row`` is the run's saved row, and ``kept`` the saved verdict: the row itself for the
+    maintainers' tests, or its amended one for the diff whose digest is ``amendment``. None for a run that may not be scored now
+    (``scoreable``), and for a verdict that is missing (none, or one saved for another run or diff). A verdict saved under an
+    ending the run no longer has (``MADE_UNDER``, ``ending_sha256``) is void, never given: a made run that did not end on its patch
+    (``on_patch``) failed, which needs no check; any other is None until it is checked again. Else the verdict as saved, and for
+    the maintainers' tests none for a run on its patch with no count of failing tests."""
+    end = ending(root, row)
+    if (not scoreable(end) or kept is None or kept.get("run") != row.get("run")
+            or (amendment is not None and kept.get("amendment_sha256") != amendment)):
+        return None
+    if kept.get(MADE_UNDER) != ending_sha256(root, row):
+        return None if on_patch(end) else False
+    if amendment is not None:
+        return kept.get("amended_passes")
+    return None if on_patch(end) and kept.get("failing") is None else bool(kept.get("passes"))
+
+
+def holds(root: Path, row: Mapping[str, Any], kept: Mapping[str, Any] | None, *, amendment: str | None = None) -> bool:
+    """Whether a saved verdict (``verdict``'s ``kept``) is the run's own and stands: the run may be scored now, and it was saved for
+    this run (and diff) under the ending the run has now. A saved verdict that does not hold is made again, or not given."""
+    return (kept is not None and scoreable(ending(root, row)) and kept.get("run") == row.get("run")
+            and (amendment is None or kept.get("amendment_sha256") == amendment)
+            and kept.get(MADE_UNDER) == ending_sha256(root, row))
+
+
 def scoreable(record: Mapping[str, Any] | None) -> bool:
-    """Whether a run's ending (``ending``) may be given a verdict, and whether it was made: no ending, or "limited" or "refused",
-    may not."""
-    return record is not None and record.get("status") not in UNSCORED
+    """Whether a run's ending (``ending``) may be given a verdict, and whether it was made: only an ending it names (``SCORED``).
+    No ending, an empty record, a status it does not know, and "limited" or "refused" (``UNSCORED``) may not."""
+    return record is not None and record.get("status") in SCORED
 
 
 def on_patch(record: Mapping[str, Any] | None) -> bool:

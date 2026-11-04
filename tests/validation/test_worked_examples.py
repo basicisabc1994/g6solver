@@ -642,6 +642,7 @@ def _amended_run(ctx, folder):
     (run.path / "final.patch").write_text("a patch", encoding="utf-8")
     (run.path / "rounds").mkdir()
     (run.path / "rounds" / "round-1.patch").write_text("an earlier patch", encoding="utf-8")
+    run.finish({"agent_started": True}, "finished")      # a run with no record has no verdict to give (``wecommon.scoreable``)
     return run
 
 
