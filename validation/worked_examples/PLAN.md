@@ -2518,3 +2518,31 @@ standing ruling. A probe showed that what was sent is the tree as packed, and th
   ordinary tools).
 
 **The host pilot** waits for that change, as it waited for this loop.
+
+## 2026-11-05 (early): stage 4 scored, both registered predictions, by plain code
+
+**What ran.** The runs ran on the API remainder. The driver (stage4 f2fce3b) ended cleanly at 03:10, with $168.06 spent of the
+$178 stop.
+- **Bugs.** 28 were prepared. Six gave way at run time, as the rule says, because they had no finished validation:
+  opentelemetry-python-5854, pip-14011, hatch-2473, hatch-2257, s3fs-1065 and s3fs-1056.
+- **Whole bugs.** 22 ran as whole bugs. The blind audit labels 15 of them determined.
+- **Replays.** Replays 4 and 3 then ran on the 28 bugs' patches. The counts come from `stage4_result.py`.
+
+**Prediction 2, harness level: V4 against A by bug, on the maintainers' tests.**
+- **All 22.** V4 got 25 of 44 runs right, against 22 of 44 for A. 2 bugs were better, 0 worse and 20 the same, with p = 0.125 and a
+  95% interval by bug of +0% to +18%.
+  - **Held:** no more bugs worse than better, and the share right no lower.
+  - **Not met:** the frozen rule (p = 0.125), and the 95% target (56.8%).
+- **The 15 determined bugs.** 24 of 30 against 22 of 30, with 1 bug better and 0 worse, p = 0.25.
+- **A confound, recorded now.** V4 runs see the issue's discussion (`gets_thread`) and A runs do not. So the two bugs V4 won
+  measure its bug test and the discussion together. Arm T, which is A with the discussion, would separate them, and stage 4 did
+  not run it. The powered study should compare against T as well as A.
+
+**Prediction 1, reviewer level: replay 4 unchanged, on A's 39 distinct patches.** It fails.
+- **False alarms.** 4 of 19, which is 21.1% with a 95% upper bound of 41.9%. The prediction was at most 5%, with the upper bound
+  under 10%.
+- **Wrong patches flagged.** 2 of 20, which meets the 10% bar only at its edge.
+- **Replay 3 beside it.** False alarms 7 of 19, and wrong patches flagged 7 of 20.
+- **What follows.** On fresh bugs, both written tests cost more false alarms than they find wrong patches. That fits a bug test
+  that guesses an exact output the issue does not state. It is the gap replay 6's formal model is built to close, by agreeing
+  cells between two readers, so replay 6's development check is the next test of it.
