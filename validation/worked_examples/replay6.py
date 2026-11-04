@@ -133,9 +133,9 @@ COMPILER = hashlib.sha256(Path(__file__).read_bytes().replace(b"\r\n", b"\n")).h
 READER_2_SYSTEM = """You are writing, as data, the rule a reported bug breaks, over an input domain another reader has modelled.
 You are given the issue and its discussion; the domain's factors, each a list of JSON values, where a case is one value of each
 factor and every combination is a case; the names of the observations a probe returns for a case; and the probe's Python source,
-its comments and docstrings removed, which shows what each observation is. An observation whose call raised has its exception's
-type name, as a string. You are shown
-no other code and no output of any code.
+its comments and docstrings removed and some literals shown as MASKED.literal, which shows what each observation is. An
+observation whose call raised has its exception's type name, as a string. You are shown no other code and no output of any
+code.
 
 Write rules only where the issue's words state the outcome. Each rule has "when": for some factors, the one value or the list of
 values it covers, each one of that factor's values (a factor it leaves out covers all its values); "expect": for some
@@ -328,14 +328,25 @@ def _holds(value: Any, rows: set[str]) -> bool:
 def _tells(node: ast.AST, told: tuple[set[str], set[str], str]) -> bool:
     """Whether a literal tells one of reader 1's expectations (``_telling``): its value, as ``ast.literal_eval`` reads it, is
     a JSON value that is no value that tells nothing (``_SILENT``) and is an expected value or the rules list, or is or holds
-    a row. A node that is no literal, or whose value is no JSON value, as a tuple, tells none: its parts are read on their own."""
+    a row; or it is a string whose text, read as JSON by the model's own rule (``_loads``), is or holds, at any depth, an
+    expected value that is not silent, a row or the rules list. A node that is no literal, or whose value is no JSON value, as a
+    tuple, tells none: its parts are read on their own. A value the probe builds as it runs, from literals none of which tells,
+    is not found here: only running the probe could find it (PLAN.md, follow-up review 1)."""
     expected, rows, rules = told
     try:
         value = ast.literal_eval(node)
         spelled = canon(value)
-        return spelled not in _SILENT and (spelled in expected or spelled == rules or _holds(value, rows))
+        if spelled not in _SILENT and (spelled in expected or spelled == rules or _holds(value, rows)):
+            return True
     except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
         return False
+    if not isinstance(value, str):
+        return False
+    try:
+        read = _loads(value)
+    except (ValueError, RecursionError):              # no JSON text, or none by the model's rule (``_Refused`` is a ValueError)
+        return False
+    return _holds(read, (expected - _SILENT) | rows | {rules})
 
 
 def _masks(nodes: Sequence[ast.AST], told: tuple[set[str], set[str], str]) -> list[ast.AST]:
@@ -349,13 +360,22 @@ def _masks(nodes: Sequence[ast.AST], told: tuple[set[str], set[str], str]) -> li
     return [owner.get(id(node), node) for node in nodes if isinstance(node, _LITERALS) and _tells(node, told)]
 
 
+#: What stands in reader 2's probe for a literal that tells (``_shown``): an expression wherever a literal is, and a value
+#: pattern in a ``case``, where ``...`` is no pattern (follow-up review 1, finding 1).
+MASK = "MASKED.literal"
+#: What reader 2 is shown in place of a probe whose masks leave text Python's parser cannot read (``_shown``).
+WITHHELD = "(the probe is withheld: masking what would tell reader 1's expectations left text Python cannot read)"
+
+
 def _shown(probe: str, rules: Sequence[Mapping[str, Any]] = ()) -> tuple[str, int] | None:
     """The probe as reader 2 is shown it, and how many of its literals were masked. Its text, with its newlines as Python reads
     them, less every comment, as Python's own tokenizer reads one, and every statement that is a string alone (``_inert``), as
     Python's own parser reads one, so no text of reader 1's that does nothing as the probe runs reaches reader 2; and each
-    literal that tells one of the expectations of ``rules`` (``_masks``) replaced by ``...``, an expression, so that what was
-    an expression is one still. None where the tokenizer cannot read it. A probe the parser cannot read loses its comments
-    alone (``parse_model`` refuses one: it cannot run, and none of its literals can be found)."""
+    literal that tells one of the expectations of ``rules`` (``_masks``) replaced by ``MASK``. What is shown is read again by
+    Python's own parser, and where it cannot read it (a sign before a mask in a ``case``, which allows a sign only before a
+    number), ``WITHHELD`` is shown in its place, never the text. None where the tokenizer cannot read the probe. A probe the
+    parser cannot read loses its comments alone (``parse_model`` refuses one: it cannot run, and none of its literals can be
+    found)."""
     text = probe.replace("\r\n", "\n").replace("\r", "\n")
     lines = text.split("\n")
     try:
@@ -373,7 +393,7 @@ def _shown(probe: str, rules: Sequence[Mapping[str, Any]] = ()) -> tuple[str, in
         return at(node.lineno, node.col_offset), at(node.end_lineno, node.end_col_offset), new
 
     edits += [edit(node, "") for node in nodes if _inert(node)]
-    edits += [edit(node, "...") for node in (_masks(nodes, _telling(rules)) if rules else ())]
+    edits += [edit(node, MASK) for node in (_masks(nodes, _telling(rules)) if rules else ())]
     starts = list(itertools.accumulate((len(line) + 1 for line in lines), initial=0))
     spans = [(starts[row - 1] + column, starts[end_row - 1] + end_column, new)
              for (row, column), (end_row, end_column), new in edits]
@@ -382,8 +402,9 @@ def _shown(probe: str, rules: Sequence[Mapping[str, Any]] = ()) -> tuple[str, in
     for start, end, new in sorted(spans, key=lambda span: (span[0], -span[1], span[2])):
         if start >= done:
             kept.append(text[done:start] + new)
-            done, masked = end, masked + (new == "...")
-    return "".join(kept) + text[done:], masked
+            done, masked = end, masked + (new == MASK)
+    shown = "".join(kept) + text[done:]
+    return (shown if not masked or tree is None or _tree(shown) is not None else WITHHELD), masked
 
 
 def _bare(probe: str) -> str | None:
@@ -558,21 +579,57 @@ _g6_child(__import__("json"), __import__("math"), __import__("os"), __import__("
 """
 #: How long the probe's process may run, in seconds, before it is ended with every process it started and every cell skipped.
 _G6_SECONDS = 120
-#: The probe's process starts a process group of its own, so what it starts is ended with it (_g6_end).
+#: The probe's process starts a process group of its own, so what it starts is ended with it (_g6_end). On Windows it is held in
+#: a job object of its own (_g6_hold) before it is sent anything.
 _G6_APART = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
 _g6_answer = []
 
 
-def _g6_end(child):
+def _g6_kernel():
+    """Windows' kernel32, with the types of the calls that hold the probe's process in a job object and end the job."""
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    for name, result, args in (("CreateJobObjectW", wintypes.HANDLE, [ctypes.c_void_p, wintypes.LPCWSTR]),
+                               ("OpenProcess", wintypes.HANDLE, [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]),
+                               ("AssignProcessToJobObject", wintypes.BOOL, [wintypes.HANDLE, wintypes.HANDLE]),
+                               ("TerminateJobObject", wintypes.BOOL, [wintypes.HANDLE, wintypes.UINT]),
+                               ("CloseHandle", wintypes.BOOL, [wintypes.HANDLE])):
+        call = getattr(kernel, name)
+        call.restype, call.argtypes = result, args
+    return kernel
+
+
+def _g6_hold(child):
+    """On Windows, a job object of its own holding the probe's process, made while that process still waits for what it is
+    sent, so it has started nothing: every process it starts then, and every one those start, is in the job, whether or not the
+    process that started it still runs, and ends with the job (_g6_end). None elsewhere, where the process group its own
+    session began holds them. An OSError where Windows will not hold it."""
+    if os.name != "nt":
+        return None
+    import ctypes
+    kernel = _g6_kernel()
+    job = kernel.CreateJobObjectW(None, None)
+    process = kernel.OpenProcess(0x0101, False, child.pid)   # PROCESS_SET_QUOTA and PROCESS_TERMINATE
+    held = bool(job) and bool(process) and bool(kernel.AssignProcessToJobObject(job, process))
+    error = ctypes.get_last_error()
+    for handle in (process,) + (() if held else (job,)):
+        if handle:
+            kernel.CloseHandle(handle)
+    if not held:
+        raise ctypes.WinError(error)
+    return job
+
+
+def _g6_end(child, job=None):
     """The probe's process ended with every process it started, then reaped: on POSIX its process group, which its own session
-    began, on Windows its tree, ended while the probe's process still runs."""
+    began, on Windows its job (_g6_hold)."""
     try:
         if os.name == "nt":
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(child.pid)], stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL, timeout=60)
+            _g6_kernel().TerminateJobObject(job, 1)
         else:
             os.killpg(child.pid, signal.SIGKILL)
-    except (OSError, subprocess.SubprocessError):     # the group had ended, or taskkill did not run or did not end
+    except OSError:                                   # the group had ended
         pass
     child.kill()
     child.communicate()
@@ -592,10 +649,19 @@ def _g6_ask():
     except OSError:
         return None, "the probe's process did not start"
     try:
+        job = _g6_hold(child)
+    except OSError:
+        child.kill()
+        child.communicate()
+        return None, "the probe's process could not be held with every process it starts"
+    try:
         out = child.communicate(sent, timeout=_G6_SECONDS)[0]
     except subprocess.TimeoutExpired:
-        _g6_end(child)
+        _g6_end(child, job)
         return None, f"the probe's process ran past {_G6_SECONDS} seconds"
+    finally:
+        if job:
+            _g6_kernel().CloseHandle(job)
     if child.returncode != 0:                         # a process that failed gives no answer, whatever it wrote
         return None, f"the probe's process exited {child.returncode}"
     try:

@@ -180,13 +180,15 @@ def test_a_verdict_is_saved_under_the_bytes_that_were_run_however_the_file_chang
     assert fr.saved(tmp_path, rows[0], r3.FOLDER) is None         # the bytes now there were never run, so have no verdict
     assert not list((tmp_path / "critic_packs").glob("*.patch"))  # the copy is gone
 
-def test_a_test_run_whose_docker_exec_failed_raises_and_every_other_call_passes_through():
+def test_a_test_run_whose_docker_exec_failed_raises_and_so_does_any_docker_call_that_failed():
+    """Changed on purpose by replay 6's follow-up review 1, finding 3: a ``docker`` call itself (run, cp, rm) that ends non-zero
+    raises too, so a container a run could not remove is never taken as removed."""
     class Fake:
         def __init__(self, code):
             self.code = code
 
         def __call__(self, *args, **kwargs):
-            return ("called", args)
+            return subprocess.CompletedProcess(args, self.code, b"", b"")
 
         def sh(self, ctr, script, *args, **kwargs):
             return subprocess.CompletedProcess(script, self.code, b"", b"")
@@ -198,7 +200,9 @@ def test_a_test_run_whose_docker_exec_failed_raises_and_every_other_call_passes_
         r3.Checked(Fake(125)).sh("ctr", "cp -r /we/rule /tmp/held; true")
     with pytest.raises(RuntimeError, match="exited 1"):             # a patch that does not apply: a failed review, as before
         r3.Checked(Fake(1)).sh("ctr", "git apply /tmp/we.patch")
-    assert r3.Checked(Fake(0))("rm", "-f", "x") == ("called", ("rm", "-f", "x"))
+    assert r3.Checked(Fake(0))("rm", "-f", "x").args == ("rm", "-f", "x")
+    with pytest.raises(RuntimeError, match="docker rm in the review exited 1"):
+        r3.Checked(Fake(1))("rm", "-f", "x")
 
 
 def test_a_saved_answer_that_is_no_answer_is_asked_again_and_runs_nothing(tmp_path):

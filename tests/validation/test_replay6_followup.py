@@ -215,24 +215,24 @@ def test_reader_2_is_given_no_copy_of_reader_1s_table_in_the_probes_data():
     got = formal(probe, rows=[row], caller=caller)
     [(_, user)] = caller.calls
     assert json.dumps([row]) not in user and "R1_PRIVATE_EXPECTATION_84" not in user
-    assert _shown(user).startswith("READER_ONE_RULES = ...\n") and got["masked"] == 1
+    assert _shown(user).startswith("READER_ONE_RULES = MASKED.literal\n") and got["masked"] == 1
     assert repr(probe) in got["test"]                 # the file runs the probe as reader 1 wrote it
 
 
 @pytest.mark.parametrize(("line", "shown", "masked"), [
-    ("A = 'R1_SECRET'", "A = ...", 1),                                       # a value a row expects
-    ("A = 'R1_' 'SECRET'", "A = ...", 1),                                    # one literal, as the parser reads it
-    ("A = -37", "A = ...", 1),                                               # a negative number is a literal too
-    ("A = -37.0", "A = ...", 1),                                             # one value by canon
-    ("A = 2.5", "A = ...", 1),
-    ("A = ['R1_SECRET', 'other']", "A = [..., 'other']", 1),
-    ("A = ('R1_SECRET', 'other')", "A = (..., 'other')", 1),                # no JSON value; its parts are literals
-    ("A = {'R1_SECRET': 1}", "A = {...: 1}", 1),
-    (f"A = {SECRET!r}", "A = ...", 1),                                       # a row, so its exempt True is told by none
-    (f"A = [{SECRET!r}, {HALF!r}]", "A = ...", 1),                           # the rules list
-    (f"A = {{'table': [{SECRET!r}], 'other': 'R1_SECRET'}}", "A = ...", 1),  # a display that holds a row
-    ("A = f'{0}R1_SECRET'", "A = ...", 1),                                   # an f-string is masked whole
-    ("A = 'R1_SECRET'; B = -37", "A = ...; B = ...", 2),
+    ("A = 'R1_SECRET'", "A = MASKED.literal", 1),                                       # a value a row expects
+    ("A = 'R1_' 'SECRET'", "A = MASKED.literal", 1),                                    # one literal, as the parser reads it
+    ("A = -37", "A = MASKED.literal", 1),                                               # a negative number is a literal too
+    ("A = -37.0", "A = MASKED.literal", 1),                                             # one value by canon
+    ("A = 2.5", "A = MASKED.literal", 1),
+    ("A = ['R1_SECRET', 'other']", "A = [MASKED.literal, 'other']", 1),
+    ("A = ('R1_SECRET', 'other')", "A = (MASKED.literal, 'other')", 1),                # no JSON value; its parts are literals
+    ("A = {'R1_SECRET': 1}", "A = {MASKED.literal: 1}", 1),
+    (f"A = {SECRET!r}", "A = MASKED.literal", 1),                                       # a row, so its exempt True is told by none
+    (f"A = [{SECRET!r}, {HALF!r}]", "A = MASKED.literal", 1),                           # the rules list
+    (f"A = {{'table': [{SECRET!r}], 'other': 'R1_SECRET'}}", "A = MASKED.literal", 1),  # a display that holds a row
+    ("A = f'{0}R1_SECRET'", "A = MASKED.literal", 1),                                   # an f-string is masked whole
+    ("A = 'R1_SECRET'; B = -37", "A = MASKED.literal; B = MASKED.literal", 2),
     ("A = [True, None, 0, 1, -1, 1.0, '', [], {}]", "A = [True, None, 0, 1, -1, 1.0, '', [], {}]", 0),   # each tells nothing
     ("A = 'other'; B = 37", "A = 'other'; B = 37", 0),
 ])
@@ -593,3 +593,141 @@ def test_replay_6s_run_makes_such_a_record_again_and_reviews_its_patch_with_no_r
     r6.main(["--tasks", "black-5634"])
     again = fr.read(r3.bug_record(root, "black-5634", r6.FORMAL))["found"]
     assert again["compiler"] == r6.COMPILER and ran == [again["test"]] and again["test"] != "AN OLDER FILE"
+
+# --- follow-up review 1 ---------------------------------------------------------------------------------------------------------
+def _user(probe, rows):
+    caller = Caller(rows)
+    got = formal(probe, rows=rows, caller=caller, **TELLS)
+    [(_, user)] = caller.calls
+    return got, _shown(user)
+
+
+def test_follow_up_review_1_finding_1_a_mask_in_a_case_pattern_leaves_python_that_parses():
+    """A literal that tells stands as ``MASKED.literal``: an expression wherever a literal is, and a value pattern in a ``case``,
+    where ``...`` is no pattern."""
+    probe = ("def observe(case):\n    match case['x']:\n        case 'R1_SECRET':\n            return {'result': 'a'}\n"
+             "        case {'k': 'R1_SECRET'}:\n            return {'result': 'b'}\n        case _:\n"
+             "            return {'result': None}\n")
+    got, text = _user(probe, [SECRET, HALF])
+    ast.parse(text)
+    assert "case MASKED.literal:" in text and "case {'k': MASKED.literal}:" in text and got["masked"] == 2
+    assert "R1_SECRET" not in text
+
+
+def test_a_probe_that_masking_would_leave_unreadable_is_withheld_from_reader_2():
+    """Where a mask leaves text Python's parser cannot read (a sign before a mask in a pattern, which allows a sign only before
+    a number), reader 2 is shown that the probe is withheld, never the text, and never the literal."""
+    probe = "def observe(case):\n    match case['x']:\n        case -2.5:\n            return {'result': 'a'}\n" \
+            "        case _:\n            return {'result': None}\n"
+    got, text = _user(probe, [SECRET, HALF])
+    assert text == r6.WITHHELD and "2.5" not in text and got["masked"] == 1
+
+
+@pytest.mark.parametrize("line", [f"A = {json.dumps(json.dumps([SECRET, HALF]))}",       # the rules, as JSON text
+                                  f"A = {json.dumps(json.dumps(SECRET))}",                # a row, as JSON text
+                                  "A = '{\"k\": [\"R1_SECRET\"]}'",                      # an expected value inside JSON text
+                                  "A = '-37'"])                                           # an expected number as JSON text
+def test_follow_up_review_1_finding_2_a_literal_whose_text_as_json_tells_is_masked(line):
+    got, text = _user(f"{line}\n{OBSERVE}", [SECRET, HALF])
+    assert text == f"A = MASKED.literal\n{OBSERVE}" and got["masked"] == 1
+
+
+@pytest.mark.parametrize("line", ["A = 'true'", "A = '[]'", "A = '{\"k\": \"other\"}'", "A = 'not json R1'"])
+def test_a_literal_whose_text_as_json_tells_nothing_is_shown(line):
+    got, text = _user(f"{line}\n{OBSERVE}", [SECRET, HALF])
+    assert text == f"{line}\n{OBSERVE}" and got["masked"] == 0
+
+
+class _RemovalFails:
+    """A docker whose ``rm`` fails, every other call succeeding, and the containers it made and was asked to remove kept."""
+
+    def __init__(self):
+        self.live, self.removed = set(), []
+
+    def __call__(self, *args, **kwargs):
+        if args[:2] == ("run", "-d"):
+            self.live.add(args[args.index("--name") + 1])
+        if args[:2] == ("rm", "-f"):
+            self.removed.append(args[2])
+            return subprocess.CompletedProcess(args, 1, b"", b"removal failed")
+        return subprocess.CompletedProcess(args, 0, b"", b"")
+
+
+@pytest.mark.parametrize("ins", [r6.FORMAL, r3.rule()], ids=["own containers", "one container"])
+def test_follow_up_review_1_finding_3_a_container_that_was_not_removed_leaves_no_counted_verdict(tmp_path, monkeypatch, ins):
+    docker = _RemovalFails()
+    ctx = SimpleNamespace(docker=docker, g6={"commit": "0" * 40}, variant=we.ROUND3)
+    ran = we.ProbeRun(0, {"case": "passed"}, {}, "")
+    monkeypatch.setattr(fr, "parent_run", lambda *a: ran)
+    monkeypatch.setattr(fr, "patch_run", lambda *a: ran)
+    monkeypatch.setattr(r3, "_patched", lambda *a: ran)
+    row = _finished_run(tmp_path)
+    [record] = r3.review_bug(ctx, tmp_path, we.task_by_id(row["task"]), [row], "Issue", QUOTE,
+                             ask=lambda *a, **kw: ({"verdict": "defect", "test": "test", "error": ""}, None, None), ins=ins)
+    assert docker.removed and not fr.counts(record) and "rm" in record["error"]
+
+
+def test_a_run_that_failed_keeps_its_own_error_when_its_container_is_not_removed_either(tmp_path, monkeypatch):
+    docker = _RemovalFails()
+    ctx = SimpleNamespace(docker=docker, g6={"commit": "0" * 40}, variant=we.ROUND3)
+
+    def broke(*args):
+        raise RuntimeError("the parent's run broke")
+
+    monkeypatch.setattr(fr, "parent_run", broke)
+    row = _finished_run(tmp_path)
+    [record] = r3.review_bug(ctx, tmp_path, we.task_by_id(row["task"]), [row], "Issue", QUOTE,
+                             ask=lambda *a, **kw: ({"verdict": "defect", "test": "test", "error": ""}, None, None),
+                             ins=r6.FORMAL)
+    assert docker.removed and not fr.counts(record) and "the parent's run broke" in record["error"]
+
+
+def test_every_docker_call_a_review_run_makes_is_read_for_its_status():
+    checked = r3.Checked(lambda *args, **kwargs: subprocess.CompletedProcess(args, 125, b"", b"no such image"))
+    with pytest.raises(RuntimeError, match="125"):
+        checked("cp", "a", "b")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a Windows job object; POSIX ends the probe's process group")
+def test_follow_up_review_1_finding_4_a_timeout_ends_a_process_whose_parent_had_already_exited(tmp_path):
+    import ctypes
+    import textwrap
+    from ctypes import wintypes
+    pid_file = tmp_path / "grandchild.json"
+    intermediary = textwrap.dedent(f"""
+        import json, subprocess, sys
+        from pathlib import Path
+        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(6)'], stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        Path({str(pid_file)!r}).write_text(json.dumps(child.pid), encoding='ascii')
+    """)
+    probe = textwrap.dedent(f"""
+        import subprocess, sys, time
+        def observe(case):
+            subprocess.run([sys.executable, '-c', {intermediary!r}], check=True,
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            while True:
+                time.sleep(0.05)
+    """)
+    space = {"__name__": "follow_up_compiled"}
+    exec(r6.compile_test(probe, {"x": [0]}, {(r6.canon({"x": 0}), "result"): "ok"}), space)
+    space["_G6_SECONDS"] = 1.5
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    started, handle, alive = time.monotonic(), None, False
+    try:
+        answer_, why = space["_g6_ask"]()
+        assert answer_ is None and "ran past" in why
+        handle = kernel.OpenProcess(0x100000, False, json.loads(pid_file.read_text(encoding="ascii")))
+        alive = bool(handle) and kernel.WaitForSingleObject(handle, 0) == 258
+    finally:
+        if handle:
+            assert kernel.WaitForSingleObject(handle, 10000) == 0, "the descendant must end before this test does"
+            kernel.CloseHandle(handle)
+        else:
+            time.sleep(max(0, 9 - (time.monotonic() - started)))
+    assert not alive, "the probe overran, and a process it started outlived it"

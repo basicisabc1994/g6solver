@@ -203,16 +203,20 @@ def bug_record(root: Path, task: str, ins: Instruction | None = None) -> Path:
 
 
 class Checked:
-    """``ctx.docker`` for replay 3's test runs: any shell command in the container that ends non-zero raises, so a failed review is
-    made again and nothing it printed is read as a run. No such status is normal there: staging the test copy and the probe script
-    both end in a command that succeeds, so non-zero is the exec's own failure, and the one status a caller reads, ``git apply``'s,
-    already makes a failed review. ``docker`` calls themselves (run, cp, rm) are passed through as they are."""
+    """``ctx.docker`` for replay 3's test runs: any call that ends non-zero raises, a shell command in the container or a
+    ``docker`` call itself (run, cp, exec, rm), so a failed review is made again and nothing it printed is read as a run, and no
+    container a run could not remove is taken as removed (follow-up review 1, finding 3). No such status is normal there:
+    staging the test copy and the probe script both end in a command that succeeds, so non-zero is the call's own failure, and
+    the one status a caller reads, ``git apply``'s, already makes a failed review."""
 
     def __init__(self, docker: Any):
         self.docker = docker
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        return self.docker(*args, **kwargs)
+        done = self.docker(*args, **kwargs)
+        if done.returncode != 0:
+            raise RuntimeError(f"docker {args[0] if args else ''} in the review exited {done.returncode}: {we.err(done)[-300:]}")
+        return done
 
     def sh(self, ctr: str, script: str, *args: Any, **kwargs: Any) -> Any:
         done = self.docker.sh(ctr, script, *args, **kwargs)
@@ -231,23 +235,24 @@ def run_on(ctx: we.Context, task: we.Task, test: str, patch: Path, ins: Instruct
     if ins.own_containers:
         base = _apart(ctx, task, lambda name: fr.parent_run(ctx, task, name, test, ins.at, ins.file))
         return base, _apart(ctx, task, lambda name: _patched(ctx, task, name, test, patch, ins))
+    return _apart(ctx, task, lambda name: (fr.parent_run(ctx, task, name, test, ins.at, ins.file),
+                                           fr.patch_run(ctx, task, name, patch, ins.at)))
+
+
+def _apart(ctx: we.Context, task: we.Task, run: Callable[[str], Any]) -> Any:
+    """``run`` in a container made for it alone and removed once it ends, so one is removed before the next is made. A
+    removal that fails (``Checked``) fails the run, as a container still there is none removed; where the run had failed
+    already, its own error is the one raised."""
     name = f"g6we-review-{uuid.uuid4().hex[:10]}"
     try:
         fr.container(ctx, task, name)
-        base = fr.parent_run(ctx, task, name, test, ins.at, ins.file)
-        return base, fr.patch_run(ctx, task, name, patch, ins.at)
-    finally:
-        ctx.docker("rm", "-f", name, timeout=300)
-
-
-def _apart(ctx: we.Context, task: we.Task, run: Callable[[str], we.ProbeRun]) -> we.ProbeRun:
-    """``run`` in a container made for it alone and removed once it ends, so one is removed before the next is made."""
-    name = f"g6we-review-{uuid.uuid4().hex[:10]}"
-    try:
-        fr.container(ctx, task, name)
-        return run(name)
-    finally:
-        ctx.docker("rm", "-f", name, timeout=300)
+        got = run(name)
+    except BaseException:
+        with contextlib.suppress(RuntimeError, OSError, subprocess.SubprocessError):
+            ctx.docker("rm", "-f", name, timeout=300)
+        raise
+    ctx.docker("rm", "-f", name, timeout=300)
+    return got
 
 
 def _patched(ctx: we.Context, task: we.Task, name: str, test: str, patch: Path, ins: Instruction) -> we.ProbeRun:

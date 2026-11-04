@@ -240,7 +240,8 @@ def test_the_compiled_file_embeds_no_model_text_but_the_probe():
     assert got["status"] == "stands"
     tree = ast.parse(src)
     assert {alias.name for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names} == {
-        "json", "math", "os", "signal", "subprocess", "sys", "Decimal", "pytest"}  # G6's own; the probe's are in its text
+        "json", "math", "os", "signal", "subprocess", "sys", "Decimal", "pytest",   # G6's own; the probe's are in its text
+        "ctypes", "wintypes"}                         # Windows' job object (follow-up review 1, finding 4)
     strings = [node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)]
     assert strings.count(PROBE) == 1                  # the probe, as one text
     assert len([text for text in strings if "import os" in text]) == 1    # the one JSON text json.loads reads
