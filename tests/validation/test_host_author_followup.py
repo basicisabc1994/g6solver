@@ -9,6 +9,7 @@ import ast
 import importlib.util
 import io
 import json
+import re
 import subprocess
 import sys
 import tarfile
@@ -110,8 +111,8 @@ def test_every_reader_of_newline_delimited_json_reads_a_record_whole_whatever_it
     assert got == expected
 
 
-#: What the scan reads as splitting text into lines: str.splitlines, a stream's readline or readlines, a split at a line break
-#: (``split``, ``rsplit``, ``re.split``), and a for over an open file or a standard stream.
+#: What the scan reads as splitting text into lines: str.splitlines, a stream's readline or readlines, a split or a partition
+#: that can cut at a line break as Python reads one (``_splits_a_line``), and a for over an open file or a standard stream.
 STREAMS = {"stdin", "stdout", "stderr"}
 #: The one framing of newline-delimited JSON (``wecommon.stream_lines``, and ``read_stream`` for a file): Claude Code's stream
 #: and a host session's stderr, ``runs.jsonl``, the ledger and the egress log are all split by it, at "\n" alone.
@@ -151,7 +152,48 @@ NOT_A_STREAM = {
     ("run.py", "modelcheck", "out(done).splitlines"): ASCII_JSON,
     ("run.py", "main", "__doc__.splitlines"): "the module's own docstring",
     ("selection.py", "main", "__doc__.splitlines"): "the module's own docstring",
+    # Seen once a line break is what Python reads as one (follow-up review 2, finding 2); none reads a record stream.
+    ("box_mcp.py", "run_command", "said.partition(start + '\\n')"):
+        "a command's combined output, cut once at the start line the box's shell printed with this call's own nonce",
+    ("evolve.py", "main", "os.environ.get('G6_LIBRARY', '').split(os.pathsep)"): "a list of folders, as PATH holds one",
+    ("export_reviewer_cases.py", "_image",
+     "subprocess.run(['docker', 'images', '--format', '{{.Repository}}:{{.Tag}}', 'g6we-task'], capture_output=True, text=True, "
+     "timeout=60).stdout.split()"): "docker's image names, which hold no whitespace",
+    ("final_review.py", "_step", "proof.split()"): "G6's own proof text, 'review' and a hex id, cut at its one space",
+    ("final_review.py", "review", "proof.split()"): "G6's own proof text, 'review' and a hex id, cut at its one space",
+    ("run.py", "run_critic", "proof.split()"): "G6's own proof text, 'review' and a hex id, cut at its one space",
+    ("run.py", "archived_resolver.resolve", "path.split(marker, 1)"): "a path in the container, cut once at /.claude/projects/",
+    ("run.py", "read_probes", "said.partition(JUNIT_MARK)"):
+        "the probe script's output, cut once at G6's own mark, before pytest's JUnit XML",
 }
+
+
+#: Where Python itself ends a line, read from ``str.splitlines`` and ``bytes.splitlines``, never listed by hand (follow-up
+#: review 2, finding 2: a guard that knew only "\n" let a split at a lone "\r" pass).
+STR_BREAKS = [c for c in map(chr, range(0x110000)) if len(f"a{c}b".splitlines()) == 2]
+BYTES_BREAKS = [bytes([b]) for b in range(256) if len(bytes([97, b, 98]).splitlines()) == 2]
+SPLITS = ("split", "rsplit", "partition", "rpartition")
+
+
+def _splits_a_line(call: ast.Call) -> bool:
+    """Whether a split (``SPLITS``) can split at a line break as Python reads one: ``re.split`` where ``re`` itself finds its
+    pattern in a break or two; any other at a separator that holds a break of its own kind (str or bytes), or at whitespace (no
+    separator, or None), which holds every one. A separator this scan cannot read as a constant is taken as a break."""
+    regex = isinstance(call.func.value, ast.Name) and call.func.value.id == "re"
+    given = call.args[0] if call.args else next((k.value for k in call.keywords if k.arg in ("sep", "pattern")), None)
+    if given is None or (isinstance(given, ast.Constant) and given.value is None):
+        return not regex and call.func.attr in ("split", "rsplit")
+    if not (isinstance(given, ast.Constant) and isinstance(given.value, (str, bytes))):
+        return True
+    pattern = given.value
+    breaks = BYTES_BREAKS if isinstance(pattern, bytes) else STR_BREAKS
+    if not regex:
+        return any(b in pattern for b in breaks)
+    try:
+        compiled = re.compile(pattern)
+    except re.error:
+        return True
+    return any(compiled.search(probe) for b in breaks for probe in (b, b + b))
 
 
 def line_splits(source: str) -> list[tuple[str, str]]:
@@ -167,12 +209,9 @@ def line_splits(source: str) -> list[tuple[str, str]]:
                        and item.context_expr.func.id == "open"}
         if isinstance(node, ast.Attribute) and node.attr in ("splitlines", "readlines", "readline"):
             found.append((where, ast.unparse(node)))
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("split", "rsplit")
-                and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, (str, bytes))):
-            pattern = node.args[0].value
-            pattern = pattern.decode("latin-1") if isinstance(pattern, bytes) else pattern
-            if "\n" in pattern or "\\n" in pattern:
-                found.append((where, ast.unparse(node)))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in SPLITS and \
+                _splits_a_line(node):
+            found.append((where, ast.unparse(node)))
         if isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
             it = node.iter
             last = it.attr if isinstance(it, ast.Attribute) else it.id if isinstance(it, ast.Name) else None
@@ -193,6 +232,30 @@ def test_the_scan_sees_each_kind_of_line_split():
     assert [src for _, src in line_splits(source)] == [
         "t.splitlines", "p.readlines", "t.split('\\n')", "t.rsplit(b'\\r\\n')", "re.split('\\\\n+', t)", "for ... in open(p)",
         "for ... in s.stdin", "for ... in h"]
+
+
+@pytest.mark.parametrize(("call", "found"), [
+    ("t.split('\\r')", True), ("t.split('\\x0b')", True), ("t.split('\\u2028')", True), ("t.split('\\x85')", True),
+    ("t.partition('\\n')", True), ("t.rpartition(b'\\r')", True), ("t.split()", True), ("t.rsplit(None, 1)", True),
+    ("t.split(sep=None)", True), ("t.split(sep)", True), ("re.split('\\\\s+', t)", True), ("re.split('\\\\n\\\\s*\\\\n', t)", True),
+    ("re.split(PATTERN, t)", True),
+    ("t.split(',')", False), ("t.split('\\\\n')", False), ("t.split(b'\\x0b')", False), ("re.split(',', t)", False),
+    ("t.partition('=')", False)])
+def test_follow_up_review_2_finding_2_a_split_at_any_line_break_python_reads_is_seen(call, found):
+    """A line break is what Python itself ends a line at (``STR_BREAKS``, ``BYTES_BREAKS``), a split at whitespace holds every
+    one, ``re`` decides what its own pattern matches, and a separator the scan cannot read is taken as a line break."""
+    assert bool(line_splits(f"def f(t, sep):\n    {call}\n")) is found
+
+
+def test_follow_up_review_2_finding_2_a_new_split_at_a_lone_carriage_return_fails_the_guard(tmp_path, monkeypatch):
+    shadow = tmp_path / "worked_examples"
+    shadow.mkdir()
+    for source in WE_DIR.glob("*.py"):
+        (shadow / source.name).write_bytes(source.read_bytes())
+    (shadow / "new_reader.py").write_text("def read_records(text):\n    return text.split('\\r')\n", encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "WE_DIR", shadow)
+    with pytest.raises(AssertionError, match="line split"):
+        test_every_line_split_in_the_worked_examples_is_the_one_framing_or_named_with_why_it_reads_no_stream()
 
 
 def test_every_line_split_in_the_worked_examples_is_the_one_framing_or_named_with_why_it_reads_no_stream():
