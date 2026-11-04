@@ -2203,3 +2203,9 @@ A bug that fails preparation gives way, with no replacement. There are no amendm
   suffices, then builds and validates their harness.
 - This study is the first part. The 0.3.0 loop is the second. It must make headroom its pre-spend check, and make
   structural edits part of what it can propose.
+**Addendum, before any candidate is read.** The 2026-10-31 screen saved at most six mechanically passing candidates per
+project, and only 53 are unused: 48 under the cap of two per project.
+- **A deeper screen.** The 63 kept projects are screened again by `selection.screen`, the same mechanical rules T1, T3, T4
+  and T2's one-issue part, over the same window (2026-06-01 to 2026-10-29), up to 10 passing candidates each.
+- **Then the rule above.** Each project gives its next two newest unused candidates, and stops at 130.
+- **The window does not widen.** An earlier merge risks bugs already in the model's training data.
