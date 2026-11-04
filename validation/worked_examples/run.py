@@ -1492,8 +1492,9 @@ HOST_SERVERS = frozenset({"box"})
 HOST_EXIT_S = 30           # how long a session whose stream has ended is given to exit by itself before it is stopped
 #: Claude Code's word that the subscription's usage limit is reached, with when it resets when it says.
 HOST_LIMIT = re.compile(r"You(?:'|’)ve hit your (?:[\w-]+ ){0,3}limit\b\W{0,4}(resets\b[^\n|]*)?", re.I)
-#: A name part Windows would refuse or change (a device name, a reserved character, a trailing dot or space).
-HOST_UNSAFE = re.compile(r'[<>:"|?*\\\x00-\x1f]|[. ]$|^(?:con|prn|aux|nul|com\d|lpt\d)(?:\..*)?$', re.I)
+#: A name part Windows would refuse or change (a device name, a reserved character, a trailing dot or space): the box's one rule,
+#: so the export to the host and the pack from it read the same names.
+HOST_UNSAFE = box_mcp.HOST_UNSAFE
 BOX_TIMEOUT_S = 600        # one command in the box, at most: Claude Code's own Bash tool stops one at ten minutes
 
 

@@ -15,6 +15,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import secrets
 import stat
 import subprocess
@@ -27,6 +28,9 @@ from typing import Any, BinaryIO
 KEPT = (".git", ".venv")    # the container's own, at any depth, as the export's ``--exclude`` leaves them: never sent, never touched
 NAME_MAX = 255              # the bytes one part of a name may have on the container's Linux file systems
 PATH_MAX = 4096             # the bytes of a path the container's kernel takes, its terminating NUL included
+#: A name part Windows would refuse or change (a device name, a reserved character, a trailing dot or space): the one rule for a
+#: name the host holds as it is named, read by the export to the host (``run.workspace_from``) and by ``pack`` from it.
+HOST_UNSAFE = re.compile(r'[<>:"|?*\\\x00-\x1f]|[. ]$|^(?:con|prn|aux|nul|com\d|lpt\d)(?:\..*)?$', re.I)
 MAX_OUTPUT = 20000
 START = "g6-box-start"      # the start line's word, before the call's own nonce (``run_command``)
 #: What ``sh -c`` runs in the container, with the start line as ``$0`` and the command as ``$1``: the start line, then the command.
@@ -200,7 +204,8 @@ print(json.dumps({"written": written, "removed": removed}))
 
 class Refused(RuntimeError):
     """A workspace that cannot be sent: a link, a junction or another reparse point, an entry that is not inside it, a name the
-    container cannot hold, a tree changed while it was packed, or anything that could not be packed."""
+    container cannot hold or the host cannot hold as named, a tree changed while it was packed, or anything that could not be
+    packed."""
 
 
 class BoxError(RuntimeError):
@@ -246,10 +251,14 @@ def _same_folder(path: Path, checked: os.stat_result, rel: str) -> None:
 
 
 def _holdable(rel: str, repo: str) -> None:
-    """A name the container can hold, else ``Refused``: each part of it encodes as UTF-8 strictly, in at most ``NAME_MAX`` bytes,
-    and the path the mirror opens, ``repo`` and the name (the name alone when no ``repo`` is given), is shorter than
-    ``PATH_MAX``, so with its NUL it fits."""
+    """A name the host holds as named and the container can hold, else ``Refused``: no part of it is one Windows would refuse or
+    change (``HOST_UNSAFE``), since one it changes names another file (``name.`` and ``name `` are read as ``name``); each part
+    encodes as UTF-8 strictly, in at most ``NAME_MAX`` bytes; and the path the mirror opens, ``repo`` and the name (the name alone
+    when no ``repo`` is given), is shorter than ``PATH_MAX``, so with its NUL it fits."""
     for part in rel.split("/"):
+        if HOST_UNSAFE.search(part):
+            raise Refused(f"{rel!r} cannot be read by its name: its part {part!r} is one Windows would refuse or change (a device "
+                          "name, a reserved character, a trailing dot or space)")
         try:
             size = len(part.encode("utf-8"))
         except UnicodeEncodeError as exc:
@@ -263,20 +272,36 @@ def _holdable(rel: str, repo: str) -> None:
                       f"{PATH_MAX - 1} at most")
 
 
+def _root(path: Path) -> os.stat_result:
+    """The workspace's own folder, as a walk of it starts: a folder of its own, not a link, a junction or another reparse point,
+    else ``Refused``."""
+    try:
+        st = os.lstat(path)
+    except OSError as exc:
+        raise Refused(f"the workspace could not be read: {exc}") from exc
+    if (stat.S_ISLNK(st.st_mode) or getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            or not stat.S_ISDIR(st.st_mode)):
+        raise Refused(f"the workspace {path} is a link, a junction or another reparse point, or not a folder")
+    return st
+
+
 def _tree(root: Path, repo: str) -> Iterator[tuple[Path, str, os.stat_result, bytes | None]]:
-    """The workspace's entries in the order they are packed: each plain file and folder (``_plain``) but ``.git`` and ``.venv``
-    (``KEPT``), its name relative to the workspace with ``/``, one the container can hold (``_holdable``), and a file's bytes,
-    read as the file that was checked (``_read``); a folder's are None. A folder that cannot be read refuses the workspace."""
+    """The workspace's entries in the order they are packed. First the root itself is checked (``_root``), so a walk, the re-walk
+    among them, reads nothing through a root that became a link. Then each plain file and folder (``_plain``) but ``.git`` and
+    ``.venv`` (``KEPT``), its name relative to the workspace with ``/``, checked before it is used to read anything as one the
+    host holds as named and the container can hold (``_holdable``), and a file's bytes, read as the file that was checked
+    (``_read``); a folder's are None. A folder that cannot be read refuses the workspace."""
     def unreadable(exc: OSError) -> None:
         raise Refused(f"the workspace could not be read: {exc}")
 
+    _root(root)
     for here, dirs, files in os.walk(root, onerror=unreadable):
         dirs[:] = sorted(d for d in dirs if d not in KEPT)
         for name in [*dirs, *sorted(f for f in files if f not in KEPT)]:
             path = Path(here) / name
-            st = _plain(path, root)
             rel = path.relative_to(root).as_posix()
             _holdable(rel, repo)
+            st = _plain(path, root)
             yield path, rel, st, None if stat.S_ISDIR(st.st_mode) else _read(path, st, rel)
 
 
@@ -291,18 +316,12 @@ def pack(workspace: Path, repo: str = "") -> bytes:
     workspace (``Refused``), so nothing is sent; so does a workspace that is itself a link, a junction or another reparse point,
     and a folder that cannot be read, which would otherwise look empty and have its files removed in the container. Each file is
     read as the file that was checked (``_read``); once the walk is done every folder it went through, the workspace's own
-    included, is checked again (``_same_folder``), and then the whole tree is walked again: its names, what each is, and each
-    file's SHA-256 must be what was packed, else the workspace changed while it was packed and is refused, so the next call sends
-    it as it is then. Any failure to pack it (a name the tar cannot hold, a read that fails, the tar's own error) refuses it
-    too: nothing is sent or run."""
+    included, is checked again (``_same_folder``), and then the whole tree is walked again, its root checked first (``_tree``):
+    its names, what each is, and each file's SHA-256 must be what was packed, else the workspace changed while it was packed and
+    is refused, so the next call sends it as it is then. Any failure to pack it (a name the tar cannot hold, a read that fails,
+    the tar's own error) refuses it too: nothing is sent or run."""
     given = Path(workspace)
-    try:
-        top = os.lstat(given)
-    except OSError as exc:
-        raise Refused(f"the workspace could not be read: {exc}") from exc
-    if (stat.S_ISLNK(top.st_mode) or getattr(top, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
-            or not stat.S_ISDIR(top.st_mode)):
-        raise Refused(f"the workspace {given} is a link, a junction or another reparse point, or not a folder")
+    top = _root(given)
     try:
         root = given.resolve()
         out = io.BytesIO()
