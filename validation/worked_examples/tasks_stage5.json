@@ -1,0 +1,2443 @@
+{
+ "about": "Stage 5: the 130 bugs stage5_draw.py drew by its ordered rule from the stage 5 screens (candidates_stage5, candidates_stage5b, candidates_stage5c), at most two a project, in the draw's order. Fields other than install and env come from the screens. install and env reuse an earlier task set's lines for a project it holds, otherwise they are drafted from the packaging files at the parent (dependency group, then test extra, then test requirements file, then pytest). Draft: no install has been run.",
+ "tasks": [
+  {
+   "id": "urllib3-5271",
+   "project": "urllib3/urllib3",
+   "full_name": "urllib3/urllib3",
+   "licence": "MIT",
+   "pr": 5271,
+   "issue": 5268,
+   "merge_commit": "48113e7a5fa3b98a61467afa6bcbb0f9b7ca7207",
+   "parent": "a0cab2d084bd49fe347aea118daf0a26acd2c93c",
+   "merged_at": "2026-09-24T14:51:14Z",
+   "test_modules": [
+    "test/test_response.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[brotli,zstd,socks,h2]\" --group dev"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "2.8.0"
+   }
+  },
+  {
+   "id": "urllib3-5212",
+   "project": "urllib3/urllib3",
+   "full_name": "urllib3/urllib3",
+   "licence": "MIT",
+   "pr": 5212,
+   "issue": 5211,
+   "merge_commit": "10794eabe13e9141e180d528e1e8d79b535c0ee8",
+   "parent": "9a97e7b945c1d0286ffdbb5b876714b72aba0370",
+   "merged_at": "2026-09-09T18:39:44Z",
+   "test_modules": [
+    "test/test_ssl.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[brotli,zstd,socks,h2]\" --group dev"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "2.8.0"
+   }
+  },
+  {
+   "id": "charset_normalizer-825",
+   "project": "jawah/charset_normalizer",
+   "full_name": "jawah/charset_normalizer",
+   "licence": "MIT",
+   "pr": 825,
+   "issue": 824,
+   "merge_commit": "0a9201767e9d888b5a5ed7ca44400192474ad1b0",
+   "parent": "398566247f455a20c1970b1252f12303eb6ac01a",
+   "merged_at": "2026-10-20T15:45:11Z",
+   "test_modules": [
+    "tests/test_utils.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "pygments-3171",
+   "project": "pygments/pygments",
+   "full_name": "pygments/pygments",
+   "licence": "BSD-2-Clause",
+   "pr": 3171,
+   "issue": 2998,
+   "merge_commit": "76c405cdbe2ee03b7ef4b396ee49c34837dbba1d",
+   "parent": "797c4c4481da07f3f3fca253ea4e2959e98b7059",
+   "merged_at": "2026-07-05T08:01:59Z",
+   "test_modules": [
+    "tests/test_ruby.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -r requirements.txt pytest wcag-contrast-ratio"
+   ],
+   "env": {}
+  },
+  {
+   "id": "pygments-3175",
+   "project": "pygments/pygments",
+   "full_name": "pygments/pygments",
+   "licence": "BSD-2-Clause",
+   "pr": 3175,
+   "issue": 2975,
+   "merge_commit": "147c5b3b7e61111a88888c4b88a7343ff1ba1418",
+   "parent": "04beeedecfd16a21468a74d2b98d3138cb90c1ac",
+   "merged_at": "2026-07-05T07:51:40Z",
+   "test_modules": [
+    "tests/test_latex_formatter.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -r requirements.txt pytest wcag-contrast-ratio"
+   ],
+   "env": {}
+  },
+  {
+   "id": "pluggy-767",
+   "project": "pytest-dev/pluggy",
+   "full_name": "pytest-dev/pluggy",
+   "licence": "MIT",
+   "pr": 767,
+   "issue": 763,
+   "merge_commit": "09fabb162b8f84af0292b827c94e0149b82d448a",
+   "parent": "78e3f45d6c18a6efe6c46a2a79b63073f45a44bd",
+   "merged_at": "2026-10-17T06:08:48Z",
+   "test_modules": [
+    "testing/test_pluginmanager.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group testing"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "1.6.0"
+   }
+  },
+  {
+   "id": "pluggy-741",
+   "project": "pytest-dev/pluggy",
+   "full_name": "pytest-dev/pluggy",
+   "licence": "MIT",
+   "pr": 741,
+   "issue": 733,
+   "merge_commit": "f51e3a70c7f8414bff96e05c4ddb066972353376",
+   "parent": "f91048bede722a546a0fc7e776231459b90af75b",
+   "merged_at": "2026-09-25T04:58:39Z",
+   "test_modules": [
+    "testing/test_pluginmanager.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group testing"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "1.6.0"
+   }
+  },
+  {
+   "id": "botocore-3796",
+   "project": "boto/botocore",
+   "full_name": "boto/botocore",
+   "licence": "Apache-2.0",
+   "pr": 3796,
+   "issue": 3255,
+   "merge_commit": "262e5e603f8949a02859fc6ac568cfcc48aa0ddb",
+   "parent": "e2b579b5368fd8db5a6f9cc5440b07c1e14e27f0",
+   "merged_at": "2026-09-11T15:36:35Z",
+   "test_modules": [
+    "tests/unit/test_serialize.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -r requirements-dev.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "anyio-1386",
+   "project": "agronholm/anyio",
+   "full_name": "agronholm/anyio",
+   "licence": "MIT",
+   "pr": 1386,
+   "issue": 1385,
+   "merge_commit": "031412dab6a92fc85b8b976a81b4f9413d21e37f",
+   "parent": "c7b992cdd3a3e692f7f2e67c42917d8063120843",
+   "merged_at": "2026-10-10T21:27:33Z",
+   "test_modules": [
+    "tests/streams/test_tls.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[trio]\" --group test"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "4.15.1"
+   }
+  },
+  {
+   "id": "anyio-1367",
+   "project": "agronholm/anyio",
+   "full_name": "agronholm/anyio",
+   "licence": "MIT",
+   "pr": 1367,
+   "issue": 1364,
+   "merge_commit": "c7b992cdd3a3e692f7f2e67c42917d8063120843",
+   "parent": "c237c32a97d617e528adf5c80942ccbc88248c5f",
+   "merged_at": "2026-10-10T20:32:37Z",
+   "test_modules": [
+    "tests/test_sockets.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[trio]\" --group test"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "4.15.1"
+   }
+  },
+  {
+   "id": "aiobotocore-1704",
+   "project": "aio-libs/aiobotocore",
+   "full_name": "aio-libs/aiobotocore",
+   "licence": "Apache-2.0",
+   "pr": 1704,
+   "issue": 1697,
+   "merge_commit": "d8e57fad0637a76720bfec57400d4ac3eee90f45",
+   "parent": "c5e0adc7a0a755766f91867cc6eed7a196f9c8fc",
+   "merged_at": "2026-08-09T14:43:50Z",
+   "test_modules": [
+    "tests/botocore_tests/unit/test_credentials.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[httpx]\" --group test"
+   ],
+   "env": {}
+  },
+  {
+   "id": "aiobotocore-1587",
+   "project": "aio-libs/aiobotocore",
+   "full_name": "aio-libs/aiobotocore",
+   "licence": "Apache-2.0",
+   "pr": 1587,
+   "issue": 1469,
+   "merge_commit": "9b5e4058eb34f2eae6c20b538b221826f82bc64e",
+   "parent": "2085dd1b543b5bb96541d186371ab1453b9e5e45",
+   "merged_at": "2026-06-03T19:02:23Z",
+   "test_modules": [
+    "tests/test_httpsession.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[httpx]\" --group botocore-dev --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "python-dotenv-698",
+   "project": "theskumar/python-dotenv",
+   "full_name": "theskumar/python-dotenv",
+   "licence": "BSD-3-Clause",
+   "pr": 698,
+   "issue": 697,
+   "merge_commit": "e0310e5bb3f2b701b11bbc007ca0c82c1bd56f38",
+   "parent": "a00cb2eed0704cd6d2071b2004c37e95ccc86ee5",
+   "merged_at": "2026-09-30T03:05:57Z",
+   "test_modules": [
+    "tests/test_cli.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[cli]\" -r requirements.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "python-dotenv-680",
+   "project": "theskumar/python-dotenv",
+   "full_name": "theskumar/python-dotenv",
+   "licence": "BSD-3-Clause",
+   "pr": 680,
+   "issue": 661,
+   "merge_commit": "f7b18d9c72d1abcc2ad4023424b84f5bee30d266",
+   "parent": "751f8c148222e58aa173c83c4e5e6cfccb2cc124",
+   "merged_at": "2026-08-16T15:23:35Z",
+   "test_modules": [
+    "tests/test_main.py",
+    "tests/test_parser.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[cli]\" -r requirements.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "pyjwt-1208",
+   "project": "jpadilla/pyjwt",
+   "full_name": "jpadilla/pyjwt",
+   "licence": "MIT",
+   "pr": 1208,
+   "issue": 914,
+   "merge_commit": "384c945065ad1f1d7e5a0331c7377c7f278532f5",
+   "parent": "ea7267519f2be5ff031efabd692af7a4461f3d5e",
+   "merged_at": "2026-09-14T17:28:51Z",
+   "test_modules": [
+    "tests/test_api_jwk.py",
+    "tests/test_jwks_client.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[crypto]\" --group tests"
+   ],
+   "env": {}
+  },
+  {
+   "id": "platformdirs-661",
+   "project": "tox-dev/platformdirs",
+   "full_name": "tox-dev/platformdirs",
+   "licence": "MIT",
+   "pr": 661,
+   "issue": 659,
+   "merge_commit": "3ee973f7ee5591f40cb19f189b0b5d8beeee2d1b",
+   "parent": "a94826ea9de5b7371a5268f3ec0eb72976e61301",
+   "merged_at": "2026-10-28T16:40:52Z",
+   "test_modules": [
+    "tests/test_unix.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group test"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "4.9.0"
+   }
+  },
+  {
+   "id": "platformdirs-663",
+   "project": "tox-dev/platformdirs",
+   "full_name": "tox-dev/platformdirs",
+   "licence": "MIT",
+   "pr": 663,
+   "issue": 658,
+   "merge_commit": "a94826ea9de5b7371a5268f3ec0eb72976e61301",
+   "parent": "3b4cf5f997d570eb81327406867ab61cfabe61de",
+   "merged_at": "2026-10-28T16:40:12Z",
+   "test_modules": [
+    "tests/test_unix.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group test"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "4.9.0"
+   }
+  },
+  {
+   "id": "filesystem_spec-2352",
+   "project": "fsspec/filesystem_spec",
+   "full_name": "fsspec/filesystem_spec",
+   "licence": "BSD-3-Clause",
+   "pr": 2352,
+   "issue": 1586,
+   "merge_commit": "b079ca540881e606f56389064b6d9ce79369c0d0",
+   "parent": "9fc57d9cccc5f4f515a5be739a07291dcd5e295d",
+   "merged_at": "2026-10-21T14:26:43Z",
+   "test_modules": [
+    "fsspec/tests/test_fuse.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[test]\""
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "2026.10.0"
+   }
+  },
+  {
+   "id": "filesystem_spec-2312",
+   "project": "fsspec/filesystem_spec",
+   "full_name": "fsspec/filesystem_spec",
+   "licence": "BSD-3-Clause",
+   "pr": 2312,
+   "issue": 2311,
+   "merge_commit": "884ca3130a7ffa48b7fe39c6705fa2d1f6bb5e70",
+   "parent": "f7b0302f1efe8eeca7126a93c211f0c0e48b6a2c",
+   "merged_at": "2026-10-20T14:48:42Z",
+   "test_modules": [
+    "fsspec/implementations/tests/test_zip.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[test]\""
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "2026.10.0"
+   }
+  },
+  {
+   "id": "python-pathspec-162",
+   "project": "cpburnz/python-pathspec",
+   "full_name": "cpburnz/python-pathspec",
+   "licence": "MIT",
+   "pr": 162,
+   "issue": 161,
+   "merge_commit": "c86245dabec3ec37a0fcb8d20973c4530a9f5339",
+   "parent": "cd79e3c74e2af8d8eadcc0d74d979db518c80f12",
+   "merged_at": "2026-10-16T02:51:44Z",
+   "test_modules": [
+    "tests/test_05_pathspec.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "python-pathspec-132",
+   "project": "cpburnz/python-pathspec",
+   "full_name": "cpburnz/python-pathspec",
+   "licence": "MIT",
+   "pr": 132,
+   "issue": 129,
+   "merge_commit": "f404ca47871a9f2f854bbadc5cb3d77155f64db3",
+   "parent": "93e0179cb2d7a6d830050c62f3eab950b9263bf3",
+   "merged_at": "2026-09-05T13:47:16Z",
+   "test_modules": [
+    "tests/test_06_gitignore.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[hyperscan,re2]\" --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "filelock-880",
+   "project": "tox-dev/filelock",
+   "full_name": "tox-dev/filelock",
+   "licence": "MIT",
+   "pr": 880,
+   "issue": 879,
+   "merge_commit": "160141c4733b5320aec3617c0c761b040164445c",
+   "parent": "cb18d9eb3152009afca9fbcd3f91168a297c0c01",
+   "merged_at": "2026-10-28T06:37:04Z",
+   "test_modules": [
+    "tests/test_lazy_import.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group test"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "4.2.4"
+   }
+  },
+  {
+   "id": "filelock-827",
+   "project": "tox-dev/filelock",
+   "full_name": "tox-dev/filelock",
+   "licence": "MIT",
+   "pr": 827,
+   "issue": 770,
+   "merge_commit": "8aaa3730873d35af3e84854615017aba7aa7355b",
+   "parent": "e95d9ea335b7bc2ae9e42517ed6a0dea9d069a3a",
+   "merged_at": "2026-10-14T08:05:32Z",
+   "test_modules": [
+    "tests/soft_rw/test_soft_rw_async.py",
+    "tests/test_read_write_unit.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group test"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "4.1.1"
+   }
+  },
+  {
+   "id": "uvicorn-3103",
+   "project": "Kludex/uvicorn",
+   "full_name": "Kludex/uvicorn",
+   "licence": "BSD-3-Clause",
+   "pr": 3103,
+   "issue": 3074,
+   "merge_commit": "09a236b050ab58ae51f17dca54dedae78376a978",
+   "parent": "d2edc00818f31b89b21b7621e26071834a5efb94",
+   "merged_at": "2026-08-29T07:49:07Z",
+   "test_modules": [
+    "tests/protocols/test_http.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "uvicorn-3041",
+   "project": "Kludex/uvicorn",
+   "full_name": "Kludex/uvicorn",
+   "licence": "BSD-3-Clause",
+   "pr": 3041,
+   "issue": 3040,
+   "merge_commit": "b57926d3f46348b5773b184cdf53ae8588300b77",
+   "parent": "49de1b91d497d038d97a0475f7459fbf66b9b8f9",
+   "merged_at": "2026-08-01T18:07:51Z",
+   "test_modules": [
+    "tests/protocols/test_websocket.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "tomlkit-620",
+   "project": "python-poetry/tomlkit",
+   "full_name": "python-poetry/tomlkit",
+   "licence": "MIT",
+   "pr": 620,
+   "issue": 619,
+   "merge_commit": "49d6efa980fedb321f16371a4b05abd2a449f775",
+   "parent": "8c959b51c7da2734662af759a7c9f95e9a78060a",
+   "merged_at": "2026-09-30T00:38:54Z",
+   "test_modules": [
+    "tests/test_items.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . pytest PyYAML"
+   ],
+   "env": {}
+  },
+  {
+   "id": "tomlkit-563",
+   "project": "python-poetry/tomlkit",
+   "full_name": "python-poetry/tomlkit",
+   "licence": "MIT",
+   "pr": 563,
+   "issue": 562,
+   "merge_commit": "94e62fbef9d16093dec86728888474197f4a5cc7",
+   "parent": "495a42ecc9119eaaeb895def0fd025a71cd1cf60",
+   "merged_at": "2026-07-16T07:39:11Z",
+   "test_modules": [
+    "tests/test_items.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . pytest PyYAML"
+   ],
+   "env": {}
+  },
+  {
+   "id": "opentelemetry-python-5656",
+   "project": "open-telemetry/opentelemetry-python",
+   "full_name": "open-telemetry/opentelemetry-python",
+   "licence": "Apache-2.0",
+   "pr": 5656,
+   "issue": 5655,
+   "merge_commit": "ca410a6eae68e32ba9eb886ba407df60d310aec9",
+   "parent": "7fd5f6b2a95270f25faa0dfc5313681a1fbf0a7a",
+   "merged_at": "2026-10-28T02:23:34Z",
+   "test_modules": [
+    "opentelemetry-sdk/tests/metrics/test_periodic_exporting_metric_reader.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -r opentelemetry-sdk/test-requirements.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "opentelemetry-python-5650",
+   "project": "open-telemetry/opentelemetry-python",
+   "full_name": "open-telemetry/opentelemetry-python",
+   "licence": "Apache-2.0",
+   "pr": 5650,
+   "issue": 5648,
+   "merge_commit": "a90b5ff44bb175a30b52c1249b6a2baec9ec5a73",
+   "parent": "087ab8668436faa25314e90a6ef897e14c5f4d0c",
+   "merged_at": "2026-10-26T21:31:00Z",
+   "test_modules": [
+    "opentelemetry-sdk/tests/logs/test_export.py",
+    "opentelemetry-sdk/tests/trace/export/test_export.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -r opentelemetry-sdk/test-requirements.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "pip-14231",
+   "project": "pypa/pip",
+   "full_name": "pypa/pip",
+   "licence": "MIT",
+   "pr": 14231,
+   "issue": 9456,
+   "merge_commit": "f399c3718970b1b0e2478dac5296eb62679a9b86",
+   "parent": "c34c3b6e692f4a3605b63d4350b23ea4fb708849",
+   "merged_at": "2026-08-08T21:26:00Z",
+   "test_modules": [
+    "tests/unit/test_base_command.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group test"
+   ],
+   "env": {}
+  },
+  {
+   "id": "pip-14228",
+   "project": "pypa/pip",
+   "full_name": "pypa/pip",
+   "licence": "MIT",
+   "pr": 14228,
+   "issue": 14227,
+   "merge_commit": "af78f26630eaee8dfa47e25eff728be209f29dc5",
+   "parent": "d7d0d0a39494e28ec1c407bd0680e4a4d1067791",
+   "merged_at": "2026-08-04T22:19:13Z",
+   "test_modules": [
+    "tests/functional/test_install_config.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group test"
+   ],
+   "env": {}
+  },
+  {
+   "id": "pydantic-settings-1077",
+   "project": "pydantic/pydantic-settings",
+   "full_name": "pydantic/pydantic-settings",
+   "licence": "MIT",
+   "pr": 1077,
+   "issue": 1066,
+   "merge_commit": "8dc9e05ab07d91e21dd2a37d0b9c30f6d92b1930",
+   "parent": "c50c853b19ec5cc673b5cf5510326ce6b2681d28",
+   "merged_at": "2026-10-20T12:56:35Z",
+   "test_modules": [
+    "tests/test_settings.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[yaml]\" --group testing"
+   ],
+   "env": {}
+  },
+  {
+   "id": "pydantic-settings-1076",
+   "project": "pydantic/pydantic-settings",
+   "full_name": "pydantic/pydantic-settings",
+   "licence": "MIT",
+   "pr": 1076,
+   "issue": 1065,
+   "merge_commit": "c50c853b19ec5cc673b5cf5510326ce6b2681d28",
+   "parent": "9aabb8ab5ad1b0a922f2514619e5f519ef257b70",
+   "merged_at": "2026-10-20T12:03:24Z",
+   "test_modules": [
+    "tests/test_settings.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[yaml]\" --group testing"
+   ],
+   "env": {}
+  },
+  {
+   "id": "hatch-2390",
+   "project": "pypa/hatch",
+   "full_name": "pypa/hatch",
+   "licence": "MIT",
+   "pr": 2390,
+   "issue": 2389,
+   "merge_commit": "7c26ebeaf8b83f5f0374a2545bb15e36c87db0d0",
+   "parent": "c4abc454f908bb4fc2a92452a82cb33dac14abf3",
+   "merged_at": "2026-09-20T22:55:19Z",
+   "test_modules": [
+    "tests/cli/env/test_create.py",
+    "tests/helpers/helpers.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -e backend pytest pytest-mock pytest-xdist filelock flit-core trustme editables"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "1.18.2"
+   }
+  },
+  {
+   "id": "hatch-2398",
+   "project": "pypa/hatch",
+   "full_name": "pypa/hatch",
+   "licence": "MIT",
+   "pr": 2398,
+   "issue": 2384,
+   "merge_commit": "d5f7bfe813dd4d81520def23b43f5d46aad1899c",
+   "parent": "cbfc465e019ff51460f80ebbc35370e476aed6b9",
+   "merged_at": "2026-09-11T03:41:06Z",
+   "test_modules": [
+    "tests/backend/metadata/test_core.py",
+    "tests/backend/metadata/test_spec.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -e backend pytest pytest-mock pytest-xdist filelock flit-core trustme editables"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "1.18.2"
+   }
+  },
+  {
+   "id": "pyparsing-644",
+   "project": "pyparsing/pyparsing",
+   "full_name": "pyparsing/pyparsing",
+   "licence": "MIT",
+   "pr": 644,
+   "issue": 496,
+   "merge_commit": "a5e080704e9f266f960a71aaaffc3b00d2e72d20",
+   "parent": "9b728b8835aeef5974f0ee2be8df204b642ba008",
+   "merged_at": "2026-07-04T22:00:44Z",
+   "test_modules": [
+    "tests/test_unit.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[diagrams]\" pytest matplotlib"
+   ],
+   "env": {}
+  },
+  {
+   "id": "s3fs-1047",
+   "project": "fsspec/s3fs",
+   "full_name": "fsspec/s3fs",
+   "licence": "BSD-3-Clause",
+   "pr": 1047,
+   "issue": 838,
+   "merge_commit": "8bdc275fe6963ffea3f274bb6fd6cff8626155b9",
+   "parent": "62f45e6f667e1fe745b2f613d0217b296b2de0db",
+   "merged_at": "2026-09-22T14:21:22Z",
+   "test_modules": [
+    "s3fs/tests/test_s3fs.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "s3fs-1042",
+   "project": "fsspec/s3fs",
+   "full_name": "fsspec/s3fs",
+   "licence": "BSD-3-Clause",
+   "pr": 1042,
+   "issue": 982,
+   "merge_commit": "85a6ec52baf7a0f764ddaf881aa0acf58f935932",
+   "parent": "359cf5727c79f32e72106ee492a446d247225bf8",
+   "merged_at": "2026-09-17T20:54:22Z",
+   "test_modules": [
+    "s3fs/tests/test_s3fs.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "soupsieve-310",
+   "project": "facelessuser/soupsieve",
+   "full_name": "facelessuser/soupsieve",
+   "licence": "MIT",
+   "pr": 310,
+   "issue": 309,
+   "merge_commit": "b2cfcf4c4734f8f175e34653d31b7cf6dea975ce",
+   "parent": "e39e4e7fa57d693da8d1f2422a7c9a9c7a6d5cc7",
+   "merged_at": "2026-10-10T16:41:25Z",
+   "test_modules": [
+    "tests/test_extra/test_attribute.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . pytest beautifulsoup4 lxml html5lib"
+   ],
+   "env": {}
+  },
+  {
+   "id": "soupsieve-308",
+   "project": "facelessuser/soupsieve",
+   "full_name": "facelessuser/soupsieve",
+   "licence": "MIT",
+   "pr": 308,
+   "issue": 307,
+   "merge_commit": "2e464750bfd739816b8f135a482754743d205fa0",
+   "parent": "2523f4837d8e7b5f7d7f5f8fc63dca5eb71a71a1",
+   "merged_at": "2026-10-01T15:49:41Z",
+   "test_modules": [
+    "tests/test_level1/test_escapes.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . pytest beautifulsoup4 lxml html5lib"
+   ],
+   "env": {}
+  },
+  {
+   "id": "openai-python-3875",
+   "project": "openai/openai-python",
+   "full_name": "openai/openai-python",
+   "licence": "Apache-2.0",
+   "pr": 3875,
+   "issue": 3874,
+   "merge_commit": "bfd3680c8d3b715bb3175b82cd0fa1c1fb53162f",
+   "parent": "4d1274681db7f34f671ff9e71adc1461d22a927b",
+   "merged_at": "2026-09-23T21:33:31Z",
+   "test_modules": [
+    "tests/test_extract_files.py",
+    "tests/test_files.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "openai-python-3851",
+   "project": "openai/openai-python",
+   "full_name": "openai/openai-python",
+   "licence": "Apache-2.0",
+   "pr": 3851,
+   "issue": 3840,
+   "merge_commit": "fab5283255ad76d9e79e202e1cf46b6eea783f4b",
+   "parent": "56b17081e22d8e168421e91bb400017ec2b0be89",
+   "merged_at": "2026-09-18T22:04:38Z",
+   "test_modules": [
+    "tests/lib/responses/test_null_content.py",
+    "tests/lib/responses/test_null_output.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "psutil-2969",
+   "project": "giampaolo/psutil",
+   "full_name": "giampaolo/psutil",
+   "licence": "BSD-3-Clause",
+   "pr": 2969,
+   "issue": 2512,
+   "merge_commit": "2e09ea45c3e1102a7cc5ec385cb83acc4c4eadd0",
+   "parent": "b0c59d7e154caee0e6e16c933893d3b336cf8df3",
+   "merged_at": "2026-08-08T22:33:52Z",
+   "test_modules": [
+    "tests/test_linux.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group test"
+   ],
+   "env": {}
+  },
+  {
+   "id": "psutil-2965",
+   "project": "giampaolo/psutil",
+   "full_name": "giampaolo/psutil",
+   "licence": "BSD-3-Clause",
+   "pr": 2965,
+   "issue": 2964,
+   "merge_commit": "ef3d9af1062e3e5d59e431e957b75fd4287b053e",
+   "parent": "8a5d53df33e28831f4833803b89e40e857d5632d",
+   "merged_at": "2026-08-08T12:43:27Z",
+   "test_modules": [
+    "tests/__init__.py",
+    "tests/test_contracts.py",
+    "tests/test_misc.py",
+    "tests/test_scripts.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group test"
+   ],
+   "env": {}
+  },
+  {
+   "id": "python-sdk-3776",
+   "project": "modelcontextprotocol/python-sdk",
+   "full_name": "modelcontextprotocol/python-sdk",
+   "licence": "MIT",
+   "pr": 3776,
+   "issue": 3773,
+   "merge_commit": "d7845c073a2b9ba5ab2817ecf93d3e45ef24cd14",
+   "parent": "a525a3d9bece967d91534b746a6c842931b7b4ec",
+   "merged_at": "2026-10-27T11:15:09Z",
+   "test_modules": [
+    "tests/server/mcpserver/test_extension.py",
+    "tests/server/test_apps.py",
+    "tests/server/test_extensions_capability.py",
+    "tests/types/test_methods.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e src/mcp-types -e . --group dev"
+   ],
+   "env": {
+    "UV_DYNAMIC_VERSIONING_BYPASS": "2.3.0"
+   }
+  },
+  {
+   "id": "python-sdk-3758",
+   "project": "modelcontextprotocol/python-sdk",
+   "full_name": "modelcontextprotocol/python-sdk",
+   "licence": "MIT",
+   "pr": 3758,
+   "issue": 3725,
+   "merge_commit": "a525a3d9bece967d91534b746a6c842931b7b4ec",
+   "parent": "5a3a23af65def4d636864d55701ff9395cad92d0",
+   "merged_at": "2026-10-24T20:19:27Z",
+   "test_modules": [
+    "tests/server/mcpserver/test_func_metadata.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e src/mcp-types -e . --group dev"
+   ],
+   "env": {
+    "UV_DYNAMIC_VERSIONING_BYPASS": "2.3.0"
+   }
+  },
+  {
+   "id": "redis-py-4513",
+   "project": "redis/redis-py",
+   "full_name": "redis/redis-py",
+   "licence": "MIT",
+   "pr": 4513,
+   "issue": 4512,
+   "merge_commit": "2cce7519a6762d393e61854bdec53bfcd6e95666",
+   "parent": "5824947a7c20c9fba09a8a70b920c3e697708965",
+   "merged_at": "2026-10-29T10:13:22Z",
+   "test_modules": [
+    "tests/test_asyncio/test_cluster.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -r dev_requirements.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "redis-py-4486",
+   "project": "redis/redis-py",
+   "full_name": "redis/redis-py",
+   "licence": "MIT",
+   "pr": 4486,
+   "issue": 4478,
+   "merge_commit": "0d6590711ad1cb9a1bd8a3cf0eeebc816ac02377",
+   "parent": "19b57572702f19f9b75194641eec4381135acde7",
+   "merged_at": "2026-10-27T11:49:15Z",
+   "test_modules": [
+    "tests/test_asyncio/test_cluster_transaction.py",
+    "tests/test_cluster_transaction.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -r dev_requirements.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "pre-commit-3774",
+   "project": "pre-commit/pre-commit",
+   "full_name": "pre-commit/pre-commit",
+   "licence": "MIT",
+   "pr": 3774,
+   "issue": 3773,
+   "merge_commit": "73926c191e10d2ede0ca627632e6e697d8092a61",
+   "parent": "9ad8a0a99acec306e6e9c32490b0088008b83069",
+   "merged_at": "2026-10-12T20:41:57Z",
+   "test_modules": [
+    "tests/languages/node_test.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -r requirements-dev.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "pre-commit-3743",
+   "project": "pre-commit/pre-commit",
+   "full_name": "pre-commit/pre-commit",
+   "licence": "MIT",
+   "pr": 3743,
+   "issue": 3737,
+   "merge_commit": "42ee3ff5ac1cae639613c9ad002d0502ae82384f",
+   "parent": "242ce8a25657be59f2770b50de41fe0fd508820d",
+   "merged_at": "2026-08-10T21:56:43Z",
+   "test_modules": [
+    "tests/languages/node_test.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -r requirements-dev.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "python-15435",
+   "project": "TheAlgorithms/Python",
+   "full_name": "TheAlgorithms/Python",
+   "licence": "MIT",
+   "pr": 15435,
+   "issue": 15434,
+   "merge_commit": "a7a298e4175e38aed996fbc97d34548816d3ba90",
+   "parent": "78e489f5dda5c68ce76c873af12a98c259661a3a",
+   "merged_at": "2026-09-27T12:46:24Z",
+   "test_modules": [
+    "tests/test_sorts.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python --group test"
+   ],
+   "env": {}
+  },
+  {
+   "id": "markitdown-2412",
+   "project": "microsoft/markitdown",
+   "full_name": "microsoft/markitdown",
+   "licence": "MIT",
+   "pr": 2412,
+   "issue": 2411,
+   "merge_commit": "ab6792caca7ffdfa591076db80d121f1ff163f24",
+   "parent": "21887b3bf038926ce0781811b28c86f3e42b353f",
+   "merged_at": "2026-09-09T16:36:38Z",
+   "test_modules": [
+    "packages/markitdown/tests/test_csv_line_endings.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \"packages/markitdown[all]\" pytest openai"
+   ],
+   "env": {}
+  },
+  {
+   "id": "markitdown-2430",
+   "project": "microsoft/markitdown",
+   "full_name": "microsoft/markitdown",
+   "licence": "MIT",
+   "pr": 2430,
+   "issue": 2390,
+   "merge_commit": "21887b3bf038926ce0781811b28c86f3e42b353f",
+   "parent": "b6e8bbdce628d564c6af031b5f26cda6e818ea10",
+   "merged_at": "2026-09-09T15:40:54Z",
+   "test_modules": [
+    "packages/markitdown/tests/test_module_misc.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \"packages/markitdown[all]\" pytest openai"
+   ],
+   "env": {}
+  },
+  {
+   "id": "ui-ux-pro-max-skill-548",
+   "project": "nextlevelbuilder/ui-ux-pro-max-skill",
+   "full_name": "nextlevelbuilder/ui-ux-pro-max-skill",
+   "licence": "MIT",
+   "pr": 548,
+   "issue": 547,
+   "merge_commit": "28b3b8dee8c976df4fa3e94aed4e092ad43fcb03",
+   "parent": "1f8857914da3c723d58dab1d609dd0d55a86bf51",
+   "merged_at": "2026-10-26T10:07:28Z",
+   "test_modules": [
+    ".claude/skills/ui-ux-pro-max/scripts/tests/test_web_stack_freshness.py",
+    "cli/assets/scripts/tests/test_web_stack_freshness.py",
+    "src/ui-ux-pro-max/scripts/tests/test_web_stack_freshness.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "ui-ux-pro-max-skill-532",
+   "project": "nextlevelbuilder/ui-ux-pro-max-skill",
+   "full_name": "nextlevelbuilder/ui-ux-pro-max-skill",
+   "licence": "MIT",
+   "pr": 532,
+   "issue": 529,
+   "merge_commit": "616663179c5f9b5e2b3e07cab23ac9cad76378f3",
+   "parent": "7246805992a42b7bba37d4cac83b01416f0c6c44",
+   "merged_at": "2026-10-14T20:04:51Z",
+   "test_modules": [
+    ".claude/skills/design/scripts/logo/tests/test_generate.py",
+    ".claude/skills/design/scripts/tests/test_cip_generate.py",
+    ".claude/skills/design/scripts/tests/test_icon_generate.py",
+    "cli/assets/skills/design/scripts/logo/tests/test_generate.py",
+    "cli/assets/skills/design/scripts/tests/test_cip_generate.py",
+    "cli/assets/skills/design/scripts/tests/test_icon_generate.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "graphify-1323",
+   "project": "Graphify-Labs/graphify",
+   "full_name": "Graphify-Labs/graphify",
+   "licence": "Apache-2.0",
+   "pr": 1323,
+   "issue": 1322,
+   "merge_commit": "09da5294e4b783c860ef2d406d69701cfe9913db",
+   "parent": "61836ce0e8fa806ed8619dad35d7cb4bf2a0aedc",
+   "merged_at": "2026-06-16T01:14:31Z",
+   "test_modules": [
+    "tests/test_extract.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[all]\" --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "graphify-1282",
+   "project": "Graphify-Labs/graphify",
+   "full_name": "Graphify-Labs/graphify",
+   "licence": "Apache-2.0",
+   "pr": 1282,
+   "issue": 1277,
+   "merge_commit": "fb1908cc55fafd87cfa43ca8cabd8ffba42da14a",
+   "parent": "90decbc4ed641dc3d0de7896e5c31114963f7401",
+   "merged_at": "2026-06-12T18:54:45Z",
+   "test_modules": [
+    "tests/test_labeling.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[all]\" --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "moneyprinterturbo-1585",
+   "project": "harry0703/MoneyPrinterTurbo",
+   "full_name": "harry0703/MoneyPrinterTurbo",
+   "licence": "MIT",
+   "pr": 1585,
+   "issue": 1584,
+   "merge_commit": "f14f678806160bb00deadb2d7c155ec9ab9b3cb0",
+   "parent": "7bd8291dbd92bf7cd4688ea5466f916af11522fd",
+   "merged_at": "2026-10-07T02:00:02Z",
+   "test_modules": [
+    "test/services/test_mpt_agent_skill.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "moneyprinterturbo-1296",
+   "project": "harry0703/MoneyPrinterTurbo",
+   "full_name": "harry0703/MoneyPrinterTurbo",
+   "licence": "MIT",
+   "pr": 1296,
+   "issue": 1295,
+   "merge_commit": "d37f8faf83bca38b8f2b06a692a44e553eec325c",
+   "parent": "3ade9fbc40e18db32a5edb340d49e31ea0dd5528",
+   "merged_at": "2026-09-02T03:13:21Z",
+   "test_modules": [
+    "test/services/test_material_openai_image.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "browser-use-5552",
+   "project": "browser-use/browser-use",
+   "full_name": "browser-use/browser-use",
+   "licence": "MIT",
+   "pr": 5552,
+   "issue": 5539,
+   "merge_commit": "e3251d87e03f2a7276beab207e1179072a2a62b2",
+   "parent": "d5453ae80e11d61c94986d3506d37a829b473c42",
+   "merged_at": "2026-09-05T14:50:12Z",
+   "test_modules": [
+    "tests/ci/test_browser_use_cli.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . pytest pytest-asyncio pytest-httpserver pytest-xdist pytest-timeout"
+   ],
+   "env": {}
+  },
+  {
+   "id": "browser-use-5640",
+   "project": "browser-use/browser-use",
+   "full_name": "browser-use/browser-use",
+   "licence": "MIT",
+   "pr": 5640,
+   "issue": 5637,
+   "merge_commit": "1706dd4e376793e2d01b70eca9f080439afe7fe7",
+   "parent": "2b696cbdc581a181635f0f4dd7e89acd789f845f",
+   "merged_at": "2026-09-05T06:36:45Z",
+   "test_modules": [
+    "tests/ci/test_html_serializer_style.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . pytest pytest-asyncio pytest-httpserver pytest-xdist pytest-timeout"
+   ],
+   "env": {}
+  },
+  {
+   "id": "agent-reach-326",
+   "project": "Panniantong/Agent-Reach",
+   "full_name": "Panniantong/Agent-Reach",
+   "licence": "MIT",
+   "pr": 326,
+   "issue": 294,
+   "merge_commit": "9045fee67e13b2d8d0daf5825300b87bac4e9867",
+   "parent": "5b07d95e7e3c65909f49d3cdac1bb5b1f59dd1b9",
+   "merged_at": "2026-06-10T06:59:17Z",
+   "test_modules": [
+    "tests/test_channels.py",
+    "tests/test_cli.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[dev]\""
+   ],
+   "env": {}
+  },
+  {
+   "id": "manim-2501",
+   "project": "3b1b/manim",
+   "full_name": "3b1b/manim",
+   "licence": "MIT",
+   "pr": 2501,
+   "issue": 2336,
+   "merge_commit": "3e5bfce5bfe5247921d330dbd22b2d0fd7f1d201",
+   "parent": "fe7de0716d38760ace303423995848764aad93f4",
+   "merged_at": "2026-08-17T20:10:05Z",
+   "test_modules": [
+    "tests/test_space_ops.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "scrapling-406",
+   "project": "D4Vinci/Scrapling",
+   "full_name": "D4Vinci/Scrapling",
+   "licence": "BSD-3-Clause",
+   "pr": 406,
+   "issue": 394,
+   "merge_commit": "64bc7007b0218544256c09454a99fdabace7a829",
+   "parent": "39847bd2da41f8e089593f91016d81d3a4771e6f",
+   "merged_at": "2026-08-09T19:06:37Z",
+   "test_modules": [
+    "tests/ai/test_ai_mcp.py",
+    "tests/fetchers/test_utils.py",
+    "tests/spiders/test_feed.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[ai,shell]\" -r tests/requirements.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "scrapling-374",
+   "project": "D4Vinci/Scrapling",
+   "full_name": "D4Vinci/Scrapling",
+   "licence": "BSD-3-Clause",
+   "pr": 374,
+   "issue": 366,
+   "merge_commit": "aba2b3a57f3009cb6607dba58bb51863ca48d00d",
+   "parent": "16d57718c9df99da776f033de644076ca215013e",
+   "merged_at": "2026-07-12T19:47:12Z",
+   "test_modules": [
+    "tests/ai/test_ai_mcp.py",
+    "tests/cli/test_cli.py",
+    "tests/spiders/test_shopify.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[ai,shell]\" -r tests/requirements.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "crawl4ai-2077",
+   "project": "unclecode/crawl4ai",
+   "full_name": "unclecode/crawl4ai",
+   "licence": "Apache-2.0",
+   "pr": 2077,
+   "issue": 2071,
+   "merge_commit": "7e801521428ee12509994d39151006f64055ebe3",
+   "parent": "bd8b1302f5fb4d3692eb8bb5925ccbabc82931c9",
+   "merged_at": "2026-07-15T08:24:14Z",
+   "test_modules": [
+    "deploy/docker/tests/test_security_2026_04.py",
+    "deploy/docker/tests/test_security_container_posture.py",
+    "tests/async/test_dispatchers.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "learn-claude-code-603",
+   "project": "shareAI-lab/learn-claude-code",
+   "full_name": "shareAI-lab/learn-claude-code",
+   "licence": "MIT",
+   "pr": 603,
+   "issue": 577,
+   "merge_commit": "7226f555d48900076eba126acf37c9ed5f002b5d",
+   "parent": "11c6ce5ff51319279975bd3648403a1ca6e01e6b",
+   "merged_at": "2026-10-27T04:47:01Z",
+   "test_modules": [
+    "tests/test_s08_context_compact.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -r requirements.txt pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "learn-claude-code-571",
+   "project": "shareAI-lab/learn-claude-code",
+   "full_name": "shareAI-lab/learn-claude-code",
+   "licence": "MIT",
+   "pr": 571,
+   "issue": 570,
+   "merge_commit": "45a0f3585a9175b9b1f22d958d3185b97b827c52",
+   "parent": "2f8cfb03a6213948619b233761a9d75e8513149f",
+   "merged_at": "2026-10-27T04:39:56Z",
+   "test_modules": [
+    "tests/test_workflow_goal_lessons.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -r requirements.txt pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "ai-engineering-from-scratch-690",
+   "project": "rohitg00/ai-engineering-from-scratch",
+   "full_name": "rohitg00/ai-engineering-from-scratch",
+   "licence": "MIT",
+   "pr": 690,
+   "issue": 508,
+   "merge_commit": "510e11c2fc4c56d4251431d78737d87cf2523c9f",
+   "parent": "b2be5adeeedd503b6db2c9b2fe64a8ea0edae674",
+   "merged_at": "2026-10-23T07:05:22Z",
+   "test_modules": [
+    "phases/14-agent-engineering/42-agent-workbench-capstone/code/tests/test_main.py",
+    "scripts/test_translate_workflow.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "ai-engineering-from-scratch-503",
+   "project": "rohitg00/ai-engineering-from-scratch",
+   "full_name": "rohitg00/ai-engineering-from-scratch",
+   "licence": "MIT",
+   "pr": 503,
+   "issue": 502,
+   "merge_commit": "65bd37e766a0c9f12e780b5f3f833a808d1cace9",
+   "parent": "4f838d5965af553689d0068426a680025820da05",
+   "merged_at": "2026-10-17T15:59:40Z",
+   "test_modules": [
+    "scripts/test_link_check.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "llamafactory-10632",
+   "project": "hiyouga/LlamaFactory",
+   "full_name": "hiyouga/LlamaFactory",
+   "licence": "Apache-2.0",
+   "pr": 10632,
+   "issue": 10610,
+   "merge_commit": "8489928769f239667ee746ebfb43cee79c0c91e1",
+   "parent": "b61140db3e53d17deca7a8b099d236304801a250",
+   "merged_at": "2026-07-13T09:30:36Z",
+   "test_modules": [
+    "tests/check_license.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -r requirements/dev.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "strix-1192",
+   "project": "usestrix/strix",
+   "full_name": "usestrix/strix",
+   "licence": "Apache-2.0",
+   "pr": 1192,
+   "issue": 1171,
+   "merge_commit": "1df67c52e2f469d5f1a035e28c7f736e881bd715",
+   "parent": "3c767cdd4750d5e0e4454f58eff279c589889f00",
+   "merged_at": "2026-09-01T00:22:34Z",
+   "test_modules": [
+    "tests/test_report_pdf.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "strix-1116",
+   "project": "usestrix/strix",
+   "full_name": "usestrix/strix",
+   "licence": "Apache-2.0",
+   "pr": 1116,
+   "issue": 1109,
+   "merge_commit": "e152c4c7c037a895b039d5fbdf469ac7b17a5ee9",
+   "parent": "fe758af4fca92e566f49b599f96178f83105b13e",
+   "merged_at": "2026-08-20T20:41:05Z",
+   "test_modules": [
+    "tests/test_cli_target_list.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "ppt-master-324",
+   "project": "hugohe3/ppt-master",
+   "full_name": "hugohe3/ppt-master",
+   "licence": "MIT",
+   "pr": 324,
+   "issue": 323,
+   "merge_commit": "067d24bbefb11f5801f7666dd6a9e9d78858a782",
+   "parent": "604ecdec8dd6a0405e1abdb49565430902373276",
+   "merged_at": "2026-10-22T11:40:05Z",
+   "test_modules": [
+    "skills/ppt-master/scripts/tests/test_svg_editor_server.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -r requirements.txt pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "docling-4596",
+   "project": "docling-project/docling",
+   "full_name": "docling-project/docling",
+   "licence": "MIT",
+   "pr": 4596,
+   "issue": 4595,
+   "merge_commit": "8f9a97183aa76cb79dd992d808a793e80b8f0627",
+   "parent": "55c1da8aa7d5044c6cc6d6e5f03be5fd3feda2ad",
+   "merged_at": "2026-10-29T11:54:02Z",
+   "test_modules": [
+    "tests/test_backend_markdown.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[convert-core,format-markdown]\" --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "docling-4813",
+   "project": "docling-project/docling",
+   "full_name": "docling-project/docling",
+   "licence": "MIT",
+   "pr": 4813,
+   "issue": 4793,
+   "merge_commit": "d518808da7520d2e6f865b8499582e641baa58aa",
+   "parent": "ad03515e80405a7678b2a89e703f9e3703e5ded1",
+   "merged_at": "2026-10-29T10:26:44Z",
+   "test_modules": [
+    "tests/test_backend_jats.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[convert-core,format-xml-jats]\" --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "ai-job-search-686",
+   "project": "ai-job-search-dev/ai-job-search",
+   "full_name": "ai-job-search-dev/ai-job-search",
+   "licence": "MIT",
+   "pr": 686,
+   "issue": 685,
+   "merge_commit": "d621ebe63549dffb291edea7f7621cd00e67ddb1",
+   "parent": "e5b98f698fc6529af8ba2a9b23f12ab7f53df176",
+   "merged_at": "2026-10-19T19:46:49Z",
+   "test_modules": [
+    "tests/test_tools_utf8_output.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python pytest openpyxl"
+   ],
+   "env": {}
+  },
+  {
+   "id": "ai-job-search-668",
+   "project": "ai-job-search-dev/ai-job-search",
+   "full_name": "ai-job-search-dev/ai-job-search",
+   "licence": "MIT",
+   "pr": 668,
+   "issue": 655,
+   "merge_commit": "e7778f58ed4a867d1bf24112eccc333643b11e9f",
+   "parent": "a59535083faef8be8784369b28b680a60202aa8b",
+   "merged_at": "2026-10-19T18:07:51Z",
+   "test_modules": [
+    "tests/test_verify_layout.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python pytest openpyxl"
+   ],
+   "env": {}
+  },
+  {
+   "id": "mem0-6559",
+   "project": "mem0ai/mem0",
+   "full_name": "mem0ai/mem0",
+   "licence": "Apache-2.0",
+   "pr": 6559,
+   "issue": 6557,
+   "merge_commit": "8127e8bd47a8f5b6eabd178c0637e72621b9b976",
+   "parent": "5fd01d284a35a044602350d1faabaa02ee27c00d",
+   "merged_at": "2026-09-25T11:38:20Z",
+   "test_modules": [
+    "tests/vector_stores/test_turbopuffer.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[test]\""
+   ],
+   "env": {}
+  },
+  {
+   "id": "mem0-6547",
+   "project": "mem0ai/mem0",
+   "full_name": "mem0ai/mem0",
+   "licence": "Apache-2.0",
+   "pr": 6547,
+   "issue": 6546,
+   "merge_commit": "a2d8a8a849810e887757d2be7d716cf894c5627c",
+   "parent": "fb6d5e1917dd28def068821d86356e602aff446a",
+   "merged_at": "2026-09-25T10:51:17Z",
+   "test_modules": [
+    "tests/vector_stores/test_s3_vectors.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[test]\" boto3"
+   ],
+   "env": {}
+  },
+  {
+   "id": "annotated_deep_learning_paper_implementations-326",
+   "project": "labmlai/annotated_deep_learning_paper_implementations",
+   "full_name": "labmlai/annotated_deep_learning_paper_implementations",
+   "licence": "MIT",
+   "pr": 326,
+   "issue": 245,
+   "merge_commit": "2be1800d141eb2716d6079405bbe47ce1040ef85",
+   "parent": "9695356269fc7adfc1f56910120305ce99283928",
+   "merged_at": "2026-10-25T17:01:15Z",
+   "test_modules": [
+    "test/rl/test_game.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "daily_stock_analysis-2379",
+   "project": "ZhuLinsen/daily_stock_analysis",
+   "full_name": "ZhuLinsen/daily_stock_analysis",
+   "licence": "MIT",
+   "pr": 2379,
+   "issue": 2349,
+   "merge_commit": "d34e5ee9dbb9956212a9cddfa7e9587d53956373",
+   "parent": "c82279455d9424b48127679d896479adb1420288",
+   "merged_at": "2026-10-04T13:10:01Z",
+   "test_modules": [
+    "tests/test_main_schedule_mode.py",
+    "tests/test_runtime_scheduler_service.py",
+    "tests/test_scheduled_analysis_claim.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -r .github/requirements-ci.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "daily_stock_analysis-2368",
+   "project": "ZhuLinsen/daily_stock_analysis",
+   "full_name": "ZhuLinsen/daily_stock_analysis",
+   "licence": "MIT",
+   "pr": 2368,
+   "issue": 2352,
+   "merge_commit": "4e29abc636540420396f332dd2ad5555607791be",
+   "parent": "4f4b653ebc5bd0e885ae813c47d4224aa9bc64f1",
+   "merged_at": "2026-09-30T14:31:32Z",
+   "test_modules": [
+    "tests/test_analyzer_prompt_language.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -r .github/requirements-ci.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "last30days-skill-1336",
+   "project": "mvanhorn/last30days-skill",
+   "full_name": "mvanhorn/last30days-skill",
+   "licence": "MIT",
+   "pr": 1336,
+   "issue": 1335,
+   "merge_commit": "61175ff52539c50ed1a33c159e77f0227c0ca045",
+   "parent": "a27c4be946d4159f2db3a026ce7def3717fe8274",
+   "merged_at": "2026-10-27T00:20:12Z",
+   "test_modules": [
+    "tests/test_http_fixtures.py",
+    "tests/test_youtube_comparison_budget.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "last30days-skill-1325",
+   "project": "mvanhorn/last30days-skill",
+   "full_name": "mvanhorn/last30days-skill",
+   "licence": "MIT",
+   "pr": 1325,
+   "issue": 1290,
+   "merge_commit": "f9f2870706c3f2f90fed9dc5aa49bc0b1737ebba",
+   "parent": "6f9052cca8fcafad9055c438b7b3f9112f2ee20f",
+   "merged_at": "2026-10-26T17:45:49Z",
+   "test_modules": [
+    "tests/test_drill_mode.py",
+    "tests/test_person_identity.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "scrapy-8386",
+   "project": "scrapy/scrapy",
+   "full_name": "scrapy/scrapy",
+   "licence": "BSD-3-Clause",
+   "pr": 8386,
+   "issue": 8297,
+   "merge_commit": "4091b936b6a1b6aeb4b7297b47015b1d1907b5ea",
+   "parent": "4001c07fea040cbbaaac505412698ee91c7a1034",
+   "merged_at": "2026-10-21T19:01:14Z",
+   "test_modules": [
+    "tests/test_downloadermiddleware_robotstxt.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . attrs coverage pexpect psutil pyftpdlib pygments pytest pytest-cov pytest-rerunfailures pytest-timeout pytest-xdist sybil pytest-twisted"
+   ],
+   "env": {}
+  },
+  {
+   "id": "scrapy-7776",
+   "project": "scrapy/scrapy",
+   "full_name": "scrapy/scrapy",
+   "licence": "BSD-3-Clause",
+   "pr": 7776,
+   "issue": 5828,
+   "merge_commit": "48590c105d48a439da51bfb3561c61a0a7720f44",
+   "parent": "ab34d952158b1072c6ee60b835f894de657814ab",
+   "merged_at": "2026-10-20T15:00:17Z",
+   "test_modules": [
+    "tests/test_downloader_handler_twisted_http11.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . attrs coverage pexpect psutil pyftpdlib pygments pytest pytest-cov pytest-rerunfailures pytest-timeout pytest-xdist sybil pytest-twisted"
+   ],
+   "env": {}
+  },
+  {
+   "id": "minimind-883",
+   "project": "jingyaogong/minimind",
+   "full_name": "jingyaogong/minimind",
+   "licence": "Apache-2.0",
+   "pr": 883,
+   "issue": 878,
+   "merge_commit": "d80c69254309c4dc457e9ab926d6987725e1cf2b",
+   "parent": "7a4766887b29471150056015a71161ccac11503b",
+   "merged_at": "2026-10-27T06:52:52Z",
+   "test_modules": [
+    "tests/test_stream_tool_calls.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -r requirements.txt pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "ai-hedge-fund-719",
+   "project": "virattt/ai-hedge-fund",
+   "full_name": "virattt/ai-hedge-fund",
+   "licence": "MIT",
+   "pr": 719,
+   "issue": 718,
+   "merge_commit": "b0b3211752ec55c6267c56bd7a9d3c9f949385ac",
+   "parent": "491b5b0cb14320d7368818a11668c2557e8830b3",
+   "merged_at": "2026-09-25T18:30:47Z",
+   "test_modules": [
+    "hedge_fund/brokers/test_sim.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "keras-24055",
+   "project": "keras-team/keras",
+   "full_name": "keras-team/keras",
+   "licence": "Apache-2.0",
+   "pr": 24055,
+   "issue": 23251,
+   "merge_commit": "cb82dac8523538d01ea3d7a5ec9851bc7b2c054c",
+   "parent": "d7b8ca0c007e3e624f2bb4058802ae44871b86da",
+   "merged_at": "2026-10-23T19:34:27Z",
+   "test_modules": [
+    "keras/src/callbacks/orbax_checkpoint_test.py",
+    "keras/src/models/sequential_test.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -r requirements.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "keras-23782",
+   "project": "keras-team/keras",
+   "full_name": "keras-team/keras",
+   "licence": "Apache-2.0",
+   "pr": 23782,
+   "issue": 23780,
+   "merge_commit": "ad20418a15a9f21bda2873af635174ffe326c186",
+   "parent": "dac41c3025d8bc5e60b7414344c99df73bafe70f",
+   "merged_at": "2026-10-20T16:58:13Z",
+   "test_modules": [
+    "keras/src/layers/normalization/layer_normalization_test.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -r requirements.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "crewai-8678",
+   "project": "crewAIInc/crewAI",
+   "full_name": "crewAIInc/crewAI",
+   "licence": "MIT",
+   "pr": 8678,
+   "issue": 8679,
+   "merge_commit": "6dd2a3a6cffb875fa516f5547c8d9c8d3a20a056",
+   "parent": "bc5728b8852ccb8ef768864fb6f8d640c4b9d9af",
+   "merged_at": "2026-10-27T23:23:39Z",
+   "test_modules": [
+    "lib/crewai/tests/hooks/test_model_call_hook_reach.py",
+    "lib/crewai/tests/llms/test_structured_output_multimodal.py",
+    "lib/crewai/tests/test_llm.py",
+    "lib/crewai/tests/test_llm_litellm_usage_events.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e lib/crewai-core -e lib/cli -e \"lib/crewai[litellm]\" --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "crewai-8642",
+   "project": "crewAIInc/crewAI",
+   "full_name": "crewAIInc/crewAI",
+   "licence": "MIT",
+   "pr": 8642,
+   "issue": 8641,
+   "merge_commit": "c5f996ab6d9105cab38109235809232e9eeef008",
+   "parent": "00ef9ea1568f6ff5af9accc5ecfe7eb58f6fe8dd",
+   "merged_at": "2026-10-27T07:08:26Z",
+   "test_modules": [
+    "lib/crewai-files/tests/test_acleanup_listing_nonblocking.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e lib/crewai-files --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "mempalace-2717",
+   "project": "MemPalace/mempalace",
+   "full_name": "MemPalace/mempalace",
+   "licence": "MIT",
+   "pr": 2717,
+   "issue": 2709,
+   "merge_commit": "1f0803a31958b30320418356b2db88c4ed9c27f9",
+   "parent": "55ed1df4faabfda69dcf53adfef3fd29cba38609",
+   "merged_at": "2026-10-10T21:03:05Z",
+   "test_modules": [
+    "tests/mcp/test_read_tools.py",
+    "tests/test_backends.py",
+    "tests/test_cli.py",
+    "tests/test_cli_source_adapters.py",
+    "tests/test_embedder_identity.py",
+    "tests/test_embedding.py",
+    "tests/test_embedding_model_fallback.py",
+    "tests/test_embeddinggemma2.py",
+    "tests/test_embeddinggemma2_chroma_warning.py",
+    "tests/test_embeddinggemma2_device.py",
+    "tests/test_embeddinggemma2_repair.py",
+    "tests/test_mcp_http_transport.py",
+    "tests/test_new_palace_identity.py",
+    "tests/test_palace.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "mempalace-2632",
+   "project": "MemPalace/mempalace",
+   "full_name": "MemPalace/mempalace",
+   "licence": "MIT",
+   "pr": 2632,
+   "issue": 2618,
+   "merge_commit": "fb315bc3a4e2a42bb0a07b3dc5c856e622be6bdb",
+   "parent": "741254421c31fb8e511c429133f5148d29bd4073",
+   "merged_at": "2026-10-10T18:48:15Z",
+   "test_modules": [
+    "tests/mcp/test_guards.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "i-have-adhd-57",
+   "project": "ayghri/i-have-adhd",
+   "full_name": "ayghri/i-have-adhd",
+   "licence": "MIT",
+   "pr": 57,
+   "issue": 53,
+   "merge_commit": "6df1f6264ea8dbcd9f1bb235b03c419f5b2a8d28",
+   "parent": "80c848f80d1908dc81df01116324f7485caa196b",
+   "merged_at": "2026-07-22T06:36:09Z",
+   "test_modules": [
+    "tests/test_run_evals.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "i-have-adhd-48",
+   "project": "ayghri/i-have-adhd",
+   "full_name": "ayghri/i-have-adhd",
+   "licence": "MIT",
+   "pr": 48,
+   "issue": 44,
+   "merge_commit": "1a9e52ad934e7e34cd3111c479dfcee62a96c580",
+   "parent": "57dcf96071db03c9dff9ffa6358ae6f570c681a4",
+   "merged_at": "2026-07-22T05:49:33Z",
+   "test_modules": [
+    "tests/test_run_evals.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "voicebox-1130",
+   "project": "jamiepine/voicebox",
+   "full_name": "jamiepine/voicebox",
+   "licence": "MIT",
+   "pr": 1130,
+   "issue": 434,
+   "merge_commit": "fee218ef0be33b87d5b29a7dca30c01569e17480",
+   "parent": "39b1c912914eac3a3695dd70d8de4e4a0edae0eb",
+   "merged_at": "2026-10-04T00:05:47Z",
+   "test_modules": [
+    "backend/tests/test_model_load_progress_offline.py",
+    "backend/tests/test_offline_guard.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -r backend/requirements.txt pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "voicebox-895",
+   "project": "jamiepine/voicebox",
+   "full_name": "jamiepine/voicebox",
+   "licence": "MIT",
+   "pr": 895,
+   "issue": 884,
+   "merge_commit": "68ece25a80a324596d82d45f5bd3efa31bf378a9",
+   "parent": "1db0fdf645fc567cbffefa0e8ba151e582459df1",
+   "merged_at": "2026-07-27T06:31:42Z",
+   "test_modules": [
+    "backend/tests/test_mcp_speak.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -r backend/requirements.txt pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "cli-anything-419",
+   "project": "HKUDS/CLI-Anything",
+   "full_name": "HKUDS/CLI-Anything",
+   "licence": "Apache-2.0",
+   "pr": 419,
+   "issue": 418,
+   "merge_commit": "b6da3c8f1012b431982b8a735db7b0789976b78a",
+   "parent": "d1eca95a4731fc2c9e5d3d7a00afe97c3cb346e4",
+   "merged_at": "2026-08-21T07:25:42Z",
+   "test_modules": [
+    "cli-hub/tests/test_cli_hub.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e cli-hub pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "cli-anything-421",
+   "project": "HKUDS/CLI-Anything",
+   "full_name": "HKUDS/CLI-Anything",
+   "licence": "Apache-2.0",
+   "pr": 421,
+   "issue": 407,
+   "merge_commit": "c91059d835f488f4f032b88eff7dc7ed5412b444",
+   "parent": "1c451645ef2efb260664b80d8024bf4c2bba0533",
+   "merged_at": "2026-08-21T07:25:09Z",
+   "test_modules": [
+    "audacity/agent-harness/cli_anything/audacity/tests/test_full_e2e.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \"audacity/agent-harness[dev]\""
+   ],
+   "env": {}
+  },
+  {
+   "id": "private-gpt-2394",
+   "project": "zylon-ai/private-gpt",
+   "full_name": "zylon-ai/private-gpt",
+   "licence": "Apache-2.0",
+   "pr": 2394,
+   "issue": 2392,
+   "merge_commit": "42398f8e076369d91887a7f78f9577054fc248c8",
+   "parent": "f180256fea990effb7ca57d4a0f697e48efe2ae4",
+   "merged_at": "2026-10-09T13:03:23Z",
+   "test_modules": [
+    "tests/components/vector_store/test_qdrant_client_builder.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[test,vectorstore-qdrant]\""
+   ],
+   "env": {}
+  },
+  {
+   "id": "deeptutor-1041",
+   "project": "HKUDS/DeepTutor",
+   "full_name": "HKUDS/DeepTutor",
+   "licence": "Apache-2.0",
+   "pr": 1041,
+   "issue": 1040,
+   "merge_commit": "07bb3c19e91af04b1c7b4f52c2b711d88ea451c0",
+   "parent": "3f6e82405e333d0bbc13ebce33cfadf945a7cf0c",
+   "merged_at": "2026-08-29T03:30:11Z",
+   "test_modules": [
+    "tests/services/llm/test_anthropic_provider_fixes.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[dev]\""
+   ],
+   "env": {}
+  },
+  {
+   "id": "llama_index-23223",
+   "project": "run-llama/llama_index",
+   "full_name": "run-llama/llama_index",
+   "licence": "MIT",
+   "pr": 23223,
+   "issue": 23222,
+   "merge_commit": "169e450aa54d26ed3e0536b1a0f1ea537871aa5d",
+   "parent": "5885087ef817563306e1b655bcea0537ce0c12ba",
+   "merged_at": "2026-09-25T23:11:28Z",
+   "test_modules": [
+    "llama-index-integrations/llms/llama-index-llms-anthropic/tests/test_anthropic_utils.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e llama-index-integrations/llms/llama-index-llms-anthropic --group llama-index-integrations/llms/llama-index-llms-anthropic/pyproject.toml:dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "llama_index-23208",
+   "project": "run-llama/llama_index",
+   "full_name": "run-llama/llama_index",
+   "licence": "MIT",
+   "pr": 23208,
+   "issue": 23207,
+   "merge_commit": "5885087ef817563306e1b655bcea0537ce0c12ba",
+   "parent": "cf8311c42dfe57bcd6bf106424481c808307ee61",
+   "merged_at": "2026-09-25T23:11:05Z",
+   "test_modules": [
+    "llama-index-integrations/llms/llama-index-llms-bedrock-converse/tests/test_bedrock_converse_utils.py",
+    "llama-index-integrations/llms/llama-index-llms-bedrock-converse/tests/test_llms_bedrock_converse.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e llama-index-integrations/llms/llama-index-llms-bedrock-converse --group llama-index-integrations/llms/llama-index-llms-bedrock-converse/pyproject.toml:dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "supervision-2786",
+   "project": "roboflow/supervision",
+   "full_name": "roboflow/supervision",
+   "licence": "MIT",
+   "pr": 2786,
+   "issue": 2757,
+   "merge_commit": "e889c4d40ac96b158f30060e2997d9836c43d6ef",
+   "parent": "b651cca2f8154bb23a9253c6f6f2a65b1ac10b5c",
+   "merged_at": "2026-10-26T09:40:19Z",
+   "test_modules": [
+    "tests/dataset/formats/test_yolo.py",
+    "tests/detection/utils/test_polygons.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "supervision-2795",
+   "project": "roboflow/supervision",
+   "full_name": "roboflow/supervision",
+   "licence": "MIT",
+   "pr": 2795,
+   "issue": 2794,
+   "merge_commit": "88c28fd0acab1622be496a9c67d7546bef4443aa",
+   "parent": "734d899d4a0277e97e06404bb07f10fed6122e37",
+   "merged_at": "2026-10-24T21:14:43Z",
+   "test_modules": [
+    "tests/depth/test_core.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "exo-2499",
+   "project": "exo-explore/exo",
+   "full_name": "exo-explore/exo",
+   "licence": "Apache-2.0",
+   "pr": 2499,
+   "issue": 2464,
+   "merge_commit": "2ffb6990ba28e8a5b62e052c18a2c47797997b92",
+   "parent": "a23dbee50f2d69db34bcc9a38c13b95a55428ed6",
+   "merged_at": "2026-10-29T04:28:55Z",
+   "test_modules": [
+    "src/exo/utils/tests/test_channels.py",
+    "src/exo/worker/tests/unittests/test_runner/test_runner_blocked_holding_the_gil.py",
+    "src/exo/worker/tests/unittests/test_runner/test_runner_shutdown.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "exo-2486",
+   "project": "exo-explore/exo",
+   "full_name": "exo-explore/exo",
+   "licence": "Apache-2.0",
+   "pr": 2486,
+   "issue": 2430,
+   "merge_commit": "e07d3e815a6643311d8516ee324478ac67e38676",
+   "parent": "167ba368cdfea1ac0fa4b41832af463f3edefcf9",
+   "merged_at": "2026-10-29T04:14:19Z",
+   "test_modules": [
+    "src/exo/api/tests/test_placement_node_shares_api.py",
+    "src/exo/master/tests/test_placement.py",
+    "src/exo/master/tests/test_placement_node_shares.py",
+    "src/exo/utils/info_gatherer/tests/test_gpu_working_set.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "cowagent-3795",
+   "project": "zhayujie/CowAgent",
+   "full_name": "zhayujie/CowAgent",
+   "licence": "MIT",
+   "pr": 3795,
+   "issue": 3793,
+   "merge_commit": "855f210a338c0a57fa6286a73fd0adf9f11f681a",
+   "parent": "c690a031947f78e1f9245fbe976ae7a14e892b7c",
+   "merged_at": "2026-10-21T08:41:07Z",
+   "test_modules": [
+    "tests/test_bash_streaming.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -r requirements.txt pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "cowagent-3744",
+   "project": "zhayujie/CowAgent",
+   "full_name": "zhayujie/CowAgent",
+   "licence": "MIT",
+   "pr": 3744,
+   "issue": 3742,
+   "merge_commit": "db130545910a05688c88da80c8c93f2f99115a1d",
+   "parent": "f95f044b4a85f0df0aa17f419766c0cbd1b00ec8",
+   "merged_at": "2026-10-13T09:05:54Z",
+   "test_modules": [
+    "tests/test_cli_install_browser_sudo.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -r requirements.txt pytest"
+   ],
+   "env": {}
+  },
+  {
+   "id": "mitmproxy-8489",
+   "project": "mitmproxy/mitmproxy",
+   "full_name": "mitmproxy/mitmproxy",
+   "licence": "MIT",
+   "pr": 8489,
+   "issue": 8488,
+   "merge_commit": "c8a55fff43df386024c97181bcc08b0c61335a66",
+   "parent": "f9c59ef5243dd24e53e2b6e57c4fff64bc09f7c4",
+   "merged_at": "2026-10-20T07:40:21Z",
+   "test_modules": [
+    "test/mitmproxy/net/http/test_cookies.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "mitmproxy-8326",
+   "project": "mitmproxy/mitmproxy",
+   "full_name": "mitmproxy/mitmproxy",
+   "licence": "MIT",
+   "pr": 8326,
+   "issue": 8309,
+   "merge_commit": "af35c326cb020793f7c61b6a5c6ef78a3a998c23",
+   "parent": "c8e855310865aca74e634aab840fe5e1b026a938",
+   "merged_at": "2026-07-17T12:07:21Z",
+   "test_modules": [
+    "test/mitmproxy/proxy/layers/http/test_http.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "claude-howto-222",
+   "project": "luongnv89/claude-howto",
+   "full_name": "luongnv89/claude-howto",
+   "licence": "MIT",
+   "pr": 222,
+   "issue": 219,
+   "merge_commit": "b968f429866a02d2b18765f418e90cbc7f871b3e",
+   "parent": "9c44df16ee8fda8bf405e339bcb2b7a13ae6fe70",
+   "merged_at": "2026-10-29T00:16:49Z",
+   "test_modules": [
+    "scripts/tests/test_build_website.py",
+    "scripts/tests/test_check_cross_references.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \"scripts[dev]\""
+   ],
+   "env": {}
+  },
+  {
+   "id": "langgraph-9406",
+   "project": "langchain-ai/langgraph",
+   "full_name": "langchain-ai/langgraph",
+   "licence": "MIT",
+   "pr": 9406,
+   "issue": 8218,
+   "merge_commit": "858891aaa164ebdacf33b8f5e7f88b38b9132211",
+   "parent": "1526b0e82df6e2f9879eb0fb005d04d3fe469ebf",
+   "merged_at": "2026-10-26T23:35:14Z",
+   "test_modules": [
+    "libs/langgraph/tests/test_pregel_async.py",
+    "libs/langgraph/tests/test_tool_stream_handler.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e libs/langgraph --group libs/langgraph/pyproject.toml:test"
+   ],
+   "env": {}
+  },
+  {
+   "id": "langgraph-9407",
+   "project": "langchain-ai/langgraph",
+   "full_name": "langchain-ai/langgraph",
+   "licence": "MIT",
+   "pr": 9407,
+   "issue": 9284,
+   "merge_commit": "c2c73b4f912ff346f2498ced08a769c4cc9390fe",
+   "parent": "03e73ff51bf8c3dd9bf851695a0f0848a26b38bd",
+   "merged_at": "2026-10-26T20:29:23Z",
+   "test_modules": [
+    "libs/langgraph/tests/test_pregel_async.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e libs/langgraph --group libs/langgraph/pyproject.toml:test"
+   ],
+   "env": {}
+  },
+  {
+   "id": "gradio-13983",
+   "project": "gradio-app/gradio",
+   "full_name": "gradio-app/gradio",
+   "licence": "Apache-2.0",
+   "pr": 13983,
+   "issue": 13982,
+   "merge_commit": "020c76cd18e59609a26dc006f25d3bb071e3b8b2",
+   "parent": "8a77753ffd0cb7bf9c3c30d5f5a0aebb665cda30",
+   "merged_at": "2026-10-20T04:44:26Z",
+   "test_modules": [
+    "test/test_queueing.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python --torch-backend cpu -e \".[oauth,mcp]\" -e client/python -r test/requirements.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "gradio-13949",
+   "project": "gradio-app/gradio",
+   "full_name": "gradio-app/gradio",
+   "licence": "Apache-2.0",
+   "pr": 13949,
+   "issue": 13950,
+   "merge_commit": "526c24340024dfae9c9a7709aad552382ed99f86",
+   "parent": "2cdd7727442fa2a8560992e1d8e164e18e1527aa",
+   "merged_at": "2026-10-09T18:49:11Z",
+   "test_modules": [
+    "test/test_ranged_response.py",
+    "test/test_routes.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python --torch-backend cpu -e \".[oauth,mcp]\" -e client/python -r test/requirements.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "deepspeed-8909",
+   "project": "deepspeedai/DeepSpeed",
+   "full_name": "deepspeedai/DeepSpeed",
+   "licence": "Apache-2.0",
+   "pr": 8909,
+   "issue": 8797,
+   "merge_commit": "322283b2509f8fbf6bbf2bc1306f749f9d7c6a41",
+   "parent": "b5829596d6230275b7464ecf5a704b9b5a6ceccd",
+   "merged_at": "2026-10-27T17:40:04Z",
+   "test_modules": [
+    "tests/unit/comm/test_comms_logger.py",
+    "tests/unit/utils/test_timer.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[dev]\""
+   ],
+   "env": {}
+  },
+  {
+   "id": "deepspeed-8882",
+   "project": "deepspeedai/DeepSpeed",
+   "full_name": "deepspeedai/DeepSpeed",
+   "licence": "Apache-2.0",
+   "pr": 8882,
+   "issue": 8881,
+   "merge_commit": "507602ff5cef8d7f065a3a4b1b6befe37b5e4ba8",
+   "parent": "62656fe76e42f7866b8fa3bb6e0867f35de415a6",
+   "merged_at": "2026-10-27T03:45:35Z",
+   "test_modules": [],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[dev]\""
+   ],
+   "env": {}
+  },
+  {
+   "id": "ifixai-350",
+   "project": "ifixai-ai/iFixAi",
+   "full_name": "ifixai-ai/iFixAi",
+   "licence": "Apache-2.0",
+   "pr": 350,
+   "issue": 349,
+   "merge_commit": "2c8801f33754ee5b51018e95db352e39e83375c6",
+   "parent": "7bfe4e9d69f41c498cc3c8e82045912c8a12fcfa",
+   "merged_at": "2026-10-22T04:54:00Z",
+   "test_modules": [
+    "ifixai/tests/test_markdown_evidence_provenance.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[dev]\""
+   ],
+   "env": {}
+  },
+  {
+   "id": "agno-11347",
+   "project": "agno-agi/agno",
+   "full_name": "agno-agi/agno",
+   "licence": "Apache-2.0",
+   "pr": 11347,
+   "issue": 11344,
+   "merge_commit": "e8d7de8b300b62f109e3e272bf8011ad1268cd37",
+   "parent": "3b7042246fcd5ce75853d21cbee83483d49892ba",
+   "merged_at": "2026-10-28T12:34:13Z",
+   "test_modules": [
+    "libs/agno/tests/unit/eval/test_accuracy_eval.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e libs/agnoctl -e \"libs/agno[dev]\""
+   ],
+   "env": {}
+  },
+  {
+   "id": "agno-11327",
+   "project": "agno-agi/agno",
+   "full_name": "agno-agi/agno",
+   "licence": "Apache-2.0",
+   "pr": 11327,
+   "issue": 11322,
+   "merge_commit": "3b7042246fcd5ce75853d21cbee83483d49892ba",
+   "parent": "d9ab0a758286142e7d998ef313ee7504d7fd9453",
+   "merged_at": "2026-10-28T08:46:08Z",
+   "test_modules": [
+    "libs/agno/tests/unit/os/routers/test_knowledge_upload_chunker.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e libs/agnoctl -e \"libs/agno[dev]\""
+   ],
+   "env": {}
+  },
+  {
+   "id": "manim-5078",
+   "project": "ManimCommunity/manim",
+   "full_name": "ManimCommunity/manim",
+   "licence": "MIT",
+   "pr": 5078,
+   "issue": 4945,
+   "merge_commit": "bb380986b16273d4197bcf21e1365b5f0dcad505",
+   "parent": "7c73d5159caf33a066ccf3549232fd5fca6f91bd",
+   "merged_at": "2026-10-24T21:56:07Z",
+   "test_modules": [
+    "tests/module/mobject/geometry/test_unit_geometry.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "manim-5040",
+   "project": "ManimCommunity/manim",
+   "full_name": "ManimCommunity/manim",
+   "licence": "MIT",
+   "pr": 5040,
+   "issue": 4949,
+   "merge_commit": "a6d029efc1684acde9940ebd6e48520764641e27",
+   "parent": "cbaf84a5a01d4430f298c84f4e22b2fa7b936a2f",
+   "merged_at": "2026-10-05T22:51:55Z",
+   "test_modules": [
+    "tests/opengl/test_opengl_camera.py",
+    "tests/opengl/test_threed_scene_opengl.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "agents-668",
+   "project": "wshobson/agents",
+   "full_name": "wshobson/agents",
+   "licence": "MIT",
+   "pr": 668,
+   "issue": 660,
+   "merge_commit": "31fdae14d6767218f5f3657a52cd819a293e4891",
+   "parent": "7f38372210b740c1f06c9367c168b48a29f02937",
+   "merged_at": "2026-08-18T14:31:31Z",
+   "test_modules": [
+    "plugins/plugin-eval/tests/test_engine.py",
+    "plugins/plugin-eval/tests/test_judge.py",
+    "plugins/plugin-eval/tests/test_monte_carlo.py",
+    "plugins/plugin-eval/tests/test_reporter.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \"plugins/plugin-eval[dev]\""
+   ],
+   "env": {}
+  },
+  {
+   "id": "agents-666",
+   "project": "wshobson/agents",
+   "full_name": "wshobson/agents",
+   "licence": "MIT",
+   "pr": 666,
+   "issue": 663,
+   "merge_commit": "960e11180ff5fe95fb42b85056241b3b055058d0",
+   "parent": "d43bb81e9ceef9ffbaf0a63f214e759cd5c65dd1",
+   "merged_at": "2026-08-18T14:31:24Z",
+   "test_modules": [
+    "tools/tests/test_install_copilot.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \"plugins/plugin-eval[dev]\""
+   ],
+   "env": {}
+  },
+  {
+   "id": "colossalai-6469",
+   "project": "hpcaitech/ColossalAI",
+   "full_name": "hpcaitech/ColossalAI",
+   "licence": "Apache-2.0",
+   "pr": 6469,
+   "issue": 6465,
+   "merge_commit": "218cb5b0bc1c6d0d5f99e8d2e7dcb953918801fe",
+   "parent": "bcb2307745f167a4ab6f0075a1919b79ead71938",
+   "merged_at": "2026-10-19T07:02:57Z",
+   "test_modules": [
+    "tests/test_moe/test_moe_ep_zero_grad_norm.py",
+    "tests/test_shardformer/test_hybrid_parallel_grad_clip_norm/test_zero_optimizer.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -r requirements/requirements-test.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "colossalai-6468",
+   "project": "hpcaitech/ColossalAI",
+   "full_name": "hpcaitech/ColossalAI",
+   "licence": "Apache-2.0",
+   "pr": 6468,
+   "issue": 6466,
+   "merge_commit": "bcb2307745f167a4ab6f0075a1919b79ead71938",
+   "parent": "483fa9c3ad9590dc652fdda32648d217162fae95",
+   "merged_at": "2026-10-19T07:02:12Z",
+   "test_modules": [
+    "tests/test_moe/test_moe_ep_sp_grad_sync.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -r requirements/requirements-test.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "lightrag-4146",
+   "project": "HKUDS/LightRAG",
+   "full_name": "HKUDS/LightRAG",
+   "licence": "MIT",
+   "pr": 4146,
+   "issue": 3891,
+   "merge_commit": "f2f55ec42cb8aedcc6bd54191628820d562fb552",
+   "parent": "4d0afc1bc36e6a34d4a5895b68efe9413748627a",
+   "merged_at": "2026-10-14T09:18:16Z",
+   "test_modules": [
+    "tests/kg/milvus_impl/test_milvus_migration_retry.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[pytest,offline-storage]\""
+   ],
+   "env": {}
+  }
+ ]
+}

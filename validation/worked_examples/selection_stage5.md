@@ -2,9 +2,27 @@
 # Stage 5: the selection record
 
 **Status: the draw is final, on 2026-11-04, before any of its runs.** 130 bugs from
-74 projects. Tasks are drafted next, then the blind determinacy audit, then preparation
+74 projects. Tasks are drafted (`tasks_stage5.json`, below); next come the blind determinacy audit, then preparation
 (`images`, `validate`, `selfcheck`, `freecheck`); a bug that fails preparation gives way to the next kept candidate in this
 order, as stage 2's rule says.
+
+## Tasks drafted
+
+`tasks_stage5.json` holds the 130 in the draw's order, each with the earlier sets' twelve fields. All fields but `install`
+and `env` come from the screens. Test modules are the pull request's own test files, by path alone; no test's content, diff,
+fix or issue discussion was read. A project an earlier set holds reuses that set's install and env (32 tasks, 18 projects),
+except tomlkit and opentelemetry, whose packaging differs at these parents and which were drafted afresh. The rest were
+drafted from each project's packaging files at the parent, in the order: a dependency group for tests (37), a test extra (15),
+a test requirements file (17), else the named packages the maintainers' tests need (29). 16 tasks set an environment
+variable, a pretend version for a build backend that reads git tags. Every group, extra, requirements file and folder an
+install line names exists at its parent; no install has been run, so preparation is where a line is shown to work.
+
+What preparation is likely to meet, from the packaging files alone: 80 tasks carry at least one concern, among them GPU or
+CUDA tests (6), a Python other than the image's 3.12 (4: private-gpt-2394 needs below 3.12, python-15435 3.15 or later, the
+two exo tasks 3.13 only), a non-Python build step (15), very heavy dependencies (22) and services such as Redis, Postgres or
+the network (20). deepspeed-8882's pull request changes no test module, only CI files and `tests/conftest.py`, so it has no
+maintainers' test to fail at the parent. These are not reasons to leave a bug out before preparation: each stays in the draw,
+and one that fails preparation gives way to the next kept candidate, as the rule says.
 
 ## The rule
 
