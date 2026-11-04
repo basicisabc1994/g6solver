@@ -2407,7 +2407,9 @@ with what judges it: a namespace, a folder, a process tree and a container.
 - The probe runs in a namespace of its own. Whether a value is JSON is decided by an exact walk of types, with no equality
   the value supplies.
 - The probe's text is read by the same rule as the model's data (finding 1: one fact, one rule).
-- The probe works in an empty temporary folder, with the pytest process's import path.
+- The probe keeps the project folder as its working folder, since probes read the project's files by relative path. It gets
+  the pytest process's import path. (Amended before any build: an empty folder would turn those probes into misses, and a
+  container for each run already removes what finding 3 found, as the probe's answer is computed once a run.)
 - On a timeout, the whole process group is ended.
 - Each run of replay 6, the parent's and the patch's, gets a container of its own.
 - A compiled test's record is named by the compiler's source as well as the instruction.
