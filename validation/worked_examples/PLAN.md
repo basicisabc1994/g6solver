@@ -2175,3 +2175,31 @@ Claude Code on the bugs where that is possible.
 4. Draw about 130 new bugs by the T2 rule, with the blind determinacy audit and preparation.
 5. Run A and K2 twice each on stage 4's bugs and the new ones. The prediction registered at 1a98c52 is read on the
    determined bugs.
+## 2026-11-04 (evening): stage 5's bugs, the rule before the draw
+
+**Purpose.** The powered K2 study (1a98c52, f52e316) needs about 100 determined unseen bugs. Stage 4's 31 count, since K2
+has seen none of them. Stage 5 adds about 130.
+
+**The rule.** Stage 4's T2 rule, unchanged in every other respect:
+- **Projects.** The 63 that the 2026-10-31 screen kept (`selection/candidates_unseen.json`), in rank order from 1 to 100.
+- **Candidates.** Each project gives at most its next two newest: merged, linked to an issue, not marked mechanical. A
+  candidate is skipped if stages 1, 2 or 4 drew it, or if any task set holds its bug.
+- **Judgement.** A model reader judges T2 on the issue's text alone, never on a fix, a test or a run. Security reports are
+  left out.
+- **Stop.** At 130 kept, or when the projects run out. If they run out first, the count is what it is: no third
+  candidate per project is drawn.
+
+**After the draw, in order.**
+1. Tasks drafted: parent commit, maintainers' fail-to-pass tests.
+2. The blind determinacy audit: two families, Codex and Opus, labels only.
+3. Preparation: `images`, `validate`, `selfcheck`, `freecheck`.
+
+A bug that fails preparation gives way, with no replacement. There are no amendments. The record is `selection_stage5.md`.
+
+**The owner's framing of the goal, 2026-11-04 (evening).**
+- Show on real bugs that G6 improves Claude Code.
+- Show that G6's self-diagnosis and self-rectification loop does this from data, essentially autonomously.
+- Then offer it as a framework: users bring their own tasks with a truth signal, and G6 first analyses whether their data
+  suffices, then builds and validates their harness.
+- This study is the first part. The 0.3.0 loop is the second. It must make headroom its pre-spend check, and make
+  structural edits part of what it can propose.
