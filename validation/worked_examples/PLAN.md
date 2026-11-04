@@ -2355,3 +2355,18 @@ replay 6 goes no further and arm F is not built.
 - The model is only as right as the readers' reading of the issue. Two readers who misread it the same way give a confident
   wrong model, so false alarms are always read against the maintainers' tests, never against the model.
 - Undetermined bugs stay undetermined.
+## 2026-11-04 (evening): the parent gate is by case, found by replay 6's review, before replay 5 runs
+
+**What the review found.** Replay 6's first Codex review reproduced the fault. Replay 3's verdict flagged a patch when any case
+failed on the parent and any case failed on the patch. It did not require the same case. Replays 4, 5 and 6 share that verdict.
+
+**What was registered.**
+- Replays 5 and 6 were registered with the stricter rule: a case that fails on the parent still fails on the patch.
+- K2's gate, and the gated counts at 1a98c52, were computed case by case from the saved results, so they used it too.
+
+**Repaired at `claude/replay5` cf211ee, test first, before replay 5's first run.**
+- `Instruction.same_case` turns the rule by case on. Replays 5 and 6 turn it on.
+- Replays 3 and 4 keep the rule they were scored with, so their recorded results stand as recorded.
+
+**Reported beside them.** Replays 3 and 4 are also scored by case, from the per-case results their records already hold, with
+no rerun. The difference between the two rules is reported, by patch.
