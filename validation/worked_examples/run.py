@@ -41,6 +41,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 import copy
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
@@ -399,9 +400,12 @@ def trained(arm: str) -> dict[str, str]:
     else:
         return {}
     text = json.loads((HARNESS / f"{name}.json").read_text(encoding="utf-8"))
-    odd = sorted(set(text) - set(TRAINED))
+    odd = sorted(set(text) - set(TRAINED) - set(STRUCTURAL))
     if odd:
         raise ValueError(f"harness training cannot change {odd}")
+    bad = sorted(k for k in STRUCTURAL if k in text and text[k] not in STRUCTURAL[k])
+    if bad:
+        raise ValueError(f"harness training gave {bad} a value outside {[STRUCTURAL[k] for k in bad]}")
     return text
 
 
@@ -967,6 +971,9 @@ R3_PROBE = {(R3_MODELS[1], task, "D", 1) for task in ("black-5634", "attrs-1593"
 R3_D_G6 = "f50953c"          # arm D's G6, reviewed (PLAN.md, 2026-10-30): its refusals name proposed_checks
 HARNESS = Path(__file__).resolve().parent / "harness"   # the distilled text of each generation
 TRAINED = ("fixer", "scout", "repair", "critic")   # the parts of the loop harness training can add to
+#: The structural choices a generation may make, each from a closed list (PLAN.md, 2026-11-04, evening). ``finding``: which of a
+#: reviewer's failing cases go back to the agent: any, as K1 sends them, or only those that failed on the parent too.
+STRUCTURAL = {"finding": ("any", "parent")}
 R3_LOOP_G6 = "c53d310"       # the distillation loop's G6 (PLAN.md, 2026-10-30)
 R3_HELD = ("black-5521", "click-3769", "starlette-3718")   # by hash, before any tuning; never read by the distiller
 R3_HELD_REPEATS = 5          # the final comparison, set before any generation ran (PLAN.md, 2026-10-30)
@@ -1866,15 +1873,25 @@ def keep_first_patch(ctx: Context, task: Task, agent: str, base: str, n: int = 1
     ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/rounds/round-{n}.patch"), workdir=task.repo, timeout=300)
 
 
+def finding_rule(arm: str) -> str:
+    """Which of a reviewer's failing cases go back to the agent in arm ``arm``: "any", as K1 sends them, or "parent", only those
+    that failed on the parent too (K2), as the arm's generation sets it (``STRUCTURAL``)."""
+    return trained(arm).get("finding", "any")
+
+
 def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, tally: c.Tally,
-                        stop: float, started: float, critique: Callable[[int], dict[str, Any]]) -> dict[str, Any]:
+                        stop: float, started: float, critique: Callable[[int], dict[str, Any]], finding: str = "any") -> dict[str, Any]:
     """Arm K (PLAN.md, 2026-11-01): plain Claude Code, then the patch is read by another model family, repaired in the same session if
     the reader's test fails on it, and read again, until a reader reproduces nothing. One review saw one layer of a defect, so one
-    repair stopped there. The agent may reject a finding, and leaving the code as it was ends the loop. No scout, no probes, no G6."""
+    repair stopped there. The agent may reject a finding, and leaving the code as it was ends the loop. No scout, no probes, no G6.
+    With ``finding`` "parent" (K2, PLAN.md, 2026-11-04, evening), each round's test is also run on the parent in a container of its
+    own, and only the cases that failed there and still fail go back; a parent run with no result sends nothing back."""
     def tree() -> str:
         return out(ctx.docker.sh(agent, "git status --porcelain; git diff", workdir=task.repo, timeout=120))
 
-    rounds, failing, reason, verdicts, seconds = 0, [], "", [], 0.0
+    gated = finding == "parent"          # K2 (PLAN.md, 2026-11-04, evening)
+    at_parent: dict[str, str] = {}       # every round's test on the parent, in a container of its own, by case
+    rounds, failing, reason, verdicts, seconds, broken = 0, [], "", [], 0.0, False
     for n in range(1, MAX_REPAIRS + 2):
         rounds = n
         keep_first_patch(ctx, task, agent, base, n)
@@ -1886,6 +1903,22 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
             got = run_set(ctx, task, agent, CRITIC_AT)
             run.write_json(f"repair_check_{n}_critic.json", {"exit": got.exit, "ran": got.ran, "results": got.results, "tail": got.tail})
             failing = sorted(failures_of([("critic", got, None)])[0]) if got.usable else []
+            if gated and failing:
+                try:
+                    parent = parent_check(ctx, task, critic, SimpleNamespace(at=CRITIC_AT, file=critic_files(n)[1]))
+                except (RuntimeError, OSError, subprocess.SubprocessError):
+                    parent = None
+                if parent is None or parent.exit is None:
+                    failing, broken = [], True
+                    reason = "the review's test gave no result on the parent, so no finding could be read"
+                    break
+                run.write_json(f"repair_check_{n}_critic_parent.json", {"exit": parent.exit, "ran": parent.ran,
+                                                                        "results": parent.results, "tail": parent.tail})
+                at_parent.update(parent.results)
+                failing = [case for case in failing if at_parent.get(case.split(":", 1)[1]) in ("failed", "error")]
+                if not failing:
+                    reason = "every case the review's test failed on the patch passed on the parent"
+                    break
         if not failing:
             reason = "a review reproduced nothing" if critic.get("verdict") in ("none", "defect") else "a review failed"
             break
@@ -1899,9 +1932,10 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
         if tree() == before:
             reason = "the agent left the code as it was"
             break
-    clean = not failing and verdicts[-1] in ("none", "defect")
+    clean = not failing and not broken and verdicts[-1] in ("none", "defect")
     return {"status": "no_counterexample_in_domain" if clean else "inconclusive", "rounds": rounds, "reason": reason,
-            "failing": failing[:40], "critic": {"verdicts": verdicts, "seconds": round(seconds, 1)}}
+            "failing": failing[:40], "critic": {"verdicts": verdicts, "seconds": round(seconds, 1)},
+            **({"finding": "parent"} if gated else {})}
 
 
 def review_once(ctx: Context, task: Task, run: Any, agent: str, docker_args: list[str], key: str, tally: c.Tally, stop: float,
@@ -2222,7 +2256,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                                             lambda: run_critic(ctx, task, run, agent, base, title, text))
         if critic_led and not dry and not ended:
             record["repairs"] = reviews_until_clean(ctx, task, run, agent, base, docker_args, key, tally, stop, started,
-                                                    lambda n: run_critic(ctx, task, run, agent, base, title, text, n))
+                                                    lambda n: run_critic(ctx, task, run, agent, base, title, text, n),
+                                                    finding=finding_rule(ctx.arm))
         if test_led and not dry and not ended:
             record["repairs"] = reviews_with_bug_test(ctx, task, run, agent, base, docker_args, key, tally, stop, started, bug)
         result = tally.result or {}
