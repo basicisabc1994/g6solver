@@ -15,6 +15,7 @@ import tarfile
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -317,9 +318,41 @@ def test_an_allowed_value_with_no_credential_passes_unchanged():
     assert we.host_env(kept) == {**kept, **helpers.FIXED}
 
 
-def test_every_allowed_variable_read_as_a_url_has_its_value_checked_for_any_at_sign():
+def test_every_allowed_variable_programs_read_as_a_url_is_also_read_with_no_scheme():
     assert we.HOST_ENV_URLS <= we.HOST_ENV_NAMES
     assert {n for n in we.HOST_ENV_NAMES if n.endswith("_PROXY") and n != "NO_PROXY"} | {"DOCKER_HOST"} == we.HOST_ENV_URLS
+
+
+# --- 3b. a URL's user and password are what the URL parser reads (follow-up review 1, findings 1 and 2) -------------------------
+def _reads_userinfo(url: str) -> bool:
+    parts = urlsplit(url)
+    return parts.username is not None or parts.password is not None
+
+
+@pytest.mark.parametrize(("name", "value", "url"), [
+    ("NODE_EXTRA_CA_CERTS", "https://review-user:review password@proxy.invalid/ca.pem", None),  # follow-up review 1, finding 1
+    ("HTTPS_PROXY", "http://review-user:review password@proxy.invalid:8080", None),
+    ("HTTP_PROXY", "review-user:review password@proxy.invalid:8080", "//review-user:review password@proxy.invalid:8080"),
+    ("DOCKER_HOST", "u:p w@host.invalid:2376", "//u:p w@host.invalid:2376"),
+    ("PATH", r"D:\tools;https://u:p w@host.invalid/x;D:\bin", "https://u:p w@host.invalid/x"),
+    ("NO_PROXY", "localhost, https://u:p w@host.invalid", "https://u:p w@host.invalid")])
+def test_follow_up_review_1_finding_1_a_user_or_password_the_url_parser_reads_never_reaches_the_host_session(name, value, url):
+    assert _reads_userinfo(url or value)
+    assert we.host_env({"TEMP": "t", name: value}) == {"TEMP": "t", **helpers.FIXED}
+
+
+@pytest.mark.parametrize(("name", "value"), [("HTTPS_PROXY", "http://u@[::1"), ("SSL_CERT_FILE", "https://u:p@[::1/ca.pem")])
+def test_a_url_the_parser_cannot_read_is_not_passed(name, value):
+    with pytest.raises(ValueError):
+        urlsplit(value)
+    assert we.host_env({"TEMP": "t", name: value}) == {"TEMP": "t", **helpers.FIXED}
+
+
+@pytest.mark.parametrize("value", ["npipe:////./pipe/g6@review", "npipe:////./pipe/docker_engine",
+                                   "unix:///run/user@1000/docker.sock", "tcp://127.0.0.1:2376"])
+def test_follow_up_review_1_finding_2_a_docker_endpoint_with_no_user_or_password_keeps_its_daemon(value):
+    assert not _reads_userinfo(value) and not _reads_userinfo("//" + value)
+    assert we.host_env({"TEMP": "t", "DOCKER_HOST": value}) == {"TEMP": "t", "DOCKER_HOST": value, **helpers.FIXED}
 
 
 # --- 4. a pack is checked whole before anything is sent (review 4, findings 2 and 6) -------------------------------------------

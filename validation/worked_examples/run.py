@@ -44,6 +44,7 @@ import hashlib
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any
+from urllib.parse import urlsplit
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -1476,11 +1477,9 @@ HOST_ENV_NAMES = frozenset({
 HOST_ENV_PREFIXES = ("LC_", "PROCESSOR_")
 #: A name that may carry a key, a token or a password: dropped whatever admitted it, before ``HOST_FIXED_ENV`` is added.
 HOST_ENV_SECRET = re.compile(r"TOKEN|KEY|SECRET|PASS|AUTH|CREDENTIAL", re.I)
-#: An allowed variable whose value is read as a URL, with a scheme or without one (a proxy given as ``user:password@host:port``
-#: is read so): any "@" in its value may end a user, a password or a token, so the variable is dropped.
+#: An allowed variable programs read as a URL with a scheme or without one (a proxy given as ``user:password@host:port``; docker
+#: reads ``host:port`` as tcp): its value is also read as a URL's authority with no scheme (``host_value_holds_userinfo``).
 HOST_ENV_URLS = frozenset({"HTTP_PROXY", "HTTPS_PROXY", "DOCKER_HOST"})
-#: In any other allowed value, a URL with something before an "@": a user, a password or a token; the variable is dropped.
-HOST_ENV_USERINFO = re.compile(r"://\S*@")
 #: Set in every host session, after the allowlist: no claude.ai connectors (2.1.318 lets them through --strict-mcp-config), no
 #: retry of a refused request on another model, and the container runs' no updates, telemetry, error reports, other traffic or
 #: memory, so the version stays fixed through the study.
@@ -1515,11 +1514,21 @@ def host_env(environ: Mapping[str, str]) -> dict[str, str]:
 
 
 def host_value_holds_userinfo(name: str, value: str) -> bool:
-    """Whether an allowed variable's value may carry a credential in a URL: in a variable read as a URL (``HOST_ENV_URLS``), any
-    "@"; in any other, an "@" after a scheme's "://" (``HOST_ENV_USERINFO``). Such a variable is dropped whole, never passed with
-    the part before the "@" taken out: taking it out needs a parser that reads the URL exactly as each program that reads the
-    variable does, and a credential the two read differently would pass, while a dropped variable is plainly not there."""
-    return ("@" in value) if name.upper() in HOST_ENV_URLS else bool(HOST_ENV_USERINFO.search(value))
+    """Whether an allowed variable's value may carry a credential in a URL: a user or a password as the URL format's own parser
+    reads them (``urlsplit``), in the value read whole, in each URL the value holds read from its "://" on (a URL in a list, a
+    path or a proxy alike), and, in a variable programs read as a URL with no scheme (``HOST_ENV_URLS``), in the value read as an
+    authority. A value the parser cannot read is taken to carry one. No pattern of G6's own decides where a user or password
+    ends: a password with a space is still one, and an "@" in a pipe's or a socket's path is none. Such a variable is dropped
+    whole, never passed with the user and password taken out: taking them out needs a parser that reads the URL exactly as each
+    program that reads the variable does, and a credential the two read differently would pass, while a dropped variable is
+    plainly not there."""
+    readings = [value, *(value[m.start() + 1:] for m in re.finditer("://", value))]
+    if name.upper() in HOST_ENV_URLS:
+        readings.append("//" + value)
+    try:
+        return any(parts.username is not None or parts.password is not None for parts in map(urlsplit, readings))
+    except ValueError:
+        return True
 
 
 def host_init(obj: Any) -> dict[str, Any] | None:
