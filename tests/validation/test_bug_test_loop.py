@@ -91,15 +91,53 @@ def test_each_bug_test_arm_asks_under_its_replays_own_instruction():
         we.bug_instruction("V9")
 
 
-def test_the_bug_test_is_run_on_the_untouched_tree_and_taken_away_before_the_agent_starts(monkeypatch):
-    calls = []
-    monkeypatch.setattr(we, "write_in", lambda d, ctr, dest, text, **kw: calls.append(("write", dest)))
-    monkeypatch.setattr(we, "run_set", lambda ctx, task, agent, where: (calls.append(("run", where)), AT_PARENT)[1])
+def test_the_bug_test_runs_on_the_parent_in_a_container_of_its_own_and_never_in_the_agents(monkeypatch):
+    """Review v1 findings 2 and 3: the agent's container never holds the test before its first check, and its tree is never
+    touched by the parent run. The parent run is replay 3's (``final_review.container`` and ``parent_run``, docker checked)."""
+    import final_review as fr
+    calls, removed = [], []
+    monkeypatch.setattr(we, "write_in", lambda *a, **kw: pytest.fail("nothing is written in the agent's container"))
+    monkeypatch.setattr(we, "run_set", lambda *a, **kw: pytest.fail("nothing runs in the agent's container"))
+    monkeypatch.setattr(fr, "container", lambda ctx, task, name: calls.append(("container", type(ctx.docker).__name__)))
+    monkeypatch.setattr(fr, "parent_run", lambda ctx, task, name, test, where, file: (calls.append((where, file, test)), AT_PARENT)[1])
+    from types import SimpleNamespace
+    ctx = SimpleNamespace(docker=lambda *a, **kw: removed.append(a))
+    got = we.parent_check(ctx, type("T", (), {"repo": "/w/r"})(), {"test": TEST}, r4.SYMPTOM)
+    assert calls == [("container", "Checked"), (r4.SYMPTOM.at, r4.SYMPTOM.file, TEST)] and got is AT_PARENT
+    assert removed and removed[0][:2] == ("rm", "-f")
+
+
+def test_the_bug_test_is_asked_as_replay_4_asks_it_with_no_patch(monkeypatch):
+    """Review v1 finding 1: the reviewer is the measured one (``final_review._step``), which reads Codex's exit."""
+    import final_review as fr
+    asked = []
+    monkeypatch.setattr(fr, "_step", lambda ctx, task, patch, title, text, prompt, where, file, *, candidate, run:
+                        (asked.append((prompt, where, file, candidate, run)), {**bug(), "error": ""}, None, None)[1:])
+    got = we.ask_bug_test(type("Ctx", (), {})(), None, "title", "text", r4.SYMPTOM)
+    assert asked == [(r4.SYMPTOM_FIRST, r4.SYMPTOM.at, r4.SYMPTOM.file, False, False)] and got["test"] == TEST
+
+
+@pytest.mark.parametrize("at_parent", [we.ProbeRun(None, {}, {}, ""), None])
+def test_a_parent_run_with_no_result_is_a_failed_review(monkeypatch, at_parent):
+    got, asked, _ = _loop(monkeypatch, bug(at_parent=at_parent), [])
+    assert asked == [] and got["status"] == "inconclusive"
+
+
+def test_a_check_whose_docker_step_fails_or_gives_no_exit_is_no_clean_review(monkeypatch):
+    """Review v1 finding 4."""
+    got, asked, _ = _loop(monkeypatch, bug(), [we.ProbeRun(None, {}, {}, "")])
+    assert asked == [] and got["status"] == "inconclusive"
+
+    def broken(ctx, task, agent, where):
+        ctx.docker.sh(agent, "probe")
+        return ALL_HOLD
+    monkeypatch.setattr(we, "write_in", lambda *a, **kw: None)
+    monkeypatch.setattr(we, "run_set", broken)
     docker = _Docker(True)
-    ctx = type("Ctx", (), {"docker": docker})()
-    got = we.parent_check(ctx, type("T", (), {"repo": "/w/r"})(), "agent", {"test": TEST}, r4.SYMPTOM)
-    assert calls == [("write", f"{r4.SYMPTOM.at}/{r4.SYMPTOM.file}"), ("run", r4.SYMPTOM.at)] and got is AT_PARENT
-    assert any(f"rm -rf {r4.SYMPTOM.at}" in s for s in docker.scripts)          # nothing of it is left for the agent to read
+    docker.sh = lambda agent, script, *a, **kw: type("Done", (), {"stdout": b"", "stderr": b"", "returncode": 125})()
+    ctx = type("Ctx", (), {"docker": docker, "arm": "V4"})()
+    got = we.reviews_with_bug_test(ctx, type("T", (), {"repo": "/w/r"})(), _Run(), "agent", "b", [], "k", None, 1.0, 0.0, bug())
+    assert got["status"] == "inconclusive" and "failed to run" in got["reason"]
 
 
 def test_a_test_that_reproduces_nothing_on_the_parent_sends_nothing_back(monkeypatch):

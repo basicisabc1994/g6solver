@@ -52,7 +52,7 @@ MAX_CASES, MAX_RECORDS = 6, 8
 
 def judged_on() -> set[str]:
     """The bugs a harness is judged on: nothing about them reaches the proposer."""
-    return {*we.R3_HELD, *(t.id for path in (we.TASKS_FRESH, we.TASKS_UNSEEN) for t in we.load_tasks(path))}
+    return {*we.R3_HELD, *(t.id for path in we.fresh_sets() for t in we.load_tasks(path))}
 
 
 def verdicts(root: Path, arm: str, tasks: Sequence[str], repeats: Sequence[int] = (1, 2)) -> list[dict[str, Any]]:

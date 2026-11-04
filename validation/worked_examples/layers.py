@@ -12,12 +12,16 @@ errors they miss and never assumed from where they come from.
 from __future__ import annotations
 
 import collections
+import hashlib
+import io
 import json
 import re
+import tokenize
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
 import compare
+import product_review as pr
 import replay_compare as rc
 import wecommon as c
 from g6.core.binomial import lower_bound, upper_bound
@@ -27,24 +31,54 @@ TEST_PATH = re.compile(r"(^|/)(tests?|testing)/|(^|/)test_[^/]*\.py$|_test\.py$|
 Said = Mapping[str, Mapping[str, str]]
 
 
+def _tokens(body: str) -> str:
+    """One line of code as Python's tokenizer reads it, its tokens joined: layout and comments go, a string literal stays exactly
+    as written. A line the tokenizer cannot finish (a line of a string spanning lines) keeps the tokens it read, or is kept
+    stripped when it read none."""
+    got: list[str] = []
+    skip = (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.ENDMARKER)
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(body).readline):
+            if token.type not in skip:
+                got.append(token.string)
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        if not got:
+            return "" if body.strip().startswith("#") else body.strip()
+    return "".join(got)
+
+
 def change(text: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
-    """A patch's normalised source change: for each Python file outside tests, its added and removed lines in order, with
-    whitespace, blank lines and comment lines dropped; files sorted by path."""
+    """A patch's normalised source change: for each Python file outside tests, its added and removed lines in order, each as
+    its tokens (``_tokens``), blank and comment lines dropped; files sorted by path. A file's name is read as ``git apply``
+    reads it, with ``product_review``'s own reader, from its header, which ends at its first hunk; in a hunk every line is
+    content, whatever it begins with."""
     files: dict[str, list[str]] = {}
-    current = None
-    for line in text.splitlines():
+    current, header = None, False
+    for line in text.split("\n"):
+        line = line[:-1] if line.endswith("\r") else line
         if line.startswith("diff --git "):
-            found = re.match(r"diff --git a/(.*?) b/(.*)$", line)
-            current = found.group(2) if found and found.group(2).endswith(".py") and not TEST_PATH.search(found.group(2)) else None
-            if current:
-                files[current] = []
+            current, header = None, True
+            for old, new in pr._sides(line[len("diff --git "):]):
+                path = pr._applied(pr._unquoted(new))
+                if path and path == pr._applied(pr._unquoted(old)):
+                    current = path
+                    break
             continue
-        if current is None or line.startswith(("+++", "---", "@@", "index ", "new file", "deleted file", "similarity", "rename ")):
+        if header:
+            if line.startswith("+++ "):
+                name = pr._unquoted(line[4:].split("\t", 1)[0])
+                if name != "/dev/null" and pr._applied(name):
+                    current = pr._applied(name)
+            elif line.startswith(("@@", "GIT binary patch", "Binary files ")):
+                header = False
+                if not (current and current.endswith(".py") and not TEST_PATH.search(current)):
+                    current = None
             continue
-        if line[:1] in "+-":
-            body = re.sub(r"\s+", "", line[1:])
-            if body and not body.startswith("#"):
-                files[current].append(line[0] + body)
+        if current is None or line[:1] not in "+-":
+            continue
+        body = _tokens(line[1:])
+        if body:
+            files.setdefault(current, []).append(line[0] + body)
     return tuple(sorted((path, tuple(lines)) for path, lines in files.items() if lines))
 
 
@@ -72,14 +106,17 @@ def mixed(runs: Mapping[str, Sequence[tuple[str, object, bool]]]) -> set[str]:
 
 
 def table(kinds: Mapping[str, str], said: Said) -> dict[str, dict[str, object]]:
-    """Each layer's counts as (flagged, judged): by kind, and its misses on wrong patches and false alarms on right ones."""
+    """Each layer's counts as (flagged, judged): by kind, and its misses on wrong patches and false alarms on right ones. A
+    review counts as the comparison counts it (``replay_compare.right``): on a right patch any word but "none" is a false
+    alarm; on a wrong patch only "reproduced" catches it."""
     out = {}
     for layer, verdicts in said.items():
         cells = {kind: [0, 0] for kind in KINDS}
         for sha, verdict in verdicts.items():
             if sha in kinds:
+                truth = kinds[sha] == "right"
                 cells[kinds[sha]][1] += 1
-                cells[kinds[sha]][0] += verdict == "reproduced"
+                cells[kinds[sha]][0] += rc.right(layer, verdict, truth) != truth
         wrong = [cells["commonest wrong"], cells["other wrong"]]
         flagged_wrong, judged_wrong = sum(x[0] for x in wrong), sum(x[1] for x in wrong)
         out[layer] = {"flagged": {kind: tuple(cells[kind]) for kind in KINDS},
@@ -107,9 +144,10 @@ def runs_of(root: Path, tasks: Iterable[str], score: str) -> dict[str, list[tupl
         if row.get("task") not in wanted or row.get("status") != "finished" or truth is None or not patch.is_file() \
                 or not patch.stat().st_size:
             continue
-        sha = c.sha256_file(patch)
+        raw = patch.read_bytes()                  # one read: the digest and the change are of these bytes
+        sha = hashlib.sha256(raw).hexdigest()
         if sha not in cache:
-            cache[sha] = change(patch.read_text("utf-8", errors="surrogateescape"))
+            cache[sha] = change(raw.decode("utf-8", errors="surrogateescape"))
         out[row["task"]].append((sha, cache[sha], bool(truth)))
     return out
 
