@@ -2546,3 +2546,28 @@ $178 stop.
 - **What follows.** On fresh bugs, both written tests cost more false alarms than they find wrong patches. That fits a bug test
   that guesses an exact output the issue does not state. It is the gap replay 6's formal model is built to close, by agreeing
   cells between two readers, so replay 6's development check is the next test of it.
+
+## 2026-11-05 (morning): replay 5's development check, as registered, by plain code
+
+**What ran.** Replay 5 ran at `claude/replay5` cf211ee:
+- a training smoke run on 7 bugs, which ended cleanly;
+- then the 34 bugs of stages 1 and 2, all 420 distinct patches, ending cleanly at 05:46.
+
+The counts come from `replay_compare.py`, on the amended tests.
+
+**The registered predictions.**
+1. **False alarms: met.** 10 of 279 right patches, which is 3.6% with a 95% upper bound of 6.0%.
+2. **Wrong patches flagged: not met.** 26 of 141, which is 18.4%, against the predicted 30% or more.
+3. **Wrong patches flagged that the symptom test passed: not yet scored.** `replay_compare` does not report the union; it is
+   counted next, by plain code, from the same records.
+
+**The kill rule** (under 15% flagged, or false alarms over 15%) is not met, so replay 5 is not killed.
+
+**Beside it.** The symptom test flagged 28 of 141 wrong patches, with 0 false alarms, and the rule test 63 of 141, with 48 false
+alarms. On the maintainers' tests, replay 5 against the final review is 218 right against 214, p = 0.41, with 13 bugs better and
+15 worse.
+
+**What follows.**
+- Each precise layer sees about a fifth of the wrong patches.
+- Whether the relation layer adds to the symptom layer is prediction 3.
+- If it passes, the next registered step is replay 5 on stage 4's arm A patches.
