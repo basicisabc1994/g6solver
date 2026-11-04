@@ -313,7 +313,7 @@ def test_a_url_with_a_user_or_password_in_any_allowed_variable_is_dropped(name, 
 def test_an_allowed_value_with_no_credential_passes_unchanged():
     kept = {"HTTPS_PROXY": "http://proxy.invalid:8080", "http_proxy": "http://proxy.invalid:3128/", "HTTP_PROXY": "proxy.invalid:80",
             "NO_PROXY": "localhost,127.0.0.1,.corp.invalid", "DOCKER_HOST": "npipe:////./pipe/docker_engine",
-            "PATH": r"C:\Users\a@b\bin;C:\tools", "USERPROFILE": r"C:\Users\a@b", "SSL_CERT_FILE": r"C:\certs\ca@corp.pem"}
+            "PATH": r"D:\home\a@b\bin;D:\tools", "USERPROFILE": r"D:\home\a@b", "SSL_CERT_FILE": r"D:\certs\ca@corp.pem"}
     assert we.host_env(kept) == {**kept, **helpers.FIXED}
 
 
