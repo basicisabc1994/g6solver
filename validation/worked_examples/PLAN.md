@@ -2222,6 +2222,15 @@ candidates.
   - Ranks 1 to 100 are taken first, then 101 to 250, in rank order.
   - The draw stops at 130.
 - **If the supply still falls short,** the study runs on what there is. Its power is reported for the number reached.
+- **How the widened screen reads its rules, set before it runs.**
+  - P1 is read as written: 10,000 stars, or a PyPI rank of 100 or better. A project ranked 101 to 250 therefore meets it by
+    stars alone. The count dropped for P1 is reported.
+  - The window is the deeper screen's, 2026-06-01 to 2026-10-29. The 2026-10-31 screen's own window began 2025-12-01, so
+    "the same window" above means the deeper screen's.
+  - Ranks come from PyPI's list as read now, with its update date recorded.
+  - A repository that an earlier screen covered, a training repository, or a repository an earlier rank already gave, is
+    skipped.
+  - The script is `rescreen6.py`, kept with the selection record. It writes `selection/candidates_stage5b.json`.
 ## 2026-11-04 (evening): replay 6, a formal model of the issue's rule checked on every case, registered before it is built
 
 **Owner's direction, 2026-11-04 (evening).** Push further: let the model use formal methods to model the problem, and so
