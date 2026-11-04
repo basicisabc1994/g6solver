@@ -2255,6 +2255,31 @@ The skills, plugins and agents its init lists are Claude Code's own bundled ones
   - A repository that an earlier screen covered, a training repository, or a repository an earlier rank already gave, is
     skipped.
   - The script is `rescreen6.py`, kept with the selection record. It writes `selection/candidates_stage5b.json`.
+**Third addendum, before any candidate is read.**
+
+**What the widened screen gave.** All 150 ranks were screened, with no errors.
+- Only 9 projects meet P1, P2 and P4, and 104 fail P1 among other rules.
+- 4 of the 9 have mechanically passing candidates: 30 in all, 8 under the cap.
+- So stage 5 has about 54 candidates, and stage 4 and 5 together about 36 determined bugs at past rates.
+
+**Power at that supply.** From `metaharness.evaluate.power`, for the gated effect registered at 1a98c52:
+
+| Determined bugs | 36 | 50 | 80 | 100 |
+|---|---|---|---|---|
+| Power | 0.26 | 0.42 | 0.69 | 0.80 |
+
+A study at 36 cannot decide, so it is not run as the powered study.
+
+**The fix, inside the rule.** P1 already admits any project with 10,000 stars. Only the population was limited, to PyPI's ranking.
+- **Population.** GitHub's Python repositories with at least 10,000 stars, from `gh search repos`, in star order, at most 1,000.
+- **Left out:**
+  - forks and archived repositories;
+  - every repository an earlier screen covered, and the training repositories.
+- **Rules.** P2 and P4, the mechanical rules and the window are unchanged, with up to 10 passing candidates each.
+- **Draw.** Two newest unused per project. Ranks 1 to 100 first, then 101 to 250, then this population in star order, to 130.
+- **A screen that meets GitHub's rate limit** waits and retries the same project. It never skips one.
+- **Record.** The script is `rescreen7.py`. It writes `selection/candidates_stage5c.json`.
+- **If this still falls short,** the study's power is reported for the number reached, and it is not called powered.
 ## 2026-11-04 (evening): replay 6, a formal model of the issue's rule checked on every case, registered before it is built
 
 **Owner's direction, 2026-11-04 (evening).** Push further: let the model use formal methods to model the problem, and so
