@@ -2032,3 +2032,53 @@ the behaviour they kept. A test of the whole rule against the reference would ha
 - **Blind readers who disagree.** M9 took its blind readers' checks as the answer. Where the readers disagree with each
   other, or with the maintainers' words in the discussion, the issue should be reported as ambiguous and their checks not
   sent back. That is a rule for any arm that uses blind readers.
+## 2026-11-04 (evening): headroom, where a self-checking loop can gain, and stage 4's forecast before its results
+
+**Owner's direction, 2026-11-04 (evening).** Return to the thesis of how agents check themselves:
+- show uplift wherever it is structurally possible, on determined bugs;
+- have the system itself say where none is possible, why, and what would have to change;
+- use subscription credit for further testing;
+- stop only once that is established;
+- then build the 0.3.0 loop, and then assess readiness for an early alpha.
+
+**Headroom, coded.** `validation/worked_examples/headroom.py` is at `claude/replay5` 6e51039, built test first, and is plain
+code over recorded patches and saved reviews. It puts each bug in the first class that holds:
+
+| Class | When it holds |
+|---|---|
+| undetermined | the audit says the target is not in the issue |
+| solved | every distinct patch is right |
+| generation | no patch is right |
+| separable | a layer flags a wrong patch and never a right one |
+| inseparable | otherwise |
+
+It names what must change for each class.
+
+**Stage 1 and 2's 20 determined bugs, maintainers' and amended alike.**
+- 15 solved: one run of A is right 97% of the time.
+- 2 generation: click-3404 and starlette-3189.
+- 2 inseparable: black-5148 and pygments-3158, A right 25%. Every layer that flags their wrong patches flags their right ones
+  too.
+- 1 separable: s3transfer-423, A right 0%, bound 100%, separated by the final review.
+
+**The classes account for every loop arm's gains and losses on determined bugs.**
+- **s3transfer-423 (separable).** Every self-checking arm (K0, K1, R, M9) was right on both runs. Every arm without a
+  reviewer (A, S, T) was right on neither.
+- **black-5148 (inseparable).** K1, M9 and T lost to A: a reviewer that also flags right patches sends right patches back.
+- **Solved bugs.** Ties, except where M9 lost on anyio-1354, anyio-1424 and urllib3-5254. On urllib3-5254, K1's "win" is A's
+  first run, which ended in an error with no patch.
+- **Reading.** A self-checking loop gains exactly where its check separates right from wrong, and loses where its check
+  flags right patches. On these bugs the two cancel: +1 against −1.
+- **What must change.** A check that separates more determined bugs and never flags a right one. The symptom test flags no
+  right patch, but separates no determined bug; its catches were on undetermined bugs. Replay 5's relations are the next
+  candidate, scored on stage 1 and 2 by its development check.
+
+**Stage 4's forecast, registered now.** Two whole bugs have been seen so far, both ties (uvicorn-3236, uvicorn-3199).
+- **Headroom is read the same way on stage 4** once replays 4 and 3 have run on its patches: A's and V4's runs as candidates,
+  and the symptom, rule and frozen layers where they exist.
+- **Forecast 1.** V4 is better than A on no more determined bugs than V4's own test separates, plus run-to-run variance.
+  The frozen rule is not met.
+- **Forecast 2.** V4 is worse than A on no determined bug through its test. Each V4 run whose final patch is wrong had its
+  test hold on that patch or reproduce nothing on the parent, never send back a patch that was right.
+- **How 2 is checked.** From V4's records: every repair note followed a check on a patch the test then still failed.
+- **Uplift is claimed only if the frozen rule is met,** as before.
