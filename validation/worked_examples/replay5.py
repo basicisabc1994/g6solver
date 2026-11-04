@@ -48,7 +48,9 @@ defect usually shows on other inputs and other paths too, and those are what you
 
 """ + r3.RULE_FIRST[r3.RULE_FIRST.index("<hard_limits>"):]
 INSTRUCTION = hashlib.sha256(RELATION_FIRST.encode("utf-8")).hexdigest()[:16]
-RELATION = r3.Instruction(RELATION_FIRST, INSTRUCTION, f"final_review_relation-{INSTRUCTION}", f"{we.WE}/relation", "test_relation.py")
+#: Its registration flags a patch only when a case that fails on the parent still fails on it (PLAN.md, 2026-11-04): by case.
+RELATION = r3.Instruction(RELATION_FIRST, INSTRUCTION, f"final_review_relation-{INSTRUCTION}", f"{we.WE}/relation", "test_relation.py",
+                          same_case=True)
 FOLDER = RELATION.folder
 
 

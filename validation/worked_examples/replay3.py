@@ -102,6 +102,9 @@ class Instruction:
     folder: str
     at: str
     file: str
+    #: The parent gate by case (PLAN.md, 2026-11-04, evening): a patch is reproduced only when a case that fails on the parent
+    #: still fails on it. Off for replays 3 and 4, which were scored without it; on where a registration states it.
+    same_case: bool = False
 
 
 def rule() -> Instruction:
@@ -126,9 +129,10 @@ def failed_cases(run: we.ProbeRun | None) -> list[str]:
     return sorted(f"rule:{case}" for case, outcome in (run.results if run else {}).items() if outcome == "failed")
 
 
-def verdict(found: Mapping[str, Any], base: we.ProbeRun | None, now: we.ProbeRun | None) -> dict[str, Any]:
+def verdict(found: Mapping[str, Any], base: we.ProbeRun | None, now: we.ProbeRun | None, *,
+            same_case: bool = False) -> dict[str, Any]:
     """One patch's record: "failed" where there was no review, "reproduced" where a test that fails on the parent has a case that
-    fails with the patch, and "none" otherwise, with the reason."""
+    fails with the patch (with ``same_case``, a case that failed on the parent), and "none" otherwise, with the reason."""
     at_parent, on_patch = failed_cases(base), failed_cases(now)
     if no_answer(found):
         said, reason = "failed", no_answer(found)
@@ -138,6 +142,8 @@ def verdict(found: Mapping[str, Any], base: we.ProbeRun | None, now: we.ProbeRun
         said, reason = "failed", "a test run gave no exit, as when the container fails, so nothing was learnt"
     elif not at_parent:
         said, reason = "none", "the test fails no case on the parent, so it reproduces nothing"
+    elif on_patch and same_case and not set(on_patch) & set(at_parent):
+        said, reason = "none", "every case that fails with the patch passed on the parent"
     elif on_patch:
         said, reason = "reproduced", ""
     elif not now.usable:
@@ -228,7 +234,7 @@ def review_bug(ctx: we.Context, root: Path, task: we.Task, rows: Sequence[Mappin
                 continue
             finally:
                 copy.unlink(missing_ok=True)
-        got.append(_keep(root, row, verdict(found, base, now), started, sha, ins=ins))
+        got.append(_keep(root, row, verdict(found, base, now, same_case=ins.same_case), started, sha, ins=ins))
     return got
 
 
