@@ -2133,3 +2133,45 @@ result on the parent and on the patch.
 - Recorded runs bound the gated loop at about 85% of runs right on determined bugs: A's 77.5%, plus two bugs.
 - 95% also needs the two generation bugs and pygments-3158. They need a better first attempt and a check that quotes the
   issue, not a better chooser.
+## 2026-11-04 (evening): the powered study runs on the subscription, through a host-session author
+
+**Owner's decision.** "Spend on subscription please." The aim is a measurable uplift over Claude Code, with G6 improving
+Claude Code on the bugs where that is possible.
+
+**The design.** The sign-in never enters a container: Claude Code runs on the host, every test in the bug's container.
+- **The author.** `claude -p` on the host, in a scratch copy of the parent tree.
+  - The copy is kept outside any `.claude` folder, because Claude Code protects those from edits.
+  - Flags: `--restricted --tools "Read,Edit,Write,Glob,Grep"`, settings with `blockReadsOutsideWorkingDirectories` and
+    `blockWritesOutsideWorkingDirectories` true and `disableAllHooks`, `--permission-mode acceptEdits`,
+    `--permission-prompts none`.
+  - No Bash or PowerShell tool at all. Native Windows has no sandbox, and read-only shell commands run without a prompt.
+  - No API key in the environment, so the sign-in is used.
+- **The one test tool.** An MCP server, `box`, passed by `--mcp-config` with `--strict-mcp-config` and allowed alone. Each
+  call does two things:
+  - mirrors the scratch copy into the bug's container, which has no network;
+  - runs the command there as the unprivileged user.
+- **The rest is unchanged.** The final patch comes from the container as now, scored by the same independent check, and K2's
+  reviewer and parent check run as on `claude/k2`.
+
+**Probed with harmless dummy files, CLI 2.1.318.**
+- The sign-in works under `--restricted`.
+- A read of a canary file outside the scratch folder was refused, and its content never reached the output.
+- An edit inside the scratch folder was applied.
+- A write outside it was refused.
+- The MCP tool was the only other tool, and was called with no denial.
+
+**Record and pacing.**
+- **A separate archive root,** so host runs are never pooled with container runs. Arms A and K2 are compared there only
+  with each other.
+- **Not counted as API spend.** Claude Code's cost figure under a subscription is an estimate, so it is recorded apart and
+  never added to the study's spend.
+- **Usage limits.** The plan's limits pace the study. A run that meets one is paused until the reset the message gives,
+  never scored.
+
+**Order of work.**
+1. Build the host author, test first, with fakes.
+2. Its own Codex review loop.
+3. A pilot on development bugs.
+4. Draw about 130 new bugs by the T2 rule, with the blind determinacy audit and preparation.
+5. Run A and K2 twice each on stage 4's bugs and the new ones. The prediction registered at 1a98c52 is read on the
+   determined bugs.
