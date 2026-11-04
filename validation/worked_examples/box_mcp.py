@@ -28,22 +28,77 @@ TOOL = {"name": "run",
         "description": ("Run a shell command in the repository's test environment: a container holding the repository with its "
                         ".venv and its git history, and no network. Your working folder is mirrored into it before each "
                         "command, so the command sees your latest edits; what a command changes in files is not kept, so make "
-                        "every change with your own editing tools. Returns the exit code and the last 20000 characters of the "
-                        "command's combined output."),
+                        "every change with your own editing tools, and a process a command leaves running is stopped before the "
+                        "next mirror. Returns the exit code and the last 20000 characters of the command's combined output."),
         "inputSchema": {"type": "object", "properties": {"command": {"type": "string", "description": "The shell command (sh -c)."}},
                         "required": ["command"]}}
 
-#: Run in the container as root, ``python3 -I -c MIRROR REPO USER``, with ``pack``'s tar on standard input: every member checked
-#: before anything changes; then what is new or changed written (a changed file in place, keeping its mode and owner), what the tar
-#: does not hold removed, ``.git`` and ``.venv`` left as they are, and what it made given to USER. Prints what it wrote and removed.
-MIRROR = r'''import io, json, os, shutil, sys, tarfile
+#: The first step of ``MIRROR``, as root in the container: every process of the container's user is killed, but the container's
+#: first (``tail``, which runs nothing of the agent's), until none runs (a zombie runs nothing); else the mirror is refused. So
+#: nothing the agent started can change a name between the mirror's check of it and its act on it.
+STOP = r'''
+
+def stop(uid):
+    for _ in range(50):
+        left = []
+        for name in os.listdir("/proc"):
+            if not name.isdigit() or int(name) in (1, os.getpid()):
+                continue
+            try:
+                with open("/proc/" + name + "/status") as f:
+                    fields = dict(line.split(":", 1) for line in f.read().splitlines() if ":" in line)
+            except OSError:
+                continue
+            if str(uid) in fields.get("Uid", "").split() and fields.get("State", "").split()[:1] not in (["Z"], ["X"]):
+                left.append(int(name))
+        if not left:
+            return
+        for pid in left:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        time.sleep(0.1)
+    sys.exit("refused: processes of uid %d still run: %s" % (uid, left[:10]))
+'''
+
+#: Run in the container as root, ``python3 -I -c MIRROR REPO USER``, with ``pack``'s tar on standard input. First every process of
+#: USER is stopped (``STOP``); then the repository's root must be a folder of its own, not a link, and every member is checked,
+#: and no folder holding ``.git`` or ``.venv`` at any depth may be removed, all before anything changes. Then what is new or
+#: changed is written: never through a name already there, which is removed (a folder, a link, another name of a file) and the
+#: file made fresh, exclusively, keeping a replaced file's mode and owner; what the tar does not hold removed, ``.git`` and
+#: ``.venv`` left as they are, and what it made given to USER. Prints what it wrote and removed.
+MIRROR = r'''import io, json, os, shutil, signal, stat, sys, tarfile, time
 try:
     import pwd
 except ImportError:          # not a POSIX system: the script's own tests, on the host
     pwd = None
+''' + STOP + r'''
 repo, user = os.path.abspath(sys.argv[1]), sys.argv[2]
 kept = {".git", ".venv"}
 ids = (pwd.getpwnam(user).pw_uid, pwd.getpwnam(user).pw_gid) if pwd else None
+if ids:
+    if ids[0] in (0, os.geteuid()):
+        sys.exit("refused: the mirror stops another user's processes, never its own")
+    stop(ids[0])
+
+
+def kind(path):
+    """What holds a name: (None, None), or ("dir", st) for a folder of its own, ("file", st) for a regular file with one name,
+    and ("other", st) for anything else: a link, a junction, another name of a file, a device."""
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return None, None
+    if stat.S_ISLNK(st.st_mode) or getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+        return "other", st
+    if stat.S_ISDIR(st.st_mode):
+        return "dir", st
+    return ("file" if stat.S_ISREG(st.st_mode) and st.st_nlink == 1 else "other"), st
+
+
+if kind(repo)[0] != "dir":
+    sys.exit("refused: the repository's root " + repr(repo) + " is not a folder of its own")
 tar = tarfile.open(fileobj=io.BytesIO(sys.stdin.buffer.read()))
 files, dirs = {}, set()
 for m in tar.getmembers():
@@ -61,8 +116,13 @@ def at(name):
     return os.path.join(repo, *name.split("/"))
 
 
+for name in files:
+    if kind(at(name))[0] == "dir" and any(kept & {*subdirs, *names} for _, subdirs, names in os.walk(at(name))):
+        sys.exit("refused: " + repr(name) + " would replace a folder holding .git or .venv")
+
+
 def clear(path):
-    if os.path.isdir(path) and not os.path.islink(path):
+    if kind(path)[0] == "dir":
         shutil.rmtree(path)
     else:
         os.remove(path)
@@ -73,28 +133,43 @@ def own(path):
         os.chown(path, *ids)
 
 
+def excl(path, flags):
+    return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o644)
+
+
+def fresh(path, data, mode, owner):
+    for _ in range(3):
+        try:
+            f = open(path, "wb", opener=excl)
+        except FileExistsError:
+            clear(path)        # the name is held, by the old file or one made since: removed, never written through
+            continue
+        with f:
+            if owner:
+                os.fchown(f.fileno(), *owner)
+                os.fchmod(f.fileno(), mode)
+            f.write(data)
+        return
+    sys.exit("refused: " + repr(path) + " was held again each time it was cleared")
+
+
 for name in sorted(dirs):
     path = at(name)
-    if os.path.lexists(path) and (os.path.islink(path) or not os.path.isdir(path)):
+    if kind(path)[0] not in (None, "dir"):
         clear(path)
-    if not os.path.isdir(path):
+    if kind(path)[0] is None:
         os.mkdir(path, 0o755)
         own(path)
 for name, m in sorted(files.items()):
     path, data = at(name), tar.extractfile(m).read()
-    if os.path.lexists(path) and (os.path.islink(path) or not os.path.isfile(path)):
-        clear(path)
-    if os.path.isfile(path):
+    held, st = kind(path)
+    if held == "file":
         with open(path, "rb") as f:
             if f.read() == data:
                 continue
-        with open(path, "wb") as f:
-            f.write(data)
-    else:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o644)
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-        own(path)
+    elif held is not None:
+        clear(path)
+    fresh(path, data, *((stat.S_IMODE(st.st_mode), (st.st_uid, st.st_gid)) if held == "file" and ids else (0o644, ids)))
     written += 1
 for here, subdirs, names in os.walk(repo, topdown=False):
     rel = os.path.relpath(here, repo).replace(os.sep, "/")
@@ -138,11 +213,31 @@ def _plain(path: Path, root: Path) -> os.stat_result:
     return st
 
 
+def _read(path: Path, checked: os.stat_result, rel: str) -> bytes:
+    """A file's bytes, read from a descriptor that is the file ``_plain`` checked: the same device and inode, a regular file with
+    one name. A name given to another file in between refuses the workspace."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "rb") as f:
+        st = os.fstat(f.fileno())
+        if (st.st_dev, st.st_ino) != (checked.st_dev, checked.st_ino) or not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+            raise Refused(f"{rel} is not the file that was checked: its name was given to another between the check and the read")
+        return f.read()
+
+
 def pack(workspace: Path) -> bytes:
     """The workspace as a tar, in memory: its plain files and folders, without ``.git`` or ``.venv`` (``KEPT``), each named relative
-    to it with ``/``. Anything else refuses the whole workspace (``Refused``), so nothing is sent; so does a folder that cannot be
-    read, which would otherwise look empty and have its files removed in the container."""
-    root = Path(workspace).resolve()
+    to it with ``/``. Anything else refuses the whole workspace (``Refused``), so nothing is sent; so does a workspace that is
+    itself a link, a junction or another reparse point, and a folder that cannot be read, which would otherwise look empty and
+    have its files removed in the container. Each file is read as the file that was checked (``_read``)."""
+    given = Path(workspace)
+    try:
+        top = os.lstat(given)
+    except OSError as exc:
+        raise Refused(f"the workspace could not be read: {exc}") from exc
+    if (stat.S_ISLNK(top.st_mode) or getattr(top, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            or not stat.S_ISDIR(top.st_mode)):
+        raise Refused(f"the workspace {given} is a link, a junction or another reparse point, or not a folder")
+    root = given.resolve()
     out = io.BytesIO()
 
     def unreadable(exc: OSError) -> None:
@@ -159,7 +254,7 @@ def pack(workspace: Path) -> bytes:
                     info.type, info.mode = tarfile.DIRTYPE, 0o755
                     tar.addfile(info)
                 else:
-                    data = path.read_bytes()
+                    data = _read(path, st, info.name)
                     info.size, info.mode = len(data), 0o644
                     tar.addfile(info, io.BytesIO(data))
     return out.getvalue()
@@ -190,7 +285,8 @@ def _result(text: str, *, error: bool = False) -> dict[str, Any]:
 
 
 def call(opts: Any, params: dict[str, Any], docker: Callable[..., Any]) -> dict[str, Any]:
-    """One ``tools/call``: the mirror, then the command. A docker failure, docker's own exit 125 included, is a tool error."""
+    """One ``tools/call``: the mirror, then the command. A docker failure, docker's own exit 125 included, is a tool error; so is a
+    docker client ended by a signal (a return code below 0, or none)."""
     arguments = params.get("arguments") or {}
     if params.get("name") != "run":
         return _result(f"there is no tool {params.get('name')!r}; the one tool is run", error=True)
@@ -205,7 +301,7 @@ def call(opts: Any, params: dict[str, Any], docker: Callable[..., Any]) -> dict[
         return _result(f"nothing was mirrored or run: {exc}", error=True)
     except (BoxError, OSError, subprocess.SubprocessError) as exc:
         return _result(f"{type(exc).__name__}: {exc}", error=True)
-    return _result(text, error=code == 125)
+    return _result(text, error=code is None or code < 0 or code == 125)
 
 
 def serve(stdin: BinaryIO, stdout: BinaryIO, opts: Any, docker: Callable[..., Any]) -> None:

@@ -57,14 +57,14 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
     if rec.get("status") == "refused" and "already made" in str(rec.get("why")):   # made before a crash: check it
         rec = [r for r in distill.main_row(root / "ledger.jsonl")
                if (r.get("task"), r.get("arm"), r.get("repeat")) == (task, arm, repeat)][-1]
-    if rec.get("status") == "refused":   # never counted as a failed run
-        raise SystemExit(f"refused: {arm} {task} {repeat}: {rec.get('why')}")
-    if rec.get("status") == "limited":   # the subscription's usage limit: no verdict, nothing saved, made again after the reset
-        raise SystemExit(f"limited: {arm} {task} {repeat}: {(rec.get('limit') or {}).get('resets') or 'no reset given'}")
+    if not c.scoreable(rec):   # refused, never counted as a failed run; or limited: nothing saved, made again after the reset
+        said = (((rec.get("limit") or {}).get("resets") or "no reset given") if rec.get("status") == "limited"
+                else rec.get("why"))
+        raise SystemExit(f"{rec.get('status')}: {arm} {task} {repeat}: {said}")
     row = {"arm": arm, "task": task, "repeat": repeat, "run": rec.get("run"), "status": rec.get("status"),
            "why": rec.get("why"), "cost_usd": rec.get("cost_usd"), "passes": False, "failing": None, "tests": []}
-    if rec.get("status") == "finished":
-        final = [x for x in last_json(tool("check", "--task", task, "--g6", g6, "--run", rec["run"], timeout=1200)).get("checks", [])
+    if c.on_patch(rec):      # finished, or ended by a model refusal: scored on the patch it left
+        final =[x for x in last_json(tool("check", "--task", task, "--g6", g6, "--run", rec["run"], timeout=1200)).get("checks", [])
                  if x.get("patch") == "final"]     # by name: with no run named, check scores the bug's latest run, which a restart may not be
         if not final:       # no verdict is not a failed run: nothing is saved, and a restart checks it again
             raise SystemExit(f"no verdict for {arm} {task} {repeat}")
@@ -94,7 +94,7 @@ def rescore(root: Path, g6: str) -> list[dict[str, Any]]:
                 rows.append(kept)
                 continue
         passes = False
-        if row.get("status") == "finished":
+        if c.on_patch(row):
             final = [x for x in last_json(tool("check", "--task", row["task"], "--g6", g6, "--run", row["run"], "--amended",
                                                timeout=1200)).get("checks", []) if x.get("patch") == "final"]
             passes = final[-1].get("passes") if final else None

@@ -41,6 +41,7 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 import copy
+import hashlib
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any
@@ -1061,9 +1062,9 @@ def r3_refusal(ctx: Context, task: Task) -> tuple[str, float, float]:
     if ctx.arm == "D" and not str(ctx.g6.get("commit")).startswith(R3_D_G6):
         return f"arm D runs only on the reviewed G6, {R3_D_G6}", 0.0, 0.0
     done = r3_done(rows)
-    # a host run that met the subscription's usage limit, or was refused at its session's start, gave no verdict, so it is made
-    # again, as a killed run is (PLAN.md, 2026-11-04)
-    if key in done and done[key] not in ("limited", "refused") and not (ctx.rerun_why and done[key] == "error"):
+    # a host run that met the subscription's usage limit, or that G6 refused at its session's start, gave no verdict, so it is
+    # made again, as a killed run is; a run a model refusal ended was made (PLAN.md, 2026-11-04; ``wecommon.scoreable``)
+    if key in done and c.scoreable({"status": done[key]}) and not (ctx.rerun_why and done[key] == "error"):
         return f"run {key} was already made ({done[key]}); no run is made again for a better result", 0.0, 0.0
     earlier = [k for k in sched if R3_MODELS.index(k[0]) < R3_MODELS.index(ctx.model) and k not in done]
     if earlier and key not in R3_SMOKE and key not in R3_PROBE and not r3_loop_key(key):
@@ -1456,22 +1457,33 @@ HOST_FLAGS = ("-p", "--restricted", "--tools", "Read,Edit,Write,Glob,Grep", "--m
 HOST_SETTINGS = {"permissions": {"blockReadsOutsideWorkingDirectories": True, "blockWritesOutsideWorkingDirectories": True},
                  "disableAllHooks": True}
 #: What the host session keeps of the driver's environment, by name in any case: what a program needs to run on Windows or POSIX
-#: and to find the user's own sign-in, the proxy and CA variables, and docker's. Nothing else passes: not the driver's own Claude
-#: Code session's variables, nor a key or token, which would sign in in place of the subscription.
+#: and to find the user's own sign-in, the proxy and CA variables, and the four that say which docker daemon to reach. Nothing
+#: else passes: not the driver's own Claude Code session's variables, nor a key or token, which would sign in in place of the
+#: subscription; and no name a prefix admits passes by the prefix alone (``HOST_ENV_SECRET``).
 HOST_ENV_NAMES = frozenset({
     "PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "HOME", "USER",
     "LOGNAME", "SHELL", "USERNAME", "USERDOMAIN", "COMPUTERNAME", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES",
     "PROGRAMFILES(X86)", "PROGRAMW6432", "COMMONPROGRAMFILES", "COMMONPROGRAMFILES(X86)", "COMMONPROGRAMW6432", "TEMP", "TMP",
     "TMPDIR", "LANG", "TERM", "OS", "NUMBER_OF_PROCESSORS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "SSL_CERT_FILE",
-    "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"})
-HOST_ENV_PREFIXES = ("LC_", "PROCESSOR_", "DOCKER_")
+    "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY"})
+HOST_ENV_PREFIXES = ("LC_", "PROCESSOR_")
+#: A name that may carry a key, a token or a password: dropped whatever admitted it, before ``HOST_FIXED_ENV`` is added.
+HOST_ENV_SECRET = re.compile(r"TOKEN|KEY|SECRET|PASS|AUTH|CREDENTIAL", re.I)
 #: Set in every host session, after the allowlist: no claude.ai connectors (2.1.318 lets them through --strict-mcp-config), no
 #: retry of a refused request on another model, and the container runs' no updates, telemetry, error reports, other traffic or
 #: memory, so the version stays fixed through the study.
 HOST_FIXED_ENV = {"ENABLE_CLAUDEAI_MCP_SERVERS": "false", "CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK": "1", "DISABLE_AUTOUPDATER": "1",
                   "DISABLE_TELEMETRY": "1", "DISABLE_ERROR_REPORTING": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
                   "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
-HOST_BOX = ("box", "mcp__box__run")      # the one MCP server, and its one tool, a host session may have
+#: Exactly what a host session's init may name: the five file tools and the box's ``run``, and the box as its one MCP server.
+HOST_TOOLS = frozenset({"Edit", "Glob", "Grep", "Read", "Write", "mcp__box__run"})
+HOST_SERVERS = frozenset({"box"})
+HOST_EXIT_S = 30           # how long a session whose stream has ended is given to exit by itself before it is stopped
+#: Run by ``powershell`` with the run's workspace in ``G6_WE_WORKSPACE``, never on its command line: the id of every process,
+#: but its own, whose command line holds that path, as the box's does.
+HOST_HOLDING = ("$p = $env:G6_WE_WORKSPACE; if (-not $p) { exit 1 }; Get-CimInstance Win32_Process | Where-Object { "
+                "$_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine.IndexOf($p, [StringComparison]::OrdinalIgnoreCase) "
+                "-ge 0 } | ForEach-Object { $_.ProcessId }")
 #: Claude Code's word that the subscription's usage limit is reached, with when it resets when it says.
 HOST_LIMIT = re.compile(r"You(?:'|’)ve hit your (?:[\w-]+ ){0,3}limit\b\W{0,4}(resets\b[^\n|]*)?", re.I)
 #: A name part Windows would refuse or change (a device name, a reserved character, a trailing dot or space).
@@ -1487,29 +1499,35 @@ def host_args(mcp_file: Path, settings_file: Path, model: str, *, resume: str = 
 
 def host_env(environ: Mapping[str, str]) -> dict[str, str]:
     """The host session's environment: what ``HOST_ENV_NAMES`` and ``HOST_ENV_PREFIXES`` allow of ``environ``, never a name that
-    starts with CLAUDE or ANTHROPIC, in any case, then ``HOST_FIXED_ENV``."""
+    starts with CLAUDE or ANTHROPIC, nor one that may carry a key or token (``HOST_ENV_SECRET``), in any case, then
+    ``HOST_FIXED_ENV``."""
     kept = {k: v for k, v in environ.items() if (k.upper() in HOST_ENV_NAMES or k.upper().startswith(HOST_ENV_PREFIXES))
-            and not k.upper().startswith(("CLAUDE", "ANTHROPIC"))}
+            and not k.upper().startswith(("CLAUDE", "ANTHROPIC")) and not HOST_ENV_SECRET.search(k)}
     return {**kept, **HOST_FIXED_ENV}
 
 
 def host_init(obj: Any) -> dict[str, Any] | None:
     """A stream record that is the session's init: its tool and MCP server names, and why the session may not go on ("" when it
-    may): an MCP server other than the box, or an MCP tool other than the box's ``run``. Other built-in tools are only recorded."""
+    may): any tools or MCP servers but exactly ``HOST_TOOLS`` and ``HOST_SERVERS``, one more or one fewer."""
     if not (isinstance(obj, dict) and obj.get("type") == "system" and obj.get("subtype") == "init"):
         return None
     tools = [str(t) for t in obj.get("tools") or []]
     servers = [str(s.get("name") if isinstance(s, dict) else s) for s in obj.get("mcp_servers") or []]
-    other = [s for s in servers if s != HOST_BOX[0]] + [t for t in tools if t.startswith("mcp__") and t != HOST_BOX[1]]
-    why = f"the host session had MCP servers or tools other than the box: {', '.join(other)}" if other else ""
+    more = sorted({*tools} - HOST_TOOLS) + sorted({*servers} - HOST_SERVERS)
+    fewer = sorted(HOST_TOOLS - {*tools}) + sorted(HOST_SERVERS - {*servers})
+    why = (f"the host session's init was not exactly the five file tools and the box: it had {', '.join(more) or 'nothing more'} "
+           f"and lacked {', '.join(fewer) or 'nothing'}") if more or fewer else ""
     return {"tools": tools, "servers": servers, "why": why}
 
 
 def host_facts(path: Path, model: str) -> dict[str, Any]:
-    """What a saved host stream says of its session: its init (``host_init``), the models that wrote its messages (Claude Code's
-    own synthetic ones apart), and each record of a refused request (its subtype, category and models)."""
-    init, seen, refusals = None, set(), []
+    """What a saved host stream says of its session: its init (``host_init``), its last result, the first usage limit Claude Code
+    gave in it (``limit_of``), the models that wrote its messages (Claude Code's own synthetic ones apart), and each record of a
+    refused request (its subtype, category and models). A model is the one asked for only when it is that name, or that name and
+    a date (``-YYYYMMDD``)."""
+    init, result, limit, seen, refusals = None, None, None, set(), []
     for line in path.read_text(encoding="utf-8").splitlines() if path.is_file() else []:
+        limit = limit if limit is not None else limit_of(line)
         try:
             obj = json.loads(line)
         except ValueError:
@@ -1517,18 +1535,45 @@ def host_facts(path: Path, model: str) -> dict[str, Any]:
         if not isinstance(obj, dict):
             continue
         init = init or host_init(obj)
+        result = obj if obj.get("type") == "result" else result
         msg = obj.get("message")
         if obj.get("type") == "assistant" and isinstance(msg, dict) and msg.get("model") and msg.get("model") != "<synthetic>":
             seen.add(str(msg["model"]))
         if obj.get("type") == "system" and "refusal" in str(obj.get("subtype") or ""):
             refusals.append({k: obj.get(k) for k in ("subtype", "apiRefusalCategory", "originalModel", "fallbackModel")})
-    return {"init": init, "models": seen, "refusals": refusals, "switched": any(not m.startswith(model) for m in seen)}
+    asked = re.compile(re.escape(model) + r"(?:-\d{8})?")
+    return {"init": init, "result": result, "limit": limit, "models": seen, "refusals": refusals,
+            "switched": any(not asked.fullmatch(m) for m in seen)}
+
+
+def host_ending(stop: str, facts: Mapping[str, Any], *, code: int | None, limit: str | None, by_g6: bool) -> tuple[str, str]:
+    """How a host session ended, decided once from all of its evidence: ("", "") when cleanly, else its status and why. In this
+    order: "limited" when Claude Code said the usage limit was reached (with the reset it gave); "refused", G6's own refusal of
+    the session, when its stream has no init or an init that is not exactly the box's and the five file tools (``host_init``);
+    "model_refused" at a record of a request the model refused, a run made as Claude Code alone would leave it (PLAN.md,
+    runtime-k ec0f761), with nothing resent. Then, once the session's own result was read, what it says (``status_of``),
+    whatever ended the process after it; before any result, the stream's own stop ("timeout", "cap_turns") or "error". Last,
+    "error" for a process that ended by itself with a code other than 0; ``by_g6``: G6 ended the process, its code says nothing."""
+    if limit is not None:
+        return "limited", limit
+    init, result = facts.get("init"), facts.get("result")
+    if init is None:
+        return "refused", "the host session's stream had no init, so what tools it had is not known"
+    if init["why"]:
+        return "refused", init["why"]
+    if facts.get("refusals"):
+        return "model_refused", ""
+    got = status_of("" if result else stop, SimpleNamespace(result=result))
+    if got != "finished":
+        return got, ""
+    return ("error", "") if code != 0 and not by_g6 else ("", "")
 
 
 def limit_of(line: str) -> str | None:
     """Whether a stream line says the subscription's usage limit is reached (``HOST_LIMIT``): when the limit resets as Claude Code
-    gave it ("" when it did not), or None. Only Claude Code's own words are read: the result's text, a synthetic message, or a line
-    that is not JSON. The model's messages and the tools' output never are."""
+    gave it ("" when it did not), or None. Only what Claude Code itself marks as its own is read: the text of a result that is an
+    error (``is_error``, or an error subtype), a synthetic message, or a line that is not JSON. A successful result's text is the
+    model's answer, and the model's messages and the tools' output are never read either."""
     try:
         obj = json.loads(line)
     except ValueError:
@@ -1536,7 +1581,8 @@ def limit_of(line: str) -> str | None:
     else:
         msg = obj.get("message") if isinstance(obj, dict) else None
         if isinstance(obj, dict) and obj.get("type") == "result":
-            texts = [str(obj.get("result") or "")]
+            failed = obj.get("is_error") is True or str(obj.get("subtype") or "").startswith("error")
+            texts = [str(obj.get("result") or "")] if failed else []
         elif isinstance(obj, dict) and obj.get("type") == "assistant" and isinstance(msg, dict) and msg.get("model") == "<synthetic>":
             texts = [str(b.get("text") or "") for b in msg.get("content") or [] if isinstance(b, dict)]
         else:
@@ -1548,16 +1594,25 @@ def limit_of(line: str) -> str | None:
     return None
 
 
-def kill_tree(proc: Any) -> None:
-    """The host session and every process it started (the box, and what the box runs on the host)."""
-    if os.name == "nt":
-        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, timeout=60)
-    else:
+def end_session(proc: Any, workspace: Path) -> None:
+    """Every process a host session started, ended, whatever happened, and nothing else. On POSIX, the session's process group,
+    which its launcher leads (``start_new_session``). On Windows, the launcher's tree (``taskkill /T``), then each process whose
+    command line holds the run's own workspace, as the box's arguments do, which a launcher that ended first no longer reaches
+    (``HOST_HOLDING``; never for a folder within two steps of a drive's root)."""
+    if os.name != "nt":
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except OSError:
             pass
-    proc.kill()
+        return
+    subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, timeout=60)
+    if len(Path(workspace).parts) < 3:
+        return
+    found = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", HOST_HOLDING], capture_output=True,
+                           timeout=120, env={**os.environ, "G6_WE_WORKSPACE": str(workspace)})
+    for pid in dict.fromkeys(int(x) for x in found.stdout.split() if x.isdigit()):
+        if pid != os.getpid():
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=60)
 
 
 # --- the run -------------------------------------------------------------------------------------------------------------
@@ -1808,12 +1863,14 @@ def host_files(ctx: Context, run: Any, task: Task, agent: str, workspace: Path) 
 
 
 def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settings_file: Path, text: str, name: str, *,
-                 resume: str = "", seconds: float, tally: c.Tally, stop_usd: float) -> str:
+                 resume: str = "", seconds: float, tally: c.Tally, stop_usd: float | None = None) -> str:
     """One Claude Code session on the host, on the subscription's sign-in, its stream saved as ``name`` as ``run_session`` saves
-    one, with the same deadline and stop; its folder the workspace, and the bug's container reached only through the box.
-    ``resume``: the session a repair goes on with. How it ended, as ``read_stream`` says; "refused" when its init names an MCP
-    server or tool other than the box's (``host_init``), the session ended at once and why saved beside the stream; or "limited"
-    when Claude Code said the usage limit was reached: the session ends at that line, and the limit's reset is saved beside it."""
+    one; its folder the workspace, and the bug's container reached only through the box. ``resume``: the session a repair goes
+    on with. Its clock starts before its prompt goes in, which a thread writes; its turns and time are capped, never its cost:
+    the stream's dollars are the subscription's estimate (``stop_usd`` is not used). The stream stops at once at an init that is
+    not exactly the box's (``host_init``) or at the usage limit. Whatever happened, every process the session started is then
+    ended (``end_session``); its exit code, and whether G6 had to end it, are saved beside the stream. Returns how it ended, as
+    ``host_ending`` decides from all of it ("" when cleanly), with why G6 refused it, or when the limit resets, saved there too."""
     command = [shutil.which(HOST_CLAUDE) or HOST_CLAUDE, *host_args(mcp_file, settings_file, ctx.model, resume=resume)]
     proc = (ctx.starter or subprocess.Popen)(command, cwd=str(workspace), env=host_env(os.environ if ctx.environ is None else ctx.environ),
                                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -1821,46 +1878,57 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
     errors: list[bytes] = []
     drain = threading.Thread(target=lambda: errors.append(proc.stderr.read() or b""), daemon=True)
     drain.start()
-    limit: list[str] = []
-    refused: list[str] = []
+    cut: list[str] = []          # the line the stream was stopped at, before its end
 
     def lines() -> Iterator[bytes]:
         for line in iter(proc.stdout.readline, b""):
             yield line
-            text = line.decode("utf-8", errors="replace")
+            said = line.decode("utf-8", errors="replace")
             try:
-                init = host_init(json.loads(text))
+                init = host_init(json.loads(said))
             except ValueError:
                 init = None
-            if init and init["why"]:
-                refused.append(init["why"])
-                return
-            said = limit_of(text)
-            if said is not None:
-                limit.append(said)
+            if (init and init["why"]) or limit_of(said) is not None:
+                cut.append(said)
                 return
 
+    def feed() -> None:
+        try:
+            proc.stdin.write(text.encode("utf-8"))
+            proc.stdin.close()
+        except (OSError, ValueError):
+            pass             # a process that ended, or was stopped, before it took its prompt
+
     stream = open(run.fresh_path(name), "w", encoding="utf-8", newline="\n")
+    stop = "error"
+    deadline = time.monotonic() + seconds
+    writer = threading.Thread(target=feed, daemon=True)
+    writer.start()
     try:
-        proc.stdin.write(text.encode("utf-8"))
-        proc.stdin.close()
-        ended = read_stream(lines(), tally, deadline=time.monotonic() + seconds,
-                            write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()), stop_usd=stop_usd)
+        stop = read_stream(lines(), tally, deadline=deadline,
+                           write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()), stop_usd=float("inf"))
     finally:
         stream.close()
+        if not stop and not cut:      # the stream came to its end: the session is given a moment to exit by itself
+            try:
+                proc.wait(timeout=HOST_EXIT_S)
+            except subprocess.TimeoutExpired:
+                pass
+        by_g6 = proc.poll() is None        # still running: G6 ends it, and its exit code is G6's doing
+        end_session(proc, workspace)
         if proc.poll() is None:
-            kill_tree(proc)
-        proc.wait(timeout=60)
+            proc.kill()
+        code = proc.wait(timeout=60)
+        writer.join(timeout=30)
     drain.join(timeout=30)
     stem, said = Path(name).stem, b"".join(errors).decode("utf-8", errors="replace")
     run.write(f"{stem}_stderr.txt", said)
-    if refused:
-        run.write(f"{stem}_refused.txt", refused[0])
-        return "refused"
-    limit.extend(x for x in map(limit_of, said.splitlines() if not limit else []) if x is not None)
-    if limit:
-        run.write(f"{stem}_limit.txt", limit[0])
-        return "limited"
+    run.write_json(f"{stem}_exit.json", {"exit_code": code, "ended_by_g6": by_g6})
+    facts = host_facts(run.path / name, ctx.model)
+    limit = facts["limit"] if facts["limit"] is not None else next((x for x in map(limit_of, said.splitlines()) if x is not None), None)
+    ended, why = host_ending(stop, facts, code=code, limit=limit, by_g6=by_g6)
+    if ended in ("refused", "limited"):
+        run.write(f"{stem}_{'refused' if ended == 'refused' else 'limit'}.txt", why)
     return ended
 
 
@@ -2117,20 +2185,23 @@ def finding_rule(arm: str) -> str:
 
 def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, tally: c.Tally,
                         stop: float, started: float, critique: Callable[[int], dict[str, Any]], finding: str = "any",
-                        session: Callable[[str, str], Any] | None = None) -> dict[str, Any]:
+                        session: Callable[[str, str], Any] | None = None, tree: Callable[[], Any] | None = None) -> dict[str, Any]:
     """Arm K (PLAN.md, 2026-11-01): plain Claude Code, then the patch is read by another model family, repaired in the same session if
     the reader's test fails on it, and read again, until a reader reproduces nothing. One review saw one layer of a defect, so one
     repair stopped there. The agent may reject a finding, and leaving the code as it was ends the loop. No scout, no probes, no G6.
     With ``finding`` "parent" (K2, PLAN.md, 2026-11-04, evening), each round's test is also run on the parent in a container of its
     own, and only the cases that failed there and still fail go back; a parent run with no result sends nothing back. ``session``:
-    a repair as ``session(note, stream name)``, the host executor's (PLAN.md, 2026-11-04); by default the same session continued
-    in the container (``run_session``). A repair that meets the subscription's usage limit ends the loop."""
-    def tree() -> str:
+    a repair as ``session(note, stream name)``, the host executor's (PLAN.md, 2026-11-04), which returns how it ended ("" when
+    cleanly); by default the same session continued in the container (``run_session``). A host repair that does not end cleanly
+    ends the loop, and how it ended is returned as ``ended``. ``tree``: what says whether a repair changed anything, compared
+    before and after it; by default git's display of the container's tree."""
+    def shown() -> str:
         return out(ctx.docker.sh(agent, "git status --porcelain; git diff", workdir=task.repo, timeout=120))
 
+    tree = tree or shown
     gated = finding == "parent"          # K2 (PLAN.md, 2026-11-04, evening)
     at_parent: dict[str, str] = {}       # every round's test on the parent, in a container of its own, by case
-    rounds, failing, reason, verdicts, seconds, broken = 0, [], "", [], 0.0, False
+    rounds, failing, reason, verdicts, seconds, broken, ended = 0, [], "", [], 0.0, False, ""
     for n in range(1, MAX_REPAIRS + 2):
         rounds = n
         keep_first_patch(ctx, task, agent, base, n)
@@ -2169,9 +2240,11 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
         if session is None:
             run_session(ctx, run, agent, scout_again(docker_args), key, tally, note, f"repair_stream_{n}.jsonl",
                         seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
-        elif (ended := session(note, f"repair_stream_{n}.jsonl")) in ("limited", "refused"):
-            reason = ("the repair met the subscription's usage limit" if ended == "limited"
-                      else "the repair's session was refused: it had more than the box")
+        elif ended := session(note, f"repair_stream_{n}.jsonl"):
+            reason = {"limited": "the repair met the subscription's usage limit",
+                      "refused": "the repair's session was refused: its init was not exactly the five file tools and the box",
+                      "model_refused": "the model refused a request in the repair; nothing is resent"
+                      }.get(ended, f"the repair's session ended {ended}")
             break
         if tree() == before:
             reason = "the agent left the code as it was"
@@ -2179,7 +2252,7 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
     clean = not failing and not broken and verdicts[-1] in ("none", "defect")
     return {"status": "no_counterexample_in_domain" if clean else "inconclusive", "rounds": rounds, "reason": reason,
             "failing": failing[:40], "critic": {"verdicts": verdicts, "seconds": round(seconds, 1)},
-            **({"finding": "parent"} if gated else {})}
+            **({"finding": "parent"} if gated else {}), **({"ended": ended} if ended else {})}
 
 
 def review_once(ctx: Context, task: Task, run: Any, agent: str, docker_args: list[str], key: str, tally: c.Tally, stop: float,
@@ -2364,8 +2437,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
     tag = uuid.uuid4().hex[:10]
     common = {"g6_commit": ctx.g6.get("commit"), "g6_image": ctx.g6.get("image"), "task_image": task_image,
               "model": model}
-    if round3:
-        common.update(arm=ctx.arm, repeat=ctx.repeat, cap_usd=cap, stop_usd=stop, label="development",
+    if round3:    # a host run reserves nothing of the API's money, from its start (``wecommon.spent``)
+        common.update(arm=ctx.arm, repeat=ctx.repeat, cap_usd=cap, stop_usd=0.0 if host else stop, label="development",
                       **({"rerun_why": ctx.rerun_why} if ctx.rerun_why else {}))
     if host:
         common["executor"] = "host"
@@ -2463,7 +2536,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             record["workspace_files"] = workspace_from(ctx, task, agent, workspace)
             mcp_file, settings_file = host_files(ctx, run, task, agent, workspace)
             run.write_json("command.json", {"host": [HOST_CLAUDE, *host_args(mcp_file, settings_file, model)],
-                                            "caps": {"stop_usd": stop, "turns": c.MAX_TURNS, "wall_clock_s": c.WALL_CLOCK_S},
+                                            "caps": {"turns": c.MAX_TURNS, "wall_clock_s": c.WALL_CLOCK_S},
                                             "key": "none: the host's Claude Code is signed in to the subscription"})
         else:
             run.write_json("command.json", {"docker": docker_args, "caps": {"usd": cap, "stop_usd": stop,
@@ -2486,16 +2559,20 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         tally = c.Tally(count_reported=round3)
 
         def turn(note: str, name: str, resume: str = "") -> str:
-            """A host session, then its tree into the container before anything reads it there."""
+            """A host session, then its tree into the container before anything reads it there; how it ended (``host_session``).
+            No session starts once the run's clock is spent: that is the run's "timeout"."""
             left = c.WALL_CLOCK_S - (time.monotonic() - started)
-            ended = host_session(ctx, run, workspace, mcp_file, settings_file, note, name, resume=resume,
-                                 seconds=max(60.0, left) if resume else left, tally=tally, stop_usd=stop)
+            if left <= 0:
+                return "timeout"
+            ended = host_session(ctx, run, workspace, mcp_file, settings_file, note, name, resume=resume, seconds=left, tally=tally)
             facts = host_facts(run.path / name, model)      # recorded whatever happens; every session's models and refusals
             if facts["init"] and "host_tools" not in record:
                 record.update(host_tools=facts["init"]["tools"], host_mcp_servers=facts["init"]["servers"])
             record["models_seen"] = sorted({*record.get("models_seen", []), *facts["models"]})
             record["model_refusals"] = [*record.get("model_refusals", []), *facts["refusals"]]
             record["model_switched"] = bool(record.get("model_switched")) or facts["switched"]
+            exited = json.loads((run.path / f"{Path(name).stem}_exit.json").read_text(encoding="utf-8"))
+            record["ended_by_g6"] = bool(record.get("ended_by_g6")) or exited["ended_by_g6"]     # any session G6 had to end
             box_mcp.mirror(workspace, ctx.docker, container=agent, repo=task.repo, user=USER, timeout=BOX_TIMEOUT_S)
             if ended == "refused" and "why" not in record:
                 record["why"] = (run.path / f"{Path(name).stem}_refused.txt").read_text(encoding="utf-8")
@@ -2539,12 +2616,13 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             record["repairs"] = reviews_until_clean(ctx, task, run, agent, base, docker_args, key, tally, stop, started,
                                                     lambda n: run_critic(ctx, task, run, agent, base, title, text, n),
                                                     finding=finding_rule(ctx.arm),
-                                                    session=(lambda note, name: turn(note, name, tally.session_id)) if host else None)
+                                                    session=(lambda note, name: turn(note, name, tally.session_id)) if host else None,
+                                                    tree=(lambda: hashlib.sha256(box_mcp.pack(workspace)).hexdigest()) if host else None)
+            ended = record["repairs"].get("ended") or ended      # a host repair that did not end cleanly: the run ends as it did
         if test_led and not dry and not ended:
             record["repairs"] = reviews_with_bug_test(ctx, task, run, agent, base, docker_args, key, tally, stop, started, bug)
         result = tally.result or {}
-        record.update(status_detail=status_of("refused" if host and "why" in record else "limited" if "limit" in record else ended,
-                                              tally),
+        record.update(status_detail=status_of(ended, tally),
                       agent_usd=tally.cost_usd,
                       cost_usd=round(tally.cost_usd + float(record.get("cost_usd") or 0.0)
                                      + float((record.get("scout") or {}).get("usd") or 0.0), 6),
@@ -2556,6 +2634,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         if host:   # the subscription's sessions: what the stream says they would cost, never counted as the API's spend
             record.update(executor="host", subscription_usd_estimate=record["agent_usd"], cost_usd=0.0)
         run.write("final_report.txt", str(result.get("result") or ""))
+        if host:   # the agent's tree is the workspace: into the container again, over whatever a review's test left there
+            box_mcp.mirror(workspace, ctx.docker, container=agent, repo=task.repo, user=USER, timeout=BOX_TIMEOUT_S)
         ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/final.patch"), workdir=task.repo, timeout=600)
         final = run.fresh_path("final.patch")
         if not copy_out(ctx.docker, agent, f"{WE}/final.patch", final):
@@ -2715,6 +2795,9 @@ def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool
     if src is None:
         raise SystemExit("no run to check")
     src = Path(src)
+    done = json.loads((src / "run.json").read_text(encoding="utf-8")) if (src / "run.json").is_file() else {}
+    if not c.scoreable(done):
+        raise SystemExit(f"{run_rel or src.name} ended {done.get('status')}: it has no verdict to give (wecommon.scoreable)")
     f2p, p2p = v["record"]["fail_to_pass"], v["record"]["pass_to_pass"]
     folder = ctx.archive.start("recheck" if amended else "check", task.id,
                                checked_run=str(src.relative_to(ctx.archive.root)).replace("\\", "/"))

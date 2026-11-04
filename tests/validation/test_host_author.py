@@ -7,9 +7,12 @@ from __future__ import annotations
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
 import tarfile
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -85,7 +88,7 @@ def export_of(repo: Path) -> bytes:
     return tar_of(entries)
 
 
-TOOLS = ["Read", "Edit", "Write", "Glob", "Grep", "TodoWrite", "mcp__box__run"]
+TOOLS = ["Read", "Edit", "Write", "Glob", "Grep", "mcp__box__run"]     # exactly what a host session may have, and no more
 
 
 def stream(sid: str, *, cost: float = 0.42, extra: tuple[dict, ...] = (), tools: list[str] = TOOLS,
@@ -107,30 +110,39 @@ class Stdin(io.BytesIO):
 
 
 class Proc:
-    pid = 4242
+    pid = None          # no real process: ``end_session`` is a fake wherever a fake process runs
+    ended = None        # the workspace ``end_session`` was given for this session's processes
 
-    def __init__(self, lines: list[str]) -> None:
-        self.stdin, self.stderr = Stdin(), io.BytesIO(b"")
+    def __init__(self, lines: list[str], code: int = 0, hangs: bool = False) -> None:
+        self.stdin, self.stderr, self.code, self.hangs = Stdin(), io.BytesIO(b""), code, hangs
         self.stdout = io.BytesIO(("\n".join(lines) + "\n").encode("utf-8"))
 
-    def poll(self) -> int:
-        return 0
+    def poll(self) -> int | None:
+        return None if self.hangs and self.ended is None else self.code     # one that hangs runs until it is ended
 
     def wait(self, timeout: float | None = None) -> int:
-        return 0
+        if self.poll() is None:
+            raise subprocess.TimeoutExpired("claude", timeout)
+        return self.code
 
 
-def starter(sessions: list[tuple[str, str, list[str] | None]]):
-    """A fake process starter: session i is (its id, what it writes in src/mod.py or "", its stream or None for a plain one)."""
+def fake_end(monkeypatch) -> None:
+    """``end_session`` for fake processes: it records the workspace it was given and stops nothing."""
+    monkeypatch.setattr(we, "end_session", lambda proc, workspace: setattr(proc, "ended", workspace), raising=False)
+
+
+def starter(sessions: list[tuple]):
+    """A fake process starter: session i is (its id, what it writes in src/mod.py or "", its stream or None for a plain one), and
+    optionally its exit code (0) and whether it hangs after its stream until it is ended (False)."""
     starts: list[dict] = []
 
     def start(argv, *, cwd, env, stdin, stdout, stderr, **kw):
-        sid, body, lines = sessions[len(starts)]
+        sid, body, lines, *code = sessions[len(starts)]
         mod = Path(cwd) / "src" / "mod.py"
         starts.append({"argv": list(argv), "cwd": cwd, "env": dict(env), "before": mod.read_text("utf-8") if mod.is_file() else None})
         if body:
             mod.write_text(body, encoding="utf-8")
-        proc = Proc(lines if lines is not None else stream(sid))
+        proc = Proc(lines if lines is not None else stream(sid), *code)
         starts[-1]["proc"] = proc
         return proc
     return start, starts
@@ -194,6 +206,7 @@ def host_run(monkeypatch, tmp_path, arm, sessions, *, environ=None):
     monkeypatch.setattr(we, "start_net", lambda *a, **kw: pytest.fail("the host executor starts no network or proxy"))
     monkeypatch.setattr(we, "read_thread", lambda *a: "")
     monkeypatch.setattr(we, "host_workspace", workspace)
+    fake_end(monkeypatch)
     ctx = we.Context(archive=we.c.Archive(tmp_path / "archive"), docker=docker, key_reader=lambda: pytest.fail("no key is read"),
                      issue_reader=lambda task: ("title", "issue"), tree_reader=lambda task: "tree", g6={"commit": "0" * 40},
                      variant=we.ROUND3, arm=arm, model=SONNET, environ=environ or {"PATH": "p"}, executor="host", starter=start)
@@ -207,7 +220,8 @@ def mirrors(docker) -> list[int]:
 
 
 # --- the command line and the environment ---------------------------------------------------------------------------------
-def test_the_host_command_line_is_exactly_the_validated_flags_and_resumes_only_on_a_repair(tmp_path):
+def test_the_host_command_line_is_exactly_the_validated_flags_and_resumes_only_on_a_repair(monkeypatch, tmp_path):
+    fake_end(monkeypatch)
     start, starts = starter([("s1", "", None), ("s1", "", None)])
     ctx = we.Context(archive=we.c.Archive(tmp_path / "a"), docker=None, key_reader=lambda: pytest.fail("no key"), issue_reader=None,
                      g6={}, variant=we.ROUND3, arm="K1", model=SONNET, environ={"PATH": "p"}, executor="host", starter=start)
@@ -254,7 +268,8 @@ def test_the_host_environment_is_an_allowlist_without_any_claude_or_anthropic_na
     assert not {k for k in got if k.upper().startswith(("CLAUDE", "ANTHROPIC"))} - set(FIXED)
 
 
-def test_no_key_or_token_reaches_the_host_session_even_when_set(tmp_path):
+def test_no_key_or_token_reaches_the_host_session_even_when_set(monkeypatch, tmp_path):
+    fake_end(monkeypatch)
     environ = {"ANTHROPIC_API_KEY": "sk-ant-api03-notakey000000", "ANTHROPIC_AUTH_TOKEN": "tok", "CLAUDE_CODE_OAUTH_TOKEN": "oat",
                "anthropic_api_key": "lower", "PATH": "p", "USERPROFILE": "u", **dict.fromkeys(SESSION_OWN, "v")}
     assert we.host_env(environ) == {"PATH": "p", "USERPROFILE": "u", **FIXED}
@@ -541,7 +556,7 @@ def test_the_host_mode_runs_claude_code_on_the_host_and_every_command_in_a_conta
     assert (run / "final.patch").read_text("utf-8") == "def f():\n    return 1\n"     # the host's edit reached the container
     assert record["executor"] == "host" and record["cost_usd"] == 0.0 and record["subscription_usd_estimate"] == pytest.approx(0.42)
     assert record["claude_version"] == "2.1.318" and not workspaces[0].exists()
-    assert record["host_tools"] == TOOLS and record["host_mcp_servers"] == ["box"]          # a built-in tool is recorded, not refused
+    assert record["host_tools"] == TOOLS and record["host_mcp_servers"] == ["box"]          # the six tools, and the box alone
     assert record["models_seen"] == [SONNET] and record["model_switched"] is False and record["model_refusals"] == []
     ended = [r for r in ctx.archive.rows() if r.get("event") == "ended"]
     assert ended[-1]["cost_usd"] == 0.0
@@ -567,7 +582,7 @@ def test_k2_on_the_host_repairs_in_a_resumed_host_session_mirrored_before_each_r
     assert len(starts) == 2 and "--resume" not in starts[0]["argv"] and starts[1]["argv"][-2:] == ["--resume", "s1"]
     assert "test_owed" in starts[1]["proc"].stdin.text
     assert record["repairs"]["rounds"] == 2 and record["repairs"]["status"] == "no_counterexample_in_domain"
-    assert record["repairs"]["finding"] == "parent" and len(mirrors(docker)) == 2
+    assert record["repairs"]["finding"] == "parent" and len(mirrors(docker)) == 3     # after each session, and before the patch
     run = ctx.archive.root / record["run"]
     assert (run / "repair_stream_1.jsonl").is_file() and (run / "final.patch").read_text("utf-8") == "def f():\n    return 2\n"
     assert record["cost_usd"] == 0.0
@@ -580,3 +595,356 @@ def test_a_host_run_is_refused_when_dry_or_for_an_arm_with_repairs_outside_arm_k
         ctx.arm = arm
         assert we.host_refusal(ctx, dry=False)
     assert we.host_refusal(SimpleNamespace(executor="cloud", variant=we.ROUND3, arm="A"), dry=False)
+
+
+# --- the review of the host executor (2026-11-04): each class of its findings removed where it arises -----------------------
+# R1: a host session's ending is decided once, from all of its evidence, and carried to the run's own status.
+REFUSAL = {"type": "system", "subtype": "model_refusal", "apiRefusalCategory": "cyber", "originalModel": SONNET, "session_id": "s1"}
+
+
+@pytest.mark.parametrize(("lines", "code", "status"), [
+    (stream("s1")[1:], 0, "refused"),                         # no init: what tools the session had is not known
+    (stream("s1", tools=[*TOOLS, "Bash"]), 0, "refused"),     # a built-in tool more than the six
+    (stream("s1", tools=TOOLS[:-1]), 0, "refused"),           # one less: no box
+    (stream("s1", extra=(REFUSAL,)), 0, "model_refused"),     # a request the model refused: a run made, not refused
+    (stream("s1")[:-1], 0, "error"),                          # no result
+    (stream("s1"), 17, "error"),                              # an exit code other than 0
+    (stream("s1"), 0, "finished")])
+def test_a_host_sessions_ending_is_decided_once_from_its_init_result_exit_code_and_refusals(monkeypatch, tmp_path, lines, code,
+                                                                                             status):
+    record, _, starts, *_ = host_run(monkeypatch, tmp_path, "A", [("s1", "", lines, code)])
+    assert record["status"] == status, record.get("error")
+    assert len(starts) == 1 and starts[0]["proc"].ended is not None        # its processes ended, whatever happened
+    assert bool(record.get("why")) is (status == "refused")
+
+
+def k2_reviews(monkeypatch, review) -> None:
+    monkeypatch.setattr(we, "run_critic", lambda *a, **kw: review(a[-1]))
+    monkeypatch.setattr(we, "run_set", lambda *a: ON_TREE)
+    monkeypatch.setattr(we, "parent_check", lambda *a: AT_PARENT)
+
+
+def test_a_repair_that_does_not_end_cleanly_ends_the_run_with_its_own_status(monkeypatch, tmp_path):
+    k2_reviews(monkeypatch, lambda n: {"verdict": "defect", "rule": "r", "why": "w", "test": TEST} if n == 1
+               else pytest.fail("no review after a repair that did not end cleanly"))
+    record, _, starts, *_ = host_run(monkeypatch, tmp_path, "K2", [("s1", "def f():\n    return 1\n", None),
+                                                                     ("s1", "def f():\n    return 2\n", stream("s1")[:-1])])
+    assert record["status"] == "error" and record["repairs"]["ended"] == "error" and len(starts) == 2
+    assert all(s["proc"].ended is not None for s in starts)
+
+
+def test_a_model_refusal_is_never_resumed_with_a_repair(monkeypatch, tmp_path):
+    k2_reviews(monkeypatch, lambda n: pytest.fail("a run a refusal ended starts no review and no repair"))
+    record, _, starts, *_ = host_run(monkeypatch, tmp_path, "K2", [("s1", "", stream("s1", extra=(REFUSAL,))), ("s1", "", None)])
+    assert record["status"] == "model_refused" and len(starts) == 1 and record["model_refusals"][0]["subtype"] == "model_refusal"
+    assert we.c.scoreable(record) and "why" not in record
+
+
+def test_a_model_refusal_in_a_repair_ends_the_run_on_the_workspaces_patch_and_resends_nothing(monkeypatch, tmp_path):
+    k2_reviews(monkeypatch, lambda n: {"verdict": "defect", "rule": "r", "why": "w", "test": TEST} if n == 1
+               else pytest.fail("no review after a repair a refusal ended"))
+    record, _, starts, ctx, *_ = host_run(monkeypatch, tmp_path, "K2", [
+        ("s1", "def f():\n    return 1\n", None), ("s1", "def f():\n    return 2\n", stream("s1", extra=(REFUSAL,))),
+        ("s1", "", None)])
+    assert record["status"] == "model_refused" and record["repairs"]["ended"] == "model_refused" and len(starts) == 2
+    assert (ctx.archive.root / record["run"] / "final.patch").read_text("utf-8") == "def f():\n    return 2\n"
+
+
+def test_a_run_a_refusal_ended_is_scored_on_its_patch_and_never_made_again_while_an_init_refusal_may_be(monkeypatch, tmp_path):
+    import compare
+    import loop
+    asked = []
+
+    def tool(command, *args, **kw):
+        asked.append(command)
+        if command == "run":
+            return json.dumps({"status": "model_refused", "run": "run/t/1", "cost_usd": 0.0})
+        return json.dumps({"checks": [{"patch": "final", "passes": True, "failing": 0, "fail_to_pass_failing": []}]})
+
+    monkeypatch.setattr(loop, "tool", tool)
+    row = loop.one(tmp_path, "g6", "K1", "t", 1)
+    assert asked == ["run", "check"] and row["status"] == "model_refused" and row["passes"] is True
+    monkeypatch.setattr(we, "amendment", lambda task: None)
+    assert compare.saved(tmp_path)[("K1", "t", 1)]["maintainers"] is True
+    assert we.c.scoreable({"status": "model_refused"}) and not we.c.scoreable({"status": "refused"})
+    archive = we.c.Archive(tmp_path / "r3")
+    ctx = SimpleNamespace(archive=archive, tasks=None, model=SONNET, arm="K1", repeat=1, g6={"commit": we.R3_LOOP_G6}, rerun_why="")
+    made, infra = we.load_tasks(we.TASKS_STAGE4)[:2]
+    archive.start("run", made.id, model=SONNET, arm="K1", repeat=1).finish({"agent_started": True, "cost_usd": 0.0}, "model_refused")
+    archive.start("run", infra.id, model=SONNET, arm="K1", repeat=1).finish({"agent_started": True, "cost_usd": 0.0}, "refused")
+    assert "already made" in we.r3_refusal(ctx, made)[0] and "already made" not in we.r3_refusal(ctx, infra)[0]
+
+
+@pytest.mark.parametrize(("lines", "code", "hangs", "status"), [
+    (stream("s1"), -9, True, "finished"),       # a clean result, then G6 had to end the process: the result's ending
+    (stream("s1")[:-1], -9, True, "error"),     # G6 ended it before any result was read
+    (stream("s1"), 17, False, "error")])        # it ended by itself with a code other than 0
+def test_a_session_g6_ended_after_its_result_keeps_that_results_ending(monkeypatch, tmp_path, lines, code, hangs, status):
+    record, _, starts, *_ = host_run(monkeypatch, tmp_path, "A", [("s1", "", lines, code, hangs)])
+    assert record["status"] == status and record["ended_by_g6"] is hangs
+    saved = json.loads((tmp_path / "archive" / record["run"] / "stream_exit.json").read_text("utf-8"))
+    assert saved == {"exit_code": code, "ended_by_g6": hangs}
+
+
+def test_no_repair_starts_once_the_runs_clock_is_spent(monkeypatch, tmp_path):
+    now = [we.time.monotonic()]
+    monkeypatch.setattr(we.time, "monotonic", lambda: now[0])
+
+    def review(n):
+        now[0] += we.c.WALL_CLOCK_S          # the first review takes the rest of the run's time
+        return {"verdict": "defect", "rule": "r", "why": "w", "test": TEST}
+
+    k2_reviews(monkeypatch, review)
+    record, _, starts, *_ = host_run(monkeypatch, tmp_path, "K2", [("s1", "def f():\n    return 1\n", None), ("s1", "", None)])
+    assert len(starts) == 1 and record["status"] == "timeout" and record["repairs"]["ended"] == "timeout"
+
+
+@pytest.mark.parametrize("status", ["limited", "refused"])
+def test_every_scoring_entry_point_asks_one_rule_and_gives_no_verdict_to_a_limited_or_refused_run(monkeypatch, tmp_path, status):
+    import compare
+    assert not we.c.scoreable({"status": status}) and we.c.scoreable({"status": "timeout"}) and we.c.scoreable({})
+    task = we.load_tasks()[0]
+    archive = we.c.Archive(tmp_path / "a")
+    archive.start("validate", task.id).finish({"fail_to_pass": ["test.py::test_bug"], "pass_to_pass": [], "ok": True}, "finished")
+    run = archive.start("run", task.id, executor="host")
+    run.finish({"agent_started": True, "cost_usd": 0.0}, status)
+    monkeypatch.setattr(we, "_oracle_run", lambda *a, **kw: pytest.fail("a run with no verdict is never checked"))
+    with pytest.raises(SystemExit, match=status):
+        we.check(SimpleNamespace(archive=archive), task, run.rel)          # the run named by --run, too
+    (tmp_path / "loop").mkdir()
+    (tmp_path / "loop" / "K1-t-1.json").write_text(json.dumps({"arm": "K1", "task": "t", "repeat": 1, "run": "run/t/1",
+                                                               "status": status, "passes": False, "failing": 3}), "utf-8")
+    monkeypatch.setattr(we, "amendment", lambda task: None)
+    assert compare.saved(tmp_path)[("K1", "t", 1)]["maintainers"] is None
+
+
+@pytest.mark.parametrize("code", [-9, None])
+def test_a_docker_client_ended_by_a_signal_is_a_tool_error(tmp_path, box, code):
+    ws = tmp_path / "ws"
+    write(ws, {"a.py": "x\n"})
+    opts = SimpleNamespace(container="ctr", repo="/w/r", workspace=str(ws), user="tester", timeout=30.0)
+    got = box.call(opts, {"name": "run", "arguments": {"command": "true"}},
+                   lambda *a, **kw: ok(b"{}") if box.MIRROR in a else ok(b"", code=code))
+    assert got["isError"] is True
+
+
+# R2: a producer's text is trusted only where Claude Code itself marks it.
+def test_a_limit_is_read_only_where_claude_code_marks_its_own_words_and_a_model_counts_only_by_its_own_name(tmp_path):
+    said = {"type": "result", "subtype": "success", "is_error": False, "result": f"The fixture prints: {LIMIT_TEXT}"}
+    assert we.limit_of(json.dumps(said)) is None                                  # a successful result's text is the model's
+    assert we.limit_of(json.dumps({"type": "result", "subtype": "error_during_execution", "result": LIMIT_TEXT})) == \
+        "resets 7pm (Europe/London)"
+    for n, (seen, switched) in enumerate([(SONNET, False), (SONNET + "-20260101", False), (SONNET + "-2026010", True),
+                                           (SONNET + "-different-model", True), (SONNET[:-1], True)]):
+        lines = stream("s1")
+        message = json.loads(lines[1])
+        message["message"]["model"] = seen
+        path = tmp_path / f"stream-{n}.jsonl"
+        path.write_text("\n".join([lines[0], json.dumps(message), lines[-1]]), encoding="utf-8")
+        assert we.host_facts(path, SONNET)["switched"] is switched, seen
+
+
+# R3: nothing the agent started runs while the mirror checks and acts, and no check is apart from what it guards.
+def mirror_in(box, repo: Path, data: bytes) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, "-I", "-c", box.MIRROR, str(repo), "tester"], input=data, capture_output=True,
+                          timeout=60)
+
+
+def unlink(at: Path) -> None:
+    if os.name == "nt":
+        os.rmdir(at)
+    else:
+        os.remove(at)
+
+
+def test_the_mirror_writes_a_changed_file_fresh_and_refuses_a_repository_root_that_is_a_link(tmp_path, box):
+    ws, repo, elsewhere = tmp_path / "ws", tmp_path / "repo", tmp_path / "elsewhere"
+    write(ws, {"a.py": "agent\n", "b.py": "same\n"})
+    write(repo, {"b.py": "same\n"})
+    write(elsewhere, {"a.py": "elsewhere\n", "kept.txt": "k\n"})
+    os.link(elsewhere / "a.py", repo / "a.py")            # the repository's a.py is another name of a file outside it
+    done = mirror_in(box, repo, box.pack(ws))
+    assert done.returncode == 0, done.stderr
+    assert (elsewhere / "a.py").read_text() == "elsewhere\n" and (repo / "a.py").read_text() == "agent\n"
+    assert os.stat(repo / "a.py").st_nlink == 1
+    repo.rename(tmp_path / "moved")
+    link(elsewhere, repo)                                  # the repository's root itself replaced by a link
+    try:
+        done = mirror_in(box, repo, box.pack(ws))
+        assert done.returncode != 0 and b"refused" in done.stderr
+        assert sorted(p.name for p in elsewhere.iterdir()) == ["a.py", "kept.txt"] and (elsewhere / "a.py").read_text() == "elsewhere\n"
+    finally:
+        unlink(repo)
+
+
+def test_the_mirror_refuses_before_any_change_to_remove_a_folder_that_holds_git_or_venv_at_any_depth(tmp_path, box):
+    ws, repo = tmp_path / "ws", tmp_path / "repo"
+    write(ws, {"a.py": "new\n", "pkg": "now a file\n"})
+    write(repo, {"a.py": "old\n", "gone.py": "g\n", "pkg/deep/.venv/bin/python": "v\n"})
+    done = mirror_in(box, repo, box.pack(ws))
+    assert done.returncode != 0 and b"refused" in done.stderr
+    assert (repo / "a.py").read_text() == "old\n" and (repo / "gone.py").is_file() and (repo / "pkg/deep/.venv/bin/python").is_file()
+
+
+def test_the_mirror_first_stops_every_process_of_the_user_but_the_containers_first(box):
+    procs = {"1": ("1000", "S"), "7": ("1000", "R"), "8": ("1000", "Z"), "9": ("0", "S"), "self": None}
+    killed = []
+
+    class Os:
+        @staticmethod
+        def listdir(path):
+            assert path == "/proc"
+            return list(procs)
+
+        @staticmethod
+        def getpid():
+            return 99
+
+        @staticmethod
+        def kill(pid, sig):
+            killed.append((pid, sig))
+            procs.pop(str(pid))
+
+    def status(path, *a, **kw):
+        uid, state = procs[path.split("/")[2]]
+        return io.StringIO(f"Name:\tx\nState:\t{state} (x)\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\n")
+
+    space = {"os": Os, "signal": SimpleNamespace(SIGKILL=9), "sys": sys, "time": SimpleNamespace(sleep=lambda s: None), "open": status}
+    exec(box.STOP, space)
+    space["stop"](1000)
+    assert killed == [(7, 9)]                   # not the container's first process, a zombie, or another user's
+    procs["7"] = ("1000", "R")
+    Os.kill = staticmethod(lambda pid, sig: killed.append((pid, sig)))         # one that does not end
+    with pytest.raises(SystemExit, match="refused"):
+        space["stop"](1000)
+    assert box.STOP in box.MIRROR
+
+
+def test_the_box_refuses_a_workspace_that_is_a_link_and_a_file_that_is_not_the_one_it_checked(monkeypatch, tmp_path, box):
+    real = tmp_path / "real"
+    write(real, {"a.py": "x\n"})
+    link(real, tmp_path / "ws")
+    try:
+        with pytest.raises(box.Refused, match="workspace"):
+            box.pack(tmp_path / "ws")
+    finally:
+        unlink(tmp_path / "ws")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside\n")
+    checked = box._plain
+
+    def swapped(path, root):          # the name given to a file outside right after its check
+        st = checked(path, root)
+        if path.name == "a.py":
+            path.unlink()
+            os.link(outside, path)
+        return st
+
+    monkeypatch.setattr(box, "_plain", swapped)
+    with pytest.raises(box.Refused, match="a.py"):
+        box.pack(real)
+
+
+# R4: a host run is counted by the API's rules as what it is: no reservation, no stop.
+def test_a_host_run_reserves_and_stops_nothing_of_the_apis_money(monkeypatch, tmp_path):
+    started = {"event": "started", "run": "run/t/1", "kind": "run"}
+    assert we.c.spent([{**started, "stop_usd": 0}]) == 0 and we.c.spent([{**started, "executor": "host", "stop_usd": 10.5}]) == 0
+    assert we.c.spent([started]) == we.c.RUN_STOP_USD
+    record, _, _, ctx, *_ = host_run(monkeypatch, tmp_path, "A", [("s1", "", stream("s1", cost=50.0))])
+    assert record["status"] == "finished" and record["cost_usd"] == 0.0 and record["subscription_usd_estimate"] == 50.0
+    start = [r for r in ctx.archive.rows() if r.get("event") == "started" and r.get("kind") == "run"][-1]
+    assert start["executor"] == "host" and start["stop_usd"] == 0.0
+
+
+# R5: on the host the agent's tree is the workspace, by its bytes.
+def test_k_on_the_host_compares_the_workspaces_bytes_and_never_gits_display(monkeypatch):
+    class Docker:
+        def sh(self, *a, **kw):
+            raise AssertionError("git's display is not read when the tree is given")
+
+    trees = iter(["a", "b", "b", "b"])
+    monkeypatch.setattr(we, "run_set", lambda *a: ON_TREE)
+    monkeypatch.setattr(we, "keep_first_patch", lambda *a: None)
+    got = we.reviews_until_clean(SimpleNamespace(docker=Docker()), SimpleNamespace(repo="/w/r"), SimpleNamespace(write_json=lambda *a: None),
+                                 "agent", "base", [], "", None, 1.0, 0.0,
+                                 lambda n: {"verdict": "defect", "rule": "r", "why": "w", "test": TEST},
+                                 session=lambda note, name: "", tree=lambda: next(trees))
+    assert got["rounds"] == 2 and got["reason"] == "the agent left the code as it was"
+
+
+def test_the_final_patch_is_the_workspace_mirrored_again_after_a_reviewers_test_changed_the_container(monkeypatch, tmp_path):
+    def run_set(ctx, task, agent, where):
+        (ctx.docker.repo / "src" / "mod.py").write_text("the reviewer's test wrote this\n", encoding="utf-8")
+        return we.ProbeRun(0, {"test_critic.py::test_owed": "passed"}, {}, "")
+
+    monkeypatch.setattr(we, "run_critic", lambda *a, **kw: {"verdict": "defect", "rule": "r", "why": "w", "test": TEST})
+    monkeypatch.setattr(we, "run_set", run_set)
+    record, docker, _, ctx, _, _ = host_run(monkeypatch, tmp_path, "K2", [("s1", "def f():\n    return 1\n", None)])
+    assert record["status"] == "finished", record.get("error")
+    assert (ctx.archive.root / record["run"] / "final.patch").read_text("utf-8") == "def f():\n    return 1\n"
+    diff = next(i for i, call in enumerate(docker.calls) if call[0] == "sh" and f"{we.WE}/final.patch" in call[1])
+    assert mirrors(docker)[-1] == diff - 1
+
+
+# R6: the session's clock covers its prompt, and every process a session started ends with it.
+def test_the_prompt_goes_in_while_the_sessions_clock_runs(monkeypatch, tmp_path):
+    stopped = threading.Event()
+
+    class Unread(Stdin):
+        def write(self, data):
+            stopped.wait(30)          # a process that takes no input until it is stopped
+            return super().write(data)
+
+    class Quiet:
+        lines = [(stream("s1")[0] + "\n").encode()]
+
+        def readline(self):
+            if self.lines:
+                return self.lines.pop()
+            stopped.wait(30)
+            return b""
+
+    proc = Proc([])
+    proc.stdin, proc.stdout = Unread(), Quiet()
+    monkeypatch.setattr(we, "end_session", lambda p, ws: (setattr(p, "ended", ws), stopped.set()))
+    ctx = SimpleNamespace(starter=lambda argv, **kw: proc, model=SONNET, environ={}, archive=we.c.Archive(tmp_path / "a"))
+    begun = time.monotonic()
+    ended = we.host_session(ctx, ctx.archive.start("run", "t"), tmp_path, tmp_path / "m.json", tmp_path / "s.json", "go",
+                            "stream.jsonl", seconds=0.3, tally=we.c.Tally())
+    assert ended == "timeout" and time.monotonic() - begun < 5 and proc.ended == tmp_path and proc.stdin.text == "go"
+
+
+def test_ending_a_session_stops_its_group_or_its_tree_and_each_process_holding_its_workspace(monkeypatch, tmp_path):
+    calls = []
+    ws = tmp_path / "workspaces" / "tag"
+    if os.name != "nt":
+        monkeypatch.setattr(we.os, "killpg", lambda pid, sig: calls.append((pid, sig)))
+        we.end_session(SimpleNamespace(pid=4242), ws)
+        assert calls == [(4242, signal.SIGKILL)]
+        return
+
+    def run(argv, **kw):
+        calls.append((list(argv), kw.get("env")))
+        found = f"111\r\n{os.getpid()}\r\n222\r\n111\r\n".encode() if argv[0] == "powershell" else b""
+        return SimpleNamespace(returncode=0, stdout=found, stderr=b"")
+
+    monkeypatch.setattr(we.subprocess, "run", run)
+    we.end_session(SimpleNamespace(pid=4242), ws)
+    (first, _), (sweep, env), *rest = calls
+    assert first == ["taskkill", "/PID", "4242", "/T", "/F"]
+    assert sweep[0] == "powershell" and "Win32_Process" in sweep[-1] and str(ws) not in " ".join(sweep)
+    assert env["G6_WE_WORKSPACE"] == str(ws)
+    assert [argv for argv, _ in rest] == [["taskkill", "/PID", "111", "/T", "/F"], ["taskkill", "/PID", "222", "/T", "/F"]]
+    calls.clear()
+    we.end_session(SimpleNamespace(pid=4242), Path(ws.anchor))          # a folder this near the root is never swept
+    assert [argv[0] for argv, _ in calls] == ["taskkill"]
+
+
+# R7: no prefix admits a name by itself.
+def test_no_prefix_admits_a_name_by_itself_and_no_name_of_a_key_or_token_passes():
+    environ = {"PATH": "p", "DOCKER_HOST": "d", "DOCKER_CONTEXT": "c", "DOCKER_CERT_PATH": "cp", "DOCKER_TLS_VERIFY": "1",
+               "DOCKER_AUTH_TOKEN": "t", "DOCKER_CONFIG": "cfg", "docker_password": "p", "LC_ALL": "C", "LC_API_KEY": "k",
+               "PROCESSOR_SECRET": "s", "PROCESSOR_ARCHITECTURE": "AMD64", "HTTPS_PROXY": "h", "Http_Proxy_Credential": "x"}
+    assert we.host_env(environ) == {"PATH": "p", "DOCKER_HOST": "d", "DOCKER_CONTEXT": "c", "DOCKER_CERT_PATH": "cp",
+                                    "DOCKER_TLS_VERIFY": "1", "LC_ALL": "C", "PROCESSOR_ARCHITECTURE": "AMD64", "HTTPS_PROXY": "h",
+                                    **FIXED}

@@ -258,14 +258,36 @@ class Archive:
 
 def spent(rows: Iterable[Mapping[str, Any]]) -> float:
     """Dollars spent: every ended run's cost; a run started and never ended counts the run's whole stop (its own
-    ``stop_usd`` when its start says one, as in round 3) until it is closed with its stream's cost."""
+    ``stop_usd`` when its start says one, as in round 3, 0 included) until it is closed with its stream's cost. A host run's
+    start counts nothing: its sessions are the subscription's, never the API's money (PLAN.md, 2026-11-04)."""
     rows = list(rows)
     ended = {r["run"]: float(r.get("cost_usd") or 0.0) for r in rows if r.get("event") == "ended"}
     total = sum(ended.values())
     for r in rows:
         if r.get("event") == "started" and r.get("kind") == "run" and r["run"] not in ended:
-            total += float(r.get("stop_usd") or RUN_STOP_USD)
+            stop = 0.0 if r.get("executor") == "host" else r.get("stop_usd")
+            total += RUN_STOP_USD if stop is None else float(stop)
     return round(total, 6)
+
+
+#: How a run ends with no verdict to give (PLAN.md, 2026-11-04): at the subscription's usage limit, or refused by G6 itself,
+#: before or at its session's start. Such a run is never scored, and may be made again. A run a model refusal ended
+#: ("model_refused") was made, and is scored (``ON_PATCH``).
+UNSCORED = ("limited", "refused")
+#: How a made run ends when what is scored is its final patch: it finished, or a model refusal ended it, as Claude Code alone
+#: would leave it (PLAN.md, runtime-k ec0f761). Any other made run counts as failed.
+ON_PATCH = ("finished", "model_refused")
+
+
+def scoreable(record: Mapping[str, Any]) -> bool:
+    """Whether a run's record may be given a verdict, and whether it was made: the one rule every scoring entry point asks
+    (``run.check``, ``loop.one``, ``compare.saved``), and round 3's refusal to make a run again."""
+    return record.get("status") not in UNSCORED
+
+
+def on_patch(record: Mapping[str, Any]) -> bool:
+    """Whether a run's verdict is its final patch's independent check (``ON_PATCH``), the one rule ``loop`` and ``compare`` ask."""
+    return record.get("status") in ON_PATCH
 
 
 def may_start(spent_usd: float, cap: float = CAP_USD, need: float = RUN_STOP_USD) -> tuple[bool, str]:
