@@ -181,3 +181,118 @@ def test_an_agent_that_leaves_the_code_as_it_was_has_decided(monkeypatch):
 def test_a_test_that_will_not_run_on_the_patch_says_nothing_of_it(monkeypatch):
     got, asked, _ = _loop(monkeypatch, bug(), [WONT_RUN])
     assert asked == [] and got["status"] == "no_counterexample_in_domain" and "would not run" in got["reason"]
+
+
+def test_the_bug_tests_folder_holds_only_what_the_reviewer_wrote_at_each_check(monkeypatch, tmp_path):
+    """Review v2 finding 3: a check copies the test's whole folder, so a file the agent leaves there (a ``conftest.py`` that
+    replaces each case) would change what the cases run. Before each check the folder is removed as root, then the reviewer's
+    test written alone. Real pytest behind a fake docker; the fake only translates the folder's removal, ``run_set``'s copy,
+    its pytest run and the tree's digest."""
+    import dataclasses
+    import hashlib
+    import os
+    import shutil
+    import subprocess
+    from types import SimpleNamespace
+
+    source, copied, repo = tmp_path / "symptom", tmp_path / "held", tmp_path / "repo"
+    repo.mkdir()
+    module = repo / "buggy.py"
+    module.write_text("def answer():\n    return 0\n", encoding="utf-8")
+    test = (f"import sys\nsys.path.insert(0, {str(repo)!r})\nfrom buggy import answer\n"
+            "def test_bug():\n    assert answer() == 1\n")
+    ins = dataclasses.replace(r4.SYMPTOM, at=source.as_posix())
+    xml, seen, sessions = tmp_path / "results.xml", [], []
+
+    class Docker:
+        def sh(self, ctr, script, **kw):
+            output = b""
+            if "cp -r " in script:                 # run_set's copy, which also begins with a removal
+                shutil.rmtree(copied, ignore_errors=True)
+                shutil.copytree(source, copied)
+                seen.append(sorted(p.name for p in copied.iterdir()))
+            elif script.startswith("rm -rf ") and ins.at in script:
+                shutil.rmtree(source, ignore_errors=True)
+            elif "--junitxml=" in script:
+                env = {**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTHONDONTWRITEBYTECODE": "1"}
+                done = subprocess.run([sys.executable, "-m", "pytest", str(copied / ins.file), "-q", "-p", "no:cacheprovider",
+                                       f"--rootdir={copied}", f"--confcutdir={copied}", f"--junitxml={xml}",
+                                       "-o", "junit_family=xunit2"], cwd=repo, env=env, capture_output=True, timeout=60)
+                output = done.stdout + f"\nexit={done.returncode}\n{we.JUNIT_MARK}\n".encode() + xml.read_bytes()
+            elif "sha256sum " in script:
+                output = hashlib.sha256(module.read_bytes()).hexdigest().encode()
+            elif script.startswith(f"rm -rf {we.HELD_COPY}"):
+                shutil.rmtree(copied, ignore_errors=True)
+            else:
+                raise AssertionError(f"unexpected step: {script[:80]}")
+            return SimpleNamespace(returncode=0, stdout=output, stderr=b"")
+
+    def write_in(docker, ctr, dest, body, **kw):
+        Path(dest).parent.mkdir(parents=True, exist_ok=True)
+        Path(dest).write_text(body, encoding="utf-8")
+
+    def session(*a, **kw):                    # the first repair plants a conftest.py beside the test and fixes nothing
+        sessions.append(1)
+        if len(sessions) == 1:
+            (source / "conftest.py").write_text("def pytest_collection_modifyitems(items):\n    for item in items:\n"
+                                                "        item.obj = lambda: None\n", encoding="utf-8")
+            module.write_text("def answer():\n    return 0\n# touched\n", encoding="utf-8")
+
+    monkeypatch.setattr(we, "HELD_COPY", copied.as_posix())
+    monkeypatch.setattr(we, "bug_instruction", lambda arm: ins)
+    monkeypatch.setattr(we, "write_in", write_in)
+    monkeypatch.setattr(we, "keep_first_patch", lambda *a: None)
+    monkeypatch.setattr(we, "run_session", session)
+    monkeypatch.setattr(we, "scout_again", lambda args: args)
+    ctx, task = SimpleNamespace(docker=Docker(), arm="V4"), SimpleNamespace(repo=repo.as_posix())
+    got = we.reviews_with_bug_test(ctx, task, SimpleNamespace(write_json=lambda *a: None), "agent", "base", [], "", None, 1.0, 0.0,
+                                   bug(test=test))
+    assert seen[:2] == [[ins.file], [ins.file]], seen
+    assert got["status"] == "inconclusive" and got["failing"], got
+
+
+def test_the_bug_test_before_the_agent_comes_out_of_the_runs_one_allowance(monkeypatch, tmp_path):
+    """Review v2 finding 2: arm V's pre-agent review is on the run's clock, as arm K's reviews are, so the first session's
+    deadline counts from before it, as the repairs' allowance and the recorded time do."""
+    import io
+    import json
+    from types import SimpleNamespace
+
+    task, clock, deadlines = we.load_tasks()[0], [100.0], []
+
+    class Docker:
+        def __call__(self, *a, **kw):
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+        def sh(self, ctr, script, *a, **kw):
+            if script == we.TREE_STATE:
+                value = {"head": task.parent, "tree": "tree", "dirty": 0, "commits": 1}
+            elif script == we.ARM_STATE:
+                value = {"mcp_servers": [], "skills": []}
+            else:
+                return self()
+            return SimpleNamespace(returncode=0, stdout=json.dumps(value).encode(), stderr=b"")
+
+        def popen(self, *a, **kw):
+            return SimpleNamespace(stdin=io.BytesIO(), stdout=io.BytesIO(), stderr=io.BytesIO(), poll=lambda: 0,
+                                   wait=lambda **kw: 0)
+
+    def bug_test(*a):
+        clock[0] += 90.0
+        return {"verdict": "none", "seconds": 90.0}
+
+    def read_stream(*a, deadline, **kw):
+        deadlines.append(deadline)
+        return "timeout"
+
+    monkeypatch.setattr(we.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(we, "key_check", lambda *a, **kw: {"ok": True})
+    monkeypatch.setattr(we, "start_net", lambda *a: ("net", "proxy"))
+    monkeypatch.setattr(we, "read_thread", lambda *a: "")
+    monkeypatch.setattr(we, "bug_test", bug_test)
+    monkeypatch.setattr(we, "read_stream", read_stream)
+    ctx = we.Context(archive=we.c.Archive(tmp_path / "archive"), docker=Docker(), key_reader=lambda: "dummy",
+                     issue_reader=lambda task: ("title", "issue"), tree_reader=lambda task: "tree", g6={"commit": "0" * 40},
+                     variant=we.ROUND3, arm="V4", environ={})
+    record = we._run_task(ctx, task, dry=False, cap=10.0, stop=10.5)
+    assert record["status"] == "timeout" and deadlines == [100.0 + we.c.WALL_CLOCK_S] and record["seconds"] == 90.0, record

@@ -2042,8 +2042,9 @@ def reviews_with_bug_test(ctx: Context, task: Task, run: Any, agent: str, base: 
     for n in range(1, MAX_REPAIRS + 2):
         rounds = n
         keep_first_patch(ctx, task, agent, base, n)
-        write_in(ctx.docker, agent, f"{ins.at}/{ins.file}", bug["test"] + "\n", user="root")
-        try:
+        try:     # a check copies the test's whole folder, so the folder goes first and the test is written alone (review v2)
+            checked_ctx.docker.sh(agent, f"rm -rf {ins.at}", user="root", timeout=60)
+            write_in(ctx.docker, agent, f"{ins.at}/{ins.file}", bug["test"] + "\n", user="root")
             got = run_set(checked_ctx, task, agent, ins.at)
         except RuntimeError as exc:
             return {"status": "inconclusive", "rounds": rounds, "failing": [], "critic": summary,
@@ -2185,12 +2186,12 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                 stop = max(1.0, stop - float(record["scout"]["usd"]))
         if looped and has_hook(ctx.arm):
             write_in(ctx.docker, agent, f"{HOME}/.claude/settings.json", hook_settings(stop=True))
+        started = time.monotonic()    # one clock for the run: arm V's bug test comes out of the same allowance (review v2)
         bug: dict[str, Any] = {}
         if test_led and not dry:      # the bug's test, from the issue and the parent, before the agent starts (PLAN.md, 2026-11-04)
             bug = bug_test(ctx, task, run, title, text)
             record["bug_test"] = {k: bug.get(k) for k in ("verdict", "seconds", "error", "instruction")}
         tally = c.Tally(count_reported=round3)
-        started = time.monotonic()
         proc = ctx.docker.popen(*docker_args, env=ctx.client_env(key))
         record["agent_started"] = True
         errors: list[bytes] = []
@@ -2222,10 +2223,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         if critic_led and not dry and not ended:
             record["repairs"] = reviews_until_clean(ctx, task, run, agent, base, docker_args, key, tally, stop, started,
                                                     lambda n: run_critic(ctx, task, run, agent, base, title, text, n))
-        before_agent = float(bug.get("seconds") or 0.0)     # the bug's test, on the run's clock as arm K's reviews are
         if test_led and not dry and not ended:
-            record["repairs"] = reviews_with_bug_test(ctx, task, run, agent, base, docker_args, key, tally, stop,
-                                                      started - before_agent, bug)
+            record["repairs"] = reviews_with_bug_test(ctx, task, run, agent, base, docker_args, key, tally, stop, started, bug)
         result = tally.result or {}
         record.update(status_detail=status_of(ended, tally), agent_usd=tally.cost_usd,
                       cost_usd=round(tally.cost_usd + float(record.get("cost_usd") or 0.0)
@@ -2234,7 +2233,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                       result_usd=tally.result_usd, reported_usd=result.get("total_cost_usd"),
                       model_calls=tally.model_calls, num_turns=result.get("num_turns"), usage=tally.usage,
                       result_subtype=result.get("subtype"), session_id=tally.session_id,
-                      seconds=round(time.monotonic() - started + before_agent, 1))
+                      seconds=round(time.monotonic() - started, 1))
         run.write("final_report.txt", str(result.get("result") or ""))
         ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/final.patch"), workdir=task.repo, timeout=600)
         final = run.fresh_path("final.patch")
