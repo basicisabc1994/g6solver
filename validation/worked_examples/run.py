@@ -1972,8 +1972,8 @@ def review_once(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
 RULE_STEP_ARMS = ("K3",)
 #: What the same session is told after its first patch is saved; its digest is pinned by a test and recorded in each run.
 RULE_STEP = """Before you finish: list each behaviour your change keeps on the code path it touches. For each one, find the
-reference the issue gives for it: the words of the issue, the old version's rule, or a parent or sibling class the issue
-names. Write one test that checks the whole rule against that reference, every case the issue or the reference fixes, not
+reference the issue gives for it: the words of the issue or its discussion, the old version's rule, or a parent or sibling
+class the issue names. Write one test that checks the whole rule against that reference, every case the issue or the reference fixes, not
 only the issue's own example, and run it. Where the reference and your code disagree, fix the code. Where the issue's own
 example and the reference it names disagree, say so in your reply and follow the reference. Then reply with the list and
 what you changed."""

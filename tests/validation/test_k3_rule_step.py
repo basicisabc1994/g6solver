@@ -40,7 +40,7 @@ def test_k3_is_k2_with_the_rule_step_and_nothing_else():
 
 
 def test_the_rule_step_is_one_constant_pinned_by_its_digest():
-    assert we.RULE_DIGEST == _sha(we.RULE_STEP)[:16] == "a4783649c7ffdfb1"
+    assert we.RULE_DIGEST == _sha(we.RULE_STEP)[:16] == "3e99c1c0b233732a"
 
 
 class _Stdin(io.BytesIO):
