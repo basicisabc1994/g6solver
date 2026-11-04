@@ -2082,3 +2082,54 @@ It names what must change for each class.
   test hold on that patch or reproduce nothing on the parent, never send back a patch that was right.
 - **How 2 is checked.** From V4's records: every repair note followed a check on a patch the test then still failed.
 - **Uplift is claimed only if the frozen rule is met,** as before.
+## 2026-11-04 (evening): the reviewer improved on recorded data, and what showing the uplift takes
+
+**Root cause of the false alarms on the inseparable bugs.** From recorded reviews only. On black-5148 and pygments-3158 the
+reviewers flagged the right patches on cases that pass on the parent and fail on the patch. The reviewer treated as a
+requirement either the parent's behaviour beside the fix, or its own extension of the fix beyond what the issue asks.
+
+**The rule proposed from it.** A finding stands only on a case that fails on the parent and still fails on the patch. A case
+that passed on the parent and fails on the patch is a note, not a finding.
+
+**Measured on all 420 recorded patches of stage 1 and 2.** No model was called: the saved reviews already hold every case's
+result on the parent and on the patch.
+
+| Reviewer, amended tests | False alarms on right | Misses on wrong | Balanced |
+|---|---|---|---|
+| Final review, frozen | 138 of 279 | 61 of 141 | 53.6% |
+| Final review, gated | 89 of 279 | 92 of 141 | 51.4% |
+| Rule test, gated | 44 of 279 | 86 of 141 | 61.6% |
+| Symptom test, unchanged by the gate | 0 of 279 | 113 of 141 | 59.9% |
+
+**What the gate does to headroom on the 20 determined bugs.**
+- separable: 2, s3transfer-423 and black-5148; inseparable: 1, pygments-3158.
+- A gated loop keeps the one win, turns the one loss into a win, and never sends a right patch back on those bugs.
+- Misses only mean that nothing goes back, which is Claude Code alone.
+
+**Power,** from G6's `metaharness.evaluate.power`, at the frozen rule's p < 0.05, by number of determined bugs:
+
+| Loop | 20 | 50 | 100 | 200 | 300 |
+|---|---|---|---|---|---|
+| Frozen, as measured (+1 −1) | 0.00 | 0.02 | 0.03 | 0.04 | 0.04 |
+| Gated (+2 of 20, discordant 15%) | 0.06 | 0.42 | 0.80 | 0.98 | 1.00 |
+
+**What follows.**
+- **The frozen loop cannot show uplift at any size.** On determined bugs its one gain is cancelled by its one loss.
+- **Stage 4 cannot decide the gated loop.** It has 21 determined bugs, at power 0.06.
+- **To show it,** arm K2 (K1's loop with the gate) runs against A, both twice, on about 100 determined unseen bugs. The
+  determined share has been about 60% (20 of 34, 21 of 31), so that is about 160 drawn bugs.
+
+**Cost and time,** from recorded means.
+- About $0.36 a bug for both arms twice, so about $58 on API credit, beyond the $17.73 left. The alternative is subscription
+  runs, which keep the sign-in out of every container, so the author runs on the host with tests in the bug's container.
+- Preparation at the memory floor has run at about 10 minutes a bug, so about 27 hours for 160 bugs.
+
+**The registered prediction, frozen before K2's first run.** K2 against A on the determined bugs, on the maintainers' tests:
+- more bugs better than worse;
+- the frozen rule met;
+- no bug worse through a finding that rests on a case that passed on the parent.
+
+**The 95% target, stated exactly.**
+- Recorded runs bound the gated loop at about 85% of runs right on determined bugs: A's 77.5%, plus two bugs.
+- 95% also needs the two generation bugs and pygments-3158. They need a better first attempt and a check that quotes the
+  issue, not a better chooser.
