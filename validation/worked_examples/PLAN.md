@@ -2370,3 +2370,54 @@ failed on the parent and any case failed on the patch. It did not require the sa
 
 **Reported beside them.** Replays 3 and 4 are also scored by case, from the per-case results their records already hold, with
 no rerun. The difference between the two rules is reported, by patch.
+
+## 2026-11-04 (night): replay 6's code review ended at its limit; a follow-up comes before its development check
+
+**The loop.** `claude/replay6` had four Codex reviews and three repairs (ba72967, ee6c61f, db29929). The reviews found 7, 10, 5
+and 7. Every finding was reproduced by its own test before it was counted. The loop never reached a clean review.
+- Codex's filter stopped review 3 partway. It was not retried or reworded. A fresh Claude reviewer stood in, and the tests
+  Codex had already written were kept.
+- One earlier control fails by design: `test_old_replay_sources_and_instructions_are_identical`, since replay 3 gained
+  `same_case` (the section above).
+
+**Rejected, with the reason.**
+- Review 3, lead 1: a probe that reads its own expected values can only make its own cells pass. So it can cause a miss,
+  never a flag. Recorded as a limit.
+- Review 4, finding 5: the patch's bytes change between the duplicate check and the run. Only something writing to the frozen
+  archive during a run can do that, and nothing does. Each saved record names the bytes it reviewed, so it would show.
+
+**Open from review 4, reproduced on db29929.** They are repaired as their own change, `claude/replay6-followup`, test first,
+with its own review loop. Review 4's tests are its first failing tests.
+1. A probe that returns text which is not Unicode (a lone surrogate) passes as JSON. The cell then fails on both trees and
+   flags the patch, though the model reader refuses the same text.
+2. Reader 2 is sent the probe with comments and docstrings removed, but data stays. A constant holding reader 1's table reaches
+   reader 2, so the two tables are no longer independent.
+3. The probe's process works in the project folder, and replay 3 runs the parent and then the patch in one container. A file
+   the probe writes there (here a `pytest.py`) changes the patch's run.
+4. On restart, a saved compiled test is reused however the compiler changed since, because the record is named by the
+   instruction alone. No replay 6 record exists yet, so this moves no count.
+6. A probe that overruns is killed, but the processes it started are not. They keep running into the patch's run.
+7. The check that an observation is JSON runs in the probe's own namespace and trusts the returned object's equality. So a
+   probe can approve a value that JSON would change (a tuple read as a list).
+- **Lead, not counted:** a project that is importable only through pytest's `pythonpath` setting cannot be imported in the
+  probe's process. Its cells are skipped: a miss, not a flag.
+
+**Decided for that change: remove the root, not the instances.** Findings 3, 6 and 7 share one root. The probe shares too much
+with what judges it: a namespace, a folder, a process tree and a container.
+- The probe runs in a namespace of its own. Whether a value is JSON is decided by an exact walk of types, with no equality
+  the value supplies.
+- The probe's text is read by the same rule as the model's data (finding 1: one fact, one rule).
+- The probe works in an empty temporary folder, with the pytest process's import path.
+- On a timeout, the whole process group is ended.
+- Each run of replay 6, the parent's and the patch's, gets a container of its own.
+- A compiled test's record is named by the compiler's source as well as the instruction.
+- What reader 2 is sent is masked mechanically wherever a literal equals one of reader 1's expected values. The masks are
+  counted and reported.
+- Cost if wrong: one container start more per patch, and a reader 2 that sees less of the probe.
+
+**Replay 5 is unchanged.** It shares replay 3's one container per patch. Counted on the records: none of the 79 saved model
+tests in round 3's replay records writes outside a temporary folder. The count looked for writes by `open`, `Path` writes,
+`os.chdir`, and `shutil` and `os` file moves. So the shared container moved no recorded count of replays 3 and 4. Replay 5
+runs as registered and reports the same count for its own tests.
+
+**When.** Replay 6's development check waits for the follow-up's review loop. It still runs after replay 5.
