@@ -9,7 +9,8 @@ Reader 1 (Codex, asked as replay 3 asks its reviewer, through ``final_review._st
 the model, one JSON document where replay 3's reply carries its test: named factors (their product the cases, at most
 ``MAX_CASES``), named observations, a probe whose ``observe(case)`` calls the code, and a rule table, each row quoting the issue.
 Reader 2 (Claude, ``g6.core.host_models.ClaudeCodeCaller``, no tool) is given the issue, the factors, the observations and the
-probe, never reader 1's rules, the parent or any output of the code, and writes its own table. G6's checks are plain code here,
+probe with no comment or docstring (``_bare``), never reader 1's rules, the parent or any output of the code, and writes its own
+table. G6's checks are plain code here,
 before anything runs: the model's form, rows whose quote is not the issue's own words dropped, a table that gives one case two
 values for one observation refused, and the two tables compared on every case both cover, where any difference leaves the bug
 ambiguous and nothing is flagged on it. Every comparison of two values, a table's with a factor's, the two tables', and the
@@ -22,14 +23,17 @@ case. Each bug's record holds its status (``STATUSES``), the counts and both tab
 from __future__ import annotations
 
 import argparse
+import ast
 import functools
 import hashlib
 import inspect
+import io
 import itertools
 import json
 import math
 import re
 import subprocess
+import tokenize
 import uuid
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
@@ -114,7 +118,8 @@ FOLDER = FORMAL.folder
 READER_2_SYSTEM = """You are writing, as data, the rule a reported bug breaks, over an input domain another reader has modelled.
 You are given the issue and its discussion; the domain's factors, each a list of JSON values, where a case is one value of each
 factor and every combination is a case; the names of the observations a probe returns for a case; and the probe's Python source,
-which shows what each observation is. An observation whose call raised has its exception's type name, as a string. You are shown
+its comments and docstrings removed, which shows what each observation is. An observation whose call raised has its exception's
+type name, as a string. You are shown
 no other code and no output of any code.
 
 Write rules only where the issue's words state the outcome. Each rule has "when": for some factors, the one value or the list of
@@ -268,6 +273,45 @@ def check_rows(rows: Any, factors: Mapping[str, Sequence[Any]], observations: Se
     return ""
 
 
+def _inert(node: ast.AST) -> bool:
+    """A statement that is a string alone, a docstring or any other: it does nothing as it runs, and holds only text."""
+    value = node.value if isinstance(node, ast.Expr) else None
+    if isinstance(value, ast.JoinedStr):
+        return all(isinstance(part, ast.Constant) for part in value.values)
+    return isinstance(value, ast.Constant) and isinstance(value.value, (str, bytes))
+
+
+def _bare(probe: str) -> str | None:
+    """The probe as reader 2 is shown it: its text, with its newlines as Python reads them, less every comment, as Python's own
+    tokenizer reads one, and every statement that is a string alone (``_inert``), as Python's own parser reads one, so no text
+    of reader 1's that does nothing as the probe runs reaches reader 2. None where the tokenizer cannot read it. A probe the
+    parser cannot read cannot run, and loses its comments alone."""
+    text = probe.replace("\r\n", "\n").replace("\r", "\n")
+    lines = text.split("\n")
+    try:
+        cuts = [(token.start, token.end) for token in tokenize.generate_tokens(io.StringIO(text).readline)
+                if token.type == tokenize.COMMENT]
+    except (tokenize.TokenError, SyntaxError):         # an IndentationError is a SyntaxError
+        return None
+    try:
+        tree: ast.AST | None = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        tree = None
+
+    def at(row: int, column: int) -> tuple[int, int]:  # the parser counts a column in UTF-8 bytes, the tokenizer in characters
+        return row, len(lines[row - 1].encode("utf-8")[:column].decode("utf-8"))
+
+    cuts += [(at(node.lineno, node.col_offset), at(node.end_lineno, node.end_col_offset))
+             for node in (ast.walk(tree) if tree else ()) if _inert(node)]
+    starts = list(itertools.accumulate((len(line) + 1 for line in lines), initial=0))
+    kept, done = [], 0
+    for (row, column), (end_row, end_column) in sorted(cuts):
+        start, end = starts[row - 1] + column, starts[end_row - 1] + end_column
+        kept.append(text[done:max(done, start)])
+        done = max(done, end)
+    return "".join(kept) + text[done:]
+
+
 def parse_model(text: str) -> tuple[dict[str, Any] | None, str]:
     """Reader 1's model, or None and why it breaks its form: factors of distinct JSON scalars or lists, ``1..MAX_CASES`` cases
     in their product, observations distinct identifiers, a probe of some source, and a table ``check_rows`` passes."""
@@ -297,6 +341,8 @@ def parse_model(text: str) -> tuple[dict[str, Any] | None, str]:
         return None, "observations are not distinct Python identifiers"
     if not isinstance(probe, str) or not probe.strip():
         return None, "the probe is no Python source"
+    if _bare(probe) is None:
+        return None, "the probe cannot be read by Python's tokenizer, so reader 2 cannot be shown it"
     why = check_rows(rows, factors, observations)
     if why:
         return None, why
@@ -370,7 +416,8 @@ _TEST = '''
 #: The probe's process: G6's own program, run by this file's interpreter in the directory pytest runs in, so the project imports
 #: as it does for any test. It reads the probe and the cases from its input, never an expectation, runs the probe as its main
 #: code, under no module name of its own, and writes one JSON answer: the type name of what the probe raised as it ran, or for
-#: each case its observations or the type name of what observe raised. What the probe prints goes nowhere, and the process
+#: each case the type name of what observe raised, or its observations, written as JSON strictly and read back as they were,
+#: or, where they are no JSON value, the type name of what observe gave. What the probe prints goes nowhere, and the process
 #: ends once it has answered.
 _G6_CHILD = """
 def _g6_child(json, os, sys):
@@ -383,9 +430,16 @@ def _g6_child(json, os, sys):
         observe, seen = main.get("observe"), []
         for case in sent["cases"]:
             try:
-                seen.append({"seen": json.loads(json.dumps(observe(case), default=repr))})
+                got = observe(case)
             except BaseException as exc:
                 seen.append({"raised": type(exc).__name__})
+                continue
+            try:
+                kept = json.loads(json.dumps(got, allow_nan=False))
+                exact = bool(kept == got)
+            except BaseException:
+                exact = False
+            seen.append({"seen": kept} if exact else {"not_json": type(got).__name__})
         said = {"seen": seen}
     except BaseException as exc:
         said = {"raised": type(exc).__name__}
@@ -402,24 +456,30 @@ _g6_answer = []
 
 
 def _g6_ask():
-    """The probe's process, run once: each case's entry by the case's canon, or None and why, where the probe raised as it ran,
-    or the process overran _G6_SECONDS and was killed, or gave no answer this file reads. Then every cell is skipped, and
-    none fails."""
+    """The probe's process, run once: each case's entry by the case's canon, or None and why, where the process overran
+    _G6_SECONDS and was killed, or exited other than 0, whatever it wrote, or gave no answer this file reads, or the probe
+    raised as it ran. Then every cell is skipped, and none fails."""
     cases = {canon(cell["case"]): cell["case"] for cell in _G6_CELLS}
     sent = json.dumps({"probe": _G6_PROBE, "cases": list(cases.values())}).encode("ascii")
     try:
         done = subprocess.run([sys.executable, "-c", _G6_CHILD], input=sent, stdout=subprocess.PIPE,
                               stderr=subprocess.DEVNULL, timeout=_G6_SECONDS)
-        said = json.loads(done.stdout.decode("ascii"))
     except subprocess.TimeoutExpired:                 # run kills the process before it raises this
         return None, f"the probe's process ran past {_G6_SECONDS} seconds"
-    except (OSError, ValueError):                     # no process, or no JSON: a UnicodeError is a ValueError
+    except OSError:
+        return None, "the probe's process did not start"
+    if done.returncode != 0:                          # a process that failed gives no answer, whatever it wrote
+        return None, f"the probe's process exited {done.returncode}"
+    try:
+        said = json.loads(done.stdout.decode("ascii"))
+    except (ValueError, RecursionError):              # no JSON: a UnicodeError is a ValueError
         said = None
     if isinstance(said, dict) and isinstance(said.get("raised"), str):
         return None, f"the probe raised {said['raised']}"
     seen = said.get("seen") if isinstance(said, dict) else None
     if not isinstance(seen, list) or len(seen) != len(cases) or not all(
-            isinstance(one, dict) and ("seen" in one or isinstance(one.get("raised"), str)) for one in seen):
+            isinstance(one, dict) and ("seen" in one or isinstance(one.get("raised"), str)
+                                       or isinstance(one.get("not_json"), str)) for one in seen):
         return None, "the probe's process gave no answer"
     return dict(zip(cases, seen)), ""
 
@@ -433,12 +493,13 @@ def test_formal(cell):
         pytest.skip(why)
     one = answer[canon(cell["case"])]
     if "seen" not in one:
-        pytest.skip(f"observe raised {one['raised']}")
+        pytest.skip(f"observe raised {one['raised']}" if "raised" in one else
+                    f"what observe gave ({one['not_json']}) is no JSON value, so its case is unobservable")
     seen = one["seen"]
     names = [cell["observation"], *([cell["equals"]] if "equals" in cell else [])]
     if not isinstance(seen, dict) or any(name not in seen for name in names):
         pytest.skip("observe gave no such observation")
-    # The tables' one rule (canon): an observation that is no JSON value, a number that is not finite, fails its cell.
+    # The tables' one rule (canon); what observe gave is a JSON value as it was, or its case was unobservable and skipped.
     assert canon(seen[cell["observation"]]) == (canon(seen[cell["equals"]]) if "equals" in cell else cell["want"])
 '''
 
@@ -492,9 +553,11 @@ def reader_2() -> ClaudeCodeCaller:
 
 
 def reader_2_text(issue: str, model: Mapping[str, Any]) -> str:
-    """What reader 2 is given: the issue's text, and reader 1's factors, observations and probe. Never reader 1's rules."""
+    """What reader 2 is given: the issue's text, and reader 1's factors, observations and probe, the probe with no comment or
+    docstring (``_bare``; ``parse_model`` refuses one it cannot read). Never reader 1's rules."""
     return (f"<issue>\n{issue}\n</issue>\n\n<factors>\n{json.dumps(_python(model['factors']), indent=1)}\n</factors>\n\n"
-            f"<observations>\n{json.dumps(model['observations'])}\n</observations>\n\n<probe>\n{model['probe']}\n</probe>\n")
+            f"<observations>\n{json.dumps(model['observations'])}\n</observations>\n\n"
+            f"<probe>\n{_bare(model['probe'])}\n</probe>\n")
 
 
 def reader_2_rules(reply: str) -> list[Any] | None:

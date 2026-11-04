@@ -44,6 +44,9 @@ REVIEWERS = ((FROZEN, fr.FOLDER), (REPRODUCE, fr.REPRODUCE), (PRODUCT, pr.FOLDER
 #: The replays paired with the final review, patch by patch: replay 1, replay 3 (PLAN.md, 2026-11-04, early), replay 4
 #: (2026-11-04, late morning), replay 5 (2026-11-04, afternoon) and replay 6 (2026-11-04, evening).
 PAIRED = (REPRODUCE, RULE, SYMPTOM, RELATION, FORMAL)
+#: The replays run on replay 3's machinery, by their instructions: a saved verdict of theirs counts only where their scheduler
+#: reuses it (``replay3.reused``: the bug's own, under the replay's gate), so no patch is both waiting and counted.
+INSTRUCTIONS = {RULE: r3.rule(), SYMPTOM: r4.SYMPTOM, RELATION: r5.RELATION, FORMAL: r6.FORMAL}
 SCORES = ("amended", "maintainers")
 Rows = Mapping[str, Mapping[str, Any]]
 
@@ -60,7 +63,7 @@ def groups() -> list[tuple[str, list[str], bool]]:
 def patches(root: Path, tasks: Iterable[str]) -> dict[str, dict[str, Any]]:
     """Each distinct final patch of these bugs' finished runs, by digest and in digest order: its bug, its truth on each score
     (None where its runs' verdicts differ or none was scored), the scores it is split on, and each reviewer's ``said`` and
-    ``verdict`` from its saved review (None where there is no saved review)."""
+    ``verdict`` from its saved review (None where there is none its scheduler reuses, ``spoken``, and none that failed)."""
     wanted, verdicts = set(tasks), compare.saved(root)
     found: dict[str, dict[str, Any]] = {}
     for path in sorted((root / "loop").glob("*-*.json")):
@@ -83,10 +86,18 @@ def patches(root: Path, tasks: Iterable[str]) -> dict[str, dict[str, Any]]:
         one["split"] = [score for score in SCORES if len(seen[score]) > 1]
         for name, folder in REVIEWERS:
             kept = fr.read(root / "loop" / folder / f"{sha}.json")     # one that cannot be read is no review, as the replays read it
-            if not (fr.counts(kept) or (kept or {}).get("said") == "failed"):
-                kept = None          # neither a review nor a failed one, so no record at all: it completes no block, as none does
+            if not (spoken(name, kept, one["task"]) or (kept or {}).get("said") == "failed"):
+                kept = None          # no review its scheduler reuses, nor a failed one: no record, so it completes no block
             one[name] = {"said": kept["said"], "verdict": kept.get("verdict")} if kept else None
     return dict(sorted(found.items()))
+
+
+def spoken(name: str, review: Mapping[str, Any] | None, task: str) -> bool:
+    """Whether reviewer ``name``'s saved review speaks for a patch of ``task``, by the one rule its scheduler reuses a review
+    by: ``replay3.reused`` (the bug's own, under the replay's gate) for the replays on replay 3's machinery (``INSTRUCTIONS``),
+    and ``final_review.counts`` for the others."""
+    ins = INSTRUCTIONS.get(name)
+    return r3.reused(review, task, ins) if ins else fr.counts(review)
 
 
 def counted(review: Mapping[str, Any] | None) -> bool:

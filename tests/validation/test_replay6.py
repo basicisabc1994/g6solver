@@ -772,3 +772,90 @@ def test_a_patch_whose_bytes_change_while_its_bug_is_asked_has_no_verdict_under_
     assert not (tmp_path / "loop" / r6.FOLDER / f"{after}.json").exists()
     kept = json.loads((tmp_path / "loop" / r6.FOLDER / f"{before}.json").read_text("utf-8"))
     assert got[0]["said"] == kept["said"] == "failed" and "changed" in kept["error"] and not fr.counts(kept)
+
+
+# --- review 3's findings, each removed by its class ----------------------------------------------------------------------------
+def test_the_counts_take_a_saved_verdict_only_where_its_scheduler_reuses_it(tmp_path, monkeypatch):
+    """Review 3 finding 2: a verdict the scheduler leaves waiting, made for another bug or under the other gate, was counted.
+    The counts read each replay's saved verdict by the rule its scheduler reuses one by: ``replay3.reused`` for the replays on
+    replay 3's machinery, ``final_review.counts`` for the others."""
+    [row] = _rows(tmp_path, 1)
+    row = {**row, "arm": "L9", "repeat": 0}
+    _finished(tmp_path, row)
+    sha = hashlib.sha256((tmp_path / "run0" / "final.patch").read_bytes()).hexdigest()
+    monkeypatch.setattr(rc.compare, "saved", lambda root: {("L9", row["task"], 0): {"amended": True, "maintainers": True}})
+    names = {folder: name for name, folder in rc.REVIEWERS}
+    for ins in (r3.rule(), r4.SYMPTOM, r5.RELATION, r6.FORMAL):
+        gate = {"same_case": True} if ins.same_case else {}
+        for record in ({}, {"same_case": True}, {**gate, "task": "other-1"}):
+            fr.keep(tmp_path, row, {"said": "none", "verdict": "none", **record}, ins.folder, sha=sha)
+            waits = r3.waiting(tmp_path, [row["task"]], ins) != []
+            assert waits == (record != gate), (ins.folder, record)
+            rows = rc.patches(tmp_path, [row["task"]])
+            assert rc.tally(rows, names[ins.folder], "amended")["n"] == (not waits), (ins.folder, record)
+            assert (rows[sha][names[ins.folder]] is None) == waits
+    for name, folder in rc.REVIEWERS[:3]:              # the final review's rule, which names no bug, is as it was
+        fr.keep(tmp_path, row, {"said": "none", "verdict": "none", "task": "other-1"}, folder, sha=sha)
+        assert fr.waiting(tmp_path, [row["task"]], folder) == []
+        assert rc.tally(rc.patches(tmp_path, [row["task"]]), name, "amended")["n"] == 1
+
+
+def test_reader_2_is_shown_the_probe_with_no_comment_or_docstring_and_the_file_runs_it_as_written():
+    """Review 3 finding 3: reader 1's table reached reader 2 in a comment of the probe. Reader 2 is shown the probe with every
+    comment, as Python's tokenizer reads one, and every docstring or other statement that is a string alone, as its parser
+    reads one, removed; the compiled file runs the probe as reader 1 wrote it."""
+    probe = ('"""R1_MODULE_DOC"""\nimport os\r# R1_AFTER_A_LONE_CR\r\n'
+             'class Ünï:  "R1_CLASS_DOC é"\n'
+             'def observe(case):  # R1_TRAILING\n'
+             '    """R1_FUNCTION_DOC\n    over two lines"""\n'
+             '    note = "# R1_KEPT_STRING"\n'
+             '    out = str(case["n"]).rjust(case["width"])\n'
+             '    ("R1_BARE_STRING"  # R1_INNER\n     "R1_MORE")\n'
+             '    return {"length": len(out), "size": len(out), "out": out}\n')
+    caller = Caller(rules(PADDED))
+    got = r6.formal(wrote(model(probe=probe)), TITLE, TEXT, caller)
+    [(_, user)] = caller.calls
+    for text in ("R1_MODULE_DOC", "R1_AFTER_A_LONE_CR", "R1_CLASS_DOC", "R1_TRAILING", "R1_FUNCTION_DOC", "over two lines",
+                 "R1_BARE_STRING", "R1_INNER", "R1_MORE"):
+        assert text not in user, text
+    assert 'note = "# R1_KEPT_STRING"' in user and 'out = str(case["n"]).rjust(case["width"])' in user and "class Ünï:" in user
+    assert got["status"] == "stands" and repr(probe) in got["test"]           # the probe as reader 1 wrote it, as one text
+    space = _load(got["test"])
+    for cell in space["_G6_CELLS"]:
+        space["test_formal"](cell)                    # and it runs as written: each agreed case is padded
+    unparsed = Caller(rules(PADDED))                  # one the tokenizer reads and the parser cannot still loses its comments
+    got = r6.formal(wrote(model(probe="# R1_COMMENT\ndef observe(case) return {}\n")), TITLE, TEXT, unparsed)
+    assert got["status"] == "stands" and "R1_COMMENT" not in unparsed.calls[0][1] and "def observe(case) return {}" in unparsed.calls[0][1]
+
+
+@pytest.mark.parametrize("probe", ['def observe(case):\n    return """\n', "if 1:\n    x = 1\n  y = 2\n", "x = (1,\n", "x = 1\x00\n"])
+def test_a_probe_the_tokenizer_cannot_read_asks_no_reader_2_and_makes_the_bug_invalid(probe):
+    caller = Caller(rules(PADDED))
+    got = r6.formal(wrote(model(probe=probe)), TITLE, TEXT, caller)
+    assert got["status"] == "invalid" and got["test"] == "" and caller.calls == [] and "tokenizer" in got["status_reason"]
+
+
+@pytest.mark.parametrize("ending", ["_exit = os._exit\nos._exit = lambda code: _exit(7)\n",
+                                    "def _end(code):\n    raise SystemExit(7)\nos._exit = _end\n"])
+def test_a_probe_process_that_exits_non_zero_skips_every_cell_whatever_it_answered(ending):
+    """Review 3 finding 4: the probe's process wrote its answer and then exited non-zero, and the answer was read. An answer
+    is read only from a process that exited 0."""
+    space = _load(r6.formal(wrote(model(probe="import os\n" + ending + PROBE)), TITLE, TEXT, Caller(rules(PADDED)))["test"])
+    for cell in space["_G6_CELLS"]:
+        with pytest.raises(pytest.skip.Exception, match="exited 7"):
+            space["test_formal"](cell)
+
+
+@pytest.mark.parametrize(("value", "expected"), [("b'abc'", "b'abc'"), ("{3}", "{3}"), ("(3, 3)", [3, 3]), ("{1: 3}", {"1": 3}),
+                                                  ("float('nan')", "nan"), ("[[1]] * 1 + [object()]", "x")])
+def test_an_observation_that_is_no_json_value_makes_its_case_unobservable_and_its_cells_skip(value, expected):
+    """Review 3 finding 5: the probe's process wrote a value that is no JSON value by its repr, so bytes whose repr is the
+    expected string passed. Each case's observations are written as JSON strictly and must read back as they were; any other
+    makes the case unobservable, and its cells skip."""
+    row = {"when": {}, "expect": {"out": expected}, "quote": QUOTE}
+    probe = f"def observe(case):\n    return {{'length': 3, 'size': 3, 'out': {value}}}\n"
+    space = _load(r6.formal(wrote(model(probe=probe, rules=[row])), TITLE, TEXT, Caller(rules(row)))["test"])
+    assert len(space["_G6_CELLS"]) == 4
+    for cell in space["_G6_CELLS"]:
+        with pytest.raises(pytest.skip.Exception, match="no JSON value"):
+            space["test_formal"](cell)
