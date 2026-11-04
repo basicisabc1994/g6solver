@@ -26,6 +26,7 @@ import compare
 import final_review as fr
 import product_review as pr
 import replay3 as r3
+import replay4 as r4
 import run as we
 import wecommon as c
 from g6.core.binomial import lower_bound, upper_bound
@@ -34,10 +35,11 @@ BLOCK, ALPHA = 40, 0.05
 #: The predictions, written before any run: replay 1's agreement up by at least 10 points with false alarms up by at most 5, and
 #: replay 2's verdicts matching the final review's on at least 85% of patches.
 RISE, MORE_FALSE_ALARMS, MATCH = Fraction(1, 10), Fraction(1, 20), Fraction(17, 20)
-FROZEN, REPRODUCE, PRODUCT, RULE = "final review", "reproduce first", "product", "rule test"
-REVIEWERS = ((FROZEN, fr.FOLDER), (REPRODUCE, fr.REPRODUCE), (PRODUCT, pr.FOLDER), (RULE, r3.FOLDER))
-#: The replays paired with the final review, patch by patch: replay 1, and replay 3 (PLAN.md, 2026-11-04, early).
-PAIRED = (REPRODUCE, RULE)
+FROZEN, REPRODUCE, PRODUCT, RULE, SYMPTOM = "final review", "reproduce first", "product", "rule test", "symptom test"
+REVIEWERS = ((FROZEN, fr.FOLDER), (REPRODUCE, fr.REPRODUCE), (PRODUCT, pr.FOLDER), (RULE, r3.FOLDER), (SYMPTOM, r4.FOLDER))
+#: The replays paired with the final review, patch by patch: replay 1, replay 3 (PLAN.md, 2026-11-04, early) and replay 4
+#: (2026-11-04, late morning).
+PAIRED = (REPRODUCE, RULE, SYMPTOM)
 SCORES = ("amended", "maintainers")
 Rows = Mapping[str, Mapping[str, Any]]
 
