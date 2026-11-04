@@ -126,6 +126,21 @@ class Redactor:
 
 
 # --- Claude Code's stream ----------------------------------------------------------------------------------------------
+def stream_lines(text: str) -> list[str]:
+    """Newline-delimited JSON as its lines: Claude Code's stream and a host session's stderr, ``runs.jsonl``, the ledger and the
+    egress log, every one the worked examples read. It is split at "\\n" alone, never where ``str.splitlines`` splits too (U+2028,
+    U+2029, U+0085 and the like, which a JSON string holds as they are): no part of a record is ever read as a line of its own.
+    The one framing: a test fails on any other line split in the worked examples that is not named with why it reads no such
+    text."""
+    return text.split("\n")
+
+
+def read_stream(path: Path) -> list[str]:
+    """A newline-delimited JSON file's lines (``stream_lines``): its bytes decoded as UTF-8 with no newline translation, so a
+    "\\r" is never read as a line's end either."""
+    return stream_lines(Path(path).read_bytes().decode("utf-8"))
+
+
 @dataclass
 class Tally:
     """What Claude Code's stream-json said: model calls (distinct assistant messages, sub-agents included) with their
@@ -261,7 +276,7 @@ class Archive:
     def rows(self) -> list[dict[str, Any]]:
         if not self.index.is_file():
             return []
-        return [json.loads(line) for line in self.index.read_text(encoding="utf-8").splitlines() if line.strip()]
+        return [json.loads(line) for line in read_stream(self.index) if line.strip()]
 
     def start(self, kind: str, task: str, **meta: Any) -> RunFolder:
         stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%S%fZ")

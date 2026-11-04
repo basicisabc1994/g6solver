@@ -13,6 +13,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import wecommon as c
 from g6.core import llm
 from g6.metaharness.failure_strategy import FailureTraceStrategy
 from g6.metaharness.propose import DevFailure, ProposerView
@@ -90,4 +91,4 @@ def distill(base: str, rows: Sequence[Mapping[str, Any]], archive: Path, caller:
 
 
 def main_row(path: Path) -> list[dict]:
-    return [json.loads(line) for line in path.read_text("utf-8").splitlines() if line.strip()]
+    return [json.loads(line) for line in c.read_stream(path) if line.strip()]

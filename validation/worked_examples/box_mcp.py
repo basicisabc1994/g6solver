@@ -11,6 +11,7 @@ Only the standard library, so ``-I`` holds.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import os
@@ -19,11 +20,13 @@ import stat
 import subprocess
 import sys
 import tarfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, BinaryIO
 
 KEPT = (".git", ".venv")    # the container's own, at any depth, as the export's ``--exclude`` leaves them: never sent, never touched
+NAME_MAX = 255              # the bytes one part of a name may have on the container's Linux file systems
+PATH_MAX = 4096             # the bytes of a path the container's kernel takes, its terminating NUL included
 MAX_OUTPUT = 20000
 START = "g6-box-start"      # the start line's word, before the call's own nonce (``run_command``)
 #: What ``sh -c`` runs in the container, with the start line as ``$0`` and the command as ``$1``: the start line, then the command.
@@ -196,8 +199,8 @@ print(json.dumps({"written": written, "removed": removed}))
 
 
 class Refused(RuntimeError):
-    """A workspace that cannot be sent: a link, a junction or another reparse point, an entry that is not inside it, a folder
-    changed while it was packed, or anything that could not be packed."""
+    """A workspace that cannot be sent: a link, a junction or another reparse point, an entry that is not inside it, a name the
+    container cannot hold, a tree changed while it was packed, or anything that could not be packed."""
 
 
 class BoxError(RuntimeError):
@@ -242,13 +245,56 @@ def _same_folder(path: Path, checked: os.stat_result, rel: str) -> None:
         raise Refused(f"{rel} is not the folder that was checked: it was changed while the workspace was packed")
 
 
-def pack(workspace: Path) -> bytes:
+def _holdable(rel: str, repo: str) -> None:
+    """A name the container can hold, else ``Refused``: each part of it encodes as UTF-8 strictly, in at most ``NAME_MAX`` bytes,
+    and the path the mirror opens, ``repo`` and the name (the name alone when no ``repo`` is given), is shorter than
+    ``PATH_MAX``, so with its NUL it fits."""
+    for part in rel.split("/"):
+        try:
+            size = len(part.encode("utf-8"))
+        except UnicodeEncodeError as exc:
+            raise Refused(f"{rel!r} cannot be named in the container: a part of it is not UTF-8 ({exc.reason})") from exc
+        if size > NAME_MAX:
+            raise Refused(f"{rel}: File name too long: its part {part!r} is {size} bytes in UTF-8, and the container holds "
+                          f"{NAME_MAX} at most")
+    whole = len((f"{repo.rstrip('/')}/{rel}" if repo else rel).encode("utf-8"))
+    if whole >= PATH_MAX:
+        raise Refused(f"{rel}: File name too long: its path in the container is {whole} bytes, and the container opens "
+                      f"{PATH_MAX - 1} at most")
+
+
+def _tree(root: Path, repo: str) -> Iterator[tuple[Path, str, os.stat_result, bytes | None]]:
+    """The workspace's entries in the order they are packed: each plain file and folder (``_plain``) but ``.git`` and ``.venv``
+    (``KEPT``), its name relative to the workspace with ``/``, one the container can hold (``_holdable``), and a file's bytes,
+    read as the file that was checked (``_read``); a folder's are None. A folder that cannot be read refuses the workspace."""
+    def unreadable(exc: OSError) -> None:
+        raise Refused(f"the workspace could not be read: {exc}")
+
+    for here, dirs, files in os.walk(root, onerror=unreadable):
+        dirs[:] = sorted(d for d in dirs if d not in KEPT)
+        for name in [*dirs, *sorted(f for f in files if f not in KEPT)]:
+            path = Path(here) / name
+            st = _plain(path, root)
+            rel = path.relative_to(root).as_posix()
+            _holdable(rel, repo)
+            yield path, rel, st, None if stat.S_ISDIR(st.st_mode) else _read(path, st, rel)
+
+
+def _digest(data: bytes | None) -> bytes | None:
+    """A file's SHA-256, None for a folder."""
+    return None if data is None else hashlib.sha256(data).digest()
+
+
+def pack(workspace: Path, repo: str = "") -> bytes:
     """The workspace as a tar, in memory: its plain files and folders, without ``.git`` or ``.venv`` (``KEPT``), each named relative
-    to it with ``/``. Anything else refuses the whole workspace (``Refused``), so nothing is sent; so does a workspace that is
-    itself a link, a junction or another reparse point, and a folder that cannot be read, which would otherwise look empty and
-    have its files removed in the container. Each file is read as the file that was checked (``_read``), and once the walk is
-    done every folder it went through, the workspace's own included, is checked again (``_same_folder``). Any failure to pack it
-    (a name the tar cannot hold, a read that fails, the tar's own error) refuses it too: nothing is sent or run."""
+    to it with ``/``, every name one the container can hold under ``repo`` (``_holdable``). Anything else refuses the whole
+    workspace (``Refused``), so nothing is sent; so does a workspace that is itself a link, a junction or another reparse point,
+    and a folder that cannot be read, which would otherwise look empty and have its files removed in the container. Each file is
+    read as the file that was checked (``_read``); once the walk is done every folder it went through, the workspace's own
+    included, is checked again (``_same_folder``), and then the whole tree is walked again: its names, what each is, and each
+    file's SHA-256 must be what was packed, else the workspace changed while it was packed and is refused, so the next call sends
+    it as it is then. Any failure to pack it (a name the tar cannot hold, a read that fails, the tar's own error) refuses it
+    too: nothing is sent or run."""
     given = Path(workspace)
     try:
         top = os.lstat(given)
@@ -261,27 +307,25 @@ def pack(workspace: Path) -> bytes:
         root = given.resolve()
         out = io.BytesIO()
         walked = [(given, top, "the workspace")]
-
-        def unreadable(exc: OSError) -> None:
-            raise Refused(f"the workspace could not be read: {exc}")
-
+        packed: list[tuple[str, bytes | None]] = []
         with tarfile.open(fileobj=out, mode="w", format=tarfile.PAX_FORMAT) as tar:
-            for here, dirs, files in os.walk(root, onerror=unreadable):
-                dirs[:] = sorted(d for d in dirs if d not in KEPT)
-                for name in [*dirs, *sorted(f for f in files if f not in KEPT)]:
-                    path = Path(here) / name
-                    st = _plain(path, root)
-                    info = tarfile.TarInfo(path.relative_to(root).as_posix())
-                    if stat.S_ISDIR(st.st_mode):
-                        walked.append((path, st, info.name))
-                        info.type, info.mode = tarfile.DIRTYPE, 0o755
-                        tar.addfile(info)
-                    else:
-                        data = _read(path, st, info.name)
-                        info.size, info.mode = len(data), 0o644
-                        tar.addfile(info, io.BytesIO(data))
+            for path, rel, st, data in _tree(root, repo):
+                info = tarfile.TarInfo(rel)
+                if data is None:
+                    walked.append((path, st, rel))
+                    info.type, info.mode = tarfile.DIRTYPE, 0o755
+                    tar.addfile(info)
+                else:
+                    info.size, info.mode = len(data), 0o644
+                    tar.addfile(info, io.BytesIO(data))
+                packed.append((rel, _digest(data)))
         for path, st, rel in walked:
             _same_folder(path, st, rel)
+        now = [(rel, _digest(data)) for _, rel, _, data in _tree(root, repo)]
+        if now != packed:
+            at = next((i for i, (was, is_) in enumerate(zip(packed, now)) if was != is_), min(len(packed), len(now)))
+            raise Refused(f"{(packed if at < len(packed) else now)[at][0]} changed while the workspace was packed: walked again, "
+                          "the tree is not what was packed, so nothing is sent")
     except Refused:
         raise
     except (OSError, ValueError, tarfile.TarError) as exc:       # UnicodeError is a ValueError
@@ -291,8 +335,9 @@ def pack(workspace: Path) -> bytes:
 
 def mirror(workspace: Path, docker: Callable[..., Any], *, container: str, repo: str, user: str, timeout: float) -> str:
     """The workspace into the container's repository (``MIRROR``, as root). ``docker`` is called as ``run.Docker`` is. A refused
-    workspace sends nothing (``Refused``); a docker step that fails raises ``BoxError``. Returns what the script printed."""
-    data = pack(workspace)
+    workspace, a name the container cannot hold under ``repo`` among them, sends nothing and runs nothing (``Refused``); a docker
+    step that fails raises ``BoxError``. Returns what the script printed."""
+    data = pack(workspace, repo)
     done = docker("exec", "-i", "-u", "root", container, "python3", "-I", "-c", MIRROR, repo, user, input=data, timeout=timeout)
     if done.returncode != 0:
         raise BoxError(f"the mirror failed ({done.returncode}): {(_text(done.stdout) + ' ' + _text(done.stderr)).strip()[-2000:]}")

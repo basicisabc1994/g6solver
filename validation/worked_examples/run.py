@@ -1476,6 +1476,11 @@ HOST_ENV_NAMES = frozenset({
 HOST_ENV_PREFIXES = ("LC_", "PROCESSOR_")
 #: A name that may carry a key, a token or a password: dropped whatever admitted it, before ``HOST_FIXED_ENV`` is added.
 HOST_ENV_SECRET = re.compile(r"TOKEN|KEY|SECRET|PASS|AUTH|CREDENTIAL", re.I)
+#: An allowed variable whose value is read as a URL, with a scheme or without one (a proxy given as ``user:password@host:port``
+#: is read so): any "@" in its value may end a user, a password or a token, so the variable is dropped.
+HOST_ENV_URLS = frozenset({"HTTP_PROXY", "HTTPS_PROXY", "DOCKER_HOST"})
+#: In any other allowed value, a URL with something before an "@": a user, a password or a token; the variable is dropped.
+HOST_ENV_USERINFO = re.compile(r"://\S*@")
 #: Set in every host session, after the allowlist: no claude.ai connectors (2.1.318 lets them through --strict-mcp-config), no
 #: retry of a refused request on another model, and the container runs' no updates, telemetry, error reports, other traffic or
 #: memory, so the version stays fixed through the study.
@@ -1501,11 +1506,20 @@ def host_args(mcp_file: Path, settings_file: Path, model: str, *, resume: str = 
 
 def host_env(environ: Mapping[str, str]) -> dict[str, str]:
     """The host session's environment: what ``HOST_ENV_NAMES`` and ``HOST_ENV_PREFIXES`` allow of ``environ``, never a name that
-    starts with CLAUDE or ANTHROPIC, nor one that may carry a key or token (``HOST_ENV_SECRET``), in any case, then
-    ``HOST_FIXED_ENV``."""
+    starts with CLAUDE or ANTHROPIC, nor one that may carry a key or token (``HOST_ENV_SECRET``), in any case, nor a value that
+    may carry one (``host_value_holds_userinfo``), then ``HOST_FIXED_ENV``."""
     kept = {k: v for k, v in environ.items() if (k.upper() in HOST_ENV_NAMES or k.upper().startswith(HOST_ENV_PREFIXES))
-            and not k.upper().startswith(("CLAUDE", "ANTHROPIC")) and not HOST_ENV_SECRET.search(k)}
+            and not k.upper().startswith(("CLAUDE", "ANTHROPIC")) and not HOST_ENV_SECRET.search(k)
+            and not host_value_holds_userinfo(k, v)}
     return {**kept, **HOST_FIXED_ENV}
+
+
+def host_value_holds_userinfo(name: str, value: str) -> bool:
+    """Whether an allowed variable's value may carry a credential in a URL: in a variable read as a URL (``HOST_ENV_URLS``), any
+    "@"; in any other, an "@" after a scheme's "://" (``HOST_ENV_USERINFO``). Such a variable is dropped whole, never passed with
+    the part before the "@" taken out: taking it out needs a parser that reads the URL exactly as each program that reads the
+    variable does, and a credential the two read differently would pass, while a dropped variable is plainly not there."""
+    return ("@" in value) if name.upper() in HOST_ENV_URLS else bool(HOST_ENV_USERINFO.search(value))
 
 
 def host_init(obj: Any) -> dict[str, Any] | None:
@@ -1522,21 +1536,29 @@ def host_init(obj: Any) -> dict[str, Any] | None:
     return {"tools": tools, "servers": servers, "why": why}
 
 
-def host_lines(text: str) -> list[str]:
-    """A host session's stream, or its stderr, as its lines. Claude Code's stream is newline-delimited JSON, so it is split at "\\n"
-    alone, never where ``str.splitlines`` splits too (U+2028 and the like, which a JSON string holds as they are): no part of a
-    line is ever read as a line of its own."""
-    return text.split("\n")
+def model_refusal(obj: Any) -> dict[str, Any] | None:
+    """Whether a stream record says the model refused a request, and what it says of it; None when it does not. The one
+    recogniser of a model refusal in the worked examples, which every reader of a host stream asks: a system record whose subtype
+    names a refusal (its subtype, category and models), or an assistant message whose stop reason is "refusal" (that, and its
+    model), the record V7's ``run_arm.Tally`` reads; a test holds the two to one answer on every record V7 reads."""
+    if not isinstance(obj, dict):
+        return None
+    if obj.get("type") == "system" and "refusal" in str(obj.get("subtype") or ""):
+        return {k: obj.get(k) for k in ("subtype", "apiRefusalCategory", "originalModel", "fallbackModel")}
+    msg = obj.get("message")
+    if obj.get("type") == "assistant" and isinstance(msg, dict) and msg.get("stop_reason") == "refusal":
+        return {"stop_reason": "refusal", "model": msg.get("model")}
+    return None
 
 
 def host_facts(path: Path, model: str) -> dict[str, Any]:
-    """What a saved host stream says of its session: its init (``host_init``): every init record is read, and the first one that
-    is not exactly the box's and the five file tools is the session's, else the first; its last result, the first usage limit
-    Claude Code gave in it (``limit_of``), the models that wrote its messages (Claude Code's own synthetic ones apart), and each
-    record of a refused request (its subtype, category and models). A model is the one asked for only when it is that name, or
-    that name and a date (``-YYYYMMDD``)."""
+    """What a saved host stream says of its session, its lines as ``c.read_stream`` frames them: its init (``host_init``): every
+    init record is read, and the first one that is not exactly the box's and the five file tools is the session's, else the
+    first; its last result, the first usage limit Claude Code gave in it (``limit_of``), the models that wrote its messages
+    (Claude Code's own synthetic ones apart), and each record of a refused request (``model_refusal``). A model is the one asked
+    for only when it is that name, or that name and a date (``-YYYYMMDD``)."""
     init, result, limit, seen, refusals = None, None, None, set(), []
-    for line in host_lines(path.read_bytes().decode("utf-8")) if path.is_file() else []:
+    for line in c.read_stream(path) if path.is_file() else []:
         limit = limit if limit is not None else limit_of(line)
         try:
             obj = json.loads(line)
@@ -1551,8 +1573,8 @@ def host_facts(path: Path, model: str) -> dict[str, Any]:
         msg = obj.get("message")
         if obj.get("type") == "assistant" and isinstance(msg, dict) and msg.get("model") and msg.get("model") != "<synthetic>":
             seen.add(str(msg["model"]))
-        if obj.get("type") == "system" and "refusal" in str(obj.get("subtype") or ""):
-            refusals.append({k: obj.get(k) for k in ("subtype", "apiRefusalCategory", "originalModel", "fallbackModel")})
+        if (refused := model_refusal(obj)) is not None:
+            refusals.append(refused)
     asked = re.compile(re.escape(model) + r"(?:-\d{8})?")
     return {"init": init, "result": result, "limit": limit, "models": seen, "refusals": refusals,
             "switched": any(not asked.fullmatch(m) for m in seen)}
@@ -1563,8 +1585,8 @@ def host_ending(stop: str, facts: Mapping[str, Any], *, code: int | None, limit:
     """How a host session ended, decided once from all of its evidence: ("", "") when cleanly, else its status and why. In this
     order: "limited" when Claude Code said the usage limit was reached (with the reset it gave); "refused", G6's own refusal of
     the session, when its stream has no init or an init that is not exactly the box's and the five file tools (``host_init``);
-    "model_refused" at a record of a request the model refused, a run made as Claude Code alone would leave it (PLAN.md,
-    runtime-k ec0f761), with nothing resent. Then, once the session's own result was read, what it says (``status_of``),
+    "model_refused" at a record of a request the model refused (``model_refusal``), a run made as Claude Code alone would leave
+    it (PLAN.md, runtime-k ec0f761), with nothing resent. Then, once the session's own result was read, what it says (``status_of``),
     whatever ended the process after it; before any result, the stream's own stop ("timeout", "cap_turns") or "error". Then
     "error" for a process that ended by itself with a code other than 0; ``by_g6``: G6 ended the process, its code says nothing.
     Last, ``left``: why the session's processes could not be confirmed ended (``end_session``), which makes any ending but
@@ -1743,7 +1765,7 @@ def egress(ctx: Context, px: str, dest: Path) -> dict[str, Any]:
     ctx.docker("cp", f"{px}:/opt/egress.jsonl", str(dest), timeout=120)
     entries = []
     if dest.is_file():
-        entries = [json.loads(line) for line in dest.read_text(encoding="utf-8").splitlines() if line.strip()]
+        entries = [json.loads(line) for line in c.read_stream(dest) if line.strip()]
     return {"requests": len(entries),
             "allowed": sorted({f"{e.get('host')}:{e.get('port')}" for e in entries if e.get("allowed") is True}),
             "refused": sorted({f"{e.get('host')}:{e.get('port')}" for e in entries if e.get("allowed") is False})}
@@ -1936,7 +1958,7 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
     cut: list[str] = []          # the line the stream was stopped at, before its end
     stop, by_g6, left, code = "error", False, "", None
 
-    def lines() -> Iterator[bytes]:      # read from a pipe of bytes, at b"\n" alone, as ``host_lines`` splits a saved stream
+    def lines() -> Iterator[bytes]:      # read from a pipe of bytes, at b"\n" alone, as ``c.stream_lines`` splits a saved stream
         for line in iter(proc.stdout.readline, b""):
             yield line
             said = line.decode("utf-8", errors="replace")
@@ -1990,7 +2012,8 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
     run.write(f"{stem}_stderr.txt", said)
     run.write_json(f"{stem}_exit.json", {"exit_code": code, "ended_by_g6": by_g6, "not_ended": left})
     facts = host_facts(run.path / name, ctx.model)
-    limit = facts["limit"] if facts["limit"] is not None else next((x for x in map(limit_of, host_lines(said)) if x is not None), None)
+    limit = facts["limit"] if facts["limit"] is not None else next((x for x in map(limit_of, c.stream_lines(said)) if x is not None),
+                                                                   None)
     ended, why = host_ending(stop, facts, code=code, limit=limit, by_g6=by_g6, left=left)
     if ended in ("refused", "limited"):
         run.write(f"{stem}_{'refused' if ended == 'refused' else 'limit'}.txt", why)
@@ -2729,7 +2752,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             record["g6_model"] = {**g6_model_cost(saved.values()), "reviews_saved": len(saved)}
             record["cost_usd"] = round(record["cost_usd"] + record["g6_model"]["usd"], 6)
         objects = []
-        for line in (run.path / "stream.jsonl").read_text(encoding="utf-8").splitlines():
+        for line in c.read_stream(run.path / "stream.jsonl"):
             try:
                 objects.append(json.loads(line))
             except ValueError:
@@ -3163,7 +3186,7 @@ def progress(archive: c.Archive, task: str) -> dict[str, Any]:
     folder = runs[-1]
     tally, objects, last_tool = c.Tally(), [], ""
     stream = folder / "stream.jsonl"
-    for line in (stream.read_text(encoding="utf-8").splitlines() if stream.is_file() else []):
+    for line in (c.read_stream(stream) if stream.is_file() else []):
         try:
             obj = json.loads(line)
         except ValueError:
@@ -3227,8 +3250,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "rounds":
         # the rounds read again from a finished run's stream and its saved replies, into a new file of the run
         folder = archive.root / args.run_rel
-        objects = [json.loads(line) for line in (folder / "stream.jsonl").read_text(encoding="utf-8").splitlines()
-                   if line.strip().startswith("{")]
+        objects = [json.loads(line) for line in c.read_stream(folder / "stream.jsonl") if line.strip().startswith("{")]
         rounds = extract_rounds(objects, archived_resolver(folder))
         c.RunFolder(archive, folder, args.run_rel).write_json("rounds_resolved.json", rounds)
         print(json.dumps([{k: r.get(k) for k in ("round", "outcome", "error", "saved_to_file", "polls")}

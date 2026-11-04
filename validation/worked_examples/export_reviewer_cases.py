@@ -122,7 +122,7 @@ def row(task: str, sha: str, text: str, ok: bool) -> dict[str, str]:
 def _checks(root: Path, task: str) -> dict[str, list[dict[str, Any]]]:
     """Run path to the newest independent check of it, with a row for each round."""
     found = {}
-    for line in (root / "runs.jsonl").read_text("utf-8").splitlines():
+    for line in c.read_stream(root / "runs.jsonl"):
         if f'"check/{task}/' not in line or '"checked_run"' not in line:
             continue
         rec = json.loads(line)
