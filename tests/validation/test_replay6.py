@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import inspect
 import json
 import sys
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,6 +25,7 @@ import replay5 as r5  # noqa: E402
 import replay6 as r6  # noqa: E402
 import replay_compare as rc  # noqa: E402
 import run as we  # noqa: E402
+from g6.core import host_models  # noqa: E402
 from g6.core.host_models import ClaudeCodeCaller  # noqa: E402
 from g6.core.llm import LLMError  # noqa: E402
 
@@ -219,7 +222,7 @@ def test_tables_that_agree_compile_to_a_file_whose_cases_are_exactly_the_agreed_
     cells = space["_G6_CELLS"]
     assert {(r6.canon(cell["case"]), cell["observation"]) for cell in cells} == {
         (r6.canon({"n": n, "width": 3}), "length") for n in (1, 22)}
-    assert [cell["value"] for cell in cells] == [3, 3] and len({cell["id"] for cell in cells}) == 2
+    assert [cell["want"] for cell in cells] == [r6.canon(3)] * 2 and len({cell["id"] for cell in cells}) == 2
     assert all(cell["id"].startswith(("c000-length", "c002-length")) for cell in cells)
     for cell in cells:
         space["test_formal"](cell)                    # the fake probe pads both, so each agreed case holds
@@ -232,17 +235,17 @@ def test_the_compiled_file_embeds_no_model_text_but_the_probe():
     row = {"when": {"width": 3}, "expect": {"out": evil}, "quote": QUOTE}
     got = r6.formal(wrote(model(factors=factors, rules=[row])), TITLE, TEXT, Caller(rules(row)))
     src = got["test"]
-    assert got["status"] == "stands" and src.startswith(PROBE)
-    tail = ast.parse(src[len(PROBE):])
-    assert {alias.name for node in ast.walk(tail) if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names} == {
-        "json", "pytest"}
-    holding = [node for node in ast.walk(tail) if isinstance(node, ast.Constant) and isinstance(node.value, str)
-               and "import os" in node.value]
-    assert len(holding) == 1                          # the one JSON text json.loads reads
+    assert got["status"] == "stands"
+    tree = ast.parse(src)
+    assert {alias.name for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names} == {
+        "json", "sys", "types", "Decimal", "pytest"}            # G6's own; the probe's are in its text
+    strings = [node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)]
+    assert strings.count(PROBE) == 1                  # the probe, as one text
+    assert len([text for text in strings if "import os" in text]) == 1    # the one JSON text json.loads reads
     for text in (QUOTE, "R1_RULE_LINE", "R1_WHY_LINE"):
         assert text not in src
     cell = _load(src)["_G6_CELLS"][0]
-    assert cell["value"] == evil and cell["case"]["wid'th\"); import os; (\""] == "'); import os; ('"
+    assert cell["want"] == r6.canon(evil) and cell["case"]["wid'th\"); import os; (\""] == "'); import os; ('"
     assert set(cell["id"]) <= set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.,=+-")
 
 
@@ -265,7 +268,7 @@ def test_an_equals_expectation_compiles_to_an_equality_of_two_observations():
     space = _load(got["test"])
     by_case = {(cell["case"]["n"], cell["case"]["width"]): cell for cell in space["_G6_CELLS"]}
     assert set(by_case) == {(1, 3), (1, 4), (22, 3), (22, 4)}
-    assert all(cell["observation"] == "size" and cell["equals"] == "length" and "value" not in cell for cell in by_case.values())
+    assert all(cell["observation"] == "size" and cell["equals"] == "length" and "want" not in cell for cell in by_case.values())
     space["test_formal"](by_case[1, 3])                                  # size equals length
     with pytest.raises(AssertionError):
         space["test_formal"](by_case[22, 3])                             # size is not length
@@ -279,6 +282,100 @@ def test_a_case_whose_observation_is_missing_is_skipped():
     space = _load(got["test"])
     with pytest.raises(pytest.skip.Exception):
         space["test_formal"](space["_G6_CELLS"][0])
+
+
+# --- one rule for a JSON value, wherever two are compared ---------------------------------------------------------------------
+def test_one_spelling_compares_numbers_by_their_exact_value_and_a_boolean_never_as_a_number():
+    assert r6.canon(2) == r6.canon(2.0) == r6.canon(Decimal("2.00")) == r6.canon(Decimal("0.2E+1"))
+    assert r6.canon(Decimal("9007199254740992.0")) != r6.canon(Decimal("9007199254740993.0"))
+    assert r6.canon(9007199254740993) == r6.canon(Decimal("9007199254740993.0")) != r6.canon(9007199254740992.0)
+    assert r6.canon(0.1) == r6.canon(Decimal("0.1")) and r6.canon(-0.0) == r6.canon(0) and r6.canon(0.5) != r6.canon(0.25)
+    assert len({r6.canon(value) for value in (True, 1, False, 0, None, "1", [1], {"a": 1}, [])}) == 9
+    assert r6.canon({"b": [1, 2.0], "a": None}) == r6.canon({"a": None, "b": [1.0, 2]})
+    for bad in (float("nan"), float("inf"), (1, 2), {1: 2}, object()):
+        with pytest.raises(ValueError):
+            r6.canon(bad)
+    got, why = r6.parse_model(model(factors={"n": [2, 2.0], "width": [3]}))
+    assert got is None and "repeats" in why                      # one value, by the one rule
+    text = model(factors={"n": ["A", "B"], "width": [3]}).replace('"A"', "9007199254740992.0").replace('"B"', "9007199254740993.0")
+    got, _ = r6.parse_model(text)
+    assert len(r6.cases(got["factors"])) == 2                    # two values, read exactly
+
+
+@pytest.mark.parametrize("big", ["1e309", "-1e309", "1e9999999999999999999"])
+@pytest.mark.parametrize(("first", "second", "says"), [
+    (model(factors={"n": [1, "BIG"], "width": [3, 4]}), rules(PADDED), "the model holds"),
+    (model(rules=[{**PADDED, "expect": {"length": "BIG"}}]), rules(PADDED), "the model holds"),
+    (model(), rules({**PADDED, "expect": {"length": "BIG"}}), "reader 2"),
+])
+def test_a_number_no_float_holds_makes_the_bug_invalid_with_a_reason_and_never_aborts(first, second, says, big):
+    got = r6.formal(wrote(first.replace('"BIG"', big)), TITLE, TEXT, Caller(second.replace('"BIG"', big)))
+    assert got["status"] == "invalid" and got["test"] == "" and not r3.no_answer(got)
+    assert says in got["status_reason"] and "no float" in got["status_reason"]
+
+
+def test_the_compiled_assertion_compares_an_observation_by_the_tables_one_rule():
+    probe = ("def observe(case):\n"
+             "    seen = {'float': 2.0, 'bool': True, 'big': 9007199254740992.0}[case['kind']]\n"
+             "    return {'length': seen, 'size': 2}\n")
+    rows = [{"when": {"kind": "float"}, "expect": {"length": 2}, "quote": QUOTE},
+            {"when": {"kind": "bool"}, "expect": {"length": 1}, "quote": QUOTE},
+            {"when": {"kind": "big"}, "expect": {"length": "BIG"}, "quote": QUOTE},
+            {"when": {}, "expect": {"size": {"equals": "length"}}, "quote": QUOTE}]
+    first = model(factors={"kind": ["float", "bool", "big"]}, probe=probe, rules=rows).replace('"BIG"', "9007199254740993.0")
+    got = r6.formal(wrote(first), TITLE, TEXT, Caller(rules(*rows).replace('"BIG"', "9007199254740993.0")))
+    assert got["status"] == "stands"
+    space, held = _load(got["test"]), {}
+    for cell in space["_G6_CELLS"]:
+        try:
+            space["test_formal"](cell)
+            held[cell["case"]["kind"], cell["observation"]] = True
+        except AssertionError:
+            held[cell["case"]["kind"], cell["observation"]] = False
+    assert held == {("float", "length"): True, ("bool", "length"): False, ("big", "length"): False,
+                    ("float", "size"): True, ("bool", "size"): False, ("big", "size"): False}
+
+
+def test_the_compiled_file_carries_g6s_own_canon_as_the_rule_of_its_assertion():
+    src = r6.formal(wrote(model()), TITLE, TEXT, Caller(rules(PADDED)))["test"]
+    own = inspect.getsource(r6.canon)
+    assert src.count(own) == 1 and src.count("def canon(") == 1
+    assert src.index(own) < src.index("_G6_PROBE =")              # G6's fixed text, before any text of the model's
+    space = _load(src)
+    for value in (2, 2.0, True, None, "x", [1, [2.5]], {"a": 1}, -0.0, 9007199254740992.0):
+        assert space["canon"](value) == r6.canon(value)
+
+
+# --- the probe, in a module of its own ---------------------------------------------------------------------------------------
+def test_the_probe_runs_in_a_module_of_its_own_so_no_name_it_defines_reaches_pytest():
+    probe = PROBE + ("import pytest\nfrom unittest import SkipTest\n__test__ = False\npytestmark = pytest.mark.skip('probe')\n"
+                     "def setup_module(module):\n    raise SkipTest('probe')\n"
+                     "def setup_function(function):\n    raise SkipTest('probe')\n"
+                     "def teardown_function(function):\n    raise SkipTest('probe')\n"
+                     "@pytest.fixture(autouse=True)\ndef probe_fixture():\n    raise SkipTest('probe')\n"
+                     "def pytest_collection_modifyitems(items):\n    items.clear()\n"
+                     "def test_extra():\n    assert 0\n"
+                     "class TestMore:\n    def test_one(self):\n        assert 0\n")
+    got = r6.formal(wrote(model(probe=probe)), TITLE, TEXT, Caller(rules(PADDED)))
+    assert got["status"] == "stands"
+    space = _load(got["test"])
+    for cell in space["_G6_CELLS"]:
+        space["test_formal"](cell)                    # observe, read from the probe's module, pads both cases
+    probes = {"__test__", "pytestmark", "setup_module", "setup_function", "teardown_function", "probe_fixture",
+              "pytest_collection_modifyitems", "test_extra", "TestMore", "observe", "SkipTest"}
+    assert not probes & set(space)
+    assert {name for name in space if name.startswith(("test", "Test", "setup", "teardown", "pytest_"))} == {"test_formal"}
+
+
+@pytest.mark.parametrize("probe", ["raise ImportError('no such module')\n" + PROBE, "import sys\nsys.exit(3)\n",
+                                   PROBE + "import pytest\npytest.fail('as it runs')\n", "def observe(case) return {}\n"])
+def test_a_probe_that_raises_as_it_runs_skips_every_cell_and_fails_none(probe):
+    got = r6.formal(wrote(model(probe=probe)), TITLE, TEXT, Caller(rules(PADDED)))
+    space = _load(got["test"])                        # the probe has not run: no name of it is this file's
+    assert len(space["_G6_CELLS"]) == 2
+    for cell in space["_G6_CELLS"]:
+        with pytest.raises(pytest.skip.Exception):
+            space["test_formal"](cell)
 
 
 # --- the two readers --------------------------------------------------------------------------------------------------------
@@ -309,10 +406,31 @@ def test_reader_2_is_claude_with_no_tool_and_the_two_settings_given_in_its_setti
                         "env": {"ENABLE_CLAUDEAI_MCP_SERVERS": "false", "CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK": "1"}}
 
 
+@pytest.mark.parametrize(("printed", "answers"), [
+    ({"type": "result", "subtype": "success", "is_error": False, "result": "R"}, True),
+    ({"type": "result", "subtype": "success", "result": "R"}, True),
+    ({"type": "result", "subtype": "error_max_turns", "is_error": False, "result": "R"}, False),
+    ({"type": "result", "subtype": "error_during_execution", "result": "R"}, False),
+    ({"type": "result", "subtype": "a_status_not_yet_named", "result": "R"}, False),
+    ({"type": "result", "result": "R"}, False),
+    ({"type": "result", "subtype": "success", "is_error": True, "result": "R"}, False),
+    ("not one JSON result {", False),
+])
+def test_reader_2_takes_a_reply_only_from_a_result_claude_code_marks_a_success(tmp_path, monkeypatch, printed, answers):
+    monkeypatch.setattr(host_models, "_tail", lambda text, hide: "<withheld>")     # no key file is read for an error
+    printed = printed if isinstance(printed, str) else json.dumps(printed)
+    reader = r6.reader_2()
+    if answers:
+        assert reader._reply(0, printed, "", tmp_path, ()) == "R"
+    else:
+        with pytest.raises(LLMError):
+            reader._reply(0, printed, "", tmp_path, ())
+
+
 # --- replay 3's machinery, with fakes for the step, reader 2 and the runs ----------------------------------------------------
 def test_an_agreed_case_that_fails_at_the_parent_and_on_a_patch_reproduces(tmp_path):
     got, _, ran, found, rows = _review(tmp_path, wrote(model()), Caller(rules(PADDED)), base=FAILS, now=FAILS)
-    assert found["status"] == "stands" and ran == [found["test"], found["test"]] and ran[0].startswith(PROBE)
+    assert found["status"] == "stands" and ran == [found["test"], found["test"]] and repr(PROBE) in ran[0]
     assert [g["said"] for g in got] == ["reproduced", "reproduced"] and all(g["instruction"] == r6.FORMAL.digest for g in got)
     assert all(fr.saved(tmp_path, row, r6.FOLDER)["said"] == "reproduced" for row in rows)
     assert all(fr.saved(tmp_path, row, folder) is None for row in rows for folder in (r3.FOLDER, r4.FOLDER, r5.FOLDER))
@@ -322,6 +440,16 @@ def test_an_agreed_case_that_fails_only_at_the_parent_reproduces_nothing_on_the_
     got, _, ran, found, _ = _review(tmp_path, wrote(model()), Caller(rules(PADDED)), base=FAILS, now=HOLDS)
     assert found["status"] == "stands" and len(ran) == 2
     assert [(g["said"], g["reason"]) for g in got] == [("none", "every case holds with the patch")] * 2
+
+
+def test_a_patch_whose_failing_cases_all_held_at_the_parent_is_not_flagged(tmp_path):
+    """Replay 6's registration: a patch is flagged when an agreed case that fails on the parent still fails on it. Its text,
+    digest and folder are as they were."""
+    assert r6.FORMAL.same_case and r6.INSTRUCTION == "b8df0b33deca6844" and r6.FOLDER == "final_review_formal-b8df0b33deca6844"
+    other = we.ProbeRun(1, {"t::test_formal[c000]": "passed", "t::test_formal[c001]": "failed"}, {}, "")
+    got, _, ran, found, _ = _review(tmp_path, wrote(model()), Caller(rules(PADDED)), base=FAILS, now=other)
+    assert found["status"] == "stands" and len(ran) == 2
+    assert [(g["said"], g["reason"]) for g in got] == [("none", "every case that fails with the patch passed on the parent")] * 2
 
 
 def test_a_model_whose_cases_all_hold_at_the_parent_reproduces_nothing(tmp_path):
