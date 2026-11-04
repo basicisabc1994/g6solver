@@ -2706,3 +2706,50 @@ is therefore Claude Code alone in that same run. Arms K0, K1, M9 and V4 on unsee
 6. **Prediction, if stage 5 runs with the loop as it stands (K2, no H-rule):**
    - more bugs better than worse, within runs and between arms;
    - the frozen rule not met.
+
+## 2026-11-05 (late morning): stage 5's audit combined, K3 built, replay 6's follow-up ended clean
+
+**Stage 5's blind audit, combined by the rule at f787f86.** Both families labelled all 130 bugs, labels only.
+- Opus says 86 are determined; Codex says 95.
+- They agree on 117 of 130 (90.0%), with Cohen's kappa 0.76.
+- Where they disagree, Codex says determined and Opus does not on 11 bugs; the reverse holds on 2.
+- **Determined by both: 84.** Those are the bugs stage 5's determined count is read on.
+- **Expected after preparation.** At stage 4's rate (6 of 28 gave way), about 67 of the 84 reach the runs. With stage 4's 15,
+  K arms would run on about 80 determined bugs they have not seen.
+
+**Power at 80 determined bugs,** by the same resampling as the morning's section:
+
+| Loop | Frozen rule | Within runs |
+|---|---|---|
+| As it stands (6 of 22 wrong first patches made right) | 0.18 | 0.31 |
+| At the pilot bar (about 10 of 22) | 0.66 | 0.81 |
+| An extra 45% made right | 0.87 | 0.94 |
+
+So stage 5 can decide the within-run comparison only if the pilot bar is met, and the frozen rule only with a larger gain.
+The pre-spend rule of the morning's section stands as written.
+
+**K3, built test first with fakes.** `claude/k3`: 815b8a6 by the builder, then 0beb64f.
+- **The step's wording.** The rule step names "the words of the issue or its discussion" as a place a reference can stand,
+  since every K arm reads the discussion. Its digest is 3e99c1c0b233732a, repinned on purpose.
+- **The first prompt is arm T's, byte for byte.** K3 checks its first prompt against arm A's prompt builder given the same
+  issue text with its discussion, which is exactly what arm T sends.
+  - So the within-run control is Claude Code alone on the same input, the issue and its discussion.
+  - It does not separate the discussion's share from the loop's, so stage 4's confound does not touch it.
+  - Between arms, stage 5 is read against T as well as A, as stage 4's section said.
+  - A run whose first prompt differs is refused and never scored.
+- **How a K3 run's patches are saved.**
+  - The first patch is saved as `round-1` before the step, and nothing overwrites it.
+  - The tree after the step is saved as `rule.patch` and scored as `rule`.
+  - Review 1 reads `rule.patch`.
+- **Tests.** 10 new cases, each failing before its code except one pin of K2's behaviour. Every focused file the builder ran
+  passed. `test_stage3` fails at collection, the same on a0ad0a8.
+- **Its review loop.** Codex review 1 is queued. Nothing of K3 runs before that loop ends.
+- **For the host session.** `rule_step` must take the host's session hook, as `reviews_until_clean` does, or a host K3 run
+  would not take the step. This is merged once `claude/host-author-followup-2` is done.
+
+**Replay 6's follow-up: its review loop ended clean on d523a53.**
+- Four reviews and three repairs: reviews 1 to 3 had findings, and review 4 reproduced none. It is the first loop here whose
+  last review is clean.
+- **Left open.** One existing test, `test_reproduce_review.py` line 345, fails on the tip. It pins git apply's error wording,
+  which the shared container wrapper now reports differently, while the verdict stays `failed`. It is looked at before
+  replay 6's development check runs.
