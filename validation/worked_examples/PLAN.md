@@ -2486,3 +2486,35 @@ in any case.
 **Why.** Stage 4's determined set came from one auditor. Requiring both families is stricter, so the per-family counts are kept
 for reading the two stages together.
 - **Cost if wrong:** a smaller determined set than one family would give, if one family is the stricter.
+
+## 2026-11-04 (night, late): the host-author follow-up's review loop ended at its limit; its open findings go to their own change
+
+**The loop.** `claude/host-author-followup` had four Codex reviews and three repairs (14ed14a, 3741528, 22dd17c). The reviews
+found 2, 2, 3 and 6, and every finding was reproduced by its own test before it was counted. The loop never reached a clean
+review. Saved verdicts: repair 1 left 704 verdicts reading the same. Repairs 2 and 3 changed tests only.
+
+**Rejected, with the reason.** Review 2, finding 1: a folder that becomes a junction after the re-walk checked it. This is the
+standing ruling. A probe showed that what was sent is the tree as packed, and that the next call refuses the junction.
+
+**Open from review 4, reproduced on 22dd17c.** They go to their own change, test first, with its own review loop.
+1. to 4. The framing guard misses:
+   - a back reference that consumes a captured line break;
+   - a category under an inline ASCII flag;
+   - a pattern passed as `**` keyword arguments;
+   - `from re import *`.
+5. The workspace root replaced by a junction before the re-walk starts is not refused.
+6. On Windows, names that differ only by a trailing dot or space read through one file, so a tar can hold the wrong bytes.
+
+**Decided for that change: question the design, not a fifth patch.** The framing guard's scan under-covered in reviews 2, 3 and
+4. Each repair taught it more of what code can do, and the reviews found the next form. No scan can decide what code does.
+- **The guard becomes an inventory.** Every call in the folder named `split`, `rsplit`, `partition`, `rpartition`, `splitlines`,
+  `readline` or `readlines` is listed with its reason, and so is every call of anything `re` binds:
+  - under any name or import form, star imports included;
+  - with any arguments.
+  A new one fails until a person names it, and the scan no longer judges whether a call can cut a line.
+- **The re-walk checks the root again before it starts.**
+- **A name part Windows would refuse or change is refused,** by the existing `HOST_UNSAFE`, one rule for one fact.
+- **Cost if wrong:** a longer allow list, and names with a trailing dot or space refused (none can be made on Windows by
+  ordinary tools).
+
+**The host pilot** waits for that change, as it waited for this loop.
