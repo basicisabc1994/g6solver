@@ -110,11 +110,19 @@ covers, not only its example.
               "drop that rule."),
 ), r3.RULE_FIRST[r3.RULE_FIRST.index("<hard_limits>"):])
 INSTRUCTION = hashlib.sha256(FORMAL_FIRST.encode("utf-8")).hexdigest()[:16]
+def stale(found: Mapping[str, Any]) -> bool:
+    """Whether a bug's saved record will be made again before any patch runs (``again``): one that stands, made by another
+    compiler than this module's (``COMPILER``). Until it is, no verdict its old test gave speaks for a patch (``replay3.reused``),
+    so the scheduler leaves the bug's patches waiting and the counts take none of them."""
+    return found.get("status") == "stands" and found.get("compiler") != COMPILER
+
+
 #: ``same_case``: replay 6's registration states the parent gate by case, a patch flagged when an agreed case that fails on the
 #: parent still fails on it. ``own_containers``: the parent's run and the patch's each in a container of its own (PLAN.md,
-#: 2026-11-04, night), so nothing the probe leaves in the project folder as one runs reaches the other.
+#: 2026-11-04, night), so nothing the probe leaves in the project folder as one runs reaches the other. ``stale``: a record
+#: another compiler made waits to be made again, and its verdicts with it.
 FORMAL = r3.Instruction(FORMAL_FIRST, INSTRUCTION, f"final_review_formal-{INSTRUCTION}", f"{we.WE}/formal", "test_formal.py",
-                        same_case=True, own_containers=True)
+                        same_case=True, own_containers=True, stale=stale)
 FOLDER = FORMAL.folder
 #: The compiler's name (PLAN.md, 2026-11-04, night): a digest of this module's own source text, its line ends read as one,
 #: which holds every text the compiled file is made of and every check that decides its cells, so no change to any of them goes
@@ -804,7 +812,7 @@ def again(root: Path, task: str, title: str, text: str) -> bool:
     was made again. A record that does not stand has nothing compiled, and is kept as it was."""
     saved = r3.bug_record(root, task, FORMAL)
     found = (fr.read(saved) or {}).get("found")
-    if not isinstance(found, dict) or found.get("status") != "stands" or found.get("compiler") == COMPILER:
+    if not isinstance(found, dict) or not stale(found):
         return False
     reply = found.get("reader_2_reply")
     if not isinstance(reply, str):

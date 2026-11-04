@@ -8,6 +8,7 @@ compiled files run in real local pytest processes, as review 4's tests run them.
 from __future__ import annotations
 
 import ast
+import hashlib
 import importlib.util
 import inspect
 import json
@@ -28,6 +29,7 @@ import replay3 as r3  # noqa: E402
 import replay4 as r4  # noqa: E402
 import replay5 as r5  # noqa: E402
 import replay6 as r6  # noqa: E402
+import replay_compare as rc  # noqa: E402
 import run as we  # noqa: E402
 
 QUOTE = "The result must be ok."
@@ -503,3 +505,91 @@ def test_a_record_that_does_not_stand_has_nothing_compiled_and_is_reused_as_it_w
     saved = _record(tmp_path, "black-5634", found)
     before = saved.read_bytes()
     assert not r6.again(tmp_path, "black-5634", "Issue", QUOTE) and saved.read_bytes() == before
+
+
+# --- a patch's verdict speaks only for the test its bug's record holds now ------------------------------------------------------
+# The class of review 4's finding 4, at its root: a saved artifact is named by less than what made it. A bug's record made
+# again (by another compiler, or asked again after one cut short) holds another test; the verdicts the old test gave stay on
+# disk under each patch's digest, and the scheduler and the counts reused them. A verdict counts only while its bug's record
+# holds the test it ran, and never while that record waits to be made again (replay 6's ``stale``).
+FAILS = we.ProbeRun(1, {"test_formal::test_formal[c000-result-x=0]": "failed"}, {}, "")
+
+
+def _verdict(root: Path, row: dict, ins, test: str) -> str:
+    sha = hashlib.sha256((root / str(row["run"]) / "final.patch").read_bytes()).hexdigest()
+    gate = {"same_case": True} if ins.same_case else {}
+    fr.keep(root, row, {"said": "none", "verdict": "none", "test": test, **gate}, ins.folder, sha=sha)
+    return sha
+
+
+def _bug(root: Path, ins, found: dict) -> None:
+    saved = r3.bug_record(root, "black-5634", ins)
+    saved.parent.mkdir(parents=True, exist_ok=True)
+    fr.write_whole(saved, json.dumps({"task": "black-5634", "instruction": ins.digest, "found": found}))
+
+
+def _finished_run(root: Path) -> dict:
+    [row] = _patch(root)
+    row = {**row, "arm": "L9", "repeat": 0}
+    (root / "loop" / "L9-black-5634-0.json").write_text(json.dumps({**row, "status": "finished"}), "utf-8")
+    return row
+
+
+@pytest.mark.parametrize("ins", [r3.rule(), r4.SYMPTOM, r5.RELATION, r6.FORMAL], ids=lambda ins: ins.folder.split("-")[0])
+def test_a_verdict_counts_only_while_its_bugs_record_holds_the_test_it_ran(tmp_path, monkeypatch, ins):
+    row = _finished_run(tmp_path)
+    monkeypatch.setattr(rc.compare, "saved", lambda root: {("L9", "black-5634", 0): {"amended": True, "maintainers": True}})
+    name = {folder: name for name, folder in rc.REVIEWERS}[ins.folder]
+    own = {"status": "stands", "compiler": r6.COMPILER} if ins is r6.FORMAL else {}
+    sha = _verdict(tmp_path, row, ins, "THE TEST IT RAN")
+    for test, waits in (("THE TEST IT RAN", False), ("ANOTHER TEST", True)):
+        _bug(tmp_path, ins, {"verdict": "defect", "rule": "r", "why": "w", "error": "", "test": test, **own})
+        assert (r3.waiting(tmp_path, ["black-5634"], ins) != []) == waits, (ins.folder, test)
+        assert (rc.patches(tmp_path, ["black-5634"])[sha][name] is None) == waits, (ins.folder, test)   # the counts agree
+
+
+def test_a_verdict_with_no_record_beside_it_speaks_for_the_test_it_carries(tmp_path):
+    row = _finished_run(tmp_path)
+    _verdict(tmp_path, row, r3.rule(), "THE TEST IT RAN")
+    assert r3.waiting(tmp_path, ["black-5634"], r3.rule()) == []
+
+
+def test_replay_6_leaves_waiting_a_patch_whose_standing_record_another_compiler_made(tmp_path):
+    row = _finished_run(tmp_path)
+    found = {**formal("def observe(case):\n    return {'result': str(case)}\n"), "test": "AN OLDER FILE"}
+    assert found["status"] == "stands"
+    _verdict(tmp_path, row, r6.FORMAL, "AN OLDER FILE")
+    for compiler, waits in ((r6.COMPILER, False), ("an-older-one", True)):
+        _record(tmp_path, "black-5634", {**found, "compiler": compiler})
+        assert (r3.waiting(tmp_path, ["black-5634"], r6.FORMAL) != []) == waits, compiler
+    assert all(r3.rule().stale is None for _ in [0]) and r4.SYMPTOM.stale is None and r5.RELATION.stale is None
+
+
+def test_replay_6s_run_makes_such_a_record_again_and_reviews_its_patch_with_no_reader_asked(tmp_path, monkeypatch):
+    """Through ``main``, as a restart meets it: the scheduler is asked first, so a patch it left with a reused verdict was never
+    reviewed and its bug's record never made again."""
+    root = tmp_path / "round3"
+    root.mkdir()
+    row = _finished_run(root)
+    found = {**formal("def observe(case):\n    return {'result': str(case)}\n"), "test": "AN OLDER FILE",
+             "compiler": "an-older-one"}
+    _record(root, "black-5634", found)
+    _verdict(root, row, r6.FORMAL, "AN OLDER FILE")
+    ran = []
+
+    def run_on(ctx, task, test, patch, ins=None):
+        ran.append(test)
+        return FAILS, FAILS
+
+    monkeypatch.setattr(r6.c, "archive_root", lambda: tmp_path)
+    monkeypatch.setattr(rc.compare, "saved", lambda root: {})
+    monkeypatch.setattr(we, "Docker", lambda: object())
+    monkeypatch.setattr(we, "g6_info", lambda commit: {"commit": commit})
+    monkeypatch.setattr(we, "read_issue", lambda task: ("Issue", QUOTE))
+    monkeypatch.setattr(we, "read_thread", lambda task: "")
+    monkeypatch.setattr(r6, "reader_2", lambda: SimpleNamespace(complete=_no_reader))
+    monkeypatch.setattr(fr, "_step", _no_reader)
+    monkeypatch.setattr(r3, "run_on", run_on)
+    r6.main(["--tasks", "black-5634"])
+    again = fr.read(r3.bug_record(root, "black-5634", r6.FORMAL))["found"]
+    assert again["compiler"] == r6.COMPILER and ran == [again["test"]] and again["test"] != "AN OLDER FILE"

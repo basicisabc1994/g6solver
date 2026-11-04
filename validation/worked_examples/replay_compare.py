@@ -86,18 +86,18 @@ def patches(root: Path, tasks: Iterable[str]) -> dict[str, dict[str, Any]]:
         one["split"] = [score for score in SCORES if len(seen[score]) > 1]
         for name, folder in REVIEWERS:
             kept = fr.read(root / "loop" / folder / f"{sha}.json")     # one that cannot be read is no review, as the replays read it
-            if not (spoken(name, kept, one["task"]) or (kept or {}).get("said") == "failed"):
+            if not (spoken(name, kept, one["task"], root) or (kept or {}).get("said") == "failed"):
                 kept = None          # no review its scheduler reuses, nor a failed one: no record, so it completes no block
             one[name] = {"said": kept["said"], "verdict": kept.get("verdict")} if kept else None
     return dict(sorted(found.items()))
 
 
-def spoken(name: str, review: Mapping[str, Any] | None, task: str) -> bool:
+def spoken(name: str, review: Mapping[str, Any] | None, task: str, root: Path) -> bool:
     """Whether reviewer ``name``'s saved review speaks for a patch of ``task``, by the one rule its scheduler reuses a review
-    by: ``replay3.reused`` (the bug's own, under the replay's gate) for the replays on replay 3's machinery (``INSTRUCTIONS``),
-    and ``final_review.counts`` for the others."""
+    by: ``replay3.reused`` (the bug's own, under the replay's gate, by the test the bug's record in ``root`` holds now) for the
+    replays on replay 3's machinery (``INSTRUCTIONS``), and ``final_review.counts`` for the others."""
     ins = INSTRUCTIONS.get(name)
-    return r3.reused(review, task, ins) if ins else fr.counts(review)
+    return r3.reused(review, task, ins, r3.current(root, task, ins)) if ins else fr.counts(review)
 
 
 def counted(review: Mapping[str, Any] | None) -> bool:

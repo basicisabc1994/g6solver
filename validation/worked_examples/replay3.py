@@ -24,7 +24,7 @@ import subprocess
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -108,6 +108,9 @@ class Instruction:
     #: The parent's run and the patch's each in a container of its own (PLAN.md, 2026-11-04, night), so nothing one run leaves in
     #: its container reaches the other. Off for replays 3, 4 and 5, which run both in one; on for replay 6.
     own_containers: bool = False
+    #: Whether a bug's saved record (its ``found``) will be made again before any patch runs, so no verdict its old test gave
+    #: speaks for a patch (``reused``): replay 6's, for a standing record another compiler made. None for replays 3, 4 and 5.
+    stale: Callable[[Mapping[str, Any]], bool] | None = field(default=None, compare=False, repr=False)
 
 
 def rule() -> Instruction:
@@ -159,16 +162,38 @@ def verdict(found: Mapping[str, Any], base: we.ProbeRun | None, now: we.ProbeRun
             "at_base": base.results if base else {}, "on_patch": now.results if now else {}}
 
 
-def reused(found: Mapping[str, Any] | None, task: str, ins: Instruction) -> bool:
+def current(root: Path, task: str, ins: Instruction) -> Mapping[str, Any] | None:
+    """A bug's saved record under ``ins`` as it stands now (its ``found``), or None where it has none that can be read."""
+    found = (fr.read(bug_record(root, task, ins)) or {}).get("found")
+    return found if isinstance(found, dict) else None
+
+
+def reused(found: Mapping[str, Any] | None, task: str, ins: Instruction, now: Mapping[str, Any] | None = None) -> bool:
     """Whether a saved verdict speaks for this bug's patch under ``ins``, so the patch is not reviewed again: one that counts
-    (``final_review.counts``), saved for this bug, under this instruction's gate (``_keep`` names it where it is on). One made
-    for another bug, or under the other gate, as replay 5's were before its gate by case, leaves the patch waiting."""
-    return fr.counts(found) and found.get("task") == task and bool(found.get("same_case")) == ins.same_case
+    (``final_review.counts``), saved for this bug, under this instruction's gate (``_keep`` names it where it is on), and made by
+    the test the bug's record holds now (``now``, from ``current``). One made for another bug, under the other gate, as replay
+    5's were before its gate by case, or by a test the record no longer holds, leaves the patch waiting, as does any while the
+    record waits to be made again (``ins.stale``). With no record beside it, a verdict speaks for the test it carries."""
+    if not (fr.counts(found) and found.get("task") == task and bool(found.get("same_case")) == ins.same_case):
+        return False
+    if now is None:
+        return True
+    if ins.stale is not None and ins.stale(now):
+        return False
+    return str(found.get("test") or "") == str(now.get("test") or "")
 
 
 def waiting(root: Path, tasks: Sequence[str], ins: Instruction) -> list[dict[str, Any]]:
     """``final_review.waiting`` under ``ins``: a finished run's patch waits while no verdict saved for it is ``reused``."""
-    return fr.waiting(root, tasks, ins.folder, spoken=lambda found, row: reused(found, str(row.get("task")), ins))
+    records: dict[str, Mapping[str, Any] | None] = {}
+
+    def spoken(found: Mapping[str, Any] | None, row: Mapping[str, Any]) -> bool:
+        task = str(row.get("task"))
+        if task not in records:
+            records[task] = current(root, task, ins)
+        return reused(found, task, ins, records[task])
+
+    return fr.waiting(root, tasks, ins.folder, spoken=spoken)
 
 
 def bug_record(root: Path, task: str, ins: Instruction | None = None) -> Path:
