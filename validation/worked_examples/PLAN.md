@@ -1975,3 +1975,28 @@ reads two precise layers with different holes.
 
 **If it passes,** it is scored unchanged on stage 4's arm A patches, bugs it was not developed on, with the same three
 measures.
+## 2026-11-04 (afternoon): where 95% can be reached, from recorded runs
+
+Stage 1 and 2's 34 bugs are split by the blind audit's determined label (`compare.DETERMINED`, `DETERMINED_2`). This uses
+recorded runs only, from every arm, counts only.
+
+| Bugs | Truth | Some arm right, by bug | Arm A, runs right |
+|---|---|---|---|
+| Determined (20) | maintainers' or amended | 18 of 20 | 30 of 40 (75%) |
+| Not determined (14) | maintainers' | 5 of 14 | 8 of 37 (22%) |
+| Not determined (14) | amended | 12 of 14 | 19 of 37 (51%) |
+
+**What it shows.**
+- **Undetermined bugs cap every harness.** On the maintainers' tests, across every arm and every repeat, only 5 of the 14
+  undetermined bugs ever got a right patch. Neither selection nor repair can reach 95% there: it needs behaviour the issue
+  does not state. So the 95% target is read on determined bugs, which for stage 4 are the audit's 21.
+- **On determined bugs, Claude Code alone gets 75% of runs right.** A perfect chooser by bug would reach 90%.
+- **The 15 points above Claude Code sit in four bugs** where some arm was right and A was not always: s3transfer-423 (A 0
+  of 2, any arm 8 of 15), urllib3-5254 (1 of 2, 12 of 15), black-5148 (1 of 2, 2 of 10) and pygments-3158 (0 of 2, 1
+  of 15). Selection or repair can only win there.
+- **Two determined bugs no arm solved** in 10 runs each: click-3404 and starlette-3189. Reaching 95% needs generation on
+  bugs like these, which no reviewer or chooser can supply.
+
+**Next, for the generation part.** A root cause of those two bugs from their recorded wrong patches: what the runs share,
+and what the issue and the parent say that the runs did not use. These bugs are development now, under the 2026-11-02 rule,
+and the lesson is taken as a class, never as the bug's fix.
