@@ -175,30 +175,104 @@ BYTES_BREAKS = [bytes([b]) for b in range(256) if len(bytes([97, b, 98]).splitli
 SPLITS = ("split", "rsplit", "partition", "rpartition")
 
 
-def _splits_a_line(call: ast.Call) -> bool:
-    """Whether a split (``SPLITS``) can split at a line break as Python reads one: ``re.split`` where ``re`` itself finds its
-    pattern in a break or two; any other at a separator that holds a break of its own kind (str or bytes), or at whitespace (no
-    separator, or None), which holds every one. A separator this scan cannot read as a constant is taken as a break."""
-    regex = isinstance(call.func.value, ast.Name) and call.func.value.id == "re"
+#: ``re``'s own parser, which reads a pattern as ``re`` compiles it (follow-up review 3, finding 1: probes of a break alone and two
+#: breaks missed ``\r(?=\{)``).
+from re import _constants as RE_OPS, _parser as RE_PARSER  # noqa: E402
+#: How the parser names a category inside a set, as the escape that stands for it.
+RE_CATEGORIES = {"CATEGORY_DIGIT": r"\d", "CATEGORY_NOT_DIGIT": r"\D", "CATEGORY_SPACE": r"\s", "CATEGORY_NOT_SPACE": r"\S",
+                 "CATEGORY_WORD": r"\w", "CATEGORY_NOT_WORD": r"\W"}
+
+
+def _set_holds_a_break(items: list, breaks: set[int], text: bool) -> bool:
+    """Whether a character set as ``re`` parsed it can match a line break: a negated set always can; else a literal, a range or
+    a category that holds one (a category this scan does not know is taken as holding one)."""
+    if any(op is RE_OPS.NEGATE for op, _ in items):
+        return True
+    for op, value in items:
+        if op is RE_OPS.LITERAL and value in breaks:
+            return True
+        if op is RE_OPS.RANGE and any(value[0] <= b <= value[1] for b in breaks):
+            return True
+        if op is RE_OPS.CATEGORY:
+            escape = RE_CATEGORIES.get(str(value))
+            if escape is None or any(re.fullmatch(escape if text else escape.encode(), chr(b) if text else bytes([b]))
+                                     for b in breaks):
+                return True
+    return False
+
+
+def _consumes_a_break(items, breaks: set[int], text: bool) -> bool:
+    """Whether a pattern as ``re`` parsed it can consume a line break anywhere in what it matches. A lookaround consumes nothing,
+    and neither does an anchor or a back reference (its group is read where it stands); anything else this scan does not know
+    is taken as consuming one."""
+    known_silent = (RE_OPS.AT, RE_OPS.ASSERT, RE_OPS.ASSERT_NOT, RE_OPS.GROUPREF)
+    for op, value in items:
+        if op is RE_OPS.LITERAL:
+            if value in breaks:
+                return True
+        elif op in (RE_OPS.NOT_LITERAL, RE_OPS.ANY):
+            return True
+        elif op is RE_OPS.IN:
+            if _set_holds_a_break(value, breaks, text):
+                return True
+        elif op is RE_OPS.BRANCH:
+            if any(_consumes_a_break(part, breaks, text) for part in value[1]):
+                return True
+        elif op is RE_OPS.SUBPATTERN:
+            if _consumes_a_break(value[-1], breaks, text):
+                return True
+        elif op in (RE_OPS.MAX_REPEAT, RE_OPS.MIN_REPEAT, RE_OPS.POSSESSIVE_REPEAT):
+            if _consumes_a_break(value[2], breaks, text):
+                return True
+        elif op is RE_OPS.ATOMIC_GROUP:
+            if _consumes_a_break(value, breaks, text):
+                return True
+        elif op is RE_OPS.GROUPREF_EXISTS:
+            if any(part is not None and _consumes_a_break(part, breaks, text) for part in value[1:]):
+                return True
+        elif op not in known_silent:
+            return True
+    return False
+
+
+def _splits_a_line(call: ast.Call, regex_modules: set[str], regex_splits: set[str]) -> bool:
+    """Whether a split can split at a line break as Python reads one. ``re.split``, under any name an import binds to ``re`` or
+    to its ``split`` (follow-up review 3, finding 3), where ``re``'s own parser finds that the pattern can consume a break
+    anywhere (``_consumes_a_break``); any other split or partition at a separator that holds a break of its own kind (str or
+    bytes), or at whitespace (no separator, or None), which holds every one. A separator or pattern this scan cannot read as a
+    constant is taken as a break."""
+    func = call.func
+    regex = (isinstance(func, ast.Name) and func.id in regex_splits) or (
+        isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id in regex_modules)
+    attr = func.attr if isinstance(func, ast.Attribute) else "split"
     given = call.args[0] if call.args else next((k.value for k in call.keywords if k.arg in ("sep", "pattern")), None)
     if given is None or (isinstance(given, ast.Constant) and given.value is None):
-        return not regex and call.func.attr in ("split", "rsplit")
+        return not regex and attr in ("split", "rsplit")
     if not (isinstance(given, ast.Constant) and isinstance(given.value, (str, bytes))):
         return True
     pattern = given.value
-    breaks = BYTES_BREAKS if isinstance(pattern, bytes) else STR_BREAKS
+    text = isinstance(pattern, str)
     if not regex:
-        return any(b in pattern for b in breaks)
+        return any(b in pattern for b in (STR_BREAKS if text else BYTES_BREAKS))
+    breaks = {ord(c) for c in STR_BREAKS} if text else {b[0] for b in BYTES_BREAKS}
     try:
-        compiled = re.compile(pattern)
-    except re.error:
+        parsed = RE_PARSER.parse(pattern)
+    except (re.error, RecursionError, OverflowError):
         return True
-    return any(compiled.search(probe) for b in breaks for probe in (b, b + b))
+    return _consumes_a_break(list(parsed), breaks, text)
 
 
 def line_splits(source: str) -> list[tuple[str, str]]:
-    """Every line split in a module's source (``STREAMS``, and the kinds above), as (the function it is in, its source)."""
+    """Every line split in a module's source (``STREAMS``, and the kinds above), as (the function it is in, its source). Its
+    limits, stated: a split reached through ``getattr``, a name assigned from ``re.split`` at run time, or a regex compiled in one
+    place and split in another with a constant the scan cannot see is not found; it finds what this folder's code writes."""
     found: list[tuple[str, str]] = []
+    tree = ast.parse(source)
+    imports = [node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
+    regex_modules = {"re"} | {a.asname or a.name for node in imports if isinstance(node, ast.Import)
+                              for a in node.names if a.name == "re"}
+    regex_splits = {a.asname or a.name for node in imports if isinstance(node, ast.ImportFrom) and node.module == "re"
+                    for a in node.names if a.name == "split"}
 
     def visit(node: ast.AST, where: str, opened: set[str]) -> None:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -209,8 +283,9 @@ def line_splits(source: str) -> list[tuple[str, str]]:
                        and item.context_expr.func.id == "open"}
         if isinstance(node, ast.Attribute) and node.attr in ("splitlines", "readlines", "readline"):
             found.append((where, ast.unparse(node)))
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in SPLITS and \
-                _splits_a_line(node):
+        if isinstance(node, ast.Call) and ((isinstance(node.func, ast.Attribute) and node.func.attr in SPLITS)
+                                           or (isinstance(node.func, ast.Name) and node.func.id in regex_splits)) and \
+                _splits_a_line(node, regex_modules, regex_splits):
             found.append((where, ast.unparse(node)))
         if isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
             it = node.iter
@@ -221,9 +296,8 @@ def line_splits(source: str) -> list[tuple[str, str]]:
         for child in ast.iter_child_nodes(node):
             visit(child, where, opened)
 
-    visit(ast.parse(source), "<module>", set())
+    visit(tree, "<module>", set())
     return found
-
 
 def test_the_scan_sees_each_kind_of_line_split():
     source = ("def f(t, p, s):\n    t.splitlines()\n    p.readlines()\n    t.split('\\n')\n    t.rsplit(b'\\r\\n')\n"
@@ -247,6 +321,34 @@ def test_follow_up_review_2_finding_2_a_split_at_any_line_break_python_reads_is_
     assert bool(line_splits(f"def f(t, sep):\n    {call}\n")) is found
 
 
+@pytest.mark.parametrize(("source", "found"), [
+    ("def f(t):\n    import re\n    re.split('\\\\r(?=\\\\{)', t)\n", True),           # follow-up review 3, finding 1
+    ("def f(t):\n    import re\n    re.compile('\\\\r(?=\\\\{)').split(t)\n", True),
+    ("def f(t):\n    import re\n    re.split('[^x]', t)\n", True),
+    ("def f(t):\n    import re\n    re.split('(?=\\\\r),', t)\n", False),               # a lookahead consumes nothing
+    ("def f(t):\n    import re\n    re.split('[,;]', t)\n", False),
+    ("from re import split\ndef f(t):\n    split('\\\\r', t)\n", True),                  # follow-up review 3, finding 3
+    ("from re import split as cut\ndef f(t):\n    cut('\\\\r', t)\n", True),
+    ("import re as rx\ndef f(t):\n    rx.split('\\\\r', t)\n", True),
+    ("def split(a, b):\n    return a\ndef f(t):\n    split('\\\\r', t)\n", False)])          # a function of the module's own
+def test_follow_up_review_3_a_regex_split_is_read_by_re_s_own_parser_and_by_any_name_bound_to_it(source, found):
+    """``re``'s own parser decides whether a pattern can consume a line break anywhere (a lookaround consumes nothing), and a
+    split reached through ``re`` under any name an import binds is read as ``re.split``."""
+    assert bool(line_splits(source)) is found
+
+
+def test_follow_up_review_3_finding_2_a_reader_in_a_subfolder_fails_the_guard(tmp_path, monkeypatch):
+    shadow = tmp_path / "worked_examples"
+    shadow.mkdir()
+    for source in WE_DIR.glob("*.py"):
+        (shadow / source.name).write_bytes(source.read_bytes())
+    (shadow / "readers").mkdir()
+    (shadow / "readers" / "transcript.py").write_text("def read(text):\n    return text.splitlines()\n", encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "WE_DIR", shadow)
+    with pytest.raises(AssertionError, match="line split"):
+        test_every_line_split_in_the_worked_examples_is_the_one_framing_or_named_with_why_it_reads_no_stream()
+
+
 def test_follow_up_review_2_finding_2_a_new_split_at_a_lone_carriage_return_fails_the_guard(tmp_path, monkeypatch):
     shadow = tmp_path / "worked_examples"
     shadow.mkdir()
@@ -259,7 +361,7 @@ def test_follow_up_review_2_finding_2_a_new_split_at_a_lone_carriage_return_fail
 
 
 def test_every_line_split_in_the_worked_examples_is_the_one_framing_or_named_with_why_it_reads_no_stream():
-    found = Counter((path.name, where, src) for path in sorted(WE_DIR.glob("*.py"))
+    found = Counter((path.relative_to(WE_DIR).as_posix(), where, src) for path in sorted(WE_DIR.rglob("*.py"))
                     for where, src in line_splits(path.read_text("utf-8")))
     assert found[FRAMING] == 1, "the one framing, wecommon.stream_lines, splits at '\\n' alone"
     other = set(found) - {FRAMING}
