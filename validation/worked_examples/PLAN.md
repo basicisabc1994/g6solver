@@ -1804,3 +1804,31 @@ prompted.
   (analogous code and callers), gathered before anyone edits.
 - **If it passes.** Replay 4 is scored on bugs not yet used, against the frozen review and replay 3, under the
   balanced-accuracy amendment. Those bugs and their runs are drawn and registered first.
+
+## 2026-11-04 (late morning): stage 4's bugs, the rule before the draw
+
+**Purpose.** Unseen bugs for the next scored step: replay 4 if its development check passes, the next hypothesis if not.
+Arm A's runs on them stand for Claude Code alone. Every bug of stages 1 and 2 is now development, so the measurement
+bottleneck is fresh bugs.
+
+**Source.** The 2026-10-31 screen, `selection/candidates_unseen.json`, read at 2026-10-31T11:14:52Z with the window
+2025-12-01 to 2026-10-29. The draw takes the repositories it kept at PyPI ranks 45 to 100, in rank order. None of them
+was used in training, stage 2 or the development pool, and the screen was made before any of today's work.
+
+**The rule: stage 2's, unchanged.**
+- Each repository gives at most its two newest candidates judged to report a bug with a clear expected behaviour (T2).
+  Security reports are left out.
+- A bug that fails `images`, `validate`, `selfcheck` or `freecheck` gives way to the next candidate in order.
+
+**One difference: who judges T2.** A model reader judges T2 on the issue's text alone, applying the rule's words, and
+gives a reason for every candidate it looks at, all before any run. Stage 2's T2 was mine. The judgement never sees a
+fix, a test or a run.
+
+**Size.** It is set by the pre-spend check once replay 4's development check has ended, from the effect that check
+measures, and recorded before any run. It is at most the pool.
+
+**Runs.** Arm A only: Claude Code alone, Sonnet 5.5, the prompt unchanged. The number of repeats is set with the size.
+They run on the API remainder, with the stop at $178 of the $180 limit.
+
+**Audit and amendments: as for stage 2.** A blind auditor labels each bug determined by its task or not. A bug that is
+not determined gets an amendment written without reading any run.
