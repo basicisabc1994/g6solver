@@ -14,6 +14,7 @@ import inspect
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -862,3 +863,107 @@ def test_a_startup_module_of_the_project_cannot_start_a_process_before_the_probe
         else:
             time.sleep(max(0, 8 - (time.monotonic() - started)))
     assert not pid_file.is_file() and not alive, "the project's startup module ran in the probe's interpreter"
+
+# --- follow-up review 3 ---------------------------------------------------------------------------------------------------------
+def test_follow_up_review_3_finding_1_json_the_reader_accepts_however_deep_is_masked_and_never_aborts_the_review():
+    secret = "READER_ONE_PRIVATE_EXPECTATION"
+    row = {"when": {}, "expect": {"result": secret}, "quote": QUOTE}
+    payload = "[" * 600 + json.dumps(secret) + "]" * 600
+    assert r6.canon(r6._loads(payload)) == r6.canon(json.loads(payload))
+    caller = Caller([row])
+    got = formal(f"data = {payload!r}\ndef observe(case):\n    return {{'result': str(case)}}\n", rows=[row], caller=caller)
+    [(_, user)] = caller.calls
+    assert secret not in user and got["status"] in r6.STATUSES and got["masked"] == 1
+
+
+@pytest.mark.parametrize("code", [0, 1, 125, 239])
+@pytest.mark.parametrize("failed_call", ["stage", "probe", "cleanup"])
+def test_follow_up_review_3_finding_2_the_reviewers_step_reads_every_docker_status_of_its_test_runs(tmp_path, code,
+                                                                                                    failed_call):
+    """Replay 1's step runs its reviewer's test through the one wrapper every replay's test runs use (``final_review.Checked``):
+    a failed exec is a failed review, whatever report it printed."""
+    calls = []
+
+    class Docker:
+        def __call__(self, *args, **kwargs):
+            if "archive" in args:
+                data = io.BytesIO()
+                with tarfile.open(fileobj=data, mode="w"):
+                    pass
+                return subprocess.CompletedProcess(args, 0, data.getvalue(), b"")
+            return subprocess.CompletedProcess(args, 0, b"", b"")
+
+        def sh(self, name, script, **kwargs):
+            which = "stage" if "cp -r" in script else "probe" if "--junitxml" in script else "cleanup"
+            if "git apply" in script:
+                return subprocess.CompletedProcess(script, 0, b"", b"")
+            calls.append(which)
+            mark = re.search(r'echo "(' + re.escape(we.JUNIT_MARK) + r' [^"\n]+)"', script)
+            printed = (f'exit=1\n{mark[1]}\n<testsuites><testsuite><testcase classname="test_rule" name="test_result">'
+                       '<failure/></testcase></testsuite></testsuites>').encode() if which == "probe" else b""
+            return subprocess.CompletedProcess(script, code if which == failed_call else 0, printed, b"exec failed")
+
+    def critic(pack):
+        proof = (pack / "issue.txt").read_text("utf-8").splitlines()[0]
+        return (f"READ: {proof}\nRULE: The result must be correct.\nVERDICT: defect\nWHY: A defect.\n"
+                "```python\ndef test_result():\n    assert False\n```\n")
+
+    patch = tmp_path / "candidate.patch"
+    patch.write_text("fake patch", encoding="utf-8")
+    ctx = SimpleNamespace(docker=Docker(), g6={"commit": "0" * 40}, variant=we.ROUND3,
+                          archive=SimpleNamespace(root=tmp_path), critic=critic)
+    found, base, now = fr._step(ctx, we.task_by_id("black-5634"), patch, "Issue", "Text", "Prompt", "/tmp/review-test",
+                                "test_rule.py", candidate=False)
+    assert failed_call in calls
+    assert fr.reproduction(found, base, now)["said"] == ("failed" if code else "reproduced")
+
+
+def test_every_replay_test_run_uses_the_one_wrapper():
+    assert r3.Checked is fr.Checked
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a Windows venv launcher and job objects")
+def test_follow_up_review_3_finding_3_the_interpreter_a_venv_launcher_starts_is_held_with_it(tmp_path):
+    """The probe's process is created suspended, held in its job, then resumed, so not even a launcher's first process runs
+    outside the job, and every process it starts is in it."""
+    import ctypes
+    from ctypes import wintypes
+    pids = tmp_path / "pids.json"
+    probe = ("import json, os, subprocess, sys, time\nfrom pathlib import Path\n"
+             "def observe(case):\n"
+             "    p = subprocess.Popen([sys.executable, '-I', '-S', '-c', 'import time; time.sleep(3)'], "
+             "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+             f"    Path({str(pids)!r}).write_text(json.dumps([os.getpid(), p.pid]), encoding='ascii')\n"
+             "    time.sleep(1.5)\n    return {'result': 'ok'}\n")
+    space = {"__name__": "follow_up_compiled"}
+    exec(r6.compile_test(probe, {"x": [0]}, {(r6.canon({"x": 0}), "result"): "ok"}), space)
+    hold = space["_g6_hold"]
+
+    def hold_late(child):
+        time.sleep(0.4)
+        return hold(child)
+
+    space["_g6_hold"], space["_G6_SECONDS"] = hold_late, 0.3
+    assert space["_G6_APART"]["creationflags"] & 0x4                  # CREATE_SUSPENDED
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    alive, started = [], time.monotonic()
+    try:
+        answer_, why = space["_g6_ask"]()
+        assert answer_ is None, (answer_, why)
+        for pid in (json.loads(pids.read_text(encoding="ascii")) if pids.exists() else []):
+            handle = kernel.OpenProcess(0x100000, False, pid)
+            if handle:
+                try:
+                    if kernel.WaitForSingleObject(handle, 150) == 258:
+                        alive.append(pid)
+                    assert kernel.WaitForSingleObject(handle, 6000) == 0, "a process this test started must end"
+                finally:
+                    kernel.CloseHandle(handle)
+    finally:
+        time.sleep(max(0, 7 - (time.monotonic() - started)))
+    assert not alive, f"processes the probe started outlived its timeout: {alive}"

@@ -16,6 +16,7 @@ review does. Its reviews are saved apart, in ``REPRODUCE``.
 from __future__ import annotations
 
 import argparse
+import copy
 import io
 import json
 import os
@@ -188,6 +189,37 @@ def codex(pack: Path) -> str:
     return got.stdout.decode("utf-8", errors="replace")
 
 
+class Checked:
+    """``ctx.docker`` for every replay's test runs (``_step``'s and ``replay3.run_on``'s alike, follow-up review 3, finding 2):
+    any call that ends non-zero raises, a shell command in the container or a ``docker`` call itself (run, cp, exec, rm), so a
+    failed review is made again and nothing it printed is read as a run, and no container a run could not remove is taken as
+    removed. No such status is normal there: staging the test copy and the probe script both end in a command that succeeds,
+    so non-zero is the call's own failure, and the one status a caller reads, ``git apply``'s, already makes a failed review.
+    The frozen review (``review``) is left as it ran."""
+
+    def __init__(self, docker: Any):
+        self.docker = docker
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        done = self.docker(*args, **kwargs)
+        if done.returncode != 0:
+            raise RuntimeError(f"docker {args[0] if args else ''} in the review exited {done.returncode}: {we.err(done)[-300:]}")
+        return done
+
+    def sh(self, ctr: str, script: str, *args: Any, **kwargs: Any) -> Any:
+        done = self.docker.sh(ctr, script, *args, **kwargs)
+        if done.returncode != 0:
+            raise RuntimeError(f"a command in the review's container exited {done.returncode}")
+        return done
+
+
+def checked(ctx: we.Context) -> we.Context:
+    """A copy of ``ctx`` whose docker is ``Checked``; the caller's context keeps its own."""
+    tested = copy.copy(ctx)
+    tested.docker = ctx.docker if isinstance(ctx.docker, Checked) else Checked(ctx.docker)
+    return tested
+
+
 def removed(ctx: we.Context, name: str) -> str:
     """A replay's review container removed (``docker rm -f``): "" where it was, else why not. The one rule for every replay's
     containers, its reviewer's step (``_step``) and its test runs (``replay3._apart``) alike: a container a review could not
@@ -256,8 +288,9 @@ def _step(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, pr
         asking = False
         found = answered(we.critic_report(reply, proof=proof), reply)
         if found["test"] and run:
-            base = parent_run(ctx, task, name, found["test"], where, file)
-            now = patch_run(ctx, task, name, patch, where)
+            tested = checked(ctx)                     # every status of the test runs read (``Checked``)
+            base = parent_run(tested, task, name, found["test"], where, file)
+            now = patch_run(tested, task, name, patch, where)
     except (RuntimeError, OSError, subprocess.SubprocessError, tarfile.TarError) as exc:
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
         if asking:

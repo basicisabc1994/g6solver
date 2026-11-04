@@ -321,9 +321,18 @@ def _telling(rules: Sequence[Mapping[str, Any]]) -> tuple[set[str], set[str], st
 
 def _holds(value: Any, rows: set[str]) -> bool:
     """Whether a JSON value is one of these rows or holds one, at any depth: an object's keys as well as its values (follow-up
-    review 2, finding 1)."""
-    parts = value if isinstance(value, list) else [*value, *value.values()] if isinstance(value, dict) else ()
-    return canon(value) in rows or any(_holds(part, rows) for part in parts)
+    review 2, finding 1), walked with a stack of its own, so no nesting the JSON reader accepts exhausts Python's (follow-up
+    review 3, finding 1)."""
+    stack = [value]
+    while stack:
+        one = stack.pop()
+        if canon(one) in rows:
+            return True
+        if isinstance(one, list):
+            stack.extend(one)
+        elif isinstance(one, dict):
+            stack.extend([*one, *one.values()])
+    return False
 
 
 def _tells(node: ast.AST, told: tuple[set[str], set[str], str]) -> bool:
@@ -347,7 +356,10 @@ def _tells(node: ast.AST, told: tuple[set[str], set[str], str]) -> bool:
         read = _loads(value)
     except (ValueError, RecursionError):              # no JSON text, or none by the model's rule (``_Refused`` is a ValueError)
         return False
-    return _holds(read, (expected - _SILENT) | rows | {rules})
+    try:
+        return _holds(read, (expected - _SILENT) | rows | {rules})
+    except RecursionError:                            # a value too deep to spell by ``canon``: masked, as one that may tell
+        return True
 
 
 def _masks(nodes: Sequence[ast.AST], told: tuple[set[str], set[str], str]) -> list[ast.AST]:
@@ -581,9 +593,11 @@ _g6_child(__import__("json"), __import__("math"), __import__("os"), __import__("
 """
 #: How long the probe's process may run, in seconds, before it is ended with every process it started and every cell skipped.
 _G6_SECONDS = 120
-#: The probe's process starts a process group of its own, so what it starts is ended with it (_g6_end). On Windows it is held in
-#: a job object of its own (_g6_hold) before it is sent anything.
-_G6_APART = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
+#: The probe's process starts a process group of its own, so what it starts is ended with it (_g6_end). On Windows it is created
+#: suspended (0x4, CREATE_SUSPENDED), held in a job object of its own (_g6_hold) and only then resumed, so not even a launcher's
+#: first process runs outside the job (follow-up review 3, finding 3).
+_G6_APART = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | 0x4} if os.name == "nt"
+             else {"start_new_session": True})
 _g6_answer = []
 
 
@@ -603,23 +617,27 @@ def _g6_kernel():
 
 
 def _g6_hold(child):
-    """On Windows, a job object of its own holding the probe's process, made while that process still waits for what it is
-    sent, so it has started nothing: every process it starts then, and every one those start, is in the job, whether or not the
-    process that started it still runs, and ends with the job (_g6_end). None elsewhere, where the process group its own
-    session began holds them. An OSError where Windows will not hold it."""
+    """On Windows, a job object of its own holding the probe's process, made while that process is still suspended (_G6_APART),
+    so it has run nothing: once it is held it is resumed, and every process it starts, and every one those start, is in the job,
+    whether or not the process that started it still runs, and ends with the job (_g6_end). None elsewhere, where the process
+    group its own session began holds them. An OSError where Windows will not hold it or resume it."""
     if os.name != "nt":
         return None
     import ctypes
+    from ctypes import wintypes
     kernel = _g6_kernel()
+    ntdll = ctypes.WinDLL("ntdll")
+    ntdll.NtResumeProcess.restype, ntdll.NtResumeProcess.argtypes = ctypes.c_long, [wintypes.HANDLE]
     job = kernel.CreateJobObjectW(None, None)
-    process = kernel.OpenProcess(0x0101, False, child.pid)   # PROCESS_SET_QUOTA and PROCESS_TERMINATE
+    process = kernel.OpenProcess(0x0901, False, child.pid)   # PROCESS_SET_QUOTA, PROCESS_TERMINATE, PROCESS_SUSPEND_RESUME
     held = bool(job) and bool(process) and bool(kernel.AssignProcessToJobObject(job, process))
     error = ctypes.get_last_error()
-    for handle in (process,) + (() if held else (job,)):
+    resumed = held and ntdll.NtResumeProcess(process) == 0
+    for handle in (process,) + (() if resumed else (job,)):
         if handle:
             kernel.CloseHandle(handle)
-    if not held:
-        raise ctypes.WinError(error)
+    if not resumed:
+        raise ctypes.WinError(error) if not held else OSError("the probe's process was held but could not be resumed")
     return job
 
 

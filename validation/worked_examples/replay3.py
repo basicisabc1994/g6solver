@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import copy
 import functools
 import hashlib
 import json
@@ -202,27 +201,8 @@ def bug_record(root: Path, task: str, ins: Instruction | None = None) -> Path:
     return root / "loop" / ins.folder / "bugs" / f"{task}-{ins.digest}.json"
 
 
-class Checked:
-    """``ctx.docker`` for replay 3's test runs: any call that ends non-zero raises, a shell command in the container or a
-    ``docker`` call itself (run, cp, exec, rm), so a failed review is made again and nothing it printed is read as a run, and no
-    container a run could not remove is taken as removed (follow-up review 1, finding 3). No such status is normal there:
-    staging the test copy and the probe script both end in a command that succeeds, so non-zero is the call's own failure, and
-    the one status a caller reads, ``git apply``'s, already makes a failed review."""
-
-    def __init__(self, docker: Any):
-        self.docker = docker
-
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        done = self.docker(*args, **kwargs)
-        if done.returncode != 0:
-            raise RuntimeError(f"docker {args[0] if args else ''} in the review exited {done.returncode}: {we.err(done)[-300:]}")
-        return done
-
-    def sh(self, ctr: str, script: str, *args: Any, **kwargs: Any) -> Any:
-        done = self.docker.sh(ctr, script, *args, **kwargs)
-        if done.returncode != 0:
-            raise RuntimeError(f"a command in the review's container exited {done.returncode}")
-        return done
+#: The one wrapper every replay's test runs use (`final_review.Checked`), named here as before.
+Checked = fr.Checked
 
 
 def run_on(ctx: we.Context, task: we.Task, test: str, patch: Path, ins: Instruction | None = None
@@ -230,8 +210,7 @@ def run_on(ctx: we.Context, task: we.Task, test: str, patch: Path, ins: Instruct
     """A saved test of the rule on the parent and with ``patch``, in a container of its own, or with ``ins.own_containers`` each
     run in one of its own, as replay 1 runs its tests, with an exec that failed raising (``Checked``)."""
     ins = ins or rule()
-    ctx = copy.copy(ctx)                              # the caller's context keeps its own docker
-    ctx.docker = Checked(ctx.docker)
+    ctx = fr.checked(ctx)                             # the caller's context keeps its own docker
     if ins.own_containers:
         base = _apart(ctx, task, lambda name: fr.parent_run(ctx, task, name, test, ins.at, ins.file))
         return base, _apart(ctx, task, lambda name: _patched(ctx, task, name, test, patch, ins))
