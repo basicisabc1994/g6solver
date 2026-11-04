@@ -56,6 +56,8 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
                if (r.get("task"), r.get("arm"), r.get("repeat")) == (task, arm, repeat)][-1]
     if rec.get("status") == "refused":   # never counted as a failed run
         raise SystemExit(f"refused: {arm} {task} {repeat}: {rec.get('why')}")
+    if rec.get("status") == "limited":   # the subscription's usage limit: no verdict, nothing saved, made again after the reset
+        raise SystemExit(f"limited: {arm} {task} {repeat}: {(rec.get('limit') or {}).get('resets') or 'no reset given'}")
     row = {"arm": arm, "task": task, "repeat": repeat, "run": rec.get("run"), "status": rec.get("status"),
            "why": rec.get("why"), "cost_usd": rec.get("cost_usd"), "passes": False, "failing": None, "tests": []}
     if rec.get("status") == "finished":

@@ -43,7 +43,8 @@ def saved(root: Path) -> dict[tuple[str, str, int], dict[str, bool | None]]:
     rows: dict[tuple[str, str, int], dict[str, bool | None]] = {}
     for path in (root / "loop").glob("*-*.json"):
         row, again = json.loads(path.read_text("utf-8")), root / "loop" / "amended" / path.name
-        passes = None if row.get("status") == "finished" and row.get("failing") is None else bool(row["passes"])
+        passes = None if (row.get("status") == "finished" and row.get("failing") is None) or row.get("status") == "limited" \
+            else bool(row["passes"])      # a run that met the subscription's usage limit has no verdict (PLAN.md, 2026-11-04)
         amended = passes
         diff = we.amendment(row["task"])
         if diff:

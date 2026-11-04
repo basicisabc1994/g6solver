@@ -29,6 +29,7 @@ import os
 import queue
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
@@ -37,10 +38,10 @@ import threading
 import time
 import uuid
 import xml.etree.ElementTree as ET
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 import copy
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any
 
@@ -48,6 +49,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+import box_mcp  # noqa: E402
 import observe  # noqa: E402
 import selection  # noqa: E402
 import wecommon as c  # noqa: E402
@@ -1059,7 +1061,8 @@ def r3_refusal(ctx: Context, task: Task) -> tuple[str, float, float]:
     if ctx.arm == "D" and not str(ctx.g6.get("commit")).startswith(R3_D_G6):
         return f"arm D runs only on the reviewed G6, {R3_D_G6}", 0.0, 0.0
     done = r3_done(rows)
-    if key in done and not (ctx.rerun_why and done[key] == "error"):
+    # a run that met the subscription's usage limit gave no verdict, so it is made again, as a killed run is (PLAN.md, 2026-11-04)
+    if key in done and done[key] != "limited" and not (ctx.rerun_why and done[key] == "error"):
         return f"run {key} was already made ({done[key]}); no run is made again for a better result", 0.0, 0.0
     earlier = [k for k in sched if R3_MODELS.index(k[0]) < R3_MODELS.index(ctx.model) and k not in done]
     if earlier and key not in R3_SMOKE and key not in R3_PROBE and not r3_loop_key(key):
@@ -1440,6 +1443,71 @@ def status_of(stop: str, tally: c.Tally) -> str:
 KILL_AGENT = (f'for p in /proc/[0-9]*; do [ "$(readlink $p/exe 2>/dev/null)" = {CLAUDE} ] && '
               'kill -9 "${p#/proc/}" 2>/dev/null; done; true')
 
+# --- the host executor (PLAN.md, 2026-11-04): Claude Code on the host, on the subscription's sign-in; every command it runs, in
+# the bug's container through the box (``box_mcp.py``). The sign-in never enters a container, and the container has no network.
+HOST_CLAUDE = "claude"
+#: The flags probed with Claude Code 2.1.318 on the host, in the order probed; ``{...}`` is a run's own value (``host_args``). No
+#: Bash or PowerShell tool: the box's ``run`` is the only way to run anything. A repair adds ``--resume <session>``.
+HOST_FLAGS = ("-p", "--restricted", "--tools", "Read,Edit,Write,Glob,Grep", "--mcp-config", "{mcp}", "--strict-mcp-config",
+              "--allowedTools", "mcp__box__run", "--settings", "{settings}", "--permission-mode", "acceptEdits",
+              "--permission-prompts", "none", "--output-format", "stream-json", "--verbose", "--model", "{model}",
+              "--max-turns", "{turns}")
+HOST_SETTINGS = {"permissions": {"blockReadsOutsideWorkingDirectories": True, "blockWritesOutsideWorkingDirectories": True},
+                 "disableAllHooks": True}
+#: Any of these would sign the host's Claude Code in with a key or token in place of the subscription.
+HOST_SECRETS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
+#: Claude Code's word that the subscription's usage limit is reached, with when it resets when it says.
+HOST_LIMIT = re.compile(r"You(?:'|’)ve hit your (?:[\w-]+ ){0,3}limit\b\W{0,4}(resets\b[^\n|]*)?", re.I)
+#: A name part Windows would refuse or change (a device name, a reserved character, a trailing dot or space).
+HOST_UNSAFE = re.compile(r'[<>:"|?*\\\x00-\x1f]|[. ]$|^(?:con|prn|aux|nul|com\d|lpt\d)(?:\..*)?$', re.I)
+BOX_TIMEOUT_S = 600        # one command in the box, at most: Claude Code's own Bash tool stops one at ten minutes
+
+
+def host_args(mcp_file: Path, settings_file: Path, model: str, *, resume: str = "") -> list[str]:
+    """``HOST_FLAGS`` with the run's own values: the box's MCP configuration and the settings, both in the run's folder."""
+    values = {"mcp": str(mcp_file), "settings": str(settings_file), "model": model, "turns": str(c.MAX_TURNS)}
+    return [flag.format(**values) for flag in HOST_FLAGS] + (["--resume", resume] if resume else [])
+
+
+def host_env(environ: Mapping[str, str]) -> dict[str, str]:
+    """The host session's environment: ``environ`` without a key or token (``HOST_SECRETS``), whatever its case."""
+    return {k: v for k, v in environ.items() if k.upper() not in HOST_SECRETS}
+
+
+def limit_of(line: str) -> str | None:
+    """Whether a stream line says the subscription's usage limit is reached (``HOST_LIMIT``): when the limit resets as Claude Code
+    gave it ("" when it did not), or None. Only Claude Code's own words are read: the result's text, a synthetic message, or a line
+    that is not JSON. The model's messages and the tools' output never are."""
+    try:
+        obj = json.loads(line)
+    except ValueError:
+        texts = [line]
+    else:
+        msg = obj.get("message") if isinstance(obj, dict) else None
+        if isinstance(obj, dict) and obj.get("type") == "result":
+            texts = [str(obj.get("result") or "")]
+        elif isinstance(obj, dict) and obj.get("type") == "assistant" and isinstance(msg, dict) and msg.get("model") == "<synthetic>":
+            texts = [str(b.get("text") or "") for b in msg.get("content") or [] if isinstance(b, dict)]
+        else:
+            return None
+    for text in texts:
+        found = HOST_LIMIT.search(text)
+        if found:
+            return (found.group(1) or "").strip()
+    return None
+
+
+def kill_tree(proc: Any) -> None:
+    """The host session and every process it started (the box, and what the box runs on the host)."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, timeout=60)
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+    proc.kill()
+
 
 # --- the run -------------------------------------------------------------------------------------------------------------
 @dataclass
@@ -1460,6 +1528,8 @@ class Context:
     repeat: int = 1              # round 3: which repeat of the same model, task and arm (Sonnet's arm A: 1 or 2)
     tasks: Sequence[Task] | None = None   # round 3's schedule's tasks (default: tasks.json)
     rerun_why: str = ""          # round 3: a run whose agent started and ended in "error" may be made again, saying why
+    executor: str = "container"  # "host": Claude Code on the host, on the subscription's sign-in (PLAN.md, 2026-11-04)
+    starter: Callable[..., Any] | None = None    # how the host session's process starts (default: ``subprocess.Popen``)
 
     def client_env(self, key: str | None = None) -> dict[str, str]:
         base = dict(self.environ) if self.environ is not None else {
@@ -1601,6 +1671,8 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
             cap, stop = r3_caps(ctx.model, spent=0.0, fable_left=1)
         elif not why:
             why, cap, stop = r3_refusal(ctx, task)
+    if not why and ctx.executor != "container":
+        why = host_refusal(ctx, dry=dry)
     if why:
         return {"status": "refused", "why": why, "task": task.id}
     body = _run_task(ctx, task, dry=dry, cap=cap, stop=stop)
@@ -1626,6 +1698,106 @@ def run_session(ctx: Context, run: Any, agent: str, command: list[str], key: str
             ctx.docker.sh(agent, KILL_AGENT, user="root", timeout=60)
             proc.kill()
         proc.wait(timeout=60)
+
+
+def host_refusal(ctx: Context, *, dry: bool) -> str:
+    """Why a run cannot be made by the host executor, or "". It makes round 3's runs of Claude Code alone, in one session (arms A,
+    S and T) or in arm K's loop, whose repairs it makes on the host too; never a dry run, which on the host would spend the
+    subscription."""
+    if ctx.executor != "host":
+        return f"there is no executor {ctx.executor!r}"
+    if dry:
+        return "a dry run is never made on the host: its Claude Code would spend the subscription"
+    if ctx.variant != ROUND3 or not (ctx.arm in ("A", "S", "T") or re.fullmatch(r"K\d+", ctx.arm)):
+        return "the host executor makes round 3's runs of arms A, S, T and K only"
+    return ""
+
+
+def host_workspace(ctx: Context, tag: str) -> Path:
+    """The folder the host's Claude Code works in, beside the archive's critic packs, removed when the run ends. Claude Code
+    refuses edits under a ``.claude`` folder, so an archive under one is refused before the agent starts."""
+    folder = (ctx.archive.root / "workspaces" / tag).resolve()
+    if any(part.lower() == ".claude" for part in folder.parts):
+        raise RuntimeError(f"the workspace {folder} is under a .claude folder, where Claude Code refuses edits")
+    folder.mkdir(parents=True)
+    return folder
+
+
+def workspace_from(ctx: Context, task: Task, agent: str, dest: Path) -> int:
+    """The parent's tree, from the agent's container into ``dest`` on the host, where the host's Claude Code works on it: no
+    ``.git`` and no ``.venv``, which stay in the container. Only plain files and folders come out: an absolute name, a ``..`` part,
+    a link, a device, or a name the host cannot hold as it is (two differing only in case, or one Windows would refuse or change)
+    refuses the whole tree before anything is written. Returns how many files came out."""
+    done = ctx.docker("exec", "-u", USER, "-w", task.repo, agent, "tar", "-c", "--exclude=.git", "--exclude=.venv", ".",
+                      timeout=900)
+    if done.returncode != 0:
+        raise RuntimeError(f"the workspace's export failed ({done.returncode}): {err(done)[-600:]}")
+    seen: set[str] = set()
+    with tarfile.open(fileobj=io.BytesIO(done.stdout)) as tar:
+        members = tar.getmembers()
+        for member in members:
+            parts = PurePosixPath(member.name).parts
+            key = "/".join(parts).casefold()
+            if (member.name.startswith(("/", "\\")) or ".." in parts or not (member.isfile() or member.isdir())
+                    or any(HOST_UNSAFE.search(part) for part in parts) or (key in seen and key)):
+                raise RuntimeError(f"the workspace's export holds {member.name!r}, which the host cannot hold as a plain file or "
+                                   "folder inside the workspace")
+            seen.add(key)
+        tar.extractall(dest, members=members, **({"filter": "data"} if hasattr(tarfile, "data_filter") else {}))
+    return sum(member.isfile() for member in members)
+
+
+def host_files(ctx: Context, run: Any, task: Task, agent: str, workspace: Path) -> tuple[Path, Path]:
+    """The host session's MCP configuration, the box and nothing else, and its settings (``HOST_SETTINGS``), in the run's folder."""
+    exe = getattr(ctx.docker, "exe", "docker")
+    box = {"command": sys.executable, "args": ["-I", str(HERE / "box_mcp.py"), "--container", agent, "--repo", task.repo,
+                                               "--workspace", str(workspace), "--user", USER, "--timeout", str(BOX_TIMEOUT_S),
+                                               "--docker", shutil.which(exe) or exe]}
+    return run.write_json("host_mcp.json", {"mcpServers": {"box": box}}), run.write_json("host_settings.json", HOST_SETTINGS)
+
+
+def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settings_file: Path, text: str, name: str, *,
+                 resume: str = "", seconds: float, tally: c.Tally, stop_usd: float) -> str:
+    """One Claude Code session on the host, on the subscription's sign-in, its stream saved as ``name`` as ``run_session`` saves
+    one, with the same deadline and stop; its folder the workspace, and the bug's container reached only through the box.
+    ``resume``: the session a repair goes on with. How it ended, as ``read_stream`` says, or "limited" when Claude Code said the
+    usage limit was reached: the session ends at that line, and the limit's reset is saved beside the stream."""
+    command = [shutil.which(HOST_CLAUDE) or HOST_CLAUDE, *host_args(mcp_file, settings_file, ctx.model, resume=resume)]
+    proc = (ctx.starter or subprocess.Popen)(command, cwd=str(workspace), env=host_env(os.environ if ctx.environ is None else ctx.environ),
+                                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                             **({} if os.name == "nt" else {"start_new_session": True}))
+    errors: list[bytes] = []
+    drain = threading.Thread(target=lambda: errors.append(proc.stderr.read() or b""), daemon=True)
+    drain.start()
+    limit: list[str] = []
+
+    def lines() -> Iterator[bytes]:
+        for line in iter(proc.stdout.readline, b""):
+            yield line
+            said = limit_of(line.decode("utf-8", errors="replace"))
+            if said is not None:
+                limit.append(said)
+                return
+
+    stream = open(run.fresh_path(name), "w", encoding="utf-8", newline="\n")
+    try:
+        proc.stdin.write(text.encode("utf-8"))
+        proc.stdin.close()
+        ended = read_stream(lines(), tally, deadline=time.monotonic() + seconds,
+                            write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()), stop_usd=stop_usd)
+    finally:
+        stream.close()
+        if proc.poll() is None:
+            kill_tree(proc)
+        proc.wait(timeout=60)
+    drain.join(timeout=30)
+    stem, said = Path(name).stem, b"".join(errors).decode("utf-8", errors="replace")
+    run.write(f"{stem}_stderr.txt", said)
+    limit.extend(x for x in map(limit_of, said.splitlines() if not limit else []) if x is not None)
+    if limit:
+        run.write(f"{stem}_limit.txt", limit[0])
+        return "limited"
+    return ended
 
 
 def probe_gate(ctx: Context, task: Task, agent: str, where: str, tree: str) -> list[str]:
@@ -1880,12 +2052,15 @@ def finding_rule(arm: str) -> str:
 
 
 def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, tally: c.Tally,
-                        stop: float, started: float, critique: Callable[[int], dict[str, Any]], finding: str = "any") -> dict[str, Any]:
+                        stop: float, started: float, critique: Callable[[int], dict[str, Any]], finding: str = "any",
+                        session: Callable[[str, str], Any] | None = None) -> dict[str, Any]:
     """Arm K (PLAN.md, 2026-11-01): plain Claude Code, then the patch is read by another model family, repaired in the same session if
     the reader's test fails on it, and read again, until a reader reproduces nothing. One review saw one layer of a defect, so one
     repair stopped there. The agent may reject a finding, and leaving the code as it was ends the loop. No scout, no probes, no G6.
     With ``finding`` "parent" (K2, PLAN.md, 2026-11-04, evening), each round's test is also run on the parent in a container of its
-    own, and only the cases that failed there and still fail go back; a parent run with no result sends nothing back."""
+    own, and only the cases that failed there and still fail go back; a parent run with no result sends nothing back. ``session``:
+    a repair as ``session(note, stream name)``, the host executor's (PLAN.md, 2026-11-04); by default the same session continued
+    in the container (``run_session``). A repair that meets the subscription's usage limit ends the loop."""
     def tree() -> str:
         return out(ctx.docker.sh(agent, "git status --porcelain; git diff", workdir=task.repo, timeout=120))
 
@@ -1926,9 +2101,13 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
             reason = "the repairs ran out with a defect open"
             break
         before = tree()
-        run_session(ctx, run, agent, scout_again(docker_args), key, tally,
-                    CRITIC_NOTE.format(**{k: critic.get(k, "") for k in ("rule", "why", "test")}) + REVIEW_ASK, f"repair_stream_{n}.jsonl",
-                    seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
+        note = CRITIC_NOTE.format(**{k: critic.get(k, "") for k in ("rule", "why", "test")}) + REVIEW_ASK
+        if session is None:
+            run_session(ctx, run, agent, scout_again(docker_args), key, tally, note, f"repair_stream_{n}.jsonl",
+                        seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
+        elif session(note, f"repair_stream_{n}.jsonl") == "limited":
+            reason = "the repair met the subscription's usage limit"
+            break
         if tree() == before:
             reason = "the agent left the code as it was"
             break
@@ -2113,7 +2292,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
     critic_led = round3 and re.fullmatch(r"K\d+", ctx.arm) is not None
     test_led = round3 and bug_led(ctx.arm)
     no_g6 = round3 and (critic_led or test_led or ctx.arm in ("A", "S", "T", "R", *CONVERT_ARMS))   # Claude Code alone: no G6 server, skill or command
-    key = DRY_KEY if dry else ctx.key_reader()
+    host = ctx.executor == "host"      # Claude Code on the host, on the subscription's sign-in: no key is read (PLAN.md, 2026-11-04)
+    key = DRY_KEY if dry else "" if host else ctx.key_reader()
     ctx.archive.redact = c.Redactor(key, *ctx.archive.redact.secrets)
     task_image, _ = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     tag = uuid.uuid4().hex[:10]
@@ -2122,31 +2302,35 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
     if round3:
         common.update(arm=ctx.arm, repeat=ctx.repeat, cap_usd=cap, stop_usd=stop, label="development",
                       **({"rerun_why": ctx.rerun_why} if ctx.rerun_why else {}))
+    if host:
+        common["executor"] = "host"
     run = ctx.archive.start("dryrun" if dry else "run", task.id, **common)
     record: dict[str, Any] = {**common, "task": task.id, "run": run.rel, "agent_started": False, "cost_usd": 0.0}
     agent, net, px, status = "", "", "", "error"
+    workspace: Path | None = None
     try:
         title, text = ctx.issue_reader(task)
         if round3 and gets_thread(ctx.arm):
             text += read_thread(task)
         record["image_id"] = out(ctx.docker("image", "inspect", task_image, "--format", "{{.Id}}"))
         round2 = ctx.variant == ROUND2
-        if round2:
-            net, px = start_net(ctx, tag)      # round 2's key check asks G6's model, through the run's proxy
-        record["key_check"] = key_check(ctx, task, task_image, key, tag, net=net if round2 else "",
-                                        px=px if round2 else "")
-        run.write_json("key_check.json", record["key_check"])
-        if round2:
-            record["key_check_g6"] = g6_model_cost([{"completion": {"activities": [
-                {**x, "activity": "model call"} for x in record["key_check"].get("g6_model_calls") or []]}}])
-            record["cost_usd"] = record["key_check_g6"]["usd"]
-        if not record["key_check"]["ok"]:
-            status = "key_check_failed"
-            return run.finish(record, status)
-        if not round2:
-            net, px = start_net(ctx, tag)
+        if not host:     # on the host no key enters the container, which has no network: no key check and no proxy
+            if round2:
+                net, px = start_net(ctx, tag)      # round 2's key check asks G6's model, through the run's proxy
+            record["key_check"] = key_check(ctx, task, task_image, key, tag, net=net if round2 else "",
+                                            px=px if round2 else "")
+            run.write_json("key_check.json", record["key_check"])
+            if round2:
+                record["key_check_g6"] = g6_model_cost([{"completion": {"activities": [
+                    {**x, "activity": "model call"} for x in record["key_check"].get("g6_model_calls") or []]}}])
+                record["cost_usd"] = record["key_check_g6"]["usd"]
+            if not record["key_check"]["ok"]:
+                status = "key_check_failed"
+                return run.finish(record, status)
+            if not round2:
+                net, px = start_net(ctx, tag)
         agent = f"g6we-run-{task.id}-{tag}"
-        checked(ctx.docker("run", "-d", "--name", agent, "--label", "g6we=1", "--network", net, *LIMITS, *SECURITY,
+        checked(ctx.docker("run", "-d", "--name", agent, "--label", "g6we=1", "--network", "none" if host else net, *LIMITS, *SECURITY,
                            "-u", USER, "-e", f"HOME={HOME}", "-w", task.repo, task_image, "tail", "-f", "/dev/null",
                            timeout=600), "agent container")
         try:
@@ -2161,7 +2345,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             return run.finish(record, status)
         base = str(state["head"])
         record["base_commit"] = base
-        record["claude_version"] = out(ctx.docker("exec", "-u", USER, agent, CLAUDE, "--version", timeout=120))
+        if not host:     # the host's version is read from its stream
+            record["claude_version"] = out(ctx.docker("exec", "-u", USER, agent, CLAUDE, "--version", timeout=120))
         if no_g6:    # round 3, arm A: no g6 setup, and no g6 command on the agent's path
             checked(ctx.docker("exec", "-u", "root", agent, "rm", "-f", G6_BIN, timeout=60), "remove the g6 command")
             record["g6_setup_exit"] = None
@@ -2208,9 +2393,17 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                      "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "DISABLE_TELEMETRY=1", "DISABLE_ERROR_REPORTING=1"]
         docker_args = ["exec", "-i", "-u", USER, "-w", task.repo, *[a for e in env_names for a in ("-e", e)], agent,
                        *args]
-        run.write_json("command.json", {"docker": docker_args, "caps": {"usd": cap, "stop_usd": stop,
-                                        "turns": c.MAX_TURNS, "wall_clock_s": c.WALL_CLOCK_S},
-                                        "key": "passed by name; its value only in the docker client's environment"})
+        if host:   # the parent's tree comes out to the host's workspace; each session's tree goes back in (``box_mcp.mirror``)
+            workspace = host_workspace(ctx, tag)
+            record["workspace_files"] = workspace_from(ctx, task, agent, workspace)
+            mcp_file, settings_file = host_files(ctx, run, task, agent, workspace)
+            run.write_json("command.json", {"host": [HOST_CLAUDE, *host_args(mcp_file, settings_file, model)],
+                                            "caps": {"stop_usd": stop, "turns": c.MAX_TURNS, "wall_clock_s": c.WALL_CLOCK_S},
+                                            "key": "none: the host's Claude Code is signed in to the subscription"})
+        else:
+            run.write_json("command.json", {"docker": docker_args, "caps": {"usd": cap, "stop_usd": stop,
+                                            "turns": c.MAX_TURNS, "wall_clock_s": c.WALL_CLOCK_S},
+                                            "key": "passed by name; its value only in the docker client's environment"})
         at_base: dict[str, ProbeRun] = {}
         if looped and not dry:   # the hook arrives after the scout, so it cannot stop the scout
             record["agent_started"] = True
@@ -2226,27 +2419,42 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             bug = bug_test(ctx, task, run, title, text)
             record["bug_test"] = {k: bug.get(k) for k in ("verdict", "seconds", "error", "instruction")}
         tally = c.Tally(count_reported=round3)
-        proc = ctx.docker.popen(*docker_args, env=ctx.client_env(key))
-        record["agent_started"] = True
-        errors: list[bytes] = []
-        drain = threading.Thread(target=lambda: errors.append(proc.stderr.read() or b"") if proc.stderr else None,
-                                 daemon=True)
-        drain.start()
-        stream = open(run.fresh_path("stream.jsonl"), "w", encoding="utf-8", newline="\n")
-        try:
-            proc.stdin.write(text_in.encode("utf-8"))
-            proc.stdin.close()
-            ended = read_stream(iter(proc.stdout.readline, b""), tally, deadline=started + c.WALL_CLOCK_S,
-                                write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
-                                stop_usd=stop)
-        finally:
-            stream.close()
-            if proc.poll() is None:
-                ctx.docker.sh(agent, KILL_AGENT, user="root", timeout=60)
-                proc.kill()
-            proc.wait(timeout=60)
-        drain.join(timeout=30)
-        run.write("stderr.txt", b"".join(errors).decode("utf-8", errors="replace"))
+
+        def turn(note: str, name: str, resume: str = "") -> str:
+            """A host session, then its tree into the container before anything reads it there."""
+            left = c.WALL_CLOCK_S - (time.monotonic() - started)
+            ended = host_session(ctx, run, workspace, mcp_file, settings_file, note, name, resume=resume,
+                                 seconds=max(60.0, left) if resume else left, tally=tally, stop_usd=stop)
+            box_mcp.mirror(workspace, ctx.docker, container=agent, repo=task.repo, user=USER, timeout=BOX_TIMEOUT_S)
+            if ended == "limited" and "limit" not in record:
+                record["limit"] = {"stream": name, "resets": (run.path / f"{Path(name).stem}_limit.txt").read_text(encoding="utf-8")}
+            return ended
+
+        if host:
+            record["agent_started"] = True
+            ended = turn(text_in, "stream.jsonl")
+        else:
+            proc = ctx.docker.popen(*docker_args, env=ctx.client_env(key))
+            record["agent_started"] = True
+            errors: list[bytes] = []
+            drain = threading.Thread(target=lambda: errors.append(proc.stderr.read() or b"") if proc.stderr else None,
+                                     daemon=True)
+            drain.start()
+            stream = open(run.fresh_path("stream.jsonl"), "w", encoding="utf-8", newline="\n")
+            try:
+                proc.stdin.write(text_in.encode("utf-8"))
+                proc.stdin.close()
+                ended = read_stream(iter(proc.stdout.readline, b""), tally, deadline=started + c.WALL_CLOCK_S,
+                                    write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
+                                    stop_usd=stop)
+            finally:
+                stream.close()
+                if proc.poll() is None:
+                    ctx.docker.sh(agent, KILL_AGENT, user="root", timeout=60)
+                    proc.kill()
+                proc.wait(timeout=60)
+            drain.join(timeout=30)
+            run.write("stderr.txt", b"".join(errors).decode("utf-8", errors="replace"))
         if looped and holds_loop(ctx.arm) and not dry and not ended:
             record["repairs"] = repair_loop(ctx, task, run, agent, docker_args, key, tally, stop, started, at_base,
                                             lambda: run_critic(ctx, task, run, agent, base, title, text))
@@ -2257,11 +2465,12 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         if critic_led and not dry and not ended:
             record["repairs"] = reviews_until_clean(ctx, task, run, agent, base, docker_args, key, tally, stop, started,
                                                     lambda n: run_critic(ctx, task, run, agent, base, title, text, n),
-                                                    finding=finding_rule(ctx.arm))
+                                                    finding=finding_rule(ctx.arm),
+                                                    session=(lambda note, name: turn(note, name, tally.session_id)) if host else None)
         if test_led and not dry and not ended:
             record["repairs"] = reviews_with_bug_test(ctx, task, run, agent, base, docker_args, key, tally, stop, started, bug)
         result = tally.result or {}
-        record.update(status_detail=status_of(ended, tally), agent_usd=tally.cost_usd,
+        record.update(status_detail=status_of("limited" if "limit" in record else ended, tally), agent_usd=tally.cost_usd,
                       cost_usd=round(tally.cost_usd + float(record.get("cost_usd") or 0.0)
                                      + float((record.get("scout") or {}).get("usd") or 0.0), 6),
                       stream_usd=round(tally.stream_usd, 6),
@@ -2269,6 +2478,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                       model_calls=tally.model_calls, num_turns=result.get("num_turns"), usage=tally.usage,
                       result_subtype=result.get("subtype"), session_id=tally.session_id,
                       seconds=round(time.monotonic() - started, 1))
+        if host:   # the subscription's sessions: what the stream says they would cost, never counted as the API's spend
+            record.update(executor="host", subscription_usd_estimate=record["agent_usd"], cost_usd=0.0)
         run.write("final_report.txt", str(result.get("result") or ""))
         ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/final.patch"), workdir=task.repo, timeout=600)
         final = run.fresh_path("final.patch")
@@ -2297,6 +2508,9 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                 objects.append(json.loads(line))
             except ValueError:
                 continue
+        if host:
+            record["claude_version"] = next((str(o["claude_code_version"]) for o in objects
+                                             if o.get("type") == "system" and o.get("claude_code_version")), None)
         rounds = extract_rounds(objects, archived_resolver(run.path))
         for one in rounds:      # round 2: what G6's own model proposed in this round's review
             if one.get("job_id") in saved:
@@ -2309,7 +2523,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             record["observed"] = observe.observe_run(run.path)     # what the run shows about W1 to W5
         except (OSError, ValueError) as exc:
             record["observed"] = {"error": f"{type(exc).__name__}: {exc}"[:300]}
-        record["egress"] = egress(ctx, px, run.fresh_path("egress.jsonl"))
+        record["egress"] = {"network": "none"} if host else egress(ctx, px, run.fresh_path("egress.jsonl"))
         status = record["status_detail"]
     except Exception as exc:  # noqa: BLE001 - every failure is recorded and the containers are removed
         record["error"] = ctx.archive.redact(f"{type(exc).__name__}: {exc}")[:2000]
@@ -2320,6 +2534,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                 ctx.docker("rm", "-f", name, timeout=300)
         if net:
             ctx.docker("network", "rm", net, timeout=120)
+        if workspace is not None:
+            shutil.rmtree(workspace, ignore_errors=True)
     return run.finish(record, status)
 
 
@@ -2753,6 +2969,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--model", choices=R3_MODELS, help="round 3: the agent's model")
     ap.add_argument("--repeat", type=int, default=1, help="round 3: 2 for Sonnet's second arm A run of a bug")
     ap.add_argument("--rerun-why", default="", help="round 3: make again a run that ended in error, saying why")
+    ap.add_argument("--executor", choices=("container", "host"), default="container",
+                    help="round 3: host runs Claude Code on the host, on the subscription's sign-in, and each of its commands "
+                         "in the bug's container, which has no network (box_mcp.py)")
     args = ap.parse_args(argv)
     first = c.Archive(c.archive_root(args.archive))
     variant = {2: ROUND2, 3: ROUND3}.get(args.round, "")
@@ -2798,7 +3017,7 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("round 3 gives G6 no model")
         ctx = Context(archive=archive, docker=Docker(), key_reader=read_key, issue_reader=read_issue, g6=g6,
                       variant=variant, prior_spent=prior, arm=args.arm or "", model=args.model or c.MODEL,
-                      repeat=args.repeat, rerun_why=args.rerun_why)
+                      repeat=args.repeat, rerun_why=args.rerun_why, executor=args.executor)
         result = {"validate": lambda: validate(ctx, task), "selfcheck": lambda: selfcheck(ctx, task),
                   "freecheck": lambda: freecheck(ctx, task), "modelcheck": lambda: modelcheck(ctx, task),
                   "dryrun": lambda: run_task(ctx, task, dry=True),
