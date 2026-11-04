@@ -2000,3 +2000,35 @@ recorded runs only, from every arm, counts only.
 **Next, for the generation part.** A root cause of those two bugs from their recorded wrong patches: what the runs share,
 and what the issue and the parent say that the runs did not use. These bugs are development now, under the 2026-11-02 rule,
 and the lesson is taken as a class, never as the bug's fix.
+## 2026-11-04 (afternoon): why no arm solved two determined bugs
+
+This root cause comes from recorded runs only: the issue, the final patches, the agents' reports, and the check's failing
+test names and messages. No model or container was run, and the maintainers' fix was not read.
+
+**click-3404, 10 runs.** None passed, with 10 to 18 maintainers' tests failing.
+- 7 runs read the issue one way, and 3 restored the reporter's table literally.
+- The discussion states the polarity and the tie-break; the reporter's own table has them swapped.
+- The maintainers' tests check the whole precedence rule: every pair of sources, declaration order and value kind. Every
+  run fixed the issue's one case and left the ties to the old rule.
+- Arm M9's blind readers wrote checks expecting the reporter's table, and M9's second run followed them to a worse patch.
+
+**starlette-3189, 10 runs.** None passed, with 2 failing each.
+- Every run made the two classes send what the reference class sends.
+- But every run also kept, and adapted to the new context, extra machinery the reference class does not have.
+- The maintainers' test fails on exactly that machinery, which the full test client the agents checked with happens to
+  satisfy.
+
+**The class both share.** The missed requirement sits in behaviour the patch kept from the old code. The issue names a
+reference: the old version's rule, the maintainers' words, a parent class. The runs checked the example against it, never
+the behaviour they kept. A test of the whole rule against the reference would have shown it, and no run's checks reached it.
+
+**What it means for the next steps.**
+- **Reviewer side.** Replay 5's relations are this test: the reference and the patched path agree on the same input, and
+  the same change of input, such as a swapped declaration order, moves the output the same way. These two bugs are among
+  replay 5's 34, so its development check reads them directly.
+- **Author side, a hypothesis recorded now and not run.** Before finishing, the agent lists the behaviours its patch keeps on
+  the touched path and checks each one against the reference the issue names. It needs author runs, which need credit or a
+  host session, and both are the owner's to give.
+- **Blind readers who disagree.** M9 took its blind readers' checks as the answer. Where the readers disagree with each
+  other, or with the maintainers' words in the discussion, the issue should be reported as ambiguous and their checks not
+  sent back. That is a rule for any arm that uses blind readers.
