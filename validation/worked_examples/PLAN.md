@@ -2454,7 +2454,8 @@ first, with its own review loop. Review 4's tests are its first failing tests.
 
 **Decided for that change: remove the root, not the instances.**
 - Every reader of a host transcript goes through one framing function, and a test fails if any other split appears.
-- One recogniser of a model refusal serves both the host path and the earlier one that already read the stop reason.
+- One recogniser of a model refusal serves every reader in the worked examples. V7's code, which already read the stop
+  reason, is left as it ran; a test holds the two to the same answer on the same records.
 - A value is checked as well as a name. A URL carrying a password is not passed on.
 - A pack is checked whole before anything is sent:
   - every name is one the receiver can hold;
