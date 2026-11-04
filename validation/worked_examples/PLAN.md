@@ -2686,6 +2686,13 @@ is therefore Claude Code alone in that same run. Arms K0, K1, M9 and V4 on unsee
 
    Replay 6's formal model of the issue's rule is the candidate source of that rule. Its development check follows its
    review 4.
+   - **Built one change at a time.** Arm K3 is K2 plus the author's rule step only. The whole-rule finding waits for replay
+     6's development check.
+   - **The rule step comes after the first patch is saved.** The author's first session uses arm A's prompt, byte for byte,
+     and its patch is saved as `round-1` before the step. Only then does the same session get the step. So the first patch
+     stays Claude Code alone, and the within-run comparison still holds.
+   - **What is scored.** The patch after the step is saved and scored too, so a pilot can tell what the step did from what
+     the review did.
 5. **Pre-spend rule for stage 5.**
    - **What gates the runs.** Stage 5's runs start only after a development pilot of the changed loop on development bugs
      with headroom. Those are the four bugs above, plus any later scored bug where a first patch was wrong.
