@@ -2571,3 +2571,131 @@ alarms. On the maintainers' tests, replay 5 against the final review is 218 righ
 - Each precise layer sees about a fifth of the wrong patches.
 - Whether the relation layer adds to the symptom layer is prediction 3.
 - If it passes, the next registered step is replay 5 on stage 4's arm A patches.
+
+## 2026-11-05 (morning, later): why no stage has reached significance, the bottleneck, and what changes before stage 5 runs
+
+**Owner's direction, 2026-11-05.** Root-cause why the loop has not reached significance, name the bottleneck, make the
+improvements, and test again.
+
+**How this was read.** By plain code from saved records only, with no model and no container. The measure is the maintainers'
+tests unless a line says otherwise. Every count below was read today, after stages 1, 2 and 4 were scored, so all of it is
+exploratory. Nothing here changes a scored result. The test of what follows is stage 5, whose runs have not started.
+
+**Replay 5's prediction 3: not met.** The relation test flagged 3 wrong patches that the symptom test passed, against the
+10 or more predicted (amended tests). The two layers together flag 31 of 141 wrong patches (22.0%), with 10 false alarms out
+of 279 right patches (3.6%). On the maintainers' tests the union flags 33 of 222, with 8 false alarms out of 198. The two
+precise layers' holes line up: a second layer built from the issue mostly catches the patches the first one already catches.
+So replay 5 does not go on to stage 4's patches as a separate layer.
+
+**1. Within each run, the loop seldom changes the outcome.** Every loop run since stage 1 saves its first patch
+(`rounds/round-1.patch`), made before any review, and the independent check scores it beside the final patch. The first patch
+is therefore Claude Code alone in that same run. Arms K0, K1, M9 and V4 on unseen bugs:
+
+| Bugs | Loop runs | First patch right | Wrong to right | Right to wrong |
+|---|---|---|---|---|
+| Determined, stage 1 | 28 | 16 | 1 | 1 |
+| Determined, stage 2 | 70 | 61 | 4 | 0 |
+| Determined, stage 4 | 24 | 23 | 1 | 0 |
+| Undetermined, stage 1 | 45 | 3 | 12 | 2 |
+| Undetermined, stages 2 and 4 | 56 | 7 | 0 | 0 |
+
+- **Determined bugs.** The first patch is right in 100 of 122 runs (82%); arm A is right in 52 of 63 runs on the same 32 bugs.
+  The loop turned 6 of the 22 wrong first patches right and broke 1 of the 100 right ones, a net of about 4% of runs.
+- **Undetermined bugs.** The loop gained only in stage 1, whose bugs come from the training repositories. In the new
+  repositories of stages 2 and 4 it gained nothing in 56 runs.
+- **The gap between arms is mostly Claude Code's own variation.** In stage 2, K1 was better than A on 3 bugs and worse on none.
+  Within K1's own runs, the loop changed the outcome on only one bug. In stage 4, V4 was better on 2 bugs and changed the
+  outcome on one. In a larger study that variation runs both ways and dilutes the sign test.
+
+**2. Where a wrong first patch stays wrong, on determined bugs.**
+- **Something goes back on most patches.** It went back on 16 of the 22 wrong first patches (73%), and on 38 of the 100 right
+  ones.
+- **What goes back seldom makes the patch right.** It did so on 6 of the 16.
+- **The failures sit on four bugs.** All 16 failed or absent repairs are on four of the 32 bugs: black-5148, click-3404 and
+  starlette-3189 (stage 1), and pygments-3158 (stage 2). These are the bugs that the 2026-11-04 headroom reading classed as
+  generation or inseparable.
+- **The review's flags on those four bugs.** From the saved reviews:
+
+  | Bug | What the final review flags |
+  |---|---|
+  | click-3404 | all 10 wrong patches, yet the repairs still failed |
+  | black-5148 | all 8 wrong patches and both right ones |
+  | starlette-3189 | 3 of 10 wrong patches |
+  | pygments-3158 | 4 of 10 wrong patches and the right one |
+
+  The symptom and relation tests flag 5 of these four bugs' 38 wrong patches in all.
+- **What the four bugs share.** The 2026-11-04 root cause of click-3404 and starlette-3189 found a patch that fixes the
+  issue's one case and leaves the rest of the rule as it was. The issue names a reference: the maintainers' words, or a
+  parent class. Neither the author nor the reviewer checks the whole rule against it. A finding that names one failing case
+  does not carry the rule, so the repair fixes that case again.
+
+**3. What that effect allows: power, by resampling whole recorded bugs.**
+- **Method.** The 32 unseen determined bugs, each with its own recorded A runs and loop runs, drawn with replacement. The
+  test is the frozen rule's exact one-sided sign test by bug, at p < 0.05.
+- **The designs compared:**
+  - between: the frozen rule, loop against A, two runs each;
+  - within: each loop run's final patch against its own first patch, two runs, by bug;
+  - adaptive: within, plus two more loop runs on any bug whose first patch was wrong.
+
+| Determined bugs | 35 | 50 | 65 | 100 | 150 | 200 |
+|---|---|---|---|---|---|---|
+| Between (frozen rule) | 0.03 | 0.09 | 0.13 | 0.25 | 0.38 | 0.52 |
+| Within | 0.05 | 0.12 | 0.22 | 0.45 | 0.66 | 0.81 |
+| Adaptive | 0.04 | 0.09 | 0.16 | 0.31 | 0.48 | 0.62 |
+
+- **If more still-wrong first patches were made right.** Power at 100 and 65 determined bugs:
+
+  | Extra share made right | Between, 100 | Within, 100 | Between, 65 | Within, 65 |
+  |---|---|---|---|---|
+  | 25% | 0.77 | 0.91 | 0.53 | 0.69 |
+  | 45% | 0.94 | 0.98 | 0.76 | 0.87 |
+
+  An extra 25% takes the loop from 6 of 22 wrong first patches made right to about 10 of 22 (45%).
+- **The registered forecast does not hold.** The 2026-11-04 (evening) forecast of 0.80 at 100 determined bugs used the
+  gated effect measured on the same 20 bugs that the gate rule was derived from. Measured across all three unseen stages, the
+  effect is smaller.
+
+**Root cause.**
+- **First order: each study was too small for the effect it could show.** The loop's effect on unseen determined bugs is about
+  4% of runs, for two reasons:
+  - Claude Code alone is already right in about 82% of runs there.
+  - The rest sit on a few bugs where what goes back does not carry the rule the patch misses.
+- **Undetermined bugs give nothing in new repositories,** because the rule the maintainers test is not in the issue.
+- **Second order: the loop measured and forecast itself in ways that hid this.**
+  - It compared arms by bug, which adds Claude Code's own run-to-run variation.
+  - It sized studies by supply and credit.
+  - It forecast power from an effect measured where its rule was tuned.
+  - It improved the reviewer on recorded patches, where detection is measured, while repair, which needs author runs, was never measured.
+
+**The bottleneck.** The loop's conversion of wrong first patches on the few determined bugs with headroom: 6 of 22.
+- **Not the sample.** Stage 5 at the current effect cannot decide: power 0.25 under the frozen rule at 100 determined bugs.
+- **Not detection alone.** On click-3404 every wrong patch was flagged and the repairs still failed.
+
+**Decided now, before any stage 5 run.**
+1. **A within-run analysis for stage 5, beside the frozen rule and never in its place.**
+   - K2's author prompt must be byte-identical to arm A's, checked by digest before each run.
+   - The first patch is saved and scored, as `run.py` already does.
+   - The frozen rule stays the claim. Whether the within-run comparison may decide is the owner's ruling.
+2. **Adaptive extra runs are dropped:** they lowered power in the resampling.
+3. **No more layers of the same kind.** Stop adding reviewer layers built from the issue's example, since prediction 3 shows
+   their holes line up.
+4. **The change to test is to conversion. Hypothesis H-rule:** the loop converts more wrong first patches when:
+   - before finishing, the author lists the behaviours its patch keeps on the touched path and checks each one against the
+     reference the issue names (recorded 2026-11-04, afternoon, and never run);
+   - and a finding sends back the whole rule (each case the issue or the reference fixes), not one failing case.
+
+   Replay 6's formal model of the issue's rule is the candidate source of that rule. Its development check follows its
+   review 4.
+5. **Pre-spend rule for stage 5.**
+   - **What gates the runs.** Stage 5's runs start only after a development pilot of the changed loop on development bugs
+     with headroom. Those are the four bugs above, plus any later scored bug where a first patch was wrong.
+   - **What the pilot must show.**
+     - It converts at least 10 of 22 wrong first patches. That is 45%, the share at which within-run power at 100 determined
+       bugs passes 0.9.
+     - It breaks no more than 2 right first patches in 100.
+   - **Otherwise** the stage 5 runs wait, and stage 5's preparation and audit go on as planned.
+   - **What the pilot cannot show.** It runs on the bugs the change was read from, so it shows only whether the change can work
+     at all. Stage 5 is the test.
+6. **Prediction, if stage 5 runs with the loop as it stands (K2, no H-rule):**
+   - more bugs better than worse, within runs and between arms;
+   - the frozen rule not met.
