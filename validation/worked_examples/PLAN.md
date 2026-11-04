@@ -2222,6 +2222,30 @@ candidates.
   - Ranks 1 to 100 are taken first, then 101 to 250, in rank order.
   - The draw stops at 130.
 - **If the supply still falls short,** the study runs on what there is. Its power is reported for the number reached.
+**The host session's settings, from the probes, before any host run.** `claude/host-author` 9b2ac40, built test first. Five
+probe transcripts and the driver's own environment showed three gaps in the first build, all repaired:
+- **The driver's environment leaked.** The driving Claude Code session's variables, its messaging socket and token among them,
+  would have reached every author. The host environment is now an allowlist, and every CLAUDE* and ANTHROPIC* name is dropped.
+- **The account's claude.ai connectors reached the session.** That was 49 tools (Gmail, Drive, Docs) and one server's
+  instructions, despite `--strict-mcp-config`. They are now switched off. A session whose init names any other server or MCP
+  tool is stopped and its run refused, never scored.
+- **A refused request was retried on another model.** In 3 of 5 probes Claude Code retried after a refusal (category "cyber")
+  on an older model and finished the session there. That retry is now off. Refusals, the models that wrote and any switch are
+  recorded.
+
+**The pilot of those settings,** one session on Sonnet 5.5 with the study's flags and environment:
+- exactly the five file tools and the box's `run`, with `box` the only server;
+- no connector tools or instructions in the transcript;
+- the subscription's sign-in (no API key) and one model throughout, CLI 2.1.318;
+- the box call and the edit worked, with no denial.
+
+The skills, plugins and agents its init lists are Claude Code's own bundled ones; with no Skill or Agent tool, none can be used.
+
+**How a run a refusal ends is counted, set now.**
+- It is a run that was made, scored on the patch it left, as Claude Code alone would leave it. Both arms meet the same
+  classifier.
+- Refused runs are reported by arm, and the primary result is also read without the bugs where any run was refused.
+- No refused request is resent or reworded.
 - **How the widened screen reads its rules, set before it runs.**
   - P1 is read as written: 10,000 stars, or a PyPI rank of 100 or better. A project ranked 101 to 250 therefore meets it by
     stars alone. The count dropped for P1 is reported.
