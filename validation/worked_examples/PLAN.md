@@ -2990,3 +2990,73 @@ written test, in that image (`run.py:3359-3370`, `:3579-3584`).
 - false acceptances and false alarms gated separately;
 - inferred requirements kept as hypotheses;
 - the 0.3.0 bar asking for completed cycles and injected faults, not only quiet days.
+
+## 2026-11-05 (night, late): the method-selection test, set before it is built or run
+
+**What it asks.** Whether a selector that learns, per context known before the choice, which recorded check method agrees with
+the truth, does better on bugs it never saw than the best single method chosen beforehand. This is the first test of G6's
+third level (choosing the method), and it costs no model call: every verdict it reads is already in the archive.
+
+**What it can show, said before it runs.** On stage 4 only the rule test (replay 3) and the symptom test (replay 4) gave
+counted verdicts on its 77 patches. Both were near chance there: balanced accuracy on the amended truth was 49.1% and 46.2%.
+So this test can show at most that the selector avoids the worse of two weak methods. It cannot show a selector beating a good
+method. A stronger test needs more methods on unseen patches, and is registered separately before stage 5's replays run.
+
+**The selector.** PR #8's `MetacognitiveMethodSelector`, unchanged, at the PR's head `9ebfbbe`. Its three modules
+(`metacognition`, `assurance`, `mixed_methods`, standard library only) are loaded as a package of their own. Its settings:
+- **Methods:** two variants of kind `reviewer`, "rule test" and "symptom test", each with an estimated cost of 1, so cost
+  never decides.
+- **No exploration:** exploration weight 0, and risk tier R2, so the score is the smoothed success rate less the regression
+  penalty.
+- **Ties:** the selector breaks ties by variant id, so "rule test" wins a tie.
+
+**The context, known before the choice and computed by code, with counts printed and no text.**
+- **Domain:** "coding", the same for every patch.
+- **Uncertainty:** "example" when the bug's issue text holds a fenced code block, a line starting `>>> `, or the word
+  `Traceback`; "no example" otherwise.
+- **Claim kind:** "one file" when the patch changes exactly one file outside the tests, "several files" otherwise.
+  - Files are read by the study's patch reader, as `git apply` reads them (replay 2's).
+  - A test file is one under a `tests` or `testing` folder, or one named `test_*.py` or `*_test.py`.
+
+So there are four contexts at most.
+
+**Training and test.**
+- **Training:** stages 1 and 2's patches (`replay_compare.patches`).
+  - Each counted verdict of either method on a patch whose amended truth is determined becomes one trial, in split `heldout`.
+  - A trial is `resolved` when the verdict agrees with that truth.
+  - The admission hook admits a trial only by those two tests: the verdict counts (`replay_compare.spoken`) and the truth is
+    determined. Nothing in the trial is trusted.
+  - Each patch is a case and its bug is the cohort.
+- **Test:** stage 4's patches. Per patch, the selector chooses one method by that patch's context, and the chosen method's
+  verdict is the selector's.
+
+**Compared with, on stage 4, on the amended truth (the maintainers' truth reported beside it).**
+- **The best single method on training, by balanced accuracy:** the rule test (63.7% against 59.9%).
+- **The symptom test alone.**
+- **Either accuses:** a patch is accused when either method reproduced a defect.
+- **Both accuse:** a patch is accused only when both did. This is the two-method majority.
+
+**Measures, read once.**
+- Balanced accuracy and false alarms on the 77 patches.
+- The sign test by bug, against the rule test.
+  - Per bug: the selector's correct verdicts minus the rule test's, over the bug's patches where both methods counted.
+  - Each bug comes out better, worse or tied.
+
+**Predictions.**
+1. **The selector does at least as well as the worse method:** its balanced accuracy on stage 4 is at least 46.2%.
+2. **It shows no difference from the rule test by bug at p < 0.05.** I expect most bugs tied, since the methods agree on most
+   patches.
+3. **It may choose the weaker method on balanced accuracy.** The selector's score is agreement, and agreement rewards the more
+   permissive method where most patches are right. If this happens, it is a finding about the score, to be decided before the
+   stage 5 test, not a failure of this test.
+
+**Kill rule.** If more than half of stage 4's patches fall in a context where either method has no admitted training case,
+the test is reported as not run. The selector would then be choosing by its tie rule, not by evidence.
+
+**Where it runs.**
+- **The script:** `validation/worked_examples/selection_test.py`, on the study's head after `claude/study-trust`'s review loop.
+  - It reads rows only through the study's readers and prints counts only.
+  - Its tests use made-up trials.
+- **The record:** the result goes into this file whatever it shows.
+- **The selector's own record:** what it chose, by context and on how many trials, is the first entry of G6's metacognitive
+  record.
