@@ -2951,3 +2951,42 @@ alone, so no reader can be given a claim to check.
 **The pilot's first run.** `pilot_k3.ps1 -First` on 754513c: black-5148, repeat 1, alone, to check that a host K3 run's rule
 step ends as the K loop's rules say. The remaining 27 follow once it has. It waits for the machine's memory floor (6.5 GB
 free) before it starts, as every timed run here does.
+
+## 2026-11-05 (night, later): a cross-family challenge of the loop's design; stage 5 decides by bug; the oracle kept from candidate code
+
+**What ran.** A read-only Codex challenge of the 0.3.0 loop design, against `claude/next`, `claude/host-k3`, `claude/tick-rca`
+and PR #8's head. Two of its claims could change recorded results, so they were checked first, in the code and the archive.
+
+**1. The frozen rule's p-value is by run, not by bug.** `compare.judged` reads `compare.compare`'s sign test over run pairs
+(`compare.py:111-120`, `:175-178`). Two runs of one bug are not independent, so this overstates the evidence. For example, six
+run wins from three bugs give p = 0.016 by run and 0.125 by bug. `by_bug` already counts bugs better, worse and the same
+(`:123-134`), and every result in this file has been stated by bug. No stage has met the rule, so no claim was made on the
+run-level p.
+- **Decided now, before any stage 5 run or any pilot count: every decision in stage 5 is by bug.**
+  - The frozen rule: the sign test over bugs, on the loop arm's passes minus the other arm's, per bug.
+  - The within-run comparison: the same over bugs, on the final patches' passes minus the first patches'.
+  - Run-level counts are reported beside these, never decisive.
+- **Why this is allowed:** it makes the rule stricter. Nothing is loosened after a result is seen.
+- **What it costs:** power. The challenge computes about 57% at 80 bugs and p < 0.05, if 15% of bugs are better and 5% worse.
+  The pilot bar's power figures came from resampling whole bugs, so they stand.
+
+**2. Oracle material sits beside candidate code.** The oracle image holds the maintainers' fixed tree (`/oracle/fixed`) and
+their diff (`/fix.patch`, `/fix.files`) (`run.py:879-890`). `check` runs a patch's code, and `replay` runs a reviewer's
+written test, in that image (`run.py:3359-3370`, `:3579-3584`).
+- **The record:** of the archive's 1,013 Python files, one mentions `/oracle`. It is a repository's own test file in a review
+  pack. None of them mentions `fix.patch` or `fix.files`. So no recorded patch or reviewer test read the oracle, and no recorded
+  result changes.
+- **Why it matters next:** an author or reviewer whose behaviour a loop searches over could find and use that path.
+- **Decided:** before arm L or any unattended cycle, code a candidate wrote runs either in the task image or with the oracle
+  material removed first. The maintainers' tests are copied in for scoring alone.
+- **The K3 pilot is not touched.** Its authors and reviewers are fixed, and none was ever shown that path.
+
+**3. The rest of the challenge changes the design, not any record.** It is folded into the design before any of it is built:
+- a stop that interrupts a tick;
+- diagnosis shown to proposers kept apart from the evaluator-only root-cause analysis;
+- arm L's blocks allocated before stage 5 and retired after use;
+- promotion recovery by operation id;
+- pacing per provider, with a daily ceiling;
+- false acceptances and false alarms gated separately;
+- inferred requirements kept as hypotheses;
+- the 0.3.0 bar asking for completed cycles and injected faults, not only quiet days.
