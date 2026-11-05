@@ -33,8 +33,14 @@ the start of what the request raised: ``MODEL_REFUSED`` (``refused_by``), ``G6_E
   characters of what the program printed, flattened. So the loop has each host caller read its program's own output whole,
   before it is cut: as a request goes out, the caller really sending it becomes a ``WatchedClaude`` or a ``WatchedCodex``
   (``read_stops``), whatever holds it. What that reads goes straight to the loop (``telling_stops``) before anything else
-  sees it, so a wrapper that catches failed requests cannot retry it or hide it, with the text that caller was given, so a
-  wrapper that rewrites a request cannot send what was refused under another.
+  sees it, so a wrapper that catches failed requests cannot retry it or hide it. For a watched caller only those structured
+  fields decide: the older text pattern (``_LIMIT``) is never applied to what it raises, stderr included.
+* **What a host request is.** A refused request is known by one identity, ``request_identity``: the digest of the exact
+  arguments and input the program is started with, taken at the last step the bound caller gives a subclass before the
+  program starts (``_command``, whose output ``host_models._run`` receives unchanged; ``_launch`` for a session of a caller's
+  own, as ``ToolSession`` is). The loop checks it there, against what was refused and against an identical request still out,
+  under one lock (``telling_stops``' gate). What is left between that step and the start is the building of the program's
+  environment, with no wait in it; closing it needs a step in the bound file itself, at an issuance window.
 * Claude Code: its JSON result (``host_models._result``). A refusal is ``stop_reason`` ``refusal``, an ``api_error`` of
   ``_STOPPED_BY`` or a ``permission_denials`` entry; on an error result, a limit is ``api_error_status`` 429 or ``api_error``
   ``usage_limit_reached``, and capacity is ``api_error_status`` 529 (``overloaded_error``). Read from the text of Claude Code
@@ -43,7 +49,9 @@ the start of what the request raised: ``MODEL_REFUSED`` (``refused_by``), ``G6_E
   characters are still read for the two limit fields (``_LIMIT``), which a Claude Code caller the loop does not watch can show.
 * Codex: its JSON events (``codex exec --json``, which codex-cli 0.165.0 documents as "Print events to stdout as JSONL"), read
   by ``codex_said``. Only Codex's own events are read: an ``error`` event, and the ``error`` of a ``turn.failed``. A model's
-  words are in ``item`` events, inside JSON strings, so they cannot read as either, and a turn that completed answered. Codex
+  words are in ``item`` events, inside JSON strings, so they cannot read as either. An explicit failure of a kind G6 does not
+  know (``turn.failed``, or an ``error`` of no known kind) is a failed request, whatever the exit status or the last-message
+  file say; a known limit or capacity on the way to a turn that completed with no error is an answer. Codex
   names what it reports in ``codex_error_info`` (``_CODEX_KINDS``), and where an event carries none, its own message begins
   with one of the program's fixed texts (``_CODEX_SAYS``). Read from the installed program's text and from Codex's own
   recorded sessions on this machine, where ``server_overloaded`` came with "Selected model is at capacity." and ``cyber_policy``
@@ -57,6 +65,7 @@ scores no case for either arm. What reads as none of these is a failed case, and
 from __future__ import annotations
 
 import contextvars
+import hashlib
 import json
 import os
 import re
@@ -67,7 +76,8 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from pathlib import Path
+from typing import Any, Protocol
 
 from g6.core import component_process, host_models
 from g6.core.llm import RATE_LIMITED, LLMError
@@ -91,8 +101,22 @@ _CODEX_SAYS = (("You've hit your usage limit", "limit"), ("You\u2019ve hit your 
                ("Quota exceeded.", "limit"), ("exceeded retry limit, last status: 429", "limit"),
                ("Selected model is at capacity.", "capacity"), ("Flex capacity unavailable.", "capacity"),
                ("This content was flagged for possible", "refusal"), ("This request has been flagged for possible", "refusal"))
-_Tell = Callable[[str, tuple[str, ...]], None]
-_TELL: contextvars.ContextVar[_Tell | None] = contextvars.ContextVar("g6_loop_stops", default=None)
+
+
+class Gate(Protocol):
+    """What ``telling_stops`` puts in front of a watched caller: the loop's one check on a request that is about to leave
+    (``sending``, which raises to keep it in), and where what the provider said goes (``told``)."""
+
+    def sending(self, identity: str) -> None: ...
+
+    def told(self, said: str, identity: str) -> None: ...
+
+
+_TELL: contextvars.ContextVar[Gate | None] = contextvars.ContextVar("g6_loop_stops", default=None)
+#: The identity of what each call's program was started with, by the call's own folder, from the step that sends to the reply
+#: that reads it: a call nested inside another, or on another thread, has a folder of its own.
+_SENT: dict[str, str] = {}
+_SENT_LOCK = threading.Lock()
 ASK_TIMEOUT = 30.0
 WEEK_MINUTES = 7 * 24 * 60
 WEEK = timedelta(minutes=WEEK_MINUTES)
@@ -239,13 +263,14 @@ _CODEX_SAID = {"refusal": f"{MODEL_REFUSED}: Codex reported its policy stopped t
                "capacity": f"{AT_CAPACITY}: Codex reported its model at capacity"}
 
 
-def codex_said(printed: str) -> str:
-    """What Codex's own JSON events (``codex exec --json``) say stopped the turn, in G6's own words, or ``""``. Only its own
-    events are read: ``error``, and the ``error`` of ``turn.failed`` (or of a ``turn.completed`` that carries one). A refusal
-    anywhere among them is a refusal, since what was refused is never sent again whatever came after it. Otherwise the last
-    limit or capacity named decides, unless the turn then completed with no error, since then it answered. A line that is no
-    JSON object, or a field of the wrong kind, says nothing."""
-    refused, said, answered = "", "", False
+def _codex_turn(printed: str) -> tuple[str, bool]:
+    """What Codex's own JSON events (``codex exec --json``) say of the turn: the stop it names, in G6's own words, or ``""``,
+    and whether the turn failed explicitly. Only its own events are read: ``error``, and the ``error`` of ``turn.failed`` (or
+    of a ``turn.completed`` that carries one). A refusal anywhere among them is a refusal, since what was refused is never sent
+    again whatever came after it. Otherwise the last limit or capacity named decides, unless the turn then completed with no
+    error, since then it answered. A ``turn.failed``, or an ``error`` of no kind G6 knows, is a failure whatever follows. A line
+    that is no JSON object, or a field of the wrong kind, says nothing."""
+    refused, said, answered, failed = "", "", False, False
     for line in printed.splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -260,46 +285,132 @@ def codex_said(printed: str) -> str:
         error = event if kind == "error" else event.get("error") if kind in ("turn.failed", "turn.completed") else None
         if kind == "turn.completed" and error is None:
             answered = True
-        elif isinstance(error, Mapping) and (stop := _codex_kind(error)):
-            refused, said = (_CODEX_SAID[stop], said) if stop == "refusal" else (refused, _CODEX_SAID[stop])
-            answered = False
-    return refused or ("" if answered else said)
+            continue
+        failed = failed or kind == "turn.failed"
+        stop = _codex_kind(error) if isinstance(error, Mapping) else ""
+        if stop == "refusal":
+            refused = _CODEX_SAID[stop]
+        elif stop:
+            said, answered = _CODEX_SAID[stop], False
+        elif kind in ("error", "turn.completed"):
+            failed = True
+    return refused or ("" if answered else said), failed
+
+
+def codex_said(printed: str) -> str:
+    """What Codex's own JSON events say stopped the turn, in G6's own words, or ``""`` (``_codex_turn``)."""
+    return _codex_turn(printed)[0]
+
+
+def request_digest(system: str, user: str) -> str:
+    """What a request to a model is known by once refused, when no host program's input can be seen: no text of it is kept.
+    A pair with no NUL and no lone surrogate in it is digested as it always was, its two parts joined by one NUL, so what was
+    refused before is still known. Any other pair is digested as JSON behind two NULs, which no such join can begin with: no
+    two pairs share a digest."""
+    joined = f"{system}\0{user}"
+    try:
+        if "\0" not in system and "\0" not in user:
+            return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+    except UnicodeEncodeError:
+        pass
+    return hashlib.sha256(("\0\0" + json.dumps([system, user])).encode("ascii")).hexdigest()
+
+
+def request_identity(argv: Sequence[str], stdin: str, root: str | Path | None) -> str:
+    """What a host request is known by: the digest of the arguments a program is started with, after the program itself, and
+    of its input, exactly as given. A path in the call's own folder (``root``) stands for the bytes of the file there, which
+    G6 wrote for the program to read, or for its place in that folder where there is no file yet, as where the program
+    writes; any other argument stands as it is. So the same bytes are one request, whichever call or rendering made them."""
+    base = os.path.normcase(os.path.abspath(root)) if root is not None else None
+    parts: list[list[str]] = []
+    for arg in list(argv)[1:]:
+        where = os.path.normcase(os.path.abspath(arg)) if os.path.isabs(arg) else ""
+        if base and where and (where == base or where.startswith(base + os.sep)):
+            place = os.path.relpath(where, base).replace(os.sep, "/")
+            try:
+                parts.append(["file", place, hashlib.sha256(Path(arg).read_bytes()).hexdigest()])
+            except OSError:
+                parts.append(["path", place])
+        else:
+            parts.append(["arg", arg])
+    return hashlib.sha256(json.dumps(["host", parts, stdin]).encode("ascii")).hexdigest()
 
 
 @contextmanager
-def telling_stops(tell: _Tell) -> Iterator[None]:
-    """Inside, a stop a watched caller reads goes to ``tell`` before anything else sees it, as G6's own code, with what the
-    bound caller says it was given: its system text and request first, or for a session of its own, such as ``ToolSession``, a
-    prompt alone. What ``tell`` raises is what stops the request, so a wrapper between it and the loop cannot take a refusal or
-    a limit for a failed request and send it again."""
-    token = _TELL.set(tell)
+def telling_stops(gate: Gate) -> Iterator[None]:
+    """Inside, a watched caller asks ``gate`` before its program starts (``sending``), and a stop it reads goes to ``gate``
+    before anything else sees it, as G6's own code, with the identity of what was sent (``told``). What either raises is what
+    stops the request, so a wrapper between it and the loop cannot take a refusal or a limit for a failed request and send it
+    again."""
+    token = _TELL.set(gate)
     try:
         yield
     finally:
         _TELL.reset(token)
 
 
-def _stopped(said: str, hide: tuple[str, ...]) -> None:
-    """Tell the loop what the provider said, then raise it as the request's failure: before the bound caller cuts what the
-    program printed down to its end."""
+class ProviderStop(LLMError):
+    """What a watched caller raises for a stop its provider reported: G6's own code first, and what was refused or limited."""
+
+    def __init__(self, said: str, identity: str) -> None:
+        super().__init__(said)
+        self.said, self.identity = said, identity
+
+
+def _sending(argv: Sequence[str], stdin: str, files: Any) -> None:
+    """The last step before a watched caller's program starts: what it is about to send is checked by the loop's gate, which
+    raises to keep it in, and kept for the reply that reads it."""
+    identity = request_identity(argv, stdin, Path(files).parent if files is not None else None)
+    gate = _TELL.get()
+    if gate is not None:
+        gate.sending(identity)
+    with _SENT_LOCK:
+        for stale in list(_SENT)[:-256]:          # a call whose program never answered leaves its entry behind
+            del _SENT[stale]
+        _SENT[str(files)] = identity
+
+
+def _received(hide: tuple[str, ...]) -> str:
+    """What a reply read with no step that sends before it was given, as the bound caller says: its system text and request,
+    or a prompt alone. Such a request was never checked as it left, so this serves the record and nothing else."""
+    return request_digest(*hide[:2]) if len(hide) > 1 else request_digest("", hide[0] if hide else "")
+
+
+def _stopped(said: str, files: Any, hide: tuple[str, ...]) -> None:
+    """Tell the loop what the provider said of what was sent, then raise it as the request's failure: before the bound caller
+    cuts what the program printed down to its end."""
+    with _SENT_LOCK:
+        identity = _SENT.pop(str(files), None) if files is not None else None
+    identity = identity or _received(hide)
     if said:
-        tell = _TELL.get()
-        if tell is not None:
-            tell(said, hide)
-        raise LLMError(said)
+        gate = _TELL.get()
+        if gate is not None:
+            gate.told(said, identity)
+        raise ProviderStop(said, identity)
 
 
 class WatchedClaude(host_models.ClaudeCodeCaller):
-    """Claude Code as the loop calls it: as the bound caller, and a stop in its result raises G6's own code."""
+    """Claude Code as the loop calls it: as the bound caller, checked as it sends, and a stop in its result raises G6's own
+    code."""
+
+    def _command(self, program: str, system: str, user: str, work: Path, files: Path) -> tuple[list[str], str]:
+        argv, stdin = super()._command(program, system, user, work, files)
+        _sending(argv, stdin, files)
+        return argv, stdin
+
+    def _launch(self, argv: list[str], stdin: str, cwd: Path, files: Path, env: dict[str, str], seconds: float) -> Any:
+        """A session of a caller's own that starts its program itself names that step ``_launch`` (``ToolSession``)."""
+        _sending(argv, stdin, files)
+        return super()._launch(argv, stdin, cwd, files, env, seconds)
 
     def _reply(self, code: int, printed: str, errors: str, files: Any, hide: tuple[str, ...]) -> str:
-        _stopped(claude_said(host_models._result(printed) or {}), hide)
+        _stopped(claude_said(host_models._result(printed) or {}), files, hide)
         return super()._reply(code, printed, errors, files, hide)
 
 
 class WatchedCodex(host_models.CodexCaller):
-    """Codex as the loop calls it: as the bound caller, printing its events as JSON, and a stop in them raises G6's own code.
-    The reply is still the last message Codex writes to its file."""
+    """Codex as the loop calls it: as the bound caller, checked as it sends, printing its events as JSON, and a stop in them
+    raises G6's own code. A turn it reports as failed is a failed request. The reply is still the last message Codex writes."""
 
     def argv(self, program: str, *, work: str, last_message: str) -> list[str]:
         args = super().argv(program, work=work, last_message=last_message)
@@ -308,8 +419,17 @@ class WatchedCodex(host_models.CodexCaller):
         at = args.index("exec") + 1
         return [*args[:at], "--json", *args[at:]]
 
+    def _command(self, program: str, system: str, user: str, work: Path, files: Path) -> tuple[list[str], str]:
+        argv, stdin = super()._command(program, system, user, work, files)
+        _sending(argv, stdin, files)
+        return argv, stdin
+
     def _reply(self, code: int, printed: str, errors: str, files: Any, hide: tuple[str, ...]) -> str:
-        _stopped(codex_said(printed), hide)
+        said, failed = _codex_turn(printed)
+        _stopped(said, files, hide)
+        if failed:
+            raise LLMError(f"{host_models.HOST_FAILED}: codex exited {code} and reported that its turn failed, of no kind "
+                           "G6 reads as a stop")
         return super()._reply(code, printed, errors, files, hide)
 
 
@@ -325,6 +445,11 @@ def read_stops(sender: Any) -> None:
     for host, watched in _WATCHED:
         if isinstance(sender, host) and not isinstance(sender, watched):
             sender.__class__ = type(kind.__name__, (watched, kind), {})
+
+
+def watched(sender: Any) -> bool:
+    """Whether ``sender`` reads its program's output itself, so only what it reads from the structured fields decides."""
+    return isinstance(sender, WatchedClaude | WatchedCodex)
 
 
 def _number(value: Any) -> bool:
@@ -455,6 +580,7 @@ class AccountReader:
         return self.readings.get(provider)
 
 
-__all__ = ["AT_CAPACITY", "AccountReader", "MODEL_REFUSED", "NOT_REPORTED", "REFRESH", "UsageUnavailable", "WatchedClaude",
-           "WatchedCodex", "claude_said", "codex_limits", "codex_said", "limit_ends", "limits_reading", "read_limits",
-           "read_stops", "refused_by", "telling_stops"]
+__all__ = ["AT_CAPACITY", "AccountReader", "Gate", "MODEL_REFUSED", "NOT_REPORTED", "ProviderStop", "REFRESH",
+           "UsageUnavailable", "WatchedClaude", "WatchedCodex", "claude_said", "codex_limits", "codex_said", "limit_ends",
+           "limits_reading", "read_limits", "read_stops", "refused_by", "request_digest", "request_identity",
+           "telling_stops", "watched"]
