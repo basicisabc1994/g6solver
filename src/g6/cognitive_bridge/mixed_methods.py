@@ -203,7 +203,7 @@ class MixedMethodExecutor:
         self.allow = frozenset(allow)
 
     def _invoke(self, step: MethodStep) -> dict[str, Any]:
-        how =(f"Allow it in your own code with MixedMethodExecutor(registry, allow=('{step.component}.{step.op}',)), "
+        how = (f"Allow it in your own code with MixedMethodExecutor(registry, allow=('{step.component}.{step.op}',)), "
                f"or list {step.component}.{step.op} (or {step.component}) in {SENSITIVE_ENV} where you start G6.")
         return invoke_checked(step.component, step.op, dict(step.params), allow=allowed_sensitive() | self.allow,
                               how_to_allow=how, registry=self.registry)
