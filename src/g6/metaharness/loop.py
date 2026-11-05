@@ -53,13 +53,13 @@ from g6.metaharness.domain import (
     BARRED,
     FALLBACK_MODEL,
     SHARES,
-    AnswerUnidentifiable,
     Cut,
     Domain,
     Execution,
     FailureRecord,
     Judge,
-    answer_identity,
+    answer_encoding,
+    answer_from,
     backends,
     caller_problems,
     cut_pool,
@@ -497,20 +497,27 @@ def _pool_problems(cut: Cut, policy: EvidencePolicy) -> list[tuple[str, str]]:
 
 
 def _answer_problems(cut: Cut) -> list[tuple[str, str]]:
-    """Cases whose answer the loop cannot hold exactly: one no exact encoding identifies (``answer_identity``), or one the
-    split's reference cannot render, which the evaluation count is kept by (``SuiteCase.ref``). Either is refused at
-    enrolment, by case id only: an answer is never shown."""
+    """Cases whose answer the loop cannot give its judge exactly as identified: one outside the admitted set
+    (``answer_encoding``), or one the split's reference cannot render, which the evaluation count is kept by
+    (``SuiteCase.ref``). Either, and anything at all that raises while an answer is read, is refused at enrolment, by case
+    id only: an answer is never shown."""
     found = []
     for name, _ in SHARES:
         for case in getattr(cut, name):
             try:
-                answer_identity(case.expected)
-                canonical(case.expected)
-            except (AnswerUnidentifiable, ValueError, RecursionError) as exc:
+                canonical(answer_from(answer_encoding(case.expected)))
+            except Exception as exc:  # noqa: BLE001 - whatever cannot be read whole is refused, by case id
                 found.append(f"{case.case_id} ({type(exc).__name__})")
-    return [(ANSWER_UNIDENTIFIABLE, f"{len(found)} cases have an answer the loop cannot identify exactly, for example "
-             f"{', '.join(found[:3])}: each answer must be one it encodes exactly (answer_identity) and one the split's "
-             "reference can render as JSON (SuiteCase.ref)")] if found else []
+    return [(ANSWER_UNIDENTIFIABLE, f"{len(found)} cases have an answer the loop cannot give its judge exactly, for example "
+             f"{', '.join(found[:3])}: an answer is None, a bool, an int, a finite float, a str, a list or a dict with str "
+             "keys, each of exactly that type, as a tree no deeper than 64")] if found else []
+
+
+def _as_identified(cut: Cut) -> Cut:
+    """``cut`` with each answer replaced by the one decoded from its encoding: a fresh tree that shares nothing with what the
+    domain holds, which is what the judge is given, so what it reads is exactly what was identified."""
+    return Cut(**{name: tuple(dataclasses.replace(case, expected=answer_from(answer_encoding(case.expected)))
+                              for case in getattr(cut, name)) for name, _ in SHARES})
 
 
 def _groups(cases: Sequence[SuiteCase]) -> list[str]:
@@ -523,13 +530,57 @@ def _overlap(a: str, b: str) -> bool:
 
 
 def _in_reach(root: Path, domain: Domain) -> list[str]:
-    """What judges that lies in or around the loop's folder, which is the only place it writes."""
-    sealed = domain.sealed()
+    """What judges that lies in or around the loop's folder, which is the only place it writes: by path, and by the file
+    system's own identity of each folder on the way, so another spelling of a folder is that folder, and whatever a link
+    under a judge's root points at (a link there is refused all the same, ``_unpinned``)."""
+    sealed, roots = domain.sealed(), _roots(domain)
     guarded = {"G6's own source": str(_SOURCE),
-               **{f"the judge's root {root}": str(root) for root in _roots(domain)},
+               **{f"the judge's root {root}": str(root) for root in roots},
+               **{f"a link under the judge's root, to {os.path.realpath(link)}": os.path.realpath(link)
+                  for link in _links_under(roots)},
                **{f"sealed root {i}": r for i, r in enumerate(sealed.vault.roots if sealed is not None else ())}}
-    where = os.path.normcase(str(root))
-    return [name for name, path in guarded.items() if _overlap(where, os.path.normcase(path))]
+    return [name for name, path in guarded.items() if _same_place(root, Path(path))]
+
+
+def _same_place(a: Path, b: Path) -> bool:
+    """Whether ``a`` and ``b`` overlap, one being the other or lying in it: by path, or by the identity the file system
+    gives a folder, compared along every folder above each."""
+    return _overlap(os.path.normcase(str(a)), os.path.normcase(str(b))) or _within(a, b) or _within(b, a)
+
+
+def _within(inner: Path, outer: Path) -> bool:
+    try:
+        held = outer.stat()
+    except OSError:
+        return False
+    for place in (inner, *inner.parents):
+        try:
+            if os.path.samestat(place.stat(), held):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _is_link(path: Path) -> bool:
+    """Whether ``path`` is a link or a junction; one that cannot be asked is taken for one."""
+    try:
+        return path.is_symlink() or path.is_junction()
+    except OSError:
+        return True
+
+
+def _links_under(roots: Sequence[Path]) -> list[Path]:
+    """Every link or junction that is a root or lies under one: what it points at is no part of the root's listing."""
+    found = []
+    for root in roots:
+        if _is_link(root):
+            found.append(root)
+            continue
+        for here, dirs, files in os.walk(root, followlinks=False):
+            found += [Path(here) / name for name in (*dirs, *files) if _is_link(Path(here) / name)]
+            dirs[:] = [name for name in dirs if not _is_link(Path(here) / name)]
+    return found
 
 
 def envelope_sha256() -> str:
@@ -547,16 +598,20 @@ def _importable_caches(root: Path) -> dict[str, str]:
     folder is a namespace package, so ``g6.x.__pycache__.name`` imports ``name.py``, ``name.pyc`` or an extension there. A cache
     a first import writes is named for its interpreter (``select.cpython-312.pyc``), which no import statement can name, so it is
     left out and a legitimate import changes nothing."""
-    suffixes = sorted(importlib.machinery.all_suffixes(), key=len, reverse=True)
     found = {}
     for path in root.rglob("*"):
-        if not in_cache(path.relative_to(root)) or not path.is_file():
-            continue
-        name = os.path.normcase(path.name)          # Windows imports ``planted.PY`` as it does ``planted.py``
-        suffix = next((s for s in suffixes if name.endswith(os.path.normcase(s))), None)
-        if suffix is not None and name[:-len(suffix)] and "." not in name[:-len(suffix)]:   # importlib checks no names
+        if in_cache(path.relative_to(root)) and path.is_file() and _importable(path.name):
             found[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
     return found
+
+
+def _importable(name: str) -> bool:
+    """Whether an import statement could name a file called ``name``: an importable suffix, and no dot before it, which a
+    cache named for its interpreter (``select.cpython-312.pyc``) has."""
+    name = os.path.normcase(name)                   # Windows imports ``planted.PY`` as it does ``planted.py``
+    suffix = next((s for s in sorted(importlib.machinery.all_suffixes(), key=len, reverse=True)
+                   if name.endswith(os.path.normcase(s))), None)
+    return suffix is not None and bool(name[:-len(suffix)]) and "." not in name[:-len(suffix)]   # importlib checks no names
 
 
 def _profile_space(name: str, run: Execution) -> str:
@@ -676,15 +731,40 @@ def _unpinned(domain: Domain) -> list[tuple[str, str]]:
     roots = _roots(domain)
     found = [f"{name} lives in {where or 'no file'}" for name, fn in _judging_code(domain)
              if not _held_by(where := _code_file(fn), roots)]
-    return [(JUDGE_UNPINNED, "; ".join(found) + ", outside G6, the Python installation and every root this domain "
-             "declares, so no listing pins what it does")] if found else []
+    problems = [(JUDGE_UNPINNED, "; ".join(found) + ", outside G6, the Python installation and every root this domain "
+                 "declares, so no listing pins what it does")] if found else []
+    links = _links_under(roots)
+    return problems + ([(JUDGE_UNPINNED, f"a link or junction under the judge's roots, at {links[0]}, points at what no "
+                         "listing of them pins: a root holds its files itself")] if links else [])
 
 
 def _pinned(roots: Sequence[Path]) -> dict[str, str]:
-    """Each root pinned whole by the bytes of every file Python could import from it, as ``envelope_sha256`` pins G6."""
-    return {os.path.normcase(str(root)): manifest_sha256({**build_manifest(root, patterns=ENVELOPE_PATTERNS),
-                                                          **_importable_caches(root)}) if root.is_dir() else ""
-            for root in roots}
+    """Each root pinned whole: every regular file under it, of any suffix, by its bytes (data files and archives as much as
+    source), and any link or junction under it by that name alone, which refuses (``_unpinned``). An interpreter's own
+    cache, a file under ``__pycache__`` named for its interpreter, is left out: no import statement names it, and the runner
+    reads none (the freeze's threat model is honest drift)."""
+    return {os.path.normcase(str(root)): ("a link" if _is_link(root) else manifest_sha256(_listing(root)) if root.is_dir()
+                                          else "") for root in roots}
+
+
+def _listing(root: Path) -> dict[str, str]:
+    found = {}
+    for here, dirs, files in os.walk(root, followlinks=False):
+        for name in (*dirs, *files):
+            path = Path(here) / name
+            if _is_link(path):
+                found[path.relative_to(root).as_posix()] = "a link"
+            elif name in files and (_importable(name) or not in_cache(path.relative_to(root))):
+                found[path.relative_to(root).as_posix()] = _bytes_of(path)
+        dirs[:] = [name for name in dirs if not _is_link(Path(here) / name)]
+    return found
+
+
+def _bytes_of(path: Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError as exc:
+        return f"unreadable ({type(exc).__name__})"
 
 
 def _loaded_outside(roots: Sequence[Path]) -> list[list[str]]:
@@ -746,6 +826,14 @@ def _coded(row: dict[str, Any], statuses: Sequence[Mapping[str, Any]]) -> dict[s
         row |= min(reversed(held), key=lambda status: RANKED.index(status["code"]) if status["code"] in RANKED else len(RANKED))
     row["statuses"] = held
     return row
+
+
+def _safety_in(row: Mapping[str, Any]) -> str:
+    """The reason of the safety stop a cycle's row holds, ranked first among its statuses, or ``""``."""
+    held = [status for status in (row, *row.get("statuses", ()))
+            if status.get("code") in SAFETY_STOPS or status.get("outcome") == "sealed_breach"]
+    return str(min(held, key=lambda status: SAFETY_STOPS.index(status["code"]) if status.get("code") in SAFETY_STOPS
+                   else 0)["reason"]) if held else ""
 
 
 def _differs(now: Mapping[str, str], breached: bool, recorded: Mapping[str, str]) -> list[str]:
@@ -839,11 +927,12 @@ class ShadowLoop:
     def _bind(self) -> None:
         """What this handle runs: the domain's cases as they stand, cut, and a harness on them with nothing kept from
         before. An enrolment does this again, so what a person froze is what runs, on this handle as on a new one."""
-        self.cut = cut_pool(self.domain.development(), self.settings.seed)
+        cut = cut_pool(self.domain.development(), self.settings.seed)
+        answers = _answer_problems(cut)
+        self.cut = cut if answers else _as_identified(cut)     # the judge is given each answer as it was identified
         self.workflow = _workflow(self.domain, self.cut, self.settings, self.requests)
         # a workflow is digested by its answers' rendering, so answers that cannot be held are refused before it is read
-        self.problems = _pool_problems(self.cut, self.workflow.policy) + (_answer_problems(self.cut)
-                                                                          or self.workflow.problems())
+        self.problems = _pool_problems(self.cut, self.workflow.policy) + (answers or self.workflow.problems())
         # the harness holds its own last check from here: what judges, read and compared by the one function the loop
         # calls too (``_still_frozen``), never a check a caller of ``adopt`` hands it
         self.mh = None if self.problems else adapt_shadow(self.workflow, self.domain.execution().factory,
@@ -1105,11 +1194,32 @@ class ShadowLoop:
 
     @_exclusive
     def fault(self, exc: BaseException) -> dict[str, Any]:
-        """A tick that raised past its own guard is a failed cycle like any other, so three in a row still pause."""
+        """A tick that raised past its own guard is a failed cycle like any other, so three in a row still pause. It ends on
+        the same frozen check and the same rule as every cycle that adopts nothing (``_still_frozen``, ``_coded``), held to
+        what the tick read before it developed anything, or to what a person enrolled when it read nothing, so a frozen
+        change in a failed cycle is kept and ranked."""
         if self.log.paused():
             return _blocked(PAUSED, f"the loop is paused: {self.log.paused()}", "A person reads why, then lifts it.")
-        return self._record({"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
-                             "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]})
+        row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error", "code": CYCLE_FAILED,
+               "reason": f"{type(exc).__name__}: {exc}"[:500]}
+        statuses: list[Mapping[str, Any]] = [row]
+        try:
+            held = self._still_frozen() if self._frozen_seen is not None else self._as_enrolled()
+        except Exception as second:  # noqa: BLE001 - a failed cycle is recorded whatever else fails
+            held = None
+            row["reason"] = f"{row['reason']}; what judges could not be read ({type(second).__name__})"[:500]
+        if held is not None and type(held) is not Held:
+            statuses.append({"outcome": "blocked", "code": held["warning_card"]["code"], "reason": held["message"]})
+        return self._record(_coded(row, statuses))
+
+    def _as_enrolled(self) -> Held | dict[str, Any] | None:
+        """What judges held to what a person enrolled, for a failed cycle that read nothing of its own; ``None`` unenrolled."""
+        enrolled = self.log.enrolled()
+        if enrolled is None:
+            return None
+        changed = self._changed()
+        return _blocked(FROZEN_CHANGED, f"changed since a person enrolled this domain: {', '.join(changed)}. Nothing "
+                        "measured against it would mean what it did") if changed else Held(dict(enrolled["frozen"]))
 
     @_exclusive
     def quiet(self) -> dict[str, Any]:
@@ -1242,24 +1352,27 @@ class ShadowLoop:
         try:
             reply = self._reply(self.log.cycle(row))
         except (OSError, LedgerError) as exc:
-            return self.lost_cycle(exc, refusal=row.get("classifier_stop"))
+            return self.lost_cycle(exc, refusal=row.get("classifier_stop"), safety=_safety_in(row))
         self.lost_cycles = self.waited = 0
         self._pause_if_failing()
         return reply
 
-    def lost_cycle(self, exc: BaseException, *, refusal: dict[str, str] | None = None) -> dict[str, Any]:
+    def lost_cycle(self, exc: BaseException, *, refusal: dict[str, str] | None = None, safety: str = "") -> dict[str, Any]:
         """A cycle the log would not take. The streak that pauses the loop is read from the log, so these leave it nothing
         to read and are counted here, for as long as this process lives. At ``MAX_FAILED_CYCLES`` in a row the loop stops
         for good: ``STOP`` and ``stops.log`` are other files, so a restart stays closed until a person starts it again, and
         should those fail too, this process still spends no more. A cycle that is written starts the count again. A cycle
-        that holds a ``refusal`` stops the loop at the first, since the pause a person must read would have stood on it."""
+        that holds a safety stop (``safety``, its reason, or a classifier's ``refusal``) stops the loop at the first, since
+        the pause a person must read would have stood on it, so a restarted handle reads it all the same."""
         self.lost_cycles += 1
         why = (f"{self.lost_cycles} of the {MAX_FAILED_CYCLES} cycles in a row that stop the loop could not be written to "
                f"its log ({type(exc).__name__}: {exc})")[:400]
+        if safety:
+            why = f"{safety[:200]}, and the log would not take that cycle ({type(exc).__name__}: {exc})"[:400]
         if refusal is not None:
             why = (f"a classifier or a permission stopped a request ({refusal['said']}) and the log would not take that cycle "
                    f"({type(exc).__name__}: {exc})")[:400]
-        if refusal is not None or self.lost_cycles >= MAX_FAILED_CYCLES:
+        if refusal is not None or safety or self.lost_cycles >= MAX_FAILED_CYCLES:
             self.cannot_record = why
             try:
                 ask_to_stop(self.root, why)

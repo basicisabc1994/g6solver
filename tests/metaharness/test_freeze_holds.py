@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 import threading
 from datetime import UTC, datetime, timedelta
@@ -584,4 +585,190 @@ def test_two_lambdas_of_one_function_are_two_names_so_a_swap_between_them_is_a_c
     refuse = lambda output: False  # noqa: E731
     assert loop_module._named(accept)[:2] == loop_module._named(refuse)[:2]
     assert loop_module._named(accept) != loop_module._named(refuse)
+
+
+# Review 3's classes: the judge is given exactly what was identified, roots are pinned whole with no links, every cycle
+# that adopts nothing ends on one rule, and a safety refusal outlives a cycle the log would not take ----------------------
+
+ADMITTED_ANSWERS = [None, True, False, 0, -1, 2 ** 80, -0.0, 0.1, float("nan"), "", "x\ud800y", [], {},
+                    {"b": 1, "a": [2, {"c": None}]}, [[], [[]]], {"tests": ["t"], "fixed": "f"}]
+
+
+@pytest.mark.parametrize("answer", ADMITTED_ANSWERS, ids=range(len(ADMITTED_ANSWERS)))
+def test_an_admitted_answer_decodes_to_exactly_what_was_identified_and_shares_nothing(answer):
+    import struct
+
+    from g6.metaharness.domain import answer_encoding, answer_from
+
+    def shape(value):
+        if isinstance(value, float):
+            return ("float", struct.pack(">d", value))
+        if isinstance(value, dict):
+            return ("dict", [(key, shape(item)) for key, item in value.items()])
+        if isinstance(value, list):
+            return ("list", [shape(item) for item in value])
+        return (type(value).__name__, value)
+
+    decoded = answer_from(answer_encoding(answer))
+    assert shape(decoded) == shape(answer)                    # each type exact, dict order and float bytes kept
+    assert answer_encoding(decoded) == answer_encoding(answer)
+    if isinstance(answer, (list, dict)):
+        assert decoded is not answer
+
+
+def _aliased():
+    shared = []
+    return [shared, shared]
+
+
+def _cyclic():
+    found: list = []
+    found.append(found)
+    return found
+
+
+REFUSED_ANSWERS = {"a str subclass": lambda: type("Text", (str,), {})("x"), "a tuple": lambda: (1,),
+                   "bytes": lambda: b"x", "a set": lambda: {1}, "an int key": lambda: {1: "a"},
+                   "a list reached twice": _aliased, "a cycle": _cyclic, "too deep": lambda: _deep(80),
+                   "a proxy": lambda: __import__("weakref").proxy(_Target([1])), "a bool subclass of int": lambda: _Number(1)}
+
+
+class _Target(list):
+    pass
+
+
+class _Number(int):
+    pass
+
+
+@pytest.mark.parametrize("name", list(REFUSED_ANSWERS))
+def test_an_answer_outside_the_admitted_set_has_no_encoding_and_enrolment_names_its_case_only(name):
+    from g6.metaharness.domain import AnswerUnidentifiable, Cut, answer_encoding
+    from g6.metaharness.loop import _answer_problems
+    from g6.metaharness.schema import SuiteCase
+
+    with pytest.raises(AnswerUnidentifiable):
+        answer_encoding(REFUSED_ANSWERS[name]())
+    [(code, said)] = _answer_problems(Cut((), (), (SuiteCase("the-case", "input", REFUSED_ANSWERS[name]()),), ()))
+    assert code == "G6_E_LOOP_ANSWER_UNIDENTIFIABLE" and "the-case" in said
+
+
+def test_an_admitted_answer_and_a_refused_one_never_share_an_identity():
+    from g6.metaharness.domain import answer_identity
+
+    assert answer_identity([1]) != answer_identity((1,)) and answer_identity("x") != answer_identity(b"x")
+    assert answer_identity([[], []]) != answer_identity(_aliased())
+    assert answer_identity({"a": 1, "b": 2}) != answer_identity({"b": 2, "a": 1})         # order is part of it
+
+
+@pytest.mark.parametrize("make", [lambda f: domains.WordProblems(f), lambda f: domains.BugFixes(f)])
+def test_the_judge_is_given_fresh_copies_of_what_was_identified_and_the_first_domains_fit(tmp_path, make):
+    from g6.metaharness.domain import answer_encoding
+
+    domain = make(tmp_path)
+    loop, _ = _enrolled(tmp_path, domain=domain, settings=LEAN)
+    held = {case.case_id: case.expected for case in domain.development()}
+    for name in ("tune", "selection", "held_out", "monitor"):
+        for case in getattr(loop.cut, name):
+            assert answer_encoding(case.expected) == answer_encoding(held[case.case_id])
+            assert not isinstance(case.expected, (list, dict)) or case.expected is not held[case.case_id]
+    suite = loop.workflow.suite
+    assert all(case.expected is not held[case.case_id] or isinstance(case.expected, str)
+               for case in (*suite.dev, *suite.held_out, *suite.selection))
+
+
+def test_coding_replay_answers_are_labels_the_admitted_set_holds():
+    from g6.metaharness.coding_replay import RIGHT, WRONG
+    from g6.metaharness.domain import answer_encoding, answer_from
+
+    assert all(answer_from(answer_encoding(label)) == label for label in (RIGHT, WRONG))
+
+
+def test_every_regular_file_under_a_root_is_pinned_whatever_its_suffix(tmp_path):
+    from g6.metaharness.loop import _pinned
+
+    files = [tmp_path / "rules.json", tmp_path / "helpers.zip", tmp_path / "deep" / "table.csv", tmp_path / "README"]
+    for path in files:
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(b"original")
+    for path in files:
+        before = _pinned([tmp_path])
+        path.write_bytes(b"edited")
+        assert _pinned([tmp_path]) != before, path.name
+    cache = tmp_path / "__pycache__"
+    cache.mkdir()
+    before = _pinned([tmp_path])
+    (cache / "helpers.cpython-312.pyc").write_bytes(b"what an import writes")
+    assert _pinned([tmp_path]) == before                      # an interpreter's own cache stays out
+
+
+def _junction(link: Path, target: Path) -> None:
+    import _winapi
+
+    _winapi.CreateJunction(str(target), str(link))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a junction is Windows's")
+def test_a_junction_under_a_root_refuses_enrolment_and_one_made_later_is_a_change(tmp_path):
+    from g6.metaharness.domain import Judge
+    from g6.metaharness.loop import _pinned
+
+    judge_dir, elsewhere = tmp_path / "judge", tmp_path / "elsewhere"
+    judge_dir.mkdir()
+    elsewhere.mkdir()
+    source = judge_dir / "frz3_linked_judge.py"
+    source.write_text('def verdict(output, expected):\n    return output == "Answer: " + str(expected)\n', encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("frz3_linked_judge", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    before = _pinned([judge_dir])
+    _junction(judge_dir / "alias", elsewhere)
+    assert _pinned([judge_dir]) != before
+    domain = domains.WordProblems(tmp_path)
+    domain.judge = lambda: Judge(module.verdict, answers_by="independent")
+    loop = ShadowLoop(domain, tmp_path / "loop", LEAN, proposer=domains.proposes({"prompt": domains.WORKING}),
+                      now=lambda: NOW, clock=domains.Clock())
+    got = loop.enrol("Ada")
+    assert got["warning_card"]["code"] == "G6_E_LOOP_JUDGE_UNPINNED" and "junction" in got["message"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a junction is Windows's")
+def test_a_root_that_is_another_name_for_the_loops_folder_is_the_same_place(tmp_path):
+    from g6.metaharness.loop import _same_place
+
+    loop_dir = tmp_path / "loop"
+    loop_dir.mkdir()
+    _junction(tmp_path / "alias", loop_dir)
+    assert _same_place(loop_dir, tmp_path / "alias") and _same_place(loop_dir / "inner", tmp_path / "alias")
+    assert not _same_place(loop_dir, tmp_path / "other")
+
+
+def test_a_failed_cycle_with_nothing_changed_keeps_its_own_code(tmp_path):
+    loop, _, _ = _declared(tmp_path)
+    got = loop.fault(RuntimeError("a pass broke outside any tick"))
+    row = loop.log.cycles()[-1]
+    assert got["warning_card"]["code"] == row["code"] == "G6_E_LOOP_CYCLE_FAILED"
+    assert [status["code"] for status in row["statuses"]] == ["G6_E_LOOP_CYCLE_FAILED"]
+
+
+def test_a_failed_cycle_outside_a_tick_is_held_to_what_a_person_enrolled(tmp_path):
+    loop, _, declaration = _declared(tmp_path)
+    _edit(declaration)
+    loop.fault(RuntimeError("a pass broke outside any tick"))
+    row = loop.log.cycles()[-1]
+    assert row["code"] == FROZEN_CHANGED and "G6_E_LOOP_CYCLE_FAILED" in [status["code"] for status in row["statuses"]]
+
+
+@pytest.mark.parametrize("status", ["classifier", "unmetered", "sealed_breach", "barred"])
+def test_a_safety_stop_the_log_would_not_take_stops_the_loop_at_once(tmp_path, monkeypatch, status):
+    from g6.self_maintenance.envelope import stop_in_force
+
+    loop, _ = _statused(tmp_path, status, False)
+
+    def refused(row):
+        raise OSError("the disk is full")
+
+    monkeypatch.setattr(loop.log, "cycle", refused)
+    assert loop.tick()["warning_card"]["code"] == "G6_E_LOOP_CANNOT_RECORD"
+    assert stop_in_force(loop.root).code == "G6_E_LOOP_STOPPED" and loop.lost_cycles == 1
 

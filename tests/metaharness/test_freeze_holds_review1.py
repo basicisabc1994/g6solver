@@ -134,31 +134,16 @@ def judge_keyed_answer(output, expected):
 
 
 def test_distinct_python_answers_with_identical_json_cannot_share_a_freeze(tmp_path, monkeypatch):
+    """Changed by freeze repair 3 on purpose: a dict with a key that is not a str is outside the admitted answers, so it
+    never reaches a judge. The reviewer's form enrolled one and changed its key's type before the adoption; enrolment now
+    refuses it, by case id, and a str-keyed answer the judge is given is a copy no one else holds."""
     domain = domains.WordProblems(tmp_path)
     domain.pool = [replace(case, expected={1: case.expected}) for case in domain.pool]
     domain.judge = lambda: Judge(judge_keyed_answer, answers_by="independent")
-    loop, _ = enrolled(tmp_path, domain=domain)
-    target = loop.cut.held_out[0]
-    value = target.expected[1]
-    assert judge_keyed_answer(f"Answer: {value}", target.expected)
-    original = shadow._measured
-    changed = []
-
-    def make_row(report):
-        # All measurements and the recommendation are real. Change a held-out
-        # answer while constructing the adoption row, before its final check.
-        target.expected["1"] = target.expected.pop(1)
-        changed.append(True)
-        return original(report)
-
-    monkeypatch.setattr(shadow, "_measured", make_row)
-    reply = loop.tick()
-    assert changed
-    assert not judge_keyed_answer(f"Answer: {value}", target.expected)
-    # The original answer has not been restored.
-    assert target.expected == {"1": value}
-    assert not loop.mh.adoption_rows(), "adopted after a held-out answer changed meaning but retained its JSON digest"
-    assert reply["warning_card"]["code"] == FROZEN
+    loop = ShadowLoop(domain, tmp_path / "loop", SETTINGS, proposer=domains.proposes({"prompt": domains.WORKING}),
+                      now=lambda: NOW, clock=domains.Clock())
+    reply = loop.enrol("Review owner")
+    assert reply["warning_card"]["code"] == "G6_E_LOOP_ANSWER_UNIDENTIFIABLE" and loop.log.enrolled() is None
 
 
 # Finding 5 --------------------------------------------------------------------------------------------------------------

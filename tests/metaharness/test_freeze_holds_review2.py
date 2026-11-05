@@ -147,25 +147,16 @@ def subclass_verdict(output, expected):
 
 
 def test_builtin_subclass_answer_state_cannot_change_before_adoption(tmp_path, monkeypatch):
+    """Changed by repair 3 on purpose: a subclass is outside the admitted answers, so its state never reaches a judge. The
+    reviewer's form enrolled one and changed its state before the adoption; enrolment now refuses it, by case id."""
     domain = domains.WordProblems(tmp_path)
     domain.pool = [replace(case, expected=SubclassAnswer(case.expected)) for case in domain.pool]
     domain.judge = lambda: Judge(subclass_verdict, "independent")
-    loop, _ = enrolled(tmp_path, domain=domain)
-    target = loop.cut.held_out[0].expected
-    assert subclass_verdict(f"Answer: {target}", target)
-    original = shadow._measured
-    changed = []
-
-    def make_row(report):
-        target.valid = False
-        changed.append(True)
-        return original(report)
-
-    monkeypatch.setattr(shadow, "_measured", make_row)
-    reply = loop.tick()
-    assert changed and not subclass_verdict(f"Answer: {target}", target)
-    assert not loop.mh.adoption_rows(), "adopted after held-out answer subclass state changed"
-    assert reply["warning_card"]["code"] == shadow.FROZEN_CHANGED
+    loop = ShadowLoop(domain, tmp_path / "loop", SETTINGS, proposer=domains.proposes({"prompt": domains.WORKING}),
+                      now=lambda: NOW, clock=domains.Clock())
+    reply = loop.enrol("Review owner")
+    assert reply["warning_card"]["code"] == "G6_E_LOOP_ANSWER_UNIDENTIFIABLE" and loop.log.enrolled() is None
+    assert loop.tick()["completion_state"] == "blocked-escalated" and loop.mh is None
 
 
 def test_nan_payloads_do_not_share_an_answer_identity():

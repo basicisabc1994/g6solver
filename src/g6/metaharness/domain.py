@@ -140,8 +140,10 @@ class Domain(Protocol):
 
     # A domain may also give ``root_cause(cause)``: a member of ``g6.metaharness.lessons.ROOT_CAUSES``, or ``None``. It is no member of
     # this protocol, which would make it required: a domain without it leaves no lesson, and nothing else changes.
-    # Likewise ``roots``: the folders that hold its judging code, each pinned whole by the loop. Without it they are the
-    # folders its verdict and its checks are in; a verdict or check outside them, G6 and the installation is refused.
+    # Likewise ``roots``: the folders that hold its judging code, each pinned whole by the loop, every file in it. Without it
+    # they are the folders its verdict and its checks are in; a verdict or check outside them, G6 and the installation is
+    # refused. Declare as a root every folder the judge reads or loads code from: a file it reads from anywhere else, or
+    # code it runs from an archive or with ``runpy`` there, is not pinned (the freeze's threat model is honest drift).
 
 
 def reason_coded(view: ProposerView) -> tuple[FailureRecord, ...]:
@@ -162,9 +164,9 @@ class Cut:
     monitor: tuple[SuiteCase, ...]
 
     def digest(self) -> str:
-        """The cut's identity: each case by its id, the digest of its input, and its answer exactly as the judge can read it
-        (``answer_identity``), and nothing rendered as JSON. An answer no exact encoding holds, which enrolment refuses, is
-        ``None`` here, never the identity of any answer."""
+        """The cut's identity: each case by its id, the digest of its input, and its answer's identity
+        (``answer_identity``), and nothing rendered as JSON. An answer with no identity is ``None`` here, never the
+        identity of any answer."""
         return digest({name: [[c.case_id, hashlib.sha256(c.input.encode("utf-8")).hexdigest(), _identity_or_none(c.expected)]
                               for c in getattr(self, name)] for name, _ in SHARES})
 
@@ -177,18 +179,104 @@ class AnswerUnidentifiable(ValueError):
 _DEEPEST = 64
 
 
-def answer_identity(value: Any) -> str:
-    """The SHA-256 of an expected answer's exact encoding: every value with its exact type and everything a judge can read
-    of it. ``None``, ``bool``, ``int`` (its two's-complement bytes), ``float`` and ``complex`` (their IEEE bytes, so NaN
-    payloads and -0.0 differ), ``str``, ``bytes``, ``list``, ``tuple`` and ``dict``; ``set`` and ``frozenset`` (their
-    members in the order of their own encodings, so the same answer has the same identity in any process); ``OrderedDict``
-    in its order, which is part of what it is; a namedtuple with its fields' names, a dataclass with its fields, and any
-    other object by its class and the whole of its ``__dict__``, with a built-in type's value too when it is a subclass of
-    one. No pickle and no ``repr``. A class is named by its module and qualified name, and what its code does is pinned by
-    its file, as the loop pins every file loaded (``g6.metaharness.loop``). An object whose state is not all in what is
-    encoded (``__slots__``, no ``__dict__``), a class, a function or anything else that can be called raises
+def answer_encoding(value: Any) -> bytes:
+    """An admitted answer's exact encoding, which ``answer_from`` decodes into the answer its judge is given. Admitted are
+    ``None``, ``bool``, ``int`` (its two's-complement bytes), ``float`` (its IEEE bytes, so NaN payloads and -0.0 differ),
+    ``str``, ``list``, and ``dict`` with ``str`` keys in its own insertion order, each of exactly that type and no subclass,
+    each framed by its length, as a tree: no list or dict reached twice, and no deeper than 64. Anything else, and anything
+    that raises while it is read (a proxy, a cycle, a mapping that changes as it is walked), raises
     ``AnswerUnidentifiable``."""
-    return hashlib.sha256(_exact(value, 0)).hexdigest()
+    try:
+        return _encoded(value, 0, set())
+    except AnswerUnidentifiable:
+        raise
+    except Exception as exc:  # noqa: BLE001 - whatever cannot be read whole is refused, never guessed
+        raise AnswerUnidentifiable(f"an answer that could not be read whole ({type(exc).__name__})") from None
+
+
+def _framed(body: bytes) -> bytes:
+    return len(body).to_bytes(8, "big") + body
+
+
+def _encoded(value: Any, depth: int, held: set[int]) -> bytes:
+    if depth > _DEEPEST:
+        raise AnswerUnidentifiable(f"an answer nested deeper than {_DEEPEST} levels")
+    kind = type(value)
+    if value is None:
+        return b"N"
+    if kind is bool:
+        return b"T" if value else b"F"
+    if kind is int:
+        return b"I" + _framed(_whole(value))
+    if kind is float:
+        return b"D" + struct.pack(">d", value)
+    if kind is str:
+        return b"S" + _framed(value.encode("utf-8", "surrogatepass"))
+    if kind is list or kind is dict:
+        if id(value) in held:
+            raise AnswerUnidentifiable("an answer that reaches one list or dict twice is not a tree")
+        held.add(id(value))
+        if kind is list:
+            return b"L" + len(value).to_bytes(8, "big") + b"".join(_encoded(item, depth + 1, held) for item in value)
+        if any(type(key) is not str for key in value):
+            raise AnswerUnidentifiable("an answer that is a dict with a key that is not a str")
+        return b"M" + len(value).to_bytes(8, "big") + b"".join(
+            _encoded(key, depth + 1, held) + _encoded(item, depth + 1, held) for key, item in value.items())
+    raise AnswerUnidentifiable(f"an answer that is a {kind.__qualname__}, which no judge is given: an answer is None, a "
+                               "bool, an int, a float, a str, a list or a dict with str keys, of exactly that type")
+
+
+def answer_from(data: bytes) -> Any:
+    """The answer an ``answer_encoding`` holds, decoded: a fresh tree that shares nothing with anything else, which is what
+    a judge is given, so what it reads is exactly what was identified."""
+    value, end = _decoded(data, 0)
+    if end != len(data):
+        raise AnswerUnidentifiable("bytes after an answer's encoding")
+    return value
+
+
+def _decoded(data: bytes, at: int) -> tuple[Any, int]:
+    tag, at = data[at:at + 1], at + 1
+    if tag in (b"N", b"T", b"F"):
+        return {b"N": None, b"T": True, b"F": False}[tag], at
+    if tag == b"D":
+        return struct.unpack(">d", data[at:at + 8])[0], at + 8
+    if tag in (b"I", b"S"):
+        size, at = int.from_bytes(data[at:at + 8], "big"), at + 8
+        body = data[at:at + size]
+        return (int.from_bytes(body, "big", signed=True) if tag == b"I" else body.decode("utf-8", "surrogatepass")), at + size
+    if tag in (b"L", b"M"):
+        count, at = int.from_bytes(data[at:at + 8], "big"), at + 8
+        items: list[Any] = []
+        for _ in range(count * (1 if tag == b"L" else 2)):
+            item, at = _decoded(data, at)
+            items.append(item)
+        return (items if tag == b"L" else dict(zip(items[::2], items[1::2]))), at
+    raise AnswerUnidentifiable("not an answer's encoding")
+
+
+def answer_identity(value: Any) -> str:
+    """The SHA-256 of an answer's exact encoding. An admitted answer is identified by ``answer_encoding``, which is also
+    what its judge is given back, decoded (``answer_from``). Any other value is never given to a judge, since enrolment
+    refuses it, and is identified by a wider encoding, so that a cut's digest still says when it changes: each value with
+    its exact type, its module and qualified name framed apart; ``complex`` by its IEEE bytes; ``bytes``, ``tuple``;
+    ``set`` and ``frozenset`` members, and the items of a dict that is not admitted, in the order of their own encodings,
+    so the same value has the same identity in any process; ``OrderedDict`` in its order; a namedtuple with its fields'
+    names, a dataclass with its fields, and any other object by its class and the whole of its ``__dict__``, with a
+    built-in type's value too when it is a subclass of one, each part framed by its length. The two encodings never share
+    an identity. No pickle and no ``repr``. An object whose state is not all in what is encoded (``__slots__``, no
+    ``__dict__``), a class, a function or anything else that can be called, and anything that raises while it is read,
+    raises ``AnswerUnidentifiable``."""
+    try:
+        return hashlib.sha256(b"admitted\x00" + answer_encoding(value)).hexdigest()
+    except AnswerUnidentifiable:
+        pass
+    try:
+        return hashlib.sha256(b"refused\x00" + _exact(value, 0)).hexdigest()
+    except AnswerUnidentifiable:
+        raise
+    except Exception as exc:  # noqa: BLE001 - whatever cannot be read whole has no identity
+        raise AnswerUnidentifiable(f"an answer that could not be read whole ({type(exc).__name__})") from None
 
 
 def _identity_or_none(value: Any) -> str | None:
@@ -199,8 +287,8 @@ def _identity_or_none(value: Any) -> str | None:
 
 
 def _tagged(value: Any, body: bytes) -> bytes:
-    kind = f"{type(value).__module__}.{type(value).__qualname__}".encode("utf-8", "surrogatepass")
-    return len(kind).to_bytes(4, "big") + kind + len(body).to_bytes(8, "big") + body
+    module, named = (str(part).encode("utf-8", "surrogatepass") for part in (type(value).__module__, type(value).__qualname__))
+    return _framed(module) + _framed(named) + _framed(body)
 
 
 def _whole(value: int) -> bytes:
@@ -257,7 +345,7 @@ def _exact(value: Any, depth: int) -> bytes:
         parts.append(_exact([f.name for f in dataclasses.fields(value)], depth + 1))
     if state is not None:                         # none only for a built-in's subclass that adds no state of its own
         parts.append(_exact(dict(state), depth + 1))
-    return _tagged(value, b"".join(parts))
+    return _tagged(value, b"".join(_framed(part) for part in parts))
 
 
 def _point(seed: int, key: str) -> float:
