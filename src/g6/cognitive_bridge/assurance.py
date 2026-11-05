@@ -14,6 +14,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol
 
+from .codes import DOSSIER_BLOCKED, refusal, settled
+
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 FORMAT = "g6.cognitive_assurance.dossier/1"
 DOCUMENT_FIELDS = (
@@ -204,6 +206,21 @@ class InProcessAssuranceEvaluator:
         self.evaluator_id = evaluator_id
         self.reviewer_authenticator = reviewer_authenticator
 
+    def review_scope(self, *, standard: DomainStandard, artifacts: Mapping[str, EvidenceArtifact],
+                     verifiers: Mapping[str, FrozenVerifier], documentation: Mapping[str, str],
+                     candidate_actor: str) -> str:
+        """What an authenticated review attests: the standard, each artifact's full manifest (its id, kind, producer,
+        source reference, claim id, digest and length), the checkers, the documentation and the two identities. A
+        change to any of them is a different scope, so an attestation of one never covers another."""
+        return sha256(canonical_json({
+            "standard": standard.digest,
+            "artifacts": {k: x.manifest() for k, x in sorted(artifacts.items())},
+            "verifiers": {k: v.manifest() for k, v in sorted(verifiers.items())},
+            "documentation": {k: documentation.get(k, "") for k in DOCUMENT_FIELDS},
+            "candidate_actor": candidate_actor,
+            "evaluator_id": self.evaluator_id,
+        }))
+
     def evaluate(self, *, standard: DomainStandard,
                  artifacts: Mapping[str, EvidenceArtifact],
                  verifiers: Mapping[str, FrozenVerifier],
@@ -242,6 +259,9 @@ class InProcessAssuranceEvaluator:
                 reasons.append("missing independently supplied checker")
             elif verifier.owner == candidate_actor:
                 reasons.append("verifier owner same as producer")
+            elif verifier.id != criterion.verifier_id:  # the checker's own identity, never the caller's mapping key
+                reasons.append(f"the supplied checker is {verifier.id!r}, not the {criterion.verifier_id!r} the "
+                               "standard pins")
             else:
                 positives = [_test(verifier, a) for a in verifier.positive_controls]
                 negatives = [_test(verifier, a) for a in verifier.negative_controls]
@@ -276,14 +296,8 @@ class InProcessAssuranceEvaluator:
         if standard.risk >= 2:
             review_reason = "authenticated professional review missing"
             if attestation is not None and self.reviewer_authenticator is not None:
-                evidence_scope = sha256(canonical_json({
-                    "standard": standard.digest,
-                    "artifacts": {k: x.digest for k, x in sorted(artifacts.items())},
-                    "verifiers": {k: v.manifest() for k, v in sorted(verifiers.items())},
-                    "documentation": {k: documentation.get(k, "") for k in DOCUMENT_FIELDS},
-                    "candidate_actor": candidate_actor,
-                    "evaluator_id": self.evaluator_id,
-                }))
+                evidence_scope = self.review_scope(standard=standard, artifacts=artifacts, verifiers=verifiers,
+                                                   documentation=documentation, candidate_actor=candidate_actor)
                 if (attestation.scope_sha256 == evidence_scope
                         and attestation.reviewer_id not in (candidate_actor, self.evaluator_id)):
                     try:
@@ -302,37 +316,37 @@ class InProcessAssuranceEvaluator:
             blockers.append("no critical acceptance obligation exists")
         if advisory_failed:
             blockers.append("advisory exceptions require explicit professional disposition: " + ", ".join(advisory_failed))
-        payload = {
-            "schema": FORMAT,
-            "kind": "candidate_verification_dossier_not_G6_promotion_certificate",
-            "completion_state": "blocked-escalated" if blockers else "qualified-draft",
-            "scope_decision": "incomplete_or_failed" if blockers else "all_declared_checks_passed_in_this_evaluator",
-            "evaluator_id": self.evaluator_id,
-            "candidate_actor": candidate_actor,
-            "standard": standard.manifest(), "standard_digest": standard.digest,
-            "checks": checks,
-            "documentary_sections": {k: documentation.get(k, "") for k in DOCUMENT_FIELDS},
-            "missing_documentation": documentary_gaps,
-            "professional_review": {"required": standard.risk >= 2, "risk_tier": standard.risk_tier,
-                                    "authenticated": reviewed, "reason": review_reason},
-            "blockers": blockers,
-            "metrics": {"declared_critical": len(critical),
-                        "critical_passed": sum(x["result"] == "passed" for x in critical),
-                        "declared_advisory": len(checks)-len(critical),
-                        "advisory_exceptions": len(advisory_failed),
-                        "negative_controls_detected": sum(
-                            x.get("control_tests", {}).get("negative_detected", 0) for x in checks),
-                        "negative_controls_attempted": sum(
-                            x.get("control_tests", {}).get("negative_count", 0) for x in checks)},
-            "promotion_authority": "none: only a G6 door that re-runs a check can promote a result",
-            "limitations": [
+        payload = settled(
+            refusal(DOSSIER_BLOCKED, "; ".join(blockers)) if blockers else None,
+            schema=FORMAT,
+            kind="candidate_verification_dossier_not_G6_promotion_certificate",
+            scope_decision="incomplete_or_failed" if blockers else "all_declared_checks_passed_in_this_evaluator",
+            evaluator_id=self.evaluator_id,
+            candidate_actor=candidate_actor,
+            standard=standard.manifest(), standard_digest=standard.digest,
+            checks=checks,
+            documentary_sections={k: documentation.get(k, "") for k in DOCUMENT_FIELDS},
+            missing_documentation=documentary_gaps,
+            professional_review={"required": standard.risk >= 2, "risk_tier": standard.risk_tier,
+                                 "authenticated": reviewed, "reason": review_reason},
+            blockers=blockers,
+            metrics={"declared_critical": len(critical),
+                     "critical_passed": sum(x["result"] == "passed" for x in critical),
+                     "declared_advisory": len(checks)-len(critical),
+                     "advisory_exceptions": len(advisory_failed),
+                     "negative_controls_detected": sum(
+                         x.get("control_tests", {}).get("negative_detected", 0) for x in checks),
+                     "negative_controls_attempted": sum(
+                         x.get("control_tests", {}).get("negative_count", 0) for x in checks)},
+            promotion_authority="none: only a G6 door that re-runs a check can promote a result",
+            limitations=[
                 "The standard and its faithful translation are trusted evaluator inputs, not independently confirmed here.",
                 "A model being true in its formalisation does not imply it describes reality.",
                 "The SHA-256 content digest is unkeyed: it detects edits, not malicious rewrite and reissuance.",
                 "Executor/custody isolation is not established by this in-process reference implementation.",
                 "An assurance dossier is not professional accreditation, an audit opinion, or a result G6 promoted.",
             ],
-        }
+        )
         return CandidateDossier.from_payload(payload)
 
 

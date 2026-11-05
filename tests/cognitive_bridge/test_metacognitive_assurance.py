@@ -132,7 +132,7 @@ def test_authenticated_independent_review_passes_local_gate_but_never_issues_ver
     ev = artifact()
     scope = sha256(canonical_json({
         "standard": st.digest,
-        "artifacts": {"c1": ev.digest},
+        "artifacts": {"c1": ev.manifest()},  # the review binds the artifact's id, claim and source (review 1, finding 8)
         "verifiers": {"checker1": verifier().manifest()},
         "documentation": docs(),
         "candidate_actor": "candidate",
@@ -171,9 +171,11 @@ def variants():
 
 
 def trial(i, variant, *, resolved, domain="software_engineering", split="heldout"):
+    # a trial names the definition of the variant it evaluated, not only its id (review 1, finding 7)
+    definition = next(v for v in variants() if v.id == variant).definition_digest
     return EvaluatedTrial(f"trial-{variant}-{i}", f"case-{variant}-{i}", "evaluator-frozen-suite-1",
                           domain, "formal_specification", "invariant", variant, resolved,
-                          2, "trusted://evaluator/receipt", PIN, split)
+                          2, "trusted://evaluator/receipt", PIN, split, variant_digest=definition)
 
 
 def test_selector_cold_start_and_no_implicit_trust():

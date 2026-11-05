@@ -4,8 +4,9 @@
 This is a conservative conflict tripwire, NOT a fact checker. It builds on
 `g6.epistemic_integrity`: each admitted assertion becomes an evidence record
 whose lineage is its source, so one source repeated is one lineage
-(`collapse_independence`) and support with opposition on one scope is
-contested (`detect_contested`), by that component's rules, not a second set.
+(`collapse_independence`), and each proposition's status (supported, contested,
+refuted, undetermined) is `adjudicate_claim`'s, by that component's rules, not
+a second set: the bridge maps the answer, it does not decide again.
 An independent evaluator must admit a statement before it can be used as
 evidence. No score averaging.
 """
@@ -18,9 +19,16 @@ from typing import Any, Callable, Sequence
 from g6.core.evidence import EvidenceRecord
 from g6.epistemic_integrity import adjudicator
 
+from .codes import (EVIDENCE_CONTESTED, EVIDENCE_NOT_RECONCILED, EVIDENCE_REFUTED, EVIDENCE_UNDETERMINED, refusal,
+                    settled)
+
 HEX64 = re.compile("[0-9a-f]{64}\\Z")
 #: An assertion's stance as an evidence record states it (``g6.core.evidence.EvidenceStance``).
 _STANCE = {"supports": "supports", "refutes": "opposes", "unknown": "context_only"}
+#: ``adjudicate_claim``'s epistemic status, as the bridge names it, with the code of a status that blocks; any status
+#: not listed blocks too.
+_STATUS = {"ASSERTED": ("consistent_with_admitted_evidence", None), "CONTESTED": ("contested", EVIDENCE_CONTESTED),
+           "REFUTED": ("refuted", EVIDENCE_REFUTED), "UNVERIFIABLE": ("undetermined", EVIDENCE_UNDETERMINED)}
 
 
 @dataclass(frozen=True)
@@ -73,35 +81,34 @@ class CrossMethodConflictGate:
         for (claim_id, proposition_id, scope), data in groups.items():
             # Only exactly the same proposition and scope are compared. Each assertion is an evidence record whose
             # lineage is its source: one source repeated is one lineage, not corroboration, and a source that changes
-            # its stance contests itself (epistemic_integrity's rules).
+            # its stance contests itself. The status is epistemic_integrity's adjudication of these records.
             records = tuple(EvidenceRecord(row.evidence_ref, supports_or_opposes=_STANCE[row.stance],
                                            independence_group=row.evidence_ref, claim_id=claim_id) for row in data)
             lineages = adjudicator.collapse_independence(records)
             duplicate_sources += [source for source, members in lineages.items() for _ in members[1:]]
-            if adjudicator.detect_contested(records, lineages):
-                label, status = "contested", "blocked-escalated"
-                conflicts += 1
-            elif all(r.supports_or_opposes == "context_only" for r in records):
-                label, status = "undetermined", "blocked-escalated"
-            else:
-                label, status = "consistent_with_admitted_evidence", "qualified-draft"
-            findings.append({"claim_id": claim_id, "proposition_id": proposition_id,
-                             "scope_digest": scope, "status": label,
-                             "completion_state": status,
-                             "source_count": len(lineages),
-                             "methods": sorted({r.method for r in data}),
-                             "warning": "Consistency does not establish truth or domain correctness"})
+            status = adjudicator.adjudicate_claim(proposition_id, evidence_records=records).claim.epistemic_status
+            label, code = _STATUS.get(status, ("not_reconciled", EVIDENCE_NOT_RECONCILED))
+            conflicts += label == "contested"
+            findings.append(settled(
+                refusal(code, f"{proposition_id}: {label} ({status})") if code else None,
+                claim_id=claim_id, proposition_id=proposition_id, scope_digest=scope, status=label,
+                epistemic_status=status, source_count=len(lineages), methods=sorted({r.method for r in data}),
+                warning="Consistency does not establish truth or domain correctness"))
         # Every unadmitted claim is insufficient. Do not call it a successful
         # reconciliation merely because the contradictory evidence was rejected.
-        blocked = bool(conflicts or refused or not groups or
-                       any(x["completion_state"] == "blocked-escalated" for x in findings))
-        return {"completion_state": "blocked-escalated" if blocked else "qualified-draft",
-                "conflicts": conflicts, "unadmitted_evidence_refs": refused,
-                "repeated_source_refs": duplicate_sources,
-                "scoped_findings": findings,
-                "limitations": ["Only exact proposition-and-scope identity is compared; differing scopes are incomparable.",
-                                "Agreement is neither independent replication nor evidence of truth.",
-                                "Admissibility depends on an external trusted evaluator, not a field or an LLM judgment."]}
+        unsettled = [f"{x['proposition_id']}: {x['status']}" for x in findings
+                     if x["completion_state"] != "qualified-draft"]
+        why = ([f"{len(refused)} assertion(s) not admitted"] if refused else []) + unsettled + (
+            [] if groups else ["no admitted assertion"])
+        return settled(refusal(EVIDENCE_NOT_RECONCILED, "; ".join(why)) if why else None,
+                       conflicts=conflicts, unadmitted_evidence_refs=refused,
+                       repeated_source_refs=duplicate_sources,
+                       scoped_findings=findings,
+                       limitations=["Only exact proposition-and-scope identity is compared; differing scopes are "
+                                    "incomparable.",
+                                    "Agreement is neither independent replication nor evidence of truth.",
+                                    "Admissibility depends on an external trusted evaluator, not a field or an LLM "
+                                    "judgment."])
 
 
 __all__ = ["ScopedAssertion", "CrossMethodConflictGate"]

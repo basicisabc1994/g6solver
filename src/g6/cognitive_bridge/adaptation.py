@@ -6,19 +6,25 @@ change protected evaluators, mint G6 `verified`, or bypass owner merge.
 Real separation requires evaluator-owned records plus isolated execution.
 
 The gate's statistic is the meta-harness gate's own (``g6.reasoning.sign_test_p`` at alpha / max_evaluations, the
-rule ``g6.metaharness.schema.EvidencePolicy`` states), and its protected paths start from G6's
-(``g6.core.adaptation_gate.protected_hits``); its other conditions are stricter additions on top.
+rule ``g6.metaharness.schema.EvidencePolicy`` states). Its protected paths are G6's own
+(``g6.core.adaptation_gate.protected_hits``), the files that define the code judging a bridge result, listed from those
+functions themselves (:func:`judged_files`), and G6's core, each compared as the file system resolves the candidate
+path; its other conditions are stricter additions on top.
 """
 from __future__ import annotations
 
+import inspect
+import os
 import re
 from dataclasses import dataclass
+from pathlib import Path, PureWindowsPath
 from typing import Any, Callable, Sequence
 
 from g6.core.adaptation_gate import protected_hits
 from g6.reasoning import sign_test_p
 
 from .assurance import CandidateDossier
+from .codes import ADAPTATION_REFUSED, refusal, settled
 
 HEX = re.compile(r"^[0-9a-f]{64}$")
 PROTECTED_PARTS = ("test", "fixture", "oracle", "verifier", "evaluator", "approval", "promotion", "gate",
@@ -148,20 +154,75 @@ class ControlTrial:
 exact_sign_p = sign_test_p
 
 
+#: The checkout and its ``src`` folder: a relative candidate path is read against each, as a change names it.
+_SRC = Path(__file__).resolve().parents[2]
+_ROOT = _SRC.parent
+
+
+def judged_files() -> frozenset[Path]:
+    """The source files that define the code judging a bridge result or its evidence, listed from the functions and
+    classes themselves (never from file names): this gate and its path guard, the assurance evaluator and its checker
+    type, the selector that credits trials, the conflict gate, the orchestrator's assessment, the executor, the one maker
+    of refusals, the sign test, ``g6.epistemic_integrity``'s adjudication, G6's protected-path policy and G6's door."""
+    from g6.core import door, reliability_envelope
+    from g6.epistemic_integrity import adjudicator
+    from g6.epistemic_integrity.markers import markers
+
+    from . import assurance, codes, epistemic, metacognition, mixed_methods, orchestration
+
+    judges = (AdaptationPromotionGate.assess, protected_paths, assurance.InProcessAssuranceEvaluator.evaluate,
+              assurance.FrozenVerifier, metacognition.MetacognitiveMethodSelector,
+              epistemic.CrossMethodConflictGate.reconcile, orchestration.CognitiveAssuranceOrchestrator.assess,
+              mixed_methods.MixedMethodExecutor.execute, codes.refusal, sign_test_p, adjudicator.adjudicate_claim,
+              adjudicator.detect_contested, adjudicator.collapse_independence, markers, protected_hits,
+              door.invoke_checked,
+              door.door_reply, reliability_envelope.door_witness)
+    return frozenset(Path(inspect.getsourcefile(judge)).resolve() for judge in judges)
+
+
+def _absolute(path: str) -> bool:
+    return Path(path).is_absolute() or PureWindowsPath(path).is_absolute() or path.startswith(("/", "\\"))
+
+
+def _resolved(path: str) -> set[str]:
+    """Every file the candidate path can name, as the file system resolves it: absolute as given, or relative to the
+    checkout or to its ``src`` folder; links and ``..`` resolved, and case folded where the file system folds it."""
+    candidate = Path(path)
+    bases = [candidate] if candidate.is_absolute() else [_ROOT / candidate, _SRC / candidate]
+    found = set()
+    for base in bases:
+        try:
+            found.add(os.path.normcase(os.path.realpath(base)))
+        except (OSError, ValueError):
+            continue
+    return found
+
+
+def _judged(path: str) -> bool:
+    """The path resolves to a file that judges the bridge (:func:`judged_files`) or into G6's core."""
+    judged = {os.path.normcase(str(f)) for f in judged_files()}
+    core = os.path.normcase(str(_SRC / "g6" / "core"))
+    return any(resolved in judged or resolved == core or resolved.startswith(core + os.sep)
+               for resolved in _resolved(path))
+
+
 def protected_paths(paths: Sequence[str]) -> list[str]:
-    """G6's protected paths (``g6.core.adaptation_gate.protected_hits``) plus this gate's stricter local denylist.
+    """G6's protected paths (``g6.core.adaptation_gate.protected_hits``), each path that resolves to code that judges
+    the bridge or into G6's core (:func:`judged_files`, compared as the file system resolves the path, in any spelling),
+    and this gate's stricter local denylist: an absolute path, a ``..`` step, and the PR's protected name parts.
 
     A failure in G6's existing policy fails closed rather than being silently
     replaced by this extension's shorter static list.
     """
-    local = [p for p in paths if p.startswith("/") or ".." in p.replace("\\", "/").split("/")
+    local = [p for p in paths if _absolute(p) or ".." in p.replace("\\", "/").split("/")
              or p.replace("\\", "/").startswith(("src/g6/core/", "g6/core/", ".github/"))
              or any(part in p.lower().replace("\\", "/") for part in PROTECTED_PARTS)]
     try:
         upstream = protected_hits(tuple(paths))
+        judged = [p for p in paths if _judged(p)]
     except Exception:
-        return list(paths)  # upstream policy broken => refuse every changed path
-    return sorted(set(local).union(upstream))
+        return list(paths)  # upstream policy or the listing broken => refuse every changed path
+    return sorted(set(local).union(upstream, judged))
 
 
 class AdaptationPromotionGate:
@@ -235,21 +296,21 @@ class AdaptationPromotionGate:
         threshold = self.alpha / self.max_evaluations  # preregistered Bonferroni bound, as EvidencePolicy.threshold
         if p_value > threshold:
             violations.append(f"paired sign test not below preregistered threshold {threshold:.6g}")
-        return {"completion_state": "blocked-escalated" if violations else "qualified-draft",
-                "recommendation": "reject_or_redesign" if violations else "recommend_isolated_shadow_only",
-                "candidate": change.id, "candidate_digest": change.code_digest,
-                "baseline_digest": change.baseline_digest,
-                "frozen_suite_digest": change.suite_digest,
-                "n_pairs": len(pairs), "wins": wins, "losses": losses,
-                "ties": len(pairs) - wins - losses,
-                "critical_regression_cases": regressions,
-                "p_one_sided": p_value, "multiplicity_corrected_threshold": threshold,
-                "blocked_reasons": violations,
-                "requires_owner_authorisation": True,
-                "activation_authority": "none; an independent G6 approval and merge remain necessary",
-                "scope": "observed held-out cases; no global guarantee of monotonic improvement"}
+        return settled(refusal(ADAPTATION_REFUSED, "; ".join(violations)) if violations else None,
+                       recommendation="reject_or_redesign" if violations else "recommend_isolated_shadow_only",
+                       candidate=change.id, candidate_digest=change.code_digest,
+                       baseline_digest=change.baseline_digest,
+                       frozen_suite_digest=change.suite_digest,
+                       n_pairs=len(pairs), wins=wins, losses=losses,
+                       ties=len(pairs) - wins - losses,
+                       critical_regression_cases=regressions,
+                       p_one_sided=p_value, multiplicity_corrected_threshold=threshold,
+                       blocked_reasons=violations,
+                       requires_owner_authorisation=True,
+                       activation_authority="none; an independent G6 approval and merge remain necessary",
+                       scope="observed held-out cases; no global guarantee of monotonic improvement")
 
 
 __all__ = ["FailureModeFinding", "MitigationHypothesis", "CompositionalFailureModel",
            "detect_failure_modes", "GuardChange", "PairedTrial", "ControlTrial",
-           "AdaptationPromotionGate", "exact_sign_p", "protected_paths"]
+           "AdaptationPromotionGate", "exact_sign_p", "judged_files", "protected_paths"]

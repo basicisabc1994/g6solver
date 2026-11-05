@@ -15,7 +15,9 @@ from typing import Any, Iterable, Mapping, Protocol, Sequence
 
 from g6.core.door import SENSITIVE_ENV, allowed_sensitive, invoke_checked
 
-from .codes import APPROVAL_REQUIRED, PLAN_TAMPERED, refusal
+from .assurance import canonical_json, sha256
+from .codes import (APPROVAL_REQUIRED, EXECUTION_INCOMPLETE, MODEL_MISSING, PLAN_TAMPERED, PREREQUISITE_UNMET,
+                    STEP_FAILED, refusal, settled)
 
 # Every name resolves to an existing G6 component and a fixed, documented op.
 # Models are declarative data, never arbitrary modules, code or pickle paths.
@@ -98,20 +100,41 @@ class MethodPlan:
     translation_status: str = "candidate_unreviewed"
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "completion_state": "qualified-draft" if self.steps and not self.missing else "blocked-escalated",
-            "translation_status": self.translation_status,
-            "claims": [asdict(x) for x in self.claims],
-            "steps": [asdict(x) for x in self.steps],
-            "missing": list(self.missing),
-            "requires_explicit_execution_approval": True,
-            "limitations": [
+        refused = None
+        if self.missing or not self.steps:
+            gaps = ", ".join(f"{m['claim']}: {m['method']} ({m['reason']})" for m in self.missing)
+            refused = refusal(MODEL_MISSING, "no typed model for " + gaps if gaps else "no executable step")
+        return settled(
+            refused,
+            translation_status=self.translation_status,
+            claims=[asdict(x) for x in self.claims],
+            steps=[asdict(x) for x in self.steps],
+            missing=list(self.missing),
+            requires_explicit_execution_approval=True,
+            limitations=[
                 "The language-to-model translation must be reviewed; it may not capture user intent.",
                 "A causal model is an assumption and does not follow from observed correlation.",
                 "A solver can only establish results about the model and scope supplied.",
                 "Information gain and predictive fidelity are not an independent check of a research claim.",
             ],
-        }
+        )
+
+
+def step_digest(step: MethodStep) -> str:
+    """The identity of one planned step (its id, claim, method, component, op, parameters, metric and dependencies), as
+    the executor validated and ran it: an executed step is credited to a compiled step only under the same digest."""
+    return sha256(canonical_json(asdict(step)))
+
+
+def _no_bare_verified(value: Any, under_card: bool = False) -> Any:
+    """A copy with no ``verified`` field anywhere except in G6's own warning cards (INV-ENV-2): the door already
+    corrected the state, so a component's own flag says nothing the state does not."""
+    if isinstance(value, Mapping):
+        return {k: _no_bare_verified(v, under_card or k == "warning_card") for k, v in value.items()
+                if under_card or k != "verified"}
+    if isinstance(value, (list, tuple)):
+        return [_no_bare_verified(v, under_card) for v in value]
+    return value
 
 
 class MethodRouter:
@@ -202,11 +225,31 @@ class MixedMethodExecutor:
         self.registry = registry
         self.allow = frozenset(allow)
 
-    def _invoke(self, step: MethodStep) -> dict[str, Any]:
+    def _invoke(self, step: MethodStep, params: dict[str, Any]) -> dict[str, Any]:
         how = (f"Allow it in your own code with MixedMethodExecutor(registry, allow=('{step.component}.{step.op}',)), "
                f"or list {step.component}.{step.op} (or {step.component}) in {SENSITIVE_ENV} where you start G6.")
-        return invoke_checked(step.component, step.op, dict(step.params), allow=allowed_sensitive() | self.allow,
+        return invoke_checked(step.component, step.op, params, allow=allowed_sensitive() | self.allow,
                               how_to_allow=how, registry=self.registry)
+
+    def _run(self, step: MethodStep, params: bytes, head: dict[str, Any]) -> dict[str, Any]:
+        """One validated step through G6's door; every refusal keeps the door's own card, or names its own code."""
+        try:
+            reply = self._invoke(step, json.loads(params))  # a fresh copy of the bytes that were checked
+            card, request_id = reply["warning_card"], reply["request_id"]
+            if "result" not in reply:  # refused, or failed, before any answer: the door's error and card say why
+                return refusal(card["code"], str(reply["error"]), card=card, request_id=request_id, **head)
+            response = reply["result"]
+            if not isinstance(response, dict):
+                raise ValueError("registry did not return an evidence envelope")
+            response = _no_bare_verified(response)
+            if reply.get("ok") is not True:  # the door's own verdict; anything but a usable reply is not a run
+                return refusal(card["code"], f"{step.component}.{step.op}: G6's door did not pass its answer",
+                               card=card, request_id=request_id, result=response, **head)
+            # The door decided the state; a composed step never claims more than qualified-draft.
+            return {"completion_state": "qualified-draft", **head, "warning_card": card, "request_id": request_id,
+                    "result": response}
+        except Exception as exc:  # registry is a trust boundary
+            return refusal(STEP_FAILED, f"{type(exc).__name__}: {exc}", **head)
 
     def execute(self, plan: MethodPlan, *, approved: bool = False) -> dict[str, Any]:
         if not approved:
@@ -216,50 +259,30 @@ class MixedMethodExecutor:
             canonical = MethodRouter().plan(plan.claims)
             if canonical.steps != plan.steps or canonical.missing != plan.missing:
                 raise ValueError("method steps differ from canonical allowlisted routing")
+            # What was checked is what runs: each validated step's parameters are frozen as bytes now, so a caller's
+            # later edit of the plan's dictionaries cannot reach a pending step.
+            frozen = [(step, canonical_json(dict(step.params)), step_digest(step)) for step in canonical.steps]
         except (TypeError, ValueError) as exc:
             return refusal(PLAN_TAMPERED, str(exc), steps=[], method_execution_coverage=0.0)
         outcomes: list[dict[str, Any]] = []
         by_id: dict[str, dict[str, Any]] = {}
-        for step in plan.steps:
-            if step.depends_on:
-                parent = by_id.get(step.depends_on[0])
-                # In particular, never estimate a causal effect when identification
-                # was refused, inconclusive or not established by G6.
-                identified = (parent or {}).get("result", {}).get("answer", {}).get("identifiable")
-                if (parent or {}).get("completion_state") == "blocked-escalated" or identified is not True:
-                    result = {
-                        "id": step.id, "claim_id": step.claim_id, "component": step.component,
-                        "op": step.op, "completion_state": "blocked-escalated",
-                        "reason": "causal identifiability prerequisite not established",
-                    }
-                    outcomes.append(result)
-                    by_id[step.id] = result
-                    continue
-            result = {"id": step.id, "claim_id": step.claim_id, "method": step.method,
-                      "component": step.component, "op": step.op, "metric": step.metric}
-            try:
-                reply = self._invoke(step)
-                result["warning_card"], result["request_id"] = reply["warning_card"], reply["request_id"]
-                if "result" not in reply:  # refused, or failed, before any answer: the door's error says why
-                    result["completion_state"], result["reason"] = "blocked-escalated", str(reply["error"])[:400]
-                else:
-                    response = reply["result"]
-                    if not isinstance(response, dict):
-                        raise ValueError("registry did not return an evidence envelope")
-                    # The door decided the state; a composed step never claims more than qualified-draft.
-                    result["completion_state"] = ("blocked-escalated" if reply["completion_state"] == "blocked-escalated"
-                                                  else "qualified-draft")
-                    result["result"] = response
-            except Exception as exc:  # registry is a trust boundary
-                result["completion_state"] = "blocked-escalated"
-                result["reason"] = f"{type(exc).__name__}: {exc}"[:400]
+        for step, params, digest in frozen:
+            head = {"id": step.id, "claim_id": step.claim_id, "method": step.method, "component": step.component,
+                    "op": step.op, "metric": step.metric, "step_digest": digest}
+            parent = by_id.get(step.depends_on[0]) if step.depends_on else None
+            # In particular, never estimate a causal effect when identification
+            # was refused, inconclusive or not established by G6.
+            identified = (parent or {}).get("result", {}).get("answer", {}).get("identifiable")
+            if step.depends_on and ((parent or {}).get("completion_state") != "qualified-draft"
+                                    or identified is not True):
+                result = refusal(PREREQUISITE_UNMET, "causal identifiability prerequisite not established", **head)
+            else:
+                result = self._run(step, params, head)
             outcomes.append(result)
             by_id[step.id] = result
-        successful = [r for r in outcomes if r["completion_state"] != "blocked-escalated"]
+        successful = [r for r in outcomes if r["completion_state"] == "qualified-draft"]
         coverage = len(successful) / len(plan.steps) if plan.steps else 0.0
-        incomplete = bool(plan.missing) or len(successful) != len(plan.steps)
-        return {
-            "completion_state": "blocked-escalated" if incomplete else "qualified-draft",
+        fields = {
             "run_id": uuid.uuid4().hex,
             "steps": outcomes, "missing": list(plan.missing),
             "method_execution_coverage": coverage,
@@ -268,6 +291,11 @@ class MixedMethodExecutor:
             "limits": ["Only the provided models were executed; model semantics and data provenance were not checked.",
                        "A valid formal model does not establish that the natural language formalisation is accurate."],
         }
+        if plan.missing or len(successful) != len(plan.steps):
+            return refusal(EXECUTION_INCOMPLETE, f"{len(plan.steps) - len(successful)} of {len(plan.steps)} steps "
+                                                 f"blocked; {len(plan.missing)} evidence needs have no typed model",
+                           **fields)
+        return settled(None, **fields)
 
 
 class LLMClaimCompiler:

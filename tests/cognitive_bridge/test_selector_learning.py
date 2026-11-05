@@ -17,9 +17,16 @@ def context(budget: float = 10) -> ProblemSignature:
     return ProblemSignature("software_engineering", "bug_fix", "patch", 1, budget)
 
 
+#: The definitions of the variants the trials below evaluated: a trial names its variant's definition digest.
+DEFINITIONS = {v.id: v.definition_digest for v in (
+    MethodVariant("loop-arm", "repair", "patch", "g6_loop", "repair", 2, kind="arm"),
+    MethodVariant("plain-arm", "repair", "patch", "plain_agent", "repair", 1, kind="arm"),
+    MethodVariant("arm", "repair", "patch", "g6_loop", "repair", 1, kind="arm"))}
+
+
 def trial(case: str, variant: str, *, resolved: bool, n: int = 0, split: str = "heldout") -> EvaluatedTrial:
     return EvaluatedTrial(f"{variant}-{case}-{n}", case, "frozen-suite-1", "software_engineering", "bug_fix", "patch",
-                          variant, resolved, 1, "trusted://evaluator", PIN, split)
+                          variant, resolved, 1, "trusted://evaluator", PIN, split, variant_digest=DEFINITIONS[variant])
 
 
 def test_a_variant_may_be_any_named_method():

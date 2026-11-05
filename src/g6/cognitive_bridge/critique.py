@@ -41,8 +41,13 @@ class CritiqueReport:
     completion_state: str = "qualified-draft"
     warning: str = "LLM candidate critique only; nothing was independently checked."
 
+    def __post_init__(self) -> None:
+        # a critique proposes; it never refuses and never claims more, so its one state is qualified-draft
+        if self.completion_state != "qualified-draft":
+            raise ValueError("a critique report is a qualified-draft proposal")
+
     def to_dict(self) -> dict[str, Any]:
-        return {"objective": self.objective, "completion_state": self.completion_state,
+        return {"objective": self.objective, "completion_state": "qualified-draft",
                 "warning": self.warning, "candidates": [vars(x) for x in self.candidates]}
 
 

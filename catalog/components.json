@@ -883,6 +883,7 @@
     ],
     "requires": [
       "epistemic_integrity",
+      "invariants",
       "reasoning"
     ],
     "sensitive_ops": [],

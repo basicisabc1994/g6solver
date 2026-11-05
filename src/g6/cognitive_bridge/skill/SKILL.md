@@ -37,13 +37,25 @@ held-out trials. Every result is `qualified-draft` or `blocked-escalated`: it ne
 
 ## Reading the result
 
-Every refusal is `blocked-escalated` with its code in `code` and in its `warning_card`. A parameter an op does not
-take is `G6_E_INPUT_VALIDATION`; input the op cannot use (priors that do not sum to one, a probe that does not predict
-every hypothesis, a plan with no claim) is `G6_E_COGNITIVE_BRIDGE_INPUT`. From Python: running a plan without approval
-is `G6_E_COGNITIVE_APPROVAL_REQUIRED`, an edited plan `G6_E_COGNITIVE_PLAN_TAMPERED`, and an orchestrator plan that is
-not approved, not fully specified or has no registry `G6_E_COGNITIVE_EXECUTION_NOT_APPROVED`, each before anything
-runs. An assessment carries `warning_card`, `evidence`, `request_id` and `run_id`: `G6_E_COGNITIVE_ASSURANCE_BLOCKED`
-names what failed, and `G6_E_COGNITIVE_NOT_PROMOTED` says the checks passed in this process and nothing more.
+Every refusal is `blocked-escalated` with its code in `code` and in its `warning_card`, made in one place
+(`codes.refusal`). A parameter an op does not take is `G6_E_INPUT_VALIDATION`; input the op cannot use (priors that
+do not sum to one, a probe that does not predict every hypothesis, a plan with no claim) is
+`G6_E_COGNITIVE_BRIDGE_INPUT`. A need with no typed model is `G6_E_COGNITIVE_MODEL_MISSING`; a mandatory method with no
+affordable variant `G6_E_COGNITIVE_SELECTION_INCOMPLETE`; a required method no claim needs
+`G6_E_COGNITIVE_OBLIGATION_NOT_PLANNED`.
+
+From Python: running a plan without approval is `G6_E_COGNITIVE_APPROVAL_REQUIRED`, an edited plan or a compiled model
+that no longer matches its pin `G6_E_COGNITIVE_PLAN_TAMPERED`, an orchestrator plan that is not approved, not fully
+specified or has no registry `G6_E_COGNITIVE_EXECUTION_NOT_APPROVED`, and an incomplete compiled plan
+`G6_E_COGNITIVE_COMPILE_BLOCKED`, each before anything runs. A step whose prerequisite failed is
+`G6_E_COGNITIVE_PREREQUISITE_UNMET`, one whose call raised `G6_E_COGNITIVE_STEP_FAILED`, one G6's door refused keeps
+the door's code, and the run is then `G6_E_COGNITIVE_EXECUTION_INCOMPLETE`. A dossier with a blocker is
+`G6_E_COGNITIVE_DOSSIER_BLOCKED`; a refused guard change `G6_E_COGNITIVE_ADAPTATION_REFUSED`; a proposition
+`G6_E_COGNITIVE_EVIDENCE_CONTESTED`, `G6_E_COGNITIVE_EVIDENCE_REFUTED` or `G6_E_COGNITIVE_EVIDENCE_UNDETERMINED`, and the
+reconciliation `G6_E_COGNITIVE_EVIDENCE_NOT_RECONCILED`; an agent with no executable probe `G6_E_COGNITIVE_NO_PROBE`.
+An assessment carries `warning_card`, `evidence`, `request_id` and `run_id`: `G6_E_COGNITIVE_ASSURANCE_BLOCKED`
+names what failed, and `G6_E_COGNITIVE_NOT_PROMOTED` says the checks passed in this process and nothing more. It
+credits only a run this orchestrator executed, from its own record, step by step.
 
 ## Alone and composed
 
@@ -60,9 +72,11 @@ Composed (Python only):
 - `CognitiveAssuranceOrchestrator` joins the selector, the router, the executor and `InProcessAssuranceEvaluator`:
   compile, execute with approval, then assess the produced bytes against the standard's criteria.
 - The cross-method conflict gate reads stance and lineage by `epistemic_integrity`'s rules: one source repeated is
-  one lineage, and support with opposition on the same scope is contested.
+  one lineage, and each proposition's status (contested, refuted, undetermined) is `adjudicate_claim`'s.
 - The adaptation gate's paired sign test is `reasoning.sign_test_p`, the statistic the meta-harness gate decides by,
-  at alpha divided by the number of evaluations; its protected paths start from `g6.core.adaptation_gate`'s.
+  at alpha divided by the number of evaluations. Its protected paths are `g6.core.adaptation_gate`'s, G6's core and
+  the files of the code that judges a bridge result (`adaptation.judged_files`), compared as the file system resolves
+  the path.
 
 ## Failure modes it catches
 
@@ -72,7 +86,8 @@ Composed (Python only):
 - `false_confidence`: no result is `verified`; a dossier blocks on a missing or failed critical check, a checker that
   misses its planted negative control, a missing documentary section, or an unauthenticated review at R2 and R3.
 - `repetition_as_corroboration`: the conflict gate counts one source repeated as one lineage, and the selector
-  groups one variant's repeated trials on one case into one case, with the share that resolved.
+  groups one variant's repeated trials on one case into one case, with the share that resolved, whatever the
+  oracle's revision. A trial credits only the variant definition it names (`variant_digest`), not a reused id.
 
 ## Blind spots
 

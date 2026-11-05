@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from .assurance import canonical_json, sha256
+from .codes import MODEL_MISSING, OBLIGATION_NOT_PLANNED, SELECTION_INCOMPLETE, refusal, settled
 from .mixed_methods import ENGINE_SPECS, ENGINE_OP_VARIANTS, ClaimIR, MethodRouter, MethodPlan
 
 CAPABILITIES = frozenset(ENGINE_SPECS)
@@ -87,6 +88,13 @@ class MethodVariant:
         if not math.isfinite(self.estimated_cost) or self.estimated_cost < 0:
             raise ValueError("estimated cost must be nonnegative and finite")
 
+    @property
+    def definition_digest(self) -> str:
+        """The digest of what this variant is (its kind, method, representation, engine and op), not its name: a
+        trial credits a variant only when it names this digest."""
+        return sha256(canonical_json({"kind": self.kind, "method": self.method, "representation": self.representation,
+                                      "engine": self.engine, "op": self.op}))
+
 
 @dataclass(frozen=True)
 class EvaluatedTrial:
@@ -96,6 +104,10 @@ class EvaluatedTrial:
     contribution under its rubric, not that the method declared itself good.
     The `admit` hook checks provenance/receipts or recomputes the judgement;
     presence of these strings alone is NOT sufficient.
+
+    ``variant_digest`` is the ``MethodVariant.definition_digest`` of the variant the evaluator ran: a trial credits
+    only a variant with that id and that definition, so a new method cannot inherit history by reusing a name. A
+    trial that names no definition credits no variant.
     """
     trial_id: str
     case_id: str
@@ -110,6 +122,7 @@ class EvaluatedTrial:
     oracle_digest: str
     split: str = "heldout"
     critical_regression: bool = False
+    variant_digest: str = ""
 
     def __post_init__(self) -> None:
         if not all((self.trial_id, self.case_id, self.cohort_id, self.domain,
@@ -123,6 +136,9 @@ class EvaluatedTrial:
             raise ValueError("trial cost invalid")
         if len(self.oracle_digest) != 64 or any(x not in '0123456789abcdef' for x in self.oracle_digest):
             raise ValueError("frozen oracle digest required")
+        if self.variant_digest and (len(self.variant_digest) != 64
+                                    or any(x not in '0123456789abcdef' for x in self.variant_digest)):
+            raise ValueError("a variant digest is a 64-digit SHA-256 of the variant's definition")
 
 
 @dataclass(frozen=True)
@@ -133,7 +149,7 @@ class SelectionDecision:
     rejected_trials: int
     admitted_trials: int
     policy_digest: str
-    completion_state: str
+    refused: Mapping[str, Any] | None  # the refusal (codes.refusal) when a mandatory method is not covered
     limitations: tuple[str, ...] = (
         "Historical success estimates are uncalibrated contextual heuristics, not truth probabilities.",
         "If method assignment was not randomized or paired, off-policy comparisons may be confounded.",
@@ -141,14 +157,15 @@ class SelectionDecision:
         "Claims remain candidate hypotheses until independently evidenced and promoted by G6.",
     )
 
+    @property
+    def completion_state(self) -> str:
+        return settled(self.refused)["completion_state"]
+
     def to_dict(self) -> dict[str, Any]:
-        return {"ordered_variants": list(self.ordered_variants),
-                "requirements": list(self.requirements), "missing": list(self.missing),
-                "rejected_trials": self.rejected_trials,
-                "admitted_trials": self.admitted_trials,
-                "policy_digest": self.policy_digest,
-                "completion_state": self.completion_state,
-                "limitations": list(self.limitations)}
+        return settled(self.refused, ordered_variants=list(self.ordered_variants),
+                       requirements=list(self.requirements), missing=list(self.missing),
+                       rejected_trials=self.rejected_trials, admitted_trials=self.admitted_trials,
+                       policy_digest=self.policy_digest, limitations=list(self.limitations))
 
 
 class MetacognitiveMethodSelector:
@@ -160,8 +177,9 @@ class MetacognitiveMethodSelector:
 
     ``learn_from`` names the splits whose trials it learns from (``training``, ``heldout``, ``shadow``); the default,
     held-out and shadow, keeps the development split out of the evidence. Repeated trials of one variant on one case
-    (under one frozen oracle) are all kept and grouped: the case counts once, with the share of its trials that
-    resolved. The same record twice (one ``trial_id``) is one record.
+    (one ``case_id`` in one ``cohort_id``, whatever the oracle's revision) are all kept and grouped: the case counts
+    once, with the share of its trials that resolved. The same record twice (one ``trial_id``) is one record. A trial
+    credits a variant only when it names that variant's id and its ``definition_digest``.
     """
     def __init__(self, trials: Sequence[EvaluatedTrial] = (), *,
                  admit_trial: Callable[[EvaluatedTrial], bool] | None = None,
@@ -198,18 +216,19 @@ class MetacognitiveMethodSelector:
             clean.append(t)
             seen.add(t.trial_id)
         self.trials = tuple(clean)
-        #: How many (oracle, case, variant) groups were admitted: the evidence count, whatever the repeats.
-        self._groups = len({(t.oracle_digest, t.case_id, t.variant_id) for t in self.trials})
+        #: How many (case, variant) groups were admitted: the evidence count, whatever the repeats or oracle revisions.
+        self._groups = len({(t.cohort_id, t.case_id, t.variant_id, t.variant_digest) for t in self.trials})
 
     def _score(self, variant: MethodVariant, context: ProblemSignature) -> dict[str, Any]:
+        digest = variant.definition_digest
         specific = [x for x in self.trials
-                    if x.variant_id == variant.id and x.domain == context.domain
+                    if x.variant_id == variant.id and x.variant_digest == digest and x.domain == context.domain
                     and x.uncertainty == context.uncertainty and x.claim_kind == context.claim_kind]
         # Do not transfer patterns from unrelated domains by default; such a
         # transfer is a hypothesis that requires evaluation, not prior evidence.
         cases: dict[tuple[str, str], list[EvaluatedTrial]] = {}
-        for x in specific:  # one variant's repeated trials on one case are one case, not several
-            cases.setdefault((x.oracle_digest, x.case_id), []).append(x)
+        for x in specific:  # one variant's repeated trials on one case are one case, whatever the oracle's revision
+            cases.setdefault((x.cohort_id, x.case_id), []).append(x)
         n = len(cases)
         wins = sum(sum(x.resolved and not x.critical_regression for x in group) / len(group)
                    for group in cases.values())
@@ -312,10 +331,11 @@ class MetacognitiveMethodSelector:
                   "trials": sorted(t.trial_id for t in self.trials),
                   "required": list(required), "context": vars(context),
                   "candidate_ids": sorted(v.id for v in variants)}
+        refused = (refusal(SELECTION_INCOMPLETE, "no affordable variant covers: " + ", ".join(missing))
+                   if missing else None)
         return SelectionDecision(tuple(selected), required, tuple(missing),
                                  self.rejected_trials, len(self.trials),
-                                 sha256(canonical_json(policy)),
-                                 "blocked-escalated" if missing else "qualified-draft")
+                                 sha256(canonical_json(policy)), refused)
 
 
 class MetacognitivePlanner:
@@ -335,17 +355,13 @@ class MetacognitivePlanner:
         required = set(required_methods)
         requested = {need for claim in claims for need in claim.evidence_needs}
         if not required.issubset(requested):
-            return {"completion_state": "blocked-escalated",
-                    "reason": "professional requirements not present in canonical claim obligations",
-                    "missing": sorted(required - requested),
-                    "plan": planned.to_dict()}
+            return refusal(OBLIGATION_NOT_PLANNED, "professional requirements not present in canonical claim obligations",
+                           missing=sorted(required - requested), plan=planned.to_dict())
         decision = self.selector.select(context, variants, required_methods=required_methods)
         if planned.missing:
-            return {"completion_state": "blocked-escalated", "reason": "typed models missing",
-                    "selection": decision.to_dict(), "plan": planned.to_dict()}
-        return {"completion_state": decision.completion_state,
-                "selection": decision.to_dict(), "plan": planned.to_dict(),
-                "note": "selection advises representation/order; the G6 executor still validates all mandatory steps"}
+            return refusal(MODEL_MISSING, "typed models missing", selection=decision.to_dict(), plan=planned.to_dict())
+        return settled(decision.refused, selection=decision.to_dict(), plan=planned.to_dict(),
+                       note="selection advises representation/order; the G6 executor still validates all mandatory steps")
 
 
 __all__ = ["ProblemSignature", "MethodVariant", "EvaluatedTrial", "SelectionDecision",

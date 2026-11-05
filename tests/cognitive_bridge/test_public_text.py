@@ -18,9 +18,10 @@ PUBLIC = sorted([*(ROOT / "docs" / "cognitive_bridge").glob("*.md"),
 #: The tool that wrote the PR's first draft, and the words G6 keeps out of what it says of a check (the verb for
 #: establishing beyond doubt, in each form, its noun, and the maturity word for untried work).
 BARRED = re.compile(r"(?i)chatgpt|\bpro(?:v(?:e|ed|en|es|ing|ably)|ofs?)\b|experiment(?:al)")
-#: ``verified`` said of something, rather than G6's state named in backticks; G6's own warning card carries the flag
-#: ``"verified": false`` (INV-ENV-2), which says the opposite, so the example dossier's cards may show it.
-BARE_VERIFIED = re.compile(r'(?<!`)\bverified\b(?!`)(?!": false)')
+#: ``verified`` said of something, rather than G6's state or field named as a token (in backticks or quotes, as the code
+#: names the key it drops); G6's own warning card carries the flag ``"verified": false`` (INV-ENV-2), which says the
+#: opposite, so the example dossier's cards may show it.
+BARE_VERIFIED = re.compile(r'(?<![`"\'])\bverified\b(?![`"\'])')
 
 
 def test_the_checker_that_runs_in_process_is_named_for_what_it_is():

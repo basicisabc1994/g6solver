@@ -12,6 +12,8 @@ import math
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
+from .codes import NO_PROBE, refusal, settled
+
 
 @dataclass(frozen=True)
 class Hypothesis:
@@ -272,6 +274,9 @@ class CognitiveAgent:
             # Proposer is advisory; calls to actual tools occur only here.
             current_hypotheses = [replace(h, prior=beliefs[h.id]) for h in hypotheses]
             proposals = self.proposer.propose(objective, current_hypotheses, history)
+            if len({p.id for p in proposals}) != len(proposals):
+                # the ranking names a probe by its id: two probes under one id could rank one and run the other
+                raise ValueError("duplicate probe ids in one proposal")
             candidates = [p for p in proposals if p.id not in seen and p.tool in self.tools]
             for p in candidates:
                 _validate_probe(p, beliefs)
@@ -283,6 +288,8 @@ class CognitiveAgent:
             # Tool metadata is always owned by the caller, regardless of proposer.
             if chosen.cost != tool.cost or chosen.assumed_match_probability != tool.assumed_match_probability:
                 raise ValueError("probe cost/likelihood must match the caller-owned tool registry")
+            if chosen.cost > remaining + 1e-12:  # checked again where it runs, against what is left now
+                raise ValueError("the chosen probe costs more than the remaining budget")
             observation = tool.call(chosen.question, dict(chosen.arguments))
             if not isinstance(observation, Observation) or type(observation.positive) is not bool:
                 raise ValueError("tool must return an Observation with a boolean outcome")
@@ -304,15 +311,16 @@ class CognitiveAgent:
                             "evaluator_ref": observation.evaluator_ref,
                             "expected_information_bits": ranked[0]["expected_information_bits"],
                             "prior": before, "posterior": dict(beliefs)})
-        return {"completion_state": "qualified-draft" if history else "blocked-escalated",
-                "stop_reason": "no further affordable discriminating probe" if history else "no executable discriminating probe",
-                "objective": objective,
-                "initial_beliefs": initial, "posterior": beliefs, "history": history,
-                "remaining_budget": remaining, "limitations": [
-                    "The hypotheses must be mutually exclusive and exhaustive within the model.",
-                    "Probe predictions and likelihoods are assumptions, not independently measured facts.",
-                    "Tool observations and provenance are recorded, not independently checked here.",
-                    "An LLM proposal or high posterior probability is not a discovery certificate."]}
+        return settled(
+            None if history else refusal(NO_PROBE, "no executable discriminating probe"),
+            stop_reason="no further affordable discriminating probe" if history else "no executable discriminating probe",
+            objective=objective,
+            initial_beliefs=initial, posterior=beliefs, history=history,
+            remaining_budget=remaining, limitations=[
+                "The hypotheses must be mutually exclusive and exhaustive within the model.",
+                "Probe predictions and likelihoods are assumptions, not independently measured facts.",
+                "Tool observations and provenance are recorded, not independently checked here.",
+                "An LLM proposal or high posterior probability is not a discovery certificate."])
 
 
 @dataclass(frozen=True)

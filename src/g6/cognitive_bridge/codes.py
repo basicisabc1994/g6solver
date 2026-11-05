@@ -1,40 +1,96 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The stable codes of g6.cognitive_bridge: each refusal and each card carries one, the same on every surface.
+"""The stable codes of g6.cognitive_bridge, and :func:`refusal`, the one place the package makes a refusal.
 
 A refusal is ``blocked-escalated`` and says which of these it is, in ``code`` and in its ``warning_card``; the block's
-refusals reach ``g6_invoke`` with their card, so the door shows the same code. ``tests/cognitive_bridge/
-test_block_refusal_codes.py`` pins each one, and the skill names each one.
+refusals reach ``g6_invoke`` with their card, so the door shows the same code. Every other result is
+``qualified-draft`` (:func:`settled`). ``tests/cognitive_bridge/test_refusal_inventory.py`` parses the package and
+fails on any other place that writes a state; ``tests/cognitive_bridge/test_block_refusal_codes.py`` pins each code,
+and the skill names each one.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from g6.core.reliability_envelope import warning_card
+from g6.invariants import ERROR_CODE_PATTERN
 
 #: The block refused its input: a field it does not take is ``G6_E_INPUT_VALIDATION`` at the door; this is the rest
 #: (priors that do not sum to one, a probe that does not predict every hypothesis, a plan with no claim).
 INPUT = "G6_E_COGNITIVE_BRIDGE_INPUT"
 #: An executor asked to run a plan without the caller's approval: nothing ran.
 APPROVAL_REQUIRED = "G6_E_COGNITIVE_APPROVAL_REQUIRED"
-#: A plan's steps differ from the canonical routing of its claims: nothing ran.
+#: A plan's steps differ from the canonical routing of its claims, or a compiled model no longer matches its pin:
+#: nothing ran.
 PLAN_TAMPERED = "G6_E_COGNITIVE_PLAN_TAMPERED"
 #: The orchestrator was asked to run a plan that is not approved, not fully specified, or has no registry: nothing ran.
 EXECUTION_NOT_APPROVED = "G6_E_COGNITIVE_EXECUTION_NOT_APPROVED"
-#: An assessment blocked: a method step, a critical check, a documentary section, a review or a conflict failed.
+#: An assessment blocked: a compiled step not executed by this orchestrator, a critical check, a documentary section,
+#: a review or a conflict failed.
 ASSURANCE_BLOCKED = "G6_E_COGNITIVE_ASSURANCE_BLOCKED"
 #: An assessment passed the checks it ran in this process; no G6 door re-ran them and no outside custody held them.
 NOT_PROMOTED = "G6_E_COGNITIVE_NOT_PROMOTED"
+#: The selector found no affordable variant for a mandatory method, or no affordable portfolio for all of them.
+SELECTION_INCOMPLETE = "G6_E_COGNITIVE_SELECTION_INCOMPLETE"
+#: A required (professional) method is not among the claims' evidence needs.
+OBLIGATION_NOT_PLANNED = "G6_E_COGNITIVE_OBLIGATION_NOT_PLANNED"
+#: An evidence need has no typed model, so no step can be planned for it.
+MODEL_MISSING = "G6_E_COGNITIVE_MODEL_MISSING"
+#: A step's prerequisite was not established (a causal estimate without identification): it did not run.
+PREREQUISITE_UNMET = "G6_E_COGNITIVE_PREREQUISITE_UNMET"
+#: A step's call raised, or answered with something that is not an answer: it is not counted as run.
+STEP_FAILED = "G6_E_COGNITIVE_STEP_FAILED"
+#: An executed plan had a blocked step or a missing model: the run as a whole is not complete.
+EXECUTION_INCOMPLETE = "G6_E_COGNITIVE_EXECUTION_INCOMPLETE"
+#: The compiled plan is not complete: a mandatory method has no selected variant or no typed model.
+COMPILE_BLOCKED = "G6_E_COGNITIVE_COMPILE_BLOCKED"
+#: An assurance dossier has a blocker: a critical check, a control, a documentary section or a review.
+DOSSIER_BLOCKED = "G6_E_COGNITIVE_DOSSIER_BLOCKED"
+#: The adaptation gate refused to recommend a guard change.
+ADAPTATION_REFUSED = "G6_E_COGNITIVE_ADAPTATION_REFUSED"
+#: Admitted assertions support and refute the same proposition and scope.
+EVIDENCE_CONTESTED = "G6_E_COGNITIVE_EVIDENCE_CONTESTED"
+#: Admitted assertions only refute the proposition (``g6.epistemic_integrity``'s REFUTED).
+EVIDENCE_REFUTED = "G6_E_COGNITIVE_EVIDENCE_REFUTED"
+#: Admitted assertions neither support nor refute the proposition.
+EVIDENCE_UNDETERMINED = "G6_E_COGNITIVE_EVIDENCE_UNDETERMINED"
+#: A reconciliation as a whole: an assertion was not admitted, or a proposition is contested, refuted or undetermined.
+EVIDENCE_NOT_RECONCILED = "G6_E_COGNITIVE_EVIDENCE_NOT_RECONCILED"
+#: The research agent found no affordable, executable, discriminating probe.
+NO_PROBE = "G6_E_COGNITIVE_NO_PROBE"
 
 CODES: tuple[str, ...] = (INPUT, APPROVAL_REQUIRED, PLAN_TAMPERED, EXECUTION_NOT_APPROVED, ASSURANCE_BLOCKED,
-                          NOT_PROMOTED)
+                          NOT_PROMOTED, SELECTION_INCOMPLETE, OBLIGATION_NOT_PLANNED, MODEL_MISSING, PREREQUISITE_UNMET,
+                          STEP_FAILED, EXECUTION_INCOMPLETE, COMPILE_BLOCKED, DOSSIER_BLOCKED, ADAPTATION_REFUSED,
+                          EVIDENCE_CONTESTED, EVIDENCE_REFUTED, EVIDENCE_UNDETERMINED, EVIDENCE_NOT_RECONCILED,
+                          NO_PROBE)
+#: The two states the bridge gives a result (it never gives ``verified``).
+STATES: tuple[str, ...] = ("qualified-draft", "blocked-escalated")
 
 
-def refusal(code: str, reason: str, **extra: Any) -> dict[str, Any]:
-    """A ``blocked-escalated`` answer that says why, under ``code`` and in a warning card with the same code."""
+def refusal(code: str, reason: str, *, card: Mapping[str, Any] | None = None, **extra: Any) -> dict[str, Any]:
+    """A ``blocked-escalated`` answer that says why, under ``code`` and in a warning card with the same code.
+
+    ``code`` is one of :data:`CODES`. A step G6's door refused passes the door's own ``card`` instead, whose code (a
+    ``G6_E_*`` code G6 or the component registered) the refusal then carries."""
     reason = reason[:400]
-    return {"completion_state": "blocked-escalated", "code": code, "reason": reason,
-            "warning_card": warning_card(code, reason), **extra}
+    if card is None:
+        if code not in CODES:
+            raise ValueError(f"{code!r} is not a code g6.cognitive_bridge registered")
+        card = warning_card(code, reason)
+    elif card.get("code") != code or not ERROR_CODE_PATTERN.match(str(code)):
+        raise ValueError(f"the door's card does not carry a registered G6_E_ code: {card.get('code')!r}")
+    return {"completion_state": "blocked-escalated", "code": code, "reason": reason, "warning_card": dict(card),
+            **extra}
 
 
-__all__ = ["APPROVAL_REQUIRED", "ASSURANCE_BLOCKED", "CODES", "EXECUTION_NOT_APPROVED", "INPUT", "NOT_PROMOTED",
-           "PLAN_TAMPERED", "refusal"]
+def settled(refused: Mapping[str, Any] | None, **fields: Any) -> dict[str, Any]:
+    """``fields`` under the state a result has: a refusal's state, code, reason and card, or ``qualified-draft``."""
+    return {**(dict(refused) if refused else {"completion_state": "qualified-draft"}), **fields}
+
+
+__all__ = ["ADAPTATION_REFUSED", "APPROVAL_REQUIRED", "ASSURANCE_BLOCKED", "CODES", "COMPILE_BLOCKED",
+           "DOSSIER_BLOCKED", "EVIDENCE_CONTESTED", "EVIDENCE_NOT_RECONCILED", "EVIDENCE_REFUTED",
+           "EVIDENCE_UNDETERMINED", "EXECUTION_INCOMPLETE", "EXECUTION_NOT_APPROVED", "INPUT", "MODEL_MISSING",
+           "NOT_PROMOTED", "NO_PROBE", "OBLIGATION_NOT_PLANNED", "PLAN_TAMPERED", "PREREQUISITE_UNMET",
+           "SELECTION_INCOMPLETE", "STATES", "STEP_FAILED", "refusal", "settled"]
