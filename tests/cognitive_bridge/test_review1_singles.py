@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Review 1, single findings 1, 17, 18 and 22: a probe runs as selected and within budget, no component result carries a
 bare ``verified`` field, refutation-only evidence is decided by ``g6.epistemic_integrity``'s own rule, and one variant's
-trials on one case count once whatever the oracle's revision."""
+trials on one case count once whatever the oracle's revision. Walking the class list added one more: a door reply that did
+not pass is never read as a run."""
 from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
 from returns.result import Success
 
 from g6.cognitive_bridge import (
@@ -62,6 +64,29 @@ def test_finding_17_the_executor_carries_no_bare_verified_field_outside_warning_
     assert out["steps"][0]["warning_card"]["code"] == "G6_E_PROMOTION_LAW"
     assert "verified" not in result, f'bare field remains in method result: verified={result.get("verified")}'
     assert _bare_verified(out) == []
+
+
+@pytest.mark.parametrize("reply", ["door_blocked", "never_seen"])
+def test_class_walk_a_door_reply_that_did_not_pass_is_never_a_run(monkeypatch, reply):
+    # failure_read_as_success, found walking the class: a step counts as run only when G6's door says it passed; a
+    # reply the executor does not recognise as a pass (here a state and verdict the door never gives) is a refusal
+    class Registry:
+        def invoke(self, *args, **kwargs):
+            state = "blocked-escalated" if reply == "door_blocked" else "qualified-draft"
+            return Success({"completion_state": state, "answer": {"valid": True}})
+    executor = MixedMethodExecutor(Registry())
+    if reply == "never_seen":
+        real = executor._invoke
+
+        def unseen(*args):
+            return {**real(*args), "completion_state": "pending", "ok": None}
+        monkeypatch.setattr(executor, "_invoke", unseen)
+    plan = MethodRouter().plan([ClaimIR("c", "claim", ("formal",), {"formal": {"formula": "P"}})])
+    out = executor.execute(plan, approved=True)
+    step = out["steps"][0]
+    assert step["completion_state"] == "blocked-escalated", f"a {reply} reply was read as a run"
+    assert out["completion_state"] == "blocked-escalated"
+    assert str(step.get("code", "")).startswith("G6_E_"), step
 
 
 def test_finding_18_refuted_only_assertions_block_by_the_existing_epistemic_rule():
