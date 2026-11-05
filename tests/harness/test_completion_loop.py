@@ -1379,9 +1379,9 @@ def test_the_parent_files_may_be_cut_but_the_task_and_the_patch_never(world, mon
     base = git(world.repo, "rev-parse", "HEAD")
     (world.repo / "mod.py").write_text(FIXED + "# padding\n" * (loop.MAX_PACK_CHARS // 9), encoding="utf-8")
     step = loop.advance(world.repo, TASK, base, world.session, critic=critic)
-    pack = critic.calls[0][1]
+    pack, change = critic.calls[0][1], repo_tests.change(world.repo, base)
     assert step.action == loop.STOP and not step.code and loop.CLEAN in step.text
-    assert TASK in pack and repo_tests.diff_text(repo_tests.change(world.repo, base)) in pack
+    assert TASK in pack and loop._shown(change, repo_tests.diff_read(change)).masked in pack     # the patch as it is read
     assert len(pack) == loop.MAX_PACK_CHARS      # the parent file was cut, and that is all that was
 
 
@@ -3336,18 +3336,23 @@ def sent(user: str) -> str:
     return user.split("candidate.patch:\n", 1)[1].split("\n\nparent/", 1)[0]
 
 
-def saved_after_the_first_read(world, monkeypatch, text: str) -> list[str]:
-    """An editor that saves once, the moment the round's first read of the patch is done. What each read gave."""
-    real, reads = repo_tests.diff_text, []
+def copy_of(world, read: repo_tests.DiffRead) -> str:
+    """The patch as a reviewer is sent it, made from ``read``, one read of the patch: what ``sent`` cuts from its pack."""
+    return loop._shown(repo_tests.change(world.repo, world.base), read).masked
 
-    def diff(change) -> str:
+
+def saved_after_the_first_read(world, monkeypatch, text: str) -> list[repo_tests.DiffRead]:
+    """An editor that saves once, the moment the round's first read of the patch is done. What each read gave."""
+    real, reads = repo_tests.diff_read, []
+
+    def diff(change) -> repo_tests.DiffRead:
         found = real(change)
         reads.append(found)
         if len(reads) == 1:
             world.edit(text)
         return found
 
-    monkeypatch.setattr(repo_tests, "diff_text", diff)
+    monkeypatch.setattr(repo_tests, "diff_read", diff)
     return reads
 
 
@@ -3355,9 +3360,10 @@ def test_the_patch_a_review_is_recorded_for_is_the_patch_its_reader_was_sent(wor
     Reviewed(monkeypatch)
     critic = reviewer("none")
     world.edit()
-    saved_after_the_first_read(world, monkeypatch, FIXED + "# saved after the first read\n")
+    reads = saved_after_the_first_read(world, monkeypatch, FIXED + "# saved after the first read\n")
     world.advance(critic=critic)
-    assert digest(sent(critic.calls[0][1])) == world.state()["reviews"][0]["patch"], "the reader was sent another patch"
+    assert sent(critic.calls[0][1]) == copy_of(world, reads[0]), "the reader was sent another patch"
+    assert digest(reads[0].text) == world.state()["reviews"][0]["patch"], "the review is recorded for another read"
 
 
 def test_a_round_reads_the_patch_once_before_its_review(world, monkeypatch):
@@ -3373,12 +3379,13 @@ def test_a_save_undone_during_the_review_leaves_a_clean_stop_that_is_true(world,
     """The reader was sent the one read, and the tree is that patch again at the end, so a clean stop is about what it read."""
     Reviewed(monkeypatch)
     world.edit()
-    saved_after_the_first_read(world, monkeypatch, FIXED + "# saved, then undone\n")
+    reads = saved_after_the_first_read(world, monkeypatch, FIXED + "# saved, then undone\n")
     critic = reads_then(world.edit)
     step = world.advance(critic=critic)
     assert "# saved, then undone" not in critic.calls[0][1], "the reader was sent a patch the record does not name"
     assert step.action == loop.STOP and not step.code and loop.CLEAN in step.text
-    assert digest(sent(critic.calls[0][1])) == world.state()["reviews"][0]["patch"] == digest(the_patch(world))
+    assert sent(critic.calls[0][1]) == copy_of(world, reads[0])
+    assert digest(reads[0].text) == world.state()["reviews"][0]["patch"] == digest(the_patch(world))
 
 
 def test_a_save_that_stays_leaves_no_clean_stop_for_the_patch_that_was_read(world, monkeypatch):
@@ -3395,10 +3402,10 @@ def test_a_reviewer_told_of_the_error_reads_the_patch_the_round_recorded(world, 
     Runs(monkeypatch, now=will_not_run)
     critic = reviewer("one", "one")
     world.edit()
-    saved_after_the_first_read(world, monkeypatch, FIXED + "# saved after the first read\n")
+    reads = saved_after_the_first_read(world, monkeypatch, FIXED + "# saved after the first read\n")
     world.advance(critic=critic)
     first, second = (sent(call[1]) for call in critic.calls)
-    assert first == second and digest(first) == world.state()["reviews"][0]["patch"]
+    assert first == second == copy_of(world, reads[0]) and digest(reads[0].text) == world.state()["reviews"][0]["patch"]
 
 def test_a_new_base_does_not_take_a_review_of_the_same_diff_on_the_old_base(world, monkeypatch):
     """Someone commits a file of their own: the agent's diff reads the same, on a parent the review never saw."""

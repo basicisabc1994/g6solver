@@ -46,6 +46,8 @@ code as it was. L9's runner waits for the agent inside the loop, and a hook cann
 """
 from __future__ import annotations
 
+import bisect
+import difflib
 import json
 import os
 import re
@@ -550,113 +552,138 @@ def _cut(head: str, parents: list[str], fits: bool, mask: Callable[[str], str] =
 
 def _pack(change: repo_tests.Change, patch: str, task: str, proof: str) -> str:
     """What L9's critic reads in its folder, as text, since it has no tools: the issue, the patch, and of the base commit
-    the files the patch touches. ``patch`` is the caller's read: reading it here would make a second patch. This is the
-    pack before anything is masked; ``_masked_pack`` is what is sent."""
+    the files the patch touches. ``patch`` is the patch as the reviewer reads it (``_shown``), made from the caller's read:
+    reading it here would make a second patch. This is the pack before anything is masked; ``_masked_pack`` is what is
+    sent."""
     head = _head(patch, task, proof)
     return _cut(head, _parents(change), len(head) <= MAX_PACK_CHARS)
 
 
-#: A hunk's head, with how many lines of the old side and of the new side follow it (one where git leaves a count out).
-_HUNK_AT = re.compile(r"@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+#: The unchanged lines the reviewer's copy of a patch shows on each side of a change: as many as git's diff shows by default.
+CONTEXT = 3
 
 
-def _sides(lines: list[str]) -> list[tuple[list[int], list[int]]]:
-    """For each file of a patch's ``lines``, the lines of its old side and of its new side, as indices, read by each hunk's
-    counts: a context line is of both, a removed line of the old, an added line of the new. A line no count allows ends its
-    hunk, so a file's head is never read as a line of it, and a line that starts ``\\`` (git's note of a missing last newline,
-    or G6's naming of bytes) is of neither."""
-    files, old, new, joined = [], 0, 0, False
-    for i, line in enumerate(lines):
-        mark = line[:1]
-        if old or new:
-            if mark == "\\":
-                continue
-            took_old, took_new = (mark == "-" and old > 0) or (mark == " " and old > 0 and new > 0), \
-                (mark == "+" and new > 0) or (mark == " " and old > 0 and new > 0)
-            if took_old or took_new:
-                if took_old:
-                    files[-1][0].append(i)
-                    old -= 1
-                if took_new:
-                    files[-1][1].append(i)
-                    new -= 1
-                continue
-            old = new = 0
-        head = _HUNK_AT.match(line)
-        if head:
-            if not joined:
-                files.append(([], []))
-            joined = True
-            old, new = (int(head[n]) if head[n] is not None else 1 for n in (1, 2))
-        elif mark != "\\":
-            joined = False
-    return files
+@dataclass(frozen=True)
+class Shown:
+    """A patch as the reviewer reads it (``_shown``): ``text`` before any mask, ``masked`` as it is sent, and ``hidden``,
+    whether a mask ran over a line of it, so the reviewer did not read that line whole."""
+    text: str
+    masked: str
+    hidden: bool
 
 
-def _masked_patch(patch: str, parents: list[str]) -> tuple[str, bool]:
-    """``patch`` with each value G6's scrubber finds masked where it stands, and whether a mask ran over a line of it, so a
-    review of it did not read it whole. The values are found in each side of each file as the patch shows it, its lines
-    without their marks, and in each parent file whole: not in the diff's text, where a mark parts a name from its value on
-    the next line, and where a rule that reads on to the end would read from one file into the next. A line of a side the
-    parent holds whole, a value in it found there, is masked where it stands too, so a value whose name the hunk leaves out
-    is still found. The patch's other lines, its heads and G6's own, are scrubbed one by one."""
-    lines, cuts, hidden = patch.split("\n"), {}, False
-    files = _sides(lines)
-    owned = {i for old, new in files for i in (*old, *new)}
-
-    def place(text: str, rows: list[str]):
-        """Each span the scrubber finds in ``text``, cut by row: (row, start, end, whether the span runs over a line)."""
-        starts = [0]
-        for row in rows[:-1]:
-            starts.append(starts[-1] + len(row) + 1)
-        for begin, end in secret_spans(text):
-            over = "\n" in text[begin:end]
-            for row, start in enumerate(starts):
-                a, b = max(begin, start), min(end, start + len(rows[row]))
-                if a < b:
-                    yield row, a - start, b - start, over
-
-    for side in (side for both in files for side in both):
-        rows = [lines[i][1:] for i in side]
-        for row, a, b, over in place("\n".join(rows), rows):
-            cuts.setdefault(side[row], []).append((a, b))
-            hidden = hidden or over
-    seen: dict[str, list[tuple[int, int, bool]]] = {}
-    for text in parents:
-        rows = text.split("\n")
-        for row, a, b, over in place(text, rows):
-            seen.setdefault(rows[row].rstrip("\r"), []).append((a, b, over))
-    for i in owned:
-        for a, b, over in seen.get(lines[i][1:].rstrip("\r"), ()):
-            cuts.setdefault(i, []).append((a, b))
-            hidden = hidden or over
-    for i, line in enumerate(lines):
-        if i not in owned:
-            lines[i] = scrub(line)
-        elif i in cuts:
-            merged: list[list[int]] = []
-            for a, b in sorted(cuts[i]):
-                if merged and a <= merged[-1][1]:   # overlapping or touching values are masked as one
-                    merged[-1][1] = max(merged[-1][1], b)
-                else:
-                    merged.append([a, b])
-            body, kept, at = line[1:], [], 0
-            for a, b in merged:
-                kept += [body[at:a], MASK]
-                at = b
-            lines[i] = line[0] + "".join(kept) + body[at:]
-    return "\n".join(lines), hidden
+def _over(text: str, begin: int, end: int) -> bool:
+    """Whether the value at ``text[begin:end]`` runs over a line, so masking it hides parts of two lines or more. A newline at
+    either end of it hides no second line."""
+    return "\n" in text[begin:end].strip("\n")
 
 
-def _masked_pack(change: repo_tests.Change, patch: str, task: str, proof: str) -> tuple[str, bool]:
+def _rows(text: str | None) -> list[str]:
+    """``text``'s lines, each with its newline where it has one, cut at newlines and nowhere else, as git cuts a file's."""
+    rows = (text or "").split("\n")
+    return [row + "\n" for row in rows[:-1]] + ([rows[-1]] if rows[-1] else [])
+
+
+def _found(text: str | None, rows: list[str]) -> list[list[tuple[int, int, bool]]]:
+    """For each of ``rows``, ``text`` cut by ``_rows``, where in that line each value lies that G6's scrubber finds in ``text``
+    read whole: (start, end, whether the value runs over a line). Read whole, a name and its value on a later line are one."""
+    starts, at, found = [], 0, [[] for _ in rows]
+    for row in rows:
+        starts.append(at)
+        at += len(row)
+    for begin, end in secret_spans(text or ""):
+        over, i = _over(text or "", begin, end), max(bisect.bisect_right(starts, begin) - 1, 0)
+        while i < len(rows) and starts[i] < end:
+            a, b = max(begin, starts[i]) - starts[i], min(end, starts[i] + len(rows[i].rstrip("\n"))) - starts[i]
+            if a < b:
+                found[i].append((a, b, over))
+            i += 1
+    return found
+
+
+def _range(start: int, stop: int) -> str:
+    """One side of a hunk's head, as a unified diff writes it: its first line and how many follow, or the line before an
+    empty side."""
+    return f"{start + 1 if stop > start else start},{stop - start}"
+
+
+def _masked(line: str, cuts: Iterable[tuple[int, int]]) -> str:
+    """``line`` with ``MASK`` in place of each of ``cuts``, overlapping or touching ones masked as one."""
+    merged: list[list[int]] = []
+    for a, b in sorted(cuts):
+        if merged and a <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    kept, at = [], 0
+    for a, b in merged:
+        kept += [line[at:a], MASK]
+        at = b
+    return "".join(kept) + line[at:]
+
+
+def _shown(change: repo_tests.Change, read: repo_tests.DiffRead) -> Shown:
+    """The patch as the reviewer reads it, made from the files ``read`` found, never from git's rendering of them: no git
+    setting reaches it, and the patch is still known by ``read.text`` alone. Each file's whole text at the base and now is
+    scrubbed alone (``secret_spans``), so a name on a line the change leaves out is still beside its value, and nothing of one
+    file masks another, and the two are then compared line by line here (``difflib``), with ``CONTEXT`` unchanged lines on
+    each side of a change. A line shown is masked where the scrubber found a value in it; an unchanged line, where it found
+    one in either text; and any line, where it found a value of one line in a line of the same file, at the base or now, with
+    the same words but for the spaces around them, so a value found beside its name stays masked on a line that moved or was
+    indented away from it. A file G6 does not read is named, with why, and a text that is not its file's bytes is followed by
+    the line naming them, as in ``read.text``: a file of bytes that are not UTF-8 is shown with U+FFFD in place of each byte
+    that is not, then that line. G6's own lines are scrubbed one by one."""
+    plain, masked, hidden = [], [], False
+
+    def own(line: str) -> None:
+        plain.append(line)
+        masked.append(scrub(line))
+
+    for one in read.files:
+        if one.unread:
+            own(f"--- a/{one.rel}\n")
+            own(f"+++ b/{one.rel}\n")
+            own(f"\\ G6: {one.rel} leads out of the repository, or lies below a link that does, so G6 did not read it\n")
+            continue
+        old = None if one.added else repo_tests.read_at(change.repo, change.base_commit, one.rel)
+        own(f"--- {'/dev/null' if old is None else 'a/' + one.rel}\n")
+        own(f"+++ {'/dev/null' if one.new is None else 'b/' + one.rel}\n")
+        sides = [(rows, _found(text, rows)) for text, rows in ((old, _rows(old)), (one.new, _rows(one.new)))]
+        alike: dict[str, list[tuple[int, int]]] = {}       # a value of one line, by the words of the line it is in
+        for rows, found in sides:
+            for row, cuts in zip(rows, found):
+                words, lead = row.strip(), len(row) - len(row.lstrip())
+                if words:
+                    alike.setdefault(words, []).extend((a - lead, b - lead) for a, b, over in cuts if not over)
+        matcher = difflib.SequenceMatcher(None, sides[0][0], sides[1][0], autojunk=False)
+        for group in matcher.get_grouped_opcodes(CONTEXT):
+            own(f"@@ -{_range(group[0][1], group[-1][2])} +{_range(group[0][3], group[-1][4])} @@\n")
+            for tag, i1, i2, j1, j2 in group:
+                for mark, side, lo, hi in ((" ", 1, j1, j2),) if tag == "equal" else (("-", 0, i1, i2), ("+", 1, j1, j2)):
+                    rows, found = sides[side]
+                    for i in range(lo, hi):
+                        line = rows[i].rstrip("\n")
+                        words, lead = line.strip(), len(line) - len(line.lstrip())
+                        cuts = [*found[i], *(sides[0][1][i1 + i - j1] if tag == "equal" else ()),
+                                *((lead + max(a, 0), lead + min(b, len(words)), False)
+                                  for a, b in alike.get(words, ()) if max(a, 0) < min(b, len(words)))]
+                        hidden = hidden or any(over for _, _, over in cuts)
+                        end = "\n" if rows[i].endswith("\n") else "\n\\ No newline at end of file\n"
+                        plain.append(f"{mark}{line}{end}")
+                        masked.append(f"{mark}{_masked(line, ((a, b) for a, b, _ in cuts))}{end}")
+        if one.note:
+            own(one.note)
+    return Shown("".join(plain), "".join(masked), hidden)
+
+
+def _masked_pack(change: repo_tests.Change, shown: Shown, task: str, proof: str) -> tuple[str, bool]:
     """The pack as it is sent, and whether a mask ran over a line of the task or the patch, the parts a review must read
     whole. What looks like a secret is masked in each part alone (the issue, the patch, each parent file), so a rule that
-    reads on to the end never reads from one part into the next, and in the patch where it stands (``_masked_patch``)."""
+    reads on to the end never reads from one part into the next, and in the patch as ``_shown`` masks it."""
     issue, parents = _issue(task, proof), _parents(change)
-    shown, hidden = _masked_patch(patch, [part.partition("\n")[2] for part in parents])
-    hidden = hidden or any("\n" in issue[begin:end] for begin, end in secret_spans(issue))
-    head = f"{scrub(issue)}\n\ncandidate.patch:\n{shown}"
-    return _cut(head, [scrub(part) for part in parents], len(_head(patch, task, proof)) <= MAX_PACK_CHARS, scrub), hidden
+    hidden = shown.hidden or any(_over(issue, begin, end) for begin, end in secret_spans(issue))
+    head = f"{scrub(issue)}\n\ncandidate.patch:\n{shown.masked}"
+    return _cut(head, [scrub(part) for part in parents], len(_head(shown.text, task, proof)) <= MAX_PACK_CHARS, scrub), hidden
 
 
 def critic_file(n: int) -> str:
@@ -665,18 +692,23 @@ def critic_file(n: int) -> str:
 
 
 def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: str, where: Path, n: int = 1,
-               told: str = "", *, patch: str) -> dict:
+               told: str = "", *, patch: repo_tests.DiffRead, whole: bool = False) -> dict:
     """L9's critic: another model family reads the finished patch once, and K's, ``n`` the review it is. One that fails is
     recorded and L9 goes on. Its test, if it has one, waits in ``where`` to run with the probes. ``told``: what follows the
-    pack, for a reviewer sent back. ``patch``: what it reads, as the caller read it. What it gives names the model called,
+    pack, for a reviewer sent back. ``patch``: the caller's one read (``diff_read``). What it gives names the model called,
     here where the call is made: who is approved may change, and a later step calls no one. What looks like a secret is
     masked before it is sent (``_masked_pack``), while the head the review must read whole stays whole; ``masked`` counts
     the values, for the report. A mask that ran over a line of the task or the patch left the reviewer short of reading
-    them whole, so a clean reply from it is a failed review (``HIDDEN``); a defect it names stands as any other."""
+    them whole, so a clean reply from it is a failed review (``HIDDEN``); a defect it names stands as any other. The reviewer
+    reads the patch as ``_shown`` makes it from that read's files. ``whole``: K's rule, that a reviewer who cannot be sent
+    the whole task and patch is not asked (``TOO_LONG``)."""
     found = {"verdict": "failed", "rule": "", "why": "", "test": "", "error": ""}
+    shown = _shown(change, patch)
+    if whole and not _read_whole(shown.text, task):
+        return {**found, "error": TOO_LONG}
     proof = f"review {uuid.uuid4().hex}"
-    pack = _pack(change, patch, task, proof)
-    sent, hidden = _masked_pack(change, patch, task, proof)
+    pack = _pack(change, shown.text, task, proof)
+    sent, hidden = _masked_pack(change, shown, task, proof)
     masked = max(sent.count(MASK) - pack.count(MASK), 1) if sent != pack else 0
     try:
         found = critic_report(caller.complete(system, sent + (f"\n\n{MASKED_NOTE}" if masked else "") + told), proof=proof)
@@ -691,9 +723,10 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
 
 
 def _read_whole(patch: str, task: str) -> bool:
-    """Whether the pack holds the whole task and the whole patch: that its head fits. This is a length and never a search of
-    the text, as a task may quote the patch. The pack is cut from its end, so the parent files go first, and a new file
-    ``diff_text`` cuts is past this limit already. A reader of part of either has no clean review to give."""
+    """Whether the pack holds the whole task and the whole patch, ``patch`` as the reviewer reads it (``_shown``): that its
+    head fits. This is a length and never a search of the text, as a task may quote the patch. The pack is cut from its end,
+    so the parent files go first, and a new file ``diff_read`` cuts is past this limit already. A reader of part of either
+    has no clean review to give."""
     return len(_head(patch, task, f"review {'0' * 32}")) <= MAX_PACK_CHARS
 
 
@@ -710,10 +743,11 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     """One round of the review-until-clean loop: a fresh review of the patch as it stands, kept in ``reviews``, then every
     review's test, each alone. It gives what fails and the words of the latest review whose test fails. A review that failed
     ends the loop whatever fails, as the patch it should have read was not read, so it gives nothing to send back. A hook cut
-    short repeats its review, and that review's test is the only one with its number. The patch is read once, here: what is
-    kept, what the reviewer is sent and the digest the loop's end compares are that one read, so a clean stop is about what
-    the reviewer read, with no second read to differ from it. It is kept first, byte for byte, as ``run.py`` keeps
-    ``round-n.patch``: a later repair must not lose what a finding was about. A file counts as
+    short repeats its review, and that review's test is the only one with its number. The patch is read once, here
+    (``diff_read``): what is kept, what the reviewer is sent and the digest the loop's end compares are that one read, so a
+    clean stop is about what the reviewer read, with no second read to differ from it. The reviewer is sent the patch made
+    from that read's files (``_shown``), and the patch is known by that read's text alone. It is kept first, byte for byte,
+    as ``run.py`` keeps ``round-n.patch``: a later repair must not lose what a finding was about. A file counts as
     passed only if each case that ever failed in it has passed by its own id: a skip, a rename or a case no longer collected
     fixes nothing. This decides what the report may call fixed, and what fails, and so what goes back, is as it was.
 
@@ -721,12 +755,12 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     repair is spent: only where nothing else failed, as otherwise what failed goes back and a fresh review reads the repair.
     A review's ``unrun`` says why its test shows nothing on the latest run, so a later run updates it, or takes it away."""
     n, results, failed, failing, where = len(reviews) + 1, {}, {}, set(), session / "sets" / "critic"
-    patch, kept, mine = repo_tests.diff_text(change), session / "rounds" / f"round-{n}.patch", critic_file(n)
+    read, kept, mine = repo_tests.diff_read(change), session / "rounds" / f"round-{n}.patch", critic_file(n)
+    patch = read.text
     kept.parent.mkdir(parents=True, exist_ok=True)
     kept.write_bytes(patch.encode("utf-8"))
     (where / mine).unlink(missing_ok=True)
-    said = (run_critic(change, task, critic, shipped.critic, where, n, patch=patch) if _read_whole(patch, task) else
-            {"verdict": "failed", "rule": "", "why": "", "test": "", "error": TOO_LONG})
+    said = run_critic(change, task, critic, shipped.critic, where, n, patch=read, whole=True)
 
     def run(name: str) -> None:
         got = run_set(change, where, at_base=False, deadline=deadline, only=name)
@@ -751,7 +785,7 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
         (where / mine).unlink(missing_ok=True)
         del results[mine], failed[mine]
         said.update(run_critic(change, task, critic, shipped.critic, where, n, told=WOULD_NOT_RUN.format(error=told),
-                               patch=patch), told=told, claimed=claimed)
+                               patch=read, whole=True), told=told, claimed=claimed)
         if (where / mine).is_file():
             run(mine)
     said.update(n=n, patch=digest(patch), file=mine, results=results, failed=failed)
@@ -1214,7 +1248,7 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
     def check() -> tuple[set[str], str]:
         if critic is not None and "critic" not in state:
             state["critic"] = run_critic(change, task, critic, shipped.critic, session / "sets" / "critic",
-                                         patch=repo_tests.diff_text(change))
+                                         patch=repo_tests.diff_read(change))
         seen = []
         state["ran"] = {}
         for label, one in state["sets"].items():

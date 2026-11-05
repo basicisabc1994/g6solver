@@ -732,18 +732,28 @@ def _at_newlines(text: str) -> list[str]:
     return lines[:-1] if not lines[-1] else lines
 
 
-def _tracked_bytes(change: Change, new: set[str]) -> str:
-    """A line for each tracked file ``change`` holds, as it stands in the working tree, naming the digest of its bytes. Git's
-    diff shows a file after its filters (line endings by ``core.autocrlf`` or ``.gitattributes``, a ``clean`` driver), so
-    two working files that run differently can give one diff; with these lines they cannot. A removed file has no bytes,
-    and a link's text is what git shows, so neither has a line; nor has a file outside the tree (``outside_links``)."""
-    root, lines = change.repo.resolve(), []
-    for rel in sorted(set(change.files) - new - set(change.outside_links)):
-        path = change.repo / rel
-        if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(root):
-            continue
-        lines.append(f"\\ G6: the bytes of {rel} as they stand have SHA-256 {hashlib.sha256(path.read_bytes()).hexdigest()}\n")
-    return "".join(lines)
+@dataclass(frozen=True)
+class FileRead:
+    """One file a patch holds, as ``diff_read`` found it: its path; its text now as a reader is shown it, with the line
+    endings ``_text`` gives (None where the file is gone); the line naming its bytes where that text is not them (``""``
+    where it is); whether it is new since the base, which then holds no text of it; and whether G6 left it unread, as it
+    leads out of the repository (``Change.outside_links``) and G6 never reads such a file in its own process (review M1)."""
+
+    rel: str
+    new: str | None
+    note: str = ""
+    added: bool = False
+    unread: bool = False
+
+
+@dataclass(frozen=True)
+class DiffRead:
+    """One read of a patch. ``text`` is what the patch is known by (``diff_text``), and ``files`` is each file it holds, as
+    that same read found it, so what a reader is shown of the patch can be made from the files themselves, the bytes
+    ``text`` names, with no second read that could differ from the first."""
+
+    text: str
+    files: tuple[FileRead, ...]
 
 
 def _bytes_line(raw: bytes, shown: str, what: str) -> str:
@@ -757,12 +767,16 @@ def _bytes_line(raw: bytes, shown: str, what: str) -> str:
     return f"\\ G6: {what} shows here only in part; its bytes have SHA-256 {hashlib.sha256(raw).hexdigest()}\n"
 
 
-def diff_text(change: Change) -> str:
-    """The change as one unified diff: git's own for tracked files (each file's text, never a ``textconv`` filter's),
-    then each untracked file the change holds as added lines (at most ``DIFF_FILE_CHARS`` of it), so a scan of the
-    diff sees a new test file too. Text that is not its file's bytes exactly is followed by a line naming them
-    (``_bytes_line``), and so is each tracked file the change holds (``_tracked_bytes``): git shows a file after its
-    filters, so its text alone does not fix the bytes."""
+def diff_read(change: Change) -> DiffRead:
+    """The change, read once. Its ``text`` is one unified diff: git's own for tracked files (each file's text, never a
+    ``textconv`` filter's); then a line for each tracked file the change holds, naming the digest of its bytes as they
+    stand, or of the path a link names, as git shows a file after its filters (line endings by ``core.autocrlf`` or
+    ``.gitattributes``, a ``clean`` driver), so two working files that run differently could give one diff, and with these
+    lines cannot; then each untracked file the change holds as added lines (at most ``DIFF_FILE_CHARS`` of it), so a scan of
+    the diff sees a new test file too, each followed by a line naming its bytes where its text is not them
+    (``_bytes_line``). A removed file has no bytes, so no line. Its ``files`` are what that read found of each file the
+    change holds. A file outside the tree (``outside_links``) is never read (M1): it has no line, and no text in ``files``,
+    unless it is a tracked link itself, whose text is the path it names, read without following it."""
     # a private index built from the base tree (the review of VS-4, finding 1): git's flags, its stat cache and an
     # entry written into the repository's own index hide nothing (review C2 too)
     diffed, others = _private(change.repo, change.base_commit,   # --text: an attribute never hides a file's lines
@@ -770,14 +784,42 @@ def diff_text(change: Change) -> str:
                               ("ls-files", "--others", "--exclude-standard", "-z"))
     shown = diffed.decode("utf-8", "replace")
     new = set(_paths(others)) | _tracked_new(change.repo, change.base_commit)   # a force-added file too (F4)
-    text = shown + _bytes_line(diffed, shown, "the diff of the tracked files") + _tracked_bytes(change, new)
-    for rel in sorted(new & set(change.files) - set(change.outside_links)):   # never read (M1)
+    text, files, root, outside = shown + _bytes_line(diffed, shown, "the diff of the tracked files"), [], \
+        change.repo.resolve(), set(change.outside_links)
+    for rel in sorted(set(change.files) - new):
+        path = change.repo / rel
+        if path.is_symlink():      # its text is the path it names, as git holds a link: read, the link is never followed
+            named = os.readlink(path)
+            text += f"\\ G6: the link {rel} as it stands names a path with SHA-256 {hashlib.sha256(os.fsencode(named)).hexdigest()}\n"
+            files.append(FileRead(rel, named))
+        elif rel in outside:
+            files.append(FileRead(rel, None, unread=True))
+        elif not path.is_file():
+            files.append(FileRead(rel, None))
+        elif not path.resolve().is_relative_to(root):
+            files.append(FileRead(rel, None, unread=True))
+        else:
+            raw = path.read_bytes()
+            text += f"\\ G6: the bytes of {rel} as they stand have SHA-256 {hashlib.sha256(raw).hexdigest()}\n"
+            now = _text(raw)
+            files.append(FileRead(rel, now, _bytes_line(raw, now, rel)))
+    for rel in sorted(new & set(change.files)):
+        if rel in outside:
+            files.append(FileRead(rel, None, added=True, unread=True))
+            continue
         raw = (change.repo / rel).read_bytes()
         lines = _at_newlines(_text(raw)[:DIFF_FILE_CHARS])
         shown = "".join(f"{line}\n" for line in lines)
+        note = _bytes_line(raw, shown, rel)
         text += (f"--- /dev/null\n+++ b/{rel}\n@@ -0,0 +1,{len(lines)} @@\n" + "".join(f"+{line}\n" for line in lines)
-                 + _bytes_line(raw, shown, rel))
-    return text
+                 + note)
+        files.append(FileRead(rel, shown, note, added=True))
+    return DiffRead(text, tuple(files))
+
+
+def diff_text(change: Change) -> str:
+    """The change as one unified diff, what a patch is known by: ``diff_read``'s ``text``."""
+    return diff_read(change).text
 
 
 # --- the run ----------------------------------------------------------------------------------------------------------

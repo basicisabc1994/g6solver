@@ -252,14 +252,15 @@ def test_a_secret_in_a_parent_file_the_pack_cuts_never_reaches_the_reviewer(rig,
     from g6.context.redact import scrub
 
     secret = "made-up-value-for-this-test-77"
-    patch = "--- a/mod.py\n+++ b/mod.py\n@@ -1 +1 @@\n-value = 0\n+value = 1\n"
+    read = repo_tests.diff_read(rig.change)
+    patch = loop._shown(rig.change, read).text      # the patch as the reviewer reads it, made from the one read's files
     head = loop._head(patch, TASK, "review " + "0" * 32) + "\n\nparent/mod.py:\n"
     assignment = f"token = '{secret}'\n"
     room = loop.MAX_PACK_CHARS - len(head) - (len(assignment) - 2)      # the cap falls after the value, before its quote
     parent = "#" * (room - 1) + "\n" + assignment
     assert secret not in scrub(parent) and secret in scrub(parent[:-2])
     monkeypatch.setattr(repo_tests, "read_at", lambda *args: parent)
-    found = loop.run_critic(rig.change, TASK, rig.critic, loop.harness().critic, rig.session / "sets" / "critic", patch=patch)
+    found = loop.run_critic(rig.change, TASK, rig.critic, loop.harness().critic, rig.session / "sets" / "critic", patch=read)
     assert len(rig.calls) == 1 and secret not in rig.calls[0] and found["masked"] >= 1
     assert rig.calls[0].startswith("issue.txt:\n") and patch in rig.calls[0]       # the head the review reads stays whole
 
@@ -277,8 +278,21 @@ def test_each_span_the_scrubber_names_is_what_scrub_masks():
     assert "".join(shown) + text[at:] == scrub(text)
 
 
-def _sent(rig, patch: str, task: str = TASK) -> dict:
-    return loop.run_critic(rig.change, task, rig.critic, loop.harness().critic, rig.session / "sets" / "critic", patch=patch)
+def _sent(rig, read: repo_tests.DiffRead, task: str = TASK, change: repo_tests.Change | None = None) -> dict:
+    return loop.run_critic(change or rig.change, task, rig.critic, loop.harness().critic, rig.session / "sets" / "critic",
+                           patch=read)
+
+
+def _files(rig, monkeypatch, base: dict[str, str], now: dict[str, str], rendering: str = "") -> repo_tests.Change:
+    """A change of the files in ``now``, written where they stand, against a base that held ``base`` (a file it lacks is new
+    since), with ``rendering`` what git's own diff of them says: the patch is read from these files, as ``diff_read`` reads."""
+    for rel, text in now.items():
+        (rig.repo / rel).write_bytes(text.encode("utf-8"))
+    rels = tuple(sorted(now))
+    monkeypatch.setattr(repo_tests, "_private", lambda *args: [rendering.encode(),
+                                                               "".join(f"{rel}\0" for rel in rels if rel not in base).encode()])
+    monkeypatch.setattr(repo_tests, "read_at", lambda repo, commit, rel, **kwargs: base.get(rel))
+    return repo_tests.Change(rig.repo, rig.base, rig.base, rig.base, rels, {}, {}, rels, ())
 
 
 def test_a_secret_the_diffs_line_marks_part_from_its_name_never_reaches_the_reviewer(rig):
@@ -288,25 +302,27 @@ def test_a_secret_the_diffs_line_marks_part_from_its_name_never_reaches_the_revi
     source = 'config = {\n    "api_key":\n        "' + secret + '",\n}\n'
     rig.source.write_bytes(source.encode())
     assert secret not in scrub(source)                     # found in the file itself
-    found = _sent(rig, repo_tests.diff_text(rig.change))
+    found = _sent(rig, repo_tests.diff_read(rig.change))
     assert len(rig.calls) == 1 and secret not in rig.calls[0] and found["masked"] >= 1
 
 
-def test_a_secret_split_over_a_tracked_files_hunk_never_reaches_the_reviewer(rig):
+def test_a_secret_split_over_a_tracked_files_hunk_never_reaches_the_reviewer(rig, monkeypatch):
     old, new = "made-up-old-value-0000", "made-up-new-value-1234"
     patch = (f'--- a/conf.py\n+++ b/conf.py\n@@ -1,3 +1,3 @@\n config = {{\n     "api_key":\n-        "{old}",\n'
              f'+        "{new}",\n')
-    _sent(rig, patch)
+    change = _files(rig, monkeypatch, {"conf.py": f'config = {{\n    "api_key":\n        "{old}",\n'},
+                    {"conf.py": f'config = {{\n    "api_key":\n        "{new}",\n'}, patch)
+    _sent(rig, repo_tests.diff_read(change), change=change)
     assert old not in rig.calls[0] and new not in rig.calls[0] and '"api_key":' in rig.calls[0]
 
 
 def test_a_value_whose_name_the_hunk_leaves_out_is_found_in_the_parent_file(rig, monkeypatch):
     secret = "made-up-context-value-0123"
     parent = f'cfg = {{\n    "token":\n\n\n        "{secret}",\n    "a": 1,\n    "b": 2,\n    "c": 3,\n}}\n'
-    monkeypatch.setattr(repo_tests, "read_at", lambda *args: parent)
     patch = (f'--- a/mod.py\n+++ b/mod.py\n@@ -5,4 +5,4 @@\n         "{secret}",\n     "a": 1,\n     "b": 2,\n'
              '-    "c": 3,\n+    "c": 4,\n')
-    _sent(rig, patch)
+    change = _files(rig, monkeypatch, {"mod.py": parent}, {"mod.py": parent.replace('"c": 3', '"c": 4')}, patch)
+    _sent(rig, repo_tests.diff_read(change), change=change)
     assert secret not in rig.calls[0] and '+    "c": 4,' in rig.calls[0]
 
 
@@ -317,10 +333,10 @@ def test_a_task_that_opens_a_private_key_hides_nothing_of_the_patch(rig):
     assert ended.ending == "clean"                          # the marker hid one line's end, and no line of the patch
 
 
-def test_a_key_marker_in_one_file_masks_nothing_of_the_next(rig):
-    patch = ('--- /dev/null\n+++ b/a.py\n@@ -0,0 +1,1 @@\n+MARK = "-----BEGIN PRIVATE KEY-----"\n'
-             '--- /dev/null\n+++ b/b.py\n@@ -0,0 +1,2 @@\n+def kept():\n+    return 1\n')
-    _sent(rig, patch)
+def test_a_key_marker_in_one_file_masks_nothing_of_the_next(rig, monkeypatch):
+    change = _files(rig, monkeypatch, {}, {"a.py": 'MARK = "-----BEGIN PRIVATE KEY-----"\n',
+                                           "b.py": "def kept():\n    return 1\n"})
+    _sent(rig, repo_tests.diff_read(change), change=change)
     assert "+def kept():\n+    return 1" in rig.calls[0] and "+++ b/b.py" in rig.calls[0]
     assert "BEGIN PRIVATE" not in rig.calls[0]
 
