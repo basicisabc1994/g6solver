@@ -3111,3 +3111,28 @@ so the reading is fixed before any count.
 - **The within-run comparison is unchanged:** it was registered on 2026-11-05 (midday) as the sign test over bugs alone, and it
   stays so.
 - **What changes on the record:** nothing. No stage has met either condition, and no code changes.
+
+## 2026-11-06 (morning): the K3 pilot is 14 runs, because round 3 schedules two repeats of a loop arm on its bugs
+
+**What happened.** The pilot's launcher asked for four runs a bug, as the pilot was set (2026-11-05, afternoon). Round 3's own
+rule on 754513c (`run.r3_loop_key`) schedules a loop arm's repeats 1 and 2 only on a bug outside the held-out set, and none of
+the seven pilot bugs is held out (checked for each: repeats 1 and 2 are scheduled, 3, 4 and 5 are not). So black-5148's
+repeats 3 and 4 were refused before anything ran ("round 3 schedules no run"); nothing was spent, and the launcher went on to
+the next bug. The same holds for every pilot bug. The set pilot and the code it runs on disagreed, and nobody noticed before
+the runs started.
+
+**What had been seen when this was written.** Three pilot rows: black-5148 repeat 1 (its final patch fails one maintainers'
+test), black-5148 repeat 2 (its final patch passes) and click-3404 repeat 1 (its final patch fails ten). No count of
+conversions had been made.
+
+**What the pilot is now.**
+- Fourteen runs: the seven bugs in the set order, repeats 1 and 2 of each, on 754513c as it stands. The study's code is not
+  changed, since it is the reviewed commit the loop's arms are bound to.
+- The bar is applied as it was set, as a share: at least 45% of the wrong first patches the pilot gives are made right, and
+  no right first patch is made wrong (with fewer than 50 right first patches, any one made wrong fails the bar). The counts by
+  step, and on the four bugs alone, are reported as set.
+- The cost: half the runs. At the earlier rate (22 wrong first patches in 29 K-arm runs) fourteen runs give about 11 wrong
+  first patches, so the bar is about 5 of 11 and the share is read less precisely. The pilot shows only whether the rule step
+  can convert at all; stage 5 is the test.
+- If the owner rules instead that repeats 3 and 4 be run, that needs a reviewed change to round 3's schedule, and it is
+  written in its own section before those runs.
