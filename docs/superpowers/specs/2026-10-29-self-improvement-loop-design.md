@@ -586,13 +586,26 @@ cognitive work, with programming as the first toy model. So P2 was built first a
   before it developed anything are the ones on disk at that last check, which runs with the adoption's row already made
   and under the lock that writes it, sealed bytes first and digests after; the row carries those digests, and a change is
   a refusal of its own in the cycle's row, which the next tick refuses again. `ShadowHarness.adopt` is the one function that
-  writes an adoption, and it refuses a caller with no reading or no last check. A cycle that adopts nothing is held to the
-  same check as it ends, so a change is `G6_E_LOOP_FROZEN_CHANGED` whether or not a candidate won. The judge is pinned by
-  the verdict function selected, by its file and qualified name, and by the bytes of each of the person's files its module
-  reaches through its import graph (G6's own package is the envelope's, an installed package the installation's), and each
-  case's answer by its value with its type (`answer_identity`), never a JSON rendering two answers can share. What gets
-  past it: an edit in the moment
-  after the last read and before the write, and bytes changed and put back between the two reads. Each proposer, and the
+  writes an adoption. That last check is the harness's own, given it when the loop binds it (`_still_frozen`, the one
+  reading and comparison the loop calls too), and only its own success value, a `Held`, lets the write through; a caller's
+  check can only add a refusal, and a harness built with no check adopts nothing. One rule codes a cycle (`_coded`): every
+  status that held, the cycle's own end among them, is kept in the row's `statuses`, and the first in `RANKED` gives its
+  code: a rollback (it has happened, and the log counts generations by it), then a frozen change, then the safety stops
+  (sealed breach, unmetered caller, classifier stop, barred caller), then the tick's reservation spent. A safety stop a
+  frozen change outranks still pauses the loop, since the pause reads every status and is read before the frozen digests.
+  A cycle that adopts nothing ends on the same check, so a change is `G6_E_LOOP_FROZEN_CHANGED` whether or not a candidate
+  won, and whatever else held; a wait or a stop met at a model call writes no cycle, and the next tick's reading refuses
+  the change. The judge is pinned by files listed whole, never by following imports: the verdict function selected, by its
+  file and qualified name, each check by its file and name, every file Python could import under the roots that hold the
+  verdict and the checks (the folders they are in, or the `roots` a domain declares), and every module loaded from
+  anywhere outside those, G6 and the installation, by its bytes. A verdict or check in no such place is refused at
+  enrolment (`G6_E_LOOP_JUDGE_UNPINNED`). Each case's answer is pinned by an exact encoding (`answer_identity`): each value
+  with its exact type, a float by its IEEE bytes, set members and mapping items in the order of their encodings, an
+  object by its class and its whole `__dict__`, and no pickle or `repr`; one with no exact encoding, or one the split's
+  reference cannot render, is refused at enrolment (`G6_E_LOOP_ANSWER_UNIDENTIFIABLE`). What gets past it: an edit in the
+  moment after the last read and before the write, bytes changed and put back between the two reads, and state that lives
+  in no file: a module's globals or a class's attributes changed as it runs, a closure's cells, a callable object's
+  attributes. Each proposer, and the
   domain shown the measured view, reads a copy of its own; a sealed-split guard inside the process (limits below); a loop
   folder that may not overlap what judges it.
 - **Adoption with no person, in shadow only** (`g6/metaharness/shadow.py`). What the gate recommends becomes the loop's
