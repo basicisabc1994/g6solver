@@ -2799,3 +2799,20 @@ The pre-spend rule of the morning's section stands as written.
 - **Still to do before the pilot:**
   - the host session's `turn()` must take K3's rule step, watchdog and copy rule;
   - `export_reviewer_cases` must find K3's first patch in `baseline/`.
+
+## 2026-11-05 (midday, later): stage 5's preparation takes the determined bugs first
+
+**What changes: the order of preparation, nothing else.**
+- The 84 bugs both families labelled determined are prepared first, in draw order. The other 46 follow, in draw order.
+- No bug is added or dropped. Which bugs stage 5 runs, and how each reading is made, stay as registered.
+
+**Why.** Preparation runs about 45 to 60 minutes a bug, most of it waiting for free memory, so all 130 would take about four
+and a half days. Power, the pilot bar and the root cause above are all stated on determined bugs. Preparing those first
+brings forward the day stage 5's runs can start, by about 40 hours at the present rate.
+
+**No bug is prepared twice for a better result.**
+- A bug with a failed preparation step on record keeps that failure and gives way, as stage 5's rule says, even though
+  preparation is restarted. At the restart, none has failed; two are prepared.
+- A bug already prepared is not prepared again.
+- A bug part-way through starts again at its first step that has not passed.
+- The old process is stopped only between steps, never while a step runs.
