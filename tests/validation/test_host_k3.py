@@ -316,3 +316,20 @@ def test_a_host_k3_run_gives_its_watchdog_to_each_resumed_session_as_a_container
     assert record["status"] == "finished", record.get("error")
     assert [name for name, _ in given] == ["stream.jsonl", "rule_stream.jsonl"] and given[0][1] is None   # the first, as in a container
     assert isinstance(given[1][1], we.Watchdog)                          # the rule step's, the run's one watchdog
+
+
+@pytest.mark.parametrize("verdict", ["none", "defect"])
+def test_review_4_finding_3_a_host_k2_loop_whose_first_result_names_no_session_is_error_with_no_review(monkeypatch, tmp_path,
+                                                                                                     verdict):
+    """As in a container: the K loop starts only from a result that names its session, so with none no review runs and nothing is
+    resumed, and the run's ending on record is "error", even where its first review would have been clean."""
+    lines = helpers.stream("s1")
+    result = json.loads(lines[-1])
+    result.pop("session_id")
+    lines[-1] = json.dumps(result)
+    reviews = []
+    monkeypatch.setattr(we, "run_critic", lambda *a, **kw: (reviews.append(1), {"verdict": verdict, "test": "", "seconds": 0})[1])
+    record, _, starts, ctx, *_ = helpers.host_run(monkeypatch, tmp_path, "K2", [("s1", "def f(): return 1\n", lines)])
+    assert len(starts) == 1 and reviews == [] and record["status"] == "error" and "repairs" not in record
+    assert "session_id" not in we.host_facts(ctx.archive.root / record["run"] / we.c.NDJSON["stream"], ctx.model)["result"]
+    assert we.c.ending(ctx.archive, record["run"])["status"] == "error"

@@ -807,6 +807,19 @@ def test_repair_3_a_malformed_line_the_index_ends_is_an_error_last_or_not(tmp_pa
         archive.rows()
 
 
+@pytest.mark.parametrize("line", [" ", " ", "\x85", "\x1c", "\x0b", "\x0c", " ", ""])
+def test_review_4_finding_4_a_complete_line_json_cannot_read_is_an_error_whatever_python_calls_blank(tmp_path, line):
+    """Only JSON says whether a complete line is a row: U+2028 and the like, which ``str.strip`` takes for blank and
+    ``str.splitlines`` for a line's end, are refused, as an empty line is; only the bytes after the last newline are a torn tail."""
+    row = json.dumps({"event": "started", "run": "run/t/1"}).encode()
+    archive = we.c.Archive(tmp_path)
+    archive.index.write_bytes(row + b"\n" + line.encode("utf-8") + b"\n" + row + b"\n")
+    with pytest.raises(ValueError):
+        archive.rows()
+    archive.index.write_bytes(row + b"\n" + row + b"\n" + line.encode("utf-8"))           # the same bytes as a torn tail: skipped
+    assert archive.rows() == [json.loads(row)] * 2
+
+
 def test_repair_3_a_restart_after_a_torn_write_moves_the_torn_bytes_aside_and_its_next_start_is_read_back(tmp_path):
     """Review 1, finding 8: the next append, under the index's lock, moves exactly the bytes after the last "\\n" to a side file
     beside the index (never written over), cuts the index back to its last "\\n", and then writes its row whole."""
@@ -1316,6 +1329,25 @@ def test_review_3_a_container_k3_first_session_whose_result_names_no_session_sta
     record, docker, ctx, reviews = _container_run(monkeypatch, tmp_path, "K3", [plain, SUCCESS])
     assert docker.calls == 1 and reviews == [] and record["status"] == "error" and record["rule_step"]["at"] == "rule step"
     assert we.has_baseline(ctx.archive, record["run"]) and we.scored_run(ctx.archive, record["run"])     # a row, its baseline kept
+
+
+@pytest.mark.parametrize("verdict", ["none", "defect"])
+def test_review_4_finding_3_a_container_k2_loop_whose_first_result_names_no_session_is_error_with_no_review(monkeypatch, tmp_path,
+                                                                                                          verdict):
+    """The K loop starts only from a result that names its session: with none, no review runs, and the run is "error" even where
+    the first review would have been clean (``verdict`` "none") and no repair would have been asked for."""
+    task, events, sent = we.load_tasks()[0], [], []
+    docker = _Sessions(task, events, sent, [{k: v for k, v in SUCCESS.items() if k != "session_id"}])
+    ctx = we.Context(archive=we.c.Archive(tmp_path / "archive"), docker=docker, key_reader=lambda: "fake-key",
+                     issue_reader=lambda task: ("title", "issue"), tree_reader=lambda task: "tree", g6={"commit": "0" * 40},
+                     variant=we.ROUND3, arm="K2", environ={})
+    reviews = []
+    monkeypatch.setattr(we, "key_check", lambda *a, **kw: {"ok": True})
+    monkeypatch.setattr(we, "start_net", lambda *a: ("net", "proxy"))
+    monkeypatch.setattr(we, "read_thread", lambda *a: "")
+    monkeypatch.setattr(we, "run_critic", lambda *a, **kw: (reviews.append(1), {"verdict": verdict, "test": "", "seconds": 0})[1])
+    record = we._run_task(ctx, task, dry=False, cap=10, stop=10.5)
+    assert docker.calls == 1 and reviews == [] and record["status"] == "error" and "repairs" not in record
 
 
 # --- the reviewer cases' export reads K3's round-1 where K3 keeps it ----------------------------------------------------------

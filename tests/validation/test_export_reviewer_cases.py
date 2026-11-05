@@ -148,3 +148,46 @@ def test_a_case_row_is_what_coding_replay_loads(tmp_path):
 def test_the_module_never_names_the_oracle():
     source = Path(ex.__file__).read_text(encoding="utf-8")
     assert "fix.patch" not in source and "/oracle" not in source and "g6we-oracle" not in source
+
+
+# --- review 4, findings 5 and 8: git reads which files a part touches, in its own world, and its names stay as git gives them ----
+def _octal_patch(octal: str) -> str:
+    return (f'diff --git "a/\\{octal}.py" "b/\\{octal}.py"\n--- "a/\\{octal}.py"\n+++ "b/\\{octal}.py"\n'
+            '@@ -1 +1 @@\n-old\n+new\n')
+
+
+def test_review_4_finding_5_two_names_git_keeps_apart_stay_apart():
+    """Bytes that are not UTF-8 in a name (\\376 and \\377, as git writes them quoted): held as git's bytes, never one replacement
+    character for both."""
+    first, second = (ex.touched(_octal_patch(octal)) for octal in ("376", "377"))
+    assert first == ["\udcfe.py"] and second == ["\udcff.py"] and first != second
+    assert first[0].encode("utf-8", errors="surrogateescape") == b"\xfe.py"
+    assert set(ex.changed(_octal_patch("376") + _octal_patch("377"))) == {"\udcfe.py", "\udcff.py"}
+
+
+def _folder_in_a_work_tree(tmp_path, monkeypatch):
+    """The empty folder ``touched`` is given, inside a git work tree of its own (``git init``, local, no network)."""
+    import subprocess
+    from contextlib import contextmanager
+
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True, timeout=60)
+    inside = repo / "empty"
+    inside.mkdir()
+
+    @contextmanager
+    def empty_folder():
+        yield str(inside)
+
+    monkeypatch.setattr(ex.tempfile, "TemporaryDirectory", empty_folder)
+    return repo
+
+
+def test_review_4_finding_8_a_work_tree_that_holds_the_temporary_folder_never_changes_what_git_reads(tmp_path, monkeypatch):
+    repo = _folder_in_a_work_tree(tmp_path, monkeypatch)
+    monkeypatch.delenv("GIT_CEILING_DIRECTORIES", raising=False)
+    diff = "diff --git a/src/mod.py b/src/mod.py\n--- a/src/mod.py\n+++ b/src/mod.py\n@@ -1 +1 @@\n-old\n+new\n"
+    assert ex.changed(diff) == {"src/mod.py": [(1, 1)]}
+    monkeypatch.setenv("GIT_DIR", str(repo / ".git"))          # a repository the caller's environment names: never git's world
+    monkeypatch.setenv("GIT_WORK_TREE", str(repo))
+    assert ex.changed(diff) == {"src/mod.py": [(1, 1)]}

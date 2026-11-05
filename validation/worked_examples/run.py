@@ -3256,6 +3256,13 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                                                  (ended, first_code), session=resumed)
             ended = record["rule_step"]["ended"]
             record["first_patch_sha256"] = kept_digest(ctx.archive, run.rel)    # whether it is a baseline: has_baseline, at the end
+        if critic_led and not dry and not ended and not str((tally.result or {}).get("session_id") or ""):
+            # review 4, finding 3: the K loop starts only from a result that names its session (the first session's, or K3's rule
+            # step's, which names the first), on either executor. With none there is no session to continue, so no review runs and
+            # the run is "error", whether or not its first review would have asked for a repair.
+            ended = "error"
+            if host:
+                run.end("error", why="the first session's own result named no session, so the K loop had none to continue")
         if critic_led and not dry and not ended:
             record["repairs"] = reviews_until_clean(steps_ctx, task, run, agent, base, docker_args, key, tally, stop, started,
                                                     lambda n: run_critic(steps_ctx, task, run, agent, base, title, text, n),

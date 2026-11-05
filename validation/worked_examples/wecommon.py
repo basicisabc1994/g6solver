@@ -356,16 +356,17 @@ class Archive:
         at the very end of its bytes), which a write cut short leaves, is skipped; the next ``append`` moves it aside. Every line
         the index ends, last or not, must be read, and one that cannot is an error. Its bytes are read once: a byte that is not
         UTF-8 is held as an escape (``surrogateescape``), and a line holding one cannot be read, as a line that is not JSON
-        cannot."""
+        cannot. Whether a line is a row is JSON's to say alone (``json.loads``), never Python's own reading of whitespace
+        (``str.strip``, which takes U+2028 and the like for blank): a complete line that is not one JSON value, an empty one
+        included, is an error (review 4, finding 4)."""
         if not self.index.is_file():
             return []
         lines = read_stream(self.index, errors="surrogateescape")
         lines.pop()                         # what follows the last "\n": "" when the index ends with one, else a torn tail
         rows = []
         for line in lines:
-            if line.strip():
-                line.encode("utf-8")        # strict: an escaped byte is a UnicodeEncodeError, a ValueError
-                rows.append(json.loads(line))
+            line.encode("utf-8")            # strict: an escaped byte is a UnicodeEncodeError, a ValueError
+            rows.append(json.loads(line))
         return rows
 
     def start(self, kind: str, task: str, **meta: Any) -> RunFolder:

@@ -8,6 +8,7 @@ import collections
 import hashlib
 import io
 import json
+import os
 import re
 import subprocess
 import tarfile
@@ -51,10 +52,17 @@ def is_source(path: str) -> bool:
 def touched(part: str) -> list[str]:
     """The files one part of a patch touches, as git's own reader of its patch format names them (``git apply --numstat -z``, run on
     the part's bytes in an empty folder, which only reads them: no tree is changed), so a name git quotes or escapes is read as
-    git reads it. Each file by its name after the patch (for a rename, the new one). None for a part git cannot read."""
+    git reads it. Each file by its name after the patch (for a rename, the new one). None for a part git cannot read.
+
+    The empty folder is git's whole world (review 4, finding 8): git looks for no repository above it (``GIT_CEILING_DIRECTORIES``,
+    its parent), and none named by the environment (``GIT_DIR``, ``GIT_WORK_TREE``), so a work tree that holds the temporary folder
+    can never make git read the part's paths relative to it. A name is git's bytes, held as they are (``surrogateescape``, never a
+    replacement character), so two names git keeps apart stay apart (finding 5)."""
     with tempfile.TemporaryDirectory() as empty:
+        env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE")}
+        env["GIT_CEILING_DIRECTORIES"] = str(Path(empty).resolve().parent)
         got = subprocess.run(["git", "apply", "--numstat", "-z"], input=part.encode("utf-8", errors="surrogateescape"), cwd=empty,
-                             capture_output=True, timeout=60)
+                             capture_output=True, timeout=60, env=env)
     if got.returncode != 0:
         return []
     fields, names = got.stdout.split(b"\0"), []
@@ -65,7 +73,7 @@ def touched(part: str) -> list[str]:
         _, _, name = field.split(b"\t", 2)
         if not name and len(fields) >= 2:                  # a rename: its old name, then its new one, each a field of its own
             _, name = fields.pop(0), fields.pop(0)
-        names.append(name.decode("utf-8", errors="replace"))
+        names.append(name.decode("utf-8", errors="surrogateescape"))
     return names
 
 
