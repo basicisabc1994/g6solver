@@ -22,6 +22,7 @@ from g6.core.ledger import LedgerError, digest
 from g6.core.llm import LLMError
 from g6.metaharness import Model
 from g6.metaharness.loop import LoopSettings, ShadowLoop
+from g6.metaharness import runner as runner_module
 from g6.metaharness.method import Method
 from g6.metaharness.runner import FIRST_REST, LONGEST_REST, NAP, Runner, _in_job, main, open_loop, run
 from g6.metaharness.shadow import lineage
@@ -34,7 +35,6 @@ from g6.self_maintenance.envelope import (
     heartbeat,
     runner_alive,
     runner_lock,
-    stop_in_force,
     stop_reason,
     stop_to_lift,
     stops_asked,
@@ -517,6 +517,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
+from g6.metaharness import runner as runner_module
 from g6.metaharness.method import Method
 
 _spec = importlib.util.spec_from_file_location("loop_domains", {rig!r})
@@ -836,13 +837,14 @@ def test_a_start_with_no_settings_on_record_stands_on_nothing(tmp_path):
 
 def test_a_run_uses_the_settings_it_checked_not_a_later_write(tmp_path, monkeypatch):
     root, _ = _enrolled_folder(tmp_path)
-    real, seen = stop_in_force, []
+    real, seen = runner_module._gated, []
 
-    def written_after_the_check(folder, *start):                         # the gate's stop reading, after it read settings
+    def written_after_the_check(folder, settings):                       # the gate, which checks the settings it was given
+        found = real(folder, settings)
         _grow_allowance(root)
-        return real(folder, *start)
+        return found
 
-    monkeypatch.setattr("g6.metaharness.runner.stop_in_force", written_after_the_check)
+    monkeypatch.setattr("g6.metaharness.runner._gated", written_after_the_check)
     assert run(root, now=lambda: START + timedelta(days=2), sleep=lambda seconds: (seen.append(heartbeat(root)),
                                                                                    _then_stop(root)(seconds))) == 0
     assert seen[0]["use"][0]["ceiling"] < 1_000_000

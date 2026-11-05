@@ -716,19 +716,27 @@ first a line in `stops.log`, the journal of stops, a file no lock stands in fron
 is written, and a start records the journal it saw, by count and digest, so a restart or removing the `STOP` file by hand
 brings nothing back until a person agrees again.
 
-**One answer on whether a stop is in force.** `stop_in_force` gives it, and a start, the runner, a tick, status and the digest
-all act on it; nothing else decides. It reads the `STOP` file, the journal and the records' last start, with any stop on
-record after it, in one reading. A stop stands when the `STOP` file is not the one the last start lifted, when the journal's
-bytes are not the ones it bound (bytes decide, never a count of lines, so a line a crash cut short is a stop), when a stop
-on record follows that start, which it revokes until a person starts again, and with no start on record, when the journal
-holds any bytes at all. Anything it cannot read or use, the `STOP` file, the journal, records that are not a file or do not
-check out, or a start's lift fields of the wrong shape (refused where the row is written, and again where it is read), is a
-stop in force with its own code, `G6_E_LOOP_STOP_UNREADABLE`, never a value such as a count of -1 or nothing to lift, and
-never a raised error: a tick ends at its next request, the runner refuses to run, status says which file, and a dialog or
-a start starts nothing. A tick reads the records whole only when their bytes change, by a digest taken before each request,
-and keeps the start it read against that digest otherwise. A start reads the stop state, compares it with what the dialog
-showed and writes its row all under the tick lock and the stop lock, which a stop's writer holds until its journal line and
-its `STOP` file are both on disk, so no start lifts a stop the disk may yet lose and a start refused there writes nothing.
+**One answer on whether a stop is in force.** `stop_in_force` gives it, and a start, its dialog, the runner's preflight and
+gate, a tick's guard, status and the digest all take it; nothing else decides, and nothing else opens these files. The
+reading is a value: it opens the `STOP` file, the journal and the records once each, and everything else, the decision, the
+last start with any stop on record after it, the lift fields, who enrolled, any pause and the records themselves, comes from
+those bytes in memory, under one digest of all of them. A test lists, from the code, every place G6 joins a path to these
+files or opens the records, and each is the reading, a writer, or the question of whether a folder is a loop at all. A file
+is absent only when its open fails with not-found and the folder above it is a directory that can be listed, so a path
+under a regular file, which Windows reports as not found, is unreadable, as is a file that is a link or kept changing while
+it was read. A stop stands when the `STOP` file is not the one the last start lifted, when the journal's bytes are not the
+ones it bound (bytes decide, never a count of lines, so a line a crash cut short is a stop), when a stop on record follows
+that start, which it revokes until a person starts again, and with no start on record, when the journal holds any bytes at
+all. Anything it cannot read or use, any of the three files, records that do not check out, or a start's lift fields of the
+wrong shape, null included (one check, where the row is written and where it is read), is a stop in force with its own
+code, `G6_E_LOOP_STOP_UNREADABLE`, never a value such as a count of -1 or nothing to lift, and never a raised error: a tick
+ends at its next request, the runner refuses to run and its heartbeat carries that code, status says which file, and a
+dialog or a start starts nothing. A tick keeps the start it parsed against the digest of the very bytes it parsed, taken in
+the same reading, and parses again only when the bytes read before a request differ. A dialog's terms carry its reading's
+whole digest, and the dialog is shown only if a reading taken once it is made is that same reading. A start, under the tick
+lock and the stop lock, takes a fresh reading and refuses if its digest is not the one the dialog showed, then writes its
+row; the stop lock is the one a stop's writer holds until its journal line and its `STOP` file are both on disk, so no start
+lifts a stop the disk may yet lose, and a start refused there writes nothing.
 
 An agreement binds what the dialog showed: the settings, the Python file, who enrolled it, the stop state as that one reading
 saw it, and any pause. If any of that moves while the dialog is open, nothing starts and the person is asked again. A stop that

@@ -64,7 +64,6 @@ from g6.metaharness.loop import (
     FOLDER_STOPS,
     FROZEN_CHANGED,
     STATUS_LINE,
-    STOPPED,
     LoopSettings,
     ShadowLoop,
 )
@@ -72,16 +71,14 @@ from g6.metaharness import reflex
 from g6.metaharness.shadow import lineage
 from g6.self_maintenance import digest
 from g6.self_maintenance.envelope import (
-    CYCLE_LOG,
     ENDS_A_STREAK,
     STOP_UNREADABLE,
-    CycleLog,
+    Stop,
     beat,
     record_stop,
     runner_alive,
     runner_lock,
     stop_in_force,
-    stop_reason,
 )
 from g6.self_maintenance.pacing import SETTINGS_FILE, read_settings, windows_from
 from g6.self_maintenance.usage import AccountReader
@@ -144,10 +141,10 @@ def _domain_file(path: Any, pinned: str | None = None) -> dict[str, Any]:
     return declared
 
 
-def _pinned(root: Path) -> str:
-    """The digest of the domain file a person enrolled, from the records and never from the file; ``""`` with none."""
-    path = root / CYCLE_LOG
-    enrolled = CycleLog(path).enrolled() if path.is_file() else None
+def _pinned(reading: Stop) -> str:
+    """The digest of the domain file a person enrolled, from the records as ``reading`` read them and never from the file;
+    ``""`` with none, or with records that could not be read, which no file's digest can then match."""
+    enrolled = reading.log.enrolled() if reading.log is not None else None
     return (enrolled or {}).get("frozen", {}).get("domain_file") or ""
 
 
@@ -188,19 +185,20 @@ class Runner:
         """A heartbeat that needs nothing else to work."""
         beat(self.loop.root, **self.loop.beat_fields, **fields, domain=self.loop.domain.name, at=self.now().isoformat())
 
-    def _end(self, now: datetime, halted: str) -> None:
-        """The last page and heartbeat, and the stop in the records. None of them may keep a stop from ending the run."""
-        record_stop(self.loop.root, halted, at=now.isoformat())
+    def _end(self, now: datetime, halted: Stop) -> None:
+        """The last page and heartbeat, and the stop in the records, all with the code and the reason of the reading that
+        ended the run, never a tick's before it. None of them may keep a stop from ending the run."""
+        record_stop(self.loop.root, halted.reason, at=now.isoformat())
         try:
-            self._digest(now, halted)
-            self._beat(now, "stopped", now, reason=halted)
+            self._digest(now, halted.reason)
+            self._beat(now, "stopped", now, reason=halted.reason, code=halted.code)
         except Exception:  # noqa: BLE001 - see above: the stop wins
-            self._note(state="stopped", code=STOPPED, reason=halted)
+            self._note(state="stopped", code=halted.code, reason=halted.reason)
 
     def step(self) -> float | None:
         """One pass. The seconds to sleep, or ``None`` when a stop ended the run."""
         now = self.now()
-        halted = self.loop.stopped_by()
+        halted = self.loop._stop()
         if halted:
             self._end(now, halted)
             return None
@@ -273,8 +271,9 @@ class Runner:
             return {"code": "G6_E_LOOP_PAUSED", "reason": f"the loop is paused: {paused}"} if paused else None
         return {"code": code, "reason": self.last.get("message", "")}
 
-    def _beat(self, now: datetime, state: str, due: datetime, **said: Any) -> None:
-        code = self.last.get("warning_card", {}).get("code", "")
+    def _beat(self, now: datetime, state: str, due: datetime, *, code: str | None = None, **said: Any) -> None:
+        """A heartbeat: ``code`` when one is given, as a stop that ended the run gives its own, else the last tick's."""
+        code = self.last.get("warning_card", {}).get("code", "") if code is None else code
         self.loop.beat_fields["use"] = self._use(now)         # so a heartbeat written during a long tick keeps it
         self.loop._beat(state, code, **{"reason": self.last.get("message", ""), "next_tick": due.isoformat(),
                                         "pause": self._pause(), **said})
@@ -340,26 +339,32 @@ class Runner:
 
 
 def _gate(root: Path, settings: dict[str, Any]) -> tuple[str, str]:
-    """The code and reason that refuse ``settings`` a run on this folder, both empty when a person's start covers it. The
-    start and any stop are ``stop_in_force``'s one reading of the stop's files and the records: a start a stop on record
-    ended stands no more. It runs nothing."""
+    """The code and reason that refuse ``settings`` a run on this folder, both empty when a person's start covers it."""
+    return _gated(root, settings)[:2]
+
+
+def _gated(root: Path, settings: dict[str, Any]) -> tuple[str, str, Stop]:
+    """``_gate``'s code and reason, and the reading they stand on: ``stop_in_force``'s one reading of the stop's files and
+    the records, the start and any stop after it among them, so a start a stop on record ended stands no more. It runs
+    nothing and opens none of those files itself."""
     halted = stop_in_force(root)
     if halted.code == STOP_UNREADABLE:
-        return STOP_UNREADABLE, f"{halted.reason}, so nothing ran: a person makes it readable, then g6_improve_start"[:400]
+        return (STOP_UNREADABLE, f"{halted.reason}, so nothing ran: a person makes it readable, then g6_improve_start"[:400],
+                halted)
     start = halted.start
     if start is None:
         return NOT_STARTED, ("no start stands on this folder, so nothing ran. Only a person starts the loop, in the client's "
-                             "dialog, through g6_improve_start; after that a restart carries on until a stop")
+                             "dialog, through g6_improve_start; after that a restart carries on until a stop"), halted
     if start.get("stops") is None and start.get("stops_sha256") is None:
         return NOT_STARTED, ("the start on record bound no journal of stops, so a stop since it could not be seen and nothing "
-                             "ran: only a new g6_improve_start undoes that")
+                             "ran: only a new g6_improve_start undoes that"), halted
     if halted:
         return NOT_STARTED, (f"a stop has been asked for since the last start, so nothing ran ({halted.reason}): only a new "
-                             "g6_improve_start undoes that")[:400]
+                             "g6_improve_start undoes that")[:400], halted
     if start.get("settings") != digest_of(settings):
         return SETTINGS_CHANGED, (f"{SETTINGS_FILE} is not what the person agreed to at the last start, so nothing ran: "
-                                  "g6_improve_start shows them what stands now")
-    return "", ""
+                                  "g6_improve_start shows them what stands now"), halted
+    return "", "", halted
 
 
 def _not_started(root: Path) -> str:
@@ -396,9 +401,11 @@ def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable
     if not root.is_dir():
         print(f"{root} is not a folder", file=sys.stderr)
         return 1
-    halted = stop_reason(root)
-    if halted:
-        record_stop(root, halted, at=now().isoformat())
+    halted = stop_in_force(root)            # the preflight takes the one reading every reader takes
+    if halted.code == STOP_UNREADABLE:
+        return _refuse(root, STOP_UNREADABLE, f"{halted.reason}, so nothing ran"[:500], now)
+    if halted.seen.by_file(halted.start):  # a STOP file already there ends it before anything is opened
+        record_stop(root, halted.reason, at=now().isoformat())
         return 0
     if not runner_alive(root):              # before the lock, so a run that dies at once still leaves word that it ran
         beat(root, state="starting", pid=os.getpid(), in_job=_in_job(), at=now().isoformat())
@@ -406,10 +413,10 @@ def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable
         with runner_lock(root):
             try:
                 settings = read_settings(root)
-                code, why = _gate(root, settings)
+                code, why, reading = _gated(root, settings)
                 if code:
                     return _refuse(root, code, why, now)
-                loop, reader = open_loop(root, now=now, pinned=_pinned(root), settings=settings)
+                loop, reader = open_loop(root, now=now, pinned=_pinned(reading), settings=settings)
             except DomainChanged as exc:
                 return _refuse(root, FROZEN_CHANGED, str(exc)[:500], now)
             except Exception as exc:  # noqa: BLE001 - the domain file is the person's own code: say why, and leave word
@@ -457,12 +464,12 @@ def enrol(root: Path, who: str) -> int:
 
 
 def resume(root: Path, who: str) -> int:
-    loop = _person(root, who, "lift the pause", pinned=_pinned(root))
+    loop = _person(root, who, "lift the pause", pinned=_pinned(stop_in_force(root)))
     return 1 if loop is None else _said(loop.resume(who))
 
 
 def demote(root: Path, generation: int, who: str) -> int:
-    loop = _person(root, who, f"take generation {generation} back", pinned=_pinned(root))
+    loop = _person(root, who, f"take generation {generation} back", pinned=_pinned(stop_in_force(root)))
     return 1 if loop is None else _said(loop.demote(generation, who))
 
 

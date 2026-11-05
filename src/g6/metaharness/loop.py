@@ -85,12 +85,10 @@ from g6.self_maintenance.envelope import (
     TICK_BUDGET_SPENT,
     CycleLog,
     Stop,
-    StopUnreadable,
     ask_to_stop,
     beat,
     file_digest,
     note_refusal,
-    records_identity,
     refused_requests,
     stop_in_force,
 )
@@ -718,20 +716,14 @@ class ShadowLoop:
 
     def _stop(self) -> Stop:
         """This folder's stop, which a tick and the runner read alike: if the runner read less, a tick refused for a stop
-        would leave it going, and asking again. It is ``stop_in_force``'s answer on what is on disk. The start and any stop
-        after it are read from the records whole only when the records' bytes changed (``records_identity``, a digest
-        taken before each request), and kept against that identity otherwise; records that cannot be read stop it."""
+        would leave it going, and asking again. It is ``stop_in_force``'s reading of what is on disk, taken before each
+        request. The start and any stop after it are kept against the digest of the very records' bytes they were parsed
+        from, in that same reading, so a later reading parses again only when its bytes differ; records that cannot be read
+        stop it."""
         if self.cannot_record:
-            return Stop(STOPPED, self.cannot_record)
-        try:
-            identity = records_identity(self.root)
-        except StopUnreadable as exc:
-            self._on_record = None
-            return Stop(STOP_UNREADABLE, f"{exc}, so a stop is in force until a person can read it")
-        if self._on_record is not None and self._on_record[0] == identity:
-            return stop_in_force(self.root, self._on_record[1], revoked=self._on_record[2])
-        found = stop_in_force(self.root)
-        self._on_record = None if found.code == STOP_UNREADABLE else (identity, found.start, found.revoked)
+            return Stop(CANNOT_RECORD, self.cannot_record)  # this process's own stop: the log took no cycle
+        found = stop_in_force(self.root, known=self._on_record)
+        self._on_record = None if found.code == STOP_UNREADABLE else (found.records_sha256, found.start, found.revoked)
         return found
 
     def stopped_by(self) -> str:
@@ -835,7 +827,8 @@ class ShadowLoop:
         if halted is not None:
             return _blocked(halted.code, halted.said, "Remove the STOP file to resume." if halted.code == STOPPED else
                             "A person makes the stop's files readable; a new g6_improve_start lets it run again."
-                            if halted.code == STOP_UNREADABLE else "Whoever engaged the stop releases it.")
+                            if halted.code == STOP_UNREADABLE else "A person frees the log, then starts the loop again with "
+                            "g6_improve_start." if halted.code == CANNOT_RECORD else "Whoever engaged the stop releases it.")
         invalid = self._invalid()
         if invalid is not None:
             return invalid

@@ -1896,7 +1896,7 @@ def test_a_refusal_the_log_would_not_take_holds_the_run_and_sends_nothing_more(t
     assert "stopped a request" in stop_reason(loop.root)
     _answers_again(domain, seen)
     calls = len(seen)
-    assert _code(loop.tick()) == "G6_E_LOOP_STOPPED" and len(seen) == calls
+    assert _code(loop.tick()) == "G6_E_LOOP_CANNOT_RECORD" and len(seen) == calls   # this process's own stop, by its code
 
 
 def test_a_refusal_the_log_would_not_take_is_not_sent_after_a_restart_either(tmp_path, monkeypatch):
@@ -1945,7 +1945,7 @@ def test_a_refusal_no_file_would_take_still_holds_this_process(tmp_path, monkeyp
         loop.tick()
     _answers_again(domain, seen)
     calls = len(seen)
-    assert _code(loop.tick()) == "G6_E_LOOP_STOPPED" and len(seen) == calls
+    assert _code(loop.tick()) == "G6_E_LOOP_CANNOT_RECORD" and len(seen) == calls   # this process's own stop, by its code
 
 
 def test_refusals_that_cannot_be_read_stop_the_tick_since_nothing_could_say_what_is_barred(tmp_path):
