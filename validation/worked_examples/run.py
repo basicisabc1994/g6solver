@@ -26,10 +26,12 @@ import argparse
 import hashlib
 import io
 import json
+import math
 import os
 import queue
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -1611,15 +1613,19 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
 
 
 def run_session(ctx: Context, run: Any, agent: str, command: list[str], key: str, tally: c.Tally, text_in: str, name: str,
-                *, seconds: float, stop_usd: float, codes: list[int | None] | None = None) -> str:
+                *, seconds: float, stop_usd: float, codes: list[int | None] | None = None,
+                deadline: float | None = None) -> str:
     """One Claude Code session in the container, its stream saved as ``name``: how it ended, as ``read_stream`` says. ``codes``,
-    when given, receives the session's exit code, which arm K3's steps read (``step_ending``)."""
+    when given, receives the session's exit code, which arm K3's steps read (``step_ending``). ``deadline``, when given, is the
+    run's own (``deadline_of``), which the session ends at however long its process takes to start; without it the session has
+    ``seconds`` from when its prompt has gone in, as before."""
     proc = ctx.docker.popen(*command, env=ctx.client_env(key))
     stream = open(run.fresh_path(name), "w", encoding="utf-8", newline="\n")
     try:
         proc.stdin.write(text_in.encode("utf-8"))
         proc.stdin.close()
-        return read_stream(iter(proc.stdout.readline, b""), tally, deadline=time.monotonic() + seconds,
+        return read_stream(iter(proc.stdout.readline, b""), tally,
+                           deadline=deadline if deadline is not None else time.monotonic() + seconds,
                            write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
                            stop_usd=stop_usd)
     finally:
@@ -1885,21 +1891,29 @@ def finding_rule(arm: str) -> str:
 
 def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, tally: c.Tally,
                         stop: float, started: float, critique: Callable[[int], dict[str, Any]], finding: str = "any",
-                        after_step: bool = False) -> dict[str, Any]:
+                        after_step: bool = False, deadline: float | None = None) -> dict[str, Any]:
     """Arm K (PLAN.md, 2026-11-01): plain Claude Code, then the patch is read by another model family, repaired in the same session if
     the reader's test fails on it, and read again, until a reader reproduces nothing. One review saw one layer of a defect, so one
     repair stopped there. The agent may reject a finding, and leaving the code as it was ends the loop. No scout, no probes, no G6.
     With ``finding`` "parent" (K2, PLAN.md, 2026-11-04, evening), each round's test is also run on the parent in a container of its
     own, and only the cases that failed there and still fail go back; a parent run with no result sends nothing back.
     ``after_step``: K3's rule step ran before the loop, and the patch review 1 reads is saved already as ``rule.patch``, so round 1
-    saves none and ``round-1.patch`` stays the first session's."""
+    saves none and ``round-1.patch`` stays the first session's. ``deadline``: K3's, the run's one (``deadline_of``). No review
+    starts after it, no repair follows a review that ended after it, a repair's session ends at it with no minute of its own, and
+    a loop that ends after it ends "timeout" (``ended``). Without it, K2's loop is as it was."""
     def tree() -> str:
         return out(ctx.docker.sh(agent, "git status --porcelain; git diff", workdir=task.repo, timeout=120))
 
+    def late() -> bool:
+        return deadline is not None and time.monotonic() >= deadline
+
     gated = finding == "parent"          # K2 (PLAN.md, 2026-11-04, evening)
     at_parent: dict[str, str] = {}       # every round's test on the parent, in a container of its own, by case
-    rounds, failing, reason, verdicts, seconds, broken = 0, [], "", [], 0.0, False
+    rounds, failing, reason, verdicts, seconds, broken, timed_out = 0, [], "", [], 0.0, False, False
     for n in range(1, MAX_REPAIRS + 2):
+        if late():                       # K3: no review starts after the run's deadline
+            timed_out = True
+            break
         rounds = n
         if n > 1 or not after_step:
             keep_first_patch(ctx, task, agent, base, n)
@@ -1933,17 +1947,25 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
         if n > MAX_REPAIRS:
             reason = "the repairs ran out with a defect open"
             break
+        if late():                       # K3: a review that ended after the run's deadline sends nothing back
+            timed_out = True
+            break
         before = tree()
         run_session(ctx, run, agent, scout_again(docker_args), key, tally,
                     CRITIC_NOTE.format(**{k: critic.get(k, "") for k in ("rule", "why", "test")}) + REVIEW_ASK, f"repair_stream_{n}.jsonl",
-                    seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
+                    seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)) if deadline is None
+                    else max(0.0, deadline - time.monotonic()), stop_usd=stop,
+                    **({"deadline": deadline} if deadline is not None else {}))
         if tree() == before:
             reason = "the agent left the code as it was"
             break
-    clean = not failing and not broken and verdicts[-1] in ("none", "defect")
+    timed_out = timed_out or late()      # K3: whatever the loop ended on after the deadline, it ended at the deadline
+    if timed_out:
+        reason = "the run's deadline passed"
+    clean = not timed_out and not failing and not broken and verdicts[-1] in ("none", "defect")
     return {"status": "no_counterexample_in_domain" if clean else "inconclusive", "rounds": rounds, "reason": reason,
             "failing": failing[:40], "critic": {"verdicts": verdicts, "seconds": round(seconds, 1)},
-            **({"finding": "parent"} if gated else {})}
+            **({"finding": "parent"} if gated else {}), **({"ended": "timeout"} if timed_out else {})}
 
 
 def review_once(ctx: Context, task: Task, run: Any, agent: str, docker_args: list[str], key: str, tally: c.Tally, stop: float,
@@ -1981,15 +2003,15 @@ only the issue's own example, and run it. Where the reference and your code disa
 example and the reference it names disagree, say so in your reply and follow the reference. Then reply with the list and
 what you changed."""
 RULE_DIGEST = hashlib.sha256(RULE_STEP.encode("utf-8")).hexdigest()[:16]
-FIRST_PATCH = "round-1.patch"  # the first session's tree, kept in the archive before the step: the within-run baseline
+FIRST_PATCH = "round-1.patch"  # the first session's tree: the within-run baseline, scored by ``check`` as "round-1"
 RULE_PATCH = "rule.patch"      # the tree after the step, in ``rounds`` beside each round's patch, scored by ``check`` as "rule"
+BASELINE = "baseline"          # the run's own folder for FIRST_PATCH, outside ``rounds``: nothing after its capture writes there
 #: K3's steps from its first session to its first review, in order; each goes on only from the one before's success. The rule
 #: step is its session and then its patch, each read by ``step_ending``.
 K3_STEPS = ("first session", "first patch", "rule step")
-#: The status of a K3 run that ended before its first patch was kept, whatever ended it (kept in ``rule_step``'s "ended"): it
-#: has no Claude Code baseline, so the report counts it by arm and it is no row.
+#: The status of a K3 run with no Claude Code baseline (``has_baseline``), whatever ended it: the report counts it by arm, and it
+#: is no row and never offered to ``check``.
 NO_FIRST_PATCH = "no_first_patch"
-NO_BASELINE = ("refused", NO_FIRST_PATCH)      # K3's two endings with no Claude Code baseline (``scored_run``)
 #: What a capture reports to ``step_ending`` when its file is kept: a capture has no result of its own, and this is its success.
 CAPTURED = {"subtype": "success", "is_error": False}
 ROUND_PATCH = re.compile(r"round-(\d+)\.patch")
@@ -2013,6 +2035,13 @@ def first_prompt_check(task: Task, title: str, text: str, sent: str) -> tuple[st
                  "would not be Claude Code alone, so the run is refused before the agent starts and is never scored")
 
 
+def deadline_of(started: float) -> float:
+    """The run's one deadline, from its absolute start (``time.monotonic`` when its clock began). The first session, K3's two
+    captures, its rule session, the start of a resumed session's process and K2's loop after the step all read it, and none adds
+    an allowance of its own."""
+    return started + c.WALL_CLOCK_S
+
+
 def step_ending(stop: str | None, result: Mapping[str, Any] | None, code: int | None) -> str:
     """How one of K3's steps ended (``K3_STEPS``), by the one rule every step's caller uses. "finished" only for a success it
     recognises: no stop, a result of the step's own whose subtype is "success" and whose ``is_error`` is False, and an exit of
@@ -2026,36 +2055,86 @@ def step_ending(stop: str | None, result: Mapping[str, Any] | None, code: int | 
     return "cap_turns" if "max_turns" in sub else "cap_cost" if "budget" in sub else "error"
 
 
-def kept(ctx: Context, task: Task, agent: str, base: str, run: Any, name: str) -> str:
-    """One of K3's captures: the tree's patch against ``base`` made in the container, then copied at once into the run's
-    archive folder as ``rounds/<name>``, written once (``fresh_path``), before the agent works again. It keeps the patch's real
-    bytes, as ``final.patch`` keeps them, so the within-run comparison scores what each session left. A patch that holds the run's
-    key is not kept. Its ending by ``step_ending``: "finished" only when the command exited 0 and the file is kept."""
-    done = ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/rounds/{name}"), workdir=task.repo, timeout=300)
-    dest = run.fresh_path(f"rounds/{name}")
-    ok = done.returncode == 0 and copy_out(ctx.docker, agent, f"{WE}/rounds/{name}", dest)
+def linked(st: os.stat_result) -> bool:
+    """Whether what ``os.lstat`` described is a link: a symbolic link, a junction or any other reparse point."""
+    return stat.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def plain(path: Path, *, folder: bool = False) -> bool:
+    """Whether ``path`` is a regular file (a folder, with ``folder``) and no link (``linked``)."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return (stat.S_ISDIR(st.st_mode) if folder else stat.S_ISREG(st.st_mode)) and not linked(st)
+
+
+def baseline_of(folder: Path) -> Path:
+    """Where a K3 run's first patch is kept: in a folder of the run's own (``BASELINE``), outside ``rounds``."""
+    return folder / BASELINE / FIRST_PATCH
+
+
+def kept_digest(archive: c.Archive, rel: str) -> str | None:
+    """The sha256 the archive's index recorded when run ``rel``'s first patch was kept (``kept``), or None. It is written once,
+    at the capture, so it holds after any stop or restart."""
+    return next((str(r["sha256"]) for r in archive.rows() if r.get("event") == "kept" and r.get("run") == rel
+                 and r.get("patch") == FIRST_PATCH and r.get("sha256")), None)
+
+
+def has_baseline(archive: c.Archive, rel: str) -> bool:
+    """Whether K3 run ``rel`` has its Claude Code baseline: the one answer, read from durable state only. The index recorded the
+    first patch's digest when it was kept (``kept_digest``), and the kept file, a plain file and no link, still has those bytes.
+    Every path asks it, never a step's state in memory: the run's end (``ended_as``), its row (``loop.one``) and ``check``,
+    after a stop, an exception or a restart alike."""
+    want, path = kept_digest(archive, rel), baseline_of(archive.root / rel)
+    return bool(want) and plain(path) and c.sha256_file(path) == want
+
+
+def kept(ctx: Context, task: Task, agent: str, base: str, run: Any, name: str, deadline: float = math.inf) -> str:
+    """One of K3's captures: the tree's patch against ``base`` made in the container, then copied at once into the archive,
+    written once (``fresh_path``), before the agent works again. The first patch goes into the run's ``BASELINE`` folder, with its
+    sha256 in the archive's index (``kept_digest``); the rule step's goes into ``rounds``. It keeps the patch's real bytes, as
+    ``final.patch`` keeps them, so the within-run comparison scores what each session left, and a patch that holds the run's key
+    is not kept. It reads the run's deadline: one that has passed, or passes before the capture ends, is "timeout", and nothing
+    is kept. Otherwise its ending by ``step_ending``: "finished" only when the command exited 0 and the file is kept."""
+    if time.monotonic() >= deadline:
+        return "timeout"
+    dest = run.fresh_path(f"{BASELINE}/{name}" if name == FIRST_PATCH else f"rounds/{name}")
+    try:
+        done = ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/rounds/{name}"), workdir=task.repo,
+                             timeout=min(300.0, deadline - time.monotonic()))
+        ok = done.returncode == 0 and copy_out(ctx.docker, agent, f"{WE}/rounds/{name}", dest)
+    except subprocess.TimeoutExpired:
+        done, ok = None, False
+    late = done is None or time.monotonic() >= deadline
     if ok and any(secret.encode("utf-8") in dest.read_bytes() for secret in ctx.archive.redact.secrets):
         ok = False
-    if not ok and dest.exists():
+    if (late or not ok) and os.path.lexists(dest):
         dest.unlink()
+    if late:
+        return "timeout"
+    if ok and name == FIRST_PATCH:
+        run.archive.append({"event": "kept", "run": run.rel, "patch": name, "sha256": c.sha256_file(dest)})
     return step_ending("", CAPTURED if ok else None, done.returncode)
 
 
 def rule_step(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, tally: c.Tally,
               stop: float, started: float) -> str:
     """Arm K3's step, after the first patch is kept: the same session resumed with ``RULE_STEP``, as a repair resumes it, on the
-    run's one clock, tally and stop, so its turns and spend count against the run's allowance. It is given what is left of the
-    run's deadline and no more: none left is "timeout", with no session. Its ending (``step_ending``) reads its own result only,
-    never one an earlier session left in the tally; from a success, the tree is then kept as ``RULE_PATCH``."""
-    left = c.WALL_CLOCK_S - (time.monotonic() - started)
+    run's one tally and stop, so its turns and spend count against the run's allowance. It reads the run's one deadline
+    (``deadline_of``): none left is "timeout", with no session, and the session ends at that deadline however long its process
+    takes to start. Its ending (``step_ending``) reads its own result only, never one an earlier session left in the tally; from
+    a success, the tree is then kept as ``RULE_PATCH``, by the same deadline."""
+    deadline = deadline_of(started)
+    left = deadline - time.monotonic()
     if left <= 0:
         return "timeout"
     before, codes = tally.result, []
     stopped = run_session(ctx, run, agent, scout_again(docker_args), key, tally, RULE_STEP, "rule_stream.jsonl",
-                          seconds=left, stop_usd=stop, codes=codes)
+                          seconds=left, stop_usd=stop, codes=codes, deadline=deadline)
     own = tally.result if tally.result is not before else None      # ``Tally.feed`` keeps each result as a new dict
     ended = step_ending(stopped, own, codes[-1] if codes else None)
-    return kept(ctx, task, agent, base, run, RULE_PATCH) if ended == "finished" else ended
+    return kept(ctx, task, agent, base, run, RULE_PATCH, deadline) if ended == "finished" else ended
 
 
 def rule_led_start(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, tally: c.Tally,
@@ -2063,9 +2142,10 @@ def rule_led_start(ctx: Context, task: Task, run: Any, agent: str, base: str, do
     """Arm K3 from the end of its first session to its first review (``K3_STEPS``): the first session's ending, from its stop and
     exit (``first``) and its result, the only one in the tally yet; the first patch kept; the rule step, its session and then its
     patch kept. Each runs only when the one before it ended "finished"; the first that did not is where the run ends, with its
-    status ("ended") and its step ("at"). Both are "" when every step finished."""
+    status ("ended") and its step ("at"). Both are "" when every step finished. Whether the run has its baseline is not decided
+    here: the archive says (``has_baseline``)."""
     steps = (lambda: step_ending(first[0], tally.result, first[1]),
-             lambda: kept(ctx, task, agent, base, run, FIRST_PATCH),
+             lambda: kept(ctx, task, agent, base, run, FIRST_PATCH, deadline_of(started)),
              lambda: rule_step(ctx, task, run, agent, base, docker_args, key, tally, stop, started))
     for at, step in zip(K3_STEPS, steps):
         ended = step()
@@ -2074,35 +2154,71 @@ def rule_led_start(ctx: Context, task: Task, run: Any, agent: str, base: str, do
     return {"ended": "", "at": "", "instruction": RULE_DIGEST}
 
 
-def merge_rounds(ctx: Context, agent: str, run: Any) -> None:
-    """Arm K3's late copy of the container's ``rounds``, which the loop's later rounds are in: into a folder of the run's that
-    did not exist, so ``docker cp`` never puts it inside the archive's ``rounds``; masked there as every copy out of a container
-    is (``redact_tree``); then into ``rounds`` file by file, never over a file already there and never as one of the two
-    captures (``FIRST_PATCH``, ``RULE_PATCH``), which only ``kept`` writes. Nothing the agent leaves in the container replaces
-    what was kept, and a link is never followed out of the copy."""
-    late = run.path / f"rounds-late-{uuid.uuid4().hex[:8]}"
+def ended_as(ctx: Context, run: Any, status: str, *, dry: bool) -> str:
+    """The status a run ends with: as it stopped, except a K3 run with no Claude Code baseline (``has_baseline``), which ends
+    ``NO_FIRST_PATCH`` whatever stopped it: a preflight check, a cap, an error or an exception. A refusal at its first prompt's
+    check keeps its own status, and a dry run is never scored."""
+    if dry or status == "refused" or ctx.variant != ROUND3 or not rule_led(ctx.arm) or has_baseline(ctx.archive, run.rel):
+        return status
+    return NO_FIRST_PATCH
+
+
+def plain_files(top: Path) -> list[Path]:
+    """Every regular file under ``top``, found without following a link (``linked``): a folder that is a link is never entered,
+    and a file that is one is never read."""
+    found, todo = [], [top]
+    while todo:
+        with os.scandir(todo.pop()) as entries:
+            for entry in entries:
+                st = entry.stat(follow_symlinks=False)
+                if linked(st):
+                    continue
+                if stat.S_ISDIR(st.st_mode):
+                    todo.append(Path(entry.path))
+                elif stat.S_ISREG(st.st_mode):
+                    found.append(Path(entry.path))
+    return sorted(found)
+
+
+def copy_in(ctx: Context, agent: str, src: str, run: Any, name: str, *, skip: frozenset[str] = frozenset()) -> None:
+    """One of a K3 run's late copies out of the container (``rounds``, Claude Code's projects, G6's home), the only way they reach
+    the archive. It goes into a folder of the run's that did not exist, so ``docker cp`` never nests it. Then each regular file
+    found there without following a link (``plain_files``) is masked, as every copy out of a container is, and written into the
+    run's ``name`` folder, never over a file there and never as a name in ``skip``. Nothing is written outside that folder, so
+    the baseline (``BASELINE``) is never written, masked or replaced, and a link is never entered, read or written through."""
+    late = run.path / f"{name}-late-{uuid.uuid4().hex[:8]}"
     try:
-        if not copy_out(ctx.docker, agent, f"{WE}/rounds", late):
+        if not copy_out(ctx.docker, agent, src, late) or not plain(late, folder=True):
             return
-        redact_tree(late, ctx.archive.redact)
-        own, inside = {FIRST_PATCH.casefold(), RULE_PATCH.casefold()}, late.resolve()
-        for path in sorted(late.rglob("*")):
+        for path in plain_files(late):
             rel = path.relative_to(late)
-            dest = run.path / "rounds" / rel
-            if (path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(inside)
-                    or rel.as_posix().casefold() in own or dest.exists()):
+            dest = run.path / name / rel
+            if rel.as_posix().casefold() in skip or os.path.lexists(dest):
                 continue
+            text = path.read_bytes().decode("utf-8", errors="surrogateescape")
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(path, dest)
+            dest.write_bytes(ctx.archive.redact(text).encode("utf-8", errors="surrogateescape"))
     finally:
-        shutil.rmtree(late, ignore_errors=True)
+        if plain(late, folder=True):
+            shutil.rmtree(late, ignore_errors=True)
+        elif os.path.lexists(late):          # a link where the copy was: the link goes, never what it points at
+            try:
+                os.unlink(late)
+            except OSError:
+                os.rmdir(late)
 
 
-def scored_run(record: Mapping[str, Any]) -> bool:
-    """Whether a run may be saved as a row and offered to ``check``, which ``loop.one`` and ``check`` ask of its record. A run
-    that was made is scored on what it left, a stopped or failed one as every arm's is, so only a run with no Claude Code
-    baseline is not (``NO_BASELINE``): a K3 run refused at its first prompt's check, or ended before its first patch was kept."""
-    return record.get("status") not in NO_BASELINE
+def merge_rounds(ctx: Context, agent: str, run: Any) -> None:
+    """Arm K3's late copy of the container's ``rounds``, which the loop's later rounds are in (``copy_in``), never as one of the
+    two captures (``FIRST_PATCH``, ``RULE_PATCH``), which only ``kept`` writes."""
+    copy_in(ctx, agent, f"{WE}/rounds", run, "rounds", skip=frozenset({FIRST_PATCH.casefold(), RULE_PATCH.casefold()}))
+
+
+def scored_run(archive: c.Archive, record: Mapping[str, Any]) -> bool:
+    """Whether a run may be saved as a row and offered to ``check``, which ``loop.one`` and ``check`` ask of its record. Every
+    run that was made is scored on what it left, a stopped or failed one as every arm's is; a K3 run only when it has its Claude
+    Code baseline, read from the archive (``has_baseline``)."""
+    return not rule_led(str(record.get("arm") or "")) or has_baseline(archive, str(record.get("run") or ""))
 
 
 # --- arms V3 and V4: arm K's loop with the reviewer's test written before any patch (PLAN.md, 2026-11-04) ---------------
@@ -2267,6 +2383,15 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
     run = ctx.archive.start("dryrun" if dry else "run", task.id, **common)
     record: dict[str, Any] = {**common, "task": task.id, "run": run.rel, "agent_started": False, "cost_usd": 0.0}
     agent, net, px, status = "", "", "", "error"
+
+    def finish(status: str) -> dict[str, Any]:
+        """The run's end, on every way out of this function: a K3 run with no Claude Code baseline ends as ``ended_as`` says,
+        from the archive alone, with how it stopped kept beside it."""
+        ended = ended_as(ctx, run, status, dry=dry)
+        if ended != status:
+            record["stopped_as"] = status
+        return run.finish(record, ended)
+
     try:
         title, text = ctx.issue_reader(task)
         if round3 and gets_thread(ctx.arm):
@@ -2284,7 +2409,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             record["cost_usd"] = record["key_check_g6"]["usd"]
         if not record["key_check"]["ok"]:
             status = "key_check_failed"
-            return run.finish(record, status)
+            return finish(status)
         if not round2:
             net, px = start_net(ctx, tag)
         agent = f"g6we-run-{task.id}-{tag}"
@@ -2300,7 +2425,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         if (state.get("head") != task.parent or state.get("tree") != expected or state.get("dirty") != 0
                 or state.get("commits") != 1):
             status = "tree_mismatch"     # git must track exactly what upstream tracks at the base (PLAN.md section 9)
-            return run.finish(record, status)
+            return finish(status)
         base = str(state["head"])
         record["base_commit"] = base
         record["claude_version"] = out(ctx.docker("exec", "-u", USER, agent, CLAUDE, "--version", timeout=120))
@@ -2324,7 +2449,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             servers = record["arm_state"].get("mcp_servers") or []
             if (servers != []) if no_g6 else ("g6" not in servers):
                 status = "arm_mismatch"
-                return run.finish(record, status)
+                return finish(status)
         if round2:
             write_key_file(ctx.docker, agent, key)     # G6's model and its key, where g6.core.keys reads them
         write_in(ctx.docker, agent, f"{WE}/round_hook.sh", hook_script(task.repo, base), mode="755")
@@ -2348,7 +2473,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             if why:
                 record["why"] = why
                 status = "refused"
-                return run.finish(record, status)
+                return finish(status)
         args = claude_args(model, cap)
         way_out = DEAD_PROXY if dry else f"http://{px}:{PROXY_PORT}"
         env_names = ["ANTHROPIC_API_KEY", f"HTTPS_PROXY={way_out}", f"HTTP_PROXY={way_out}",
@@ -2369,6 +2494,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         if looped and has_hook(ctx.arm):
             write_in(ctx.docker, agent, f"{HOME}/.claude/settings.json", hook_settings(stop=True))
         started = time.monotonic()    # one clock for the run: arm V's bug test comes out of the same allowance (review v2)
+        deadline = deadline_of(started)     # the run's one deadline, which every step after it reads
         bug: dict[str, Any] = {}
         if test_led and not dry:      # the bug's test, from the issue and the parent, before the agent starts (PLAN.md, 2026-11-04)
             bug = bug_test(ctx, task, run, title, text)
@@ -2384,7 +2510,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         try:
             proc.stdin.write(text_in.encode("utf-8"))
             proc.stdin.close()
-            ended = read_stream(iter(proc.stdout.readline, b""), tally, deadline=started + c.WALL_CLOCK_S,
+            ended = read_stream(iter(proc.stdout.readline, b""), tally, deadline=deadline,
                                 write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
                                 stop_usd=stop)
         finally:
@@ -2407,12 +2533,13 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             record["rule_step"] = rule_led_start(ctx, task, run, agent, base, docker_args, key, tally, stop, started,
                                                  (ended, first_code))
             ended = record["rule_step"]["ended"]
-            if ended and record["rule_step"]["at"] != "rule step":    # ended before its first patch was kept: no baseline
-                ended = NO_FIRST_PATCH
+            record["first_patch_sha256"] = kept_digest(ctx.archive, run.rel)    # whether it is a baseline: has_baseline, at the end
         if critic_led and not dry and not ended:
             record["repairs"] = reviews_until_clean(ctx, task, run, agent, base, docker_args, key, tally, stop, started,
                                                     lambda n: run_critic(ctx, task, run, agent, base, title, text, n),
-                                                    finding=finding_rule(ctx.arm), after_step=stepped)
+                                                    finding=finding_rule(ctx.arm), after_step=stepped,
+                                                    **({"deadline": deadline} if stepped else {}))
+            ended = record["repairs"].get("ended") or ended      # K3's loop after the step ends at the run's deadline
         if test_led and not dry and not ended:
             record["repairs"] = reviews_with_bug_test(ctx, task, run, agent, base, docker_args, key, tally, stop, started, bug)
         result = tally.result or {}
@@ -2435,8 +2562,11 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             checked(ctx.docker("exec", "-u", USER, agent, "rm", "-f", KEY_FILE, timeout=60), "remove G6's key file")
         for src, name in ((f"{WE}/rounds", "rounds"), (f"{HOME}/.claude/projects", "claude_projects"),
                           (f"{HOME}/.g6", "g6_home")):
-            if name == "rounds" and round3 and rule_led(ctx.arm):     # K3: its two captures are kept already, as made
-                merge_rounds(ctx, agent, run)
+            if round3 and rule_led(ctx.arm):     # K3: every late copy goes in by copy_in, which never follows a link
+                if name == "rounds":
+                    merge_rounds(ctx, agent, run)
+                else:
+                    copy_in(ctx, agent, src, run, name)
                 continue
             copy_out(ctx.docker, agent, src, run.path / name)
             redact_tree(run.path / name, ctx.archive.redact)
@@ -2478,7 +2608,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                 ctx.docker("rm", "-f", name, timeout=300)
         if net:
             ctx.docker("network", "rm", net, timeout=120)
-    return run.finish(record, status)
+    return finish(status)
 
 
 # --- validation, the independent check and replays ------------------------------------------------------------------------
@@ -2585,13 +2715,16 @@ def scored_patches(rounds: Path) -> list[Path]:
     return [rounds / name for *_, name in sorted(order)]
 
 
-def patches_to_score(rounds: Path, arm: str) -> list[tuple[str, Path]]:
-    """The one rule ``check`` selects and labels a run's patches by, before its final one: arm K3's (``scored_patches``); every
-    other arm's exactly as before K3 (a0ad0a8): each ``round-*.patch`` anywhere under ``rounds``, by its number, a
-    ``RULE_PATCH`` among them or not. Each label is the patch's stem."""
-    found = scored_patches(rounds) if rule_led(arm) else sorted(rounds.glob("**/round-*.patch"),
-                                                                 key=lambda p: int(p.stem.split("-")[1]))
-    return [(path.stem, path) for path in found]
+def patches_to_score(folder: Path, arm: str) -> list[tuple[str, Path]]:
+    """The one rule ``check`` selects and labels a run's patches by, before its final one. Arm K3's: its baseline, read from its
+    own folder (``baseline_of``) and labelled "round-1", then its ``rounds`` (``scored_patches``) past round 1. Every other arm's
+    exactly as before K3 (a0ad0a8): each ``round-*.patch`` anywhere under ``rounds``, by its number, a ``RULE_PATCH`` among them
+    or not. Each other label is the patch's stem."""
+    rounds = folder / "rounds"
+    if rule_led(arm):
+        later = [(path.stem, path) for path in scored_patches(rounds) if path.name != FIRST_PATCH]
+        return [(Path(FIRST_PATCH).stem, baseline_of(folder)), *later]
+    return [(path.stem, path) for path in sorted(rounds.glob("**/round-*.patch"), key=lambda p: int(p.stem.split("-")[1]))]
 
 
 def run_record(archive: c.Archive, rel: str) -> dict[str, Any]:
@@ -2612,12 +2745,12 @@ def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool
     src = Path(src)
     rel = str(src.relative_to(ctx.archive.root)).replace("\\", "/")
     done = run_record(ctx.archive, rel)
-    if not scored_run(done):     # named or not, a run with no first patch is never offered to the check
+    if not scored_run(ctx.archive, {**done, "run": rel}):   # named or not, a K3 run with no baseline is never checked
         raise SystemExit(f"{rel} is arm {done.get('arm')}'s and ended {done.get('status')}: it has no Claude Code baseline to "
-                         "score")
+                         "score (has_baseline)")
     f2p, p2p = v["record"]["fail_to_pass"], v["record"]["pass_to_pass"]
     folder = ctx.archive.start("recheck" if amended else "check", task.id, checked_run=rel)
-    patches = [] if amended else patches_to_score(src / "rounds", str(done.get("arm") or ""))
+    patches = [] if amended else patches_to_score(src, str(done.get("arm") or ""))
     rows = []
     for label, patch in [*patches, ("final", src / "final.patch")]:
         body = _oracle_run(ctx, task, patch=patch, folder=folder, label=label, amended=amended)

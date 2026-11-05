@@ -56,7 +56,7 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
                if (r.get("task"), r.get("arm"), r.get("repeat")) == (task, arm, repeat)][-1]
     if rec.get("status") == "refused":   # never counted as a failed run
         raise SystemExit(f"refused: {arm} {task} {repeat}: {rec.get('why')}")
-    if not we.scored_run(rec):     # a K3 run that ended before its first patch was kept: no row, as a refusal is none
+    if not we.scored_run(c.Archive(root), {**rec, "arm": arm}):     # a K3 run with no baseline (run.has_baseline): no row
         raise SystemExit(f"not a row: {arm} {task} {repeat} ended {rec.get('status')}: it has no Claude Code baseline")
     row = {"arm": arm, "task": task, "repeat": repeat, "run": rec.get("run"), "status": rec.get("status"),
            "why": rec.get("why"), "cost_usd": rec.get("cost_usd"), "passes": False, "failing": None, "tests": []}
