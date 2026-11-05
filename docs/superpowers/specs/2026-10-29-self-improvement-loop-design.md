@@ -726,21 +726,30 @@ all. Anything it cannot read or use, any of the three files, records that do not
 wrong shape, null included (one check, where the row is written and where it is read), is a stop in force with its own
 code, `G6_E_LOOP_STOP_UNREADABLE`, never a value such as a count of -1 or nothing to lift, and never a raised error: a tick
 ends at its next request, the runner refuses to run and its heartbeat carries that code, status says which file, and a
-dialog or a start starts nothing. A tick keeps the start it parsed against the digest of the very bytes it parsed, taken in
+dialog or a start starts nothing. That holds for any failure at all, not a list of them: in the reading, in noting a stop,
+in the tick's writer reload and every other stop path, a handler catches every exception, and a test built from the code
+finds none that names a narrower list. Noting a stop decides absence by the reading's own rule, so a directory at the
+records' path is said in the heartbeat as a stop not noted. The stop is honoured before anything else: the runner's
+preflight ends on any stop in force, with its code, before its settings are read, and the dialog and a start give an
+unreadable stop's code before any other refusal; a stop they may lift is carried in any refusal they give (`stop_code`). A tick keeps the start it parsed against the digest of the very bytes it parsed, taken in
 the same reading, and parses again only when the bytes read before a request differ. A dialog's terms carry its reading's
 whole digest, and the dialog is shown only if a reading taken once it is made is that same reading. A start, under the tick
 lock and the stop lock, takes a fresh reading and refuses if its digest is not the one the dialog showed, then writes its
 row; the stop lock is the one a stop's writer holds until its journal line and its `STOP` file are both on disk, so no start
 lifts a stop the disk may yet lose, and a start refused there writes nothing. The row goes onto the approved records
-themselves: the writer must open the very chain that reading parsed, the ledger appends only onto the head it opened, and a
-reading once the row is written must find the approved bytes exactly with that one row after them, or a stop row revokes the
-start (a `STOP` file when even that will not take) and nothing is spawned.
+themselves: once the writer has opened them, a reading must find exactly the approved bytes before anything is appended,
+and the ledger appends only onto the head it opened, so a crash or a failed write after the append can leave a start only
+on approved bytes. A reading once the row is written must find those bytes with that one row after them, and on every way
+out of the append, an exception included, anything else that landed is revoked by a stop row (a `STOP` file when even that
+will not take); nothing is spawned.
 
-**One ending for the runner.** Every way a run ends goes through one function: a `STOP` file at the preflight, the gate, a
-stop a pass reads, this process's own cannot-record stop, or a folder that cannot be opened or run. A stop is noted in the
-records by a writer that never raises (what it could not note, the heartbeat says), then the day's page and the terminal
-heartbeat follow, with the code and reason of the reading that ended the run. A test lists every way `run` and a pass return
-and shows each goes through it. A runner refused the lock another runner holds writes no heartbeat over the live one's.
+**One ending for the runner.** Every way a run ends goes through one function: a stop at the preflight, the gate, a stop a
+pass reads, this process's own cannot-record stop, a folder that cannot be opened or held, or anything raised before the
+hand-off to the running loop. A stop is noted in the records by a writer that never raises (what it could not note, the
+heartbeat says), then the day's page is written, the running loop's own or one from the reading of the folder, and only then
+the terminal heartbeat, with the code and reason of the reading that ended the run. A test lists every way `run` and a pass
+return, and that every exception before the hand-off ends there too. A runner refused the lock another runner holds writes
+no page and no heartbeat over the live one's.
 
 An agreement binds what the dialog showed: the settings, the Python file, who enrolled it, the stop state as that one reading
 saw it, and any pause. If any of that moves while the dialog is open, nothing starts and the person is asked again. A stop that
