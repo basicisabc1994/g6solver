@@ -723,8 +723,9 @@ in that chain that can name a person. An adoption still cannot. The candidate ca
 a person took back from coming back through the gate.
 
 **Only a person's start lets it run.** `run` carries on a start that stands: of the starts and stops on record, the last is
-a start a person agreed to in the client's dialog. With none it is refused, with `G6_E_LOOP_NOT_STARTED`, before any of the
-folder's code runs, so a shell is no way round the dialog. A stop ends the start for good: every stop through the tool is
+a start a person agreed to in the client's dialog. With none and no stop in force it is refused, with
+`G6_E_LOOP_NOT_STARTED`, before any of the folder's code runs, so a shell is no way round the dialog; a stop in force refuses
+it with that stop's own code, never in other words. A stop ends the start for good: every stop through the tool is
 first a line in `stops.log`, the journal of stops, a file no lock stands in front of, flushed to disk before its `STOP` file
 is written, and a start records the journal it saw, by count and digest, so a restart or removing the `STOP` file by hand
 brings nothing back until a person agrees again.
@@ -733,11 +734,15 @@ brings nothing back until a person agrees again.
 gate, a tick's guard, status and the digest all take it; nothing else decides, and nothing else opens these files. The
 reading is a value: it opens the `STOP` file, the journal and the records once each, and everything else, the decision, the
 last start with any stop on record after it, the lift fields, who enrolled, any pause and the records themselves, comes from
-those bytes in memory, under one digest of all of them. A test lists, from the code, every place G6 joins a path to these
-files or opens the records, and each is the reading, a writer, or the question of whether a folder is a loop at all. A file
-is absent only when its open fails with not-found and the folder above it is a directory that can be listed, so a path
-under a regular file, which Windows reports as not found, is unreadable, as is a file that is a link or kept changing while
-it was read. A stop stands when the `STOP` file is not the one the last start lifted, when the journal's bytes are not the
+those bytes in memory, under one digest of all of them. No argument skips any part of it, and every older reader
+(`stop_standing`, `stop_seen`, `stop_reason`, `stop_to_lift`, `stops_asked`) is a field of that one full reading. A test
+lists, from the code, every place G6 joins a path to these files or opens the records, and each is the reading, a writer,
+or the question of whether a folder is a loop at all. Each file is read from one open handle, and its bytes stand only when
+the file that handle holds, known by the handle itself (on Windows its volume and file index), is the regular file that
+stands at the path once they are read, with as many bytes as were read; a file replaced or changed while it was read is
+read again. A file is absent only when its open fails with not-found and the folder above it is a directory that can be
+listed, so a path under a regular file, which Windows reports as not found, is unreadable, as is a file that is a link or
+kept changing while it was read. A stop stands when the `STOP` file is not the one the last start lifted, when the journal's bytes are not the
 ones it bound (bytes decide, never a count of lines, so a line a crash cut short is a stop), when a stop on record follows
 that start, which it revokes until a person starts again, and with no start on record, when the journal holds any bytes at
 all. Anything it cannot read or use, any of the three files, records that do not check out, or a start's lift fields of the
@@ -749,7 +754,16 @@ the same reading, and parses again only when the bytes read before a request dif
 whole digest, and the dialog is shown only if a reading taken once it is made is that same reading. A start, under the tick
 lock and the stop lock, takes a fresh reading and refuses if its digest is not the one the dialog showed, then writes its
 row; the stop lock is the one a stop's writer holds until its journal line and its `STOP` file are both on disk, so no start
-lifts a stop the disk may yet lose, and a start refused there writes nothing.
+lifts a stop the disk may yet lose, and a start refused there writes nothing. The row goes onto the approved records
+themselves: the writer must open the very chain that reading parsed, the ledger appends only onto the head it opened, and a
+reading once the row is written must find the approved bytes exactly with that one row after them, or a stop row revokes the
+start (a `STOP` file when even that will not take) and nothing is spawned.
+
+**One ending for the runner.** Every way a run ends goes through one function: a `STOP` file at the preflight, the gate, a
+stop a pass reads, this process's own cannot-record stop, or a folder that cannot be opened or run. A stop is noted in the
+records by a writer that never raises (what it could not note, the heartbeat says), then the day's page and the terminal
+heartbeat follow, with the code and reason of the reading that ended the run. A test lists every way `run` and a pass return
+and shows each goes through it. A runner refused the lock another runner holds writes no heartbeat over the live one's.
 
 An agreement binds what the dialog showed: the settings, the Python file, who enrolled it, the stop state as that one reading
 saw it, and any pause. If any of that moves while the dialog is open, nothing starts and the person is asked again. A stop that

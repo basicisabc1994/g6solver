@@ -626,7 +626,7 @@ def test_run_with_a_stop_file_ends_before_it_opens_anything(tmp_path):
     root = tmp_path / "loop"
     root.mkdir()
     (root / "STOP").write_text("stay down\n", encoding="utf-8")
-    assert run(root) == 0 and heartbeat(root) is None
+    assert run(root) == 0 and heartbeat(root)["code"] == "G6_E_LOOP_STOPPED"     # the stop that ended it (review 3, 3)
 
 
 def test_a_starting_heartbeat_is_on_record_before_the_lock_is_taken(tmp_path, monkeypatch):
@@ -810,7 +810,8 @@ def test_a_stop_counted_since_the_start_closes_the_gate_with_its_file_gone(tmp_p
     assert CycleLog(root / CYCLE_LOG).start_in_force()                   # nothing in the records says it stopped
     assert run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root)) == 1
     assert CycleLog(root / CYCLE_LOG).cycles() == []
-    assert "a stop" in capsys.readouterr().err and heartbeat(root)["code"] == "G6_E_LOOP_NOT_STARTED"
+    assert "a stop" in capsys.readouterr().err and heartbeat(root)["code"] == "G6_E_LOOP_STOPPED"   # its own code
+    assert not CycleLog(root / CYCLE_LOG).start_in_force()               # and the run's end noted it in the records
 
 
 def test_a_start_with_no_stop_count_stands_on_nothing(tmp_path, capsys):
