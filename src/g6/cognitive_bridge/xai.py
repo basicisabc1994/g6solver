@@ -148,7 +148,11 @@ def distill_blackbox(blackbox: Any, X_train: Sequence[Sequence[float]],
         raise ValueError("wrong number of features")
     if set(train) & set(holdout):
         raise ValueError("identical feature rows cross the training/holdout boundary")
-    from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor  # optional g6[ml] dependency
+    try:
+        from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor  # optional g6[ml] dependency
+    except ImportError as exc:
+        raise ImportError("scikit-learn is not installed: pip install 'g6[ml] @ "
+                          "git+https://github.com/basicisabc1994/g6solver'") from exc
 
     observed_train = list(blackbox.predict(train))
     observed_holdout = [_native(x) for x in blackbox.predict(holdout)]

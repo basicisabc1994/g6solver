@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Run from the G6 repository with: pytest -q tests/test_cognitive_bridge.py"""
+"""Run from the G6 repository with: pytest -q tests/cognitive_bridge/test_cognitive_bridge.py"""
+import importlib.util
 import json
 import math
 
@@ -10,6 +11,11 @@ from g6.cognitive_bridge import (
     LLMProposer, MLAcquisitionSelector, Observation, Probe, StaticProposer,
     ToolSpec, check_beliefs, distill_blackbox, expected_information_gain, extract_tree,
 )
+
+#: xai's tree export and surrogate need scikit-learn, which g6[ml] provides; these tests run wherever it is installed.
+needs_sklearn = pytest.mark.skipif(importlib.util.find_spec("sklearn") is None,
+                                   reason="scikit-learn is not installed (pip install 'g6[ml] @ "
+                                          "git+https://github.com/basicisabc1994/g6solver')")
 
 
 def beliefs():
@@ -113,6 +119,7 @@ def test_g6_stateless_door_validates_and_does_not_verify():
     assert bad.value["completion_state"] == "blocked-escalated"
 
 
+@needs_sklearn
 @pytest.mark.parametrize("criterion", ["gini", "entropy"])
 def test_exact_tree_transcription(criterion):
     from sklearn.tree import DecisionTreeClassifier
@@ -125,6 +132,7 @@ def test_exact_tree_transcription(criterion):
     assert explicit.to_dict()["provenance"] == "tree_transcription"
 
 
+@needs_sklearn
 def test_exact_regression_transcription():
     from sklearn.tree import DecisionTreeRegressor
     X = [[float(i)] for i in range(60)]
@@ -134,6 +142,7 @@ def test_exact_regression_transcription():
     assert explicit.predict(X) == pytest.approx(model.predict(X))
 
 
+@needs_sklearn
 def test_blackbox_surrogate_holdout_and_leakage_refusal():
     from sklearn.ensemble import RandomForestClassifier
     # no repeated rows across holdout and training

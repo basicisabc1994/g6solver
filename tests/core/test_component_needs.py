@@ -60,6 +60,7 @@ NEEDS["adapt_rq"] = {"rq": ("rq", "redis")}
 # core run 5 merges: removing either package's __g6_extras__ declaration makes its case fail
 NEEDS["grounding"] = {"nli": ("sentence_transformers",)}
 NEEDS["reasoning"] = {"graph": ("networkx",)}
+NEEDS["cognitive_bridge"] = {"ml": ("sklearn",)}  # xai's tree export and surrogate
 
 # g6.code
 OUTSIDE["adapt_django"] = set()

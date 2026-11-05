@@ -869,6 +869,23 @@
     "vetting": null
   },
   {
+    "name": "cognitive_bridge",
+    "summary": "G6 Cognitive Learning Bridge: explicitly swappable learning strategies and XAI.",
+    "maturity": "beta",
+    "maturity_reason": "new typed bridge; its proposals, likelihoods and model fidelity are not checked by anyone outside it",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "rank",
+      "update",
+      "plan_methods",
+      "rank_methods",
+      "assurance_schema"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
     "name": "component_creator",
     "summary": "g6.code.component_creator \u2014 scaffold a new G6 component in the library's own shape, and check a package against the library's standard before anyone calls it done.",
     "maturity": "beta",

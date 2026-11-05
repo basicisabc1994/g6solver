@@ -8,7 +8,7 @@ Every way of failing G6 names, the components in the library that guard against 
 
 | Failure mode | Code | Guarded by | Can be caused by | Built, awaiting its certificate |
 |---|---|---|---|---|
-| ad hoc, unrepeatable choices about what to try next | `ad_hoc_choice` | `decision_making` | — | — |
+| ad hoc, unrepeatable choices about what to try next | `ad_hoc_choice` | `cognitive_bridge`, `decision_making` | — | — |
 | admin errors in records, filings or correspondence | `admin_record_error` | — | — | — |
 | a factual question answered from the model's memory instead of a source | `answered_from_memory` | `australian_legal_corpus`, `ctx_geo` | — | — |
 | attempted too much in one patch | `attempted_too_much_in_one_patch` | — | — | — |
@@ -51,7 +51,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | a safety check that passes when its parts are missing | `fail_open_check` | `action_gating` | — | — |
 | a failed or blocked search taken to mean there are no results | `failure_read_as_empty` | `ctx_search`, `knowledge_fetcher` | — | — |
 | a false analogy between fields that differ in structure | `false_analogy` | `reasoning` | — | — |
-| an uncertain or evasive answer passed off as confident | `false_confidence` | `epistemic_integrity` | — | — |
+| an uncertain or evasive answer passed off as confident | `false_confidence` | `cognitive_bridge`, `epistemic_integrity` | — | — |
 | output presented as expert-reviewed when it was not | `false_expert_review` | — | — | — |
 | code changed by text edits that break its structure | `fragile_text_edit` | `meta_programming` | — | — |
 | a long task drifting from its goal | `goal_drift` | `goal_engine` | — | — |
@@ -134,7 +134,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | a design that fails only in a rare order of events nobody tried | `rare_interleaving` | `model_checking` | — | — |
 | reimplementing a method that already exists | `reinvented_method` | `ctx_library_mapper` | — | — |
 | repeating the same mistake | `repeated_mistake` | `action_gating`, `learning`, `metaharness` | — | — |
-| the same claim repeated, counted as more evidence | `repetition_as_corroboration` | `epistemic_integrity` | — | — |
+| the same claim repeated, counted as more evidence | `repetition_as_corroboration` | `cognitive_bridge`, `epistemic_integrity` | — | — |
 | repository dumping | `repository_dumping` | — | — | — |
 | risk management failure | `risk_management_failure` | — | — | — |
 | a broken change left running with no way back | `rollback_missing` | — | — | — |
@@ -190,7 +190,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | an experiment without controls or proper statistics | `uncontrolled_experiment` | — | — | — |
 | relevant passages that retrieval never finds | `under_retrieval` | `ctx_colbert`, `ctx_elastic` | `cog_arch_actr`, `ctx_ace` | — |
 | an agent running with more autonomy than its record supports | `unearned_autonomy` | — | — | — |
-| a model shipped without evaluation, drift or fairness checks | `unevaluated_model_shipped` | — | `adapt_automl`, `adapt_pytorch`, `adapt_sklearn` | — |
+| a model shipped without evaluation, drift or fairness checks | `unevaluated_model_shipped` | — | `adapt_automl`, `adapt_pytorch`, `adapt_sklearn`, `cognitive_bridge` | — |
 | code from a published method that does not do what the method says | `unfaithful_method_code` | `adapt_library_synthesizer` | — | — |
 | a proof that only looks finished | `unfinished_proof` | `lean` | — | — |
 | an answer not grounded in the person's own documents | `ungrounded_answer` | `grounding` | — | — |

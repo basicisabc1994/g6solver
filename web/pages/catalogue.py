@@ -44,6 +44,11 @@ PLAIN: dict[str, tuple[str, str, str]] = {
               "Fills the gaps in a code template, then hunts for an input that breaks it, and repeats until none is "
               "left in the range you set",
               "generated code that only works on the examples it was shown"),
+    "cognitive_bridge": ("The method chooser",
+                         "Picks which kind of check a claim needs, such as rules, cause and effect, logic, a "
+                         "prediction or an optimisation, ranks the questions that best tell rival explanations apart, "
+                         "and gathers the results for a reviewer outside the agent to check",
+                         "a claim checked the convenient way instead of the way it needs"),
     "coding_agent_gate": ("The coding-agent check",
                           "Checks a coding agent's work before it acts and again before it says the job is done",
                           "an agent reporting a fix that the evidence does not back up"),
@@ -157,7 +162,7 @@ PLAIN: dict[str, tuple[str, str, str]] = {
 # one in the single column that says what it is for. A test fails when a registered core component is in no column, or
 # in two, or a column names one that is not registered.
 TABLE: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Learn", ("metaharness", "learning", "distillation", "abstraction", "cegis")),
+    ("Learn", ("metaharness", "learning", "distillation", "abstraction", "cegis", "cognitive_bridge")),
     ("Know", ("context", "grounding", "causal", "graph_reasoning")),
     ("Reason", ("formal", "lean", "algebra", "datalog", "prolog", "model_checking", "optimisation", "reasoning",
                 "solver", "debate")),

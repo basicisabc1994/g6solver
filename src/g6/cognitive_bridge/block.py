@@ -69,9 +69,19 @@ class MethodVariantInput(BaseModel):
     expects: list[str] = Field(default_factory=list, max_length=50)
 
 
+#: Each op the block answers, with what it does (its ``help`` answer).
+_OPS: dict[str, str] = {
+    "rank": "rank(hypotheses, probes, budget): the affordable probes by expected information gain, best first",
+    "update": "update(hypotheses, probes, probe_id, observed_positive): the posterior after one observed probe",
+    "plan_methods": "plan_methods(claims): the typed G6 solver steps each claim's evidence needs; nothing runs",
+    "rank_methods": "rank_methods(context, variants, required_methods): a cold-start ranking of method variants",
+    "assurance_schema": "assurance_schema(): the documentary fields an assurance dossier must fill",
+}
+
+
 class CognitiveInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    op: Literal["ops", "rank", "update", "plan_methods", "rank_methods", "assurance_schema"] = "ops"
+    op: Literal["ops", "help", "rank", "update", "plan_methods", "rank_methods", "assurance_schema"] = "ops"
     claims: list[ClaimInput] = Field(default_factory=list, max_length=20)
     context: ProblemSignatureInput | None = None
     variants: list[MethodVariantInput] = Field(default_factory=list, max_length=30)
@@ -83,7 +93,8 @@ class CognitiveInput(BaseModel):
     observed_positive: bool | None = None
 
 
-@component_maturity("experimental", reason="new typed bridge; its proposals, likelihoods and model fidelity are not independently certified")
+@component_maturity("beta", reason="new typed bridge; its proposals, likelihoods and model fidelity are not "
+                                   "checked by anyone outside it")
 @block_contract(
     purpose="rank discriminating research probes and revise explicit hypotheses with auditable Bayesian arithmetic",
     mitigates_failure_modes=("ad_hoc_choice",),
@@ -93,13 +104,17 @@ class CognitiveBridgeBlock(AIBlock[CognitiveInput, dict, dict]):
     def __init__(self, name: str = "cognitive_bridge", state: dict | None = None) -> None:
         super().__init__(name=name, state=state or {})
 
-    def infer(self, data: CognitiveInput | dict) -> Result[dict]:
+    def infer(self, data: CognitiveInput) -> Result[dict]:
+        # The registry hands a validated CognitiveInput; a Python caller may still pass the plain dict.
         try:
             d = data if isinstance(data, CognitiveInput) else CognitiveInput.model_validate(data)
             if d.op == "ops":
                 return Result.ok({"component": self.name, "completion_state": "qualified-draft",
-                                  "ops": ["rank", "update", "plan_methods", "rank_methods", "assurance_schema"],
+                                  "ops": list(_OPS),
                                   "note": "LLM research and in-memory ML adapters are Python-only; no tools are invoked via this surface."})
+            if d.op == "help":
+                return Result.ok({"component": self.name, "op": "help", "completion_state": "qualified-draft",
+                                  "help": list(_OPS.values())})
             if d.op == "assurance_schema":
                 return Result.ok({"component": self.name, "op": d.op,
                                   "completion_state": "qualified-draft",
