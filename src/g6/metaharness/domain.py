@@ -29,9 +29,11 @@ states that limit.
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import inspect
 import os
+import pickle
 import sys
 import threading
 from collections import Counter
@@ -158,7 +160,37 @@ class Cut:
     monitor: tuple[SuiteCase, ...]
 
     def digest(self) -> str:
-        return digest({name: [c.ref() for c in getattr(self, name)] for name, _ in SHARES})
+        """The cut's identity: each case's reference, and its answer as the judge compares it (``answer_identity``), not a
+        JSON rendering that two answers the judge tells apart can share."""
+        return digest({name: [{**c.ref(), "answer": answer_identity(c.expected)} for c in getattr(self, name)]
+                       for name, _ in SHARES})
+
+
+def answer_identity(value: Any) -> str:
+    """The SHA-256 of an expected answer as the judge compares it: every value with its type, so answers a judge can tell
+    apart, as ``1`` and ``"1"`` or ``True`` and ``1``, never share an identity. A mapping's items and a set's members are put
+    in a fixed order first, so the same answer read in another process has the same identity."""
+    return hashlib.sha256(_answer_bytes(value)).hexdigest()
+
+
+def _answer_bytes(value: Any) -> bytes:
+    kind = f"{type(value).__module__}.{type(value).__qualname__}"
+    if value is None or isinstance(value, (bool, int, float, complex, str, bytes)):
+        body = repr(value).encode("utf-8", "backslashreplace")
+    elif isinstance(value, Mapping):
+        body = b",".join(sorted(_answer_bytes(key) + b":" + _answer_bytes(item) for key, item in value.items()))
+    elif isinstance(value, (set, frozenset)):
+        body = b",".join(sorted(_answer_bytes(item) for item in value))
+    elif isinstance(value, (list, tuple)):
+        body = b",".join(_answer_bytes(item) for item in value)
+    elif dataclasses.is_dataclass(value) and not isinstance(value, type):
+        body = _answer_bytes({f.name: getattr(value, f.name) for f in dataclasses.fields(value)})
+    else:
+        try:
+            body = pickle.dumps(value, protocol=4)
+        except Exception:  # noqa: BLE001 - what will not pickle is pinned by what it says of itself
+            body = repr(value).encode("utf-8", "backslashreplace")
+    return f"{kind}({len(body)})".encode() + body
 
 
 def _point(seed: int, key: str) -> float:

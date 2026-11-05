@@ -298,3 +298,48 @@ def test_what_a_domain_does_to_the_measured_view_no_proposer_sees(tmp_path):
 
     loop.mh.propose(Reads(), budget=120)
     assert shown == [head.digest()]
+
+
+# Review 1's classes: what judges is pinned by what decides a verdict ----------------------------------------------------
+
+def test_a_judge_is_pinned_by_its_own_files_and_not_by_what_other_digests_pin(tmp_path):
+    from g6.metaharness import loop as loop_module
+    from g6.metaharness.domain import Judge
+
+    helper = tmp_path / "freeze_rules.py"
+    helper.write_text("def verdict(output, expected):\n    return output == expected\n", encoding="utf-8")
+    sys.path.insert(0, str(tmp_path))
+    try:
+        rules = importlib.import_module("freeze_rules")
+        judge_file = tmp_path / "freeze_judge.py"
+        judge_file.write_text("import json\nfrom freeze_rules import verdict\n\ndef judge(output, expected):\n"
+                              "    return verdict(output, expected)\n\ndef other(output, expected):\n    return True\n",
+                              encoding="utf-8")
+        judging = importlib.import_module("freeze_judge")
+        files = loop_module._imported_files(judging.judge)
+        assert {judge_file.resolve(), helper.resolve()} <= files
+        assert not any(loop_module._installed(path) for path in files)          # G6 and the installation: pinned elsewhere
+        first = loop_module._judge_digest(Judge(judging.judge, answers_by="independent"))
+        assert loop_module._judge_digest(Judge(judging.other, answers_by="independent")) != first
+        helper.write_text("def verdict(output, expected):\n    return False\n", encoding="utf-8")
+        assert loop_module._judge_digest(Judge(judging.judge, answers_by="independent")) != first
+        assert rules.verdict("a", "a")                                          # what runs is unchanged; what is pinned is not
+    finally:
+        sys.path.remove(str(tmp_path))
+        sys.modules.pop("freeze_rules", None)
+        sys.modules.pop("freeze_judge", None)
+
+
+@pytest.mark.parametrize("one, other", [(1, "1"), (True, 1), (1, 1.0), ({1: "a"}, {"1": "a"}), ([1], ["1"]),
+                                        ((1,), [1]), (b"1", "1"), (None, "None")])
+def test_answers_a_judge_can_tell_apart_never_share_an_identity(one, other):
+    from g6.metaharness.domain import answer_identity
+
+    assert answer_identity(one) != answer_identity(other)
+
+
+def test_the_same_answer_has_the_same_identity_whatever_order_it_was_built_in():
+    from g6.metaharness.domain import answer_identity
+
+    assert answer_identity({"a": 1, "b": {2, 3}}) == answer_identity({"b": {3, 2}, "a": 1})
+

@@ -72,7 +72,7 @@ from g6.metaharness.monitor import MIN_PAIRS
 from g6.metaharness.propose import DevRunner, ProposerView
 from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, SuiteCase, Workflow, default_objectives
 from g6.metaharness.select import race_calls
-from g6.metaharness.shadow import SCOPE, adapt_shadow
+from g6.metaharness.shadow import FROZEN_CHANGED, SCOPE, adapt_shadow
 from g6.operator.store import OperatorStore
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
 from g6.self_maintenance.envelope import (
@@ -106,7 +106,6 @@ EVALUATOR_IN_REACH = "G6_E_LOOP_EVALUATOR_IN_REACH"
 FOLDER_STOPS = (STOPPED, STOP_UNREADABLE)
 PAUSED = "G6_E_LOOP_PAUSED"
 RESUMED = "G6_E_LOOP_RESUMED"
-FROZEN_CHANGED = "G6_E_LOOP_FROZEN_CHANGED"
 HELD_OUT_SPENT = "G6_E_LOOP_HELD_OUT_SPENT"
 SEALED_BREACH = "G6_E_LOOP_SEALED_BREACH"
 PERSON_REQUIRED = "G6_E_LOOP_PERSON_REQUIRED"
@@ -556,8 +555,52 @@ def _writable(value: Any) -> Any:
 
 
 def _judge_digest(judge: Judge | None) -> str:
-    source = judge_source(judge.verdict) if judge is not None else None
-    return hashlib.sha256(source.read_bytes()).hexdigest() if source is not None else ""
+    """What decides a verdict: the verdict function the domain selected, by its file and its qualified name, so another
+    function in the same file is another judge, and the bytes of every file its module reaches through its import graph,
+    so a helper it calls judges too. G6's own package is the envelope's to pin (``envelope_sha256``), and an installed
+    package or the standard library the installation's, so the graph is followed only through the person's own files."""
+    if judge is None:
+        return ""
+    verdict = inspect.unwrap(judge.verdict)
+    source = judge_source(judge.verdict)
+    named = getattr(verdict, "__qualname__", None) or type(verdict).__qualname__
+    files = sorted({*_imported_files(verdict), *((source.resolve(),) if source is not None else ())})
+    return digest({"verdict": [str(source) if source is not None else "", named],
+                   "files": [[str(path), file_digest(path)] for path in files]})
+
+
+def _installed(path: Path) -> bool:
+    """Whether ``path`` is G6's own package or lies in the Python installation: code another digest pins."""
+    roots = {Path(sys.prefix), Path(sys.base_prefix), Path(sys.exec_prefix), _SOURCE}
+    return any(path.is_relative_to(root.resolve()) for root in roots)
+
+
+def _imported_files(verdict: Any) -> set[Path]:
+    """The person's own files a verdict's module reaches: its module, each module its names were imported from, and so on,
+    as the modules loaded in this process hold them."""
+    todo, seen, found = [getattr(verdict, "__module__", None)], set(), set()
+    while todo:
+        name = todo.pop()
+        if not isinstance(name, str) or name in seen:
+            continue
+        seen.add(name)
+        where = getattr(sys.modules.get(name), "__file__", None)
+        if not where:
+            continue
+        path = Path(where).resolve()
+        if _installed(path):
+            continue
+        found.add(path)
+        for value in list(vars(sys.modules[name]).values()):
+            if inspect.ismodule(value):
+                todo.append(value.__name__)
+                continue
+            for owner in (value, type(value)):
+                try:
+                    todo.append(owner.__module__)
+                except Exception:  # noqa: BLE001 - an object that will not say where it came from adds nothing to follow
+                    pass
+    return found
 
 
 def _differs(now: Mapping[str, str], breached: bool, recorded: Mapping[str, str]) -> list[str]:
@@ -1003,8 +1046,12 @@ class ShadowLoop:
             return self._cut_off(halted, charged)
         elif stopped:                 # runs cut off mid-tick compared nothing: no gate result stands on them
             row |= {"outcome": "blocked", "code": TICK_BUDGET_SPENT, "reason": f"{stopped}, so nothing is adopted"}
-        elif recommended:
+        elif recommended:             # the adoption runs the frozen check last, under the lock it writes with
             row |= self._adopt(recommended[-1]["decision"], row)
+        elif row.get("outcome") != "rolled_back" and (held := self._still_frozen()) is not None:
+            # no adoption: the same check as the cycle ends. A rollback is left as it is: its row went back a generation,
+            # which the log must count, and the next tick is refused all the same
+            row |= {"outcome": "blocked", "code": held["warning_card"]["code"], "reason": held["message"]}
         if isinstance(self._rca, str):           # the read for it failed: the row says so
             row["rca"] = _writable({"unreadable": self._rca})
         elif self._rca is not None:               # read once the outcome is known: an adoption is part of what it reads
@@ -1059,24 +1106,26 @@ class ShadowLoop:
                 pass                  # the run still ends on what is held here
         return _blocked(CANNOT_RECORD, why, "A person frees the log, then starts the loop again with g6_improve_start.")
 
+    def _still_frozen(self) -> dict[str, Any] | None:
+        """The one rule for what judges at a cycle's end: the frozen digests this tick read before it developed anything
+        must be the ones on disk now, or the cycle is ``FROZEN_CHANGED``, whether or not a candidate won. A tick with no
+        such reading is refused the same way."""
+        seen = self._frozen_seen
+        if seen is None:                         # nothing to hold the files to, so nothing to stand on
+            return _blocked(FROZEN_CHANGED, "this cycle read no frozen digests before it developed anything, so nothing it "
+                            "measured stands")
+        changed = self._changed(against=seen)
+        return _blocked(FROZEN_CHANGED, f"changed during this cycle: {', '.join(changed)}. What it measured is not what a "
+                        "person enrolled, so nothing is adopted, and the next tick is refused while it stands"
+                        ) if changed else None
+
     def _adopt(self, decision: Any, row: dict[str, Any]) -> dict[str, Any]:
         """Adopt ``decision`` only if the frozen digests this tick read before it developed anything are the ones on disk
-        as the adoption is written. The adoption runs that check last, with its row already made and under the lock it
-        writes with, and the row carries the digests. A change at any moment between is a refusal of its own, written in
-        this cycle's row, and the next tick is refused while it stands."""
-        seen = self._frozen_seen
-
-        def still_frozen() -> dict[str, Any] | None:
-            if seen is None:                     # nothing to hold the files to, so nothing to adopt on
-                return _blocked(FROZEN_CHANGED, "this cycle read no frozen digests before it developed anything, so "
-                                "nothing is adopted")
-            changed = self._changed(against=seen)
-            return _blocked(FROZEN_CHANGED, f"changed during this cycle: {', '.join(changed)}. What it measured is not what "
-                            "a person enrolled, so nothing is adopted, and the next tick is refused while it stands"
-                            ) if changed else None
-
-        adopted = self.mh.adopt(decision, findings={name: row[name] for name in FINDINGS if name in row},
-                                last_check=still_frozen, frozen=seen or {})
+        as the adoption is written (``_still_frozen``). The adoption runs that check last, with its row already made and
+        under the lock it writes with, and the row carries the digests. A change at any moment between is a refusal of its
+        own, written in this cycle's row, and the next tick is refused while it stands."""
+        adopted = self.mh.adopt(decision, frozen=self._frozen_seen, last_check=self._still_frozen,
+                                findings={name: row[name] for name in FINDINGS if name in row})
         said = {"code": adopted["warning_card"]["code"], "reason": adopted["message"]}
         if adopted["completion_state"] == "blocked-escalated":
             return {**said, "outcome": "blocked"}

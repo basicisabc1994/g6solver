@@ -24,9 +24,9 @@ version, as the meta-harness's monitor does.
 rollback, so the lineage shows losses as well as gains. A row's ``version`` is its number and ``base_version`` its parent.
 It carries the profile's digest, the change in plain words, what the proposer found, and what was measured: the held-out
 split's figures before and after, as the gate read them, and for a rollback the same figures the other way with what the
-monitor saw. They are measurements on those splits, nothing stronger. An adoption the loop wrote also carries ``frozen``:
-the digests of what judges, read before the cycle developed anything, which were still the ones on disk as it was
-written. These are the loop's own numbers, which have nothing to do with G6's version, its tags or its releases: those
+monitor saw. They are measurements on those splits, nothing stronger. An adoption also carries ``frozen``: the digests
+of what judges, read before the cycle developed anything, which were still the ones on disk as it was written; an
+adoption with no such reading is never written. These are the loop's own numbers, which have nothing to do with G6's version, its tags or its releases: those
 stay the owner's.
 """
 from __future__ import annotations
@@ -62,6 +62,8 @@ DEMOTED = "G6_E_LOOP_DEMOTED"
 NOT_DEMOTABLE = "G6_E_LOOP_NOT_DEMOTABLE"
 AUDITED = "G6_E_LOOP_AUDITED"
 MEASURED = "G6_E_LOOP_MEASURED"
+#: What judges changed, or was never read, so no adoption may stand on what was measured (``g6.metaharness.loop``).
+FROZEN_CHANGED = "G6_E_LOOP_FROZEN_CHANGED"
 #: What the harness holds a run for when its executor raised, which a failed model call does.
 RUN_FAILED = "G6_E_HARNESS_EXECUTOR_FAILED"
 
@@ -170,16 +172,22 @@ class ShadowHarness(MetaHarness):
         return self.workflow.policy.max_evaluations - used
 
     @_serialized
-    def adopt(self, decision: GateDecision, *, findings: Mapping[str, Any] | None = None,
-              last_check: Callable[[], dict[str, Any] | None] = lambda: None,
-              frozen: Mapping[str, str] | None = None) -> dict[str, Any]:
+    def adopt(self, decision: GateDecision, *, frozen: Mapping[str, str] | None = None,
+              last_check: Callable[[], dict[str, Any] | None] | None = None,
+              findings: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """Make ``decision``'s candidate the loop's head and its next generation, with what its proposer ``findings``.
-        Only a recommendation this harness issued, on this head. ``last_check`` runs last: the row is made first, so
-        nothing but its write comes after the check, under the lock this harness holds for every write, and a refusal from
-        it stands in place of the adoption. ``frozen``: the digests that check held the files to, which the row carries."""
+        Only a recommendation this harness issued, on this head, and only on a reading of what judges: ``frozen``, the
+        digests the caller read before it developed anything, which the row carries, and ``last_check``, which holds the
+        files to them. It runs last: the row is made first, so nothing but its write comes after the check, under the lock
+        this harness holds for every write, and a refusal from it stands in place of the adoption. A caller with no
+        reading, or no check, is refused: this is the one function that writes an adoption."""
         refused = self._refusal()
         if refused:
             return refused
+        if not frozen or last_check is None:
+            return _blocked(FROZEN_CHANGED, "an adoption is written only on a reading of what judges and its last check, "
+                            "and this one gave none, so nothing is adopted",
+                            "Adopt through the loop's tick, which reads what judges before it develops anything.")
         if self._decisions.get(decision.digest()) is not decision:
             return _blocked(NOT_ADOPTABLE, "this decision was not issued by this harness")
         if decision.verdict != "recommend":
@@ -199,7 +207,7 @@ class ShadowHarness(MetaHarness):
                "profile_digest": proposal.candidate_digest, "profile": proposal.candidate.model_dump(mode="json"),
                "proposer": decision.proposer, "diff": dict(proposal.diff), "change": _change(proposal),
                "measured": _measured(report), **{name: value for name, value in (findings or {}).items() if name in FINDINGS},
-               **({"frozen": dict(frozen)} if frozen is not None else {})}
+               "frozen": dict(frozen)}
         stopped = last_check()                  # last: the row is made, and only its write follows
         if stopped:
             return stopped
