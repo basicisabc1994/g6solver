@@ -514,7 +514,8 @@ def test_6_a_log_that_cannot_be_read_is_a_refusal_not_a_raised_error(tmp_path):
     loop.log.path.write_text(text.replace('"outcome"', '"outcome "'), encoding="utf-8")
     calls = len(domain.llm.calls)
     got = loop.tick()
-    assert _code(got) == "G6_E_LOOP_RECORDS_UNREADABLE" and len(domain.llm.calls) == calls
+    # the records hold what the stop decision stands on, so every reader says what that decision says of them
+    assert _code(got) == "G6_E_LOOP_STOP_UNREADABLE" and len(domain.llm.calls) == calls
 
 def test_6_a_sealed_breach_whose_pause_could_not_be_written_still_stops_the_next_tick(tmp_path, monkeypatch):
     domain = domains.WordProblems(tmp_path)

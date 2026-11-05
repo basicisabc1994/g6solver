@@ -56,7 +56,7 @@ from pathlib import Path
 from typing import Any
 
 from g6.core import stop
-from g6.core.ledger import LedgerError, digest as digest_of
+from g6.core.ledger import digest as digest_of
 from g6.metaharness.loop import (
     BUDGET_WAIT,
     BUSY,
@@ -340,23 +340,19 @@ class Runner:
 
 
 def _gate(root: Path, settings: dict[str, Any]) -> tuple[str, str]:
-    """The code and reason that refuse ``settings`` a run on this folder, both empty when a person's start covers it. It
-    reads the records and runs nothing."""
-    path = root / CYCLE_LOG
-    try:
-        log = CycleLog(path) if path.is_file() else None
-        start = log.started() if log is not None and log.start_in_force() else None
-    except LedgerError as exc:
-        return NOT_STARTED, f"the loop's records cannot be trusted, so nothing ran: {exc}"[:400]
+    """The code and reason that refuse ``settings`` a run on this folder, both empty when a person's start covers it. The
+    start and any stop are ``stop_in_force``'s one reading of the stop's files and the records: a start a stop on record
+    ended stands no more. It runs nothing."""
+    halted = stop_in_force(root)
+    if halted.code == STOP_UNREADABLE:
+        return STOP_UNREADABLE, f"{halted.reason}, so nothing ran: a person makes it readable, then g6_improve_start"[:400]
+    start = halted.start
     if start is None:
         return NOT_STARTED, ("no start stands on this folder, so nothing ran. Only a person starts the loop, in the client's "
                              "dialog, through g6_improve_start; after that a restart carries on until a stop")
     if start.get("stops") is None and start.get("stops_sha256") is None:
         return NOT_STARTED, ("the start on record bound no journal of stops, so a stop since it could not be seen and nothing "
                              "ran: only a new g6_improve_start undoes that")
-    halted = stop_in_force(root, start)
-    if halted.code == STOP_UNREADABLE:
-        return STOP_UNREADABLE, f"{halted.reason}, so nothing ran: a person makes it readable, then g6_improve_start"[:400]
     if halted:
         return NOT_STARTED, (f"a stop has been asked for since the last start, so nothing ran ({halted.reason}): only a new "
                              "g6_improve_start undoes that")[:400]

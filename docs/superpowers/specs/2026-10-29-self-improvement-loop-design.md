@@ -711,12 +711,18 @@ is written, and a start records the journal it saw, by count and digest, so a re
 brings nothing back until a person agrees again.
 
 **One answer on whether a stop is in force.** `stop_in_force` gives it, and a start, the runner, a tick, status and the digest
-all act on it; nothing else decides. It reads the `STOP` file and the journal in one reading. A stop stands when the `STOP`
-file is not the one the last start lifted, or the journal is not the one it bound, so a journal rewritten to as many lines is
-no unchanged record; with no start on record, every stop in the journal stands. Anything it cannot read, the `STOP` file, the
-journal or the records that say what was lifted, is a stop in force with its own code, `G6_E_LOOP_STOP_UNREADABLE`, never a
-value such as a count of -1 or nothing to lift: a tick ends at its next request, the runner refuses to run, status says which
-file, and a start starts nothing.
+all act on it; nothing else decides. It reads the `STOP` file, the journal and the records' last start, with any stop on
+record after it, in one reading. A stop stands when the `STOP` file is not the one the last start lifted, when the journal's
+bytes are not the ones it bound (bytes decide, never a count of lines, so a line a crash cut short is a stop), when a stop
+on record follows that start, which it revokes until a person starts again, and with no start on record, when the journal
+holds any bytes at all. Anything it cannot read or use, the `STOP` file, the journal, records that are not a file or do not
+check out, or a start's lift fields of the wrong shape (refused where the row is written, and again where it is read), is a
+stop in force with its own code, `G6_E_LOOP_STOP_UNREADABLE`, never a value such as a count of -1 or nothing to lift, and
+never a raised error: a tick ends at its next request, the runner refuses to run, status says which file, and a dialog or
+a start starts nothing. A tick reads the records whole only when their bytes change, by a digest taken before each request,
+and keeps the start it read against that digest otherwise. A start reads the stop state, compares it with what the dialog
+showed and writes its row all under the tick lock and the stop lock, which a stop's writer holds until its journal line and
+its `STOP` file are both on disk, so no start lifts a stop the disk may yet lose and a start refused there writes nothing.
 
 An agreement binds what the dialog showed: the settings, the Python file, who enrolled it, the stop state as that one reading
 saw it, and any pause. If any of that moves while the dialog is open, nothing starts and the person is asked again. A stop that

@@ -85,10 +85,12 @@ from g6.self_maintenance.envelope import (
     TICK_BUDGET_SPENT,
     CycleLog,
     Stop,
+    StopUnreadable,
     ask_to_stop,
     beat,
     file_digest,
     note_refusal,
+    records_identity,
     refused_requests,
     stop_in_force,
 )
@@ -566,13 +568,23 @@ def _differs(now: Mapping[str, str], breached: bool, recorded: Mapping[str, str]
 def _exclusive(method: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
     """One operation at a time per folder, on what is written and not on what this handle last read: a restart can
     overlap a tick that is still running, and a person's process is not the loop's. The lock is the operating system's,
-    so it dies with its process, and a refusal is a reply, never a raised error."""
+    so it dies with its process, and a refusal is a reply, never a raised error. Records the stop decision stands on that
+    do not read are that decision's to say: a stop in force, ``STOP_UNREADABLE``, as every reader says it."""
 
     @wraps(method)
     def invoke(self: ShadowLoop, *args: Any, **kwargs: Any) -> dict[str, Any]:
         try:
             with Coordination(self.root / ".tick").mutex():
-                self.log.reload()
+                try:
+                    self.log.reload()
+                except (OSError, LedgerError) as exc:
+                    halted = stop_in_force(self.root)
+                    if halted.code != STOP_UNREADABLE:
+                        raise LedgerError(f"{type(exc).__name__}: {exc}") from exc
+                    reply = _blocked(STOP_UNREADABLE, halted.reason[:400], "A person makes the loop's records readable; a new "
+                                     "g6_improve_start lets it run again.")
+                    self._beat(reply["completion_state"], STOP_UNREADABLE, reason=reply["message"])
+                    return reply
                 if self.mh is not None:
                     self.mh.refresh()
                 return method(self, *args, **kwargs)
@@ -598,6 +610,7 @@ class ShadowLoop:
         self.beat_fields: dict[str, Any] = {}     # what a runner adds to every heartbeat
         self.lost_cycles = 0                      # cycles in a row the log would not take: it cannot hold this count
         self.cannot_record = ""                   # why this process spends no more, set at MAX_FAILED_CYCLES of those
+        self._on_record: tuple[str, dict | None, str] | None = None   # the records' identity, their start, and its revocation
         self.evaluating = False                   # this tick has begun its held-out evaluation
         self.waited = 0                           # ticks a budget wait turned away since the last cycle: a wait leaves no row
         self.tuned: list[dict[str, Any]] = []     # this tick's tuning cycles as they happen, for a row that a raise cut short
@@ -662,9 +675,21 @@ class ShadowLoop:
 
     def _stop(self) -> Stop:
         """This folder's stop, which a tick and the runner read alike: if the runner read less, a tick refused for a stop
-        would leave it going, and asking again. The start is the one this handle verified, which only a holder of the tick
-        lock can change."""
-        return Stop(STOPPED, self.cannot_record) if self.cannot_record else stop_in_force(self.root, self.log.started())
+        would leave it going, and asking again. It is ``stop_in_force``'s answer on what is on disk. The start and any stop
+        after it are read from the records whole only when the records' bytes changed (``records_identity``, a digest
+        taken before each request), and kept against that identity otherwise; records that cannot be read stop it."""
+        if self.cannot_record:
+            return Stop(STOPPED, self.cannot_record)
+        try:
+            identity = records_identity(self.root)
+        except StopUnreadable as exc:
+            self._on_record = None
+            return Stop(STOP_UNREADABLE, f"{exc}, so a stop is in force until a person can read it")
+        if self._on_record is not None and self._on_record[0] == identity:
+            return stop_in_force(self.root, self._on_record[1], revoked=self._on_record[2])
+        found = stop_in_force(self.root)
+        self._on_record = None if found.code == STOP_UNREADABLE else (identity, found.start, found.revoked)
+        return found
 
     def stopped_by(self) -> str:
         """Why this folder is stopped, or ``""``."""
