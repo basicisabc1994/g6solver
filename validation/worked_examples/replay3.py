@@ -169,7 +169,7 @@ class Checked:
         return self.docker(*args, **kwargs)
 
     def sh(self, ctr: str, script: str, *args: Any, **kwargs: Any) -> Any:
-        done = self.docker.sh(ctr, script, *args, **kwargs)
+        done = we.completed(self.docker.sh(ctr, script, *args, **kwargs), "a command in the review's container", ok=we.EXITS)
         if done.returncode != 0:
             raise RuntimeError(f"a command in the review's container exited {done.returncode}")
         return done

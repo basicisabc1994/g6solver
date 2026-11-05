@@ -88,8 +88,9 @@ OTHER_SOURCE = (".c", ".h", ".cc", ".cpp", ".hpp", ".pyx", ".pxd", ".pxi", ".rs"
 
 def is_test(path: str) -> bool:
     """T3's test file: a Python file under a ``test`` or ``tests`` folder, or named ``test_*.py``, ``*_test.py`` or
-    ``conftest.py``."""
-    parts = path.replace("\\", "/").split("/")
+    ``conftest.py``. ``path`` is a repository's POSIX name, as git and GitHub give it: "/" alone separates its parts, and a "\\" is a
+    character of a name, never a folder's end (study review 2, finding 5)."""
+    parts = path.split("/")
     name = parts[-1]
     if not name.endswith(".py"):
         return False
@@ -139,7 +140,8 @@ Runner = Callable[[Sequence[str]], str]
 
 
 def gh_runner(args: Sequence[str]) -> str:
-    done = subprocess.run(["gh", *args], capture_output=True, timeout=600)
+    done = c.completed(subprocess.run(["gh", *args], capture_output=True, timeout=600), f"gh {' '.join(args[:3])}",
+                       ok=c.EXITS)          # its exit read next
     if done.returncode != 0:
         raise RuntimeError(f"gh {' '.join(args[:3])} failed: {done.stderr.decode(errors='replace')[-300:]}")
     return done.stdout.decode("utf-8", errors="replace")

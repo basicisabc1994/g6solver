@@ -906,7 +906,8 @@ def test_one_admission_rule_every_entry_point_asks_a_saved_k3_row_whose_baseline
     monkeypatch.setattr(we, "amendment", lambda task: diff)
     monkeypatch.setattr(loop, "tool", lambda command, *a, **kw: json.dumps({"status": "finished", "run": run.rel, "arm": "K3"})
                         if command == "run" else json.dumps({"checks": [{"patch": "final", "passes": True, "failing": 0,
-                                                                         "fail_to_pass_failing": []}]}))
+                                                                         "fail_to_pass_failing": []}],
+                                                             "amendment_sha256": we.c.sha256_file(diff)}))   # as check names it
     assert we.scored_run(archive, run.rel)
     row = loop.one(tmp_path, "g6", "K3", "fake-1", 1)
     assert row["passes"] is True and loop.rescore(tmp_path, "g6")[0]["amended_passes"] is True
@@ -1044,7 +1045,8 @@ def _facts_case(monkeypatch, root, case):
     monkeypatch.setattr(we, "amendment", lambda name_: diff)
     monkeypatch.setattr(we, "_oracle_run", lambda *a, **kw: {"results": {"t": "passed"}})
     monkeypatch.setattr(loop, "tool", lambda command, *a, **kw: json.dumps({"run": name, "status": "finished"}) if command == "run"
-                        else json.dumps({"checks": [{"patch": "final", "passes": True, "failing": 0, "fail_to_pass_failing": []}]}))
+                        else json.dumps({"checks": [{"patch": "final", "passes": True, "failing": 0, "fail_to_pass_failing": []}],
+                                         "amendment_sha256": we.c.sha256_file(diff)}))     # the amendment the check ran, as it names it
     return archive, row_task, name, row, ex
 
 

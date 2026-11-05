@@ -17,7 +17,7 @@ import re
 import stat
 import tempfile
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Container, Iterable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -72,6 +72,32 @@ def sha256_file(path: Path) -> str:
         for block in iter(lambda: stream.read(1 << 20), b""):
             h.update(block)
     return h.hexdigest()
+
+
+#: Every exit a command's own run can end with, for a call whose caller reads that exit itself, next (``returncode``): the
+#: command's no is an outcome there, as ``git apply``'s "does not apply" is. A status outside it is no exit of the command's.
+EXITS = range(256)
+#: ``git apply``'s own exits: 0 applied, 1 it does not apply, 128 no patch git can read (an empty or garbled one). A candidate's
+#: patch that does not apply is a failed patch; any other status (a failed exec: 125 to 127, a signal's 128 + n) raises.
+APPLY_EXITS = (0, 1, 128)
+
+
+def _text(data: Any) -> str:
+    data = data or b""
+    return (data if isinstance(data, str) else data.decode("utf-8", errors="replace")).strip()
+
+
+def completed(cp: Any, what: str, *, ok: Container[int] = (0,)) -> Any:
+    """The one reader of every command's result the study reads (a docker exec, run, cp or image call; git, gh, node or the runner
+    itself): its status first, and any status ``ok`` does not name, or none, raised as a failure (RuntimeError), never read as
+    output (study review 2, findings 6, 7 and 11: a failed exec whose output looked like a success). ``ok`` is a success alone,
+    unless the command's own non-zero exit is an outcome its caller reads next (``EXITS``, or the exits named). Every call site is
+    listed, from the code, by tests/validation/test_command_results.py."""
+    code = getattr(cp, "returncode", None)
+    if not isinstance(code, int) or isinstance(code, bool) or code not in ok:
+        said = (_text(getattr(cp, "stdout", b"")) + " " + _text(getattr(cp, "stderr", b""))).strip()
+        raise RuntimeError(f"{what} failed ({code}): {said[-600:]}")
+    return cp
 
 
 def price_of(model: str) -> dict[str, float]:
@@ -624,10 +650,16 @@ def beside(root: Path | Archive, name: str) -> Path:
     """A store kept beside the saved rows, in their folder (``SAVED``), by its one name: a review's or a replay's folder of records
     (``final_review`` and the like), or one of the training's own files (``evolve.json``, ``cegis.json``). Never the rows' folder
     itself, nor the amended verdicts' (``AMENDED``): only ``shelf`` reads a row, and only ``keep`` writes one. A file kept here
-    that is no row is found by ``shelf`` and refused, as it names no run."""
-    if not name or Path(name).name != name or name in (".", "..", AMENDED):
+    that is no row is found by ``shelf`` and refused, as it names no run. Names are compared as the file system resolves them
+    (``os.path.normcase``, and on Windows the trailing dots and spaces it drops), and an existing store that is the amended
+    verdicts' folder by another name is refused too (study review 2, finding 13)."""
+    resolved = os.path.normcase(name.rstrip(". ") if os.name == "nt" else name)
+    if not name or Path(name).name != name or resolved in (".", "..", "", os.path.normcase(AMENDED)):
         raise ValueError(f"{name!r} is no store beside the saved rows")
-    return _root(root) / SAVED / name
+    store, amended = _root(root) / SAVED / name, _root(root) / SAVED / AMENDED
+    if store.exists() and amended.exists() and os.path.samefile(store, amended):
+        raise ValueError(f"{name!r} is the amended verdicts' folder by another name")
+    return store
 
 
 def _own(facts: RunFacts, kept: Mapping[str, Any] | None, amendment: str | None) -> bool:
@@ -745,20 +777,30 @@ class Shelf:
     def get(self, key: tuple[str, str, int]) -> Saved | None:
         return next((one for one in self.rows if one.key == key), None)
 
-    def bars(self, key: tuple[str, str, int], *, amended: bool = False, run: str | None = None, file: str | None = None) -> str:
-        """Why no row of the run of ``key`` may be given or written (``amended``: its amended verdict), "" when nothing bars it: a file
-        refused for anything but being torn that is kept under the key's name or names a run of that key, or a row of another run
-        kept in the file it would be written to (``file``, else the key's name): another key's run, or, with ``run`` (the run it is
-        written for), any other run. ``loop.one`` and ``loop.rescore`` ask it before any run or check, the same way, and ``keep``
-        reads the file it writes again just before it writes, by the same rule."""
+    def bars(self, key: tuple[str, str, int], *, amended: bool = False) -> str:
+        """Why the run of ``key`` has no row (``amended``: no amended verdict), "" when nothing bars it: a file refused for anything
+        but being torn that names a run of that key (one saying of its run what its start does not, or one of two files for one run,
+        or of two runs for one key). Every reader of this read gives no score for a barred key (``shelf``), and ``loop.one`` and
+        ``loop.rescore`` refuse it before any run or check, the same way (study review 2, finding 1)."""
+        folder = AMENDED if amended else SAVED
+        for f in self.found:
+            if f.folder == folder and not f.torn and f.why and f.key == key:
+                return f"{SAVED}/{AMENDED + '/' if amended else ''}{f.file}: {f.why}"
+        return ""
+
+    def blocks(self, key: tuple[str, str, int], *, amended: bool = False, run: str | None = None, file: str | None = None) -> str:
+        """Why a row of the run of ``key`` may not be written to the file it would go to (``file``, else the key's name), "" when it
+        may: that file holds a row refused for anything but being torn, or a row of another key's run, or, with ``run`` (the run it is
+        written for), of any other run. ``loop.one`` and ``loop.rescore`` ask it before any run or check, and ``keep`` reads the file
+        again just before it writes, by the same rule. A name is the file system's: on Windows, one in another case is that file."""
         folder, dest = (AMENDED if amended else SAVED), os.path.normcase(file or saved_name(*key))
         for f in self.found:
-            if f.folder != folder or f.torn:
+            if f.folder != folder or f.torn or os.path.normcase(f.file) != dest:
                 continue
-            where, there = (f"{SAVED}/{AMENDED}/{f.file}" if amended else f"{SAVED}/{f.file}"), os.path.normcase(f.file) == dest
-            if f.why and (f.key == key or there):        # a name is the file system's: on Windows, one in another case is the file
+            where = f"{SAVED}/{AMENDED + '/' if amended else ''}{f.file}"
+            if f.why:
                 return f"{where}: {f.why}"
-            if not f.why and there and (f.key != key or (run is not None and f.run != run)):
+            if f.key != key or (run is not None and f.run != run):
                 return f"{where} holds the row of {f.run}, a run of {' '.join(map(str, f.key or ()))}: never written over"
         return ""
 
@@ -787,18 +829,19 @@ def _found(archive: Archive, folder: str, path: Path, facts_of: Callable[[str], 
 
 
 def _unique(found: list[Found]) -> list[Found]:
-    """A run whose rows more than one file of a folder holds, or a key more than one run's row holds, has no row: each is refused."""
+    """A run whose rows more than one file of a folder holds, or a key more than one run's row holds, has no row: each is refused,
+    in the rows' folder and the amended verdicts' alike (study review 2, finding 14)."""
     runs = collections.Counter((f.folder, f.run) for f in found if not f.why)
     keys: dict[Any, set[str]] = collections.defaultdict(set)
     for f in found:
-        if not f.why and f.folder == SAVED:
-            keys[f.key].add(f.run)
+        if not f.why:
+            keys[(f.folder, f.key)].add(f.run)
     out = []
     for f in found:
         if not f.why and runs[(f.folder, f.run)] > 1:
             f = replace(f, why=f"{runs[(f.folder, f.run)]} files hold a row of its run")
-        elif not f.why and f.folder == SAVED and len(keys[f.key]) > 1:
-            f = replace(f, why=f"{len(keys[f.key])} runs' rows hold its key")
+        elif not f.why and len(keys[(f.folder, f.key)]) > 1:
+            f = replace(f, why=f"{len(keys[(f.folder, f.key)])} runs' rows hold its key")
         out.append(f)
     return out
 
@@ -830,16 +873,19 @@ def shelf(root: Path | Archive, amendment: Callable[[str], Path | None]) -> Shel
             found.append(one)
             read[(folder, one.file)] = row
     found = _unique(found)
+    barred = Shelf(rows=(), found=tuple(found))     # what bars a key, for every reader of this read, as loop.one asks it
     amended = {f.run: (f.file, read[(AMENDED, f.file)]) for f in found if f.folder == AMENDED and not f.why}
     rows = []
     for f in found:
-        if f.folder != SAVED or f.why:
+        if f.folder != SAVED or f.why or barred.bars(f.key):     # a key a refused row bars has no row (study review 2, 1)
             continue
         run, row = facts_of(f.run), read[(SAVED, f.file)]
         why = _why_not(run, run.name)            # the admission rule, read once a row, for every verdict below
         passes, stands = judge(run, row, why=why), _stands(run, row, why=why)
         failing, tests = row.get("failing"), row.get("tests")
         a_file, a_row = amended.get(run.name, (None, None))
+        if barred.bars(f.key, amended=True):
+            a_file, a_row = None, None           # nor an amended verdict where one is barred
         diff = amendment(run.task) if not why else None
         sha = sha256_file(diff) if diff is not None else None
         rows.append(Saved(
@@ -895,14 +941,11 @@ def keep(root: Path | Archive, row: Mapping[str, Any], *, amended: bool = False,
     if Path(file).name != file or not file.endswith(".json"):
         raise ValueError(f"{file!r} is no saved row's name")
     path = folder / file
-    try:
-        held = json.loads(path.read_bytes().decode("utf-8"))
-    except FileNotFoundError:
-        held = None
-    except ValueError:                  # torn: replaced
-        held = None
-    if isinstance(held, dict) and held.get("run") != facts.name:
-        raise ArchiveError(f"{path.name} holds the row of {held.get('run')!r}, another run's: it is never written over")
+    if os.path.lexists(path):           # read again by the reader's own rule (``_found``), just before the write
+        held, _ = _found(archive, AMENDED if amended else SAVED, path, lambda name: run_facts(archive, name) if name else None)
+        if not held.torn and (held.why or held.run != facts.name):     # a torn one is replaced; any other is never written over
+            raise ArchiveError(f"{path.name} holds no row of {facts.name}'s own: "
+                               + (held.why or f"it is the row of {held.run!r}, another run's") + "; it is never written over")
     folder.mkdir(parents=True, exist_ok=True)
     _whole(path, json.dumps(dict(row), indent=1).encode("utf-8"))
     return path

@@ -62,8 +62,9 @@ def touched(part: str) -> list[str]:
     with tempfile.TemporaryDirectory() as empty:
         env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE")}
         env["GIT_CEILING_DIRECTORIES"] = str(Path(empty).resolve().parent)
-        got = subprocess.run(["git", "apply", "--numstat", "-z"], input=part.encode("utf-8", errors="surrogateescape"), cwd=empty,
-                             capture_output=True, timeout=60, env=env)
+        got = c.completed(subprocess.run(["git", "apply", "--numstat", "-z"], input=part.encode("utf-8", errors="surrogateescape"),
+                                         cwd=empty, capture_output=True, timeout=60, env=env), "git's reading of a part",
+                          ok=c.APPLY_EXITS)      # a part git cannot read names nothing
     if got.returncode != 0:
         return []
     return c.numstat_names(got.stdout)
@@ -206,7 +207,8 @@ def labelled(root: Path, task: str) -> list[tuple[str, Path | bytes, Any]]:
 
 def _image(task: str) -> str:
     """The agent's image of ``task``, which holds the repository at the parent and neither the tests nor the fix of the maintainers' check."""
-    tags = subprocess.run(["docker", "images", "--format", "{{.Repository}}:{{.Tag}}", "g6we-task"], capture_output=True, text=True, timeout=60).stdout.split()
+    tags = c.completed(subprocess.run(["docker", "images", "--format", "{{.Repository}}:{{.Tag}}", "g6we-task"], capture_output=True,
+                                      text=True, timeout=60), "the task images' list").stdout.split()
     return next(tag for tag in tags if tag.startswith(f"g6we-task:{task}-"))
 
 
@@ -218,8 +220,9 @@ def parent_files(task: str, paths: Iterable[str], cache: Path) -> dict[str, str]
     if wanted <= set(held) | set(held.get("", ())):
         return {k: v for k, v in held.items() if k}
     bug = we.task_by_id(task)
-    got = subprocess.run(["docker", "run", "--rm", "--network", "none", "--entrypoint", "sh", _image(task), "-c", f"cd {bug.repo} && git archive --format=tar HEAD"],
-                         capture_output=True, timeout=300, check=True)
+    got = c.completed(subprocess.run(["docker", "run", "--rm", "--network", "none", "--entrypoint", "sh", _image(task), "-c",
+                                      f"cd {bug.repo} && git archive --format=tar HEAD"], capture_output=True, timeout=300),
+                      "the parent's files")
     files = {}
     with tarfile.open(fileobj=io.BytesIO(got.stdout)) as tar:
         for member in tar.getmembers():

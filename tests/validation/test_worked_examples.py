@@ -659,7 +659,12 @@ def test_an_amended_check_scores_the_final_patch_on_the_amended_lists(tmp_path, 
 
     monkeypatch.setattr(we, "_oracle_run", oracle_run)
     found = we.check(ctx, TASK, run.rel, amended=True)
-    assert seen == [("final", True)] and found["checks"][0]["passes"] and found["amended"]
+    # the amendment applied is the check's own copy of the bytes its control ran, and the check names their digest (study review 2,
+    # finding 9: an amended verdict is bound to the amendment the check ran)
+    [(label, applied)] = seen
+    diff = we.amendment(TASK.id)
+    assert label == "final" and isinstance(applied, Path) and applied.read_bytes() == diff.read_bytes()
+    assert found["amendment_sha256"] == we.c.sha256_file(diff) and found["checks"][0]["passes"] and found["amended"]
 
 
 def test_an_amended_check_needs_the_amend_step_first(tmp_path, monkeypatch):
@@ -1050,7 +1055,8 @@ def _made(root, rel, status, *, repeat=1, cost=None):
     (root / rel).mkdir(parents=True, exist_ok=True)
     (root / rel / "run.json").write_text(json.dumps({"status": status, "agent_started": True}), "utf-8")
     c.Archive(root).append({"event": "started", "run": rel, "kind": "run", "arm": "A",    # and its start in the index, by its
-                            "task": rel.split("/")[1], "repeat": repeat})                # name: run/<task>/<n>, arm A's
+                            "task": rel.split("/")[1], "repeat": repeat,                 # name: run/<task>/<n>, arm A's,
+                            "model": we.R3_MODELS[1]})                                   # on the loop's model
     if cost is not None:
         c.Archive(root).append({"event": "ended", "run": rel, "status": status, "cost_usd": cost})
 
@@ -1073,10 +1079,9 @@ def test_the_loop_reads_the_runners_output_and_stops_on_a_refusal(tmp_path, monk
     with pytest.raises(SystemExit):
         loop.one(tmp_path, "g", "A", "y", 1)
     assert not (tmp_path / "loop" / "A-y-1.json").exists()
-    # a run made before a crash is checked, never made again
+    # a run made before a crash is checked, never made again: found by the runner's own rule in the index, with no ledger line
     said["run"] = '{"status": "refused", "why": "run (x) was already made (finished); no run is made again"}'
-    (tmp_path / "ledger.jsonl").write_text(json.dumps(
-        {"task": "z", "arm": "A", "repeat": 1, "run": "run/z/1", "status": "finished", "cost_usd": 0.3}) + "\n", "utf-8")
+    assert not (tmp_path / "ledger.jsonl").exists()           # study review 2, finding 2: a stop before the ledger's line
     again = loop.one(tmp_path, "g", "A", "z", 1)
     assert again["run"] == "run/z/1" and again["failing"] == 2 and again["cost_usd"] == 0.3
 
@@ -1112,8 +1117,9 @@ def _counting_tool(monkeypatch, loop, verdict=True):
     calls = []
 
     def tool(command, *args, **_):
-        calls.append(args)
-        return json.dumps({"checks": [{"patch": "final", "passes": verdict, "failing": []}]})
+        calls.append(args)                  # an amended check names the amendment it ran (study review 2, finding 9)
+        return json.dumps({"checks": [{"patch": "final", "passes": verdict, "failing": []}],
+                           "amendment_sha256": c.sha256_file(loop.we.amendment("x-1"))})
 
     monkeypatch.setattr(loop, "tool", tool)
     return calls

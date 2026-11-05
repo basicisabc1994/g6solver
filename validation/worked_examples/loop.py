@@ -28,8 +28,14 @@ EXECUTOR = "container"      # run.py's --executor for every call: "host" runs Cl
 
 
 def tool(command: str, *args: str, timeout: int = 7800) -> str:
-    return subprocess.run([sys.executable, str(HERE / "run.py"), command, "--round", "3", "--executor", EXECUTOR, *args],
-                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout).stdout
+    """What the runner printed, once its exit says it succeeded: it prints its record and exits 0, and any failure exits otherwise,
+    so a runner that failed gives nothing to read, whatever it printed (``wecommon.completed``), and stops the loop here."""
+    try:
+        return c.completed(subprocess.run([sys.executable, str(HERE / "run.py"), command, "--round", "3", "--executor", EXECUTOR,
+                                           *args], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                          timeout=timeout), f"run.py {command}").stdout
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from None
 
 
 def last_json(text: str) -> dict[str, Any]:
@@ -47,13 +53,14 @@ def last_json(text: str) -> dict[str, Any]:
     return found
 
 
-def _unchanged(archive: c.Archive, rel: str, made: str | None, what: str) -> c.RunFacts:
-    """The run's facts read again after its check and before its verdict is kept or given: an ending that changed meanwhile (a
-    failure recorded during the check) is a refusal, and the next call scores the run on the ending it has then (study review 1,
-    findings 11 and 20)."""
-    now = c.run_facts(archive, rel)
-    if now is None or now.ending_sha256 != made:
-        raise SystemExit(f"refused: {what}: {rel}'s ending changed while it was checked; run again to score it as it ended")
+def _unchanged(archive: c.Archive, before: c.RunFacts, what: str) -> c.RunFacts:
+    """The run's facts read again after its check and before its verdict is kept or given, on every path: an ending that changed
+    meanwhile (a failure recorded during the check) is a refusal, and the next call scores the run on the ending it has then
+    (study review 1, findings 11 and 20). Both the digest of its ending's files and the ending itself are compared, so an ending
+    read from the run's own record, which no ending file digests, is held to the same rule (study review 2, finding 3)."""
+    now = c.run_facts(archive, before.name)
+    if now is None or now.ending_sha256 != before.ending_sha256 or dict(now.ending or {}) != dict(before.ending or {}):
+        raise SystemExit(f"refused: {what}: {before.name}'s ending changed while it was checked; run again to score it as it ended")
     return now
 
 
@@ -79,10 +86,11 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
     archive, key = c.Archive(root), (arm, task, repeat)
     asked = {"arm": arm, "task": task, "repeat": repeat}
     shelf = c.shelf(archive, we.amendment)
-    barred = shelf.bars(key)
+    held = shelf.get(key)
+    barred = shelf.bars(key) or ("" if held is not None and held.holds else      # a held row is given, nothing is written
+                                 shelf.blocks(key, file=held.file if held else None, run=held.facts.name if held else None))
     if barred:
         raise SystemExit(f"refused: the saved rows' folder holds no row of {arm} {task} {repeat}'s own run: {barred}")
-    held = shelf.get(key)
     if held is not None and held.holds:      # admitted now, and saved under the ending the run has now
         return held.record()
     if held is not None:                     # void: made again from the run's ending as it is now
@@ -92,8 +100,10 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
         if not rec:          # the runner printed no record: nothing is known of the run, so nothing is saved
             raise SystemExit(f"no record: {arm} {task} {repeat}: the runner printed none")
         if rec.get("status") == "refused" and "already made" in str(rec.get("why")):   # made before a crash: check it
-            rec = [r for r in distill.main_row(root / c.NDJSON["ledger"])
-                   if (r.get("task"), r.get("arm"), r.get("repeat")) == (task, arm, repeat)][-1]
+            made_as = we.r3_made(archive.rows(), root, (SONNET, task, arm, repeat))   # by the runner's own rule, from the index
+            if made_as is None:
+                raise SystemExit(f"no record: {arm} {task} {repeat}: the runner says it was made, and the index names no such run")
+            rec = {"run": made_as}
     rel = str(rec.get("run") or "")      # the run's name is all that is taken from what the runner printed or a row saved
     facts = c.run_facts(archive, rel)    # every fact of the run, from the archive (wecommon.run_facts)
     end, made = (facts.ending, facts.ending_sha256) if facts is not None else (None, None)
@@ -117,7 +127,7 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
         if not isinstance(passes, bool):    # a check's word that is not true or false is no verdict, never a failed run
             raise SystemExit(f"no verdict for {arm} {task} {repeat}")
         row.update(passes=passes, tests=tests[:20], failing=failing if isinstance(failing, int) else len(failing or []))
-    now = _unchanged(archive, rel, made, f"{arm} {task} {repeat}")
+    now = _unchanged(archive, facts, f"{arm} {task} {repeat}")
     _keep(archive, row, file=file)
     print(json.dumps({k: row[k] for k in ("arm", "task", "repeat", "status", "passes", "failing", "cost_usd")}), flush=True)
     return {**row, "passes": c.judge(now, row)}
@@ -137,22 +147,28 @@ def rescore(root: Path, g6: str) -> list[dict[str, Any]]:
         facts = one.facts
         if one.amendment_sha256 is None:      # no amendment, or a run the one admission rule does not admit: none is made
             continue
-        if one.amended_holds:
+        barred = shelf.bars(one.key, amended=True)
+        if not barred and one.amended_holds:
             rows.append(one.amended_record())
             continue
-        barred = shelf.bars(one.key, amended=True, run=facts.name, file=one.amended_file)
+        barred = barred or shelf.blocks(one.key, amended=True, run=facts.name, file=one.amended_file)
         if barred:
             raise SystemExit(f"refused: no amended verdict of {' '.join(map(str, one.key))}'s own run may be kept: {barred}")
         passes = False      # a made run that did not end on its patch failed on either score, with no check
         if c.on_patch(facts.ending):
-            final = [x for x in last_json(tool("check", "--task", facts.task, "--g6", g6, "--run", facts.name, "--amended",
-                                               timeout=1200)).get("checks", []) if x.get("patch") == "final"]
+            said = last_json(tool("check", "--task", facts.task, "--g6", g6, "--run", facts.name, "--amended", timeout=1200))
+            final = [x for x in said.get("checks", []) if x.get("patch") == "final"]
             passes = final[-1].get("passes") if final else None
             if not isinstance(passes, bool):       # no verdict is not a failed run
                 raise SystemExit(f"no amended verdict for {Path(one.name).stem}")
-        made = facts.ending_sha256
+            if said.get("amendment_sha256") != one.amendment_sha256:     # bound to the bytes the check applied (review 2, 9)
+                raise SystemExit(f"refused: {' '.join(map(str, one.key))}: the check ran the amendment "
+                                 f"{str(said.get('amendment_sha256'))[:12]}, not the one read, {one.amendment_sha256[:12]}")
         row = {**one.amended_record(), "amended_passes": passes}
-        now = _unchanged(archive, facts.name, made, " ".join(map(str, one.key)))
+        now = _unchanged(archive, facts, " ".join(map(str, one.key)))
+        diff = we.amendment(facts.task)          # read again: a verdict on the amendment as it stands, or none (review 2, 9)
+        if diff is None or c.sha256_file(diff) != one.amendment_sha256:
+            raise SystemExit(f"refused: {' '.join(map(str, one.key))}: the amendment changed while it was checked; run again")
         _keep(archive, row, amended=True, file=one.amended_file)
         rows.append({**row, "amended_passes": c.judge(now, row, amendment=one.amendment_sha256)})
     return rows

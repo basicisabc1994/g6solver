@@ -594,7 +594,8 @@ def run_codex(pack: Path, timeout: float | None = None) -> str:
     """One read-only Codex task in ``pack``, on the owner's sign-in: what it printed (``codex_task``). ``timeout``: arm K3's
     watchdog's, what is left of the run; without it the call is the frozen review's own, as it was."""
     got = codex_task(pack) if timeout is None else codex_task(pack, timeout)
-    return got.stdout.decode("utf-8", errors="replace")
+    # the frozen review's call, as it was: what Codex printed is its reply whatever its exit (final_review.reviewer reads the exit)
+    return completed(got, "the frozen review's Codex task", ok=EXITS).stdout.decode("utf-8", errors="replace")
 
 
 def codex_task(pack: Path, timeout: float = CRITIC_SECONDS) -> subprocess.CompletedProcess:
@@ -604,8 +605,9 @@ def codex_task(pack: Path, timeout: float = CRITIC_SECONDS) -> subprocess.Comple
     if not companion:
         raise RuntimeError("G6_CODEX_COMPANION is not set")
     try:
-        got = subprocess.run(["node", companion, "task", "--fresh", "--effort", "high", "--cwd", str(pack), "--prompt-file",
-                              str(pack / "critic_prompt.md")], capture_output=True, timeout=timeout, cwd=pack)
+        got = completed(subprocess.run(["node", companion, "task", "--fresh", "--effort", "high", "--cwd", str(pack),
+                                        "--prompt-file", str(pack / "critic_prompt.md")], capture_output=True, timeout=timeout,
+                                       cwd=pack), "the Codex task", ok=EXITS)       # its exit is read by its callers
     finally:
         end_codex(pack)
     return got
@@ -740,6 +742,8 @@ def convert_start(root: Path, task: str, repeat: int) -> tuple[Path, dict[str, s
         raise ValueError(f"{case['arm']}-{case['of']} of {task} has no saved row that is its run's own")
     patch = held.facts.folder / "final.patch"
     found = json.loads((c.beside(root, "final_review") / f"{c.sha256_file(patch)}.json").read_text("utf-8"))
+    if not isinstance(found, dict) or found.get("task") != task:    # a review is one bug's (study review 2, finding 12)
+        raise ValueError(f"{case['arm']}-{case['of']} of {task} has no saved review of its own bug")
     if found.get("said") != "reproduced":
         raise ValueError(f"{case['arm']}-{case['of']} of {task} has no reproduced finding")
     return patch, {k: str(found.get(k) or "") for k in ("rule", "why", "test")}
@@ -810,17 +814,21 @@ class Docker:
 
 
 def out(cp: Any) -> str:
-    return (cp.stdout or b"").decode("utf-8", errors="replace").strip()
+    data = cp.stdout or b""
+    return (data if isinstance(data, str) else data.decode("utf-8", errors="replace")).strip()
 
 
 def err(cp: Any) -> str:
-    return (cp.stderr or b"").decode("utf-8", errors="replace").strip()
+    data = cp.stderr or b""
+    return (data if isinstance(data, str) else data.decode("utf-8", errors="replace")).strip()
+
+
+completed, EXITS, APPLY_EXITS = c.completed, c.EXITS, c.APPLY_EXITS      # the one reader of a command's result (wecommon)
 
 
 def checked(cp: Any, what: str) -> str:
-    if cp.returncode != 0:
-        raise RuntimeError(f"{what} failed ({cp.returncode}): {(out(cp) + ' ' + err(cp))[-600:]}")
-    return out(cp)
+    """A command's output, once its status says it succeeded (``completed``)."""
+    return out(completed(cp, what))
 
 
 def write_in(docker: Docker, ctr: str, dest: str, text: str, *, user: str = USER, mode: str = "644") -> None:
@@ -1067,9 +1075,10 @@ def r3_caps(model: str, *, spent: float, fable_left: int) -> tuple[float, float]
     return cap, round(cap * R3_MARGIN, 6)
 
 
-def r3_done(rows: Iterable[Mapping[str, Any]], root: Path) -> dict[tuple[str, str, str, int], str]:
-    """The round 3 runs whose agent started, by (model, task, arm, repeat), with how each ended, as its folder under the archive
-    ``root`` says (``wecommon.ending``): a host run's ending file, which a stop before the index's end of the run leaves too."""
+def _r3_made(rows: Iterable[Mapping[str, Any]], root: Path) -> dict[tuple[str, str, str, int], tuple[str, str]]:
+    """Each round 3 run whose agent started, by (model, task, arm, repeat): its name and how it ended, as its folder under the archive
+    ``root`` says (``wecommon.ending``): a host run's ending file, which a stop before the index's end of the run leaves too. The
+    newest start of a key is its run. The one rule ``r3_done`` (the runner's refusal) and ``r3_made`` (the loop's recovery) read."""
     rows = list(rows)
     done = {}
     for r in rows:
@@ -1078,8 +1087,21 @@ def r3_done(rows: Iterable[Mapping[str, Any]], root: Path) -> dict[tuple[str, st
         facts = c.run_facts(root, str(r["run"]), rows)      # the one source of the run's facts, from these rows of the index
         end = facts.ending if facts is not None else None
         if end and end.get("agent_started") and end.get("status"):
-            done[(str(r.get("model")), str(r.get("task")), str(r.get("arm")), int(r.get("repeat") or 1))] = str(end["status"])
+            done[(str(r.get("model")), str(r.get("task")), str(r.get("arm")), int(r.get("repeat") or 1))] = (facts.name,
+                                                                                                          str(end["status"]))
     return done
+
+
+def r3_done(rows: Iterable[Mapping[str, Any]], root: Path) -> dict[tuple[str, str, str, int], str]:
+    """The round 3 runs whose agent started, by (model, task, arm, repeat), with how each ended (``_r3_made``)."""
+    return {key: status for key, (_, status) in _r3_made(rows, root).items()}
+
+
+def r3_made(rows: Iterable[Mapping[str, Any]], root: Path, key: tuple[str, str, str, int]) -> str | None:
+    """The name of the run ``r3_done`` says was made for ``key``, from the index alone, or None: what a restart recovers when the
+    runner refuses a run already made, with no other record of it needed (the ledger's line is written after, and a stop between
+    the two leaves none: study review 2, finding 2)."""
+    return _r3_made(rows, root).get(key, (None, ""))[0]
 
 
 def r3_refusal(ctx: Context, task: Task) -> tuple[str, float, float]:
@@ -1219,20 +1241,24 @@ def test_changes(numstat: bytes) -> list[str]:
 
 
 #: Before the seal: each test file the fix changes, as the maintainers' fixed tree holds it, set aside where the seal leaves it
-#: (``TESTS_HELD``); one the fix deletes is not there to set aside.
+#: (``TESTS_HELD``); one the fix deletes is not there to set aside. A link is set aside as the link it is (``cp -P``), never as the
+#: bytes of what it names: a test file that is a link to the fix's own code carries none of it across the seal (study review 2,
+#: finding 10).
 TESTS_HELD = "/tmp/we-tests"
 HOLD_TESTS = f"""set -e
 for p in "$@"; do
   if [ -e "/oracle/fixed/$p" ] || [ -L "/oracle/fixed/$p" ]; then
-    mkdir -p -- "$(dirname -- "{TESTS_HELD}/$p")"; cp -- "/oracle/fixed/$p" "{TESTS_HELD}/$p"
+    mkdir -p -- "$(dirname -- "{TESTS_HELD}/$p")"; cp -P -- "/oracle/fixed/$p" "{TESTS_HELD}/$p"
   fi
 done"""
 #: After the seal and the patch: each test file the fix changes put in the tree as the maintainers left it, over whatever the patch
-#: made of it; one they deleted removed.
+#: made of it, a link as a link; one they deleted removed.
 APPLY_TESTS = f"""set -e
 cd "$1"; shift
 for p in "$@"; do
-  if [ -e "{TESTS_HELD}/$p" ]; then mkdir -p -- "$(dirname -- "$p")"; cp -- "{TESTS_HELD}/$p" "$p"; else rm -f -- "$p"; fi
+  if [ -e "{TESTS_HELD}/$p" ] || [ -L "{TESTS_HELD}/$p" ]; then
+    mkdir -p -- "$(dirname -- "$p")"; rm -f -- "$p"; cp -P -- "{TESTS_HELD}/$p" "$p"
+  else rm -f -- "$p"; fi
 done"""
 JUNIT_IN = "/tmp/we-junit.xml"
 
@@ -1781,7 +1807,9 @@ def redact_tree(folder: Path, redact: c.Redactor) -> int:
 
 
 def copy_out(docker: Any, ctr: str, src: str, dest: Path) -> bool:
-    cp = docker("cp", f"{ctr}:{src}", str(dest), timeout=900)
+    """Whether ``src`` was copied out of the container to ``dest``: docker's 1 (no such file, or no copy) is a no; any other
+    status raises (``completed``)."""
+    cp = completed(docker("cp", f"{ctr}:{src}", str(dest), timeout=900), f"the copy of {src}", ok=(0, 1))
     return cp.returncode == 0 and dest.exists()
 
 
@@ -1799,13 +1827,15 @@ def key_check(ctx: Context, task: Task, image: str, key: str, tag: str, *, net: 
             write_key_file(ctx.docker, name, key)     # round 2: G6's own key file, which the confined test must not see
         proxy = ([a for e in (f"HTTPS_PROXY=http://{px}:{PROXY_PORT}", f"HTTP_PROXY=http://{px}:{PROXY_PORT}",
                               "NO_PROXY=localhost,127.0.0.1") for a in ("-e", e)] if px else [])
-        done = ctx.docker("exec", "-i", "-u", USER, "-e", f"HOME={HOME}", "-e", "ANTHROPIC_API_KEY", *proxy, name,
-                          G6PY, "-I", "-", input=keyprobe_driver().encode("utf-8"), env=ctx.client_env(key),
-                          timeout=1800)
         try:
+            done = completed(ctx.docker("exec", "-i", "-u", USER, "-e", f"HOME={HOME}", "-e", "ANTHROPIC_API_KEY", *proxy, name,
+                                        G6PY, "-I", "-", input=keyprobe_driver().encode("utf-8"), env=ctx.client_env(key),
+                                        timeout=1800), "the key check's driver")
             found = json.loads(out(done).splitlines()[-1])
+        except RuntimeError as exc:            # a driver that failed gave no answer, whatever it printed
+            found = {"error": str(exc)[:600]}
         except (ValueError, IndexError):
-            found = {"error": f"the driver printed nothing readable (exit {done.returncode})"}
+            found = {"error": "the driver printed nothing readable"}
     finally:
         ctx.docker("rm", "-f", name, timeout=300)
     found["ok"] = key_check_ok(found, key_file=ctx.variant == ROUND2)
@@ -1826,7 +1856,7 @@ def start_net(ctx: Context, tag: str) -> tuple[str, str]:
 
 
 def egress(ctx: Context, px: str, dest: Path) -> dict[str, Any]:
-    ctx.docker("cp", f"{px}:/opt/{c.NDJSON['egress']}", str(dest), timeout=120)
+    copy_out(ctx.docker, px, f"/opt/{c.NDJSON['egress']}", dest)       # none copied (1): no request was logged
     entries = []
     if dest.is_file():
         entries = [json.loads(line) for line in c.read_stream(dest) if line.strip()]
@@ -1846,7 +1876,8 @@ def refusal(ctx: Context, task: Task) -> str:
     if v is None or not v["record"].get("ok") or not v["record"].get("fail_to_pass"):
         return "the task has no finished validation with a FAIL_TO_PASS test"
     _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
-    if v["record"].get("oracle_image_id") != out(ctx.docker("image", "inspect", oracle, "--format", "{{.Id}}")):
+    if v["record"].get("oracle_image_id") != out(completed(ctx.docker("image", "inspect", oracle, "--format", "{{.Id}}"),
+                                                           "the oracle image's inspection", ok=(0, 1))):   # 1: no such image
         return "the task's validation was not made on the images this run would use"
     if ctx.variant == ROUND3:
         return ""     # round 3's own stop, order and caps: r3_refusal
@@ -1869,7 +1900,9 @@ def hook_selftest(ctx: Context, agent: str, task: Task) -> dict[str, Any]:
               f' echo "{{\\"exit\\": $code, \\"index_before\\": $before, \\"index_after\\": $after, '
               f'\\"patch_names_change\\": $saved, \\"printed_bytes\\": $said}}"')
     try:
-        return json.loads(out(ctx.docker.sh(agent, script, workdir=task.repo)).splitlines()[-1])
+        return json.loads(checked(ctx.docker.sh(agent, script, workdir=task.repo), "the hook self-test").splitlines()[-1])
+    except RuntimeError as exc:                # a self-test that failed gave no answer, whatever it printed
+        return {"error": str(exc)[:600]}
     except (ValueError, IndexError):
         return {"error": "the hook self-test printed nothing readable"}
 
@@ -1968,10 +2001,8 @@ def workspace_from(ctx: Context, task: Task, agent: str, dest: Path) -> int:
     First of all, ``dest`` itself must be a path the host holds as named, by the box's one check (``box_mcp.root_named``), so
     nothing is exported into ``workspace`` for ``workspace.``. Returns how many files came out."""
     box_mcp.root_named(dest)
-    done = ctx.docker("exec", "-u", USER, "-w", task.repo, agent, "tar", "-c", "--exclude=.git", "--exclude=.venv", ".",
-                      timeout=900)
-    if done.returncode != 0:
-        raise RuntimeError(f"the workspace's export failed ({done.returncode}): {err(done)[-600:]}")
+    done = completed(ctx.docker("exec", "-u", USER, "-w", task.repo, agent, "tar", "-c", "--exclude=.git", "--exclude=.venv",
+                                ".", timeout=900), "the workspace's export")
     seen: set[str] = set()
     with tarfile.open(fileobj=io.BytesIO(done.stdout)) as tar:
         members = tar.getmembers()
@@ -2122,27 +2153,31 @@ def probe_gate(ctx: Context, task: Task, agent: str, where: str, tree: str) -> l
     """``scout_gate`` on the probes in ``where``: pytest's exit, the cross test's cases, and failures that are not
     assertions, as the container reports them."""
     if qualified(ctx.arm):
-        got = read_probes(out(ctx.docker.sh(agent, probe_script(where), workdir=task.repo, timeout=300)))
+        got = read_probes(checked(ctx.docker.sh(agent, probe_script(where), workdir=task.repo, timeout=300), "the probes"))
 
         def cases(test: str) -> list[str]:
             return [v for k, v in got.results.items() if k.rsplit("::", 1)[-1].split("[")[0] == test]
 
         crashed = sum(v == "error" or (v == "failed" and not re.match(r"assert|AssertionError|Failed", got.texts.get(k, "")))
                       for k, v in got.results.items())
-        return scout_gate(out(ctx.docker.sh(agent, f"cat {tree} 2>/dev/null", timeout=60)),
-                          exit_code=2 if got.exit is None else got.exit, collected=len(cases("test_cross")), broken=crashed,
+        return scout_gate(read_in(ctx.docker, agent, tree), exit_code=2 if got.exit is None else got.exit,
+                          collected=len(cases("test_cross")), broken=crashed,
                           randoms=sum(v in ("passed", "failed") for v in cases("test_random")),
                           executed=sum(v in ("passed", "failed") for v in cases("test_cross")))
     run_them, count = probes_at(where), PROBE_COLLECT.replace(f"{WE}/probes", where)
-    said = out(ctx.docker.sh(agent, f"COLUMNS=300 {run_them} {gate_flags()} > /tmp/we-gate.txt 2>&1; code=$?; "
-                                    'grep "^FAILED" /tmp/we-gate.txt | head -c 400000; echo "exit=$code"; '
-                                    f'echo "cross=$({count} 2>/dev/null | grep -c test_cross)"; '
-                                    f'echo "random=$({count} 2>/dev/null | grep -c test_random)"; rm -f /tmp/we-gate.txt',
-                             workdir=task.repo, timeout=300))
+    said = checked(ctx.docker.sh(agent, f"COLUMNS=300 {run_them} {gate_flags()} > /tmp/we-gate.txt 2>&1; code=$?; "
+                                        'grep "^FAILED" /tmp/we-gate.txt | head -c 400000; echo "exit=$code"; '
+                                        f'echo "cross=$({count} 2>/dev/null | grep -c test_cross)"; '
+                                        f'echo "random=$({count} 2>/dev/null | grep -c test_random)"; rm -f /tmp/we-gate.txt',
+                                 workdir=task.repo, timeout=300), "the probe gate")
     code, collected, broken = gate_numbers(said)
-    return scout_gate(out(ctx.docker.sh(agent, f"cat {tree} 2>/dev/null", timeout=60)), exit_code=code,
-                      collected=collected, broken=broken,
+    return scout_gate(read_in(ctx.docker, agent, tree), exit_code=code, collected=collected, broken=broken,
                       randoms=random_cases(said) if int(ctx.arm[1:]) >= 6 else None)
+
+
+def read_in(docker: Any, agent: str, path: str) -> str:
+    """A file's text in a container, "" when there is none (``cat``'s 1); any other status raises (``completed``)."""
+    return out(completed(docker.sh(agent, f"cat {path} 2>/dev/null", timeout=60), f"the read of {path}", ok=(0, 1)))
 
 
 def probe_sets(arm: str) -> list[tuple[str, str]]:
@@ -2156,7 +2191,7 @@ def run_set(ctx: Context, task: Task, agent: str, where: str) -> ProbeRun:
     if held:
         ctx.docker.sh(agent, f"rm -rf {HELD_COPY}; [ -d {where} ] && cp -r {where} {HELD_COPY} && chown -R {USER} {HELD_COPY}; "
                              "true", user="root", timeout=60)
-    said = out(ctx.docker.sh(agent, probe_script(HELD_COPY if held else where), workdir=task.repo, timeout=300))
+    said = checked(ctx.docker.sh(agent, probe_script(HELD_COPY if held else where), workdir=task.repo, timeout=300), "the probes")
     if held:
         ctx.docker.sh(agent, f"rm -rf {HELD_COPY}", user="root", timeout=60)
     return read_probes(said)
@@ -2183,8 +2218,8 @@ def run_critic(ctx: Context, task: Task, run: Any, agent: str, base: str, title:
                 "the critic's patch")
         if not copy_out(ctx.docker, agent, f"{WE}/critic.patch", pack / "candidate.patch"):
             raise RuntimeError("the patch could not be copied")
-        tree = ctx.docker("exec", "-u", USER, "-w", task.repo, agent, "git", "archive", "--format=tar", base, timeout=300)
-        checked(tree, "the parent's tree")
+        tree = completed(ctx.docker("exec", "-u", USER, "-w", task.repo, agent, "git", "archive", "--format=tar", base, timeout=300),
+                         "the parent's tree")
         with tarfile.open(fileobj=io.BytesIO(tree.stdout)) as tar:
             for member in tar.getmembers():
                 if member.isfile():
@@ -2268,10 +2303,10 @@ def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
             refused += left
             if left:
                 _, left = checked_again(left, c.NDJSON["numbered_stream"].format(tag=tag, n=2), where, tree_at)
-            run.write(f"{tag}_at_base.txt", out(ctx.docker.sh(agent, f"{probes_at(where)} 2>&1 | tail -c 8000",
-                                                              workdir=task.repo, timeout=300)))
+            run.write(f"{tag}_at_base.txt", checked(ctx.docker.sh(agent, f"{probes_at(where)} 2>&1 | tail -c 8000",
+                                                                  workdir=task.repo, timeout=300), "the probes at the base"))
             copy_out(ctx.docker, agent, where, run.path / f"{tag}_probes")
-            held_tree = scout_tree(out(ctx.docker.sh(agent, f"cat {tree_at} 2>/dev/null", timeout=60)) or "no tree")
+            held_tree = scout_tree(read_in(ctx.docker, agent, tree_at) or "no tree")
             run.write(f"{tag}_tree.txt", held_tree["text"])
             hidden[tag] = {"still_wrong": left, **{k: held_tree.get(k) for k in ("shapes", "open", "error")}}
             restore()
@@ -2286,8 +2321,8 @@ def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
     checked(ctx.docker.sh(agent, f"mkdir -p {WE}/probes && chown -R root:root {WE}/probes && chmod -R a+rX,go-w "
                                  f"{WE}/probes; [ -f {WE}/tree.json ] && chown root:root {WE}/tree.json "
                                  f"&& chmod a+r {WE}/tree.json; true", user="root", timeout=60), "lock the probes")
-    at_base = ctx.docker.sh(agent, f"{PROBE_RUN} 2>&1 | tail -c 8000", workdir=task.repo, timeout=300)
-    run.write("scout_at_base.txt", out(at_base))
+    run.write("scout_at_base.txt", checked(ctx.docker.sh(agent, f"{PROBE_RUN} 2>&1 | tail -c 8000", workdir=task.repo, timeout=300),
+                                           "the probes at the base"))
     copy_out(ctx.docker, agent, f"{WE}/probes", run.path / "scout_probes")
     tree_file = run.fresh_path("tree.json")
     tree = scout_tree(tree_file.read_text("utf-8") if copy_out(ctx.docker, agent, f"{WE}/tree.json", tree_file)
@@ -2337,9 +2372,10 @@ def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
             if held:
                 ctx.docker.sh(agent, f"rm -rf {HELD_COPY}; [ -d {where} ] && cp -r {where} {HELD_COPY} && "
                                      f"chown -R {USER} {HELD_COPY}; true", user="root", timeout=60)
-            got = out(ctx.docker.sh(agent, f"COLUMNS=300 {probes_at(HELD_COPY if held else where)} --maxfail=10 -rfE "
-                                           "> /tmp/we-check.txt 2>&1; code=$?; tail -c 12000 /tmp/we-check.txt; "
-                                           'echo "exit=$code"; rm -f /tmp/we-check.txt', workdir=task.repo, timeout=300))
+            got = checked(ctx.docker.sh(agent, f"COLUMNS=300 {probes_at(HELD_COPY if held else where)} --maxfail=10 -rfE "
+                                               "> /tmp/we-check.txt 2>&1; code=$?; tail -c 12000 /tmp/we-check.txt; "
+                                               'echo "exit=$code"; rm -f /tmp/we-check.txt', workdir=task.repo, timeout=300),
+                          "the probes' check")
             if held:
                 ctx.docker.sh(agent, f"rm -rf {HELD_COPY}", user="root", timeout=60)
             run.write(f"repair_check_{rounds[0]}_{label}.txt", got)
@@ -2354,7 +2390,7 @@ def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
                     seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
 
     def state() -> str:
-        return out(ctx.docker.sh(agent, "git status --porcelain; git diff", workdir=task.repo, timeout=120))
+        return checked(ctx.docker.sh(agent, "git status --porcelain; git diff", workdir=task.repo, timeout=120), "the tree's state")
 
     loop = Repairs(check, ask, state if qualified(ctx.arm) else None, repair_text(ctx.arm) if qualified(ctx.arm) else "")
     got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
@@ -2394,7 +2430,7 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
     recorded, and a repair's session gets what is left and no minute of its own. A loop the watchdog stopped, or one with a step
     that ended late, says "timeout" (``ended``), unless a host repair ended it first. Without it, K2's loop is as it was."""
     def shown() -> str:
-        return out(ctx.docker.sh(agent, "git status --porcelain; git diff", workdir=task.repo, timeout=120))
+        return checked(ctx.docker.sh(agent, "git status --porcelain; git diff", workdir=task.repo, timeout=120), "the tree's state")
 
     tree = tree or shown
     dog = None if deadline is None else Watchdog.of(deadline)
@@ -2730,7 +2766,8 @@ def kept(ctx: Context, task: Task, agent: str, base: str, run: Any, name: str, d
     docker = dog.docker(ctx.docker)
     dest = run.fresh_path(f"{BASELINE}/{name}" if name == FIRST_PATCH else f"rounds/{name}")
     try:
-        done = docker.sh(agent, diff_script(task.repo, base, f"{WE}/rounds/{name}"), workdir=task.repo, timeout=300)
+        done = completed(docker.sh(agent, diff_script(task.repo, base, f"{WE}/rounds/{name}"), workdir=task.repo, timeout=300),
+                         f"the capture of {name}", ok=EXITS)          # any exit but 0 keeps nothing, read next
         ok = done.returncode == 0 and copy_out(docker, agent, f"{WE}/rounds/{name}", dest)
     except subprocess.TimeoutExpired:
         done, ok = None, False
@@ -2995,8 +3032,8 @@ def reviews_with_bug_test(ctx: Context, task: Task, run: Any, agent: str, base: 
 
     def tree() -> str:
         """The tree as the patch the run records (``diff_script``, new files included), by its digest."""
-        return out(ctx.docker.sh(agent, f"{diff_script(task.repo, base, patch_at)}; sha256sum {patch_at}; rm -f {patch_at}",
-                                 workdir=task.repo, timeout=300))
+        return checked(ctx.docker.sh(agent, f"{diff_script(task.repo, base, patch_at)}; sha256sum {patch_at}; rm -f {patch_at}",
+                                     workdir=task.repo, timeout=300), "the tree's patch")
 
     rounds, failing, reason = 0, [], ""
     for n in range(1, MAX_REPAIRS + 2):
@@ -3074,7 +3111,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         title, text = ctx.issue_reader(task)
         if round3 and gets_thread(ctx.arm):
             text += read_thread(task)
-        record["image_id"] = out(ctx.docker("image", "inspect", task_image, "--format", "{{.Id}}"))
+        record["image_id"] = checked(ctx.docker("image", "inspect", task_image, "--format", "{{.Id}}"), "the task image's inspection")
         round2 = ctx.variant == ROUND2
         if not host:     # on the host no key enters the container, which has no network: no key check and no proxy
             if round2:
@@ -3096,8 +3133,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                            "-u", USER, "-e", f"HOME={HOME}", "-w", task.repo, task_image, "tail", "-f", "/dev/null",
                            timeout=600), "agent container")
         try:
-            state = json.loads(out(ctx.docker.sh(agent, TREE_STATE, workdir=task.repo)).splitlines()[-1])
-        except (ValueError, IndexError):
+            state = json.loads(checked(ctx.docker.sh(agent, TREE_STATE, workdir=task.repo), "the tree's state").splitlines()[-1])
+        except (RuntimeError, ValueError, IndexError):      # no state read is no tree that matches
             state = {}
         expected = (ctx.tree_reader or read_tree)(task)
         record["tree_state"] = {**state, "upstream_tree": expected}
@@ -3108,23 +3145,26 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         base = str(state["head"])
         record["base_commit"] = base
         if not host:     # the host's version is read from its stream
-            record["claude_version"] = out(ctx.docker("exec", "-u", USER, agent, CLAUDE, "--version", timeout=120))
+            record["claude_version"] = checked(ctx.docker("exec", "-u", USER, agent, CLAUDE, "--version", timeout=120),
+                                               "Claude Code's version")
         if no_g6:    # round 3, arm A: no g6 setup, and no g6 command on the agent's path
             checked(ctx.docker("exec", "-u", "root", agent, "rm", "-f", G6_BIN, timeout=60), "remove the g6 command")
             record["g6_setup_exit"] = None
         else:
-            doctor = ctx.docker("exec", "-u", USER, "-e", f"HOME={HOME}", agent, "g6", "doctor", timeout=600)
+            doctor = completed(ctx.docker("exec", "-u", USER, "-e", f"HOME={HOME}", agent, "g6", "doctor", timeout=600),
+                               "g6 doctor", ok=EXITS)           # its report is kept as a record, whatever it found; nothing reads it
             run.write("g6_doctor.txt", out(doctor) + "\n" + err(doctor))
-            setup = ctx.docker("exec", "-u", USER, "-e", f"HOME={HOME}", "-w", HOME, agent,
-                               "g6", "setup", "--client", "claude", "--allow", "patch_review.review", timeout=600)
+            setup = completed(ctx.docker("exec", "-u", USER, "-e", f"HOME={HOME}", "-w", HOME, agent,
+                                         "g6", "setup", "--client", "claude", "--allow", "patch_review.review", timeout=600),
+                              "g6 setup", ok=EXITS)             # its output kept, then its exit read: any but 0 ends the run
             run.write("g6_setup.txt", out(setup) + "\n" + err(setup))
             record["g6_setup_exit"] = setup.returncode
             if setup.returncode != 0:
                 raise RuntimeError(f"g6 setup exited {setup.returncode}")
         if round3:   # what Claude Code will find of G6: nothing in arm A; G6's server and skill in B and C
             try:
-                record["arm_state"] = json.loads(out(ctx.docker.sh(agent, ARM_STATE)).splitlines()[-1])
-            except (ValueError, IndexError):
+                record["arm_state"] = json.loads(checked(ctx.docker.sh(agent, ARM_STATE), "the arm's state").splitlines()[-1])
+            except (RuntimeError, ValueError, IndexError):      # no state read is no arm that matches
                 record["arm_state"] = {"mcp_servers": [], "skills": [], "error": "nothing readable"}
             servers = record["arm_state"].get("mcp_servers") or []
             if (servers != []) if no_g6 else ("g6" not in servers):
@@ -3398,13 +3438,14 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
 # --- validation, the independent check and replays ------------------------------------------------------------------------
 def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: bool = False, tests: bool = True,
                 extra: Mapping[str, Path] | None = None, modules: Sequence[str] | None = None,
-                folder: c.RunFolder | None = None, label: str = "", amended: bool = False) -> dict[str, Any]:
+                folder: c.RunFolder | None = None, label: str = "", amended: bool | Path = False) -> dict[str, Any]:
     """In a fresh container from the oracle image, with no network: the code (the parent's, or the maintainers' fix), the
     maintainers' test files set aside when ``tests`` (``HOLD_TESTS``), then the oracle's material removed (``seal``), and only then
     a patch copied in and applied, the maintainers' test files put in over it (``APPLY_TESTS``), the bug's amendment when
-    ``amended``, extra files (a reviewer's written test), and pytest on ``modules``. Nothing a candidate wrote is copied in or runs
-    before the seal (study review 1, findings 9); the test files are named by git's own reader of the fix's diff, and a list that
-    cannot be read ends the step (findings 8 and 15)."""
+    ``amended`` (the file given, else the bug's diff as it stands), extra files (a reviewer's written test), and pytest on
+    ``modules``. Nothing a candidate wrote is copied in or runs before the seal (study review 1, findings 9); the test files are
+    named by git's own reader of the fix's diff, and a list that cannot be read ends the step (findings 8 and 15). Every command's
+    status is read (``completed``): a pytest exec that failed gives no report, whatever it printed (study review 2, finding 11)."""
     _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     name = f"g6we-check-{uuid.uuid4().hex[:10]}"
     body: dict[str, Any] = {"label": label}
@@ -3417,14 +3458,14 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
                     "the maintainers' fix")
         names: list[str] = []
         if tests:
-            listed = ctx.docker.sh(name, FIX_FILES, workdir=task.repo)
-            checked(listed, "the fix's file list")
+            listed = completed(ctx.docker.sh(name, FIX_FILES, workdir=task.repo), "the fix's file list")
             names = test_changes(listed.stdout or b"")
             checked(ctx.docker.sh(name, HOLD_TESTS, *names, workdir=task.repo), "the maintainers' tests set aside")
         seal(ctx.docker, name)
         if patch is not None and patch.stat().st_size:
             checked(ctx.docker("cp", str(patch), f"{name}:/tmp/we.patch", timeout=300), "patch copy")
-            applied = ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we.patch", workdir=task.repo)
+            applied = completed(ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we.patch", workdir=task.repo),
+                                "the patch's apply", ok=APPLY_EXITS)      # git's own "does not apply", read next
             body["patch_applied"] = applied.returncode == 0
             if applied.returncode != 0:
                 body["apply_error"] = err(applied)[-600:]
@@ -3432,13 +3473,15 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
         if tests:
             checked(ctx.docker.sh(name, APPLY_TESTS, task.repo, *names, workdir=task.repo), "the maintainers' tests")
         if amended:
-            checked(ctx.docker("cp", str(amendment(task.id)), f"{name}:/tmp/we-amend.patch", timeout=300), "amendment copy")
+            diff = amended if isinstance(amended, Path) else amendment(task.id)
+            checked(ctx.docker("cp", str(diff), f"{name}:/tmp/we-amend.patch", timeout=300), "amendment copy")
             checked(ctx.docker.sh(name, "git apply --whitespace=nowarn /tmp/we-amend.patch", workdir=task.repo),
                     "the amendment")
         for dest, src in (extra or {}).items():
             checked(ctx.docker("cp", str(src), f"{name}:{task.repo}/{dest}", timeout=300), f"copy {dest}")
-        ran = ctx.docker.sh(name, pytest_script(modules or task.test_modules), workdir=task.repo, timeout=2400)
-        body["pytest_exit"] = out(ran).rsplit("exit=", 1)[-1] if "exit=" in out(ran) else None
+        said = checked(ctx.docker.sh(name, pytest_script(modules or task.test_modules), workdir=task.repo, timeout=2400),
+                       "the tests' run")       # the script ends by printing pytest's own exit: the exec's is 0 unless it failed
+        body["pytest_exit"] = said.rsplit("exit=", 1)[-1] if "exit=" in said else None
         if folder is not None:
             copy_out(ctx.docker, name, "/tmp/we-pytest.txt", folder.path / f"{label}-pytest.txt")
         with tempfile.TemporaryDirectory(prefix="g6we-") as tmp:
@@ -3542,17 +3585,25 @@ def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool
             raise SystemExit(f"{rel} is arm {arm}'s: its baseline changed since it was kept, so it is never scored on round-1 "
                              "(baseline_bytes)")
     f2p, p2p = v["record"]["fail_to_pass"], v["record"]["pass_to_pass"]
+    diff = None
+    if amended:                      # the amendment read once, and only the bytes its control ran are applied (study review 2, 9)
+        found = amendment(task.id)
+        diff = found.read_bytes() if found is not None else b""
+        if hashlib.sha256(diff).hexdigest() != v["record"].get("sha256"):
+            raise SystemExit(f"{task.id}'s amendment changed since its control ran: run amend")
     folder = ctx.archive.start("recheck" if amended else "check", task.id, checked_run=rel)
     private = folder.write(FIRST_PATCH, first) if first is not None and not amended else None
+    applied = folder.write("amendment.patch", diff) if diff is not None else False
     patches = [] if amended else patches_to_score(src, arm, private)
     rows = []
     for label, patch in [*patches, ("final", src / "final.patch")]:
-        body = _oracle_run(ctx, task, patch=patch, folder=folder, label=label, amended=amended)
+        body = _oracle_run(ctx, task, patch=patch, folder=folder, label=label, amended=applied)
         if body.get("patch_applied", True) and not body.get("results") and str(body.get("pytest_exit")).strip() != "124":
             raise RuntimeError(f"no test report for {label}")   # a check that did not happen is not a failed patch
         rows.append({"patch": label, "bytes": patch.stat().st_size if patch.exists() else 0,
                      "patch_applied": body.get("patch_applied", True), **verdict(body.get("results") or {}, f2p, p2p)})
-    return folder.finish({"checks": rows, "fail_to_pass": f2p, "pass_to_pass_count": len(p2p), "amended": amended},
+    return folder.finish({"checks": rows, "fail_to_pass": f2p, "pass_to_pass_count": len(p2p), "amended": amended,
+                          **({"amendment_sha256": hashlib.sha256(diff).hexdigest()} if diff is not None else {})},
                          "finished")
 
 
@@ -3566,8 +3617,8 @@ def selfcheck(ctx: Context, task: Task) -> dict[str, Any]:
     folder = ctx.archive.start("selfcheck", task.id, g6_commit=ctx.g6.get("commit"))
     _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     gold = folder.fresh_path("gold.patch")
-    got = ctx.docker("run", "--rm", "--network", "none", oracle, "cat", "/oracle/fix.patch", timeout=600)
-    checked(got, "the fix's patch")
+    got = completed(ctx.docker("run", "--rm", "--network", "none", oracle, "cat", "/oracle/fix.patch", timeout=600),
+                    "the fix's patch")
     gold.write_bytes(got.stdout or b"")
     empty = folder.fresh_path("empty.patch")
     empty.write_bytes(b"")
@@ -3613,13 +3664,15 @@ def g6replay(ctx: Context, task: Task, code: str, args_file: Path) -> dict[str, 
             checked(ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we.patch", workdir=task.repo),
                     "the patch")
         args = {**body["args"], "repo": task.repo}
-        done = ctx.docker("exec", "-i", "-u", USER, "-e", f"HOME={HOME}", "-w", task.repo, name, G6PY, "-I", "-",
-                          input=(G6_REPLAY.replace("sys.stdin.read()", json.dumps(json.dumps(args)))).encode("utf-8"),
-                          timeout=2400)
         try:
+            done = completed(ctx.docker("exec", "-i", "-u", USER, "-e", f"HOME={HOME}", "-w", task.repo, name, G6PY, "-I", "-",
+                                        input=(G6_REPLAY.replace("sys.stdin.read()", json.dumps(json.dumps(args)))).encode("utf-8"),
+                                        timeout=2400), "G6's review")
             body["review"] = json.loads(out(done).splitlines()[-1])
+        except RuntimeError as exc:            # a review whose exec failed is no review, whatever it printed (study review 2, 6)
+            body["review"] = {"error": str(exc)[:600]}
         except (ValueError, IndexError):
-            body["review"] = {"error": f"no readable reply (exit {done.returncode}): {err(done)[-400:]}"}
+            body["review"] = {"error": "no readable reply"}
     finally:
         ctx.docker("rm", "-f", name, timeout=300)
     return folder.finish(body, "finished")
@@ -3661,13 +3714,15 @@ def modelcheck(ctx: Context, task: Task) -> dict[str, Any]:
         checked(ctx.docker("run", "-d", "--name", name, "--label", "g6we=1", "--network", net, *SECURITY, "-u", USER,
                            "-e", f"HOME={HOME}", task_image, "tail", "-f", "/dev/null", timeout=600), "model check")
         write_key_file(ctx.docker, name, key)
-        done = ctx.docker("exec", "-i", "-u", USER, "-e", f"HOME={HOME}", "-e", f"HTTPS_PROXY=http://{px}:{PROXY_PORT}",
-                          "-e", f"HTTP_PROXY=http://{px}:{PROXY_PORT}", "-e", "NO_PROXY=localhost,127.0.0.1", name, G6PY,
-                          "-I", "-", input=MODELCHECK.encode("utf-8"), timeout=600)
         try:
+            done = completed(ctx.docker("exec", "-i", "-u", USER, "-e", f"HOME={HOME}", "-e", f"HTTPS_PROXY=http://{px}:{PROXY_PORT}",
+                                        "-e", f"HTTP_PROXY=http://{px}:{PROXY_PORT}", "-e", "NO_PROXY=localhost,127.0.0.1", name,
+                                        G6PY, "-I", "-", input=MODELCHECK.encode("utf-8"), timeout=600), "the model check")
             body = json.loads(out(done).splitlines()[-1])
+        except RuntimeError as exc:            # an exec that failed gave no answer, whatever it printed
+            body = {"error": str(exc)[:600]}
         except (ValueError, IndexError):
-            body = {"error": f"no readable reply (exit {done.returncode}): {err(done)[-300:]}"}
+            body = {"error": "no readable reply"}
         body["egress"] = egress(ctx, px, folder.fresh_path(c.NDJSON["egress"]))
     finally:
         for one in (name, px):
@@ -3692,16 +3747,17 @@ def freecheck(ctx: Context, task: Task) -> dict[str, Any]:
 
 # --- building ------------------------------------------------------------------------------------------------------------
 def git_commit(ref: str) -> str:
-    got = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "--verify", f"{ref}^{{commit}}"],
-                         capture_output=True, text=True)
+    got = completed(subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "--verify", f"{ref}^{{commit}}"],
+                                   capture_output=True, text=True), "the commit's name", ok=EXITS)      # its exit read next
     if got.returncode != 0 or len(got.stdout.strip()) != 40:
         raise SystemExit(f"{ref!r} names no commit")
     return got.stdout.strip()
 
 
 def contains_required(commit: str) -> bool:
-    return all(subprocess.run(["git", "-C", str(REPO_ROOT), "merge-base", "--is-ancestor", req, commit],
-                              capture_output=True).returncode == 0 for req in c.REQUIRED_G6_COMMITS)
+    return all(completed(subprocess.run(["git", "-C", str(REPO_ROOT), "merge-base", "--is-ancestor", req, commit],
+                                        capture_output=True), "a required commit's ancestry", ok=(0, 1)).returncode == 0
+               for req in c.REQUIRED_G6_COMMITS)              # git's own 0 (it is) and 1 (it is not); 128 is no answer
 
 
 def default_claude() -> Path:
@@ -3713,7 +3769,7 @@ def build(docker: Docker, context: Path, tag: str, folder: c.RunFolder, name: st
     done = docker(*args, timeout=7200)
     folder.write(f"{name}-build.txt", out(done) + "\n" + err(done))
     checked(done, f"docker build {tag}")
-    return out(docker("image", "inspect", tag, "--format", "{{.Id}}"))
+    return checked(docker("image", "inspect", tag, "--format", "{{.Id}}"), "the image's inspection")
 
 
 def build_base(archive: c.Archive, ref: str, claude: Path, docker: Docker | None = None,
@@ -3726,8 +3782,8 @@ def build_base(archive: c.Archive, ref: str, claude: Path, docker: Docker | None
     ctx_dir = archive.root / "build" / (f"base-{commit[:12]}" + (f"-{variant}" if variant else ""))
     ctx_dir.mkdir(parents=True, exist_ok=True)
     tar = ctx_dir / "g6src.tar"
-    made = subprocess.run(["git", "-C", str(REPO_ROOT), "-c", "core.autocrlf=false", "archive", "--format=tar", "-o",
-                           str(tar), commit], capture_output=True)
+    made = completed(subprocess.run(["git", "-C", str(REPO_ROOT), "-c", "core.autocrlf=false", "archive", "--format=tar", "-o",
+                                     str(tar), commit], capture_output=True), "git archive", ok=EXITS)      # its exit read next
     if made.returncode != 0:
         raise SystemExit("git archive failed")
     if not (ctx_dir / "claude").is_file():
@@ -3740,7 +3796,7 @@ def build_base(archive: c.Archive, ref: str, claude: Path, docker: Docker | None
     rec = {"ref": ref, "g6_commit": commit, "image": tag, "image_id": image, "contains_required": contains_required(commit),
            "variant": variant, "round2_patch_sha256": c.sha256_file(ROUND2_PATCH) if variant == ROUND2 else None,
            "source_tar_sha256": c.sha256_file(tar), "claude_sha256": CLAUDE_SHA256, "from": FROM_IMAGE,
-           "from_id": out(docker("image", "inspect", FROM_IMAGE, "--format", "{{.Id}}"))}
+           "from_id": checked(docker("image", "inspect", FROM_IMAGE, "--format", "{{.Id}}"), "the base image's inspection")}
     return folder.finish(rec, "finished")
 
 
@@ -3778,15 +3834,15 @@ def read_key() -> str:
 
 def read_tree(task: Task) -> str:
     """Upstream's tree for the task's base commit, from GitHub's API (read-only)."""
-    got = subprocess.run(["gh", "api", f"repos/{task.full_name}/git/commits/{task.parent}", "--jq", ".tree.sha"],
-                         capture_output=True, timeout=120)
+    got = completed(subprocess.run(["gh", "api", f"repos/{task.full_name}/git/commits/{task.parent}", "--jq", ".tree.sha"],
+                                   capture_output=True, timeout=120), "the parent's tree", ok=EXITS)    # its exit read next
     return got.stdout.decode("utf-8", errors="replace").strip() if got.returncode == 0 else ""
 
 
 def read_thread(task: Task) -> str:
     """The issue's comments from before the fix's pull request was opened, as ``thread_text`` keeps them."""
     def api(path: str, *flags: str) -> Any:
-        got = subprocess.run(["gh", "api", *flags, path], capture_output=True, timeout=120)
+        got = completed(subprocess.run(["gh", "api", *flags, path], capture_output=True, timeout=120), path, ok=EXITS)
         if got.returncode != 0:
             raise RuntimeError(f"{path} could not be read: {got.stderr.decode(errors='replace')[-200:]}")
         return json.loads(got.stdout.decode("utf-8"))
@@ -3796,7 +3852,8 @@ def read_thread(task: Task) -> str:
 
 
 def read_issue(task: Task) -> tuple[str, str]:
-    got = subprocess.run(["gh", "api", f"repos/{task.full_name}/issues/{task.issue}"], capture_output=True, timeout=120)
+    got = completed(subprocess.run(["gh", "api", f"repos/{task.full_name}/issues/{task.issue}"], capture_output=True, timeout=120),
+                    "the issue", ok=EXITS)          # its exit read next
     if got.returncode != 0:
         raise RuntimeError(f"the issue could not be read: {got.stderr.decode(errors='replace')[-200:]}")
     data = json.loads(got.stdout.decode("utf-8"))
@@ -3811,10 +3868,11 @@ def brief(kind: str, record: Mapping[str, Any]) -> dict[str, Any]:
                 **{f"{side}_{k}": (record.get(side) or {}).get(k) for side in ("base", "fixed")
                    for k in ("pytest_exit", "patch_applied")},
                 **{f"{side}_results": len((record.get(side) or {}).get("results") or {}) for side in ("base", "fixed")}}
-    if kind == "check":
+    if kind == "check":     # with the digest of the amendment an amended check applied, which its verdict is bound to
         return {"checks": [{k: row.get(k) for k in ("patch", "bytes", "patch_applied", "passes",
                                                      "fail_to_pass_failing")} | {"failing": len(row.get("failing") or [])}
-                           for row in record.get("checks") or []]}
+                           for row in record.get("checks") or []],
+                **({"amendment_sha256": record["amendment_sha256"]} if record.get("amendment_sha256") else {})}
     if kind == "amend":     # counts only: on a fresh or held-out bug the names stay unread (PLAN.md, 2026-10-31)
         return {"ok": record.get("ok"), "why": record.get("why"), "sha256": record.get("sha256"),
                 "parent_failed": record.get("parent_failed"),

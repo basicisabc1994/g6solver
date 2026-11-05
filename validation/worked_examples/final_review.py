@@ -129,8 +129,8 @@ def review(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str) -
                               "-e", f"HOME={we.HOME}", "-w", task.repo, image, "tail", "-f", "/dev/null", timeout=600),
                    "review container")
         pack.mkdir(parents=True)
-        tree = ctx.docker("exec", "-u", we.USER, "-w", task.repo, name, "git", "archive", "--format=tar", task.parent, timeout=300)
-        we.checked(tree, "the parent's tree")
+        tree = we.completed(ctx.docker("exec", "-u", we.USER, "-w", task.repo, name, "git", "archive", "--format=tar", task.parent,
+                                       timeout=300), "the parent's tree")
         with tarfile.open(fileobj=io.BytesIO(tree.stdout)) as tar:
             for member in tar.getmembers():
                 if member.isfile():
@@ -145,7 +145,8 @@ def review(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str) -
             we.write_in(ctx.docker, name, f"{we.CRITIC_AT}/test_critic.py", found["test"] + "\n", user="root")
             base = we.run_set(ctx, task, name, we.CRITIC_AT)
             we.checked(ctx.docker("cp", str(patch), f"{name}:/tmp/we.patch", timeout=300), "patch copy")
-            if ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we.patch", workdir=task.repo).returncode != 0:
+            if we.completed(ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we.patch", workdir=task.repo),
+                            "the patch's apply", ok=we.APPLY_EXITS).returncode != 0:
                 raise RuntimeError("the patch does not apply")
             now = we.run_set(ctx, task, name, we.CRITIC_AT)
     except (RuntimeError, OSError, subprocess.SubprocessError, tarfile.TarError) as exc:
@@ -207,7 +208,8 @@ def parent_run(ctx: we.Context, task: we.Task, name: str, test: str, where: str,
 def patch_run(ctx: we.Context, task: we.Task, name: str, patch: Path, where: str) -> we.ProbeRun:
     """The second half: ``patch`` applied in ``name``, and the test in ``where`` run again."""
     we.checked(ctx.docker("cp", str(patch), f"{name}:/tmp/we.patch", timeout=300), "patch copy")
-    if ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we.patch", workdir=task.repo).returncode != 0:
+    if we.completed(ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we.patch", workdir=task.repo),
+                    "the patch's apply", ok=we.APPLY_EXITS).returncode != 0:
         raise RuntimeError("the patch does not apply")
     return we.run_set(ctx, task, name, where)
 
@@ -227,8 +229,8 @@ def _step(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, pr
     try:
         container(ctx, task, name)
         pack.mkdir(parents=True)
-        tree = ctx.docker("exec", "-u", we.USER, "-w", task.repo, name, "git", "archive", "--format=tar", task.parent, timeout=300)
-        we.checked(tree, "the parent's tree")
+        tree = we.completed(ctx.docker("exec", "-u", we.USER, "-w", task.repo, name, "git", "archive", "--format=tar", task.parent,
+                                       timeout=300), "the parent's tree")
         with tarfile.open(fileobj=io.BytesIO(tree.stdout)) as tar:
             for member in tar.getmembers():
                 if member.isfile():
@@ -313,11 +315,28 @@ def _kept(root: Path, row: Mapping[str, Any], folder: str = FOLDER) -> Path | No
     return c.beside(root, folder) / f"{c.sha256_file(patch)}.json" if patch.is_file() else None
 
 
+def of_bug(found: Mapping[str, Any] | None, task: Any) -> dict[str, Any] | None:
+    """A saved review is one bug's: it is given for ``task`` only when it names that bug. A review is kept by its patch's digest, and
+    the same bytes on another bug answer another issue, so another bug's review is no review of this one (study review 2, finding
+    12); one that names no bug is no bug's."""
+    return dict(found) if found is not None and found.get("task") == task and task is not None else None
+
+
 def saved(root: Path, row: Mapping[str, Any], folder: str = FOLDER) -> dict[str, Any] | None:
-    """The review saved in ``folder`` for this run's patch as it stands, failed or not; None if there is none, or if what is there
-    cannot be read, as a write cut short leaves it, so that patch is reviewed again."""
+    """The review saved in ``folder`` for this run's patch as it stands, on this run's bug (``of_bug``), failed or not; None if there
+    is none, if what is there cannot be read, as a write cut short leaves it, so that patch is reviewed again, or if it is another
+    bug's."""
     path = _kept(root, row, folder)
-    return read(path) if path else None
+    return of_bug(read(path), row.get("task")) if path else None
+
+
+def _another_bug(path: Path | None, task: Any) -> None:
+    """A patch whose review is kept for another bug cannot have one of its own here, as reviews are kept by digest alone: refused
+    (``replay_compare.patches`` refuses the same patch on two bugs), never written over."""
+    held = read(path) if path is not None else None
+    if held is not None and held.get("task") not in (None, task):
+        raise ValueError(f"the patch {path.stem[:12]} is on two bugs, {held.get('task')} and {task}, and a review is saved by its "
+                         "digest alone")
 
 
 def read(path: Path) -> dict[str, Any] | None:
@@ -354,6 +373,7 @@ def keep(root: Path, row: Mapping[str, Any], found: Mapping[str, Any], folder: s
     short leaves no half record. ``sha``, where given, is the digest of the bytes the review read, so a patch file changed since
     is not given this review."""
     path = c.beside(root, folder) / f"{sha}.json" if sha else _kept(root, row, folder)
+    _another_bug(path, row["task"])
     path.parent.mkdir(exist_ok=True)
     write_whole(path, json.dumps({"task": row["task"], "first_seen_in": row.get("run"), **found}, indent=1))
 
@@ -375,8 +395,10 @@ def waiting(root: Path, tasks: Sequence[str], folder: str = FOLDER) -> list[dict
     for one in c.saved_rows(root, we.amendment):
         patch = one.facts.folder / "final.patch"
         if one.facts.task in tasks and (one.facts.ending or {}).get("status") == "finished" and patch.is_file() \
-                and patch.stat().st_size and said_of(root, one.record(), folder) is None:
-            found.setdefault(c.sha256_file(patch), one.record())
+                and patch.stat().st_size:
+            _another_bug(_kept(root, one.record(), folder), one.facts.task)    # another bug's review is refused, never reused
+            if said_of(root, one.record(), folder) is None:
+                found.setdefault(c.sha256_file(patch), one.record())
     return [found[sha] for sha in sorted(found)]
 
 

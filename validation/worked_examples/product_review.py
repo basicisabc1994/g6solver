@@ -257,7 +257,8 @@ def review(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, *
                                   we.USER, "-e", f"HOME={we.HOME}", "-w", task.repo, image, "tail", "-f", "/dev/null", timeout=600),
                        "review container")
             def git(*args: str) -> bytes:
-                done = ctx.docker("exec", "-u", we.USER, "-w", task.repo, name, "git", *args, timeout=300)
+                done = we.completed(ctx.docker("exec", "-u", we.USER, "-w", task.repo, name, "git", *args, timeout=300),
+                                    f"git {args[0]} at the parent", ok=we.EXITS)       # its exit read next
                 if done.returncode != 0:
                     raise RuntimeError(f"git {args[0]} at the parent failed ({done.returncode}): {fr.ended(we.err(done))[-200:]}")
                 return done.stdout

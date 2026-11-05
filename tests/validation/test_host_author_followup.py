@@ -94,7 +94,7 @@ def _index_checks(tmp_path, capsys, monkeypatch):
 
 
 def _ledger(tmp_path, capsys, monkeypatch):
-    import distill                    # the ledger's reader, which loop.one reads it with
+    import distill                    # the ledger's reader (loop.one recovers a made run from the index: study review 2, 2)
     archive = c.Archive(tmp_path / "a")
     rows = [{"run": f"run/t/{i}", "status": "finished", "note": HOSTILE} for i in (1, 2)]
     _ndjson(archive.root / c.NDJSON["ledger"], rows)
@@ -107,7 +107,9 @@ def _egress(tmp_path, capsys, monkeypatch):
             {"host": "x.invalid", "port": 80, "allowed": False, "note": HOSTILE},
             {"host": "y.invalid", "port": 80, "allowed": False, "note": HOSTILE}]
     dest, copied = _ndjson(tmp_path / c.NDJSON["egress"], rows), []
-    got = we.egress(SimpleNamespace(docker=lambda *a, **kw: copied.append(a)), "px", dest)
+    got = we.egress(SimpleNamespace(docker=lambda *a, **kw: (copied.append(a),            # a copy that succeeded, as docker
+                                                             SimpleNamespace(returncode=0, stdout=b"", stderr=b""))[1]),
+                    "px", dest)                                                     # says it (study review 2: its status is read)
     assert copied == [("cp", f"px:/opt/{c.NDJSON['egress']}", str(dest))], "the log is copied out from where the proxy writes it"
     return got, {"requests": 3, "allowed": ["api.anthropic.com:443"], "refused": ["x.invalid:80", "y.invalid:80"]}
 
@@ -206,11 +208,10 @@ NDJSON_USES = {
     ("wecommon.py", "Archive.index", "index"):
         [(None, "the index's one path: Archive.append writes it and Archive.rows reads it with read_stream, " + HANDED)],
     ("export_reviewer_cases.py", "main", "cases"): [(None, "the cases written below, a json.dumps line a case")] * 2,
-    ("loop.py", "one", "ledger"): [("main_row", "distill.main_row, " + HANDED)],
     ("observe.py", "observe_run", "stream"): [("read_stream", "read")],
     ("run.py", "r3_ledger", "ledger"): [("open", "written: a json.dumps line a run")],
     ("run.py", "start_net", "egress"): [("docker", "where the egress proxy writes its log, in its own container")],
-    ("run.py", "egress", "egress"): [("docker", "copied out of the proxy's container to the file egress then reads")],
+    ("run.py", "egress", "egress"): [("copy_out", "copied out of the proxy's container to the file egress then reads")],
     ("run.py", "host_session", "stderr"): [("write", "written as it is read: by stream_lines, " + HANDED)],
     ("run.py", "run_scout", "tagged_stream"): [("session", SESSION)] * 3,
     ("run.py", "run_scout", "numbered_stream"): [("checked_again", SESSION)] * 3,

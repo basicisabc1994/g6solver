@@ -162,6 +162,7 @@ def test_the_reader_finds_every_json_whatever_its_name_and_refuses_what_is_no_ru
     why = {f.file: (f.why, f.torn) for f in got.found if f.why}
     assert set(why) == {"A-bug-1.json", "cegis.json", "torn.json"} and why["torn.json"][1] and not why["cegis.json"][1]
     assert got.bars(("A", "bug", 1)) and not got.bars(("K2", "bug", 1))          # the refused row bars its run's key alone
+    assert got.blocks(("A", "bug", 1)) and not got.blocks(("K2", "bug", 1), file="anything.json", run=run.rel)
 
 
 def test_two_files_naming_one_run_or_two_runs_holding_one_key_give_no_row(tmp_path):
@@ -192,7 +193,7 @@ def test_a_row_kept_under_the_keys_name_in_another_case_bars_it_as_the_file_it_i
     folder = tmp_path / c.SAVED
     folder.mkdir()
     (folder / "k2-bug-1.json").write_text(json.dumps(other_row), "utf-8")      # the file K2-bug-1.json, on this file system
-    assert c.shelf(archive, lambda task: None).bars(("K2", "bug", 1))
+    assert c.shelf(archive, lambda task: None).blocks(("K2", "bug", 1))        # no row of K2's run is written over it
 
 
 def test_the_writer_never_writes_over_another_runs_row_and_replaces_a_torn_one(tmp_path):

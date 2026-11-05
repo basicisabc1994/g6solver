@@ -27,7 +27,7 @@ class _Archive:
     """Runs with saved patches, each run's two verdicts, and each reviewer's saved word on each patch."""
 
     def __init__(self, root: Path, monkeypatch):
-        self.root, self.n = root, 0
+        self.root, self.n, self.bugs = root, 0, {}
         self.diff = root / "amendment.patch"
         root.mkdir(parents=True, exist_ok=True)
         self.diff.write_text("an amendment", "utf-8")
@@ -47,13 +47,16 @@ class _Archive:
         (self.root / "loop" / f"{arm}-{task}-1.json").write_text(json.dumps(row), "utf-8")
         (self.root / "loop" / "amended" / f"{arm}-{task}-1.json").write_text(json.dumps(
             {"amendment_sha256": hashlib.sha256(b"an amendment").hexdigest(), "run": rel, "amended_passes": amended}), "utf-8")
-        return hashlib.sha256(f"{SECRET} patch {body}".encode()).hexdigest()
+        sha = hashlib.sha256(f"{SECRET} patch {body}".encode()).hexdigest()
+        self.bugs[sha] = task
+        return sha
 
     def said(self, folder: str, sha: str, said: str, verdict: str | None = None) -> None:
         verdict = verdict or {"reproduced": "defect", "opinion": "defect", "none": "none", "defect": "defect"}.get(said, "failed")
         (self.root / "loop" / folder).mkdir(exist_ok=True)
         (self.root / "loop" / folder / f"{sha}.json").write_text(json.dumps(
-            {"task": "x", "said": said, "verdict": verdict, "rule": f"{SECRET} rule", "why": f"{SECRET} why", "test": f"{SECRET} test",
+            {"task": self.bugs.get(sha, "x"), "said": said, "verdict": verdict,          # the patch's own bug, as keep writes it:
+             "rule": f"{SECRET} rule", "why": f"{SECRET} why", "test": f"{SECRET} test",  # a review is one bug's (study review 2, 12)
              "error": f"{SECRET} error", "reply_end": f"{SECRET} reply", "reproduce": {"note": f"{SECRET} note"}}), "utf-8")
 
 

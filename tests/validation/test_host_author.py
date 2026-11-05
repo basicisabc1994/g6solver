@@ -517,7 +517,8 @@ def test_loop_threads_its_executor_to_every_runner_call(monkeypatch, tmp_path):
     import loop
     seen = []
     monkeypatch.setattr(loop, "EXECUTOR", "container")
-    monkeypatch.setattr(loop.subprocess, "run", lambda argv, **kw: (seen.append(argv), SimpleNamespace(stdout="{}"))[1])
+    monkeypatch.setattr(loop.subprocess, "run", lambda argv, **kw: (seen.append(argv),     # a runner that exited 0, as loop.tool reads
+                                                                    SimpleNamespace(returncode=0, stdout="{}", stderr=""))[1])
     monkeypatch.setattr(loop, "rescore", lambda root, g6: [loop.tool("check", "--task", "t")])
     monkeypatch.setenv("G6_WE_ARCHIVE", str(tmp_path))
     loop.main(["--rescore"])
@@ -1159,9 +1160,11 @@ def test_the_box_shell_prints_the_start_line_and_then_runs_the_command(box):
 # --- the third review of the host executor (2026-11-04): each class of its findings removed at its root -------------------------
 # A: a run's durable ending comes first: one function gives a run's verdict on either score, and a verdict saved under another
 # ending is void.
-def check_says(passes: bool):
+def check_says(passes: bool, amendment: Path | None = None):
+    """The check's printed verdict; an amended one names the amendment it ran (study review 2, finding 9)."""
     return lambda command, *a, **kw: json.dumps({"checks": [{"patch": "final", "passes": passes, "failing": 0,
-                                                             "fail_to_pass_failing": []}]})
+                                                             "fail_to_pass_failing": []}],
+                                                 **({"amendment_sha256": we.c.sha256_file(amendment)} if amendment else {})})
 
 
 def test_a_saved_verdict_holds_only_under_the_ending_it_was_made_under_on_either_score(monkeypatch, tmp_path):
@@ -1174,7 +1177,7 @@ def test_a_saved_verdict_holds_only_under_the_ending_it_was_made_under_on_either
     diff.write_text("a diff", encoding="utf-8")
     monkeypatch.setattr(we, "amendment", lambda task: diff)
     monkeypatch.setattr(loop, "tool", lambda command, *a, **kw: json.dumps({"status": "finished", "run": run.rel, "executor": "host"})
-                        if command == "run" else check_says(True)(command))
+                        if command == "run" else check_says(True, diff)(command))
     made = we.c.ending_sha256(tmp_path, run.rel)
     assert made and loop.one(tmp_path, "g6", "K1", "t", 1)["ending_sha256"] == made
     assert loop.rescore(tmp_path, "g6")[0]["amended_passes"] is True

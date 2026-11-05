@@ -83,7 +83,7 @@ def patches(root: Path, tasks: Iterable[str]) -> dict[str, dict[str, Any]]:
         one.update({score: next(iter(seen[score])) if len(seen[score]) == 1 else None for score in SCORES})
         one["split"] = [score for score in SCORES if len(seen[score]) > 1]
         for name, folder in REVIEWERS:
-            kept = fr.read(c.beside(root, folder) / f"{sha}.json")     # one that cannot be read is no review, as the replays read it
+            kept = fr.of_bug(fr.read(c.beside(root, folder) / f"{sha}.json"), one["task"])   # this bug's, read as the replays read it
             if not (fr.counts(kept) or (kept or {}).get("said") == "failed"):
                 kept = None          # neither a review nor a failed one, so no record at all: it completes no block, as none does
             one[name] = {"said": kept["said"], "verdict": kept.get("verdict")} if kept else None

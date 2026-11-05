@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from math import comb
 from pathlib import Path
 from typing import Any
@@ -56,7 +56,7 @@ def saved(root: Path) -> dict[tuple[str, str, int], dict[str, bool | None]]:
             checks.setdefault(str(r["checked_run"]), []).append(str(r["run"]))
     for one in c.saved_rows(archive, we.amendment):
         facts, passes = one.facts, one.passes      # none for a run the admission rule does not admit now
-        shown = {"arm": facts.arm, "run": facts.name}       # the report's readers: the run's own arm, and its folder by its name
+        shown = {"arm": facts.arm, "task": facts.task, "run": facts.name}   # the report's readers: the run's own facts
         rows[one.key] = {**one.scores, "said": said_of(root, shown)}
         first = first_of(root, checks.get(facts.name, ()), passes)
         if first is not None:
@@ -126,17 +126,55 @@ def end_of(root: Path, row: Mapping[str, Any]) -> str | None:
         else "a defect whose test would not run"
 
 
+Pair = tuple[bool | None, bool | None]
+Table = Mapping[str, Mapping[int, Pair]]
+
+
+def runs_by_bug(tasks: Iterable[str], repeats: Iterable[int], outcome: Callable[[str, int], Pair]) -> dict[str, dict[int, Pair]]:
+    """The one table every count of a comparison is made from: each bug once and each of its repeats once, whatever ``tasks`` or
+    ``repeats`` name more than once, with the pair (ours, theirs) ``outcome`` gives each run. A bug is a key of it, so it can give
+    any count one observation at most (study review 2, finding 8)."""
+    repeats = list(dict.fromkeys(repeats))
+    return {task: {repeat: outcome(task, repeat) for repeat in repeats} for task in dict.fromkeys(tasks)}
+
+
+def bug_signs(table: Table) -> dict[str, int | None]:
+    """One signed value a bug, from its runs' pairs: 1 when ours passed more of them, -1 when fewer, 0 when as many; None when a
+    run of it is missing on either side, or none was asked, so that bug counts neither way. The one rule both decisions read by
+    bug, the frozen rule (``compare``'s ``bug_p``) and the within-run comparison (``within``'s ``p``): repeats of one bug are not
+    independent, so a p over runs overstates the evidence."""
+    signs: dict[str, int | None] = {}
+    for task, runs in table.items():
+        pairs = list(runs.values())
+        if not pairs or any(a is None or b is None for a, b in pairs):
+            signs[task] = None
+            continue
+        ahead = sum(bool(a) for a, _ in pairs) - sum(bool(b) for _, b in pairs)
+        signs[task] = (ahead > 0) - (ahead < 0)
+    return signs
+
+
+def tally(signs: Mapping[str, int | None]) -> dict[str, int]:
+    """The bugs better, worse and the same (``bug_signs``); a bug with no sign is none of them."""
+    values = [sign for sign in signs.values() if sign is not None]
+    return {"better": values.count(1), "worse": values.count(-1), "same": values.count(0)}
+
+
+def _between(rows: Rows, loop_arm: str, other: str, score: str) -> Callable[[str, int], Pair]:
+    return lambda task, repeat: (rows.get((loop_arm, task, repeat), {}).get(score), rows.get((other, task, repeat), {}).get(score))
+
+
 def compare(rows: Rows, loop_arm: str, other: str, tasks: Iterable[str], repeats: Iterable[int], score: str) -> dict[str, Any]:
     """One arm against another on the same bugs and repeats; a pair with a run missing counts neither way. ``p`` is the sign test
-    over run pairs, reported and never decisive; ``bug_p`` is the sign test over bugs (``by_bug``), which every decision reads
-    (PLAN.md, 2026-11-05, night, later: two runs of one bug are not independent)."""
-    tasks, repeats = list(tasks), list(repeats)
-    pairs = [(rows.get((loop_arm, t, r), {}).get(score), rows.get((other, t, r), {}).get(score))
-             for t in tasks for r in repeats]
+    over run pairs, reported and never decisive; ``bug_p`` is the sign test over bugs (``bug_signs``), which every decision reads
+    (PLAN.md, 2026-11-05, night, later: two runs of one bug are not independent). Every count is made from one table, each bug
+    and each run once (``runs_by_bug``)."""
+    table = runs_by_bug(tasks, repeats, _between(rows, loop_arm, other, score))
+    pairs = [pair for runs in table.values() for pair in runs.values()]
     seen = [(a, b) for a, b in pairs if a is not None and b is not None]
     wins, losses = sum(a and not b for a, b in seen), sum(b and not a for a, b in seen)
     passed, base = sum(bool(a) for a, _ in seen), sum(bool(b) for _, b in seen)
-    bugs = by_bug(rows, loop_arm, other, tasks, repeats, score)
+    bugs = tally(bug_signs(table))
     return {"loop": loop_arm, "other": other, "score": score, "pairs": len(seen), "missing": len(pairs) - len(seen),
             "loop_passed": passed, "other_passed": base, "uplift": (passed - base) / len(seen) if seen else None,
             "wins": wins, "losses": losses, "p": sign_test(wins, losses), "bugs": bugs,
@@ -144,26 +182,17 @@ def compare(rows: Rows, loop_arm: str, other: str, tasks: Iterable[str], repeats
 
 
 def by_bug(rows: Rows, loop_arm: str, other: str, tasks: Iterable[str], repeats: Iterable[int], score: str) -> dict[str, int]:
-    """The bugs on which the loop passed more runs, fewer or the same: repeats of one bug are not independent, so a p-value
-    overstates the evidence. A bug with a run missing counts neither way."""
-    repeats = list(repeats)
-    counts = {"better": 0, "worse": 0, "same": 0}
-    for task in tasks:
-        ours, theirs = ([rows.get((arm, task, r), {}).get(score) for r in repeats] for arm in (loop_arm, other))
-        if not repeats or None in ours or None in theirs:      # no repeat asked is no pair, never a bug the same
-            continue
-        ahead = sum(map(bool, ours)) - sum(map(bool, theirs))
-        counts["better" if ahead > 0 else "worse" if ahead < 0 else "same"] += 1
-    return counts
+    """The bugs on which the loop passed more runs, fewer or the same (``bug_signs``, on ``runs_by_bug``'s table). A bug with a run
+    missing counts neither way."""
+    return tally(bug_signs(runs_by_bug(tasks, repeats, _between(rows, loop_arm, other, score))))
 
 
 def interval(rows: Rows, loop_arm: str, other: str, tasks: Iterable[str], repeats: Iterable[int],
              score: str) -> tuple[float, float] | None:
     """The 95% interval of the uplift from G6's ``compare_methods``, resampling whole bugs. It is read beside the rule, not by it."""
     pairs, clusters = [], []
-    for task in tasks:
-        for repeat in repeats:
-            ours, theirs = (rows.get((arm, task, repeat), {}).get(score) for arm in (loop_arm, other))
+    for task, runs in runs_by_bug(tasks, repeats, _between(rows, loop_arm, other, score)).items():
+        for ours, theirs in runs.values():
             if ours is not None and theirs is not None:
                 pairs.append((float(theirs), float(ours)))
                 clusters.append(task)
@@ -210,23 +239,16 @@ def within(rows: Rows, arm: str, tasks: Iterable[str], repeats: Iterable[int]) -
     worse, which decides (``within_judged``). A run with no first verdict (no Claude Code baseline, no check of its first patch, or
     one that is unknown) or no final one is no pair: it is counted (``missing``), and its bug counts neither way. The run-level
     counts (pairs, first patches made right, ``converted``, and made wrong, ``broken``) keep every pair a bug has, a bug with a run
-    missing included (study review 1, finding 5), and their sign test (``run_p``) is reported beside it, never decisive."""
-    repeats = list(repeats)
-    counts = {"better": 0, "worse": 0, "same": 0}
-    pairs = missing = converted = broken = 0
-    for task in tasks:
-        got = [(rows.get((arm, task, r), {}).get("first"), rows.get((arm, task, r), {}).get("maintainers")) for r in repeats]
-        whole = [(a, b) for a, b in got if a is not None and b is not None]
-        missing += len(got) - len(whole)
-        pairs += len(whole)
-        converted += sum(b and not a for a, b in whole)
-        broken += sum(a and not b for a, b in whole)
-        if not got or len(whole) < len(got):      # no repeat asked is no pair, never a bug the same
-            continue
-        ahead = sum(bool(b) for _, b in whole) - sum(bool(a) for a, _ in whole)
-        counts["better" if ahead > 0 else "worse" if ahead < 0 else "same"] += 1
-    return {"arm": arm, **counts, "p": sign_test(counts["better"], counts["worse"]), "pairs": pairs, "missing": missing,
-            "converted": converted, "broken": broken, "run_p": sign_test(converted, broken)}
+    missing included (study review 1, finding 5), and their sign test (``run_p``) is reported beside it, never decisive. Every
+    count is made from one table, each bug and each run once (``runs_by_bug``), the bugs' by ``bug_signs``, as ``compare``'s are."""
+    table = runs_by_bug(tasks, repeats, lambda task, repeat: (rows.get((arm, task, repeat), {}).get("maintainers"),
+                                                            rows.get((arm, task, repeat), {}).get("first")))
+    pairs = [pair for runs in table.values() for pair in runs.values()]
+    whole = [(final, first) for final, first in pairs if final is not None and first is not None]
+    counts = tally(bug_signs(table))
+    converted, broken = sum(final and not first for final, first in whole), sum(first and not final for final, first in whole)
+    return {"arm": arm, **counts, "p": sign_test(counts["better"], counts["worse"]), "pairs": len(whole),
+            "missing": len(pairs) - len(whole), "converted": converted, "broken": broken, "run_p": sign_test(converted, broken)}
 
 
 def within_judged(result: Mapping[str, Any], bar: float = 0.05) -> bool:

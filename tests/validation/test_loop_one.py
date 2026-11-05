@@ -15,7 +15,7 @@ def test_a_recovered_k1_row_is_not_scored_on_k0s_later_patch(tmp_path, monkeypat
     archive.start("validate", task.id).finish({"fail_to_pass": ["test_issue"], "pass_to_pass": []}, "finished")
     runs = {}
     for arm in ("K1", "K0"):
-        run = archive.start("run", task.id, arm=arm, repeat=1)     # as every round 3 run's start names its repeat (study review 1)
+        run = archive.start("run", task.id, arm=arm, repeat=1, model=we.R3_MODELS[1])   # as every round 3 run's start names them
         run.write("final.patch", arm)
         run.finish({"arm": arm, "agent_started": True}, "finished")
         runs[arm] = run.rel

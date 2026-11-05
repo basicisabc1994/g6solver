@@ -152,7 +152,8 @@ def similar(one: str, two: str) -> float:
 
 
 def tracked(path: Path) -> bool:
-    return subprocess.run(["git", "-C", str(path.parent), "ls-files", "--error-unmatch", path.name], capture_output=True).returncode == 0
+    return c.completed(subprocess.run(["git", "-C", str(path.parent), "ls-files", "--error-unmatch", path.name], capture_output=True),
+                       "git's list of tracked files", ok=(0, 1)).returncode == 0      # git's own 0 (tracked) and 1 (not)
 
 
 def projects() -> tuple[str, ...]:

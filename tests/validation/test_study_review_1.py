@@ -224,8 +224,8 @@ def _amended(tmp_path, monkeypatch, passes=True, also=None):
 
     def tool(*a, **kw):
         if also:
-            also(run)
-        return json.dumps({"checks": [{"patch": "final", "passes": passes}]})
+            also(run)                       # an amended check names the amendment it ran (study review 2, finding 9)
+        return json.dumps({"checks": [{"patch": "final", "passes": passes}], "amendment_sha256": c.sha256_file(diff)})
 
     monkeypatch.setattr(loop, "tool", tool)
     return archive, run, row, diff

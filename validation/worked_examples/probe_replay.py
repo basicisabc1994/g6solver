@@ -67,7 +67,8 @@ def _sealed(docker: Any, task: we.Task, oracle: str, code: str, patch: Path | No
         we.seal(docker, name)
         if patch is not None:
             we.checked(docker("cp", str(patch), f"{name}:/tmp/we-{code}.patch", timeout=300), "patch")
-            done = docker.sh(name, f"git apply --binary --whitespace=nowarn /tmp/we-{code}.patch", workdir=task.repo)
+            done = we.completed(docker.sh(name, f"git apply --binary --whitespace=nowarn /tmp/we-{code}.patch", workdir=task.repo),
+                                "the patch's apply", ok=we.APPLY_EXITS)      # git's own "does not apply", read next
             return name, done.returncode == 0
     except BaseException:
         docker("rm", "-f", name, timeout=300)
@@ -101,7 +102,11 @@ def replay_task(docker: Any, root: Path, task: we.Task, g6: str) -> dict[str, An
                 we.checked(docker("cp", str(row["probes"]), f"{name}:{probes}", timeout=300), "probes")
                 docker.sh(name, f"find {probes} -name __pycache__ -prune -exec rm -rf {{}} +; chmod -R a+rX {probes}",
                           user="root", timeout=60)
-                cells[row["label"]] = summary(we.out(docker.sh(name, RUN.format(probes=probes), workdir=task.repo, timeout=300)))
+                try:            # RUN ends with ``true``: an exit but 0 is the exec's own failure, and its output no answer
+                    cells[row["label"]] = summary(we.checked(docker.sh(name, RUN.format(probes=probes), workdir=task.repo,
+                                                                       timeout=300), "the probes"))
+                except RuntimeError as exc:      # could not run: never a pass (study review 2, finding 7)
+                    cells[row["label"]] = {**summary(""), "error": str(exc)[:300]}
             finally:
                 docker("rm", "-f", name, timeout=300)
         matrix[code] = cells
@@ -131,8 +136,8 @@ def main() -> None:
         raise SystemExit("held-out bugs are not replayed: their runs stay unread")
     root, docker = c.archive_root() / "round3", we.Docker()
     tasks = {t.id: t for t in we.load_tasks()}
-    commit = subprocess.run(["git", "-C", str(Path(__file__).parent), "rev-parse", args.g6], capture_output=True,
-                            text=True, check=True).stdout.strip()
+    commit = c.completed(subprocess.run(["git", "-C", str(Path(__file__).parent), "rev-parse", args.g6], capture_output=True,
+                                        text=True), "the G6 commit's name").stdout.strip()
     results = []
     for task in args.tasks:
         got = replay_task(docker, root, tasks[task], commit)
