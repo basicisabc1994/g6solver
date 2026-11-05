@@ -144,14 +144,17 @@ A workflow's files live in the `.g6/` folder of the project G6 was started in, s
 outside any repository you review with patch review: a review there counts those files as part of the change.
 Use `g6_compose` for explicit component connections. `g6_review_patch` is the first reference application: give
 it the patched repository, the task, and the requirements the patch must meet, each with the tests that check it.
+
 You can also give it the task's intent: its success criteria become requirements and its non-goals and failure
 criteria behaviour the patch must keep, each not established until a requirement with the same text names the
 tests that check it.
+
 It runs those tests inside an operating-system boundary, compares the changed tests, test helpers and test-runner
 files with the base commit for the signs of weakening G6 knows how to find (a static comparison: it cannot show
 that the tests are as strong as before), then runs the other tests that touch the changed modules, and returns one
-outcome: test integrity compromised, defect detected, insufficient evidence, or supported within scope. Supported
-within scope means every stated requirement passed its stated checks; it does not show that the patch does
+outcome: test integrity compromised, defect detected, insufficient evidence, or supported within scope. 
+
+Supported within scope means every stated requirement passed its stated checks; it does not show that the patch does
 everything the task needs. Each requirement gets its own evidence, and merging always needs a separate approval.
 You can also propose checks of your own (`proposed_checks`, at most 20 test files): G6 runs each inside the same
 boundary on a copy of the patch and on one of the base commit's code, and says whether it found a counterexample,
@@ -159,6 +162,7 @@ or, for a check of what the change should bring, whether it fails on the patch, 
 proposed check never passes a requirement, and a failing one gives at most insufficient evidence, with a
 reproduction you can run with plain pytest: the repository's own command, without G6's boundary (with
 `PYTHONPATH=src` where G6 put `src` on the import path).
+
 G6 keeps its record of its own test runs (test receipts) in a file your user account owns: it stops a caller's
 claimed results from counting as G6's, not a program running as you.
 Enable it explicitly with `g6 setup --client claude --allow patch_review.review` (or `--client codex`).
