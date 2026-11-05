@@ -2915,3 +2915,39 @@ the kind of uncertainty, using the verdicts already recorded. The owner wants it
 
 **Words.** Public copy says "checked" or "challenged", not "verified". The reliability state `verified` keeps its name in
 code and in the interfaces, since renaming it would break every surface that reads it.
+
+## 2026-11-05 (night): the host-k3 review loop ended at its limit on 754513c, its open findings, and the pilot's first run
+
+**The loop.** Four Codex reviews, three repairs, with findings 9, 5, 7 and 9, all reproduced in my runs. It never reached a
+clean review. Review 1 had two findings rejected (the deadline class, and host sessions ended by G6) and review 2 one (the
+deadline class); every other finding of reviews 1 to 3 is repaired at 754513c.
+
+**Review 4's nine, all reproduced on 754513c (finding 3 on both executors), its 142 probes passing.** They stay open for a
+change of their own.
+1. `loop.one`'s slow path checks the requested arm, not the saved row's, so it rewrites a contradicting row.
+2. The export reads an amended verdict without checking it belongs to the patch's own run.
+3. A K2 loop whose first result names no session finishes cleanly when its first review is clean.
+4. A complete index line holding U+2028 is skipped rather than refused.
+5. Two file names git keeps distinct become one name in the export.
+6. A rejected row in `compare.saved` still overwrites another run's score under the arm it claims.
+7. `loop.one`'s saved-row shortcut skips the requested arm and task check.
+8. The export's git reader is not isolated from a git work tree that contains its temporary folder.
+9. A resumed host session is unregistered from the watchdog before its exit wait (the deadline class).
+
+**The attribution class, met for the fifth time (findings 1, 2, 6 and 7), is redesigned, not patched again.** Each time a
+run's arm, task or verdict was read from a saved row or its file name rather than from the run's own facts. The change: a
+saved row carries no arm, task or verdict of its own; its file name and every attribution are derived from `run_facts`
+alone, so no reader can be given a claim to check.
+
+**Why none of the nine touches the pilot's counts.** By plain reading, with the records counted where a count settles it.
+- Findings 1, 6 and 7 need a saved row that contradicts its run. The pilot writes only its own new K3 rows, and
+  `pilot_counts.py` reads rows and check records without `compare`.
+- Findings 2, 5 and 8 are in the export, which the pilot does not use.
+- Finding 3 is K2's. K3's rule step already refuses to start without the first session's id, and that run ends "error"
+  with its baseline kept.
+- Finding 4: none of the index's 4,243 complete lines holds U+2028, U+2029 or any other character Python reads as a break.
+- Finding 9 can let a run end after its deadline. Such a run is still a row, and every run's ending is counted and reported.
+
+**The pilot's first run.** `pilot_k3.ps1 -First` on 754513c: black-5148, repeat 1, alone, to check that a host K3 run's rule
+step ends as the K loop's rules say. The remaining 27 follow once it has. It waits for the machine's memory floor (6.5 GB
+free) before it starts, as every timed run here does.
