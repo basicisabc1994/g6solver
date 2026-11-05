@@ -500,7 +500,7 @@ def test_the_baseline_is_kept_once_in_a_folder_of_its_own_and_scored_only_while_
         we.check(ctx, task, run.rel)
 
 
-def test_check_scores_the_baseline_bytes_it_verified_and_never_reads_the_path_again(monkeypatch, tmp_path):
+def test_check_scores_the_baseline_bytes_it_checked_and_never_reads_the_path_again(monkeypatch, tmp_path):
     archive = we.c.Archive(tmp_path / "archive")
     archive.start("validate", "fake-1").finish({"fail_to_pass": ["t"], "pass_to_pass": []}, "finished")
     run = archive.start("run", "fake-1", arm="K3")
