@@ -78,7 +78,7 @@ from g6.core import component_process, host_models
 from g6.core.llm import LLMError
 from g6.core.outside import clean_environment, find_program
 from g6.core.process_tree import ProcessTreeError
-from g6.self_maintenance.pacing import AccountReading, ProviderWindow
+from g6.self_maintenance.pacing import AccountReading, ProviderWindow, standing
 
 REFRESH = timedelta(minutes=15)
 MODEL_REFUSED = "G6_E_MODEL_REFUSED"
@@ -287,11 +287,12 @@ def _stands(reading: AccountReading | None, now: datetime) -> bool:
 
 class AccountReader:
     """The ``read_account`` of a ``BudgetMeter``. Calling it only hands back what ``refresh`` last read, which the runner
-    calls between ticks. A provider whose tool reports nothing has no reading, and ``said`` says why: the meter then stays
-    on its own count. A read that fails, or a reply that does not read, says nothing new, so the last good reading stands
-    until a good read replaces it or its reset passes, and what is charged meanwhile goes on top. The owner uses this
-    account too, so a broken tool must not make the meter read low. This is held in memory, so a restart whose first read
-    fails has forgotten it."""
+    calls between ticks, as it stands when asked: once the week its figure is of has reset, that figure is last week's and
+    is not handed back until the tool is read again (``standing``). A provider whose tool reports nothing has no reading, and
+    ``said`` says why: the meter then stays on its own count. A read that fails, or a reply that does not read, says nothing
+    new, so the last good reading stands until a good read replaces it or its reset passes, and what is charged meanwhile
+    goes on top. The owner uses this account too, so a broken tool must not make the meter read low. This is held in
+    memory, so a restart whose first read fails has forgotten it."""
 
     def __init__(self, windows: Sequence[ProviderWindow],
                  ask: Mapping[str, Callable[[], Mapping[str, Any] | None]] | None = None) -> None:
@@ -348,8 +349,9 @@ class AccountReader:
             self.said[provider] = (f"{why}; the last figure stands until {known.resets_at.isoformat()}, with the model calls "
                                    "charged since on top")
 
-    def __call__(self, provider: str, start: datetime) -> AccountReading | None:
-        return self.readings.get(provider)
+    def __call__(self, provider: str, now: datetime) -> AccountReading | None:
+        """What was last read of ``provider``, as it stands at ``now``: past its reset, without its figure (``standing``)."""
+        return standing(self.readings.get(provider), now)
 
 
 __all__ = ["AccountReader", "MODEL_REFUSED", "NOT_REPORTED", "REFRESH", "UsageUnavailable", "WatchedClaude", "codex_limits",

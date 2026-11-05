@@ -819,6 +819,37 @@ def test_a_week_that_moved_before_weeks_were_named_in_utc_keeps_its_book_after_t
         store.close()
 
 
+def test_a_runner_resumes_at_the_reset_and_not_a_day_later_on_last_weeks_use(tmp_path):
+    """Review-l4's finding 4: a weekly reading was still handed back after its reset, so the old week's use counted against
+    the new week's ceiling and the next try slipped a day."""
+    from g6.metaharness.runner import Runner
+    from g6.self_maintenance.usage import REFRESH
+
+    start = datetime(2026, 10, 26, 8, tzinfo=UTC)
+    reset, window = start + timedelta(days=7), ProviderWindow("claude", 5000, start)
+    now = [reset - timedelta(seconds=1)]
+    domain = domains.WordProblems(tmp_path, pool=86)
+    run = domain.execution()
+    domain.execution = lambda: dataclasses.replace(run, models={"local": Model(domain.llm, max_calls_per_run=1)})
+    settings = LoopSettings(windows=(window,), audit_per_tick=60,
+                            method=Method(cycles=1, propose_budget=120, select_budget=400, race_block=12, reflect_calls=1))
+    loop = ShadowLoop(domain, tmp_path / "loop", settings, proposer=domains.proposes({"prompt": domains.WORKING}),
+                      now=lambda: now[0], clock=domains.Clock())
+    assert loop.enrol("Ada")["completion_state"] == "qualified-draft"
+    answers = iter([{"rateLimits": {"primary": {"usedPercent": percent, "windowDurationMins": WEEK_MINUTES,
+                                                 "resetsAt": ends.timestamp()}}}
+                    for percent, ends in ((100, reset), (0, reset + timedelta(days=7)))])
+    reader = AccountReader((window,), ask={"claude": lambda: next(answers)})
+    loop.meter._read_account = reader
+    runner = Runner(loop, now=lambda: now[0], reader=reader)
+    runner.step()
+    assert runner.last["warning_card"]["code"] == "G6_E_LOOP_BUDGET_WAIT" and runner.not_before == reset
+    assert not domain.llm.calls
+    now[0] = reset + timedelta(seconds=1)
+    runner.step()
+    assert runner.not_before <= now[0] + REFRESH, runner.last["message"]
+
+
 def _late_refusal(requests: _Requests, release: threading.Event, failures: list):
     """A caller that answers, then has its result read on a thread of its own once ``release`` is set, in the call's context."""
     from g6.self_maintenance.usage import WatchedClaude

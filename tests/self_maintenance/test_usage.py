@@ -414,6 +414,22 @@ def test_a_reset_passing_is_read_at_once_and_not_up_to_a_refresh_later():
     assert tool.calls == 2 and reader("codex", START).used == 0
 
 
+def test_a_figure_past_its_reset_is_never_handed_back_even_before_the_tool_is_read_again():
+    """Review-l4's finding 4, at the reader: it handed back last week's figure after the reset until a refresh replaced it,
+    as inside a tick, where nothing refreshes. Where the provider's weeks fall, and a limit still ahead, still stand."""
+    reset = NOW + timedelta(minutes=1)
+    session = {"usedPercent": 100, "windowDurationMins": 300, "resetsAt": int((reset + timedelta(hours=1)).timestamp())}
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(_limits(90, resets=int(reset.timestamp()), secondary=session))})
+    reader.refresh(NOW)
+    assert reader("codex", NOW).used == 900
+    gone = reader("codex", reset)
+    assert (gone.used, gone.read_at, gone.resets_at) == (0, None, reset)
+    assert gone.limited_until == reset + timedelta(hours=1)
+    meter = BudgetMeter((WINDOW,), store=OperatorStore(":memory:"), read_account=reader)
+    seen = meter.reading("codex", reset + timedelta(minutes=1))
+    assert seen.used == 0 and seen.wait_until == reset + timedelta(hours=1)
+
+
 def test_a_reset_gets_one_read_however_many_ticks_look_after_it():
     reset = NOW + timedelta(minutes=1)
     down = usage.UsageUnavailable("down")
