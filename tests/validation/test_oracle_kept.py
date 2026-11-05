@@ -81,7 +81,7 @@ class Containers:
                 self.oracle_reads.append(script.split()[0])
                 if not self.live[name]["oracle"]:
                     return done(1)
-                return done(out=b"M\ttests/test_x.py\n" if "fix.files" in script else b"")
+                return done(out=b"1\t1\ttests/test_x.py\0" if "--numstat -z" in script else b"")    # git's reader of the fix
             if "-m pytest" in script:
                 self.candidate.append(("pytest", self.live[name]["oracle"]))
                 return done(out=b"exit=0\n")
@@ -107,7 +107,7 @@ def test_a_check_runs_the_patch_only_once_the_oracle_is_gone_and_still_scores_on
     run.finish({"executor": "host", "agent_started": True}, "finished")
     got = we.check(ctx, task, run.rel)
     assert got["checks"] == [{**got["checks"][0], "patch": "final", "passes": True}]          # scored, on the maintainers' tests
-    assert docker.oracle_reads == ["cat", "set"]          # the file list read and the tests copied in, both before the seal
+    assert docker.oracle_reads == ["git", "set"]          # the file list read (git's own reader) and the tests set aside, before the seal
     assert [what for what, _ in docker.candidate] == ["pytest"]
     _no_oracle_beside(docker)
 
@@ -140,7 +140,7 @@ def test_the_validation_and_the_checks_own_control_still_read_the_oracle_and_run
     docker, task = Containers(), we.load_tasks()[0]
     ctx = _ctx(tmp_path, docker)
     assert "fail_to_pass" in we.validate(ctx, task)                         # the parent's tests, then the fix's, each sealed after
-    assert docker.oracle_reads == ["cat", "set", "git", "cat", "set"]        # the fix and the tests applied before each seal
+    assert docker.oracle_reads == ["git", "set", "git", "git", "set"]        # the fix, the list and the tests before each seal
     ctx.archive.start("validate", task.id).finish({"fail_to_pass": [TEST_ID], "pass_to_pass": []}, "finished")
     assert we.selfcheck(ctx, task)["gold"]["patch_applied"] is True
     _no_oracle_beside(docker)
@@ -160,7 +160,7 @@ def test_each_probe_replay_code_has_a_fresh_sealed_container_so_no_probe_runs_be
                                                                            "run": run.rel, "passes": arm == "K1"}), "utf-8")
     got = probe_replay.replay_task(we.Docker(runner=docker), root, task, "0" * 40)
     assert list(got["matrix"]) == ["base", "fix", "A-1", "K1-1"]
-    assert len(docker.started) == 4 and not docker.live                     # one container a code, each removed
+    assert len(docker.started) == 4 * 2 and not docker.live     # one container a probe set on each code, each removed (finding 21)
     assert [what for what, _ in docker.candidate].count("pytest") == 4 * 2     # two probe sets on each of the four codes
     _no_oracle_beside(docker)
 

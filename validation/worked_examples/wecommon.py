@@ -908,6 +908,21 @@ def keep(root: Path | Archive, row: Mapping[str, Any], *, amended: bool = False,
     return path
 
 
+def numstat_names(out: bytes) -> list[str]:
+    """The files git's own reader of a patch names, from its machine-readable output (``git apply --numstat -z``): each by its name
+    after the patch (for a rename, the new one), as git's bytes held as they are (``surrogateescape``, never a replacement character),
+    so a name git would quote, or two names that render alike, are read exactly as git keeps them."""
+    fields, names = out.split(b"\0"), []
+    while fields:
+        one = fields.pop(0)
+        if not one:
+            continue
+        _, _, name = one.split(b"\t", 2)
+        if not name and len(fields) >= 2:                  # a rename: its old name, then its new one, each a field of its own
+            _, name = fields.pop(0), fields.pop(0)
+        names.append(name.decode("utf-8", errors="surrogateescape"))
+    return names
+
 
 def scoreable(record: Mapping[str, Any] | None) -> bool:
     """Whether a run's ending (``ending``) may be given a verdict, and whether it was made: only an ending it names (``SCORED``).

@@ -200,9 +200,11 @@ def test_fail_to_pass_and_pass_to_pass():
 
 
 def test_test_changes_are_the_test_paths_of_the_fix():
-    files = "M\tsrc/black/comments.py\nM\ttests/test_black.py\nA\ttests/data/cases/new.py\nD\ttests/old_test.py\nM\tCHANGES.md\n"
-    assert we.test_changes(files) == [("M", "tests/test_black.py"), ("A", "tests/data/cases/new.py"),
-                                      ("D", "tests/old_test.py")]
+    """As git's own reader of the fix's diff names them (``run.FIX_FILES``, its NUL-separated form: study review 1, finding 15); one
+    the fix deletes is named as one it changes, and is removed because the maintainers' tree no longer holds it (``APPLY_TESTS``)."""
+    files = (b"1\t1\tsrc/black/comments.py\0" b"2\t0\ttests/test_black.py\0" b"5\t0\ttests/data/cases/new.py\0"
+             b"0\t3\ttests/old_test.py\0" b"1\t0\tCHANGES.md\0")
+    assert we.test_changes(files) == ["tests/test_black.py", "tests/data/cases/new.py", "tests/old_test.py"]
 
 
 # --- the key check ---------------------------------------------------------------------------------------------------------

@@ -53,10 +53,33 @@ def runs_of(root: Path, task: str) -> list[dict[str, Any]]:
     return rows
 
 
+def _sealed(docker: Any, task: we.Task, oracle: str, code: str, patch: Path | None) -> tuple[str, bool]:
+    """A fresh container from the oracle image holding one code (the parent, the maintainers' fix, or a patch), sealed
+    (``run.seal``) once the fix is applied and before any patch is copied in; and whether the patch applied."""
+    name = f"g6we-replay-{uuid.uuid4().hex[:10]}"
+    try:
+        we.checked(docker("run", "-d", "--name", name, "--label", "g6we=1", "--network", "none", *we.SECURITY, "-u",
+                          we.USER, "-e", f"HOME={we.HOME}", "-e", "PYTHONDONTWRITEBYTECODE=1", "-w", task.repo, oracle,
+                          "tail", "-f", "/dev/null", timeout=600), "replay container")
+        if code == "fix":
+            we.checked(docker.sh(name, "git apply --binary --whitespace=nowarn /oracle/fix.patch", workdir=task.repo),
+                       "the maintainers' fix")
+        we.seal(docker, name)
+        if patch is not None:
+            we.checked(docker("cp", str(patch), f"{name}:/tmp/we-{code}.patch", timeout=300), "patch")
+            done = docker.sh(name, f"git apply --binary --whitespace=nowarn /tmp/we-{code}.patch", workdir=task.repo)
+            return name, done.returncode == 0
+    except BaseException:
+        docker("rm", "-f", name, timeout=300)
+        raise
+    return name, True
+
+
 def replay_task(docker: Any, root: Path, task: we.Task, g6: str) -> dict[str, Any]:
-    """Each code (the parent, the maintainers' fix, each run's final patch) in a fresh container of its own from the oracle
-    image, sealed (``run.seal``) once the fix is applied and before any probe or patch is copied in, so no probe runs beside the
-    oracle's material, and nothing a probe left on one code is there for the next."""
+    """Each probe set (a column) on each code (a row: the parent, the maintainers' fix, each run's final patch), in a fresh container
+    of its own from the oracle image, sealed (``run.seal``) once the fix is applied and before any probe or patch is copied in: no
+    probe runs beside the oracle's material, and nothing one probe set left is there for another, on the same code or any other
+    (study review 1, finding 21)."""
     _, oracle = we.image_names(task, g6, we.ROUND3)
     rows = runs_of(root, task.id)
     sets = [{"label": r["label"] + tag, "probes": r["folder"] / folder} for r in rows
@@ -67,30 +90,21 @@ def replay_task(docker: Any, root: Path, task: we.Task, g6: str) -> dict[str, An
         patch = None if code in ("base", "fix") else next(r for r in rows if r["label"] == code)["folder"] / "final.patch"
         if patch is not None and not patch.stat().st_size:
             continue
-        name = f"g6we-replay-{uuid.uuid4().hex[:10]}"
-        try:
-            we.checked(docker("run", "-d", "--name", name, "--label", "g6we=1", "--network", "none", *we.SECURITY, "-u",
-                              we.USER, "-e", f"HOME={we.HOME}", "-e", "PYTHONDONTWRITEBYTECODE=1", "-w", task.repo, oracle,
-                              "tail", "-f", "/dev/null", timeout=600), "replay container")
-            if code == "fix":
-                we.checked(docker.sh(name, "git apply --binary --whitespace=nowarn /oracle/fix.patch", workdir=task.repo),
-                           "the maintainers' fix")
-            we.seal(docker, name)
-            if patch is not None:
-                we.checked(docker("cp", str(patch), f"{name}:/tmp/we-{code}.patch", timeout=300), "patch")
-                done = docker.sh(name, f"git apply --binary --whitespace=nowarn /tmp/we-{code}.patch", workdir=task.repo)
-                if done.returncode != 0:
-                    matrix[code] = {"unapplied": True}
-                    continue
-            for row in sets:
+        cells: dict[str, Any] = {}
+        for row in sets:
+            name, applied = _sealed(docker, task, oracle, code, patch)
+            try:
+                if not applied:
+                    cells = {"unapplied": True}
+                    break
                 probes = f"/tmp/p-{row['label']}"
                 we.checked(docker("cp", str(row["probes"]), f"{name}:{probes}", timeout=300), "probes")
                 docker.sh(name, f"find {probes} -name __pycache__ -prune -exec rm -rf {{}} +; chmod -R a+rX {probes}",
                           user="root", timeout=60)
-            matrix[code] = {r["label"]: summary(we.out(docker.sh(name, RUN.format(probes=f"/tmp/p-{r['label']}"),
-                                                                  workdir=task.repo, timeout=300))) for r in sets}
-        finally:
-            docker("rm", "-f", name, timeout=300)
+                cells[row["label"]] = summary(we.out(docker.sh(name, RUN.format(probes=probes), workdir=task.repo, timeout=300)))
+            finally:
+                docker("rm", "-f", name, timeout=300)
+        matrix[code] = cells
     return {"task": task.id, "sets": [r["label"] for r in sets],
             "patches": {r["label"]: r["passes"] for r in rows}, "matrix": matrix}
 

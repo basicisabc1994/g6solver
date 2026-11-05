@@ -1206,20 +1206,33 @@ def scout_tree(raw: str) -> dict[str, Any]:
 
 
 # --- tests: maintainers' test files, junit, FAIL_TO_PASS -----------------------------------------------------------------
-def test_changes(name_status: str) -> list[tuple[str, str]]:
-    """The fix's changes to test files (PLAN.md section 2's T3 definition), from ``git diff --name-status``."""
-    rows = []
-    for line in name_status.splitlines():
-        status, _, path = line.partition("\t")
-        if path and selection.is_test(path):
-            rows.append((status.strip()[:1], path.strip()))
-    return rows
+#: The fix's files as git's own reader of its diff names them, in git's machine-readable form (NUL-separated, names never quoted),
+#: run in the repository before the seal: every oracle image holds the diff (``/oracle/fix.patch``), and nothing is changed.
+FIX_FILES = "git apply --numstat -z /oracle/fix.patch"
 
 
-APPLY_TESTS = """set -e
+def test_changes(numstat: bytes) -> list[str]:
+    """The test files the fix changes (PLAN.md section 2's T3 definition), each by its name as git's reader of the fix's diff gives
+    it (``FIX_FILES``, read by ``wecommon.numstat_names``), never from git's quoted display of a name (study review 1, finding 15),
+    each once, in git's order."""
+    return list(dict.fromkeys(name for name in c.numstat_names(numstat) if selection.is_test(name)))
+
+
+#: Before the seal: each test file the fix changes, as the maintainers' fixed tree holds it, set aside where the seal leaves it
+#: (``TESTS_HELD``); one the fix deletes is not there to set aside.
+TESTS_HELD = "/tmp/we-tests"
+HOLD_TESTS = f"""set -e
+for p in "$@"; do
+  if [ -e "/oracle/fixed/$p" ] || [ -L "/oracle/fixed/$p" ]; then
+    mkdir -p -- "$(dirname -- "{TESTS_HELD}/$p")"; cp -- "/oracle/fixed/$p" "{TESTS_HELD}/$p"
+  fi
+done"""
+#: After the seal and the patch: each test file the fix changes put in the tree as the maintainers left it, over whatever the patch
+#: made of it; one they deleted removed.
+APPLY_TESTS = f"""set -e
 cd "$1"; shift
-while [ $# -gt 1 ]; do st=$1; p=$2; shift 2
-  case "$st" in D) rm -f -- "$p" ;; *) mkdir -p -- "$(dirname -- "$p")"; cp -- "/oracle/fixed/$p" "$p" ;; esac
+for p in "$@"; do
+  if [ -e "{TESTS_HELD}/$p" ]; then mkdir -p -- "$(dirname -- "$p")"; cp -- "{TESTS_HELD}/$p" "$p"; else rm -f -- "$p"; fi
 done"""
 JUNIT_IN = "/tmp/we-junit.xml"
 
@@ -3386,11 +3399,12 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
 def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: bool = False, tests: bool = True,
                 extra: Mapping[str, Path] | None = None, modules: Sequence[str] | None = None,
                 folder: c.RunFolder | None = None, label: str = "", amended: bool = False) -> dict[str, Any]:
-    """In a fresh container from the oracle image, with no network: the code (the parent's, the maintainers' fix or
-    a patch), the maintainers' test files when ``tests``, then the oracle's material removed (``seal``), then the bug's
-    amendment when ``amended``, extra files (a reviewer's written test), and pytest on ``modules``. A patch is copied in and
-    applied before the seal, which runs none of its code; nothing a candidate wrote runs, and no extra file is copied in, before
-    it."""
+    """In a fresh container from the oracle image, with no network: the code (the parent's, or the maintainers' fix), the
+    maintainers' test files set aside when ``tests`` (``HOLD_TESTS``), then the oracle's material removed (``seal``), and only then
+    a patch copied in and applied, the maintainers' test files put in over it (``APPLY_TESTS``), the bug's amendment when
+    ``amended``, extra files (a reviewer's written test), and pytest on ``modules``. Nothing a candidate wrote is copied in or runs
+    before the seal (study review 1, findings 9); the test files are named by git's own reader of the fix's diff, and a list that
+    cannot be read ends the step (findings 8 and 15)."""
     _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     name = f"g6we-check-{uuid.uuid4().hex[:10]}"
     body: dict[str, Any] = {"label": label}
@@ -3401,6 +3415,13 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
         if fix:
             checked(ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /oracle/fix.patch", workdir=task.repo),
                     "the maintainers' fix")
+        names: list[str] = []
+        if tests:
+            listed = ctx.docker.sh(name, FIX_FILES, workdir=task.repo)
+            checked(listed, "the fix's file list")
+            names = test_changes(listed.stdout or b"")
+            checked(ctx.docker.sh(name, HOLD_TESTS, *names, workdir=task.repo), "the maintainers' tests set aside")
+        seal(ctx.docker, name)
         if patch is not None and patch.stat().st_size:
             checked(ctx.docker("cp", str(patch), f"{name}:/tmp/we.patch", timeout=300), "patch copy")
             applied = ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we.patch", workdir=task.repo)
@@ -3409,10 +3430,7 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
                 body["apply_error"] = err(applied)[-600:]
                 return body
         if tests:
-            files = out(ctx.docker.sh(name, "cat /oracle/fix.files"))
-            pairs = [x for st, p in test_changes(files) for x in (st, p)]
-            checked(ctx.docker.sh(name, APPLY_TESTS, task.repo, *pairs, workdir=task.repo), "the maintainers' tests")
-        seal(ctx.docker, name)
+            checked(ctx.docker.sh(name, APPLY_TESTS, task.repo, *names, workdir=task.repo), "the maintainers' tests")
         if amended:
             checked(ctx.docker("cp", str(amendment(task.id)), f"{name}:/tmp/we-amend.patch", timeout=300), "amendment copy")
             checked(ctx.docker.sh(name, "git apply --whitespace=nowarn /tmp/we-amend.patch", workdir=task.repo),
@@ -3589,11 +3607,11 @@ def g6replay(ctx: Context, task: Task, code: str, args_file: Path) -> dict[str, 
         if code == "fix":
             checked(ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /oracle/fix.patch", workdir=task.repo),
                     "the maintainers' fix")
-        else:
+        seal(ctx.docker, name)          # before a patch is copied in, and before G6's review runs its code (study review 1, finding 10)
+        if code != "fix":
             checked(ctx.docker("cp", code, f"{name}:/tmp/we.patch", timeout=300), "patch copy")
             checked(ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we.patch", workdir=task.repo),
                     "the patch")
-        seal(ctx.docker, name)          # G6's review runs the patch's code: nothing of the oracle's is left beside it
         args = {**body["args"], "repo": task.repo}
         done = ctx.docker("exec", "-i", "-u", USER, "-e", f"HOME={HOME}", "-w", task.repo, name, G6PY, "-I", "-",
                           input=(G6_REPLAY.replace("sys.stdin.read()", json.dumps(json.dumps(args)))).encode("utf-8"),

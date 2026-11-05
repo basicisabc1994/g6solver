@@ -57,7 +57,8 @@ def touched(part: str) -> list[str]:
     The empty folder is git's whole world (review 4, finding 8): git looks for no repository above it (``GIT_CEILING_DIRECTORIES``,
     its parent), and none named by the environment (``GIT_DIR``, ``GIT_WORK_TREE``), so a work tree that holds the temporary folder
     can never make git read the part's paths relative to it. A name is git's bytes, held as they are (``surrogateescape``, never a
-    replacement character), so two names git keeps apart stay apart (finding 5)."""
+    replacement character), so two names git keeps apart stay apart (finding 5); its output is read by the one reader of that format
+    (``wecommon.numstat_names``), which ``run`` reads the maintainers' test files by too."""
     with tempfile.TemporaryDirectory() as empty:
         env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE")}
         env["GIT_CEILING_DIRECTORIES"] = str(Path(empty).resolve().parent)
@@ -65,16 +66,7 @@ def touched(part: str) -> list[str]:
                              capture_output=True, timeout=60, env=env)
     if got.returncode != 0:
         return []
-    fields, names = got.stdout.split(b"\0"), []
-    while fields:
-        field = fields.pop(0)
-        if not field:
-            continue
-        _, _, name = field.split(b"\t", 2)
-        if not name and len(fields) >= 2:                  # a rename: its old name, then its new one, each a field of its own
-            _, name = fields.pop(0), fields.pop(0)
-        names.append(name.decode("utf-8", errors="surrogateescape"))
-    return names
+    return c.numstat_names(got.stdout)
 
 
 def changed(diff: str) -> dict[str, list[tuple[int, int]]]:
