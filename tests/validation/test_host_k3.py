@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import json
 import re
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -159,3 +161,47 @@ def test_a_host_k3_run_whose_review_ended_after_the_deadline_ends_timeout_on_rec
     record, _, starts, ctx, *_ = helpers.host_run(monkeypatch, tmp_path, "K3", [("s1", FIRST_TREE, None), ("s1", RULE_TREE, None)])
     assert record["status"] == "timeout" and _ending(ctx, record) == "timeout" and late == [1], record.get("error")
     assert we.has_baseline(ctx.archive, record["run"]) and we.scored_run(ctx.archive, record)     # as K2's timed-out runs are
+
+
+# --- item 3: the run's watchdog ends a host session's processes, as it ends a container session's ----------------------------
+def test_a_resumed_host_session_is_registered_with_the_runs_watchdog_which_ends_its_processes_once_when_it_fires(monkeypatch,
+                                                                                                                 tmp_path):
+    dog, ended, at_fire = we.Watchdog(10.0, clock=lambda: 0.0), [], []
+
+    class Firing(io.BytesIO):                     # the session's stdout: the watchdog's timer fires while it is read
+        def readline(self, *a):
+            line = super().readline(*a)
+            if b'"assistant"' in line and not at_fire:
+                dog.fire()
+                at_fire.append(len(ended))          # how many times its processes were ended by then
+            return line
+
+    def start(argv, *, cwd, env, stdin, stdout, stderr, **kw):
+        proc = helpers.Proc(helpers.stream("s1"))
+        proc.stdout = Firing(proc.stdout.getvalue())
+        return proc
+
+    monkeypatch.setattr(we, "host_start", lambda start_, argv, **kw: SimpleNamespace(proc=start_(argv, **kw)))
+    monkeypatch.setattr(we, "end_session", lambda proc, workspace, tree=None: (ended.append((proc, workspace, tree)), "")[1])
+    ctx = we.Context(archive=we.c.Archive(tmp_path / "a"), docker=None, key_reader=lambda: pytest.fail("no key"), issue_reader=None,
+                     g6={}, variant=we.ROUND3, arm="K3", model=SONNET, environ={"PATH": "p"}, executor="host", starter=start)
+    run, ws = ctx.archive.start("run", "t"), tmp_path / "ws"
+    ws.mkdir()
+    we.host_session(ctx, run, ws, tmp_path / "mcp.json", tmp_path / "settings.json", we.RULE_STEP, "rule_stream.jsonl",
+                    resume="s1", seconds=60.0, tally=we.c.Tally(), deadline=dog)
+    assert at_fire == [1] and len(ended) == 1 and ended[0][1] == ws      # ended by the watchdog when it fired, and only once
+    assert not dog._killers                                              # and no longer watched once the session is over
+
+
+def test_a_host_k3_run_gives_its_watchdog_to_each_resumed_session_as_a_container_run_does(monkeypatch, tmp_path):
+    real, given = we.host_session, []
+
+    def session(*a, deadline=None, **kw):
+        given.append((a[6], deadline))
+        return real(*a, **kw, **({"deadline": deadline} if deadline is not None else {}))
+
+    monkeypatch.setattr(we, "host_session", session)
+    record, *_ = k3_host_run(monkeypatch, tmp_path, [("s1", FIRST_TREE, None), ("s1", RULE_TREE, None)])
+    assert record["status"] == "finished", record.get("error")
+    assert [name for name, _ in given] == ["stream.jsonl", "rule_stream.jsonl"] and given[0][1] is None   # the first, as in a container
+    assert isinstance(given[1][1], we.Watchdog)                          # the rule step's, the run's one watchdog

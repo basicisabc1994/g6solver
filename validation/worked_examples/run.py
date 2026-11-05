@@ -1985,7 +1985,7 @@ def host_files(ctx: Context, run: Any, task: Task, agent: str, workspace: Path) 
 
 
 def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settings_file: Path, text: str, name: str, *,
-                 resume: str = "", seconds: float, tally: c.Tally, stop_usd: float | None = None) -> str:
+                 resume: str = "", seconds: float, tally: c.Tally, stop_usd: float | None = None, deadline: Any = None) -> str:
     """One Claude Code session on the host, on the subscription's sign-in, its stream saved as ``name`` as ``run_session`` saves
     one; its folder the workspace, and the bug's container reached only through the box. ``resume``: the session a repair goes
     on with. Its clock starts before its prompt goes in, which a thread writes; its turns and time are capped. ``stop_usd``: what
@@ -1995,12 +1995,23 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
     ended: it started in a process tree of its own (``host_start``), killed strictly (``end_session``); its exit code, whether G6
     had to end it, and why its processes could not be confirmed ended ("" when they were) are saved beside the stream. Returns
     how it ended, as ``host_ending`` decides from all of it ("" when cleanly), with why G6 refused it, or when the limit resets,
-    saved there too; an ending that is not clean is its run's, written there at once (``RunFolder.end``)."""
+    saved there too; an ending that is not clean is its run's, written there at once (``RunFolder.end``). ``deadline``: arm K3's
+    run's watchdog (``Watchdog``), given for a resumed session as ``run_session`` is given it: while the session runs, the
+    watchdog ends its processes when it fires. They are ended once, by whichever comes first, the watchdog or the session's end."""
     command = [shutil.which(HOST_CLAUDE) or HOST_CLAUDE, *host_args(mcp_file, settings_file, ctx.model, resume=resume)]
     tree = proc = stream = writer = drain = None
     errors: list[bytes] = []
     cut: list[str] = []          # the line the stream was stopped at, before its end
     stop, by_g6, left, code = "error", False, "", None
+    dog = None if deadline is None else Watchdog.of(deadline)
+    ended_once: list[str] = []
+    once = threading.Lock()
+
+    def end() -> str:                    # the session's process tree ended once (``end_session``), and why not when it was not
+        with once:
+            if not ended_once:
+                ended_once.append(end_session(proc, workspace, tree) or "")
+            return ended_once[0]
 
     def lines() -> Iterator[bytes]:      # read from a pipe of bytes, at b"\n" alone, as ``c.stream_lines`` splits a saved stream
         for line in iter(proc.stdout.readline, b""):
@@ -2026,15 +2037,16 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
                           env=host_env(os.environ if ctx.environ is None else ctx.environ),
                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         proc = tree.proc
-        drain = threading.Thread(target=lambda: errors.append(proc.stderr.read() or b""), daemon=True)
-        drain.start()
-        stream = open(run.fresh_path(name), "w", encoding="utf-8", newline="\n")
-        deadline = time.monotonic() + seconds
-        writer = threading.Thread(target=feed, daemon=True)
-        writer.start()
-        stop = read_stream(lines(), tally, deadline=deadline,
-                           write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
-                           stop_usd=stop_usd or float("inf"))
+        with (dog.watching(end) if dog is not None else contextlib.nullcontext()):    # K3: the run's watchdog ends it too
+            drain = threading.Thread(target=lambda: errors.append(proc.stderr.read() or b""), daemon=True)
+            drain.start()
+            stream = open(run.fresh_path(name), "w", encoding="utf-8", newline="\n")
+            until = time.monotonic() + seconds
+            writer = threading.Thread(target=feed, daemon=True)
+            writer.start()
+            stop = read_stream(lines(), tally, deadline=until,
+                               write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
+                               stop_usd=stop_usd or float("inf"))
     finally:
         if stream is not None:
             stream.close()
@@ -2045,7 +2057,7 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
                 except subprocess.TimeoutExpired:
                     pass
             by_g6 = proc.poll() is None        # still running: G6 ends it, and its exit code is G6's doing
-            left = end_session(proc, workspace, tree) or ""
+            left = end()
             if proc.poll() is None:
                 proc.kill()
             code = proc.wait(timeout=60)
@@ -3164,16 +3176,17 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             record["bug_test"] = {k: bug.get(k) for k in ("verdict", "seconds", "error", "instruction")}
         tally = c.Tally(count_reported=round3)
 
-        def turn(note: str, name: str, resume: str = "") -> str:
+        def turn(note: str, name: str, resume: str = "", watchdog: Watchdog | None = None) -> str:
             """A host session, then its tree into the container before anything reads it there; how it ended (``host_session``,
             which writes the run's ending when it is not clean, before this mirror). No session starts once the run's clock is
-            spent: that is the run's "timeout", its ending at once."""
+            spent: that is the run's "timeout", its ending at once. ``watchdog``: K3's, for a resumed session, as the container's
+            resumed sessions are given it (``run_session``)."""
             left = c.WALL_CLOCK_S - (time.monotonic() - started)
             if left <= 0:
                 run.end("timeout")
                 return "timeout"
             ended = host_session(ctx, run, workspace, mcp_file, settings_file, note, name, resume=resume, seconds=left, tally=tally,
-                                 stop_usd=c.api_need(record))
+                                 stop_usd=c.api_need(record), deadline=watchdog)
             facts = host_facts(run.path / name, model)      # recorded whatever happens; every session's models and refusals
             if facts["init"] and "host_tools" not in record:
                 record.update(host_tools=facts["init"]["tools"], host_mcp_servers=facts["init"]["servers"])
@@ -3190,7 +3203,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             return ended
 
         # the host session resumed, for K3's rule step and arm K's repairs alike; in the container they continue it there
-        resumed = (lambda note, name: turn(note, name, tally.session_id)) if host else None
+        resumed = (lambda note, name: turn(note, name, tally.session_id, dog)) if host else None
         if host:
             record["agent_started"] = True
             ended = turn(text_in, c.NDJSON["stream"])
