@@ -16,7 +16,10 @@ them may say G6 does it."""
 from __future__ import annotations
 
 import ast
+import html
+import json
 import re
+import unicodedata
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -37,7 +40,7 @@ _SEP = r"(?:\s*[,;/]\s*|\s+)(?:(?:or|and)\s+)?"
 #: Three states in one list (a list is kept only when it names all three): the home page's chips, llms.txt, a note.
 STATE_LIST = re.compile(rf"\b{_STATE}{_SEP}{_STATE}{_SEP}{_STATE}\b", re.IGNORECASE)
 #: The bare word in quotation marks mentions it; a quoted phrase is read.
-MENTION = re.compile(r"[\"“‘]\s*verif\w*[.,;:!?]?\s*[\"”’]", re.IGNORECASE)
+MENTION = re.compile(r"[\"\u201c\u2018]\s*verif\w*[.,;:!?]?\s*[\"\u201d\u2019]", re.IGNORECASE)
 #: Names left as they are, each with the reason; the report lists where each one stands.
 LEFT = {
     "work called verified when the evidence does not support it":
@@ -67,14 +70,37 @@ MARKDOWN = sorted({
 #: Elements that sit inside a line of text; any other element starts or ends a block.
 _INLINE = frozenset("a abbr b bdi bdo cite code data dfn em i kbd mark q s samp small span strong sub sup time u var "
                     "wbr".split())
-_SHOWN = ("title", "alt", "aria-label")
+_SHOWN = ("title", "alt", "aria-label", "aria-description", "placeholder")
+_BUTTONS = ("button", "submit", "reset")                  # an <input> of these types shows its value
+#: Characters a reader never sees: the soft hyphen and the zero-width ones.
+_INVISIBLE = re.compile("[\u00ad\u200b-\u200d\u2060\ufeff]")
+#: What an exempt code span becomes: a neutral word, so the words and the quotation marks around it stay as they were.
+PLACEHOLDER = "CODE"
+
+
+def _normalise(text: str) -> str:
+    """The text as a reader reads it: compatibility forms folded (NFKC: a ligature is its letters), the characters
+    nobody sees taken out, the marks on a letter taken off (a combining mark cannot split a word), whitespace
+    collapsed."""
+    text = _INVISIBLE.sub("", unicodedata.normalize("NFKC", text))
+    text = "".join(ch for ch in unicodedata.normalize("NFD", text) if unicodedata.category(ch) != "Mn")
+    return " ".join(unicodedata.normalize("NFC", text).split())
+
+
+def _mixed_script(word: str) -> bool:
+    """A word with Latin letters and letters of another script, which can look like a Latin word (a Cyrillic e)."""
+    scripts = {unicodedata.name(ch, "?").split(" ")[0] for ch in word if ch.isalpha()}
+    return "LATIN" in scripts and len(scripts) > 1
 
 
 def _diagram(source: str) -> str:
-    """A diagram's words as prose: a node labelled with a state's name alone names the state; every other label is
-    read, quotation marks and all."""
+    """A diagram's words as prose, as the drawn diagram shows them: Mermaid's own escapes (#quot;, #9829;) decoded and
+    its emphasis marks (*, _, `) taken out; a node labelled with a state's name alone names the state; every other
+    label is read, quotation marks and all."""
+    source = re.sub(r"#(\d+|[A-Za-z]+);", lambda m: html.unescape(f"&{'#' if m.group(1).isdigit() else ''}"
+                                                                  f"{m.group(1)};"), source)
     source = re.sub(r'\["(?:verified|qualified-draft|blocked-escalated)"\]', " ", source)
-    return source.replace('"', " ")
+    return re.sub(r"[*_`]", "", source).replace('"', " ")
 
 
 #: Python that prose cannot be: a call, an import, an attribute, a subscript, an assignment, a keyword, an ordering.
@@ -85,8 +111,8 @@ _ORDER = (ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE)
 def _is_name(code: str) -> bool:
     """A code span that is not prose: a state, an identifier with no space in it (a field, a tool, a path), or code
     Python's own parser reads as code (``verify(body, artifact_bytes)``, an import line)."""
-    code = code.strip()
-    if code.lower() in STATE_NAMES or (code and not any(ch.isspace() for ch in code)):
+    code = _normalise(code)
+    if code.lower() in STATE_NAMES or (code and " " not in code):
         return True
     try:
         tree = ast.parse(code)
@@ -97,56 +123,85 @@ def _is_name(code: str) -> bool:
                for node in ast.walk(tree))
 
 
+class _Span(str):
+    """An inline code span's text, kept apart until the words around it are known."""
+
+
+def _strings(value: object):
+    """Every string in parsed JSON."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict | list):
+        for item in value.values() if isinstance(value, dict) else value:
+            yield from _strings(item)
+
+
 class _Reader(HTMLParser):
-    """What a reader sees: each block's text, with inline markup joined into it, and each attribute a reader or a
-    search engine is shown, as units of their own. Scripts and styles are not read, nor code blocks except diagrams;
-    a code span is read unless it only names something."""
+    """What a reader sees: each block's text, with inline markup joined into it, and each attribute and structured-data
+    string a reader or a search engine is shown, as units of their own. Scripts and styles are not read (structured
+    data is, through json), nor code blocks except diagrams."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.units: list[str] = []
+        self.units: list[list[str]] = []
         self.run: list[str] = []
         self.hidden = 0                       # inside <script> or <style>
         self.pre: list[bool] = []             # the open <pre> blocks: True for a diagram
         self.code: list[str] | None = None    # an inline code span being read
+        self.data: list[str] | None = None    # a structured-data script being read
 
     def end_run(self) -> None:
-        text = "".join(self.run)
-        if text.strip():
-            self.units.append(text)
+        if "".join(self.run).strip():
+            self.units.append(self.run)
         self.run = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        values = {name: value or "" for name, value in attrs}
-        self.units += [values[name] for name in _SHOWN if values.get(name)]
-        meta = values.get("name", "") == "description" or values.get("name", "").startswith("twitter:") \
-            or values.get("property", "").startswith("og:")
+        values = {name: value or "" for name, value in attrs}     # html.parser gives attribute names in lower case
+        name, prop = values.get("name", "").lower(), values.get("property", "").lower()
+        self.units += [[values[shown]] for shown in _SHOWN if values.get(shown)]
+        if tag == "input" and values.get("type", "").lower() in _BUTTONS and values.get("value"):
+            self.units.append([values["value"]])
+        meta = name == "description" or name.startswith("twitter:") or prop.startswith("og:")
         if tag == "meta" and meta and values.get("content") and not re.match(r"(?:https?:|/)", values["content"]):
-            self.units.append(values["content"])                    # an address is not read
-        if tag in ("script", "style"):
+            self.units.append([values["content"]])                  # an address is not read
+        classes = values.get("class", "").lower().split()
+        if tag == "script" and values.get("type", "").lower() == "application/ld+json":
+            self.data = []
+        elif tag in ("script", "style"):
             self.hidden += 1
         elif tag == "pre":
             self.end_run()
-            self.pre.append("mermaid" in values.get("class", "").split())
-        elif tag == "code" and not self.pre:
+            self.pre.append("mermaid" in classes)                   # the website's diagram
+        elif tag == "code" and self.pre:
+            self.pre[-1] = self.pre[-1] or "language-mermaid" in classes   # the docs site's mermaid fence
+        elif tag == "code":
             self.code = []
         elif tag not in _INLINE:
             self.end_run()
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in ("script", "style"):
+        if tag == "script" and self.data is not None:
+            try:
+                data = json.loads("".join(self.data))
+            except json.JSONDecodeError:
+                data = None                                          # a search engine cannot read it either
+            self.units += [[text] for text in _strings(data) if not re.match(r"(?:https?:|/)", text)]
+            self.data = None
+        elif tag in ("script", "style"):
             self.hidden = max(0, self.hidden - 1)
         elif tag == "pre" and self.pre:
             self.pre.pop()
             self.end_run()
         elif tag == "code" and self.code is not None:
-            text, self.code = "".join(self.code), None
-            if not _is_name(text):
-                self.run.append(text)                                # prose in code format is read
+            self.run.append(_Span("".join(self.code)))
+            self.code = None
         elif tag not in _INLINE:
             self.end_run()
 
     def handle_data(self, data: str) -> None:
+        if self.data is not None:
+            self.data.append(data)
+            return
         if self.hidden:
             return
         if self.code is not None:
@@ -158,7 +213,7 @@ class _Reader(HTMLParser):
             self.run.append(data)
 
 
-def _units(page: str) -> list[str]:
+def _units(page: str) -> list[list[str]]:
     reader = _Reader()
     reader.feed(page)
     reader.close()
@@ -166,9 +221,23 @@ def _units(page: str) -> list[str]:
     return reader.units
 
 
+def _resolve(unit: list[str], mark=lambda span: PLACEHOLDER) -> str:
+    """A unit's text. A code span is exempt (``mark`` stands in for it) when it only names something and stands as a
+    word of its own; inside a word, or as prose, it is read as the words it holds."""
+    out: list[str] = []
+    for index, part in enumerate(unit):
+        if isinstance(part, _Span):
+            before = _normalise("".join(out) + "|")[-2:-1]          # the visible character either side of it
+            after = _normalise("|" + "".join(unit[index + 1:]))[1:2]
+            in_word = bool(re.match(r"\w", before) or re.match(r"\w", after))
+            part = mark(part) if _is_name(part) and not in_word else str(part)
+        out.append(part)
+    return "".join(out)
+
+
 def _page_copy(page: str) -> str:
     """What a visitor reads on a page: its blocks and its shown attributes, one paragraph each."""
-    return "\n\n".join(_units(page))
+    return "\n\n".join(_resolve(unit) for unit in _units(page))
 
 
 #: The docs site's Markdown extensions: MkDocs' own (toc, tables, fenced_code) and those site/mkdocs.yml adds, but
@@ -183,27 +252,45 @@ def _docs_site_html(text: str) -> str:
 
 def _markdown_copy(text: str, *, docs_site: bool = False) -> str:
     """What a reader reads in Markdown: the front matter's values as G6 reads them, then the page as it is rendered,
-    by MkDocs for the docs site and by the website's own renderer for everything else."""
+    by MkDocs for the docs site and by the website's own renderer for everything else. Words the site holds back
+    until extensions.SHOW_PLANNED is on are read too: GitHub shows them."""
+    text = views._PLANNED.sub(lambda m: m.group(1), text)
     page = _docs_site_html(text) if docs_site else views.markdown_html(text)
     return "\n\n".join([*front_matter(text).values(), _page_copy(page)])
 
 
 def claims(copy: str) -> list[str]:
-    """Each claim form left in ``copy`` once ``LEFT``, the mentions and the three-state lists are taken out, in its
-    context."""
-    copy = " ".join(copy.split())
+    """Each claim form left in ``copy``, read as a reader reads it, once the whole phrases in ``LEFT``, the mentions
+    and the three-state lists are taken out, in its context; and each word that mixes scripts, which a reader may
+    read as a Latin word it is not."""
+    copy = _normalise(copy)
+    mixed = [f"mixed scripts: {word}" for word in re.findall(r"\w+", copy) if _mixed_script(word)]
     for name in LEFT:
-        copy = re.sub(re.escape(name), " ", copy, flags=re.IGNORECASE)
+        copy = re.sub(rf"(?<![\w-]){re.escape(name)}(?![\w-])", " ", copy, flags=re.IGNORECASE)
     copy = MENTION.sub(" ", copy)
     copy = STATE_LIST.sub(lambda m: " " if {s.lower() for s in re.findall(_STATE, m.group(0), re.IGNORECASE)}
                           == set(STATE_NAMES) else m.group(0), copy)
-    return [copy[max(0, m.start() - 60):m.end() + 60] for m in CLAIM.finditer(copy)]
+    return mixed + [copy[max(0, m.start() - 60):m.end() + 60] for m in CLAIM.finditer(copy)]
 
 
 def g6_claims(page: str) -> list[str]:
-    """Each sentence of a page that names G6, in any case, and makes a claim form."""
-    sentences = (sentence for unit in _units(page) for sentence in re.split(r"(?<=[.!?])\s+", " ".join(unit.split())))
-    return [sentence for sentence in sentences if re.search(r"\bG6\b", sentence, re.IGNORECASE) and claims(sentence)]
+    """Each sentence of a page that names G6, in any case and in a code span too, and makes a claim form."""
+    found = []
+    for unit in _units(page):
+        spans: dict[str, str] = {}
+
+        def mark(span: str, spans: dict[str, str] = spans) -> str:
+            key = f"\x00{len(spans)}\x00"
+            spans[key] = str(span)
+            return key
+
+        for sentence in re.split(r"(?<=[.!?])\s+", _normalise(_resolve(unit, mark))):
+            read = sentence
+            for key, value in spans.items():
+                read, sentence = read.replace(key, value), sentence.replace(key, PLACEHOLDER)
+            if re.search(r"\bG6\b", _normalise(read), re.IGNORECASE) and claims(sentence):
+                found.append(_normalise(read))
+    return found
 
 
 def test_the_check_refuses_the_claim_and_allows_the_state_in_code_format():
@@ -237,6 +324,22 @@ def test_the_check_refuses_the_claim_and_allows_the_state_in_code_format():
     assert not claims("work called verified when the evidence does not support it")
     assert not claims(_page_copy('<meta property="og:url" content="https://g6solver.com/essays/verify-it/">'))
     assert not claims(_page_copy("<script>verify()</script><style>.verified{}</style><p>Checked.</p>"))
+    # a LEFT phrase is left only whole; an exempt code span stands in as a word, keeping the words around it
+    assert not claims("The field of formal verification.") and claims("A non-formal verification of it.")
+    assert not claims(_page_copy('<p>Never call it "<code>verified</code>".</p>'))
+    assert _page_copy("<p>The <code>verify_answer</code> op.</p>") == f"The {PLACEHOLDER} op."
+    assert g6_claims("<p><code>G6</code> checks it.</p>") == [] and g6_claims("<p>G\u200b6 verifies it.</p>")
+    # a word is read as it looks: a combining mark does not split it, and a letter from another script is refused
+    assert claims(_page_copy("<p>G6 produces v\u0301erified answers.</p>"))
+    assert claims(_page_copy("<p>G6 produces v\u0435rified answers.</p>")) and not claims("G\u00f6del's theorem.")
+    # structured data, button values and placeholders are read; so is a word the site holds back for now
+    assert claims(_page_copy('<script type="application/ld+json">{"a": {"description": "G6 verifies it."}}</script>'))
+    assert not claims(_page_copy('<script type="application/ld+json">{"a": "G6 "verifies" it"}</script>'))  # unreadable
+    assert claims(_page_copy('<input type="submit" value="Verify">')) and claims(_page_copy('<input placeholder="Verify">'))
+    assert claims(_markdown_copy("Text. <!-- planned -->G6 verifies it.<!-- /planned -->\n"))
+    # a diagram is read as drawn: Mermaid's escapes decoded, its emphasis marks gone
+    assert claims(_markdown_copy('```mermaid A caption\nflowchart TD\n  a["veri**fied**"]\n```\n'))
+    assert claims(_markdown_copy('```mermaid A caption\nflowchart TD\n  a["#118;erified it"]\n```\n'))
 
 
 def test_the_essay_check_reads_sentences_not_the_page():
@@ -275,6 +378,35 @@ def test_code_format_exempts_a_state_or_an_identifier_not_prose():
 
 def test_the_essay_check_reads_g6_in_any_case():
     assert g6_claims("<p>g6 verifies every answer.</p>")
+
+
+# Review 2 of the check (2026-11-05): five more, each closed once, at the text every source becomes.
+def test_a_left_phrase_is_a_whole_phrase_not_part_of_another_word():
+    assert claims(_markdown_copy("G6 performs informal verification of every answer."))
+
+
+@pytest.mark.parametrize("source, essay", [('G6 produces "verified `answers`" for every request.', False),
+                                           ("G6 veri`fies` every patch.", False),
+                                           ("`G6` verifies every answer.", True)])
+def test_an_exempt_code_span_keeps_the_words_around_it(source, essay):
+    page = views.markdown_html(source)
+    assert "<code>" in page
+    assert g6_claims(page) if essay else claims(_page_copy(page))
+
+
+def test_attribute_values_that_name_a_meta_are_read_in_any_case():
+    assert claims(_page_copy('<meta name="DESCRIPTION" content="G6 verifies every answer.">'))
+    assert claims(_page_copy('<meta property="OG:Description" content="G6 verifies every answer.">'))
+
+
+def test_a_diagram_on_the_docs_site_is_read():
+    assert claims(_markdown_copy('```mermaid\nflowchart TD\n  a["G6 verifies every patch"]\n```\n', docs_site=True))
+
+
+def test_soft_hyphens_and_zero_width_characters_do_not_split_a_word():
+    for hidden in ("&shy;", "\u200b", "\u200d", "\u2060", "\ufeff"):
+        assert claims(_page_copy(f"<p>G6 produces veri{hidden}fied answers.</p>")), repr(hidden)
+    assert claims(_page_copy("<p>G6 produces veri\ufb01ed answers.</p>"))       # a ligature, read as the letters
 
 
 def test_the_docs_site_is_read_with_the_extensions_mkdocs_yml_names():
