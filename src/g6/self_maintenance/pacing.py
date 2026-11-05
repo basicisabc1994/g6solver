@@ -131,13 +131,18 @@ class AccountReading:
 
 
 def standing(reading: AccountReading | None, now: datetime) -> AccountReading | None:
-    """What ``reading`` still says at ``now``. Its figure is of the week that ends at its reset, so from that reset on it says
-    nothing: the figure is not known until the tool is read again. The reset stays, as it says where the provider's weeks
-    fall and when the week a tick reserved in ended, and so does a limit, which holds until its own end."""
+    """What ``reading`` still says at ``now``: the one rule for whether a reading holds, which the reader hands back, its
+    refresh decides by, a failed read keeps by, and the meter admits by. A figure stands until its reset (one with no
+    reset, until a read replaces it). Past that reset, a limit still ahead stands alone, without the figure. Past both,
+    nothing stands, and the reading says so: it is unread, and nothing is admitted on it until a read succeeds. The reset
+    stays on it, as it says where the provider's weeks fall and when the week a tick reserved in ended."""
     now = utc(now)
-    if reading is None or reading.resets_at is None or reading.resets_at > now:
+    if reading is None or reading.unread or reading.resets_at is None or reading.resets_at > now:
         return reading
-    return replace(reading, used=0.0, estimated=True, read_at=None)
+    if reading.limited_until is not None and reading.limited_until > now:
+        return replace(reading, used=0.0, estimated=True, read_at=None)
+    return AccountReading(unread=f"what was last read is of a week that ended at {reading.resets_at.isoformat()}, and "
+                                 "nothing read since has replaced it", resets_at=reading.resets_at)
 
 
 @dataclass(frozen=True)
@@ -181,14 +186,11 @@ def _used(held: Sequence[Held], account: AccountReading | None) -> tuple[float, 
 class BudgetMeter:
     def __init__(self, windows: Sequence[ProviderWindow], *, store: OperatorStore,
                  read_account: Callable[[str, datetime], AccountReading | None] | None = None) -> None:
-        """``read_account(provider, now)``: what the account says at ``now``, or ``None``. A folder kept before reservations
-        carried their spans is read into them here, once (``OwnerScope.adopt_books``); a provider whose old rows cannot be
-        read is refused every reservation, with why, until a person looks."""
+        """``read_account(provider, now)``: what the account says at ``now``, or ``None``."""
         self.windows = {w.provider: w for w in windows}
         self.scope = store.for_owner(OWNER)
         self._read_account = read_account
         self._limits: dict[str, datetime] = {}
-        self._unread = self.scope.adopt_books(tuple(self.windows))
 
     def reading(self, provider: str, now: datetime) -> Admission:
         """Where this provider's week stands; ``admitted`` is left false, since nothing was asked for."""
@@ -207,18 +209,21 @@ class BudgetMeter:
         now = utc(now)
         soonest = min(window.next_day(now) for window in self.windows.values())
         unread = self._read_account is not None and any(
-            (seen := self._read_account(provider, now)) is not None and seen.unread for provider in self.windows)
+            (seen := standing(self._read_account(provider, now), now)) is not None and seen.unread for provider in self.windows)
         return min(soonest, now + REFRESH) if unread else soonest
 
     def _look(self, provider: str, now: datetime) -> tuple[Admission, AccountReading | None, datetime]:
         """Where this provider's week stands, what the account says of it, and when the week began. The week is where the
         provider last said its weeks fall, kept in the store so a restart with no reading stays on it; a reading that says
-        where they fall now moves it there. That moves no reservation: each counts in whichever week its span overlaps."""
+        where they fall now moves it there. That moves no reservation: each counts in whichever week its span overlaps.
+        Any reservation of this provider written with no span, as the book code wrote them and the operator's own
+        ``reserve`` still can, is read into its span first (``OwnerScope.adopt_books``), inside the same transaction when
+        this decides an admission; one that cannot be read refuses every reservation, with why, until a person looks."""
         now = utc(now)
         window = self.windows.get(provider)
         if window is None:
             return Admission(provider, 0, 0.0, 0.0, 0.0, False, reason=f"no budget window for {provider!r}"), None, now
-        refused = self._unread.get(provider, "")
+        refused = self.scope.adopt_books((provider,)).get(provider, "")
         try:
             kept = self.scope.week_grid(provider)
         except ValueError as exc:
@@ -227,8 +232,8 @@ class BudgetMeter:
             window = self.windows[provider] = window.aligned(kept)
         account = standing(self._read_account(provider, now), now) if self._read_account is not None else None
         if account is not None and account.unread:
-            refused = refused or (f"{provider}'s account could not be read ({account.unread}), so nothing is reserved on it "
-                                  "until it reads again")
+            refused = refused or (f"{provider}'s account is not known ({account.unread}), so nothing is reserved on it until "
+                                  "it is read again")
         reset = (account.resets_at or account.ended_at) if account is not None else None
         if reset is not None:
             window = self.windows[provider] = window.aligned(reset)
@@ -237,7 +242,7 @@ class BudgetMeter:
         start, day = window.place(now)
         used, above = _used(self.scope.week_held(provider, _ACCOUNT, start, start + _WEEK), account)
         reported = account.limited_until if account is not None else None
-        wait = max((at for at in (reported, self._limits.get(provider)) if at is not None), default=None)
+        wait = max((at for at in (reported, utc(self._limits.get(provider))) if at is not None), default=None)
         limited = wait is not None and now < wait
         ends = (account.resets_at if account is not None else None) or window.week_end(now)
         reason = refused or (f"at a reported limit; waiting for the reset at {wait.isoformat()}" if limited else "")
@@ -247,12 +252,13 @@ class BudgetMeter:
                          reason=reason, wait_until=wait if limited else None,
                          venture=self.scope.week_venture(provider, start), ends=ends), account, start
 
-    def reserve(self, provider: str, now: datetime, worst_case: float) -> Admission:
+    def reserve(self, provider: str, now: datetime, worst_case: float, *, tick: str = "") -> Admission:
         """Reserve ``worst_case`` when the week's ceiling allows it. A refusal is an admission with ``admitted`` false
         and its reason: the loop waits, and never spends elsewhere. Everything admission reads (the kept grid, the week, its
         venture, every reservation overlapping it, and so the reading's baseline) is read inside the one transaction that
         writes the reservation, so nothing it was checked against can change before it is written. The reservation runs
-        from ``now``, in the week ``now`` falls in."""
+        from ``now``, in the week ``now`` falls in. ``tick``: the tick that makes it, which only the loop gives, under its
+        folder's tick lock; a reservation made with none is never recovered (``recover``)."""
         now = utc(now)
         seen: list[tuple[Admission, datetime]] = []
 
@@ -267,7 +273,7 @@ class BudgetMeter:
         allowance = self.windows[provider].allowance if provider in self.windows else 0.0
         try:
             venture, reservation = self.scope.reserve_span(provider, account=_ACCOUNT, amount=worst_case,
-                                                           caps={_ACCOUNT: allowance, "cash": 0}, decide=decide)
+                                                           caps={_ACCOUNT: allowance, "cash": 0}, decide=decide, tick=tick)
         except BudgetRefused as exc:
             if not seen:
                 return Admission(provider, 0, 0.0, 0.0, 0.0, False, reason=str(exc))
@@ -278,14 +284,22 @@ class BudgetMeter:
 
     def settle(self, admission: Admission, used: float, now: datetime | None = None) -> float:
         """Charge what the host counted, up or down; a tick that never settles stays charged in full, in every week from
-        its start. The store dates the settlement by its own clock; ``now`` is a time a caller gives instead, for recovery
-        and tests, refused when it is before the reservation began."""
+        its start. The store dates the settlement by its own clock alone: a time a caller gives (``now``) is refused."""
         now = utc(now)
-        return self.scope.settle(admission.venture, admission.reservation, metered=used, at=now)
+        if now is not None:
+            raise ValueError("a settlement is dated by the store's own clock as it is written: a time a caller gives is "
+                             "refused, one before its reservation began or any other")
+        return self.scope.settle(admission.venture, admission.reservation, metered=used)
+
+    def recover(self, provider: str) -> float:
+        """Settle in full the reservations on ``provider`` that a tick made and left open, and give what was charged: only
+        under the folder's tick lock, which one tick holds at a time, so every such reservation found open is one a tick
+        that is gone left. One made outside a tick stays open, and counts, until its maker settles it."""
+        return self.scope.settle_open(provider, _ACCOUNT, made_by_a_tick=True)
 
     def settle_open(self, provider: str) -> float:
         """Settle in full every reservation on ``provider`` still open (``OwnerScope.settle_open``): only for an owner that
-        knows none of its ticks is running, as the loop under its folder's tick lock does."""
+        knows none of them can still be spending."""
         return self.scope.settle_open(provider, _ACCOUNT)
 
 

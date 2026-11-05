@@ -26,6 +26,7 @@ import json
 import math
 import os
 import sqlite3
+import threading
 import uuid
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -59,6 +60,7 @@ CREATE TABLE IF NOT EXISTS week_spans (ref TEXT PRIMARY KEY, owner TEXT NOT NULL
            AND start_us < end_us));
 CREATE INDEX IF NOT EXISTS week_spans_by_start ON week_spans (owner, provider, start_us);
 CREATE TABLE IF NOT EXISTS week_settled (ref TEXT PRIMARY KEY, at_us INTEGER NOT NULL CHECK (typeof(at_us) = 'integer'));
+CREATE TABLE IF NOT EXISTS week_ticks (ref TEXT PRIMARY KEY, tick TEXT NOT NULL CHECK (length(tick) > 0));
 CREATE TRIGGER IF NOT EXISTS week_settled_after_start BEFORE INSERT ON week_settled
     WHEN NEW.at_us < (SELECT start_us FROM week_spans WHERE ref = NEW.ref)
 BEGIN SELECT RAISE(ABORT, 'a settlement cannot end before its reservation began'); END;
@@ -154,9 +156,14 @@ class OperatorStore:
                  clock: Callable[[], datetime] | None = None) -> None:
         self.conn = open_db(path)
         self.clock = clock or _wall_clock
-        self._depth = 0                       # how deep this connection is inside ``OwnerScope.immediate``
-        self.conn.executescript(_SCHEMA + append_only("evidence") + append_only("ledger")
-                                + append_only("week_spans", "ref") + append_only("week_settled", "ref"))
+        self._writing = threading.RLock()     # one ``OwnerScope.immediate`` transaction on this connection at a time
+        self._held = threading.local()        # how deep the thread that holds it is inside it
+        self.conn.executescript(_SCHEMA + append_only("evidence") + append_only("ledger") + append_only("week_spans", "ref")
+                                + append_only("week_settled", "ref") + append_only("week_ticks", "ref"))
+
+    def in_transaction(self) -> bool:
+        """Whether the calling thread is inside ``OwnerScope.immediate`` on this store."""
+        return getattr(self._held, "depth", 0) > 0
 
     def for_owner(self, owner: str) -> OwnerScope:
         return OwnerScope(self, owner)
@@ -217,25 +224,27 @@ class OwnerScope:
     @contextmanager
     def immediate(self) -> Iterator[None]:
         """One ``BEGIN IMMEDIATE`` transaction: what is read inside it is what a write inside it is checked against, as no
-        other connection can write until it ends. A use inside one already open joins it, so a store method that writes
-        on its own can also be one step of a larger check."""
-        if self.store._depth:
-            self.store._depth += 1
+        other connection can write until it ends. It belongs to the thread that opened it: another thread on this same
+        connection waits here until it ends, then opens its own and reads what the first one wrote. A use inside one the
+        same thread already holds joins it, so a store method that writes on its own can also be one step of a larger
+        check."""
+        store = self.store
+        with store._writing:
+            depth = getattr(store._held, "depth", 0)
+            store._held.depth = depth + 1
             try:
-                yield
+                if depth:
+                    yield
+                else:
+                    self.conn.execute("BEGIN IMMEDIATE")
+                    try:
+                        yield
+                    except BaseException:
+                        self.conn.rollback()
+                        raise
+                    self.conn.commit()
             finally:
-                self.store._depth -= 1
-            return
-        self.conn.execute("BEGIN IMMEDIATE")
-        self.store._depth = 1
-        try:
-            yield
-        except BaseException:
-            self.store._depth = 0
-            self.conn.rollback()
-            raise
-        self.store._depth = 0
-        self.conn.commit()
+                store._held.depth = depth
 
     def keep_grid(self, provider: str, reset: datetime) -> None:
         """Where the provider's weeks fall, as it now says: a moment one of them ends. The latest word stands. It moves the
@@ -272,14 +281,15 @@ class OwnerScope:
                      None if row["settled"] is None else _moment(row["settled"])) for row in rows if row["reserves"]]
 
     def reserve_span(self, provider: str, *, account: str, amount: float, caps: dict[str, float],
-                     decide: Callable[[], tuple[str, datetime, datetime, datetime]]) -> tuple[str, str]:
+                     decide: Callable[[], tuple[str, datetime, datetime, datetime]], tick: str = "") -> tuple[str, str]:
         """Reserve ``amount`` on ``account`` for ``provider``, and return the venture it is filed under and the reservation.
         One ``BEGIN IMMEDIATE`` transaction (``immediate``), opened before anything is read: ``decide()`` reads inside it
         everything admission rests on and gives why not, or nothing, with the start of the provider week, the reservation's
         own start and the week's end; then the week's venture, made once and named for the week's start in UTC, with
         ``caps``; the operator's own stop check on it; and the ledger's row with its span. Nothing it was checked against can
         change before it is written. A refusal is ``BudgetRefused``, raised once the transaction has ended with no
-        reservation in it: what ``decide`` itself kept, such as where the provider's weeks fall, stays kept."""
+        reservation in it: what ``decide`` itself kept, such as where the provider's weeks fall, stays kept. ``tick``: the
+        tick that makes it, recorded with it, or ``""`` for none (``settle_open``)."""
         value = gates.amount_of(amount)
         if value is None:
             raise BudgetRefused(f"a reservation must be a finite, positive amount, got {amount!r}")
@@ -297,22 +307,27 @@ class OwnerScope:
                 reservation = uuid.uuid4().hex
                 self._append_ledger(vid, month, account, "reserve", value, reservation)
                 self.conn.execute("INSERT INTO week_spans VALUES (?, ?, ?, ?, ?, ?)", (reservation, self.owner, provider, *span))
+                if tick:
+                    self.conn.execute("INSERT INTO week_ticks VALUES (?, ?)", (reservation, tick))
         if why:
             raise BudgetRefused(why)
         return vid, reservation
 
-    def settle_open(self, provider: str, account: str) -> float:
-        """Settle in full, on the store's clock, every reservation of ``provider`` still open, and give what was charged. Only
-        an owner that knows none of its spends is running may: the loop does, under its folder's tick lock, where an open
-        reservation is a tick that died before it settled. Until then it counts in every week from its start."""
+    def settle_open(self, provider: str, account: str, *, made_by_a_tick: bool = False) -> float:
+        """Settle in full, on the store's clock, every reservation of ``provider`` still open, and give what was charged.
+        Only an owner that knows none of them can still be spending may. ``made_by_a_tick``: only those a tick made, as the
+        loop recovers under its folder's tick lock: one tick holds it at a time, so an open reservation a tick made is one a
+        tick that is gone left. One made outside a tick is never recovered: it stays open, and counts, until its maker
+        settles it."""
         with self.immediate():
             rows = self.conn.execute(
                 "SELECT l.venture_id, l.ref FROM week_spans s JOIN ledger l ON l.ref = s.ref AND l.kind = 'reserve'"
                 " JOIN ventures v ON v.venture_id = l.venture_id AND v.owner = s.owner"
                 " WHERE s.owner = ? AND s.provider = ? AND l.account = ?"
-                " AND NOT EXISTS (SELECT 1 FROM ledger x WHERE x.ref = s.ref AND x.kind = 'release') ORDER BY l.seq",
-                (self.owner, provider, account)).fetchall()
-            return sum(self._settle(row["venture_id"], row["ref"], None, None, None) for row in rows)
+                " AND NOT EXISTS (SELECT 1 FROM ledger x WHERE x.ref = s.ref AND x.kind = 'release')"
+                " AND (? = 0 OR EXISTS (SELECT 1 FROM week_ticks k WHERE k.ref = s.ref)) ORDER BY l.seq",
+                (self.owner, provider, account, int(made_by_a_tick))).fetchall()
+            return sum(self._settle(row["venture_id"], row["ref"], None, None) for row in rows)
 
     def adopt_books(self, providers: Sequence[str]) -> dict[str, str]:
         """Read into spans, once, every reservation of ``providers`` that the book code before spans kept: under a week's
@@ -478,7 +493,7 @@ class OwnerScope:
             raise
 
     def settle(self, venture_id: str, reservation: str, *, reported: float | None = None,
-               metered: float | None = None, at: datetime | None = None) -> float:
+               metered: float | None = None) -> float:
         """Release ``reservation`` and charge it: the full reservation, or ``reported`` when that is higher. What a
         run reports can raise its charge, never lower it, so an executor that reports 0 still spends its reservation
         (the archive recorded local and customer-client runs as 0, so their cap never tripped: VEN-004).
@@ -486,32 +501,26 @@ class OwnerScope:
         ``metered`` is different: the host's own count of what the run used, taken where the run cannot touch it. When
         given it is the charge, up or down, and ``reported`` is not read.
 
-        A reservation on a provider's weeks is dated as it settles, by the store's own clock, and never before it began:
-        that one value ends its span (``week_held``) and dates its charge against a reading, for every reader alike.
-        ``at`` is a time a caller gives instead, for recovery and tests; one before the reservation began is refused."""
-        at = utc(at)
+        A reservation on a provider's weeks is dated as it settles, by the store's own clock alone, and never before it
+        began: that one value ends its span (``week_held``) and dates its charge against a reading, for every reader
+        alike. No caller gives that time."""
         if metered is not None and (isinstance(metered, bool) or not isinstance(metered, int | float)
                                     or not math.isfinite(metered) or metered < 0):
             raise ValueError(f"a metered amount must be finite and not negative, got {metered!r}")
         vid = self.resolve(venture_id)
         try:
             with self.immediate():
-                return self._settle(vid, reservation, reported, metered, at)
+                return self._settle(vid, reservation, reported, metered)
         except sqlite3.IntegrityError as exc:
             raise ValueError("this reservation is already settled") from exc
 
-    def _settle(self, vid: str, reservation: str, reported: float | None, metered: float | None,
-                at: datetime | None) -> float:
+    def _settle(self, vid: str, reservation: str, reported: float | None, metered: float | None) -> float:
         """Inside the caller's transaction: ``settle``, of a venture already resolved."""
-        at = utc(at)
         row = self.conn.execute("SELECT month, account, amount FROM ledger WHERE venture_id=? AND ref=?"
                                 " AND kind='reserve'", (vid, reservation)).fetchone()
         if row is None:
             raise LookupError("no such reservation for this venture")
         span = self.conn.execute("SELECT start_us FROM week_spans WHERE ref=?", (reservation,)).fetchone()
-        if span is not None and at is not None and _us(at) < span["start_us"]:
-            raise ValueError(f"a settlement cannot end at {at.isoformat()}, before its reservation began at "
-                             f"{_moment(span['start_us']).isoformat()}")
         charged = float(row["amount"])
         reported_value = gates.amount_of(reported)
         if metered is not None:
@@ -521,6 +530,6 @@ class OwnerScope:
         self._append_ledger(vid, row["month"], row["account"], "release", row["amount"], reservation)
         self._append_ledger(vid, row["month"], row["account"], "charge", charged, reservation)
         if span is not None:
-            ended = _us(at) if at is not None else max(_us(self.store.clock()), span["start_us"])
+            ended = max(_us(self.store.clock()), span["start_us"])
             self.conn.execute("INSERT INTO week_settled VALUES (?, ?)", (reservation, ended))
         return charged

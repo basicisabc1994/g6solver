@@ -1110,11 +1110,13 @@ def test_a_limit_read_just_before_an_evaluation_leaves_the_split_unspent(tmp_pat
 
 
 def test_the_candidate_a_limit_held_back_is_evaluated_once_it_ends(tmp_path):
-    now, answers = [NOW], iter((_account(100), _account(5)))
+    now, answers = [NOW], iter((_account(100), _account(5), _account(5)))
     loop, _ = _reading(tmp_path, lambda: next(answers), now=lambda: now[0])
     before = loop.mh.held_out_left()
     loop.tick()
     now[0] = WEEK_END + timedelta(seconds=1)
+    assert _code(loop.tick()) == "G6_E_LOOP_BUDGET_WAIT"      # nothing read since the reset: the account is not known
+    loop.meter._read_account.refresh(now[0])                    # as the runner reads it before each tick
     assert loop.tick()["outcome"] == "adopted" and loop.mh.held_out_left() == before - 1
 
 

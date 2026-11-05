@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import threading
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime, timedelta, timezone
@@ -72,12 +73,13 @@ def _scenario(render, folder: Path) -> list:
     reading = AccountReading(used=950, estimated=False, read_at=r(EARLY - timedelta(hours=1)),
                              limited_until=r(EARLY + timedelta(minutes=10)), resets_at=r(LATE))
     out += [standing(reading, r(EARLY)), standing(reading, r(LATE - timedelta(microseconds=1))), standing(reading, r(LATE))]
-    told = [None]
-    store = OperatorStore(folder / "operator.db")
+    told, clock = [None], [r(EARLY)]
+    store = OperatorStore(folder / "operator.db", clock=lambda: clock[0])
     try:
         meter = BudgetMeter((window,), store=store, read_account=lambda provider, now: told[0])
         first = meter.reserve("codex", r(EARLY), 100)
-        out += [first, meter.settle(first, 60, r(EARLY + timedelta(minutes=10)))]
+        clock[0] = r(EARLY + timedelta(minutes=10))
+        out += [first, meter.settle(first, 60)]
         second = meter.reserve("codex", r(LATE), 50)
         out += [second, _refused(lambda: meter.settle(second, 50, r(EARLY + timedelta(minutes=30))))]
         told[0] = AccountReading(used=300, estimated=False, read_at=r(EARLY + timedelta(minutes=5)), resets_at=r(LATE))
@@ -183,7 +185,7 @@ def test_every_parameter_that_takes_a_moment_goes_through_utc_first():
     known = {"g6.self_maintenance.pacing.place(now)", "g6.self_maintenance.pacing.standing(now)",
              "g6.self_maintenance.pacing.reserve(now)", "g6.self_maintenance.pacing.settle(now)",
              "g6.self_maintenance.usage.refresh(now)", "g6.self_maintenance.usage.__call__(now)",
-             "g6.self_maintenance.usage.limits_reading(now)", "g6.operator.store.settle(at)", "g6.operator.store.week_held(start)"}
+             "g6.self_maintenance.usage.limits_reading(now)", "g6.operator.store.week_held(start)"}
     assert known <= set(entries), sorted(known - set(entries))       # the inventory is read from the code, and holds these
     assert not missing, missing
 
@@ -225,63 +227,276 @@ def test_every_moment_made_in_the_three_modules_is_made_through_utc():
     assert not loose, loose
 
 
-def _moment_names(function, fields: set[str], attributes: set[str], makers: set[str]) -> set[str]:
-    """The names in ``function`` that hold a moment: its parameters that do, and every name given one, to a fixed point."""
-    names = set(_datetime_parameters(function))
-    while True:
-        before = len(names)
-        for node in ast.walk(function):
-            targets, value = ((node.targets, node.value) if isinstance(node, ast.Assign) else
-                              ([node.target], node.value) if isinstance(node, ast.AnnAssign | ast.NamedExpr) and node.value else
-                              ([node.target], node.iter) if isinstance(node, ast.For | ast.comprehension) else ([], None))
-            if value is not None and _holds_a_moment(value, names, fields, attributes, makers):
-                for target in targets:
-                    names |= {n.id for n in ast.walk(target) if isinstance(n, ast.Name)}
-        if len(names) == before:
-            return names
+# 1. The readers' inventory, drawn from the producers' own listing, across the whole package -------------------------------
+
+_PACKAGE = Path(store_module.__file__).resolve().parents[1]
+_PRODUCERS = ("g6.operator.store", "g6.self_maintenance.pacing", "g6.self_maintenance.usage")
+#: The modules whose objects carry those instants out: the loop holds a tick's reservation and its request cutoff.
+_CARRIERS = (*_PRODUCERS, "g6.metaharness.loop")
+_DURATION = re.compile(r"^_?[A-Z][A-Z0-9_]*$")
+#: The boundary itself: ``utc``, and the store's turning of a UTC instant into whole microseconds and back.
+_BOUNDARY = ("utc", "_us", "_moment")
 
 
-def _holds_a_moment(node, names, fields, attributes, makers) -> bool:
-    for part in ast.walk(node):
-        if isinstance(part, ast.Name) and part.id in names:
+def _package_trees() -> dict[str, ast.Module]:
+    found = {}
+    for path in sorted(_PACKAGE.rglob("*.py")):
+        if "vendor" in path.parts:
+            continue
+        name = "g6." + ".".join(path.relative_to(_PACKAGE).with_suffix("").parts).removesuffix(".__init__")
+        found[name] = ast.parse(path.read_text(encoding="utf-8"))
+    return found
+
+
+def _imports(tree: ast.Module) -> set[str]:
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            names.add(node.module)
+        elif isinstance(node, ast.Import):
+            names |= {alias.name for alias in node.names}
+    return names
+
+
+def _producer_functions(trees) -> set[str]:
+    """The functions and methods of the producers, whose instants all came through ``utc`` (the inventories above)."""
+    return {f.name for name in _PRODUCERS for f in _functions(trees[name])}
+
+
+def _pairs(node):
+    """What an assignment gives each thing it assigns: element by element when both sides are tuples of one length."""
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    for target in targets:
+        if isinstance(target, ast.Tuple) and isinstance(node.value, ast.Tuple) and len(target.elts) == len(node.value.elts):
+            yield from zip(target.elts, node.value.elts, strict=True)
+        elif isinstance(target, ast.Tuple):
+            yield from ((element, node.value) for element in target.elts)
+        else:
+            yield target, node.value
+
+
+def _assigned(where) -> list[tuple[ast.expr, ast.expr]]:
+    return [pair for node in ast.walk(where) if isinstance(node, ast.Assign | ast.AnnAssign) and node.value is not None
+            for pair in _pairs(node)]
+
+
+def _called(call: ast.Call) -> str:
+    func = call.func
+    return func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else ""
+
+
+class _Readers:
+    """Within one module: what holds an instant from a reservation, a span, a reading or a reset (tainted), followed from
+    each read of a producer's field through names, ``self`` attributes, returns and the parameters of calls in the
+    module; and whether an expression came through ``utc`` first (acceptable)."""
+
+    def __init__(self, tree: ast.Module, fields: set[str], producers: set[str]) -> None:
+        self.tree, self.fields, self.producers = tree, set(fields), producers
+        self.functions = _functions(tree)
+        self.classes = {id(f): node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+                        for f in node.body if isinstance(f, ast.FunctionDef)}
+        self.returning: set[str] = set()
+        self.params: dict[int, set[str]] = {id(f): set() for f in self.functions}
+        self.names: dict[int, set[str]] = {id(f): set() for f in self.functions}
+        self.attributes = set(fields)
+        self._settle()
+
+    def tainted(self, node, names: set[str]) -> bool:
+        if isinstance(node, ast.Name):
+            return node.id in names
+        if isinstance(node, ast.Attribute):
+            return node.attr in self.attributes
+        if isinstance(node, ast.Subscript):
+            key = node.slice
+            return (isinstance(key, ast.Constant) and key.value in self.fields) or self.tainted(node.value, names)
+        if isinstance(node, ast.Call):
+            called = _called(node)
+            if called == "get" and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value in self.fields:
+                return True
+            if called in ("utc", "min", "max", "fromisoformat", "fromtimestamp", "astimezone", "replace"):
+                receiver = node.func.value if isinstance(node.func, ast.Attribute) else None
+                return any(self.tainted(a, names) for a in (*node.args, *([receiver] if receiver is not None else [])))
+            return called in self.returning
+        if isinstance(node, ast.GeneratorExp | ast.ListComp | ast.SetComp):
+            return self.tainted(node.elt, names | self._comprehended(node, names)) or any(
+                self.tainted(g.iter, names) for g in node.generators)
+        if isinstance(node, ast.BinOp | ast.BoolOp | ast.IfExp | ast.Tuple | ast.List | ast.Set):
+            return any(self.tainted(child, names) for child in ast.iter_child_nodes(node) if isinstance(child, ast.expr))
+        return False
+
+    def _comprehended(self, node, names: set[str]) -> set[str]:
+        """The names a comprehension binds from what it walks over that holds such an instant."""
+        return {part.id for g in node.generators if self.tainted(g.iter, names) for part in ast.walk(g.target)
+                if isinstance(part, ast.Name)}
+
+    def _settle(self) -> None:
+        def size():
+            return (len(self.returning), len(self.attributes), sum(map(len, self.names.values())),
+                    sum(map(len, self.params.values())))
+
+        while True:
+            before = size()
+            for function in self.functions:
+                names = self.names[id(function)] | self.params[id(function)]
+                for comprehension in (n for n in ast.walk(function) if isinstance(n, ast.GeneratorExp | ast.ListComp | ast.SetComp)):
+                    names |= self._comprehended(comprehension, names)
+                for target, value in _assigned(function):
+                    if self.tainted(value, names):
+                        if isinstance(target, ast.Name):
+                            names.add(target.id)
+                        elif isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) \
+                                and target.value.id == "self":
+                            self.attributes.add(target.attr)
+                for node in ast.walk(function):
+                    if isinstance(node, ast.Return) and node.value is not None and self.tainted(node.value, names):
+                        self.returning.add(function.name)
+                    elif isinstance(node, ast.Call):
+                        self._into_callee(node, names)
+                self.names[id(function)] = names - self.params[id(function)]
+            if size() == before:
+                return
+
+    def _into_callee(self, call: ast.Call, names: set[str]) -> None:
+        called = _called(call)
+        for target in (f for f in self.functions
+                       if f.name == called or (f.name == "__init__" and self.classes.get(id(f)) == called)):
+            given = [a for a in (*target.args.posonlyargs, *target.args.args)]
+            if given and given[0].arg in ("self", "cls"):
+                given = given[1:]
+            kinds = {a.arg: ast.unparse(a.annotation) if a.annotation is not None else ""
+                     for a in (*given, *target.args.kwonlyargs)}
+            holds = {name for name, kind in kinds.items() if not kind or "datetime" in kind or kind == "Any"}  # an int is not one
+            for argument, value in zip(given, call.args, strict=False):
+                if argument.arg in holds and self.tainted(value, names):
+                    self.params[id(target)].add(argument.arg)
+            for keyword in call.keywords:
+                if keyword.arg in holds and self.tainted(keyword.value, names):
+                    self.params[id(target)].add(keyword.arg)
+
+    def acceptable(self, node, function, seen=None) -> bool:
+        """Came through ``utc`` first: a call to it, a producer's field (made through it), a producer's function, a
+        parameter converted at entry, a name or ``self`` attribute given only such values, or a duration or constant."""
+        seen = seen if seen is not None else set()
+        if isinstance(node, ast.Constant):
             return True
-        if isinstance(part, ast.Attribute) and (part.attr in fields or part.attr in attributes):
-            return True
-        if isinstance(part, ast.Call) and ((isinstance(part.func, ast.Name) and part.func.id in makers)
-                                           or (isinstance(part.func, ast.Attribute) and part.func.attr in makers)):
-            return True
-    return False
+        if isinstance(node, ast.Call):
+            called = _called(node)
+            if called in ("utc", "timedelta") or called in self.producers:
+                return True
+            return called in ("min", "max") and all(self.acceptable(a, function, seen) for a in node.args)
+        if isinstance(node, ast.Name):
+            if _DURATION.match(node.id) or node.id in _converted_at_entry(function) or ("name", node.id) in seen:
+                return True
+            seen.add(("name", node.id))
+            values = [v for t, v in _assigned(function) if isinstance(t, ast.Name) and t.id == node.id]
+            for generator in (g for n in ast.walk(function) if isinstance(n, ast.GeneratorExp | ast.ListComp | ast.SetComp)
+                              for g in n.generators):
+                if any(isinstance(p, ast.Name) and p.id == node.id for p in ast.walk(generator.target)):
+                    values += (generator.iter.elts if isinstance(generator.iter, ast.Tuple | ast.List | ast.Set)
+                               else [generator.iter])
+            return bool(values) and all(self.acceptable(v, function, seen) for v in values)
+        if isinstance(node, ast.Attribute):
+            if ("attribute", node.attr) in seen:
+                return True
+            seen.add(("attribute", node.attr))
+            given = [(f, v) for f in self.functions for t, v in _assigned(f)
+                     if isinstance(t, ast.Attribute) and t.attr == node.attr]
+            if not given:
+                return node.attr in self.fields                 # a producer's field, made through ``utc``
+            return all(self.acceptable(v, f, seen) for f, v in given)
+        if isinstance(node, ast.BinOp | ast.BoolOp | ast.IfExp):
+            parts = ([node.body, node.orelse] if isinstance(node, ast.IfExp) else
+                     node.values if isinstance(node, ast.BoolOp) else [node.left, node.right])
+            return all(self.acceptable(p, function, seen) for p in parts)
+        if isinstance(node, ast.Subscript):
+            return self.acceptable(node.value, function, seen)
+        if isinstance(node, ast.GeneratorExp | ast.ListComp | ast.SetComp):
+            return self.acceptable(node.elt, function, seen)
+        if isinstance(node, ast.Tuple | ast.List | ast.Set):
+            return all(self.acceptable(e, function, seen) for e in node.elts)
+        return False
 
-
-def test_every_comparison_and_sum_of_moments_reads_only_moments_that_came_through_utc():
-    """The inventory of every comparison, ``+`` and ``-`` in the three modules with a moment on either side, and where each
-    moment on it comes from: a parameter converted at entry, a field converted when it was made, a name given only such
-    values, ``utc`` itself, or a function of these modules that returns a moment made of them."""
-    trees, fields = _trees(), set().union(*_datetime_fields().values())
-    makers = {"utc", "_moment", "_instant", "_time", "_reset", "limit_ends", "place", "next_day", "week_end", "_wall_clock",
-              "clock"}
-    attributes = {"_asked", "_EPOCH"}
-    inventory, unsure = [], []
+def test_every_comparison_and_sum_with_a_reservation_span_reading_or_reset_instant_takes_both_sides_through_utc():
+    """The fields are the producers' own listing of what holds an instant (every datetime field of their dataclasses). Their
+    readers are found wherever they are in the package, in any module that carries the producers' objects, and followed;
+    every comparison, ``+``, ``-``, ``min`` and ``max`` with such an instant on it must take every side through ``utc``."""
+    trees = _package_trees()
+    fields = set().union(*_datetime_fields().values())
+    producers = _producer_functions(trees)
+    inventory, loose = [], []
     for name, tree in trees.items():
-        for function in _functions(tree):
-            names = _moment_names(function, fields, attributes, makers) | {"_EPOCH"}
-            converted = _converted_at_entry(function)
+        if name not in _CARRIERS and not _imports(tree) & set(_CARRIERS):
+            continue
+        readers = _Readers(tree, fields, producers)
+        for function in readers.functions:
+            if name == "g6.operator.store" and function.name in _BOUNDARY:
+                continue
+            names = readers.names[id(function)] | readers.params[id(function)]
             for node in ast.walk(function):
-                sides = ([node.left, *node.comparators] if isinstance(node, ast.Compare) else
-                         [node.left, node.right] if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add | ast.Sub)
-                         else [])
-                moments = [side for side in sides if _holds_a_moment(side, names, fields, attributes, makers)]
-                if not moments:
+                if isinstance(node, ast.Compare) and all(isinstance(op, ast.Is | ast.IsNot) for op in node.ops):
+                    continue                                          # whether there is one, not when it is
+                if isinstance(node, ast.Compare):
+                    sides = [node.left, *node.comparators]
+                elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add | ast.Sub):
+                    sides = [node.left, node.right]
+                elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ("min", "max"):
+                    sides = list(node.args)
+                else:
                     continue
-                inventory.append(f"{name}.{function.name}:{node.lineno}: {ast.unparse(node)}")
-                for side in moments:
-                    for part in ast.walk(side):
-                        if (isinstance(part, ast.Name) and part.id in _datetime_parameters(function)
-                                and part.id not in converted):
-                            unsure.append(f"{name}.{function.name}:{node.lineno}: {part.id} never went through utc")
-    assert len(inventory) >= 40, inventory
-    assert not unsure, unsure
+                if not any(readers.tainted(side, names) for side in sides):
+                    continue
+                where = f"{name}.{function.name}:{node.lineno}: {ast.unparse(node)}"
+                inventory.append(where)
+                if not all(readers.acceptable(side, function) for side in sides):
+                    loose.append(where)
+    readers = {line.split(":", 1)[0] for line in inventory}
+    known = {"g6.metaharness.loop.admit", "g6.metaharness.loop.ends_by",                          # the request cutoff
+             "g6.metaharness.runner._after", "g6.metaharness.runner._due", "g6.metaharness.runner.step",  # a budget wait
+             "g6.self_maintenance.pacing._used", "g6.self_maintenance.pacing.standing", "g6.self_maintenance.pacing._look"}
+    assert known <= readers, sorted(known - readers)
+    assert not loose, loose
 
+
+# 1. The writers' inventory: every statement that writes a reservation writes its span, or admission reads it into one -----
+
+_WRITES_THE_LEDGER = re.compile(r"INSERT\s+(?:OR\s+\w+\s+)?INTO\s+ledger\b", re.I)
+
+
+def _enclosing(tree, node) -> str:
+    return next((f.name for f in _functions(tree) if f.lineno <= node.lineno <= f.end_lineno
+                 and not any(g is not f and f.lineno <= g.lineno and g.end_lineno <= f.end_lineno
+                             and g.lineno <= node.lineno <= g.end_lineno for g in _functions(tree))), "")
+
+
+def test_every_statement_that_writes_a_reservation_writes_its_span_or_admission_reads_it_into_one():
+    trees = _package_trees()
+    statements = sorted({(name, _enclosing(tree, node)) for name, tree in trees.items() for node in ast.walk(tree)
+                         if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                         and _WRITES_THE_LEDGER.search(node.value)})
+    assert statements == [("g6.operator.store", "_append_ledger")], statements
+    reservations = sorted({(name, _enclosing(tree, node)) for name, tree in trees.items() for node in ast.walk(tree)
+                           if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                           and node.func.attr == "_append_ledger" and len(node.args) > 3
+                           and isinstance(node.args[3], ast.Constant) and node.args[3].value == "reserve"})
+    assert reservations == [("g6.operator.store", "reserve"), ("g6.operator.store", "reserve_span")], reservations
+    store_tree = trees["g6.operator.store"]
+    span_writer = next(f for f in _functions(store_tree) if f.name == "reserve_span")
+    blocks = [n for n in ast.walk(span_writer) if isinstance(n, ast.With) and "immediate" in ast.unparse(n.items[0].context_expr)]
+    assert len(blocks) == 1, "reserve_span writes in one transaction"
+    text = ast.unparse(blocks[0])
+    assert "_append_ledger(" in text and "INSERT INTO week_spans" in text and "decide()" in text
+    # The operator's own ``reserve`` writes no span: whatever it writes for a provider, admission reads into a span first,
+    # inside its own transaction (``decide`` runs ``_look`` inside ``reserve_span``'s), before it reads any span.
+    pacing_tree = trees["g6.self_maintenance.pacing"]
+    meter = next(n for n in ast.walk(pacing_tree) if isinstance(n, ast.ClassDef) and n.name == "BudgetMeter")
+    look = next(f for f in meter.body if isinstance(f, ast.FunctionDef) and f.name == "_look")
+    calls = [(n.lineno, n.func.attr) for n in ast.walk(look) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+             and isinstance(n.func.value, ast.Attribute) and n.func.value.attr == "scope"]
+    first = {attr: line for line, attr in sorted(calls, reverse=True)}
+    assert first["adopt_books"] < first["week_held"], calls
+    reserve = next(f for f in meter.body if isinstance(f, ast.FunctionDef) and f.name == "reserve")
+    decide = next(f for f in ast.walk(reserve) if isinstance(f, ast.FunctionDef) and f.name == "decide")
+    assert "self._look(" in ast.unparse(decide) and "decide=decide" in ast.unparse(reserve)
 
 # 2. One function reads every process result, and only a clean exit is a reading ---------------------------------------------
 
@@ -376,7 +591,7 @@ def test_everything_admission_reads_is_read_inside_the_transaction_that_writes(t
             real = getattr(meter.scope, name)
 
             def noted(*args, real=real, name=name, **kwargs):
-                seen.setdefault(name, []).append(bool(store._depth) and store.conn.in_transaction)
+                seen.setdefault(name, []).append(store.in_transaction() and store.conn.in_transaction)
                 return real(*args, **kwargs)
 
             monkeypatch.setattr(meter.scope, name, noted)

@@ -754,3 +754,71 @@ def test_failed_usage_process_cannot_replace_last_good_figure(tmp_path, monkeypa
         assert reader("codex", later).used == 950
     finally:
         store.close()
+
+def test_failed_read_stays_unread_after_its_last_retained_limit_expires(tmp_path):
+    """Review wks2, finding 3: whether a reading held was decided by two rules, so the reader handed back a reading that
+    no longer held, and the refresh, by the other rule, saw no reason to ask again."""
+    start = datetime(2026, 10, 26, tzinfo=UTC)
+    reset = start + timedelta(days=7)
+    limit_end = reset + timedelta(minutes=5)
+    clock = [reset - timedelta(minutes=1)]
+    window = ProviderWindow("codex", 1000, start)
+    asks = []
+
+    def ask():
+        asks.append(clock[0])
+        if len(asks) > 1:
+            raise usage.UsageUnavailable("fake usage reader is down")
+        return {"rateLimits": {
+            "primary": {"usedPercent": 95, "windowDurationMins": 10080, "resetsAt": reset.timestamp()},
+            "secondary": {"usedPercent": 100, "windowDurationMins": 60, "resetsAt": limit_end.timestamp()}}}
+
+    reader = AccountReader((window,), ask={"codex": ask})
+    store = OperatorStore(tmp_path / "operator.db", clock=lambda: clock[0])
+    try:
+        meter = BudgetMeter((window,), store=store, read_account=reader)
+        reader.refresh(clock[0])
+        assert reader("codex", clock[0]).used == 950
+        clock[0] = reset
+        reader.refresh(clock[0])
+        assert not meter.reserve("codex", clock[0], 1).admitted
+        clock[0] = limit_end + timedelta(seconds=1)
+        reader.refresh(clock[0])                                    # what held no longer does: it is asked again
+        got = meter.reserve("codex", clock[0], 200)
+        assert not got.admitted and "not known" in got.reason, (got.amount, got.used, got.reason)
+        assert len(asks) == 2           # not at the reset, as the limit still stood; at once when nothing did
+    finally:
+        store.close()
+
+
+_EXPIRY = [  # (reading, now, what stands): every reader of a reading is held to these
+    ("figure ahead", dict(used=500, estimated=False, resets_at=NOW + timedelta(hours=1)), NOW, "figure"),
+    ("at its reset", dict(used=500, estimated=False, resets_at=NOW), NOW, "unread"),
+    ("past its reset, limit ahead", dict(used=500, estimated=False, resets_at=NOW - timedelta(hours=1),
+                                         limited_until=NOW + timedelta(hours=1)), NOW, "limit"),
+    ("past its reset, limit at now", dict(used=500, estimated=False, resets_at=NOW - timedelta(hours=1),
+                                          limited_until=NOW), NOW, "unread"),
+    ("no reset", dict(used=500), NOW, "figure"),
+    ("unread", dict(unread="down"), NOW, "unread"),
+]
+
+
+@pytest.mark.parametrize("case, fields, now, stands", _EXPIRY, ids=[c[0] for c in _EXPIRY])
+def test_every_reader_of_a_reading_reads_one_answer_to_whether_it_holds(case, fields, now, stands):
+    from g6.self_maintenance.pacing import standing
+
+    reading = AccountReading(**fields)
+    given = standing(reading, now)
+    assert {"figure": given is reading, "limit": given is not reading and not given.unread,
+            "unread": bool(given.unread)}[stands]
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(usage.UsageUnavailable("down"))})
+    reader.readings["codex"] = reading
+    assert reader("codex", now) == given                            # what the reader hands back
+    reader._asked = now - timedelta(minutes=1)
+    held_then = not standing(reading, reader._asked).unread
+    assert reader._lapsed(now) == (held_then and bool(given.unread))  # what its refresh asks again for
+    reader._no_reading("codex", now, "down")                         # what a failed read keeps
+    assert bool(reader("codex", now).unread) == bool(given.unread)
+    meter = BudgetMeter((WINDOW,), store=OperatorStore(":memory:"), read_account=lambda *_: reading)
+    refused = meter.reserve("codex", now, 1)
+    assert refused.admitted == (stands == "figure")                  # what the meter admits on

@@ -296,21 +296,21 @@ def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datet
                           resets_at=_reset(week, now) or window.week_end(now))
 
 
-def _stands(reading: AccountReading | None, now: datetime) -> bool:
-    """Whether what a reading said still holds: its limit is still ahead, or the week its figure is of has not ended."""
-    now = utc(now)
-    return reading is not None and any(at is not None and at > now for at in (reading.limited_until, reading.resets_at))
+def _holds(reading: AccountReading | None) -> bool:
+    """Whether what ``standing`` gave still says something: a reading, and not an unread one."""
+    return reading is not None and not reading.unread
 
 
 class AccountReader:
     """The ``read_account`` of a ``BudgetMeter``. Calling it only hands back what ``refresh`` last read, which the runner
-    calls between ticks, as it stands when asked: once the week its figure is of has reset, that figure is last week's and
-    is not handed back until the tool is read again (``standing``). A provider whose tool reports nothing has no reading, and
-    ``said`` says why: the meter then stays on its own count. A read that fails, a process that does not end cleanly
-    (``_ran``) among them, or a reply that does not read, says nothing new, so the last good reading stands until a good
-    read replaces it or its reset passes, and what is charged meanwhile goes on top. Past that the account is not known,
-    and nothing is admitted on it until a read succeeds: the owner uses this account too, so a broken tool must not make
-    the meter read low. This is held in memory, so a restart whose first read fails knows nothing, and admits nothing."""
+    calls between ticks, as it stands when asked (``standing``, the one rule for whether a reading holds): once the week
+    its figure is of has reset, that figure is last week's and is not handed back, and once nothing it said stands, it is
+    unread. A provider whose tool reports nothing has no reading, and ``said`` says why: the meter then stays on its own
+    count. A read that fails, a process that does not end cleanly (``_ran``) among them, or a reply that does not read,
+    says nothing new, so the last good reading stands while ``standing`` keeps it, and what is charged meanwhile goes on
+    top. Past that the account is not known, and nothing is admitted on it until a read succeeds: the owner uses this
+    account too, so a broken tool must not make the meter read low. This is held in memory, so a restart whose first read
+    fails knows nothing, and admits nothing."""
 
     def __init__(self, windows: Sequence[ProviderWindow],
                  ask: Mapping[str, Callable[[], Mapping[str, Any] | None]] | None = None) -> None:
@@ -320,14 +320,16 @@ class AccountReader:
         self.said = {provider: NOT_REPORTED for provider in self.windows}
         self._asked: datetime | None = None
 
-    def _reset_since(self, now: datetime) -> bool:
-        """Whether a week has ended since the tool was last asked, so what it said then says nothing of this one."""
+    def _lapsed(self, now: datetime) -> bool:
+        """Whether a reading that held when the tool was last asked no longer does, by the same rule that hands it back:
+        then what it said then says nothing now, and the tool is asked again at once."""
         now = utc(now)
-        return any(r.resets_at is not None and self._asked < r.resets_at <= now for r in self.readings.values())
+        return self._asked is not None and any(_holds(standing(r, self._asked)) and not _holds(standing(r, now))
+                                               for r in self.readings.values())
 
     def refresh(self, now: datetime) -> None:
         now = utc(now)
-        if self._asked is not None and now - self._asked < REFRESH and not self._reset_since(now):
+        if self._asked is not None and now - self._asked < REFRESH and not self._lapsed(now):
             return
         self._asked = now
         for provider in set(self.windows) & set(self.ask):
@@ -340,7 +342,7 @@ class AccountReader:
                 self._no_reading(provider, now, "its reply could not be read")
                 continue
             known = self.readings.get(provider)
-            if found.estimated and known is not None and not known.estimated and _stands(known, now):
+            if found.estimated and known is not None and not known.estimated and standing(known, now) is known:
                 limits = (at for at in (known.limited_until, found.limited_until) if at is not None)   # no week in it
                 self.readings[provider] = replace(known, limited_until=max(limits, default=None))
                 self._no_reading(provider, now, "its reply gave no week")
@@ -358,27 +360,29 @@ class AccountReader:
         self.refresh(now)
 
     def _no_reading(self, provider: str, now: datetime, why: str) -> None:
-        """No reading never replaces the last good one. What it said stands while it holds (``_stands``, and ``standing``
-        for its figure), and ``read_at`` stays as it was, so the meter goes on adding what is charged after it. Past that,
-        nothing known of the account is left: the reading says why (``unread``), and the meter admits nothing on it until a
-        read succeeds, as the ledger alone holds only G6's own use and would read low."""
+        """No reading never replaces the last good one: it stands while ``standing`` keeps it, and ``read_at`` stays as it
+        was, so the meter goes on adding what is charged after it. When nothing it said stands, nothing known of the account
+        is left: the reading says why (``unread``), and the meter admits nothing on it until a read succeeds, as the ledger
+        alone holds only G6's own use and would read low."""
         now = utc(now)
         known = self.readings.get(provider)
-        if not _stands(known, now):
+        kept = standing(known, now)
+        if not _holds(kept):
             self.readings[provider] = AccountReading(unread=why)
             self.said[provider] = (f"{why}, and nothing it reported still stands, so nothing is reserved on it until it "
                                    "reads again")
-        elif known.limited_until is not None and known.limited_until > now:
-            self.said[provider] = f"{why}; the limit it last reported stands until {known.limited_until.isoformat()}"
-        else:
-            self.said[provider] = (f"{why}; the last figure stands until {known.resets_at.isoformat()}, with the model calls "
+        elif kept.limited_until is not None and kept.limited_until > now:
+            self.said[provider] = f"{why}; the limit it last reported stands until {kept.limited_until.isoformat()}"
+        elif kept.resets_at is not None:
+            self.said[provider] = (f"{why}; the last figure stands until {kept.resets_at.isoformat()}, with the model calls "
                                    "charged since on top")
+        else:
+            self.said[provider] = f"{why}; what it last reported stands until a read replaces it"
 
     def __call__(self, provider: str, now: datetime) -> AccountReading | None:
-        """What was last read of ``provider``, as it stands at ``now``: past its reset, without its figure (``standing``)."""
+        """What was last read of ``provider``, as it stands at ``now`` (``standing``)."""
         now = utc(now)
         return standing(self.readings.get(provider), now)
-
 
 __all__ = ["AccountReader", "MODEL_REFUSED", "NOT_REPORTED", "REFRESH", "UsageUnavailable", "WatchedClaude", "codex_limits",
            "limit_ends", "limits_reading", "read_limits", "read_stops", "refused_by", "telling_stops"]

@@ -30,6 +30,7 @@ import os
 import sys
 import threading
 import time
+import uuid
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -89,7 +90,7 @@ from g6.self_maintenance.envelope import (
     refused_requests,
     stop_standing,
 )
-from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
+from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow, utc
 from g6.self_maintenance.usage import limit_ends, read_stops, refused_by, telling_stops
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
@@ -259,6 +260,7 @@ class _Requests:
     def open(self, limit: float, ends: datetime | None = None) -> None:
         """A tick's limits, from here on. ``generation`` moves with each opening and closing, so a request that took its
         look at one tick cannot be admitted under the next, or under none."""
+        ends = utc(ends)
         with self._lock:
             self.sent, self.limit, self.ends, self.stopped, self.unseen, self.refusal = 0, limit, ends, "", False, None
             self.limited: tuple[datetime, str] | None = None
@@ -270,8 +272,9 @@ class _Requests:
     def ends_by(self, moment: datetime) -> None:
         """A provider has said the tick's week ends at ``moment``, which can come to light only once it is under way. What it
         reserved covers nothing after that. A later end buys it nothing, and outside a tick there is no week to end."""
+        moment = utc(moment)
         with self._lock:
-            if self.ends is not None and moment < self.ends:
+            if self.ends is not None and moment < utc(self.ends):
                 self.ends = moment
 
     def admit(self, wait: float = 0.0, *, places: int = 0, generation: int | None = None,
@@ -279,7 +282,7 @@ class _Requests:
         """Refuse what would pass the limit, and take ``places`` in ``sent`` in that same step. ``wait``: the seconds a
         server asked for before this one goes out. ``generation``: the tick the request's call began in, and ``live`` whether
         that call is still running, both checked again under the lock, as the stop is read outside it and the call can return,
-        and its tick close, while it is read."""
+        and its tick close, while it is read. The clock and the week's end are compared as instants (``utc``)."""
         if self.refusal is not None:
             raise _Refused(self.refusal["said"])
         if self.limited is not None:
@@ -296,7 +299,7 @@ class _Requests:
                 raise LLMError(f"{TICK_BUDGET_SPENT}: this request came after its call returned, so nothing reserved covers it")
             if self.unseen or self.sent >= self.limit:
                 self.stopped = f"this tick has sent {self.sent} of the {self.limit:g} it reserved"
-            elif self.ends is not None and self.now() + timedelta(seconds=wait) >= self.ends:
+            elif self.ends is not None and utc(self.now()) + timedelta(seconds=wait) >= utc(self.ends):
                 self.stopped = f"this tick's week ended at {self.ends.isoformat()} and nothing is reserved in the new one"
             else:
                 self.sent += places
@@ -883,10 +886,11 @@ class ShadowLoop:
 
     def _reserve(self) -> tuple[Admission | None, dict[str, Any] | None]:
         """This tick's worst case on the provider its calls go to, or the wait: room on another pays for none of them. A
-        tick runs under its folder's tick lock, so a reservation still open here is one a tick that died left: it is
-        settled in full first, or it would count in every week to come."""
-        self.meter.settle_open(self.provider)
-        spend = self.meter.reserve(self.provider, self._now(), self.worst_case())
+        tick runs under its folder's tick lock, which one tick holds at a time, so a reservation a tick made that is still
+        open here is one a tick that is gone left: it is settled in full first, or it would count in every week to come.
+        One made outside a tick is left to its maker (``BudgetMeter.recover``). This tick's own is recorded as a tick's."""
+        self.meter.recover(self.provider)
+        spend = self.meter.reserve(self.provider, self._now(), self.worst_case(), tick=uuid.uuid4().hex)
         if spend.admitted:
             return spend, None
         return None, _blocked(BUDGET_WAIT, f"{spend.provider}: {spend.reason}",

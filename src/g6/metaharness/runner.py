@@ -80,7 +80,7 @@ from g6.self_maintenance.envelope import (
     stop_reason,
     stops_asked,
 )
-from g6.self_maintenance.pacing import SETTINGS_FILE, read_settings, windows_from
+from g6.self_maintenance.pacing import SETTINGS_FILE, read_settings, utc, windows_from
 from g6.self_maintenance.usage import AccountReader
 from g6.workspace._envelope import WorkspaceRefused
 
@@ -204,13 +204,13 @@ class Runner:
         if self.day != now.date():
             self._digest(now)               # before the tick, so the page of the day that ended holds that day and no more
         due, resting = self._due(now)
-        if now >= due:
+        if utc(now) >= utc(due):
             self._tick(now)
             now = self.now()
             due, resting = self._due(now)
             self._digest(now)
         self._beat(now, "resting" if resting else "waiting", due)
-        return min(self.nap, max(LEAST_NAP, (due - now).total_seconds()))
+        return min(self.nap, max(LEAST_NAP, (utc(due) - utc(now)).total_seconds()))
 
     def _rest(self) -> tuple[int, datetime | None]:
         """How many cycles in a row found nothing to try, and when the rest they earned ends."""
@@ -221,9 +221,11 @@ class Runner:
         return quiet, datetime.fromisoformat(last) + min(FIRST_REST * 2 ** min(quiet - 1, 16), LONGEST_REST)
 
     def _due(self, now: datetime) -> tuple[datetime, bool]:
-        """When the next tick may run, and whether a rest is what it waits for."""
-        rest = self._rest()[1]
-        asked = self.not_before or now
+        """When the next tick may run, and whether a rest is what it waits for. Compared as instants (``utc``), as what a
+        budget wait asks for is an instant a reading or a reservation gave."""
+        now = utc(now)
+        rest = utc(self._rest()[1])
+        asked = utc(self.not_before) or now
         return (rest, True) if rest is not None and rest > asked else (asked, False)
 
     def _tick(self, now: datetime) -> None:
@@ -244,13 +246,14 @@ class Runner:
     def _after(self, reply: dict[str, Any], now: datetime) -> datetime:
         """When the tick after ``reply`` may run. A cycle that reached a result is followed at once, for the budget and
         the rest to bound. A budget wait lasts until a ceiling can rise, or a reported limit ends if that is sooner."""
+        now = utc(now)
         code = reply["warning_card"]["code"]
         if code == STOPPED:
             return now                      # the next pass reads the stop and ends the run
         if code == BUDGET_WAIT:
             room = self.loop.meter.next_room(now)
             told = reply.get("wait_until")
-            return min(datetime.fromisoformat(told), room) if told else room
+            return min(utc(datetime.fromisoformat(told)), utc(room)) if told else utc(room)
         if code == BUSY:
             return now + BUSY_AGAIN
         return now if reply.get("outcome") in ENDS_A_STREAK else now + AGAIN

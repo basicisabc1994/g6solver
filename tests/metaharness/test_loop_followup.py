@@ -42,6 +42,24 @@ QUIET = BASE.model_copy(update={"prompt": "Note."})
 GOOD = BASE.model_copy(update={"prompt": "Check it."})
 
 
+class _Clock:
+    """A store's own clock, which the test opens the store with and moves: the store alone dates a settlement, by it.
+    Until moved it reads the wall clock, as a store with no clock of its own does."""
+
+    def __init__(self, now: datetime | None = None) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now or datetime.now(UTC)
+
+
+def _settle_at(meter: BudgetMeter, admission, used: float, at: datetime) -> float:
+    """Settle as the store does at ``at``: it is the store's clock that is moved, never a time handed to ``settle``."""
+    clock = meter.scope.store.clock
+    assert isinstance(clock, _Clock), "open the store with a _Clock to settle at a time of the test's"
+    clock.now = at
+    return meter.settle(admission, used)
+
 def test_a_refusal_while_a_stop_is_read_stops_the_request_that_was_reading_it():
     reading, release = threading.Event(), threading.Event()
     reads = []
@@ -366,11 +384,11 @@ def _meter(store, start=MONDAY, resets_at=None):
 
 def test_a_restart_in_the_providers_next_week_starts_a_book_of_its_own(tmp_path):
     sunday, path = MONDAY + timedelta(days=6), tmp_path / "operator.db"
-    store = OperatorStore(path)
+    store = OperatorStore(path, clock=_Clock())
     try:
         meter = _meter(store, resets_at=sunday)                   # the provider's weeks end on Sundays
         admission = meter.reserve("codex", MONDAY + timedelta(days=2), 300)
-        meter.settle(admission, 300, MONDAY + timedelta(days=2, hours=1))   # the store's own clock is not this test's
+        _settle_at(meter, admission, 300, MONDAY + timedelta(days=2, hours=1))   # the store is on this test's clock
     finally:
         store.close()
     store = OperatorStore(path)
@@ -758,11 +776,11 @@ def test_a_week_whose_end_moves_three_times_across_restarts_keeps_its_book(tmp_p
 def test_a_new_week_still_cannot_take_a_book_another_week_moved_into(tmp_path):
     """This drove ``week_ledger`` by hand, which is gone. No book moves now: each week's reservations are filed under a venture
     of its own, named for its own start, and a week counts another's only where their spans overlap."""
-    store = OperatorStore(tmp_path / "op.db")
+    store = OperatorStore(tmp_path / "op.db", clock=_Clock())
     try:
         monday = _meter(store)
         first = monday.reserve("codex", MONDAY + timedelta(hours=1), 100)
-        monday.settle(first, 100, MONDAY + timedelta(hours=2))
+        _settle_at(monday, first, 100, MONDAY + timedelta(hours=2))
         moved = _meter(store, resets_at=MONDAY + timedelta(days=8)).reserve("codex", MONDAY + timedelta(days=1, hours=1), 50)
         wednesday = _meter(store, resets_at=MONDAY + timedelta(days=9))
         other = wednesday.reserve("codex", MONDAY + timedelta(days=2, hours=1), 50)
@@ -1070,13 +1088,103 @@ def test_an_install_under_a_folder_named_pycache_still_pins_its_source(tmp_path,
 
 
 def test_a_tick_settles_in_full_what_a_tick_that_died_left_open(tmp_path):
-    """A tick runs under its folder's tick lock, so a reservation open when it starts is one a dead tick left: it is
-    settled in full, on the loop's clock, before the tick reserves its own, and counts in no week after."""
+    """A tick runs under its folder's tick lock, so a reservation a tick made that is open when it starts is one a dead tick
+    left: it is settled in full, on the loop's clock, before the tick reserves its own, and counts in no week after."""
     loop = _loop(tmp_path)
-    dead = loop.meter.reserve("claude", MONDAY + timedelta(days=2), 500)
+    dead = loop.meter.reserve("claude", MONDAY + timedelta(days=2), 500, tick="a tick that died")
     assert dead.admitted
     loop.tick()
     charges = loop.meter.scope.conn.execute("SELECT amount FROM ledger WHERE ref = ? AND kind = 'charge'",
                                             (dead.reservation,)).fetchall()
     assert [row["amount"] for row in charges] == [500.0]
     assert loop.meter.scope.week_held("claude", "model", MONDAY + timedelta(days=9), MONDAY + timedelta(days=16)) == []
+
+
+def test_tick_recovery_cannot_close_a_live_reservation_made_outside_the_tick_lock(tmp_path):
+    """Review wks2, finding 4: recovery settled every open reservation, but one can be made outside a tick. Now each records
+    the tick that made it, or none, and recovery settles only a tick's."""
+    from types import SimpleNamespace
+
+    from g6.workspace._coordination import Coordination
+
+    start = datetime(2026, 10, 26, tzinfo=UTC)
+    reset = start + timedelta(days=7)
+    clock = [reset - timedelta(minutes=2)]
+    path = tmp_path / "operator.db"
+    first_store, tick_store = OperatorStore(path, clock=lambda: clock[0]), OperatorStore(path, clock=lambda: clock[0])
+    entered, finish = threading.Event(), threading.Event()
+    worker, answers = None, []
+    try:
+        window = ProviderWindow("codex", 1000, start)
+        outside, tick_meter = BudgetMeter((window,), store=first_store), BudgetMeter((window,), store=tick_store)
+        live = outside.reserve("codex", clock[0], 1000)
+        assert live.admitted
+        requests = _Requests(now=lambda: clock[0])
+        requests.open(live.amount, live.ends)
+
+        def respond(system, user):
+            entered.set()
+            assert finish.wait(10)
+            return "fake completion after reset"
+
+        caller = _Counted(FakeLLM(responder=respond), requests)
+        worker = threading.Thread(target=lambda: answers.append(caller.complete("system", "in flight across reset")))
+        worker.start()
+        assert entered.wait(5)
+        clock[0] = reset - timedelta(minutes=1)
+        tick = SimpleNamespace(meter=tick_meter, provider="codex", _now=lambda: clock[0], worst_case=lambda: 200)
+        with Coordination(tmp_path / ".tick").mutex():
+            _, waiting = ShadowLoop._reserve(tick)
+        assert waiting is not None
+        clock[0] = reset + timedelta(minutes=1)
+        finish.set()
+        worker.join(10)
+        assert not worker.is_alive() and answers
+        outside.settle(live, requests.sent)                          # its maker settles it: recovery left it alone
+        with Coordination(tmp_path / ".tick").mutex():
+            spend, _ = ShadowLoop._reserve(tick)
+        assert spend is None, "recovery ended a live span; its charge vanished from the new week"
+    finally:
+        finish.set()
+        if worker is not None:
+            worker.join(10)
+        first_store.close()
+        tick_store.close()
+
+
+def test_request_cutoff_is_the_same_in_utc_and_the_second_fall_back_hour(tmp_path):
+    """Review wks2, finding 5: the cutoff added to the raw clock, and in New York's second 01:30 even adding nothing moves
+    the instant back an hour."""
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo("America/New_York")
+    opened, reset = datetime(2026, 11, 1, 5, 45, tzinfo=UTC), datetime(2026, 11, 1, 6, 30, tzinfo=UTC)
+    sent = {}
+    for name, render in (("UTC", lambda at: at), ("New York", lambda at: at.astimezone(zone))):
+        clock = [render(opened)]
+        store = OperatorStore(tmp_path / f"{name}.db", clock=lambda: clock[0])
+        try:
+            meter = BudgetMeter((ProviderWindow("codex", 1000, render(reset - timedelta(days=7))),), store=store)
+            reservation = meter.reserve("codex", clock[0], 100)
+            assert reservation.admitted and reservation.ends == reset
+            requests = _Requests(now=lambda: clock[0])
+            requests.open(reservation.amount, reservation.ends)
+            clock[0] = render(datetime(2026, 11, 1, 6, 45, tzinfo=UTC))
+            fake = FakeLLM(default="sent after the reserved week ended")
+            with pytest.raises(LLMError):
+                _Counted(fake, requests).complete("system", "late request")
+            sent[name] = len(fake.calls)
+        finally:
+            store.close()
+    assert sent == {"UTC": 0, "New York": 0}, sent
+
+
+def test_a_tick_recovers_what_a_dead_tick_made_and_leaves_what_was_made_outside_a_tick(tmp_path):
+    loop = _loop(tmp_path)
+    outside = loop.meter.reserve("claude", MONDAY + timedelta(days=2), 400)
+    dead = loop.meter.reserve("claude", MONDAY + timedelta(days=2), 500, tick="a tick that died")
+    assert outside.admitted and dead.admitted
+    loop.tick()
+    charged = {ref: [r["amount"] for r in loop.meter.scope.conn.execute(
+        "SELECT amount FROM ledger WHERE ref = ? AND kind = 'charge'", (ref,))] for ref in (outside.reservation, dead.reservation)}
+    assert charged == {outside.reservation: [], dead.reservation: [500.0]}
