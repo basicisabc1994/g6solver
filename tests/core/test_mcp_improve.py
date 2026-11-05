@@ -786,7 +786,9 @@ def test_a_count_that_breaks_during_the_start_stops_it_and_keeps_the_stop(rig, m
 
     monkeypatch.setattr(CycleLog, "start", broken_then_stopped)
     got = improve.start(rig.root, "Ada")
-    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_START_STOPPED" and "a newer stop" in stop_reason(rig.root)
+    # a reading that cannot be made is the refusal's own code, whatever else refused (follow-up review 1, finding 2)
+    assert rig.spawned == [] and _code(got) == got["stop_code"] == "G6_E_LOOP_STOP_UNREADABLE"
+    assert "a newer stop" in stop_reason(rig.root)
 
 
 def test_a_stop_that_cannot_add_to_the_count_during_a_start_survives_it(rig, monkeypatch):

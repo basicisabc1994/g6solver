@@ -7,7 +7,8 @@ fallback and no agent answer: a decline, a cancel or a client with no dialog sta
 process of its own, which outlives the session that asked, and refuses when a runner is alive, no person has enrolled a
 domain in the folder or the stop state cannot be read there (``G6_E_LOOP_STOP_UNREADABLE``). This module never runs the
 domain's code: only the runner it starts does, and the dialog names it. Whether a stop is in force is
-``stop_in_force``'s answer here as everywhere.
+``stop_in_force``'s answer here as everywhere, and every refusal of a dialog or a start is made from such a reading: an
+unreadable one is its code, and any stop in force is named in it (``stop_code``).
 An agreement binds what the dialog showed: if any of it moved while the dialog was up, nothing starts and the person is
 asked again. The start records the settings it agreed to, and the runner holds to them on every restart, so a changed
 settings file needs a new agreement even with no stop in between. It never moves or deletes a ``STOP`` file. It records the
@@ -52,6 +53,7 @@ from g6.self_maintenance.envelope import (
     Stop,
     ask_to_stop,
     file_digest,
+    flush_journal,
     heartbeat,
     record_stop,
     runner_alive,
@@ -121,9 +123,14 @@ def _is_a_loop(root: Path) -> bool:
     return (root / SETTINGS_FILE).is_file() or (root / CYCLE_LOG).is_file() or (root / RUNNER_LOCK).is_dir()
 
 
+def _unlooped(root: Path) -> tuple[str, str]:
+    """What is said of a folder that is not a loop's: why nothing was done, and what to do."""
+    return (f"{root} is not a loop's folder: it has no {SETTINGS_FILE} and no records, so nothing was done",
+            f"Name the folder, or create {SETTINGS_FILE} there: see the design's section 11.")
+
+
 def _not_a_loop(root: Path) -> dict:
-    return _blocked(NOT_A_FOLDER, f"{root} is not a loop's folder: it has no {SETTINGS_FILE} and no records, so nothing was "
-                    "done", f"Name the folder, or create {SETTINGS_FILE} there: see the design's section 11.")
+    return _blocked(NOT_A_FOLDER, *_unlooped(root))
 
 
 def _pinned_python(settings: dict[str, Any]) -> str:
@@ -136,35 +143,73 @@ def _pinned_python(settings: dict[str, Any]) -> str:
     return python
 
 
-def _cannot_start(root: Path, reading: Stop) -> dict | None:
-    """Why nothing may start on ``root``, from ``reading``, the one reading of the stop's files and the records
-    (``stop_in_force``), and then from its settings: this opens none of the reading's files. The reading comes first, so a
-    stop that cannot be read is never said as anything else. A stop that can be read is what a start lifts, so it refuses
-    nothing here, and any refusal carries its code (``stop_code``), so it is never hidden either."""
-    if reading.code == STOP_UNREADABLE:
-        return _stop_unreadable(root, reading.reason)
-    held = {"stop_code": reading.code} if reading else {}
-    if not (root / SETTINGS_FILE).is_file():
-        return {**_not_a_loop(root), **held}
+class _BadSettings(ValueError):
+    """The folder's settings cannot be read or used, however that failed: settings to fix (``BAD_SETTINGS``)."""
+
+
+def _settings(root: Path) -> dict[str, Any] | None:
+    """The folder's settings, read and checked, as a dialog shows them and a start records and runs on them, or ``None``
+    with no settings file, which is no loop's folder. Settings that cannot be read or used, however that fails, the file's
+    own check included, raise ``_BadSettings``, which the one handler of the dialog and the start refuses (``_failed``)."""
     try:
+        if not (root / SETTINGS_FILE).is_file():
+            return None
         settings = read_settings(root)
         windows_from(settings)
         _pinned_python(settings)
-    except Exception as exc:  # noqa: BLE001 - settings that cannot be read, however, are settings to fix
-        return _blocked(BAD_SETTINGS, f"{exc}"[:400], f"Fix {SETTINGS_FILE} in {root}; nothing was started.", **held)
+        return settings
+    except Exception as exc:  # noqa: BLE001 - settings that cannot be read or used, however, are settings to fix
+        raise _BadSettings(str(exc) or type(exc).__name__) from exc
+
+
+def _refusal(root: Path, reading: Stop, code: str = STOP_UNREADABLE, why: str = "", then: str = "", **fields: Any) -> dict:
+    """Every refusal of the dialog and the start, made from the reading it stands on (``stop_in_force``), so none says a stop
+    in other words or hides one: when that reading could not be made the refusal is ``G6_E_LOOP_STOP_UNREADABLE``, whatever
+    else refused, and otherwise its own ``code``. Either way it names any stop in force (``stop_code``)."""
+    if reading.code == STOP_UNREADABLE:
+        code, why = STOP_UNREADABLE, f"{reading.reason}; nothing was started"[:400]
+        then = (f"A person makes {STOP_FILE}, {STOPS_FILE} and the records in {root} readable again; until then a stop is "
+                "in force.")
+        fields = {"running": False, "folder": str(root), **fields}
+    return _blocked(code, why, then, **fields, **({"stop_code": reading.code} if reading else {}))
+
+
+def _failed(root: Path, exc: Exception) -> dict:
+    """The refusal of a dialog or a start that failed, however it failed, from a reading taken now (``_refusal``): settings
+    that cannot be read or used are settings to fix, and anything else is a start that failed."""
+    reading = stop_in_force(root)
+    if isinstance(exc, _BadSettings):
+        return _refusal(root, reading, BAD_SETTINGS, f"{exc}"[:400], f"Fix {SETTINGS_FILE} in {root}; nothing was started.")
+    return _refusal(root, reading, START_FAILED, f"the runner could not be started: {type(exc).__name__}: {exc}"[:500],
+                    running=False, folder=str(root))
+
+
+def _cannot_start(root: Path, reading: Stop) -> tuple[dict | None, dict[str, Any]]:
+    """Why nothing may start on ``root``, or ``None``, from ``reading``, the one reading of the stop's files and the records
+    (``stop_in_force``), and then from the settings, read once (``_settings``), which come back with it: what is checked here
+    is what a start records and runs on. This opens none of the reading's files. The reading comes first, so a stop that
+    cannot be read is never said as anything else. A stop that can be read is what a start lifts, so it refuses nothing
+    here, and every refusal is ``_refusal``'s, which names it, so it is never hidden either. Settings that cannot be read or
+    used raise ``_BadSettings``."""
+    if reading.code == STOP_UNREADABLE:
+        return _refusal(root, reading), {}
+    settings = _settings(root)
+    if settings is None:
+        return _refusal(root, reading, NOT_A_FOLDER, *_unlooped(root)), {}
     if runner_alive(root):
-        return _blocked(RUNNER_ALIVE, "a runner is already alive on this folder, so nothing was started",
-                        "Read g6_improve_status. If you have just stopped it, it ends once it sees the STOP file: at its next "
-                        "model call, or within a minute while it waits.", **held)
+        return _refusal(root, reading, RUNNER_ALIVE, "a runner is already alive on this folder, so nothing was started",
+                        "Read g6_improve_status. If you have just stopped it, it ends once it sees the STOP file: at its "
+                        "next model call, or within a minute while it waits."), settings
     enrol = (f'A person enrols it at their own terminal: python -P -m g6.metaharness.loop enrol "{root}" --as "Your name". '
              "An agent cannot do that step.")
     enrolled = reading.log.enrolled() if reading.log is not None else None
     if enrolled is None:
-        return _blocked(NOT_ENROLLED, "no person has enrolled a domain in this folder, so nothing was started", enrol, **held)
+        return _refusal(root, reading, NOT_ENROLLED, "no person has enrolled a domain in this folder, so nothing was started",
+                        enrol), settings
     if enrolled["frozen"].get("domain_file") != file_digest(settings.get("domain_file")):
-        return _blocked(FROZEN_CHANGED, "the Python file that declares this domain is not the one a person enrolled, so "
-                        "nothing was started and it did not run", enrol, **held)
-    return None
+        return _refusal(root, reading, FROZEN_CHANGED, "the Python file that declares this domain is not the one a person "
+                        "enrolled, so nothing was started and it did not run", enrol), settings
+    return None, settings
 
 
 def _terms(root: Path, settings: dict[str, Any], reading: Stop) -> str:
@@ -176,12 +221,6 @@ def _terms(root: Path, settings: dict[str, Any], reading: Stop) -> str:
                       "reading": reading.digest})
 
 
-def _stop_unreadable(root: Path, why: str) -> dict:
-    return _blocked(STOP_UNREADABLE, f"{why}; nothing was started"[:400],
-                    f"A person makes {STOP_FILE}, {STOPS_FILE} and the records in {root} readable again; until then a stop is "
-                    "in force.", running=False, folder=str(root))
-
-
 #: How many times a dialog is made again when what it reads moves while it is being made.
 DIALOG_TRIES = 3
 
@@ -189,27 +228,36 @@ DIALOG_TRIES = 3
 def asked(folder: str) -> tuple[Path, str, str] | dict:
     """What the person reads before the runner starts, the folder it is about, and the terms that binds them to; a
     blocked reply when it cannot start, so no dialog is shown for nothing. Everything it says comes from one reading
-    (``stop_in_force``), and it is shown only if a reading taken once it is made is that same reading: a change while it
-    was made makes it again, and a reading that cannot be made then refuses as any reader does."""
-    root = _root(folder)
-    for _ in range(DIALOG_TRIES):
-        reading = stop_in_force(root)
-        cannot = _cannot_start(root, reading)
-        if cannot is not None:
-            return cannot
-        made = _dialog(root, reading)
-        again = stop_in_force(root)
-        if again.code == STOP_UNREADABLE:
-            return _stop_unreadable(root, again.reason)
-        if again.digest == reading.digest:
-            return made
-    return _blocked(TERMS_CHANGED, "what the dialog stands on kept changing while it was made, so nothing was asked",
-                    ASK_AGAIN, running=False, folder=str(root))
+    (``stop_in_force``) and the settings, and it is shown only if all it stands on, checked again once it is made, gives
+    the same terms: a change while it was made makes it again, and settings or a reading that cannot be used then refuse
+    as they would before it. Every statement that touches a file runs inside its one handler, and every refusal is
+    ``_refusal``'s."""
+    root = Path(folder)                     # the folder as given, for a refusal before it is found
+    try:
+        root = _root(folder)
+        for _ in range(DIALOG_TRIES):
+            reading = stop_in_force(root)
+            cannot, _ = _cannot_start(root, reading)
+            if cannot is not None:
+                return cannot
+            made = _dialog(root, reading)
+            again = stop_in_force(root)
+            cannot, settings = _cannot_start(root, again)
+            if cannot is not None:
+                return cannot
+            if _terms(root, settings, again) == made[2]:
+                return made
+        return _refusal(root, again, TERMS_CHANGED, "what the dialog stands on kept changing while it was made, so nothing "
+                        "was asked", ASK_AGAIN, running=False, folder=str(root))
+    except Exception as exc:  # noqa: BLE001 - a dialog that fails, however, asks nothing and says why
+        return _failed(root, exc)
 
 
 def _dialog(root: Path, reading: Stop) -> tuple[Path, str, str]:
-    """The question and its terms, from ``reading`` and the settings alone."""
-    settings, log, seen, started = read_settings(root), reading.log, reading.seen, reading.start
+    """The question and its terms, from ``reading`` and the settings alone, read and checked once (``_settings``)."""
+    settings, log, seen, started = _settings(root), reading.log, reading.seen, reading.start
+    if settings is None:
+        raise _BadSettings(f"{SETTINGS_FILE} is no longer in {root}")
     terms = _terms(root, settings, reading)
     enrolled = log.enrolled()
     use = [f"{w.provider}: {w.allowance:g} a week{' (an estimate)' if w.estimated else ''}, keeping {w.reserve_share:.0%} for "
@@ -268,7 +316,8 @@ def _watch(root: Path, process: Any, since: datetime) -> dict:
         code = process.poll()
         if code is not None:
             said = (heartbeat(root) or {}).get("reason") or f"see {RUNNER_LOG} in the folder"
-            return _blocked(START_FAILED, f"the runner ended as it started, with exit code {code}: {said}"[:500], running=False,
+            return _refusal(root, stop_in_force(root), START_FAILED,
+                            f"the runner ended as it started, with exit code {code}: {said}"[:500], running=False,
                             return_code=code, folder=str(root))
         if _past_opening(root, since):
             return _envelope("qualified-draft", STARTED, f"the runner is alive on {root}", running=True, folder=str(root),
@@ -299,69 +348,66 @@ def _revoke(root: Path, writer: CycleLog) -> None:
             pass
 
 
-def _moved(root: Path) -> dict:
-    return _blocked(TERMS_CHANGED, "the loop's records changed between the reading the person's terms bind and the start's "
-                    "row, so nothing was started", ASK_AGAIN, running=False, folder=str(root))
+#: Why a start whose records moved under it starts nothing.
+MOVED = ("what the person's terms bind changed between the reading they were made on and the start's row, so nothing was "
+         "started")
 
 
 def start(root: Path, who: str, shown: str | None = None) -> dict:
     """Record who started it and start the runner. What the person read may have moved while the dialog was up, so
     ``shown``, the terms ``asked`` gave, must still be what stands, and a change asks them again. The start records what
     it stands on, so a restart holds to the same settings and any stop since closes it. It lifts only the stop state those
-    terms cover, by recording it: any other stop stands, and nothing starts. Under the tick lock and ``stop_lock`` it takes
-    a fresh reading (``stop_in_force``), refuses if that reading is not the one the dialog showed, its whole digest being in
-    the terms, and writes its row: no stop can land between the reading and the row, and a start refused there writes
-    nothing. The row goes onto the approved records themselves: once the writer has opened them, a reading must find
-    exactly the approved bytes, or no row is written, and the ledger appends only onto the head it opened, so a crash or a
-    failed write after the append can leave a start only on approved bytes. Once the row is written a reading must find
-    those bytes with that one row after them, and on every way out of the append, an exception included, anything else
-    that landed is revoked by a stop row (a ``STOP`` file when that will not take) and nothing is spawned. A reading that
-    cannot be made, there or when the row will not take, starts nothing and says so as any reader does."""
-    cannot = _cannot_start(root, stop_in_force(root))
-    if cannot is not None:
-        return cannot
-    settings = read_settings(root)
+    terms cover, by recording it: any other stop stands, and nothing starts. It records and runs on the settings it read
+    before its locks, which the terms must match, so a file changed after is one the runner's gate refuses. Under the tick
+    lock and ``stop_lock`` it checks everything again on a fresh reading (``stop_in_force``), refuses if that reading is not
+    the one the dialog showed, its whole digest being in the terms, and writes its row: no stop can land between the reading and the row, and a start
+    refused there writes nothing. The row binds only what is on disk: the start flushes the journal itself first
+    (``flush_journal``), since a stop that waited out the lock writes its line without it. The row goes onto the approved
+    records themselves: once the writer has opened them and the journal is flushed, a reading must find exactly the
+    approved bytes, or no row is written, and the ledger appends only onto the head it opened, so a crash or a failed write
+    after the append can leave a start only on approved bytes. A stop that lands after the reading is in nothing the row
+    binds, so it stands, and the start says so once its locks are let go. Once the row is written a reading must find those bytes
+    with that one row after them, and on every way out of the append, an exception included, anything else that landed is
+    revoked by a stop row (a ``STOP`` file when that will not take) and nothing is spawned. Every statement that touches a
+    file runs inside its one handler, and every refusal is ``_refusal``'s, made from the reading it stands on: a reading
+    that cannot be made, anywhere, starts nothing and says so as any reader does."""
     try:
+        cannot, settings = _cannot_start(root, stop_in_force(root))   # the settings it records and runs on
+        if cannot is not None:
+            return cannot
         with Coordination(root / ".tick").mutex(), stop_lock(root):
             reading = stop_in_force(root)
-            cannot = _cannot_start(root, reading)
+            cannot, _ = _cannot_start(root, reading)                  # checked again: settings that cannot be used refuse
             if cannot is not None:
                 return cannot
             if shown is not None and _terms(root, settings, reading) != shown:
-                return _blocked(TERMS_CHANGED, "what the person read is no longer what would start, so nothing was started",
-                                ASK_AGAIN, running=False, folder=str(root))
+                return _refusal(root, reading, TERMS_CHANGED, "what the person read is no longer what would start, so "
+                                "nothing was started", ASK_AGAIN, running=False, folder=str(root))
+            writer = CycleLog(root / CYCLE_LOG)
+            flush_journal(root, reading.seen)    # every line the row binds is on disk before the row stands on it
+            held = stop_in_force(root)           # once the writer has opened the records and the journal is on disk
+            if held.code == STOP_UNREADABLE or held.records != reading.records:   # not the approved bytes: no row
+                return _refusal(root, held, TERMS_CHANGED, MOVED, ASK_AGAIN, running=False, folder=str(root))
             try:
-                writer = CycleLog(root / CYCLE_LOG)
-                held = stop_in_force(root)       # once the writer has opened them: the bytes it would append onto
-                if held.code == STOP_UNREADABLE:
-                    return _stop_unreadable(root, held.reason)
-                if held.records != reading.records:
-                    return _moved(root)          # not exactly the bytes the person's terms bind: no row
-                try:
-                    writer.start(who, at=datetime.now().astimezone().isoformat(), settings=digest_of(settings),
-                                 **reading.seen.binding())
-                except BaseException:            # every way out of the append: whatever landed starts nothing
-                    if stop_in_force(root).records != reading.records:
-                        _revoke(root, writer)
-                    raise
-            except Exception:  # noqa: BLE001 - the records would not take the row: say what a reading says of them
-                moved = stop_in_force(root)
-                if moved.code == STOP_UNREADABLE:
-                    return _stop_unreadable(root, moved.reason)
+                writer.start(who, at=datetime.now().astimezone().isoformat(), settings=digest_of(settings),
+                             **reading.seen.binding())
+            except BaseException:                # every way out of the append: whatever landed starts nothing
+                if stop_in_force(root).records != reading.records:
+                    _revoke(root, writer)
                 raise
             if not _appended_onto(stop_in_force(root), reading):
                 _revoke(root, writer)            # the row did not land on the approved records: it starts nothing
-                return _moved(root)
+                return _refusal(root, stop_in_force(root), TERMS_CHANGED, MOVED, ASK_AGAIN, running=False,
+                                folder=str(root))
         halted = stop_in_force(root)
         if halted:
             record_stop(root, halted.reason, at=datetime.now().astimezone().isoformat())
-            return _blocked(START_STOPPED, f"a stop arrived while the start was being recorded, so nothing was started: "
-                            f"{halted.reason}"[:500], NOT_ASKED, running=False, folder=str(root), stop_code=halted.code)
+            return _refusal(root, halted, START_STOPPED, f"a stop arrived while the start was being recorded, so nothing "
+                            f"was started: {halted.reason}"[:500], NOT_ASKED, running=False, folder=str(root))
         spawned = datetime.now().astimezone()              # before the spawn: a runner can beat before this process looks
         return {**_watch(root, _spawn(root, settings), spawned), "started_by": who}
-    except Exception as exc:  # noqa: BLE001 - a start that fails, however, starts nothing and says so
-        return _blocked(START_FAILED, f"the runner could not be started: {type(exc).__name__}: {exc}"[:500], running=False,
-                        folder=str(root))
+    except Exception as exc:  # noqa: BLE001 - a start that fails, however, starts nothing and says why
+        return _failed(root, exc)
 
 
 def stop(folder: str, reason: str = "") -> dict:

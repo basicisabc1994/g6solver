@@ -499,6 +499,8 @@ OPENS = {
     ("g6/self_maintenance/envelope.py", "stop_in_force"): "the one reading: STOP, the journal and the records, once each",
     ("g6/self_maintenance/envelope.py", "ask_to_stop"): "writes a stop: the journal line, then the STOP file",
     ("g6/self_maintenance/envelope.py", "record_stop"): "writes a stopped row through the records' writer",
+    ("g6/self_maintenance/envelope.py", "flush_journal"): "flushes the journal to disk, writing no byte, before a start's row "
+                                                          "binds it",
     ("g6/self_maintenance/envelope.py", "_parsed"): "parses the bytes the reading took, from a copy of its own",
     ("g6/mcp/improve.py", "start"): "writes the started row through the records' writer",
     ("g6/mcp/improve.py", "_is_a_loop"): "asks only whether a folder is a loop at all, before a stop writes there",
@@ -913,8 +915,10 @@ STOP_PATHS = {"g6/self_maintenance/envelope.py": ["_absent", "_read_file", "_par
                                                   "record_stop", "ask_to_stop", "stop_seen", "stop_reason", "stop_standing",
                                                   "stop_to_lift", "stops_asked"],
               "g6/metaharness/loop.py": ["_reloaded", "_stop", "_halted", "_cut_off", "lost_cycle"],
-              "g6/mcp/improve.py": ["start", "stop", "asked", "_cannot_start", "_revoke"],
-              "g6/metaharness/runner.py": ["run", "_ending", "_folder_page", "_gated", "_end", "step"]}
+              "g6/mcp/improve.py": ["start", "stop", "asked", "_cannot_start", "_revoke", "_settings", "_refusal", "_failed",
+                                    "_dialog", "_terms", "_watch"],
+              "g6/metaharness/runner.py": ["run", "_ending", "_folder_page", "_plain_page", "_gated", "_end", "_pages",
+                                           "step"]}
 
 
 def _narrow_handlers(source: str, names: list[str]) -> list[str]:
@@ -1046,3 +1050,347 @@ def test_the_ending_inventory_covers_exceptions_before_the_hand_off():
                          for handler in guarded[0].handlers for part in handler.body)
     unguarded = [ast.unparse(node) for node in body[body.index(guarded[0]) + 1:]]
     assert unguarded == [], unguarded                     # nothing after the hand-off's try runs outside it
+
+
+# The follow-up's review 1: one maker of every refusal, every statement inside the one handler, only the runner lock's
+# refusal is another runner, a page always, and a start binds only durable journal lines --------------------------------
+
+def _functions(module) -> dict:
+    import ast
+    import inspect
+
+    return {node.name: node for node in ast.parse(inspect.getsource(module)).body if isinstance(node, ast.FunctionDef)}
+
+
+def _calls(node) -> set[str]:
+    import ast
+
+    return {call.func.id for call in ast.walk(node) if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)}
+
+
+def _kind(value) -> str:
+    """What a return gives, as the refusal inventory names it: a refusal of the maker's, a start, or its source."""
+    import ast
+
+    call = value.elts[0] if isinstance(value, ast.Tuple) else value
+    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id in ("_refusal", "_failed"):
+        return "refusal"
+    if (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "_envelope"
+            and isinstance(call.args[0], ast.Constant) and call.args[0].value == "qualified-draft"):
+        return "started"
+    if isinstance(value, ast.Dict) and None in value.keys and "_watch" in _calls(value):
+        return "watched"
+    return ast.unparse(value)
+
+
+def _returns_in_order(node) -> list[str]:
+    import ast
+
+    found = [child for child in ast.walk(node) if isinstance(child, ast.Return) and child.value is not None]
+    return [_kind(child.value) for child in sorted(found, key=lambda child: (child.lineno, child.col_offset))]
+
+
+def test_every_refusal_of_the_dialog_and_the_start_is_made_by_the_one_maker():
+    import ast
+
+    functions = _functions(improve)
+    reached, todo = set(), ["asked", "start"]
+    while todo:                                       # all the dialog and the start run, in this module
+        name = todo.pop()
+        if name in functions and name not in reached:
+            reached.add(name)
+            todo += sorted(_calls(functions[name]))
+    assert {"_cannot_start", "_dialog", "_watch", "_failed", "_refusal", "_settings"} <= reached
+    builders = sorted(name for name in reached if _calls(functions[name]) & {"_blocked", "blocked_reply", "_envelope"}
+                      and name != "_watch")
+    assert builders == ["_refusal"], builders           # no refusal is built anywhere else
+    listed = {name: _returns_in_order(functions[name]) for name in ("asked", "start", "_cannot_start", "_watch", "_failed")}
+    assert listed == {
+        "asked": ["cannot", "cannot", "made", "refusal", "refusal"],
+        "start": ["cannot", "cannot", "refusal", "refusal", "refusal", "refusal", "watched", "refusal"],
+        "_cannot_start": ["refusal", "refusal", "refusal", "refusal", "refusal", "(None, settings)"],
+        "_watch": ["refusal", "started", "started"],
+        "_failed": ["refusal", "refusal"],
+    }, listed
+    old = ast.parse("def f():\n    return _blocked(TERMS_CHANGED, 'moved')\n").body[0]
+    assert _returns_in_order(old) == ["_blocked(TERMS_CHANGED, 'moved')"]      # what the old returns were, it names
+
+
+def _a_recorded_stop(f) -> None:
+    CycleLog(f.root / CYCLE_LOG).stop("a tick cut it off")
+
+
+def _no_enrolment_and_a_journal_stop(f) -> None:
+    (f.root / CYCLE_LOG).unlink()
+    CycleLog(f.root / CYCLE_LOG).pause("no person ever enrolled this")
+    _journal_only(f)
+
+
+def _spawn_that(f, monkeypatch, act, *, fails: bool = False) -> None:
+    def spawned(at, settings):
+        act(f)
+        if fails:
+            raise OSError("no such interpreter")
+        f.spawned.append(at)
+        return Finished()
+
+    monkeypatch.setattr(improve, "_spawn", spawned)
+
+
+def _writer_that(f, monkeypatch, act, *, fails: bool = False) -> None:
+    real = CycleLog
+
+    def opened(path):
+        act(f)
+        if fails:
+            raise OSError("the records will not open")
+        return real(path)
+
+    monkeypatch.setattr(improve, "CycleLog", opened)
+
+
+def _row_lands_elsewhere(f, monkeypatch) -> None:
+    real = CycleLog.start
+
+    def landed(self, *args, **kwargs):
+        recorded = real(self, *args, **kwargs)
+        _reformat(f.root / CYCLE_LOG)
+        return recorded
+
+    monkeypatch.setattr(CycleLog, "start", landed)
+
+
+def _dialog_breaks(f, monkeypatch, act) -> None:
+    def broken(*args, **kwargs):
+        act(f)
+        raise RuntimeError("the dialog broke")
+
+    monkeypatch.setattr(improve, "_terms", broken)
+
+
+#: Each refusal the dialog or a start can give, set up with a stop a start may lift in force when it is made: the entry
+#: point, what is arranged before it, and the refusal's own code.
+REFUSALS = {
+    "not a loop's folder": ("dialog", lambda f, m: (f.root / "settings.json").unlink(), "G6_E_LOOP_NOT_A_FOLDER"),
+    "a runner alive": ("dialog", None, "G6_E_LOOP_RUNNER_ALIVE"),
+    "no one enrolled": ("dialog", lambda f, m: _no_enrolment_and_a_journal_stop(f), "G6_E_LOOP_NOT_ENROLLED"),
+    "the domain file changed": ("dialog", lambda f, m: (f.root.parent / "domain.py").write_text("# other\n"),
+                                "G6_E_LOOP_FROZEN_CHANGED"),
+    "a dialog that broke": ("dialog", lambda f, m: _dialog_breaks(f, m, lambda f: None), "G6_E_LOOP_START_FAILED"),
+    "the records moved under the writer": ("start", lambda f, m: _writer_that(f, m, _a_recorded_stop),
+                                           "G6_E_LOOP_TERMS_CHANGED"),
+    "a writer that failed": ("start", lambda f, m: _writer_that(f, m, lambda f: None, fails=True), "G6_E_LOOP_START_FAILED"),
+    "a row that did not land": ("start", _row_lands_elsewhere, "G6_E_LOOP_TERMS_CHANGED"),
+    "a runner that ended as it started": ("start", lambda f, m: _spawn_that(f, m, _a_recorded_stop),
+                                          "G6_E_LOOP_START_FAILED"),
+    "a spawn that failed": ("start", lambda f, m: _spawn_that(f, m, _a_recorded_stop, fails=True), "G6_E_LOOP_START_FAILED"),
+}
+
+
+@pytest.mark.parametrize("refusal", list(REFUSALS))
+def test_every_refusal_names_a_stop_in_force_beside_its_own_code(folder, monkeypatch, refusal):
+    from g6.self_maintenance.envelope import runner_lock, stop_in_force
+
+    entry, arrange, code = REFUSALS[refusal]
+    _agreed(folder)
+    _a_recorded_stop(folder)                                    # a stop a start may lift, in force before anything else
+    shown = improve.asked(str(folder.root))[2] if entry == "start" else None
+    if arrange is not None:
+        arrange(folder, monkeypatch)
+    if refusal == "a runner alive":
+        with runner_lock(folder.root):
+            got = improve.asked(str(folder.root))
+    else:
+        got = improve.asked(str(folder.root)) if entry == "dialog" else improve.start(folder.root, "Ada", shown)
+    assert _code(got) == code, got
+    assert stop_in_force(folder.root).code == STOPPED and got["stop_code"] == STOPPED, got
+    assert folder.spawned == [] or refusal == "a runner that ended as it started"
+
+
+def _stop_unreadable_now(f) -> None:
+    _unreadable(f.root / STOP_FILE)
+
+
+#: The refusals made after the dialog's or the start's first reading, each met by a stop that cannot be read arriving there.
+LATE = {
+    "a reading that cannot be made under the writer": lambda f, m: _writer_that(f, m, _stop_unreadable_now),
+    "a writer that failed": lambda f, m: _writer_that(f, m, _stop_unreadable_now, fails=True),
+    "a runner that ended as it started": lambda f, m: _spawn_that(f, m, _stop_unreadable_now),
+    "a spawn that failed": lambda f, m: _spawn_that(f, m, _stop_unreadable_now, fails=True),
+    "a dialog that broke": lambda f, m: _dialog_breaks(f, m, _stop_unreadable_now),
+}
+
+
+@pytest.mark.parametrize("refusal", list(LATE))
+def test_a_stop_that_cannot_be_read_when_a_refusal_is_made_is_that_refusals_code(folder, monkeypatch, refusal):
+    shown = improve.asked(str(folder.root))[2]
+    LATE[refusal](folder, monkeypatch)
+    got = improve.asked(str(folder.root)) if refusal == "a dialog that broke" else improve.start(folder.root, "Ada", shown)
+    assert _code(got) == got["stop_code"] == STOP_UNREADABLE, got
+    assert folder.spawned == [] or refusal == "a runner that ended as it started"
+
+
+def test_every_statement_of_the_dialog_and_the_start_runs_inside_the_one_handler():
+    import ast
+    import inspect
+    import textwrap
+
+    def outside(source: str) -> list[str]:
+        body = ast.parse(textwrap.dedent(source)).body[0].body
+        body = body[1:] if isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) else body
+        tries = [node for node in body if isinstance(node, ast.Try)]
+        assert len(tries) == 1 and body[-1] is tries[0], "one handler, and nothing after it"
+        [handler] = tries[0].handlers
+        assert isinstance(handler.type, ast.Name) and handler.type.id == "Exception"
+        assert [ast.unparse(part)[:15] for part in handler.body] == ["return _failed("]
+        return [ast.unparse(node) for node in body[:-1]                     # nothing before it touches a file
+                if {ast.unparse(call.func) for call in ast.walk(node) if isinstance(call, ast.Call)} - {"Path"}]
+
+    assert outside(inspect.getsource(improve.asked)) == [] and outside(inspect.getsource(improve.start)) == []
+    old = ("def f(root):\n    if not (root / 'settings.json').is_file():\n        return 1\n    try:\n        pass\n"
+           "    except Exception:\n        return _failed(root, None)\n")
+    assert outside(old) == ["if not (root / 'settings.json').is_file():\n    return 1"]   # the old shape, it finds
+
+
+#: What can fail where the dialog or the start touches a file, beside the settings: what fails, and who meets it.
+FAILURES = [("finding the folder", "_root", "dialog"), ("asking whether a runner is alive", "runner_alive", "dialog"),
+            ("asking whether a runner is alive", "runner_alive", "start"),
+            ("the domain file's digest", "file_digest", "dialog"), ("the domain file's digest", "file_digest", "start"),
+            ("the tick lock", "Coordination", "start")]
+
+
+@pytest.mark.parametrize("failure, name, consumer", FAILURES)
+def test_whatever_fails_where_the_dialog_or_the_start_touches_a_file_is_a_refusal_with_the_stop(folder, monkeypatch,
+                                                                                                 failure, name, consumer):
+    (folder.root / STOP_FILE).write_bytes(b"the owner said no\n")
+
+    def denied(*args, **kwargs):
+        raise PermissionError(f"{failure} was denied")
+
+    monkeypatch.setattr(improve, name, denied)
+    got = improve.asked(str(folder.root)) if consumer == "dialog" else improve.start(folder.root, "Ada")
+    assert got["completion_state"] == "blocked-escalated" and got["stop_code"] == STOPPED and folder.spawned == [], got
+
+
+def test_only_the_runner_locks_refusal_is_read_as_another_runner():
+    import ast
+
+    run = _functions(__import__("g6.metaharness.runner", fromlist=["run"]))["run"]
+    refusals = [node for node in ast.walk(run) if isinstance(node, ast.Try)
+                and any("WorkspaceRefused" in ast.unparse(handler.type) for handler in node.handlers if handler.type)]
+    assert [[ast.unparse(part) for part in node.body] for node in refusals] == [["held.enter_context(runner_lock(root))"]]
+
+
+@pytest.mark.parametrize("held", ["by another runner", "a hard-linked lock", "the workspace, after the lock"])
+def test_a_refusal_is_another_runner_only_when_another_holds_the_runner_lock(folder, monkeypatch, held):
+    from g6.metaharness import runner
+    from g6.self_maintenance import digest as daily
+    from g6.self_maintenance.envelope import beat, heartbeat, runner_lock
+    from g6.workspace import _coordination
+    from g6.workspace._envelope import BUSY, WorkspaceRefused
+
+    _agreed(folder)
+    beat(folder.root, state="waiting", code="the live runner's")
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    monkeypatch.setattr(runner, "open_loop", lambda *a, **k: (_ for _ in ()).throw(WorkspaceRefused(BUSY, "busy workspace")))
+    if held == "by another runner":
+        with runner_lock(folder.root):
+            assert runner.run(folder.root, now=lambda: NOW) == 1
+        assert heartbeat(folder.root)["code"] == "the live runner's"          # its page and heartbeat are the live one's
+        assert not daily.digest_path(folder.root, NOW.date()).is_file()
+        return
+    if held == "a hard-linked lock":
+        with runner_lock(folder.root):
+            pass                                                              # the lock's folder and file, made
+        (folder.root / RUNNER_LOCK / "mutex").unlink()
+        spare = folder.root / "spare"
+        spare.write_bytes(b"")
+        (folder.root / RUNNER_LOCK / "mutex").hardlink_to(spare)
+    assert runner.run(folder.root, now=lambda: NOW) == 1
+    terminal = heartbeat(folder.root)
+    assert (terminal["state"], terminal["code"]) == ("not-running", runner.CANNOT_OPEN), terminal
+    assert daily.digest_path(folder.root, NOW.date()).is_file()
+
+
+def _render_breaks(monkeypatch) -> None:
+    from g6.self_maintenance import digest as daily
+
+    monkeypatch.setattr(daily, "render", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("cannot render")))
+
+
+def _page_a_folder(f) -> None:
+    from g6.self_maintenance import digest as daily
+
+    daily.digest_path(f.root, NOW.date()).mkdir(parents=True)          # a page that cannot be written there at all
+
+
+@pytest.mark.parametrize("ending", ["a STOP at the preflight", "a gate refusal", "a running loop's stop"])
+@pytest.mark.parametrize("page", ["cannot be made", "cannot be written"])
+def test_an_ending_always_writes_a_page_or_says_it_could_not(folder, monkeypatch, ending, page):
+    from g6.metaharness import runner
+    from g6.self_maintenance import digest as daily
+    from g6.self_maintenance.envelope import heartbeat
+
+    _agreed(folder)
+    path = daily.digest_path(folder.root, NOW.date())
+    if ending == "a gate refusal":
+        _settings_changed(folder)
+    else:
+        ask_to_stop(folder.root, "the owner said no")
+    if page == "cannot be made":
+        daily.write(folder.root, NOW.date(), "the old page\n")
+        _render_breaks(monkeypatch)
+    else:
+        _page_a_folder(folder)
+    if ending == "a running loop's stop":
+        assert runner.Runner(folder.loop, now=lambda: NOW, sleep=lambda seconds: None).step() is None
+    else:
+        monkeypatch.setattr(runner, "open_loop", lambda *a, **k: pytest.fail("this ending opens no loop"))
+        runner.run(folder.root, now=lambda: NOW)
+    terminal = heartbeat(folder.root)
+    assert terminal["state"] in ("stopped", "not-running") and terminal["code"] in (STOPPED, "G6_E_LOOP_SETTINGS_CHANGED")
+    if page == "cannot be made":
+        text = path.read_text(encoding="utf-8")
+        assert terminal["code"] in text and "The runner ended" in text and "the old page" not in text, text
+        assert "page_not_written" not in terminal
+    else:
+        assert "could not be written" in terminal["page_not_written"], terminal
+
+
+def test_a_start_flushes_the_journal_before_its_row_binds_it(folder, monkeypatch):
+    real_sync, real_start, order = os.fsync, CycleLog.start, []
+    journal = folder.root / STOPS_FILE
+    _agreed(folder)
+    improve.stop(str(folder.root), "the owner said no")
+    _, _, shown = improve.asked(str(folder.root))
+
+    def synced(handle):
+        if journal.exists() and os.fstat(handle).st_ino == journal.stat().st_ino:
+            order.append("journal on disk")
+        return real_sync(handle)
+
+    def written(self, *args, **kwargs):
+        order.append("row")
+        return real_start(self, *args, **kwargs)
+
+    monkeypatch.setattr(os, "fsync", synced)
+    monkeypatch.setattr(CycleLog, "start", written)
+    improve.start(folder.root, "Ada", shown)
+    assert order == ["journal on disk", "row"], order
+
+
+def test_a_journal_that_cannot_be_flushed_starts_nothing_and_writes_no_row(folder, monkeypatch):
+    real_sync, journal = os.fsync, folder.root / STOPS_FILE
+    _journal_only(folder)
+    _, _, shown = improve.asked(str(folder.root))
+    before = (folder.root / CYCLE_LOG).read_bytes()
+
+    def failed(handle):
+        if os.fstat(handle).st_ino == journal.stat().st_ino:
+            raise OSError("the disk would not take it")
+        return real_sync(handle)
+
+    monkeypatch.setattr(os, "fsync", failed)
+    got = improve.start(folder.root, "Ada", shown)
+    assert _code(got) == improve.START_FAILED and got["stop_code"] == STOPPED and folder.spawned == []
+    assert (folder.root / CYCLE_LOG).read_bytes() == before
