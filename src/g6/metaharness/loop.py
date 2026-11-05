@@ -27,6 +27,7 @@ import importlib.machinery
 import inspect
 import math
 import os
+import re
 import site
 import sys
 import threading
@@ -92,7 +93,6 @@ from g6.self_maintenance.envelope import (
     Stop,
     ask_to_stop,
     beat,
-    file_digest,
     note_refusal,
     refused_requests,
     stop_in_force,
@@ -534,10 +534,13 @@ def _in_reach(root: Path, domain: Domain) -> list[str]:
     system's own identity of each folder on the way, so another spelling of a folder is that folder, and whatever a link
     under a judge's root points at (a link there is refused all the same, ``_unpinned``)."""
     sealed, roots = domain.sealed(), _roots(domain)
+    try:
+        links = _links_under(roots)
+    except FrozenUnreadable:
+        links = []                               # a root that cannot be listed refuses at enrolment (``_unpinned``)
     guarded = {"G6's own source": str(_SOURCE),
                **{f"the judge's root {root}": str(root) for root in roots},
-               **{f"a link under the judge's root, to {os.path.realpath(link)}": os.path.realpath(link)
-                  for link in _links_under(roots)},
+               **{f"a link under the judge's root, to {os.path.realpath(link)}": os.path.realpath(link) for link in links},
                **{f"sealed root {i}": r for i, r in enumerate(sealed.vault.roots if sealed is not None else ())}}
     return [name for name, path in guarded.items() if _same_place(root, Path(path))]
 
@@ -571,16 +574,43 @@ def _is_link(path: Path) -> bool:
 
 
 def _links_under(roots: Sequence[Path]) -> list[Path]:
-    """Every link or junction that is a root or lies under one: what it points at is no part of the root's listing."""
+    """Every link or junction that is a root or lies under one: what it points at is no part of the root's listing. A folder
+    under a root that cannot be listed raises ``FrozenUnreadable``: what it holds is not known to hold no link."""
     found = []
     for root in roots:
         if _is_link(root):
             found.append(root)
             continue
-        for here, dirs, files in os.walk(root, followlinks=False):
+        for here, dirs, files in os.walk(root, followlinks=False, onerror=_unlisted):
             found += [Path(here) / name for name in (*dirs, *files) if _is_link(Path(here) / name)]
             dirs[:] = [name for name in dirs if not _is_link(Path(here) / name)]
     return found
+
+
+class FrozenUnreadable(OSError):
+    """What judges could not be read whole: a file under a judge's root, a loaded module's source outside them, the domain's
+    declaration, or a folder under a root that could not be listed. No reading stands on it: enrolment refuses it
+    (``JUDGE_UNPINNED``), and every cycle and adoption refuses it as a frozen change while it stands."""
+
+
+def _frozen_bytes(path: Any) -> str:
+    """The one reader the freeze takes a file's bytes with: their SHA-256, or ``FrozenUnreadable`` on any failure at all,
+    never a value that stands in for bytes it could not read."""
+    try:
+        return hashlib.sha256(Path(str(path)).read_bytes()).hexdigest()
+    except Exception as exc:  # noqa: BLE001 - every failure to read is unreadable, never a digest
+        raise FrozenUnreadable(f"{path} cannot be read ({type(exc).__name__})") from exc
+
+
+def _unlisted(error: OSError) -> None:
+    """``os.walk``'s handler: a folder it cannot list is unreadable, never an empty folder."""
+    raise FrozenUnreadable(f"{getattr(error, 'filename', None) or 'a folder'} cannot be listed "
+                           f"({type(error).__name__})") from error
+
+
+#: The one kind of file under ``__pycache__`` the freeze leaves out: a bytecode cache named for an interpreter,
+#: ``<name>.<tag>.pyc`` (``select.cpython-312.pyc``, ``select.cpython-312.opt-1.pyc``), which an import writes.
+_INTERPRETER_CACHE = re.compile(r"[^.]+\.[A-Za-z0-9_-]+(\.opt-\d+)?\.pyc", re.IGNORECASE)
 
 
 def envelope_sha256() -> str:
@@ -733,44 +763,43 @@ def _unpinned(domain: Domain) -> list[tuple[str, str]]:
              if not _held_by(where := _code_file(fn), roots)]
     problems = [(JUDGE_UNPINNED, "; ".join(found) + ", outside G6, the Python installation and every root this domain "
                  "declares, so no listing pins what it does")] if found else []
-    links = _links_under(roots)
-    return problems + ([(JUDGE_UNPINNED, f"a link or junction under the judge's roots, at {links[0]}, points at what no "
-                         "listing of them pins: a root holds its files itself")] if links else [])
+    given = [Path(root) for root in getattr(domain, "roots", None) or ()]       # as declared, before anything resolves it
+    try:
+        links = [root for root in given if _is_link(root)] + _links_under(roots)
+    except FrozenUnreadable as exc:
+        return problems + [(JUDGE_UNPINNED, f"what judges cannot be listed whole ({exc}), so no listing pins it")]
+    return problems + ([(JUDGE_UNPINNED, f"a link or junction at or under the judge's roots, at {links[0]}, points at what "
+                         "no listing of them pins: a root holds its files itself")] if links else [])
 
 
 def _pinned(roots: Sequence[Path]) -> dict[str, str]:
-    """Each root pinned whole: every regular file under it, of any suffix, by its bytes (data files and archives as much as
-    source), and any link or junction under it by that name alone, which refuses (``_unpinned``). An interpreter's own
-    cache, a file under ``__pycache__`` named for its interpreter, is left out: no import statement names it, and the runner
-    reads none (the freeze's threat model is honest drift)."""
+    """Each root pinned whole: every regular file under it, of any suffix, by its bytes (data files, archives and any file
+    under ``__pycache__`` as much as source), and any link or junction under it by that name alone, which refuses
+    (``_unpinned``). Only a bytecode cache named for an interpreter is left out (``_INTERPRETER_CACHE``): an import writes
+    one, and the runner reads none (the freeze's threat model is honest drift). A file that cannot be read, or a folder
+    that cannot be listed, raises ``FrozenUnreadable``."""
     return {os.path.normcase(str(root)): ("a link" if _is_link(root) else manifest_sha256(_listing(root)) if root.is_dir()
                                           else "") for root in roots}
 
 
 def _listing(root: Path) -> dict[str, str]:
     found = {}
-    for here, dirs, files in os.walk(root, followlinks=False):
+    for here, dirs, files in os.walk(root, followlinks=False, onerror=_unlisted):
         for name in (*dirs, *files):
             path = Path(here) / name
             if _is_link(path):
                 found[path.relative_to(root).as_posix()] = "a link"
-            elif name in files and (_importable(name) or not in_cache(path.relative_to(root))):
-                found[path.relative_to(root).as_posix()] = _bytes_of(path)
+            elif name in files and not (in_cache(path.relative_to(root)) and _INTERPRETER_CACHE.fullmatch(name)):
+                found[path.relative_to(root).as_posix()] = _frozen_bytes(path)
         dirs[:] = [name for name in dirs if not _is_link(Path(here) / name)]
     return found
-
-
-def _bytes_of(path: Path) -> str:
-    try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-    except OSError as exc:
-        return f"unreadable ({type(exc).__name__})"
 
 
 def _loaded_outside(roots: Sequence[Path]) -> list[list[str]]:
     """Every module loaded in this process whose file is neither G6's, the installation's, nor under a pinned root, each by
     its file's bytes. Code loaded from anywhere else is code no listing holds, so a module loaded later (a verdict's own
-    import, made as it runs), or a change to any of them, is a change to what judges."""
+    import, made as it runs), or a change to any of them, is a change to what judges. A source that cannot be read raises
+    ``FrozenUnreadable``."""
     held = [os.path.normcase(str(root)) + os.sep for root in (*roots, *_INSTALLED)]
     found: dict[str, str] = {}
     for module in list(sys.modules.values()):
@@ -779,7 +808,7 @@ def _loaded_outside(roots: Sequence[Path]) -> list[list[str]]:
             continue
         path = os.path.normcase(os.path.abspath(where))
         if not any(path.startswith(prefix) for prefix in held):
-            found[path] = file_digest(path)
+            found[path] = _frozen_bytes(path)
     return sorted([path, sealed] for path, sealed in found.items())
 
 
@@ -1043,7 +1072,7 @@ class ShadowLoop:
         method in the same file does not (``tick_rca``'s domain part)."""
         run, sealed, judge = self.domain.execution(), self.domain.sealed(), self.domain.judge()
         roots = _roots(self.domain)
-        return {"envelope": envelope_sha256(), "domain_file": file_digest(self.domain_file),
+        return {"envelope": envelope_sha256(), "domain_file": _frozen_bytes(self.domain_file) if self.domain_file else "",
                 "profile_space": _profile_space(str(getattr(self.domain, "name", "")), run),
                 "evaluator": digest({"judging": judging_sha256(), "judge": _judge_digest(judge, roots),
                                      "independence": [judge.answers_by, judge.is_model] if judge is not None else [],
@@ -1065,8 +1094,13 @@ class ShadowLoop:
     def _changed(self, against: Mapping[str, str] | None = None) -> list[str]:
         """Which of the frozen things differ from ``against``, the digests a tick read before it developed anything, or
         from what a person enrolled when none are given. The vault's digest is of the files as sealed, so the sealed bytes
-        are compared as well."""
-        return _differs(*self._frozen_now(), self.log.enrolled()["frozen"] if against is None else against)
+        are compared as well. A reading that cannot be made whole (``FrozenUnreadable``) differs from every reading: it is
+        named as what changed, so nothing stands on it."""
+        recorded = self.log.enrolled()["frozen"] if against is None else against
+        try:
+            return _differs(*self._frozen_now(), recorded)
+        except FrozenUnreadable as exc:
+            return [f"what judges, which could not be read ({exc})"]
 
     def _invalid(self) -> dict[str, Any] | None:
         if self.problems:
@@ -1094,8 +1128,12 @@ class ShadowLoop:
         paused = self.log.paused() or self._must_stop()
         if paused:
             return _blocked(PAUSED, f"the loop is paused: {paused}", "A person reads why, then loop.resume('<name>').")
-        now, breached = self._frozen_now()
-        changed = _differs(now, breached, self.log.enrolled()["frozen"])
+        try:
+            now, breached = self._frozen_now()
+            changed = _differs(now, breached, self.log.enrolled()["frozen"])
+        except FrozenUnreadable as exc:          # no reading of what judges stands, so none is compared or kept
+            return _blocked(FROZEN_CHANGED, f"what judges could not be read ({exc}), so nothing measured against it would "
+                            "mean what it did", "A person makes it readable; the next tick reads it again.")
         if changed:
             return _blocked(FROZEN_CHANGED, f"changed since a person enrolled this domain: {', '.join(changed)}. Nothing "
                             "measured against it would mean what it did", "A person checks the change and enrols again.")
@@ -1163,10 +1201,14 @@ class ShadowLoop:
             return _blocked(SPLIT_REUSED, f"{len(reused)} held-out cases were already seen by proposers or spent by an "
                             f"earlier split, for example {reused[:3]}: a gain measured on them proves nothing",
                             "Give the gate cases the loop has not used: a split changed by a few cases is not fresh.")
+        try:                                     # read before anything is confirmed: an unreadable freeze enrols nothing
+            frozen = self._frozen()
+        except FrozenUnreadable as exc:
+            return _blocked(JUDGE_UNPINNED, f"what judges could not be read whole ({exc}), so no listing pins it and nothing "
+                            "was enrolled", "A person makes it readable, then enrols.")
         confirmed = self.mh.confirm(who, initial=self.domain.execution().initial)
         if confirmed["completion_state"] == "blocked-escalated":
             return confirmed
-        frozen = self._frozen()
         exposed = (*self.cut.tune, *self.cut.selection)
         self.log.enrol(who, frozen, domain=self.domain.name, at=self._now().isoformat(),
                        seen=sorted(c.case_id for c in exposed),

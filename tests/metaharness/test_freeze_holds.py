@@ -772,3 +772,130 @@ def test_a_safety_stop_the_log_would_not_take_stops_the_loop_at_once(tmp_path, m
     assert loop.tick()["warning_card"]["code"] == "G6_E_LOOP_CANNOT_RECORD"
     assert stop_in_force(loop.root).code == "G6_E_LOOP_STOPPED" and loop.lost_cycles == 1
 
+
+# Review 4's classes: unreadable is never a digest, only interpreter caches are left out, a root is checked as given ----
+
+class _NeverSeen(Exception):
+    """A failure no handler names."""
+
+
+def _locked(path: Path):
+    import msvcrt
+
+    stream = path.open("r+b", buffering=0)
+    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, max(1, path.stat().st_size))
+    return stream
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a byte-range lock and a denying directory handle are Windows's")
+@pytest.mark.parametrize("failure", ["a byte-range lock", "a folder that cannot be listed", "a file gone mid-listing",
+                                     "an error never seen"])
+def test_any_failure_to_read_under_a_root_makes_the_reading_unreadable_never_a_digest(tmp_path, monkeypatch, failure):
+    import msvcrt
+
+    from g6.metaharness import loop as loop_module
+
+    root = tmp_path / "judge"
+    (root / "data").mkdir(parents=True)
+    rule = root / "data" / "rule.txt"
+    rule.write_bytes(b"true")
+    closing = []
+    if failure == "a byte-range lock":
+        stream = _locked(rule)
+        closing.append(lambda: (msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 4), stream.close()))
+    elif failure == "a folder that cannot be listed":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                      wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+        kernel.CreateFileW.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel.CreateFileW(str(root / "data"), 0x80000000, 0, None, 3, 0x02000000, None)   # shares nothing
+        assert handle != wintypes.HANDLE(-1).value
+        closing.append(lambda: kernel.CloseHandle(handle))
+    elif failure == "a file gone mid-listing":
+        real = os.walk
+
+        def walked(top, **kwargs):
+            for here, dirs, files in real(top, **kwargs):
+                yield here, dirs, [*files, "gone.txt"] if Path(here).name == "data" else files
+
+        monkeypatch.setattr(loop_module.os, "walk", walked)
+    else:
+        real_read = Path.read_bytes
+        monkeypatch.setattr(Path, "read_bytes", lambda self: (_ for _ in ()).throw(_NeverSeen("never seen"))
+                            if self == rule else real_read(self))
+    try:
+        with pytest.raises(loop_module.FrozenUnreadable):
+            loop_module._pinned([root])
+    finally:
+        for close in closing:
+            close()
+    monkeypatch.undo()
+    assert loop_module._pinned([root])                        # readable again, it pins as any root does
+
+
+def test_a_reading_that_cannot_be_made_refuses_enrolment_and_every_tick_while_it_stands(tmp_path, monkeypatch):
+    from g6.metaharness import loop as loop_module
+
+    loop, _, declaration = _declared(tmp_path)
+    real = loop_module._frozen_bytes
+
+    def unreadable(path):
+        if Path(str(path)) == declaration:
+            raise loop_module.FrozenUnreadable(f"{path} cannot be read (PermissionError)")
+        return real(path)
+
+    monkeypatch.setattr(loop_module, "_frozen_bytes", unreadable)
+    got = loop.tick()
+    assert got["warning_card"]["code"] == FROZEN_CHANGED and "could not be read" in got["message"]
+    assert loop.mh.adoption_rows() == [] and loop.enrol("Ada")["warning_card"]["code"] == "G6_E_LOOP_JUDGE_UNPINNED"
+    loop._frozen_seen = dict(loop.log.enrolled()["frozen"])
+    assert "could not be read" in loop._still_frozen()["message"]     # the adoption's own last check refuses it too
+    loop._frozen_seen = None
+    monkeypatch.undo()
+    assert loop.tick()["outcome"] == "adopted"               # once it reads as enrolled, the loop goes on
+
+
+def test_the_freeze_takes_no_empty_digest_for_a_file_it_cannot_read(tmp_path):
+    from g6.metaharness import loop as loop_module
+
+    with pytest.raises(loop_module.FrozenUnreadable):
+        loop_module._frozen_bytes(tmp_path / "missing.py")
+    assert "file_digest" not in inspect_source(loop_module)
+
+
+def inspect_source(module) -> str:
+    import inspect
+
+    return inspect.getsource(module)
+
+
+@pytest.mark.parametrize("name, pinned", [("enabled.json", True), ("helper.py", True), ("helper.pyc", True),
+                                          ("helper.cpython-312.pyc", False), ("helper.cpython-312.opt-1.pyc", False),
+                                          ("helper.pypy39.pyc", False)])
+def test_only_a_bytecode_cache_named_for_an_interpreter_is_left_out(tmp_path, name, pinned):
+    from g6.metaharness.loop import _pinned
+
+    cache = tmp_path / "__pycache__"
+    cache.mkdir()
+    before = _pinned([tmp_path])
+    (cache / name).write_bytes(b"written")
+    assert (_pinned([tmp_path]) != before) is pinned
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a junction is Windows's")
+def test_a_declared_root_is_checked_as_given_before_it_is_resolved(tmp_path):
+    from g6.metaharness.loop import _unpinned
+
+    real = tmp_path / "rules"
+    real.mkdir()
+    _junction(tmp_path / "alias", real)
+    domain = domains.WordProblems(tmp_path)
+    domain.roots = (tmp_path / "alias", *__import__("g6.metaharness.loop", fromlist=["_roots"])._roots(
+        domains.WordProblems(tmp_path)))
+    found = _unpinned(domain)
+    assert found and found[-1][0] == "G6_E_LOOP_JUDGE_UNPINNED" and "alias" in found[-1][1]
+

@@ -181,6 +181,11 @@ def test_answer_without_exact_encoding_is_refused_by_case_id_instead_of_raising(
 # Findings 4, 6, 10: roots pinned whole ---------------------------------------------------------------------------------
 
 def test_judge_zip_under_root_cannot_change_before_adoption(tmp_path, monkeypatch):
+    # The archive's module leaves when this test does: a module loaded from an archive outside a later test's roots is
+    # one whose source no reading can read, which refuses that later test's every reading (review 4 of the freeze).
+    for name in ("frz3_zip_rules", "frz3_zip_judge"):
+        monkeypatch.setitem(sys.modules, name, None)
+        monkeypatch.delitem(sys.modules, name)
     loop, judge, change = archive_loop(tmp_path, monkeypatch)
     assert judge.verdict("Answer: 42", "42")
     original = shadow._measured
