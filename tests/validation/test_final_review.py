@@ -156,6 +156,8 @@ def _row(root, arm, task="x-1", repeat=1, body="one patch", status="finished"):
     row = {"arm": arm, "task": task, "repeat": repeat, "run": f"run/{arm}{repeat}", "status": status, "passes": True, "failing": 0}
     (root / "loop").mkdir(exist_ok=True)
     (root / "loop" / f"{arm}-{task}-{repeat}.json").write_text(json.dumps(row), "utf-8")
+    (run / "run.json").write_text(json.dumps({"status": status, "agent_started": True}), "utf-8")    # the run as the archive
+    compare.c.Archive(root).append({"event": "started", "run": row["run"], "kind": "run", "arm": arm})    # holds it: its start
     return row
 
 

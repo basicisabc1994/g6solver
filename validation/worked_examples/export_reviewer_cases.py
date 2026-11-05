@@ -144,24 +144,26 @@ def _checks(root: Path, task: str) -> dict[str, list[dict[str, Any]]]:
 
 
 def labelled(root: Path, task: str) -> list[tuple[str, Path | bytes, Any]]:
-    """Each recorded patch of ``task`` with its verdict. Counts of tests stay on this side: only passed or failed leaves here. Arm
+    """Each recorded patch of ``task`` with its verdict. Counts of tests stay on this side: only passed or failed leaves here. A saved
+    row names its run and holds the verdict judged; every fact of the run comes from ``wecommon.run_facts``: only a run the one
+    admission rule admits (``run.scored_run``) and that finished gives cases, and its folder is opened by its exact name only. Arm
     K3 keeps its first patch, "round-1", in its baseline folder (``run.baseline_of``), not in ``rounds``; it is a case only while
-    its bytes have the digest kept at its capture (``run.baseline_bytes``), the arm read from the run's start (``run.started_row``),
-    and it is handed on as those bytes, never as its path, so the case is what was checked."""
+    its bytes have the digest kept at its capture (``run.baseline_bytes``), and it is handed on as those bytes, never as its path,
+    so the case is what was checked."""
     checks, rows, archive = _checks(root, task), [], c.Archive(root)
     for path in sorted((root / "loop").glob(f"*-{task}-*.json")):
         rec = json.loads(path.read_text("utf-8"))
-        if rec.get("status") != "finished":
+        facts = c.run_facts(archive, str(rec.get("run", "")).replace("\\", "/"))
+        if facts is None or not we.scored_run(archive, facts.name) or (facts.ending or {}).get("status") != "finished":
             continue
-        run = str(rec.get("run", "")).replace("\\", "/")
-        folder = root / run
+        run, folder = facts.name, facts.folder
         if task in AMENDED:
             again = root / "loop" / "amended" / path.name
             if again.is_file():
                 rows.append((task, folder / "final.patch", json.loads(again.read_text("utf-8")).get("amended_passes")))
             continue
         by = {check.get("patch"): bool(check.get("passes")) for check in checks.get(run, [])}
-        first = Path(we.FIRST_PATCH).stem if we.rule_led(str(we.started_row(archive, run).get("arm") or "")) else None
+        first = Path(we.FIRST_PATCH).stem if we.rule_led(facts.arm) else None
         for name, ok in by.items():
             if name == "final":
                 continue
@@ -201,7 +203,10 @@ def parent_files(task: str, paths: Iterable[str], cache: Path) -> dict[str, str]
 
 def issue_for(root: Path, task: str) -> str:
     rec = json.loads((root / "loop" / f"K1-{task}-1.json").read_text("utf-8"))
-    return issue_of((root / str(rec["run"]).replace("\\", "/") / "prompt.txt").read_text("utf-8", errors="replace"))
+    facts = c.run_facts(c.Archive(root), str(rec["run"]).replace("\\", "/"))      # its folder, by the run's exact name only
+    if facts is None:
+        raise SystemExit(f"{rec['run']!r} is no run the archive started")
+    return issue_of((facts.folder / "prompt.txt").read_text("utf-8", errors="replace"))
 
 
 def main() -> None:

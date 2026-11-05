@@ -54,7 +54,7 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
     saved, archive = root / "loop" / f"{arm}-{task}-{repeat}.json", c.Archive(root)
     if saved.is_file():
         rec = json.loads(saved.read_text("utf-8"))
-        if we.scored_run(archive, str(rec.get("run") or "")) and c.holds(root, rec, rec):   # admitted now, saved under this ending
+        if c.holds(archive, str(rec.get("run") or ""), rec):      # admitted now, and saved under the ending the run has now
             return rec
     else:
         rec = last_json(tool("run", "--task", task, "--g6", g6, "--arm", arm, "--model", SONNET, "--repeat", str(repeat)))
@@ -64,18 +64,19 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
             rec = [r for r in distill.main_row(root / c.NDJSON["ledger"])
                    if (r.get("task"), r.get("arm"), r.get("repeat")) == (task, arm, repeat)][-1]
     rel = str(rec.get("run") or "")      # the run's name is all that is taken from what the runner printed or a row saved
-    end, made = we.ending_of(archive, rel), c.ending_sha256(root, {"run": rel})    # how the run ended, as the archive holds it
-    why = we.unscored_why(archive, rel)   # the one admission rule: refused, limited, no ending, or K3's baseline
+    facts = c.run_facts(archive, rel)    # every fact of the run, from the archive (wecommon.run_facts)
+    end, made = (facts.ending, facts.ending_sha256) if facts is not None else (None, None)
+    why = we.unscored_why(archive, rel)   # the one admission rule: refused, limited, no ending, no such run, or K3's baseline
     if why:              # refused, never counted as a failed run; limited: made again after the reset; a K3 run with no baseline
         status = (end or {}).get("status") or "no ending"
         said = (((rec.get("limit") or {}).get("resets") or "no reset given") if status == "limited"
                 else "; ".join(str(x) for x in (why, (end or {}).get("why") or rec.get("why")) if x))
         raise SystemExit(f"{status}: {arm} {task} {repeat}: {said}")
-    row = {"arm": arm, "task": task, "repeat": repeat, "run": rec.get("run"), "status": end.get("status"),
+    row = {"arm": arm, "task": task, "repeat": repeat, "run": facts.name, "status": end.get("status"),
            "why": rec.get("why"), "cost_usd": rec.get("cost_usd"), "passes": False, "failing": None, "tests": [],
            **({c.MADE_UNDER: made} if made else {})}
     if c.on_patch(end):      # finished, or ended by a model refusal: scored on the patch it left
-        final = [x for x in last_json(tool("check", "--task", task, "--g6", g6, "--run", rec["run"], timeout=1200)).get("checks", [])
+        final = [x for x in last_json(tool("check", "--task", task, "--g6", g6, "--run", facts.name, timeout=1200)).get("checks", [])
                  if x.get("patch") == "final"]     # by name: with no run named, check scores the bug's latest run, which a restart may not be
         if not final:       # no verdict is not a failed run: nothing is saved, and a restart checks it again
             raise SystemExit(f"no verdict for {arm} {task} {repeat}")
@@ -97,22 +98,24 @@ def rescore(root: Path, g6: str) -> list[dict[str, Any]]:
         row, saved = json.loads(path.read_text("utf-8")), root / "loop" / "amended" / path.name
         diff = we.amendment(row["task"])
         rel = str(row.get("run") or "")
-        end, made = we.ending_of(archive, rel), c.ending_sha256(root, {"run": rel})   # how it ended, as the archive holds it
         if not diff or not we.scored_run(archive, rel):                # the one admission rule (run.unscored_why): none is made
             continue
+        facts = c.run_facts(archive, rel)                              # how it ended, as the archive holds it
+        end, made = facts.ending, facts.ending_sha256
         sha = c.sha256_file(diff)
         kept = json.loads(saved.read_text("utf-8")) if saved.is_file() else None
-        if c.holds(root, row, kept, amendment=sha):
+        if c.holds(archive, rel, kept, amendment=sha):
             rows.append(kept)
             continue
         passes = False      # a made run that did not end on its patch failed on either score, with no check
         if c.on_patch(end):
-            final = [x for x in last_json(tool("check", "--task", row["task"], "--g6", g6, "--run", row["run"], "--amended",
+            final = [x for x in last_json(tool("check", "--task", row["task"], "--g6", g6, "--run", facts.name, "--amended",
                                                timeout=1200)).get("checks", []) if x.get("patch") == "final"]
             passes = final[-1].get("passes") if final else None
             if not isinstance(passes, bool):       # no verdict is not a failed run
                 raise SystemExit(f"no amended verdict for {path.stem}")
-        rows.append({**{k: row.get(k) for k in ("arm", "task", "repeat", "run", "passes")}, "amended_passes": passes,
+        rows.append({**{k: row.get(k) for k in ("arm", "task", "repeat")}, "run": facts.name, "passes": row.get("passes"),
+                     "amended_passes": passes,
                      "amendment_sha256": sha, **({c.MADE_UNDER: made} if made else {})})
         saved.parent.mkdir(exist_ok=True)
         saved.write_text(json.dumps(rows[-1], indent=1), "utf-8")

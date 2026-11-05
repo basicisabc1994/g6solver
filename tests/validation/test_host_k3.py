@@ -125,8 +125,8 @@ def test_a_failure_after_a_host_k3_runs_no_first_patch_ending_never_makes_it_mor
     record, _, starts, ctx, *_ = k3_host_run(monkeypatch, tmp_path, [("s1", FIRST_TREE, helpers.stream("s1")[:-1])])
     folder = ctx.archive.root / record["run"]
     assert "the mirror failed" in record["error"] and (folder / we.c.AFTER).is_file() and len(starts) == 1
-    assert record["status"] == we.NO_FIRST_PATCH and we.c.ending(ctx.archive.root, record)["status"] == we.NO_FIRST_PATCH
-    assert not we.c.scoreable(we.c.ending(ctx.archive.root, record)) and not we.scored_run(ctx.archive, record["run"])
+    assert record["status"] == we.NO_FIRST_PATCH and we.c.ending(ctx.archive.root, record["run"])["status"] == we.NO_FIRST_PATCH
+    assert not we.c.scoreable(we.c.ending(ctx.archive.root, record["run"])) and not we.scored_run(ctx.archive, record["run"])
 
 
 def test_a_host_k3_run_at_the_usage_limit_in_its_first_session_stays_limited_and_may_be_made_again(monkeypatch, tmp_path):

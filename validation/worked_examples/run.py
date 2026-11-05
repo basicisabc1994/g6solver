@@ -1051,12 +1051,12 @@ def r3_done(rows: Iterable[Mapping[str, Any]], root: Path) -> dict[tuple[str, st
     """The round 3 runs whose agent started, by (model, task, arm, repeat), with how each ended, as its folder under the archive
     ``root`` says (``wecommon.ending``): a host run's ending file, which a stop before the index's end of the run leaves too."""
     rows = list(rows)
-    ended = {r["run"]: r for r in rows if r.get("event") == "ended"}
     done = {}
     for r in rows:
         if not (r.get("event") == "started" and r.get("kind") == "run" and r.get("arm")):
             continue
-        end = c.ending(root, {**ended.get(r["run"], {}), "run": r["run"], "executor": r.get("executor", "container")})
+        facts = c.run_facts(root, str(r["run"]), rows)      # the one source of the run's facts, from these rows of the index
+        end = facts.ending if facts is not None else None
         if end and end.get("agent_started") and end.get("status"):
             done[(str(r.get("model")), str(r.get("task")), str(r.get("arm")), int(r.get("repeat") or 1))] = str(end["status"])
     return done
@@ -2474,7 +2474,7 @@ def review_once(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
 
 
 # --- arm K3: K2 with the author's rule step after the first patch (PLAN.md, 2026-11-05, morning, later, items 1 and 4) ----------
-RULE_STEP_ARMS = ("K3",)
+RULE_STEP_ARMS = c.BASELINE_ARMS   # the arms that keep a baseline, whose admission asks it (``wecommon.unscored_why``)
 #: What the same session is told after its first patch is saved; its digest is pinned by a test and recorded in each run.
 RULE_STEP = """Before you finish: list each behaviour your change keeps on the code path it touches. For each one, find the
 reference the issue gives for it: the words of the issue or its discussion, the old version's rule, or a parent or sibling
@@ -2483,9 +2483,9 @@ only the issue's own example, and run it. Where the reference and your code disa
 example and the reference it names disagree, say so in your reply and follow the reference. Then reply with the list and
 what you changed."""
 RULE_DIGEST = hashlib.sha256(RULE_STEP.encode("utf-8")).hexdigest()[:16]
-FIRST_PATCH = "round-1.patch"  # the first session's tree: the within-run baseline, scored by ``check`` as "round-1"
+FIRST_PATCH = c.FIRST_PATCH    # the first session's tree: the within-run baseline, scored by ``check`` as "round-1"
 RULE_PATCH = "rule.patch"      # the tree after the step, in ``rounds`` beside each round's patch, scored by ``check`` as "rule"
-BASELINE = "baseline"          # the run's own folder for FIRST_PATCH, outside ``rounds``: nothing after its capture writes there
+BASELINE = c.BASELINE          # the run's own folder for FIRST_PATCH, outside ``rounds``: nothing after its capture writes there
 #: K3's steps from its first session to its first review, in order; each goes on only from the one before's success. The rule
 #: step is its session and then its patch, each read by ``step_ending``.
 K3_STEPS = ("first session", "first patch", "rule step")
@@ -2659,48 +2659,16 @@ def step_ending(stop: str | None, result: Mapping[str, Any] | None, code: int | 
     return "error" if got == "finished" and code != 0 else got
 
 
-def linked(st: os.stat_result) -> bool:
-    """Whether what ``os.lstat`` described is a link: a symbolic link, a junction or any other reparse point."""
-    return stat.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
-
-
-def plain(path: Path, *, folder: bool = False) -> bool:
-    """Whether ``path`` is a regular file (a folder, with ``folder``) and no link (``linked``)."""
-    try:
-        st = os.lstat(path)
-    except OSError:
-        return False
-    return (stat.S_ISDIR(st.st_mode) if folder else stat.S_ISREG(st.st_mode)) and not linked(st)
-
-
-def baseline_of(folder: Path) -> Path:
-    """Where a K3 run's first patch is kept: in a folder of the run's own (``BASELINE``), outside ``rounds``."""
-    return folder / BASELINE / FIRST_PATCH
+#: K3's baseline, its links and its admission are read where every fact about a run is (``wecommon.run_facts``): these are those.
+linked, plain, baseline_of = c.linked, c.plain, c.baseline_of
+baseline_bytes, has_baseline = c.baseline_bytes, c.has_baseline
 
 
 def kept_digest(archive: c.Archive, rel: str) -> str | None:
-    """The sha256 the archive's index recorded when K3 run ``rel``'s first patch was kept (``kept``), or None. It is written
-    once, at the capture, so it holds after any stop or restart. Only K3's readers ask it."""
-    return next((str(r["sha256"]) for r in archive.rows() if r.get("event") == "kept" and r.get("run") == rel
-                 and r.get("patch") == FIRST_PATCH and r.get("sha256")), None)
-
-
-def baseline_bytes(archive: c.Archive, rel: str) -> bytes | None:
-    """K3 run ``rel``'s Claude Code baseline, read once: the kept file's bytes, when they have the digest the index recorded at
-    their capture (``kept_digest``), else None. A reader uses these bytes and never reads the path again, so what it uses is what
-    was checked. A digest that does not match means the baseline changed, and the run is never scored on round-1."""
-    want, path = kept_digest(archive, rel), baseline_of(archive.root / rel)
-    if not want or not plain(path):
-        return None
-    data = path.read_bytes()
-    return data if hashlib.sha256(data).hexdigest() == want else None
-
-
-def has_baseline(archive: c.Archive, rel: str) -> bool:
-    """Whether K3 run ``rel`` has its Claude Code baseline (``baseline_bytes``): the one answer, from durable state only. Every
-    K3 path asks it, never a step's state in memory: the run's end (``ended_as``), its row (``loop.one``) and ``check``, after a
-    stop, an exception or a restart alike. No other arm's run is asked."""
-    return baseline_bytes(archive, rel) is not None
+    """The sha256 the archive's index recorded when K3 run ``rel``'s first patch was kept (``kept``), as ``wecommon.run_facts``
+    reads it, or None. It is written once, at the capture, so it holds after any stop or restart."""
+    facts = c.run_facts(archive, rel)
+    return facts.kept.get(FIRST_PATCH) if facts is not None else None
 
 
 def kept(ctx: Context, task: Task, agent: str, base: str, run: Any, name: str, deadline: Any = math.inf) -> str:
@@ -2792,8 +2760,9 @@ def ended_as(ctx: Context, run: Any, status: str, *, dry: bool, dog: Watchdog | 
     ``wecommon.ending`` reads it, so what the run wrote early and what its end decides are one answer."""
     if dry:
         return status
-    if (ctx.archive.root / run.rel / c.ENDING).exists():
-        recorded = (c.ending(ctx.archive.root, {"run": run.rel}) or {}).get("status")
+    facts = c.run_facts(ctx.archive, run.rel)
+    if facts is not None and (facts.folder / c.ENDING).exists():
+        recorded = (facts.ending or {}).get("status")
         if recorded:
             return str(recorded)
     if status in c.UNSCORED or ctx.variant != ROUND3 or not rule_led(ctx.arm):
@@ -2863,40 +2832,14 @@ def merge_rounds(ctx: Context, agent: str, run: Any) -> None:
     copy_in(ctx, agent, f"{WE}/rounds", run, "rounds", skip=frozenset({FIRST_PATCH.casefold(), RULE_PATCH.casefold()}))
 
 
-def ending_of(archive: c.Archive, rel: str) -> dict[str, Any] | None:
-    """Run ``rel``'s ending as the archive holds it, never as a caller's row says it: ``wecommon.ending`` of the run's own record
-    in its folder (``run.json``; the index's end of the run when the record cannot be read), so a host run's ending file
-    decides when it has one. No status (or None) when the archive holds no ending for it."""
-    try:
-        record = json.loads((archive.root / rel / "run.json").read_text(encoding="utf-8")) if rel else None
-    except (OSError, ValueError):
-        record = None
-    if not isinstance(record, dict):
-        record = next((dict(r) for r in reversed(archive.rows()) if r.get("event") == "ended" and r.get("run") == rel), {})
-    return c.ending(archive.root, {**record, "run": rel})
+#: The one admission rule, beside the one source of a run's facts (``wecommon.run_facts``), which ``wecommon.verdict`` and
+#: ``wecommon.holds`` ask too: ``loop.one``, ``loop.rescore``, ``check``, ``compare.saved`` and the export ask it by the run's name.
+unscored_why, scored_run = c.unscored_why, c.scored_run
 
 
-def unscored_why(archive: c.Archive, rel: str) -> str:
-    """The one admission rule: "" when run ``rel`` may be saved as a row and offered to ``check``, else why not. ``loop.one`` (a
-    new row and a saved one), ``loop.rescore``, ``check`` and ``compare.saved`` ask it, and nothing else decides it. It takes the
-    run's name and nothing a caller says of it: every fact comes from the archive. A K3 run, by the arm its started row names
-    (``started_row``), only while it has its Claude Code baseline (``has_baseline``), whatever its ending says. Then every arm's
-    alike: its ending as the archive holds it (``ending_of``) must have a verdict to give (``wecommon.scoreable``), so a stopped
-    or failed run is scored on what it left, as every arm's is, and a K3 run whose baseline was kept is a row on the same
-    endings as K2's. ``wecommon.scoreable`` is this rule's second half; ``wecommon.verdict`` and ``wecommon.holds`` ask that half
-    again of a row this rule admitted."""
-    rel = str(rel or "")
-    if rule_led(str(started_row(archive, rel).get("arm") or "")) and not has_baseline(archive, rel):
-        return "its baseline changed since it was kept" if kept_digest(archive, rel) else "it has no Claude Code baseline"
-    end = ending_of(archive, rel)
-    if not c.scoreable(end):
-        return f"it ended {(end or {}).get('status') or 'with no ending on record'}: it has no verdict to give (wecommon.ending)"
-    return ""
-
-
-def scored_run(archive: c.Archive, rel: str) -> bool:
-    """Whether the one admission rule (``unscored_why``) admits run ``rel``."""
-    return not unscored_why(archive, rel)
+def ending_of(archive: c.Archive, rel: str) -> Mapping[str, Any] | None:
+    """Run ``rel``'s ending as the archive holds it (``wecommon.run_facts``); None for a name no start in the index has."""
+    return c.ending(archive, rel)
 
 
 # --- arms V3 and V4: arm K's loop with the reviewer's test written before any patch (PLAN.md, 2026-11-04) ---------------
@@ -3507,25 +3450,19 @@ def patches_to_score(folder: Path, arm: str, baseline: Path | None = None) -> li
     return [(path.stem, path) for path in sorted(rounds.glob("**/round-*.patch"), key=lambda p: int(p.stem.split("-")[1]))]
 
 
-def started_row(archive: c.Archive, rel: str) -> dict[str, Any]:
-    """What the archive's index said when run ``rel`` started, its arm among it: durable before any file of the run's own, so a
-    record a stop cut short is never read for it."""
-    return next((dict(r) for r in archive.rows() if r.get("event") == "started" and r.get("run") == rel), {})
-
-
 def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool = False) -> dict[str, Any]:
     v = amend_control(ctx.archive, task.id) if amended else latest(ctx.archive, "validate", task.id)
     if v is None:
         raise SystemExit("this diff has no passing control: run amend" if amended else "validate the task first")
-    src = ctx.archive.root / run_rel if run_rel else (latest(ctx.archive, "run", task.id) or {}).get("path")
-    if src is None:
+    named = ctx.archive.root / run_rel if run_rel else (latest(ctx.archive, "run", task.id) or {}).get("path")
+    if named is None:
         raise SystemExit("no run to check")
-    src = Path(src)
-    rel = str(src.relative_to(ctx.archive.root)).replace("\\", "/")
-    arm = str(started_row(ctx.archive, rel).get("arm") or "")    # the run's arm is never read from its own record
+    rel = str(Path(named).relative_to(ctx.archive.root)).replace("\\", "/")
+    facts = c.run_facts(ctx.archive, rel)    # every fact of the run, by its exact name; its folder is opened by that name only
     why = unscored_why(ctx.archive, rel)     # the one admission rule, as loop.one asks it, from the archive alone
-    if why:
-        raise SystemExit(f"{run_rel or src.name}: {why}")
+    if why or facts is None:
+        raise SystemExit(f"{run_rel or Path(named).name}: {why}")
+    src, arm, rel = facts.folder, facts.arm, facts.name
     first = None
     if rule_led(arm):                # K3: its baseline read once and its bytes checked; only those bytes are scored
         first = baseline_bytes(ctx.archive, rel)

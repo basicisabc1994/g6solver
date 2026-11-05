@@ -908,7 +908,7 @@ def test_repair_1_a_saved_row_naming_another_arm_is_refused_by_every_entry_point
     run.finish({"arm": "K3", "executor": "host", "agent_started": True}, "finished")
     we.baseline_of(run.path).write_bytes(b"changed after capture")
     row = {"arm": "K2", "task": task.id, "repeat": 1, "run": run.rel, "status": "finished", "passes": True, "failing": 0,
-           we.c.MADE_UNDER: we.c.ending_sha256(tmp_path, {"run": run.rel})}
+           we.c.MADE_UNDER: we.c.ending_sha256(tmp_path, run.rel)}
     (tmp_path / "loop").mkdir()
     (tmp_path / "loop" / "K2-fake-1-1.json").write_text(json.dumps(row), encoding="utf-8")
     diff = tmp_path / "amendment.patch"
@@ -924,6 +924,112 @@ def test_repair_1_a_saved_row_naming_another_arm_is_refused_by_every_entry_point
     with pytest.raises(SystemExit, match="baseline changed"):
         loop.one(tmp_path, "g6", "K2", task.id, 1)
     assert we.unscored_why(archive, run.rel) == "its baseline changed since it was kept" and not we.scored_run(archive, run.rel)
+
+
+# --- review 2, repair 1: one function is the only source of a run's facts (wecommon.run_facts) ---------------------------------
+def test_review_2_finding_3_a_saved_rows_status_never_overrides_the_runs_archived_ending(monkeypatch, tmp_path):
+    archive, task = we.c.Archive(tmp_path), SimpleNamespace(id="fake-1")
+    archive.start("validate", task.id).finish({"fail_to_pass": ["test_bug"], "pass_to_pass": []}, "finished")
+    run = archive.start("run", task.id, arm="K2")
+    run.write("final.patch", b"patch")
+    run.finish({"arm": "K2", "agent_started": True}, "finished")
+    (tmp_path / "loop").mkdir()
+    (tmp_path / "loop" / "K2-fake-1-1.json").write_text(json.dumps({"arm": "K2", "task": task.id, "repeat": 1, "run": run.rel,
+                                                                    "status": "refused", "passes": True, "failing": 0}), "utf-8")
+    monkeypatch.setattr(we, "amendment", lambda *a: None)
+    monkeypatch.setattr(we, "_oracle_run", lambda *a, **kw: {"results": {"test_bug": "passed"}})
+    assert we.ending_of(archive, run.rel)["status"] == "finished" and we.scored_run(archive, run.rel)
+    assert we.check(SimpleNamespace(archive=archive), task, run.rel)["checks"][-1]["passes"] is True
+    assert compare.saved(tmp_path)[("K2", task.id, 1)]["maintainers"] is True
+
+
+def test_review_2_finding_4_a_name_that_is_not_the_runs_own_reaches_no_run(monkeypatch, tmp_path):
+    archive, task = we.c.Archive(tmp_path / "archive"), SimpleNamespace(id="fake-1")
+    archive.start("validate", task.id).finish({"fail_to_pass": ["test_bug"], "pass_to_pass": []}, "finished")
+    run = archive.start("run", task.id, arm="K3", executor="host")
+    _keep_baseline(archive, run, b"first session patch")
+    run.write("final.patch", b"final patch")
+    run.finish({"arm": "K3", "executor": "host", "agent_started": True}, "finished")
+    we.baseline_of(run.path).write_bytes(b"changed baseline")
+    alias = run.rel.replace("/fake-1/", "/fake-1/../fake-1/", 1)
+    assert (archive.root / alias).resolve() == run.path.resolve() and not we.scored_run(archive, run.rel)
+    monkeypatch.setattr(we, "_oracle_run", lambda *a, **kw: pytest.fail("neither name is scored"))
+    with pytest.raises(SystemExit, match="baseline changed"):
+        we.check(SimpleNamespace(archive=archive), task, run.rel)
+    with pytest.raises(SystemExit, match="no run the archive started"):
+        we.check(SimpleNamespace(archive=archive), task, alias)
+    assert we.c.run_facts(archive, alias) is None and we.c.ending(archive.root, alias) is None
+
+
+def _facts_case(monkeypatch, root, case):
+    """One archive for one case of the table below: the run, its saved row, and the name every entry point is asked by."""
+    import export_reviewer_cases as ex
+    task = "black-5634"
+    archive = we.c.Archive(root)
+    archive.start("validate", task).finish({"fail_to_pass": ["t"], "pass_to_pass": []}, "finished")
+    arm = "K2" if case in ("forged status", "unknown name") else "K3"
+    run = archive.start("run", task, arm=arm, executor="host")
+    if arm == "K3":
+        _keep_baseline(archive, run, b"the first session's tree")
+    run.write("final.patch", b"final " + case.encode())
+    run.finish({"arm": arm, "executor": "host", "agent_started": True}, "finished")
+    if case in ("forged arm", "alias name", "changed K3 baseline"):
+        we.baseline_of(run.path).write_bytes(b"changed after capture")
+    name = {"alias name": run.rel.replace(f"/{task}/", f"/{task}/../{task}/", 1),
+            "unknown name": f"run/{task}/not-started"}.get(case, run.rel)
+    if case == "unknown name":                      # a folder that holds a run's files, but no start in the index names it
+        (root / name).mkdir(parents=True)
+        for file in ("run.json", "final.patch", we.c.ENDING):
+            (root / name / file).write_bytes((run.path / file).read_bytes())
+    row = {"arm": "K2" if case == "forged arm" else arm, "task": task, "repeat": 1, "run": name, "passes": True, "failing": 0,
+           "status": "refused" if case == "forged status" else "finished",
+           we.c.MADE_UNDER: we.c.ending_sha256(root, run.rel)}
+    (root / "loop" / "amended").mkdir(parents=True)
+    (root / "loop" / f"{row['arm']}-{task}-1.json").write_text(json.dumps(row), "utf-8")
+    archive.start("check", task, checked_run=name).finish({"checks": [{"patch": "final", "passes": True}]}, "finished")
+    diff = root / "amendment.patch"
+    diff.write_text("a diff", encoding="utf-8")
+    monkeypatch.setattr(we, "amendment", lambda name_: diff)
+    monkeypatch.setattr(we, "_oracle_run", lambda *a, **kw: {"results": {"t": "passed"}})
+    monkeypatch.setattr(loop, "tool", lambda command, *a, **kw: json.dumps({"run": name, "status": "finished"}) if command == "run"
+                        else json.dumps({"checks": [{"patch": "final", "passes": True, "failing": 0, "fail_to_pass_failing": []}]}))
+    return archive, task, name, row, ex
+
+
+@pytest.mark.parametrize(("case", "admitted"), [("admitted K3", True), ("forged status", True), ("forged arm", False),
+                                                ("alias name", False), ("unknown name", False), ("changed K3 baseline", False)])
+def test_review_2_every_entry_point_reads_a_runs_facts_through_one_function_and_gives_one_answer(monkeypatch, tmp_path, case,
+                                                                                                  admitted):
+    """A forged arm, a forged status, an alias name, an unknown name and a changed K3 baseline, each asked of every entry point
+    (``wecommon.ending``, ``ending_sha256``, ``verdict``, ``holds``, ``run.unscored_why``, ``scored_run``, ``ending_of``,
+    ``check``, ``compare.saved``, ``loop.one``, ``loop.rescore`` and the export): one answer, admitted or not, from the archive."""
+    archive, task, name, row, ex = _facts_case(monkeypatch, tmp_path, case)
+    root, known = archive.root, case not in ("alias name", "unknown name")
+    facts = {      # how the run ended, as the archive holds it: known by the run's own name only, whatever the row says
+        "wecommon.run_facts": we.c.run_facts(archive, name) is not None,
+        "wecommon.ending": we.c.scoreable(we.c.ending(root, name)),
+        "wecommon.ending_sha256": we.c.ending_sha256(root, name) is not None,
+        "run.ending_of": we.c.scoreable(we.ending_of(archive, name)),
+    }
+    assert facts == dict.fromkeys(facts, known)
+    answers = {    # whether the run is admitted: one answer from every entry point
+        "run.unscored_why": we.unscored_why(archive, name) == "",
+        "run.scored_run": we.scored_run(archive, name),
+        "wecommon.verdict": we.c.verdict(root, name, row) is not None,
+        "wecommon.holds": we.c.holds(root, name, row),
+        "compare.saved": compare.saved(root)[(row["arm"], task, 1)]["maintainers"] is not None,
+        "loop.rescore": bool(loop.rescore(root, "g6")),
+        "export": any(not isinstance(patch, Path) or patch.name == "final.patch" for _, patch, _ in ex.labelled(root, task)),
+    }
+    try:
+        answers["run.check"] = bool(we.check(SimpleNamespace(archive=archive), SimpleNamespace(id=task), name)["checks"])
+    except SystemExit:
+        answers["run.check"] = False
+    try:
+        answers["loop.one"] = loop.one(root, "g6", row["arm"], task, 1)["passes"] is True
+    except SystemExit:
+        answers["loop.one"] = False
+    assert answers == dict.fromkeys(answers, admitted)
 
 
 # --- the reviewer cases' export reads K3's round-1 where K3 keeps it ----------------------------------------------------------
@@ -951,9 +1057,8 @@ def test_the_reviewer_export_finds_k3s_round_1_in_its_baseline_only_while_it_has
     assert got == {(b"the first session's tree", False), (k3 / "rounds" / "rule.patch", True), (k3 / "final.patch", True),
                    (k2 / "rounds" / "round-1.patch", False), (k2 / "final.patch", True)}
     assert len(ex.distinct(ex.labelled(tmp_path, task))) == 5                   # the baseline is a case, with its label
-    baseline.write_bytes(b"something else")                                    # its bytes no longer have the kept digest
-    assert {path for _, path, _ in ex.labelled(tmp_path, task)} == {k3 / "rounds" / "rule.patch", k3 / "final.patch",
-                                                                     k2 / "rounds" / "round-1.patch", k2 / "final.patch"}
+    baseline.write_bytes(b"something else")       # its bytes no longer have the kept digest: the admission rule refuses the run,
+    assert {path for _, path, _ in ex.labelled(tmp_path, task)} == {k2 / "rounds" / "round-1.patch", k2 / "final.patch"}   # whole
 
 
 def test_repair_4_the_export_labels_the_baseline_bytes_it_checked_and_never_reads_the_path_again(monkeypatch, tmp_path):

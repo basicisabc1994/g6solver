@@ -45,15 +45,17 @@ def saved(root: Path) -> dict[tuple[str, str, int], dict[str, bool | None]]:
     archive = c.Archive(root)
     for path in (root / "loop").glob("*-*.json"):
         row, again = json.loads(path.read_text("utf-8")), root / "loop" / "amended" / path.name
-        admitted = we.scored_run(archive, str(row.get("run") or ""))   # the one admission rule, from the archive alone
-        passes = c.verdict(root, row, row) if admitted else None      # none for a run that may not be scored, on either score
+        name = str(row.get("run") or "")                 # the row names its run and holds the verdict judged; no fact of the run
+        passes = c.verdict(archive, name, row)          # none for a run the one admission rule does not admit, on either score
         amended = passes
-        diff = we.amendment(row["task"]) if admitted else None
+        diff = we.amendment(row["task"]) if we.scored_run(archive, name) else None
         if diff:
             kept = json.loads(again.read_text("utf-8")) if again.is_file() else None
-            amended = c.verdict(root, row, kept, amendment=c.sha256_file(diff))
-        rows[(row["arm"], row["task"], row["repeat"])] = {"maintainers": passes, "amended": amended, "said": said_of(root, row)}
-        review, end = final_review.said_of(root, row), end_of(root, row)
+            amended = c.verdict(archive, name, kept, amendment=c.sha256_file(diff))
+        facts = c.run_facts(archive, name)               # the report's own readers open the run's folder by its exact name only
+        shown = {**row, "run": facts.name if facts is not None else ""}
+        rows[(row["arm"], row["task"], row["repeat"])] = {"maintainers": passes, "amended": amended, "said": said_of(root, shown)}
+        review, end = final_review.said_of(root, shown), end_of(root, shown)
         if review:
             rows[(row["arm"], row["task"], row["repeat"])]["review"] = review
         if end:

@@ -13,11 +13,13 @@ import hashlib
 import json
 import os
 import re
+import stat
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 MODEL = "claude-sonnet-5-5"
@@ -272,7 +274,7 @@ class RunFolder:
         was not decided before, so a record and an index left unwritten by a stop still have it."""
         if record.get("executor") == "host":
             self.end(status, why=str(record.get("why") or ""), agent_started=bool(record.get("agent_started")))
-            status = (ending(self.archive.root, {**record, "run": self.rel}) or {}).get("status") or status
+            status = (ending(self.archive, self.rel) or {}).get("status") or status
         body = {**record, "status": status, "ended_at": now()}
         self.write_json("run.json", body)
         self.archive.append({"event": "ended", "run": self.rel, "status": status, "at": body["ended_at"],
@@ -419,86 +421,190 @@ AFTER = "failed_after_ending.json"
 MADE_UNDER = "ending_sha256"
 
 
-def ending(root: Path, row: Mapping[str, Any]) -> dict[str, Any] | None:
-    """How the run ``row["run"]`` ended, read from its folder under the archive ``root``: the one source every entry point asks
-    whether a run may be scored and whether it was made (``scoreable``, ``on_patch``; ``run.check``, ``run.r3_done``,
-    ``loop.one``, ``loop.rescore``, ``compare.saved``). Its ending file when it has one (``ENDING``), its status "error" when a
-    failure was recorded after an ending that would be scored (``AFTER``), while one with no verdict to give stays as it is
-    ("limited", "refused", and arm K3's "no_first_patch"), so a failure after it never makes it more scoreable. A host
-    run with no ending file has no ending (None, never scored): an empty or missing record says nothing. Any other run's ending is
-    ``row`` itself, its status as its own record gives it, as before; so is that of a row whose run has no folder."""
-    rel = row.get("run")
-    folder = Path(root) / str(rel) if rel else None
-    if folder is None or not folder.is_dir():
-        return dict(row)
-    try:
-        first = json.loads((folder / ENDING).read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return None if _host(Path(root), str(rel), folder, row) else dict(row)
-    except (OSError, ValueError):
+#: Arms whose run keeps a Claude Code baseline, its first patch, and is admitted only while it has it (arm K3; ``run``'s
+#: ``RULE_STEP_ARMS``). Such a run keeps it in a folder of its own (``BASELINE``), outside ``rounds``, as ``FIRST_PATCH``.
+BASELINE_ARMS = ("K3",)
+BASELINE = "baseline"
+FIRST_PATCH = "round-1.patch"
+
+
+@dataclass(frozen=True)
+class RunFacts:
+    """What the archive knows of one run, as ``run_facts`` read it in one place."""
+    name: str                            # exactly as its start in the index names it; its folder is opened by this name only
+    arm: str
+    executor: str                        # "host" or "container", as its start says
+    ending: Mapping[str, Any] | None     # how it ended (``run_facts``); None: no ending on record
+    ending_sha256: str | None            # the digest of its ending's files (``ENDING``, ``AFTER``); None when it has neither
+    kept: Mapping[str, str]              # each patch a capture kept (``FIRST_PATCH``: K3's baseline), by the digest recorded then
+    folder: Path
+
+
+def run_facts(archive: Archive | Path, name: str, rows: Iterable[Mapping[str, Any]] | None = None) -> RunFacts | None:
+    """The one source of every fact about a run, which every entry point asks by the run's name: wecommon's ``ending``,
+    ``ending_sha256``, ``verdict``, ``holds`` and the admission rule (``unscored_why``); and through them ``run.check``,
+    ``run.r3_done``, ``compare.saved``, ``loop.one``, ``loop.rescore`` and the reviewer cases' export. A run is found only by a
+    start in the index (``rows``, read now when not given) whose name is exactly ``name``: no other name, and no row a caller
+    holds, says anything of it, and a name no start has (an alias such as ``a/../a``, or none) gives None, which is never
+    admitted. Its ending: its ending file (``ENDING``), "error" when a failure was recorded after an ending that would be scored
+    (``AFTER``), while one with no verdict to give stays as it is ("limited", "refused", K3's "no_first_patch"); a host run with
+    no ending file has none; any other run's is its own record in its folder (``run.json``), else the index's end of it. The
+    ending's files are read once, and their digest is taken from the same bytes."""
+    archive = archive if isinstance(archive, Archive) else Archive(Path(archive))
+    rows = list(archive.rows() if rows is None else rows)
+    name = str(name or "")
+    started = next((r for r in rows if r.get("event") == "started" and r.get("run") == name), None) if name else None
+    if started is None:
         return None
-    status = str(first.get("status") or "") if isinstance(first, dict) else ""
-    if not status:
-        return None
-    return {**first, "status": status if status not in SCORED or not (folder / AFTER).exists() else "error"}
-
-
-def _host(root: Path, rel: str, folder: Path, row: Mapping[str, Any]) -> bool:
-    """Whether a run is a host run: as ``row`` says, else as its saved record says, else as its start in the index says."""
-    if "executor" in row:
-        return row.get("executor") == "host"
-    try:
-        return json.loads((folder / "run.json").read_text(encoding="utf-8")).get("executor") == "host"
-    except (OSError, ValueError, AttributeError):
-        return any(r.get("event") == "started" and r.get("run") == rel and r.get("executor") == "host" for r in Archive(root).rows())
-
-
-def ending_sha256(root: Path, row: Mapping[str, Any]) -> str | None:
-    """The digest of the run's durable ending, the files ``ending`` reads in its folder (``ENDING`` and ``AFTER``), so a failure
-    recorded after the ending changes it. None for a run whose folder holds neither: its ending is its own record, as it always
-    was for a run not made on the host."""
-    rel = row.get("run")
-    folder = Path(root) / str(rel) if rel else None
-    if folder is None or not folder.is_dir():
-        return None
-    digest, found = hashlib.sha256(), False
-    for name in (ENDING, AFTER):
+    folder, executor = archive.root / name, "host" if started.get("executor") == "host" else "container"
+    files: dict[str, bytes] = {}
+    for part in (ENDING, AFTER):
         try:
-            data = (folder / name).read_bytes()
+            files[part] = (folder / part).read_bytes()
         except FileNotFoundError:
             continue
         except OSError as exc:          # there, but not readable: an ending of its own, never taken for none
-            data = f"unreadable: {type(exc).__name__}".encode()
-        found = True
-        digest.update(f"{name}\0{len(data)}\0".encode() + data)
-    return digest.hexdigest() if found else None
+            files[part] = f"unreadable: {type(exc).__name__}".encode()
+    digest = hashlib.sha256()
+    for part, data in files.items():
+        digest.update(f"{part}\0{len(data)}\0".encode() + data)
+    kept: dict[str, str] = {}
+    for r in rows:
+        if r.get("event") == "kept" and r.get("run") == name and r.get("patch") and r.get("sha256"):
+            kept.setdefault(str(r["patch"]), str(r["sha256"]))
+    return RunFacts(name=name, arm=str(started.get("arm") or ""), executor=executor,
+                    ending=_ending_from(files, executor, folder, rows, name),
+                    ending_sha256=digest.hexdigest() if files else None, kept=MappingProxyType(kept), folder=folder)
 
 
-def verdict(root: Path, row: Mapping[str, Any], kept: Mapping[str, Any] | None, *, amendment: str | None = None) -> bool | None:
-    """A run's verdict on one score, its ending read first (``ending``): the one rule ``loop.one``, ``loop.rescore`` and
-    ``compare.saved`` read a saved verdict by. ``row`` is the run's saved row, and ``kept`` the saved verdict: the row itself for the
-    maintainers' tests, or its amended one for the diff whose digest is ``amendment``. None for a run that may not be scored now
-    (``scoreable``), and for a verdict that is missing (none, or one saved for another run or diff). A verdict saved under an
-    ending the run no longer has (``MADE_UNDER``, ``ending_sha256``) is void, never given: a made run that did not end on its patch
+def _ending_from(files: Mapping[str, bytes], executor: str, folder: Path, rows: list[Mapping[str, Any]],
+                 name: str) -> Mapping[str, Any] | None:
+    """``run_facts``'s ending, from the bytes of the ending's files it read, else the run's own record or its end in the index."""
+    if ENDING in files:
+        try:
+            first = json.loads(files[ENDING].decode("utf-8"))
+        except ValueError:
+            return None
+        status = str(first.get("status") or "") if isinstance(first, dict) else ""
+        if not status:
+            return None
+        return MappingProxyType({**first, "status": status if status not in SCORED or AFTER not in files else "error"})
+    if executor == "host":
+        return None
+    try:
+        record = json.loads((folder / "run.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        record = None
+    if not isinstance(record, dict):
+        record = next((dict(r) for r in reversed(rows) if r.get("event") == "ended" and r.get("run") == name), None)
+    return MappingProxyType(dict(record)) if record and record.get("status") else None
+
+
+def ending(root: Path | Archive, name: str) -> Mapping[str, Any] | None:
+    """How run ``name`` ended, as ``run_facts`` reads it; None for a name no start in the index has, or a run with no ending."""
+    facts = run_facts(root, name)
+    return facts.ending if facts is not None else None
+
+
+def ending_sha256(root: Path | Archive, name: str) -> str | None:
+    """The digest of run ``name``'s ending's files, as ``run_facts`` reads them, so a failure recorded after the ending changes it.
+    None for a run whose folder holds neither (its ending is its own record), and for a name no start has."""
+    facts = run_facts(root, name)
+    return facts.ending_sha256 if facts is not None else None
+
+
+def linked(st: os.stat_result) -> bool:
+    """Whether what ``os.lstat`` described is a link: a symbolic link, a junction or any other reparse point."""
+    return stat.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def plain(path: Path, *, folder: bool = False) -> bool:
+    """Whether ``path`` is a regular file (a folder, with ``folder``) and no link (``linked``)."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return (stat.S_ISDIR(st.st_mode) if folder else stat.S_ISREG(st.st_mode)) and not linked(st)
+
+
+def baseline_of(folder: Path) -> Path:
+    """Where a K3 run's first patch is kept: in a folder of the run's own (``BASELINE``), outside ``rounds``."""
+    return folder / BASELINE / FIRST_PATCH
+
+
+def _baseline(facts: RunFacts | None) -> bytes | None:
+    want = facts.kept.get(FIRST_PATCH) if facts is not None else None
+    path = baseline_of(facts.folder) if facts is not None else None
+    if not want or path is None or not plain(path):
+        return None
+    data = path.read_bytes()
+    return data if hashlib.sha256(data).hexdigest() == want else None
+
+
+def baseline_bytes(archive: Archive, name: str) -> bytes | None:
+    """K3 run ``name``'s Claude Code baseline, read once: the kept file's bytes (in the folder ``run_facts`` names), when they have
+    the digest the index recorded at their capture, else None. A reader uses these bytes and never reads the path again, so what
+    it uses is what was checked. A digest that does not match means the baseline changed, and the run is never scored."""
+    return _baseline(run_facts(archive, name))
+
+
+def has_baseline(archive: Archive, name: str) -> bool:
+    """Whether K3 run ``name`` has its Claude Code baseline (``baseline_bytes``): the one answer, from durable state only."""
+    return baseline_bytes(archive, name) is not None
+
+
+def _why_not(facts: RunFacts | None, name: str) -> str:
+    if facts is None:
+        return f"{name!r} is no run the archive started: no start in its index has exactly that name"
+    if facts.arm in BASELINE_ARMS and _baseline(facts) is None:
+        return "its baseline changed since it was kept" if facts.kept.get(FIRST_PATCH) else "it has no Claude Code baseline"
+    if not scoreable(facts.ending):
+        return (f"it ended {(facts.ending or {}).get('status') or 'with no ending on record'}: it has no verdict to give "
+                "(wecommon.run_facts)")
+    return ""
+
+
+def unscored_why(archive: Archive, name: str) -> str:
+    """The one admission rule: "" when run ``name`` may be saved as a row and offered to ``run.check``, else why not. Every fact it
+    reads comes from ``run_facts``: a name no start in the index has is never admitted; a run of an arm that keeps a baseline
+    (``BASELINE_ARMS``, by the arm its start names) only while it has it (``has_baseline``), whatever its ending says; then every
+    arm's alike, its ending must have a verdict to give (``scoreable``), so a stopped or failed run is scored on what it left, and
+    a K3 run whose baseline was kept is a row on the same endings as K2's. ``verdict`` and ``holds`` ask it first."""
+    return _why_not(run_facts(archive, name), str(name or ""))
+
+
+def scored_run(archive: Archive, name: str) -> bool:
+    """Whether the one admission rule (``unscored_why``) admits run ``name``."""
+    return not unscored_why(archive, name)
+
+
+def verdict(root: Path | Archive, name: str, kept: Mapping[str, Any] | None, *, amendment: str | None = None) -> bool | None:
+    """Run ``name``'s verdict on one score: the one rule ``loop.one``, ``loop.rescore`` and ``compare.saved`` read a saved verdict
+    by. Every fact about the run comes from ``run_facts``; ``kept`` is only the verdict being judged: the run's saved row for the
+    maintainers' tests, or its amended one for the diff whose digest is ``amendment``. None for a run the admission rule does not
+    admit now (``unscored_why``), and for a verdict that is missing (none, or one saved for another run or diff). A verdict saved
+    under an ending the run no longer has (``MADE_UNDER``) is void, never given: a made run that did not end on its patch
     (``on_patch``) failed, which needs no check; any other is None until it is checked again. Else the verdict as saved, and for
     the maintainers' tests none for a run on its patch with no count of failing tests."""
-    end = ending(root, row)
-    if (not scoreable(end) or kept is None or kept.get("run") != row.get("run")
+    facts = run_facts(root, name)
+    if (_why_not(facts, str(name or "")) or kept is None or kept.get("run") != facts.name
             or (amendment is not None and kept.get("amendment_sha256") != amendment)):
         return None
-    if kept.get(MADE_UNDER) != ending_sha256(root, row):
-        return None if on_patch(end) else False
+    if kept.get(MADE_UNDER) != facts.ending_sha256:
+        return None if on_patch(facts.ending) else False
     if amendment is not None:
         return kept.get("amended_passes")
-    return None if on_patch(end) and kept.get("failing") is None else bool(kept.get("passes"))
+    return None if on_patch(facts.ending) and kept.get("failing") is None else bool(kept.get("passes"))
 
 
-def holds(root: Path, row: Mapping[str, Any], kept: Mapping[str, Any] | None, *, amendment: str | None = None) -> bool:
-    """Whether a saved verdict (``verdict``'s ``kept``) is the run's own and stands: the run may be scored now, and it was saved for
-    this run (and diff) under the ending the run has now. A saved verdict that does not hold is made again, or not given."""
-    return (kept is not None and scoreable(ending(root, row)) and kept.get("run") == row.get("run")
+def holds(root: Path | Archive, name: str, kept: Mapping[str, Any] | None, *, amendment: str | None = None) -> bool:
+    """Whether a saved verdict (``verdict``'s ``kept``) is run ``name``'s own and stands: the admission rule admits the run now,
+    and the verdict was saved for this run (and diff) under the ending the run has now. One that does not hold is made again, or
+    not given."""
+    facts = run_facts(root, name)
+    return (kept is not None and not _why_not(facts, str(name or "")) and kept.get("run") == facts.name
             and (amendment is None or kept.get("amendment_sha256") == amendment)
-            and kept.get(MADE_UNDER) == ending_sha256(root, row))
+            and kept.get(MADE_UNDER) == facts.ending_sha256)
 
 
 def scoreable(record: Mapping[str, Any] | None) -> bool:

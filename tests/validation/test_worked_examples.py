@@ -1045,6 +1045,7 @@ def _made(root, rel, status):
     (``run.unscored_why``); a row or a runner's output only names it."""
     (root / rel).mkdir(parents=True, exist_ok=True)
     (root / rel / "run.json").write_text(json.dumps({"status": status, "agent_started": True}), "utf-8")
+    c.Archive(root).append({"event": "started", "run": rel, "kind": "run"})      # and its start in the index, by its name
 
 
 def test_the_loop_reads_the_runners_output_and_stops_on_a_refusal(tmp_path, monkeypatch):

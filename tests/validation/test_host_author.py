@@ -721,7 +721,7 @@ def test_every_scoring_entry_point_asks_one_rule_and_gives_no_verdict_to_a_limit
     archive = we.c.Archive(tmp_path / "a")
     archive.start("validate", task.id).finish({"fail_to_pass": ["test.py::test_bug"], "pass_to_pass": [], "ok": True}, "finished")
     run = archive.start("run", task.id, executor="host")
-    run.finish({"agent_started": True, "cost_usd": 0.0}, status)
+    run.finish({"executor": "host", "agent_started": True, "cost_usd": 0.0}, status)    # a host run's record, as its start says
     monkeypatch.setattr(we, "_oracle_run", lambda *a, **kw: pytest.fail("a run with no verdict is never checked"))
     with pytest.raises(SystemExit, match=status):
         we.check(SimpleNamespace(archive=archive), task, run.rel)          # the run named by --run, too
@@ -974,7 +974,7 @@ def test_processes_not_confirmed_ended_make_a_sessions_ending_error_and_never_mo
                                 tally=we.c.Tally())
         assert ended == status
         assert json.loads((run.path / "stream_exit.json").read_text("utf-8"))["not_ended"] == "the job still has members"
-        assert we.c.ending(ctx.archive.root, {"run": run.rel, "executor": "host"})["status"] == status
+        assert we.c.ending(ctx.archive.root, run.rel)["status"] == status
 
 
 # R7: no prefix admits a name by itself.
@@ -1003,7 +1003,7 @@ def test_a_runs_ending_is_written_when_decided_and_a_failure_after_it_never_make
 
     def mirror(workspace, docker, **kw):
         folder = next((tmp_path / "archive" / "run").glob("*/*"))
-        seen.append(we.c.ending(tmp_path / "archive", {"run": folder.relative_to(tmp_path / "archive").as_posix(), "executor": "host"}))
+        seen.append(we.c.ending(tmp_path / "archive", folder.relative_to(tmp_path / "archive").as_posix()))
         if len(seen) == failing:
             raise box_mcp.BoxError("the mirror failed (1)")
         return real(workspace, docker, **kw)
@@ -1015,7 +1015,7 @@ def test_a_runs_ending_is_written_when_decided_and_a_failure_after_it_never_make
     assert record["status"] == status and "the mirror failed" in record["error"]
     assert seen[failing - 1]["status"] == decided                    # on record before the mirror that failed
     assert json.loads((run / "ending.json").read_text("utf-8"))["status"] == decided and (run / "failed_after_ending.json").is_file()
-    assert we.c.ending(tmp_path / "archive", record)["status"] == status and we.c.scoreable(record) is (status == "error")
+    assert we.c.ending(tmp_path / "archive", record["run"])["status"] == status and we.c.scoreable(record) is (status == "error")
 
 
 def test_every_entry_point_reads_a_runs_ending_from_its_folder_and_a_host_run_without_one_is_neither_scored_nor_made(monkeypatch,
@@ -1175,19 +1175,19 @@ def test_a_saved_verdict_holds_only_under_the_ending_it_was_made_under_on_either
     monkeypatch.setattr(we, "amendment", lambda task: diff)
     monkeypatch.setattr(loop, "tool", lambda command, *a, **kw: json.dumps({"status": "finished", "run": run.rel, "executor": "host"})
                         if command == "run" else check_says(True)(command))
-    made = we.c.ending_sha256(tmp_path, {"run": run.rel})
+    made = we.c.ending_sha256(tmp_path, run.rel)
     assert made and loop.one(tmp_path, "g6", "K1", "t", 1)["ending_sha256"] == made
     assert loop.rescore(tmp_path, "g6")[0]["amended_passes"] is True
     scores = compare.saved(tmp_path)[("K1", "t", 1)]
     assert (scores["maintainers"], scores["amended"]) == (True, True)
     run.failed("final patch capture failed", agent_started=True)       # the run's ending is "error" now
-    assert we.c.ending_sha256(tmp_path, {"run": run.rel}) != made
+    assert we.c.ending_sha256(tmp_path, run.rel) != made
     monkeypatch.setattr(loop, "tool", lambda *a, **kw: pytest.fail("an error run's verdict needs no run and no check"))
     scores = compare.saved(tmp_path)[("K1", "t", 1)]
     assert (scores["maintainers"], scores["amended"]) == (False, False)
     assert loop.rescore(tmp_path, "g6")[0]["amended_passes"] is False
     row = loop.one(tmp_path, "g6", "K1", "t", 1)                        # given again from the ending it has now
-    assert (row["status"], row["passes"], row["ending_sha256"]) == ("error", False, we.c.ending_sha256(tmp_path, {"run": run.rel}))
+    assert (row["status"], row["passes"], row["ending_sha256"]) == ("error", False, we.c.ending_sha256(tmp_path, run.rel))
     container = archive.start("run", "c")                               # a container run has no ending file: its row holds as before
     container.finish({"agent_started": True}, "finished")              # on its own record, which the admission rule reads
     kept = {"arm": "A", "task": "c", "repeat": 1, "run": container.rel, "status": "finished", "passes": True, "failing": 0}
