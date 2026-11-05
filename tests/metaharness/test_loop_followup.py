@@ -55,7 +55,7 @@ class _Clock:
 
 def _settle_at(meter: BudgetMeter, admission, used: float, at: datetime) -> float:
     """Settle as the store does at ``at``: it is the store's clock that is moved, never a time handed to ``settle``."""
-    clock = meter.scope.store.clock
+    clock = getattr(meter.scope.store.clock, "__wrapped__", None)          # the store reads it through utc_clock
     assert isinstance(clock, _Clock), "open the store with a _Clock to settle at a time of the test's"
     clock.now = at
     return meter.settle(admission, used)
@@ -826,7 +826,7 @@ def test_a_week_that_moved_before_weeks_were_named_in_utc_keeps_its_book_after_t
         scope.reserve(venture, month=start.isoformat(), account="model", amount=350)
         with store.conn:
             store.conn.execute("INSERT INTO week_books VALUES (?, 'codex', ?, ?)", (OWNER, moved.isoformat(), start.isoformat()))
-            store.conn.execute("INSERT OR REPLACE INTO week_grids VALUES (?, 'codex', ?)",
+            store.conn.execute("INSERT OR REPLACE INTO week_grids (owner, provider, reset) VALUES (?, 'codex', ?)",
                                (OWNER, (moved + timedelta(days=7)).isoformat()))
     finally:
         store.close()
@@ -1188,3 +1188,28 @@ def test_a_tick_recovers_what_a_dead_tick_made_and_leaves_what_was_made_outside_
     charged = {ref: [r["amount"] for r in loop.meter.scope.conn.execute(
         "SELECT amount FROM ledger WHERE ref = ? AND kind = 'charge'", (ref,))] for ref in (outside.reservation, dead.reservation)}
     assert charged == {outside.reservation: [], dead.reservation: [500.0]}
+
+def test_retry_after_is_elapsed_time_in_both_folds():
+    """Review wks3, finding 2: the retry deadline added a server's wait to the raw clock, which in New York's repeated hour
+    is an hour off either way; every clock now gives UTC where it is defined."""
+    from datetime import timezone
+    from zoneinfo import ZoneInfo
+
+    from g6.core.llm import _WAITS
+    from g6.metaharness.loop import _AtLimit
+
+    class FakeLimitedCaller:
+        def complete(self, *args, **kwargs):
+            _WAITS.get()[-1].append({"status": 429, "retry_after_s": 30})
+
+    results = {}
+    for name, zone in (("utc", UTC), ("fixed", timezone(timedelta(hours=-4))), ("new_york", ZoneInfo("America/New_York"))):
+        results[name] = []
+        for hour, minute in ((5, 59), (6, 30)):
+            instant = datetime(2026, 11, 1, hour, minute, 50, tzinfo=UTC)
+            requests = _Requests(now=lambda instant=instant, zone=zone: instant.astimezone(zone))
+            requests.open(10, instant + timedelta(hours=3))
+            with pytest.raises(_AtLimit) as caught:
+                _Counted(FakeLimitedCaller(), requests).complete("system", "user")
+            results[name].append(caught.value.until.astimezone(UTC))
+    assert results["new_york"] == results["utc"] == results["fixed"], results

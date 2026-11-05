@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 
 from g6.operator.gates import amount_of
 from g6.operator.router import QUALIFIED, Guard
-from g6.operator.store import OwnerScope, append_only
+from g6.operator.store import OwnerScope, append_only, utc, utc_clock
 
 OUTWARD_TYPES = frozenset({"email", "post", "publish_copy", "price_test", "spend", "experiment"})
 GUARD_CANDIDATE = "guard_candidate"   # internal: a learned check a person may adopt; never outward
@@ -102,9 +102,9 @@ class ActionQueue:
         if not 0.0 <= decoy_rate <= 1.0:
             raise ValueError("decoy_rate is a probability between 0 and 1")
         self.scope, self._conn = scope, scope.conn
-        self._conn.executescript(_SCHEMA + append_only("decisions"))
+        scope.store.script(_SCHEMA + append_only("decisions"))
         self._decoy_rate, self._rng = float(decoy_rate), rng or random.Random()
-        self._clock = clock or (lambda: datetime.now(UTC))
+        self._clock = utc_clock(clock or (lambda: utc(datetime.now(UTC))))
 
     def _stamp(self) -> str:
         return self._clock().isoformat(timespec="seconds")
@@ -121,7 +121,7 @@ class ActionQueue:
             raise QueueError("A spend draft needs a finite, positive amount.")
         if not str(drafted_by or "").strip():
             raise QueueError("A draft needs the actor that drafted it.")
-        with self._conn:
+        with self.scope.immediate():
             action_id = self._insert(vid, task_id, kind, _clean(action.get("body")), action, drafted_by, review)
             if self._rng.random() < self._decoy_rate:
                 self._plant_decoy(vid, kind, review)
@@ -135,7 +135,7 @@ class ActionQueue:
         validated = [TaskProposal.model_validate(t.model_dump()) for t in tasks]
         review = {"state": QUALIFIED, "code": "G6_E_OPERATOR_PROPOSAL", "message": "task proposal; no work performed"}
         ids = []
-        with self._conn:
+        with self.scope.immediate():
             for task in validated:
                 ids.append(self._insert(vid, task.task_id, "task_proposal", _clean(task.description),
                                         task.model_dump(mode="json"), proposed_by, review))
@@ -199,7 +199,7 @@ class ActionQueue:
     # -- decisions: a person's, never the drafter's -----------------------------------------
     def approve(self, venture_id: str, action_id: str, *, reviewer: str, text: str | None = None) -> dict[str, Any]:
         vid = self.scope.resolve(venture_id)
-        with self._conn:
+        with self.scope.immediate():
             row = self._require(vid, action_id, ("proposed",), "approved")
             who = _person(reviewer, row["drafted_by"])
             before = row["body"]
@@ -219,7 +219,7 @@ class ActionQueue:
         if not str(reason or "").strip():
             raise QueueError("Say why it is rejected: the reason is what teaches the next draft.")
         vid = self.scope.resolve(venture_id)
-        with self._conn:
+        with self.scope.immediate():
             row = self._require(vid, action_id, ("proposed", "approved"), "rejected")
             who = _person(reviewer, row["drafted_by"])
             self._decide(row, "caught" if row["decoy"] else "rejected", who, row["approved_text"] or row["body"], "",
@@ -229,7 +229,7 @@ class ActionQueue:
     def mark_sent(self, venture_id: str, action_id: str, *, reviewer: str, channel: str) -> bool:
         """Record that a person sent the approved text themselves. False when it was already recorded."""
         vid = self.scope.resolve(venture_id)
-        with self._conn:
+        with self.scope.immediate():
             row = self._row(vid, action_id)
             if row is None:
                 raise QueueError(f"no item {action_id!r} in this venture's queue")
@@ -269,7 +269,7 @@ class ActionQueue:
         review = {"state": QUALIFIED, "code": "G6_E_OPERATOR_GUARD_CANDIDATE",
                   "message": "a learned check runs in shadow until a person adopts it"}
         body = f"Adopt the check {guard.name!r}: once promoted it can block drafts."
-        with self._conn:
+        with self.scope.immediate():
             action_id = self._insert(vid, "", GUARD_CANDIDATE, _clean(body), {"guard": guard.name, "sha": guard.sha()},
                                      proposed_by, review)
         return self.get(vid, action_id)
@@ -285,7 +285,7 @@ class ActionQueue:
             raise QueueError(f"[{APPROVAL_REQUIRED}] a run approval needs the actor that requested it")
         review = {"state": QUALIFIED, "code": APPROVAL_REQUIRED,
                   "message": "a run waits for a person's approval of exactly this binding"}
-        with self._conn:
+        with self.scope.immediate():
             action_id = self._insert(vid, "", RUN_APPROVAL, _clean(summary), {"binding": str(binding)},
                                      str(requested_by), review)
         return self.get(vid, action_id)

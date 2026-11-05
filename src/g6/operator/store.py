@@ -53,7 +53,7 @@ CREATE TRIGGER IF NOT EXISTS ledger_once BEFORE INSERT ON ledger WHEN NEW.kind <
     AND EXISTS (SELECT 1 FROM ledger WHERE ref = NEW.ref AND kind = NEW.kind)
 BEGIN SELECT RAISE(ABORT, 'a reservation is made once and released once'); END;
 CREATE TABLE IF NOT EXISTS week_grids (owner TEXT NOT NULL, provider TEXT NOT NULL, reset TEXT NOT NULL,
-    PRIMARY KEY (owner, provider));
+    read_at TEXT NOT NULL DEFAULT '', PRIMARY KEY (owner, provider));
 CREATE TABLE IF NOT EXISTS week_spans (ref TEXT PRIMARY KEY, owner TEXT NOT NULL, provider TEXT NOT NULL,
     week_us INTEGER NOT NULL, start_us INTEGER NOT NULL, end_us INTEGER NOT NULL,
     CHECK (typeof(week_us) = 'integer' AND typeof(start_us) = 'integer' AND typeof(end_us) = 'integer'
@@ -87,6 +87,27 @@ def utc(moment: Any) -> Any:
 _EPOCH = utc(datetime(1970, 1, 1, tzinfo=UTC))
 
 
+def utc_clock(clock: Callable[[], datetime]) -> Callable[[], datetime]:
+    """``clock`` as one that gives UTC, where a clock is taken in: every clock the loop's budget reads, its own or one it is
+    given, goes through ``utc`` as it is defined, so no reading of it is a local instant to compare."""
+    if getattr(clock, "gives_utc", False):
+        return clock
+
+    def read() -> datetime:
+        return utc(clock())
+
+    read.gives_utc, read.__wrapped__ = True, clock
+    return read
+
+
+def stored_amount(value: Any) -> float:
+    """The one way an amount is read back from the ledger: a finite number of zero or more. Anything else, a text, bytes,
+    an infinity, is a ``ValueError``: an unreadable row, which refuses, and never zero."""
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value) or value < 0:
+        raise ValueError(f"an amount in the ledger does not read as a finite number of zero or more: {value!r}"[:160])
+    return float(value)
+
+
 def append_only(table: str, key: str = "seq") -> str:
     """Triggers that refuse UPDATE, DELETE and a REPLACE over an existing ``key`` on ``table``."""
     return f"""
@@ -104,6 +125,7 @@ def _now() -> str:
     return utc(datetime.now(UTC)).isoformat(timespec="seconds")
 
 
+@utc_clock
 def _wall_clock() -> datetime:
     return utc(datetime.now(UTC))
 
@@ -155,11 +177,23 @@ class OperatorStore:
     def __init__(self, path: str | os.PathLike[str] = "operator.db", *,
                  clock: Callable[[], datetime] | None = None) -> None:
         self.conn = open_db(path)
-        self.clock = clock or _wall_clock
-        self._writing = threading.RLock()     # one ``OwnerScope.immediate`` transaction on this connection at a time
+        self.clock = utc_clock(clock or _wall_clock)
+        self._writing = threading.RLock()     # every write and commit on this connection, one at a time (``immediate``)
         self._held = threading.local()        # how deep the thread that holds it is inside it
-        self.conn.executescript(_SCHEMA + append_only("evidence") + append_only("ledger") + append_only("week_spans", "ref")
-                                + append_only("week_settled", "ref") + append_only("week_ticks", "ref"))
+        self.script(_SCHEMA + append_only("evidence") + append_only("ledger") + append_only("week_spans", "ref")
+                    + append_only("week_settled", "ref") + append_only("week_ticks", "ref"))
+        with self._writing:                   # a grid kept before it carried the time of the reading it came from
+            if "read_at" not in {row["name"] for row in self.conn.execute("PRAGMA table_info(week_grids)")}:
+                self.conn.execute("ALTER TABLE week_grids ADD COLUMN read_at TEXT NOT NULL DEFAULT ''")
+                self.conn.commit()
+
+    def script(self, sql: str) -> None:
+        """Run a script that commits on its own (``executescript`` does), holding the store's lock, so it can never commit
+        another thread's transaction half way."""
+        with self._writing:
+            if self.in_transaction():
+                raise RuntimeError("a script commits on its own, so it never runs inside a transaction")
+            self.conn.executescript(sql)
 
     def in_transaction(self) -> bool:
         """Whether the calling thread is inside ``OwnerScope.immediate`` on this store."""
@@ -191,7 +225,7 @@ class OwnerScope:
     def create_venture(self, name: str, *, caps: dict[str, float]) -> dict[str, Any]:
         """``caps`` gives each account in ``gates.ACCOUNTS`` a finite, non-negative monthly budget (0 = none may be
         spent). A missing or invalid cap is refused here, and would stop the venture if it reached the stop check."""
-        with self.conn:
+        with self.immediate():
             venture_id = self._insert_venture(name, caps)
         return self.venture(venture_id)
 
@@ -218,8 +252,15 @@ class OwnerScope:
     def week_grid(self, provider: str) -> datetime | None:
         """A moment one of the provider's weeks ended, as it last reported, or ``None`` before it has reported one. A row that
         does not read as a moment with its zone is a ``ValueError``: where its weeks fall is then not known."""
-        row = self.conn.execute("SELECT reset FROM week_grids WHERE owner=? AND provider=?", (self.owner, provider)).fetchone()
-        return _instant(row["reset"]) if row is not None else None
+        return self.kept_grid(provider)[0]
+
+    def kept_grid(self, provider: str) -> tuple[datetime | None, datetime | None]:
+        """The kept grid (``week_grid``) and when the reading it came from was taken, ``None`` for one with no such time."""
+        row = self.conn.execute("SELECT reset, read_at FROM week_grids WHERE owner=? AND provider=?",
+                                (self.owner, provider)).fetchone()
+        if row is None:
+            return None, None
+        return _instant(row["reset"]), _instant(row["read_at"]) if row["read_at"] else None
 
     @contextmanager
     def immediate(self) -> Iterator[None]:
@@ -246,12 +287,23 @@ class OwnerScope:
             finally:
                 store._held.depth = depth
 
-    def keep_grid(self, provider: str, reset: datetime) -> None:
-        """Where the provider's weeks fall, as it now says: a moment one of them ends. The latest word stands. It moves the
-        weeks a reading looks at, and no reservation."""
-        reset = utc(reset)
+    def keep_grid(self, provider: str, reset: datetime, read_at: datetime | None = None) -> tuple[datetime, datetime | None]:
+        """Where the provider's weeks fall, as a reading taken at ``read_at`` says: a moment one of them ends. A grid moves
+        only forward: it is replaced only by a reading newer than the one it came from (or when it came from one with no
+        time), decided inside the transaction that writes it, so an older reading leaves a newer grid as it is. It moves the
+        weeks a reading looks at, and no reservation. It gives the grid that stands after it, and its reading's time. A kept
+        row that does not read says nothing of where the weeks fall, so the reading's word replaces it."""
+        reset, read_at = utc(reset), utc(read_at)
         with self.immediate():
-            self.conn.execute("INSERT OR REPLACE INTO week_grids VALUES (?, ?, ?)", (self.owner, provider, _week_name(reset)))
+            try:
+                kept, kept_at = self.kept_grid(provider)
+            except ValueError:
+                kept, kept_at = None, None
+            if kept is not None and kept_at is not None and (read_at is None or read_at <= kept_at):
+                return kept, kept_at
+            self.conn.execute("INSERT OR REPLACE INTO week_grids VALUES (?, ?, ?, ?)",
+                              (self.owner, provider, _week_name(reset), _week_name(read_at) if read_at is not None else ""))
+            return reset, read_at
 
     def week_venture(self, provider: str, week: datetime) -> str:
         """The venture the reservations made in the provider week that began at ``week`` are filed under, or ``""`` before
@@ -265,20 +317,23 @@ class OwnerScope:
 
         A reservation's span runs from its start to when it was settled. While it is open it runs on without end, as a
         request it sent may still come back and be charged, so it counts in every week from its start until it is settled;
-        so does a charge the book code made with no time of its own."""
+        so does a charge the book code made with no time of its own. Every amount is read as one (``stored_amount``): one
+        that does not read is a ``ValueError``, never zero."""
         start, end = utc(start), utc(end)
         rows = self.conn.execute(
-            "SELECT t.at_us AS settled,"
-            " SUM(CASE l.kind WHEN 'reserve' THEN l.amount ELSE 0 END) AS amount,"
-            " COUNT(CASE l.kind WHEN 'reserve' THEN 1 END) AS reserves,"
-            " SUM(CASE l.kind WHEN 'charge' THEN l.amount END) AS charged"
+            "SELECT s.ref AS ref, t.at_us AS settled, l.kind AS kind, l.amount AS amount"
             " FROM week_spans s JOIN ledger l ON l.ref = s.ref"
             " JOIN ventures v ON v.venture_id = l.venture_id AND v.owner = s.owner"
             " LEFT JOIN week_settled t ON t.ref = s.ref"
             " WHERE s.owner = ? AND s.provider = ? AND l.account = ? AND s.start_us < ? AND (t.at_us IS NULL OR t.at_us >= ?)"
-            " GROUP BY s.ref", (self.owner, provider, account, _us(end), _us(start))).fetchall()
-        return [Held(float(row["amount"]), None if row["charged"] is None else float(row["charged"]),
-                     None if row["settled"] is None else _moment(row["settled"])) for row in rows if row["reserves"]]
+            " ORDER BY l.seq", (self.owner, provider, account, _us(end), _us(start))).fetchall()
+        found: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            held = found.setdefault(row["ref"], {"settled": row["settled"], "reserve": None, "charge": None})
+            if row["kind"] in ("reserve", "charge"):
+                held[row["kind"]] = (held[row["kind"]] or 0.0) + stored_amount(row["amount"])
+        return [Held(held["reserve"], held["charge"], None if held["settled"] is None else _moment(held["settled"]))
+                for held in found.values() if held["reserve"] is not None]
 
     def reserve_span(self, provider: str, *, account: str, amount: float, caps: dict[str, float],
                      decide: Callable[[], tuple[str, datetime, datetime, datetime]], tick: str = "") -> tuple[str, str]:
@@ -302,7 +357,7 @@ class OwnerScope:
                     raise ValueError("a reservation starts in the week it is made under and ends after it starts")
                 month = _week_name(week)
                 vid = self._named(f"{provider}@{month}") or self._insert_venture(f"{provider}@{month}", caps)
-                why = gates.spend_refusal(self.venture(vid), self._committed(vid, month), account, value) or ""
+                why = self._refusal(vid, month, account, value)
             if not why:
                 reservation = uuid.uuid4().hex
                 self._append_ledger(vid, month, account, "reserve", value, reservation)
@@ -359,14 +414,15 @@ class OwnerScope:
     def _old_reservations(self, providers: Sequence[str]) -> dict[str, list[sqlite3.Row]]:
         """Each provider's reservations with no span: those the book code before spans made, under its weeks' ventures."""
         rows = self.conn.execute(
-            "SELECT l.ref, l.month, v.name FROM ledger l JOIN ventures v ON v.venture_id = l.venture_id WHERE v.owner = ?"
+            "SELECT l.ref, l.month, l.amount, v.name FROM ledger l JOIN ventures v ON v.venture_id = l.venture_id WHERE v.owner = ?"
             " AND l.kind = 'reserve' AND NOT EXISTS (SELECT 1 FROM week_spans s WHERE s.ref = l.ref) ORDER BY l.seq",
             (self.owner,)).fetchall()
         return {provider: [row for row in rows if str(row["name"]).startswith(f"{provider}@")] for provider in providers}
 
     def _old_spans(self, provider: str, rows: Sequence[sqlite3.Row]) -> list[tuple[str, tuple[int, int, int]]]:
         """Inside the caller's transaction: the span of each old reservation of ``provider``, as ``(week, start, end)``. A
-        ``ValueError`` when one of them, or a row that may have moved its book, does not read as a moment with its zone."""
+        ``ValueError`` when one of them, or a row that may have moved its book, does not read as a moment with its zone, or
+        when its amount does not read as one (``stored_amount``)."""
         tables = {row["name"] for row in self.conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         moved: dict[datetime, set[datetime]] = {}           # a book's own week, and every week that may have used it
         for table in (name for name in _OLD_MOVES if name in tables):
@@ -374,6 +430,7 @@ class OwnerScope:
                 moved.setdefault(_instant(row["book"]), set()).add(_instant(row["week"]))
         spans = []
         for row in rows:
+            stored_amount(row["amount"])
             book = _instant(row["month"])
             weeks = {book, *moved.get(book, ())}
             spans.append((row["ref"], (_us(book), _us(min(weeks)), _us(max(weeks) + _WEEK))))
@@ -390,16 +447,10 @@ class OwnerScope:
 
     def venture_named(self, name: str, *, caps: dict[str, float]) -> str:
         """The id of this owner's venture of this name, made once however many ask at the same moment."""
-        self.conn.execute("BEGIN IMMEDIATE")
-        try:
+        with self.immediate():
             row = self.conn.execute("SELECT venture_id FROM ventures WHERE owner=? AND name=?",
                                     (self.owner, name)).fetchone()
-            found = row["venture_id"] if row is not None else self.create_venture(name, caps=caps)["venture_id"]
-            self.conn.commit()
-            return found
-        except BaseException:
-            self.conn.rollback()
-            raise
+            return row["venture_id"] if row is not None else self._insert_venture(name, caps)
 
     def venture(self, venture_id: str) -> dict[str, Any]:
         row = self.conn.execute("SELECT * FROM ventures WHERE venture_id=? AND owner=?",
@@ -418,14 +469,14 @@ class OwnerScope:
         if status not in STATUSES:
             raise ValueError(f"status must be one of {sorted(STATUSES)}")
         vid = self.resolve(venture_id)
-        with self.conn:
+        with self.immediate():
             self.conn.execute("UPDATE ventures SET status=? WHERE venture_id=?", (status, vid))
             self._append_evidence(vid, "status", by, {"status": status})
 
     # -- evidence (append-only) -----------------------------------------------------------
     def record(self, venture_id: str, kind: str, *, ref: str = "", detail: dict[str, Any] | None = None) -> int:
         vid = self.resolve(venture_id)
-        with self.conn:
+        with self.immediate():
             return self._append_evidence(vid, kind, ref, detail)
 
     def evidence(self, venture_id: str, *, kind: str | None = None, ref: str | None = None) -> list[dict[str, Any]]:
@@ -450,19 +501,32 @@ class OwnerScope:
         return self._committed(self.resolve(venture_id), month)
 
     def _committed(self, vid: str, month: str) -> dict[str, float]:
-        rows = self.conn.execute("SELECT account, SUM(CASE kind WHEN 'release' THEN -amount ELSE amount END) AS used"
-                                 " FROM ledger WHERE venture_id=? AND month=? GROUP BY account", (vid, month))
-        return {r["account"]: float(r["used"] or 0.0) for r in rows.fetchall()}
+        return self._month(vid, month, {"reserve": 1, "release": -1, "charge": 1})
 
     def outstanding(self, venture_id: str, month: str) -> dict[str, float]:
         """What is reserved and not yet settled, per account: the part of ``committed`` nothing has charged."""
         return self._outstanding(self.resolve(venture_id), month)
 
     def _outstanding(self, vid: str, month: str) -> dict[str, float]:
-        rows = self.conn.execute("SELECT account, SUM(CASE kind WHEN 'reserve' THEN amount WHEN 'release' THEN -amount"
-                                 " ELSE 0 END) AS pending FROM ledger WHERE venture_id=? AND month=? GROUP BY account",
-                                 (vid, month))
-        return {r["account"]: float(r["pending"] or 0.0) for r in rows.fetchall()}
+        return self._month(vid, month, {"reserve": 1, "release": -1, "charge": 0})
+
+    def _month(self, vid: str, month: str, signs: dict[str, int]) -> dict[str, float]:
+        """A month's rows summed per account by ``signs``, each amount read as one (``stored_amount``): a row that does not
+        read is a ``ValueError``, never zero."""
+        totals: dict[str, float] = {}
+        for row in self.conn.execute("SELECT account, kind, amount FROM ledger WHERE venture_id=? AND month=? ORDER BY seq",
+                                     (vid, month)):
+            totals[row["account"]] = totals.get(row["account"], 0.0) + signs[row["kind"]] * stored_amount(row["amount"])
+        return totals
+
+    def _refusal(self, vid: str, month: str, account: str, value: float) -> str:
+        """Inside the caller's transaction: why the operator's stop check refuses ``value`` this month, or ``""``. A month
+        whose ledger cannot be read refuses: an amount that does not read never counts as zero."""
+        try:
+            committed = self._committed(vid, month)
+        except ValueError as exc:
+            return f"this month's ledger cannot be read ({exc}), so nothing more is reserved on it"
+        return gates.spend_refusal(self.venture(vid), committed, account, value) or ""
 
     def _append_ledger(self, vid: str, month: str, account: str, kind: str, amount: float, ref: str) -> None:
         self.conn.execute("INSERT INTO ledger (venture_id, month, account, kind, amount, ref, at)"
@@ -477,20 +541,18 @@ class OwnerScope:
         value = gates.amount_of(amount)
         if value is None:
             raise BudgetRefused(f"a reservation must be a finite, positive amount, got {amount!r}")
-        self.conn.execute("BEGIN IMMEDIATE")
-        try:
-            why = "" if admit is None else admit(self._committed(vid, month).get(account, 0.0),
-                                                 self._outstanding(vid, month).get(account, 0.0))
-            why = why or gates.spend_refusal(self.venture(vid), self._committed(vid, month), account, value)
+        with self.immediate():
+            try:
+                why = "" if admit is None else admit(self._committed(vid, month).get(account, 0.0),
+                                                     self._outstanding(vid, month).get(account, 0.0))
+            except ValueError as exc:
+                why = f"this month's ledger cannot be read ({exc}), so nothing more is reserved on it"
+            why = why or self._refusal(vid, month, account, value)
             if why:
                 raise BudgetRefused(why)
             reservation = uuid.uuid4().hex
             self._append_ledger(vid, month, account, "reserve", value, reservation)
-            self.conn.commit()
             return reservation
-        except BaseException:
-            self.conn.rollback()
-            raise
 
     def settle(self, venture_id: str, reservation: str, *, reported: float | None = None,
                metered: float | None = None) -> float:
@@ -521,13 +583,14 @@ class OwnerScope:
         if row is None:
             raise LookupError("no such reservation for this venture")
         span = self.conn.execute("SELECT start_us FROM week_spans WHERE ref=?", (reservation,)).fetchone()
-        charged = float(row["amount"])
+        reserved = stored_amount(row["amount"])
+        charged = reserved
         reported_value = gates.amount_of(reported)
         if metered is not None:
             charged = float(metered)
         elif reported_value is not None and reported_value > charged:
             charged = reported_value
-        self._append_ledger(vid, row["month"], row["account"], "release", row["amount"], reservation)
+        self._append_ledger(vid, row["month"], row["account"], "release", reserved, reservation)
         self._append_ledger(vid, row["month"], row["account"], "charge", charged, reservation)
         if span is not None:
             ended = max(_us(self.store.clock()), span["start_us"])

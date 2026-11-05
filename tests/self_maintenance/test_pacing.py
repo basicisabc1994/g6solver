@@ -43,7 +43,7 @@ class _Clock:
 
 def _settle_at(meter: BudgetMeter, admission, used: float, at: datetime) -> float:
     """Settle as the store does at ``at``: it is the store's clock that is moved, never a time handed to ``settle``."""
-    clock = meter.scope.store.clock
+    clock = getattr(meter.scope.store.clock, "__wrapped__", None)          # the store reads it through utc_clock
     assert isinstance(clock, _Clock), "open the store with a _Clock to settle at a time of the test's"
     clock.now = at
     return meter.settle(admission, used)
@@ -722,15 +722,15 @@ def test_a_settlement_on_another_connection_during_a_reading_cannot_set_its_base
         pending = worker.reserve("codex", now, 200)
         account = AccountReading(used=500, read_at=now, estimated=False)
         reader = BudgetMeter((ProviderWindow("codex", 1000, MONDAY),), store=first, read_account=lambda *_: account)
-        grid = reader.scope.week_grid
+        grid = reader.scope.kept_grid                       # the first of a reading's reads
 
         def settled_in_between(provider):
             _settle_at(worker, pending, 0, now + timedelta(seconds=1))
             return grid(provider)
 
-        monkeypatch.setattr(reader.scope, "week_grid", settled_in_between)
+        monkeypatch.setattr(reader.scope, "kept_grid", settled_in_between)
         reader.reading("codex", now)
-        monkeypatch.setattr(reader.scope, "week_grid", grid)
+        monkeypatch.setattr(reader.scope, "kept_grid", grid)
         spend = worker.reserve("codex", now + timedelta(seconds=2), 200)
         _settle_at(worker, spend, 200, now + timedelta(seconds=3))
         restarted = BudgetMeter((ProviderWindow("codex", 1000, MONDAY),), store=second, read_account=lambda *_: account)
@@ -786,7 +786,8 @@ def _old_folder(path, books, *, provider="codex", moves=(), holders=(), grid=Non
             store.conn.executemany("INSERT INTO week_books VALUES (?, ?, ?, ?)", [(OWNER, provider, *row) for row in moves])
             store.conn.executemany("INSERT INTO book_holders VALUES (?, ?, ?, ?)", [(OWNER, provider, *row) for row in holders])
             if grid is not None:
-                store.conn.execute("INSERT OR REPLACE INTO week_grids VALUES (?, ?, ?)", (OWNER, provider, grid))
+                store.conn.execute("INSERT OR REPLACE INTO week_grids (owner, provider, reset) VALUES (?, ?, ?)",
+                                   (OWNER, provider, grid))
         return made
     finally:
         store.close()
@@ -815,7 +816,7 @@ def test_an_old_book_counts_in_every_week_that_held_it_and_in_none_after(tmp_pat
     store = OperatorStore(path, clock=_Clock())
     try:
         _codex(store, start=start).reading("codex", start + timedelta(days=2))     # read into its span
-        store.clock.now = moved + timedelta(days=7) - timedelta(hours=1)        # the store's own clock dates it
+        store.clock.__wrapped__.now = moved + timedelta(days=7) - timedelta(hours=1)   # the store's own clock dates it
         store.for_owner(OWNER).settle(venture, reservation, metered=350)
         for days, used in ((9, 350), (14, 350), (15, 0)):     # clear from the end of the last week that held it
             meter = _codex(store, start=start, resets_at=start + timedelta(days=days))
@@ -884,7 +885,7 @@ def test_a_grid_that_cannot_be_read_is_a_refusal(tmp_path):
     store = OperatorStore(tmp_path / "op.db", clock=_Clock())
     try:
         with store.conn:
-            store.conn.execute("INSERT INTO week_grids VALUES (?, 'codex', 'garbled')", (OWNER,))
+            store.conn.execute("INSERT INTO week_grids (owner, provider, reset) VALUES (?, 'codex', 'garbled')", (OWNER,))
         refused = _codex(store).reserve("codex", MONDAY + timedelta(days=2), 1)
         assert not refused.admitted and "cannot be read" in refused.reason
     finally:
@@ -1193,3 +1194,169 @@ def test_existing_meter_counts_legacy_reservation_written_after_it_opened(tmp_pa
     finally:
         store.close()
         other.close()
+
+# Review wks3: the four findings of the third review of the week spans ------------------------------------------------------
+
+def test_another_thread_cannot_commit_an_admissions_transaction(tmp_path, monkeypatch):
+    """Finding 1: the operator's ``record`` committed the shared connection outside the store's lock, and so committed
+    another thread's admission half way, before its check was done."""
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as Waited
+
+    start = datetime(2026, 11, 1, tzinfo=UTC)
+    now = start + timedelta(days=6, hours=1)
+    path = tmp_path / "operator.db"
+    first, second = OperatorStore(path, clock=lambda: now), OperatorStore(path, clock=lambda: now)
+    paused, resume = threading.Event(), threading.Event()
+    try:
+        window = ProviderWindow("codex", 100, start, reserve_share=0)
+        a, b = BudgetMeter((window,), store=first), BudgetMeter((window,), store=second)
+        unrelated = first.for_owner("another-owner")
+        venture = unrelated.create_venture("independent", caps={"model": 100, "cash": 0})["venture_id"]
+        append = a.scope._append_ledger
+
+        def pause_before_write(*args):
+            if args[3] == "reserve":
+                paused.set()
+                assert resume.wait(4)
+            return append(*args)
+
+        monkeypatch.setattr(a.scope, "_append_ledger", pause_before_write)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pending = pool.submit(a.reserve, "codex", now, 70)
+            assert paused.wait(4)
+            note = pool.submit(unrelated.record, venture, "note")
+            with pytest.raises(Waited):
+                note.result(timeout=1)                               # it waits for the admission's transaction
+            resume.set()
+            admitted = pending.result(timeout=4)
+            note.result(timeout=4)
+        competing = b.reserve("codex", now, 70)
+        assert admitted.admitted and not competing.admitted, "both 70s were admitted under a 100 ceiling"
+    finally:
+        resume.set()
+        first.close()
+        second.close()
+
+
+@pytest.mark.parametrize("amount", ["unreadable", b"\x00", float("inf")])
+def test_unreadable_old_amount_refuses_admission_after_restart(tmp_path, amount):
+    """Finding 3: an old reservation's amount was never read as one; a text the schema let in summed as zero."""
+    start = datetime(2026, 11, 1, tzinfo=UTC)
+    now = start + timedelta(days=6)
+    path = tmp_path / "operator.db"
+    store = OperatorStore(path, clock=lambda: now)
+    try:
+        venture = store.for_owner(OWNER).create_venture(f"codex@{start.isoformat()}", caps={"model": 100, "cash": 0})
+        with store.conn:
+            store.conn.execute("INSERT INTO ledger (venture_id, month, account, kind, amount, ref, at)"
+                               " VALUES (?, ?, 'model', 'reserve', ?, 'old-reservation', ?)",
+                               (venture["venture_id"], start.isoformat(), amount, now.isoformat()))
+    finally:
+        store.close()
+    store = OperatorStore(path, clock=lambda: now)
+    try:
+        meter = BudgetMeter((ProviderWindow("codex", 100, start, reserve_share=0),), store=store)
+        admission = meter.reserve("codex", now, 100)
+        assert not admission.admitted and "cannot all be read" in admission.reason, admission.reason
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("amount", ["unreadable", b"\x00"])
+def test_an_unreadable_amount_on_a_kept_span_refuses_and_never_reads_as_zero(tmp_path, amount):
+    start = datetime(2026, 11, 1, tzinfo=UTC)
+    now = start + timedelta(days=6)
+    store = OperatorStore(tmp_path / "operator.db", clock=lambda: now)
+    try:
+        meter = BudgetMeter((ProviderWindow("codex", 100, start, reserve_share=0),), store=store)
+        spend = meter.reserve("codex", now, 10)
+        with store.conn:                                             # a row written by hand, as the ledger cannot change
+            store.conn.execute("INSERT INTO ledger (venture_id, month, account, kind, amount, ref, at)"
+                               " VALUES (?, ?, 'model', 'charge', ?, ?, ?)",
+                               (spend.venture, start.isoformat(), amount, spend.reservation, now.isoformat()))
+        refused = meter.reserve("codex", now, 1)
+        assert not refused.admitted and "cannot be read" in refused.reason, refused.reason
+    finally:
+        store.close()
+
+
+def test_older_cached_reading_cannot_undo_newer_provider_grid(tmp_path):
+    """Finding 4: a reading put its reset in the store whatever its age, so an older one undid a newer grid."""
+    from g6.self_maintenance.usage import AccountReader
+
+    start = datetime(2026, 10, 25, tzinfo=UTC)
+    clock = [start + timedelta(days=6)]
+    path = tmp_path / "operator.db"
+    first, second = OperatorStore(path, clock=lambda: clock[0]), OperatorStore(path, clock=lambda: clock[0])
+    try:
+        window = ProviderWindow("codex", 100, start, reserve_share=0)
+        initial = BudgetMeter((window,), store=first)
+        previous = initial.reserve("codex", clock[0], 90)
+        assert previous.admitted
+        clock[0] += timedelta(seconds=1)
+        initial.settle(previous, 90)
+
+        def reply(percent, reset):
+            return {"rateLimits": {"primary": {"usedPercent": percent, "windowDurationMins": 10080,
+                                                "resetsAt": reset.timestamp()}}}
+
+        clock[0] = start + timedelta(days=12)
+        old_reset = start + timedelta(days=14)
+        old_reader = AccountReader((window,), ask={"codex": lambda: reply(0, old_reset)})
+        old_reader.refresh(clock[0])
+        stale = BudgetMeter((window,), store=first, read_account=old_reader)
+        assert stale.reading("codex", clock[0]).used == 0
+        clock[0] += timedelta(minutes=1)
+        new_reset = old_reset - timedelta(days=1)
+        new_reader = AccountReader((window,), ask={"codex": lambda: reply(90, new_reset)})
+        new_reader.refresh(clock[0])
+        authoritative = BudgetMeter((window,), store=second, read_account=new_reader)
+        assert authoritative.reading("codex", clock[0]).used == 90
+        assert authoritative.scope.week_grid("codex") == new_reset
+        clock[0] += timedelta(minutes=1)
+        admission = stale.reserve("codex", clock[0], 60)
+        assert not admission.admitted, "older cached reading undid the newer grid and admitted 90 + 60 against 100"
+        assert stale.scope.week_grid("codex") == new_reset                  # and left the newer grid as it was
+    finally:
+        first.close()
+        second.close()
+
+
+def test_a_tick_reservation_whose_amount_cannot_be_read_is_not_recovered_and_refuses(tmp_path):
+    """Recovery reads each amount it settles as one: one that does not read leaves every open reservation as it was, and
+    admission refuses on the provider; it is never settled as zero, nor does recovery end the tick."""
+    store = OperatorStore(tmp_path / "operator.db", clock=_Clock())
+    try:
+        meter, now = _codex(store), MONDAY + timedelta(days=2)
+        spend = meter.reserve("codex", now, 10)
+        span = store.conn.execute("SELECT week_us, start_us, end_us FROM week_spans WHERE ref=?", (spend.reservation,)).fetchone()
+        month = store.conn.execute("SELECT month FROM ledger WHERE ref=?", (spend.reservation,)).fetchone()["month"]
+        with store.conn:                                             # a row written by hand, as the ledger cannot change
+            store.conn.execute("INSERT INTO ledger (venture_id, month, account, kind, amount, ref, at)"
+                               " VALUES (?, ?, 'model', 'reserve', 'unreadable', 'by-hand', ?)",
+                               (spend.venture, month, now.isoformat()))
+            store.conn.execute("INSERT INTO week_spans VALUES ('by-hand', ?, 'codex', ?, ?, ?)", (OWNER, *span))
+            store.conn.execute("INSERT INTO week_ticks VALUES ('by-hand', 'a tick that is gone')")
+        assert meter.recover("codex") == 0.0
+        assert store.conn.execute("SELECT COUNT(*) FROM ledger WHERE kind='release'").fetchone()[0] == 0
+        refused = meter.reserve("codex", now, 1)
+        assert not refused.admitted and "cannot be read" in refused.reason, refused.reason
+    finally:
+        store.close()
+
+
+def test_a_grid_row_that_cannot_be_read_refuses_once_and_a_reading_replaces_it(tmp_path):
+    store = OperatorStore(tmp_path / "op.db", clock=_Clock())
+    try:
+        with store.conn:
+            store.conn.execute("INSERT INTO week_grids (owner, provider, reset) VALUES (?, 'codex', 'garbled')", (OWNER,))
+        now, reset = MONDAY + timedelta(days=2), MONDAY + timedelta(days=7)
+        meter = BudgetMeter((ProviderWindow("codex", 1000, MONDAY),), store=store,
+                            read_account=lambda *_: AccountReading(used=0, read_at=now, resets_at=reset))
+        refused = meter.reserve("codex", now, 1)
+        assert not refused.admitted and "cannot be read" in refused.reason, refused.reason
+        assert store.for_owner(OWNER).kept_grid("codex") == (reset, now)
+        assert meter.reserve("codex", now, 1).admitted
+    finally:
+        store.close()

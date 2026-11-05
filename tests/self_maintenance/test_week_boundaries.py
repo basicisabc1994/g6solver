@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import ast
+import functools
 import json
 import re
 import threading
@@ -235,10 +236,14 @@ _PRODUCERS = ("g6.operator.store", "g6.self_maintenance.pacing", "g6.self_mainte
 _CARRIERS = (*_PRODUCERS, "g6.metaharness.loop")
 _DURATION = re.compile(r"^_?[A-Z][A-Z0-9_]*$")
 #: The boundary itself: ``utc``, and the store's turning of a UTC instant into whole microseconds and back.
-_BOUNDARY = ("utc", "_us", "_moment")
+_BOUNDARY = ("utc", "_us", "_moment", "_instant")
+#: Of the boundary, what gives whole microseconds or a moment fresh from ``utc``: no instant from a field to compare.
+_FRESH = ("_us", "_moment", "_instant")
 
 
+@functools.cache
 def _package_trees() -> dict[str, ast.Module]:
+    """Every module of the package, parsed once for every inventory (none of them changes a tree)."""
     found = {}
     for path in sorted(_PACKAGE.rglob("*.py")):
         if "vendor" in path.parts:
@@ -313,6 +318,8 @@ class _Readers:
             called = _called(node)
             if called == "get" and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value in self.fields:
                 return True
+            if called in _FRESH:
+                return False
             if called in ("utc", "min", "max", "fromisoformat", "fromtimestamp", "astimezone", "replace"):
                 receiver = node.func.value if isinstance(node.func, ast.Attribute) else None
                 return any(self.tainted(a, names) for a in (*node.args, *([receiver] if receiver is not None else [])))
@@ -580,7 +587,7 @@ def test_everything_admission_reads_is_read_inside_the_transaction_that_writes(t
     the ``BEGIN IMMEDIATE`` transaction open: the kept grid, the week's venture and every reservation overlapping it, and so
     the reading's baseline; the grid a reading moves is kept inside it too."""
     inputs = (_scope_calls("_look") | _scope_calls("reserve")) - {"reserve_span"}
-    assert {"week_grid", "keep_grid", "week_held", "week_venture"} <= inputs, inputs
+    assert {"kept_grid", "keep_grid", "week_held", "week_venture", "adopt_books"} <= inputs, inputs
     start = datetime(2026, 10, 26, tzinfo=UTC)
     store = OperatorStore(tmp_path / "operator.db")
     try:
@@ -633,3 +640,264 @@ def test_another_connection_cannot_change_what_admission_read_before_it_writes(t
     finally:
         first.close()
         second.close()
+
+
+# 1. Every clock the budget reads gives UTC where it is defined (review wks3, finding 2) -----------------------------------------
+
+_CLOCK = "Callable[[], datetime]"
+_READS_THE_CLOCK = {"now", "utcnow", "today"}
+
+
+def _budget_modules() -> dict[str, ast.Module]:
+    """The modules that make or carry the budget's instants, and every module that imports one of them."""
+    return {name: tree for name, tree in _package_trees().items() if name in _CARRIERS or _imports(tree) & set(_CARRIERS)}
+
+
+def _clock_parameters(tree: ast.Module) -> list[tuple[ast.FunctionDef, str]]:
+    return [(f, a.arg) for f in _functions(tree) for a in (*f.args.posonlyargs, *f.args.args, *f.args.kwonlyargs)
+            if a.annotation is not None and _CLOCK in ast.unparse(a.annotation)]
+
+
+def _within(node, ancestor, parents) -> bool:
+    while node is not None and node is not ancestor:
+        node = parents.get(node)
+    return node is ancestor
+
+
+def test_every_clock_the_budget_reads_gives_utc_where_it_is_defined():
+    """Listed from the code: each read of the machine's clock (``datetime.now``, ``utcnow``, ``today``) and each clock a
+    function is given (a parameter typed ``Callable[[], datetime]``, and so the attribute it is kept in). Each read is made
+    through ``utc``; each given clock is taken in through ``utc_clock``, or handed on, by name, to a clock parameter of the
+    same listing, so no instant the budget reads is a local one (identity_from_rendering, met a third time here)."""
+    trees = _budget_modules()
+    takes: dict[str, set[str]] = {}               # a function or class, and the clock parameters it takes in
+    for tree in trees.values():
+        for function, parameter in _clock_parameters(tree):
+            takes.setdefault(function.name, set()).add(parameter)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                init = next((f for f in node.body if isinstance(f, ast.FunctionDef) and f.name == "__init__"), None)
+                takes[node.name] = {p for _, p in _clock_parameters(init)} if init is not None else set()
+    inventory, loose = [], []
+    for name, tree in trees.items():
+        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in _READS_THE_CLOCK
+                    and isinstance(node.func.value, ast.Name) and node.func.value.id == "datetime"):
+                where = f"{name}:{node.lineno}: {ast.unparse(node)}"
+                inventory.append(where)
+                parent = parents.get(node)
+                if not (_is_utc_call(parent) and parent.args and parent.args[0] is node):
+                    loose.append(where)
+        for function, parameter in _clock_parameters(tree):
+            if name == "g6.operator.store" and function.name == "utc_clock":
+                continue                                              # the boundary itself
+            where = f"{name}.{function.name}({parameter})"
+            inventory.append(where)
+            rebound = next((s.lineno for s in function.body if isinstance(s, ast.Assign) and len(s.targets) == 1
+                            and isinstance(s.targets[0], ast.Name) and s.targets[0].id == parameter
+                            and isinstance(s.value, ast.Call) and _called(s.value) == "utc_clock"
+                            and ast.unparse(s.value.args[0]) == parameter), None)
+            for use in ast.walk(function):
+                if not (isinstance(use, ast.Name) and use.id == parameter and isinstance(use.ctx, ast.Load)):
+                    continue
+                wrapped = any(isinstance(call, ast.Call) and _called(call) == "utc_clock"
+                              and any(_within(use, arg, parents) for arg in call.args)
+                              for call in ast.walk(function))
+                parent = parents.get(use)
+                handed_on = (isinstance(parent, ast.keyword) and isinstance(parents.get(parent), ast.Call)
+                             and parent.arg in takes.get(_called(parents[parent]), set()))
+                if not (wrapped or handed_on or (rebound is not None and use.lineno > rebound)):
+                    loose.append(f"{where}:{use.lineno}: {ast.unparse(parent)}")
+    known = {"g6.operator.store.__init__(clock)", "g6.operator.queue.__init__(clock)", "g6.metaharness.loop.__init__(now)",
+             "g6.metaharness.runner.__init__(now)", "g6.metaharness.runner.run(now)", "g6.metaharness.runner.open_loop(now)"}
+    assert known <= set(inventory), sorted(known - set(inventory))
+    assert any(line.startswith("g6.mcp.improve:") for line in inventory), inventory    # the start records, read as UTC
+    assert sum(".now(" in line for line in inventory) >= 8, inventory
+    assert not loose, loose
+
+
+def test_a_clock_in_any_zone_reads_as_utc_where_it_is_taken_in(tmp_path):
+    from g6.metaharness.loop import _Requests
+    from g6.operator.queue import ActionQueue
+    from g6.operator.store import utc_clock
+
+    for render in RENDERINGS.values():
+        for moment in (EARLY, LATE):
+            store = OperatorStore(tmp_path / "op.db", clock=lambda moment=moment, render=render: render(moment))
+            try:
+                queue = ActionQueue(store.for_owner("ada"), clock=lambda moment=moment, render=render: render(moment))
+                for clock in (store.clock, queue._clock, _Requests(now=lambda moment=moment, render=render: render(moment)).now):
+                    assert clock() == moment and clock().tzinfo is UTC
+            finally:
+                store.close()
+    with pytest.raises(ValueError):
+        utc_clock(lambda: datetime(2026, 11, 1, 1, 30))()                   # a clock with no zone is refused, never guessed
+
+
+# 3. The store's lock owns every write and every commit on its connection (review wks3, finding 1) -----------------------------
+
+_WRITES = re.compile(r"^\s*(INSERT|UPDATE|DELETE|REPLACE|CREATE|ALTER|DROP|BEGIN)\b", re.I)
+_LOCKS = ("immediate()", "_writing")
+
+
+def _store_modules() -> dict[str, ast.Module]:
+    return {name: tree for name, tree in _package_trees().items()
+            if name == "g6.operator.store" or "g6.operator.store" in _imports(tree)}
+
+
+def _on_the_connection(node) -> bool:
+    return isinstance(node, ast.Attribute) and node.attr in ("conn", "_conn")
+
+
+def _leading(text, function, depth: int = 0) -> str | None:
+    """How the text of a statement begins, where it is written out: a literal, an f-string, a sum that starts with one, or
+    a name every assignment in its function gives one of those; ``None`` when that cannot be read from the code."""
+    if isinstance(text, ast.Constant) and isinstance(text.value, str):
+        return text.value
+    if isinstance(text, ast.JoinedStr) and text.values and isinstance(text.values[0], ast.Constant):
+        return text.values[0].value
+    if isinstance(text, ast.BinOp) and isinstance(text.op, ast.Add):
+        return _leading(text.left, function, depth)
+    if isinstance(text, ast.Name) and depth < 3:
+        given = {_leading(value, function, depth + 1) for target, value in _assigned(function)
+                 if isinstance(target, ast.Name) and target.id == text.id}
+        return given.pop() if len(given) == 1 else None
+    return None
+
+
+def _writes(call: ast.Call, function) -> bool:
+    """Whether a statement on the connection writes or ends a transaction. One whose text cannot be read from the code, or
+    that does not begin with ``SELECT``, counts as a write."""
+    if call.func.attr in ("commit", "rollback", "executescript"):
+        return True
+    text = _leading(call.args[0], function) if call.args else None
+    return text is None or bool(_WRITES.match(text)) or not re.match(r"^\s*(SELECT|PRAGMA)\b", text, re.I)
+
+
+def _inside(node, parents) -> str:
+    """The name of the innermost function ``node`` is in, or ``""``."""
+    node = parents.get(node)
+    while node is not None and not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+        node = parents.get(node)
+    return node.name if node is not None else ""
+
+
+def _held(node, parents) -> bool:
+    """Whether ``node`` is inside a ``with`` that holds the store's lock (``immediate()`` or ``_writing``)."""
+    node = parents.get(node)
+    while node is not None:
+        if isinstance(node, ast.With) and any(ast.unparse(item.context_expr).endswith(_LOCKS) for item in node.items):
+            return True
+        node = parents.get(node)
+    return False
+
+
+def test_every_write_and_commit_on_the_stores_connection_holds_its_lock():
+    """Listed from the code: every statement run on the store's connection (``conn``, and the queue's ``_conn``, which is
+    the same) that writes, commits or rolls back, and every ``with`` on the connection, which commits. Each holds the store's
+    lock: inside ``immediate()`` or ``_writing``, or in a function every call of which does, so no thread can commit another
+    thread's admission half way (check_then_act_race)."""
+    trees = _store_modules()
+    parents = {name: {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+               for name, tree in trees.items()}
+    statements, unheld = [], {}
+    for name, tree in trees.items():
+        functions = {f.name: f for f in _functions(tree)}
+        for node in ast.walk(tree):
+            run = (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and _on_the_connection(node.func.value)
+                   and node.func.attr in ("execute", "executemany", "executescript", "commit", "rollback")
+                   and _writes(node, functions.get(_inside(node, parents[name]), tree)))
+            commits = isinstance(node, ast.With) and any(_on_the_connection(item.context_expr) for item in node.items)
+            if run or commits:
+                where = f"{name}.{_inside(node, parents[name])}:{node.lineno}: {ast.unparse(node.func if run else node.items[0])}"
+                statements.append(where)
+                if not _held(node, parents[name]):
+                    unheld.setdefault((name, _inside(node, parents[name])), []).append(where)
+    everything = {(name, f.name) for name, tree in trees.items() for f in _functions(tree)}
+    calls: dict[str, list[tuple[bool, tuple[str, str]]]] = {}     # each call of a name: whether it holds, and where it is
+    for name, tree in trees.items():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                calls.setdefault(_called(node), []).append((_held(node, parents[name]), (name, _inside(node, parents[name]))))
+    held_by_callers: set[tuple[str, str]] = set()
+    while True:                                   # a function whose every call holds the lock holds it too
+        more = set()
+        for name, function in everything - held_by_callers:
+            found = calls.get(function, [])
+            if found and all(held or caller in held_by_callers for held, caller in found):
+                more.add((name, function))
+        if not more:
+            break
+        held_by_callers |= more
+    loose = [line for key, lines in unheld.items() if key not in held_by_callers for line in lines]
+    functions = {line.split(":", 1)[0] for line in statements}
+    known = {"g6.operator.store.immediate", "g6.operator.store.script", "g6.operator.store._append_ledger",
+             "g6.operator.store._append_evidence", "g6.operator.store.set_status", "g6.operator.store.keep_grid",
+             "g6.operator.store.reserve_span", "g6.operator.store._settle", "g6.operator.store.__init__"}
+    assert known <= functions, sorted(known - functions)
+    assert any(line.startswith("g6.operator.queue.") for line in statements), statements
+    assert not loose, loose
+
+
+def test_a_write_from_another_thread_waits_for_an_open_transaction(tmp_path):
+    store = OperatorStore(tmp_path / "op.db")
+    try:
+        scope = store.for_owner("ada")
+        venture = scope.create_venture("v", caps={"model": 10, "cash": 0})["venture_id"]
+        inside, release, done = threading.Event(), threading.Event(), threading.Event()
+
+        def hold():
+            with scope.immediate():
+                scope._append_evidence(venture, "first", "", None)
+                inside.set()
+                assert release.wait(5)
+                raise RuntimeError("the first thread's transaction is rolled back")
+
+        holder = threading.Thread(target=lambda: pytest.raises(RuntimeError, hold))
+        holder.start()
+        assert inside.wait(5)
+        writer = threading.Thread(target=lambda: (scope.record(venture, "second"), done.set()))
+        writer.start()
+        assert not done.wait(0.5), "a write on the shared connection did not wait for the open transaction"
+        release.set()
+        holder.join(5)
+        writer.join(5)
+        assert [e["kind"] for e in scope.evidence(venture)] == ["created", "second"]    # nothing of the first was committed
+    finally:
+        store.close()
+
+
+# 2. One reader of a stored amount (review wks3, finding 3) -----------------------------------------------------------------------
+
+_AGGREGATE = re.compile(r"\b(SUM|TOTAL|AVG|MIN|MAX)\s*\([^)]*\bamount\b", re.I)
+
+
+def test_every_amount_read_from_the_store_is_read_by_the_one_function():
+    """Listed from the code: every read of a row's ``amount``, and every statement that would sum amounts in SQL, where a
+    text reads as zero. Each read is the argument of ``stored_amount``; no statement sums an amount (failure_read_as_success)."""
+    reads, loose = [], []
+    for name, tree in _store_modules().items():
+        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and _AGGREGATE.search(node.value):
+                loose.append(f"{name}.{_enclosing(tree, node)}:{node.lineno}: sums amounts in SQL")
+            if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and node.slice.value == "amount":
+                where = f"{name}.{_enclosing(tree, node)}:{node.lineno}: {ast.unparse(node)}"
+                reads.append(where)
+                parent = parents.get(node)
+                if not (isinstance(parent, ast.Call) and _called(parent) == "stored_amount" and parent.args[0] is node):
+                    loose.append(where)
+    functions = {line.split(":", 1)[0] for line in reads}
+    assert {"g6.operator.store.week_held", "g6.operator.store._month", "g6.operator.store._old_spans",
+            "g6.operator.store._settle"} <= functions, sorted(functions)
+    assert not loose, loose
+
+
+def test_the_one_reader_of_an_amount_admits_only_a_finite_number_of_zero_or_more():
+    from g6.operator.store import stored_amount
+
+    assert [stored_amount(v) for v in (0, 0.0, 3, 1.5)] == [0.0, 0.0, 3.0, 1.5]
+    for bad in ("1", "unreadable", b"1", None, True, False, -1, -0.5, float("inf"), float("-inf"), float("nan")):
+        with pytest.raises(ValueError):
+            stored_amount(bad)

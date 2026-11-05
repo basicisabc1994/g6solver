@@ -74,7 +74,7 @@ from g6.metaharness.propose import DevRunner, ProposerView
 from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, SuiteCase, Workflow, default_objectives
 from g6.metaharness.select import race_calls
 from g6.metaharness.shadow import SCOPE, adapt_shadow
-from g6.operator.store import OperatorStore
+from g6.operator.store import OperatorStore, utc_clock
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
 from g6.self_maintenance.envelope import (
     CYCLE_LOG,
@@ -247,11 +247,11 @@ class _Requests:
     refused here, which never goes out again. It only grows, and ``keeping`` is told of each as it happens, before any record
     of the tick is written, so no failure of those records can send one twice."""
 
-    def __init__(self, now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    def __init__(self, now: Callable[[], datetime] = lambda: utc(datetime.now(UTC)),
                  halted: Callable[[], _Halted | None] = lambda: None,
                  barring: Callable[[Any], _Halted | None] = lambda sender: None,
                  keeping: Callable[[str, str], None] = lambda request, said: None) -> None:
-        self.now, self.halted, self.barring, self.keeping = now, halted, barring, keeping
+        self.now, self.halted, self.barring, self.keeping = utc_clock(now), halted, barring, keeping
         self.refused: set[str] = set()
         self._lock = threading.Lock()
         self.generation = 0
@@ -583,12 +583,13 @@ def _exclusive(method: Callable[..., dict[str, Any]]) -> Callable[..., dict[str,
 
 class ShadowLoop:
     def __init__(self, domain: Domain, root: str | Path, settings: LoopSettings, *, proposer: Any,
-                 now: Callable[[], datetime] = lambda: datetime.now(UTC),
+                 now: Callable[[], datetime] = lambda: utc(datetime.now(UTC)),
                  clock: Callable[[], float] = time.monotonic,
                  read_account: Callable[[str, datetime], AccountReading | None] | None = None,
                  read_now: Callable[[datetime], None] | None = None,
                  domain_file: str | Path | None = None) -> None:
-        self.domain, self.settings, self._now, self.domain_file, self._read_now = domain, settings, now, domain_file, read_now
+        self.domain, self.settings, self.domain_file, self._read_now = domain, settings, domain_file, read_now
+        self._now = utc_clock(now)                # every instant the loop reads is UTC, where its clock is taken in
         self.beat_fields: dict[str, Any] = {}     # what a runner adds to every heartbeat
         self.lost_cycles = 0                      # cycles in a row the log would not take: it cannot hold this count
         self.cannot_record = ""                   # why this process spends no more, set at MAX_FAILED_CYCLES of those

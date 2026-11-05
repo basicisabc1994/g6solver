@@ -225,26 +225,33 @@ class BudgetMeter:
             return Admission(provider, 0, 0.0, 0.0, 0.0, False, reason=f"no budget window for {provider!r}"), None, now
         refused = self.scope.adopt_books((provider,)).get(provider, "")
         try:
-            kept = self.scope.week_grid(provider)
+            grid, grid_at = self.scope.kept_grid(provider)
         except ValueError as exc:
-            kept, refused = None, refused or f"where {provider}'s weeks fall cannot be read from operator.db ({exc})"
-        if kept is not None:
-            window = self.windows[provider] = window.aligned(kept)
-        account = standing(self._read_account(provider, now), now) if self._read_account is not None else None
+            grid, grid_at, refused = None, None, refused or f"where {provider}'s weeks fall cannot be read from operator.db ({exc})"
+        given = self._read_account(provider, now) if self._read_account is not None else None
+        account = standing(given, now)
         if account is not None and account.unread:
             refused = refused or (f"{provider}'s account is not known ({account.unread}), so nothing is reserved on it until "
                                   "it is read again")
         reset = (account.resets_at or account.ended_at) if account is not None else None
-        if reset is not None:
-            window = self.windows[provider] = window.aligned(reset)
-            if reset != kept:
-                self.scope.keep_grid(provider, reset)
+        if reset is not None:              # a grid moves only forward: the store keeps the newer reading's (``keep_grid``)
+            read_at = given.read_at if given is not None else None
+            if (grid, grid_at) != (reset, read_at):
+                grid, grid_at = self.scope.keep_grid(provider, reset, read_at)
+        if grid is not None:
+            window = self.windows[provider] = window.aligned(grid)
         start, day = window.place(now)
-        used, above = _used(self.scope.week_held(provider, _ACCOUNT, start, start + _WEEK), account)
+        try:
+            held = self.scope.week_held(provider, _ACCOUNT, start, start + _WEEK)
+        except ValueError as exc:
+            held, refused = [], refused or (f"an amount of {provider}'s in operator.db cannot be read ({exc}), so nothing "
+                                            "more is reserved on it until a person looks")
+        used, above = _used(held, account)
         reported = account.limited_until if account is not None else None
         wait = max((at for at in (reported, utc(self._limits.get(provider))) if at is not None), default=None)
         limited = wait is not None and now < wait
-        ends = (account.resets_at if account is not None else None) or window.week_end(now)
+        won = reset is not None and grid == reset and account.resets_at is not None       # the reading's own reset stands
+        ends = (reset if won else None) or window.week_end(now)
         reason = refused or (f"at a reported limit; waiting for the reset at {wait.isoformat()}" if limited else "")
         return Admission(provider, day, used, target(window.allowance, day),
                          ceiling(window.allowance, day, window.reserve_share),
@@ -294,8 +301,13 @@ class BudgetMeter:
     def recover(self, provider: str) -> float:
         """Settle in full the reservations on ``provider`` that a tick made and left open, and give what was charged: only
         under the folder's tick lock, which one tick holds at a time, so every such reservation found open is one a tick
-        that is gone left. One made outside a tick stays open, and counts, until its maker settles it."""
-        return self.scope.settle_open(provider, _ACCOUNT, made_by_a_tick=True)
+        that is gone left. One made outside a tick stays open, and counts, until its maker settles it. When an amount among
+        them cannot be read (``stored_amount``) none is settled: they stay open, and admission refuses on the provider until a
+        person looks (``_look``), never reading that amount as zero."""
+        try:
+            return self.scope.settle_open(provider, _ACCOUNT, made_by_a_tick=True)
+        except ValueError:
+            return 0.0
 
     def settle_open(self, provider: str) -> float:
         """Settle in full every reservation on ``provider`` still open (``OwnerScope.settle_open``): only for an owner that
