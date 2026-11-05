@@ -582,9 +582,13 @@ cognitive work, with programming as the first toy model. So P2 was built first a
 - **The envelope**, in code: a paced week per provider on the operator's ledger, the owner's reserve and the whole
   account counted (`pacing.py`); a `STOP` file, a heartbeat and a pause after three failed cycles (`envelope.py`); one
   tick at a time; refusal when the evaluator, the envelope's own code, a frozen case or a sealed byte changed, as a tick
-  starts and again last thing before an adoption is written, so only a change in the moment between that read and the write
-  gets past it, and the next tick then refuses; a sealed-split guard inside the process (limits below); a loop folder that
-  may not overlap what judges it.
+  starts and again last thing before an adoption is written. The adoption is written only if the digests the tick read
+  before it developed anything are the ones on disk at that last check, which runs with the adoption's row already made
+  and under the lock that writes it, sealed bytes first and digests after; the row carries those digests, and a change is
+  a refusal of its own in the cycle's row, which the next tick refuses again. What gets past it: an edit in the moment
+  after the last read and before the write, and bytes changed and put back between the two reads. Each proposer, and the
+  domain shown the measured view, reads a copy of its own; a sealed-split guard inside the process (limits below); a loop
+  folder that may not overlap what judges it.
 - **Adoption with no person, in shadow only** (`g6/metaharness/shadow.py`). What the gate recommends becomes the loop's
   head in a separate ledger, so the loop compounds, and the monitor rolls it back if it gets worse. A person's profile
   store never moves, `activate` and live runs are refused, and each row carries the loop's `auto:` name. Nothing goes
