@@ -541,14 +541,15 @@ class MetaHarness:
             return _blocked(NO_NEW_CANDIDATE, f"the strategy failed: {why}", plan.next_action,
                             recovery=plan.to_dict())
         seen = {r.get("candidate_digest") for r in self.ledger.rows("proposal")} | {base.digest()}
-        proposals, refused_rows = [], []
+        proposals, refused_rows, valid = [], [], 0
         for item in raw:
             parsed, why = parse_profile(item)
             problems = parsed.problems_for(self.workflow) if parsed else [(SCHEMA, why)]
             if problems:
                 refused_rows.append("; ".join(p for _, p in problems))
                 continue
-            if parsed.digest() in seen:
+            valid += 1                      # every valid one is offered, though no more are taken past the cap
+            if parsed.digest() in seen or len(proposals) >= max_candidates:
                 continue
             seen.add(parsed.digest())
             made = self.candidate(parsed, proposer=proposer, strategy=strategy.name,
@@ -559,16 +560,14 @@ class MetaHarness:
                 "strategy": strategy.name, "proposer": proposer, "candidate_digest": proposal.candidate_digest,
                 "diff": dict(proposal.diff), "failures_seen": len(view.failures), "dev_calls_used": meter.used})
             proposals.append(proposal)
-            if len(proposals) >= max_candidates:
-                break
         flagged = sorted({p for f in view.failures for p in f.flags})
         if not proposals:
             plan = recovery.for_proposal(None, refused_rows)
             return _blocked(NO_NEW_CANDIDATE, "no new candidate: the strategy proposed nothing that is valid and new",
-                            plan.next_action, refused=refused_rows, guard_flags=flagged, dev_calls_used=meter.used,
+                            plan.next_action, refused=refused_rows, valid=valid, guard_flags=flagged, dev_calls_used=meter.used,
                             recovery=plan.to_dict())
         return _envelope("qualified-draft", "G6_E_META_PROPOSED", f"{len(proposals)} candidate(s); evaluate each",
-                         next_action="mh.evaluate(proposal)", proposals=proposals, refused=refused_rows,
+                         next_action="mh.evaluate(proposal)", proposals=proposals, refused=refused_rows, valid=valid,
                          guard_flags=flagged, dev_success=view.dev_success, dev_calls_used=meter.used,
                          notes=list(view.notes))
 

@@ -15,16 +15,30 @@ from pathlib import Path
 import pytest
 
 import g6
-from g6.core.llm import EmptyRetry, FakeLLM, FallbackCaller, TimingLLMCaller
+from g6.core import host_models, llm
+from g6.core.llm import (
+    AnthropicCaller,
+    EmptyRetry,
+    FakeLLM,
+    FallbackCaller,
+    OllamaCaller,
+    OpenAICompatibleCaller,
+    TimingLLMCaller,
+)
 from g6.core.vault import AccessDenied
 from g6.metaharness import Model, Suite, SuiteCase
 from g6.metaharness.domain import (
     FALLBACK_MODEL,
     FEWEST,
+    LOCAL,
     NO_JUDGE,
     NO_SEALED,
+    PAID,
     PAID_MODEL,
+    PROVIDER_MISMATCH,
+    RETRY_MODEL,
     SEALED_OVERLAP,
+    UNKNOWN_CALLER,
     Domain,
     FailureRecord,
     Judge,
@@ -34,6 +48,8 @@ from g6.metaharness.domain import (
     domain_problems,
     reason_coded,
     sealed_closed,
+    sender_problems,
+    who_pays,
 )
 from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.monitor import MIN_PAIRS
@@ -108,6 +124,179 @@ def test_a_paid_model_is_refused_because_the_loop_never_spends_api_credits(tmp_p
     assert PAID_MODEL in _codes(domain)
 
 
+# Who pays is read from the caller's type, not from what a model declares -----------------------------------------------------
+
+class OwnCaller:
+    """A caller of a domain's own, which no rule here knows, so nothing can say who pays for it."""
+
+    def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+        return "an answer"
+
+
+class Reviewer(host_models.ClaudeCodeCaller):
+    """As ``g6.harness.completion_loop.ToolSession``: a subclass of a host caller signs in as that caller does."""
+
+
+def _with_caller(domain, caller, **declared) -> None:
+    free = domain.execution()
+    domain.execution = lambda: dataclasses.replace(free, models={"local": Model(caller, **declared)})
+
+
+KEYED = lambda: OpenAICompatibleCaller("gpt", base_url="https://api.openai.com/v1", api_key="a-key")   # noqa: E731
+
+
+@pytest.mark.parametrize("wrap", [lambda caller: caller, lambda caller: TimingLLMCaller(caller, print)])
+@pytest.mark.parametrize("caller", [KEYED, lambda: AnthropicCaller(client=object())])
+def test_a_caller_with_an_api_key_is_refused_whatever_its_model_declares(tmp_path, caller, wrap):
+    domain = domains.WordProblems(tmp_path)
+    _with_caller(domain, wrap(caller()))                                 # the field is left at its default of unpaid
+    assert PAID_MODEL in _codes(domain)
+    assert "API credits" in next(why for code, why in domain_problems(domain) if code == PAID_MODEL)
+
+
+@pytest.mark.parametrize("caller", [host_models.ClaudeCodeCaller, host_models.CodexCaller, Reviewer, OllamaCaller, FakeLLM,
+                                    lambda: OpenAICompatibleCaller("local", base_url="http://127.0.0.1:8000/v1", api_key=None)])
+def test_a_subscription_or_a_local_model_spends_no_credits(tmp_path, caller):
+    domain = domains.WordProblems(tmp_path)
+    _with_caller(domain, caller())
+    assert PAID_MODEL not in _codes(domain) and UNKNOWN_CALLER not in _codes(domain)
+
+
+@pytest.mark.parametrize("caller,provider", [(host_models.ClaudeCodeCaller, "claude"), (host_models.CodexCaller, "codex"),
+                                             (Reviewer, "claude"), (OllamaCaller, LOCAL), (FakeLLM, LOCAL), (KEYED, PAID),
+                                             (lambda: AnthropicCaller(client=object()), PAID), (OwnCaller, "")])
+def test_who_pays_is_read_from_the_callers_type(caller, provider):
+    assert who_pays(caller()) == provider
+
+
+def test_a_model_that_declares_itself_paid_is_taken_at_its_word(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    _with_caller(domain, domain.llm, paid=True)
+    assert PAID_MODEL in _codes(domain)
+
+
+def test_a_caller_nothing_here_knows_is_refused_since_nothing_can_say_who_pays(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    _with_caller(domain, OwnCaller())
+    assert _codes(domain) == {UNKNOWN_CALLER}
+
+
+class SendsItselfWithAHostBeside(OpenAICompatibleCaller):
+    """It sends for itself, with its key, whatever else it holds under ``_inner``."""
+
+    def __init__(self) -> None:
+        super().__init__("gpt", base_url="https://api.openai.com/v1", api_key="a-key")
+        self._inner = host_models.ClaudeCodeCaller()
+
+
+def test_a_caller_that_sends_for_itself_is_judged_by_itself_whatever_it_holds(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    _with_caller(domain, SendsItselfWithAHostBeside())
+    assert PAID_MODEL in _codes(domain) and who_pays(SendsItselfWithAHostBeside()) == PAID
+
+
+class KeyBeforeHost(OpenAICompatibleCaller, host_models.ClaudeCodeCaller):
+    """It sends with its key, and a host program is only something it inherits from."""
+
+
+class HostBeforeKey(host_models.CodexCaller, OpenAICompatibleCaller):
+    """It may start the program, and it holds a key all the same: reading its type cannot say which it uses."""
+
+    def __init__(self) -> None:
+        OpenAICompatibleCaller.__init__(self, "gpt", base_url="https://api.openai.com/v1", api_key="a-key")
+
+
+class HostBeforeAnthropic(host_models.ClaudeCodeCaller, AnthropicCaller):
+    """The SDK finds a key of its own, so none need be given."""
+
+
+class HostBeforeNoKey(host_models.ClaudeCodeCaller, OpenAICompatibleCaller):
+    """A host's constructor runs, so it has no ``api_key`` at all, and nothing here may fall over reading one."""
+
+
+def _key_before_host() -> KeyBeforeHost:
+    return KeyBeforeHost("gpt", base_url="https://api.openai.com/v1", api_key="a-key")
+
+
+@pytest.mark.parametrize("caller", [_key_before_host, HostBeforeKey, HostBeforeAnthropic])
+def test_a_paid_caller_is_paid_however_it_inherits_a_host(tmp_path, monkeypatch, caller):
+    posted = []
+    monkeypatch.setattr(llm, "_post_json", lambda *args: posted.append(args) or {"choices": [{"message": {"content": "x"}}]})
+    assert who_pays(caller()) == PAID
+    assert sender_problems(caller(), "claude")[0][0] == PAID_MODEL
+    loop = _a_loop_on(tmp_path, caller())
+    assert loop.enrol("Ada")["warning_card"]["code"] == PAID_MODEL and loop.tick()["warning_card"]["code"] == PAID_MODEL
+    assert posted == []
+
+
+def test_a_host_with_no_key_stays_on_its_subscription_whatever_else_it_inherits():
+    assert who_pays(HostBeforeNoKey()) == "claude"
+
+
+def test_a_retry_held_by_a_caller_that_sends_for_itself_is_no_wrapper_around_it(tmp_path):
+    caller = FakeLLM()
+    caller._inner = EmptyRetry(FakeLLM())
+    domain = domains.WordProblems(tmp_path)
+    _with_caller(domain, caller)
+    assert domain_problems(domain) == []
+
+
+def test_a_wrapper_of_a_domains_own_is_seen_through_when_it_holds_its_caller_as_the_wrappers_do(tmp_path):
+    class Logged:
+        def __init__(self, inner) -> None:
+            self._inner = inner
+
+    domain = domains.WordProblems(tmp_path)
+    _with_caller(domain, Logged(host_models.CodexCaller()))
+    assert _codes(domain) == set()
+
+
+@pytest.mark.parametrize("proposer,code", [(KEYED, PAID_MODEL), (OwnCaller, UNKNOWN_CALLER)])
+def test_a_proposer_is_held_to_the_same_rule(tmp_path, proposer, code):
+    domain = domains.WordProblems(tmp_path)
+    settings = LoopSettings(windows=(ProviderWindow("claude", 1000, datetime(2026, 10, 26, tzinfo=UTC)),))
+    loop = ShadowLoop(domain, tmp_path / "loop", settings, proposer=proposer())
+    assert loop.enrol("Ada")["warning_card"]["code"] == code and loop.tick()["warning_card"]["code"] == code
+    assert domain.llm.calls == []
+
+
+def _a_loop_on(tmp_path, caller, *, provider: str = "claude", proposer=None):
+    domain = domains.WordProblems(tmp_path)
+    _with_caller(domain, caller)
+    settings = LoopSettings(windows=(ProviderWindow(provider, 1000, datetime(2026, 10, 26, tzinfo=UTC)),))
+    return ShadowLoop(domain, tmp_path / "loop", settings, proposer=proposer or domains.proposes({"prompt": domains.WORKING}))
+
+
+def test_a_folder_that_names_one_provider_and_calls_another_is_refused(tmp_path):
+    loop = _a_loop_on(tmp_path, host_models.CodexCaller())
+    got = loop.enrol("Ada")
+    assert got["warning_card"]["code"] == PROVIDER_MISMATCH and got["completion_state"] == "blocked-escalated"
+    assert "codex" in got["message"] and "claude" in got["message"]
+
+
+def test_a_proposer_on_another_provider_is_refused_too(tmp_path):
+    loop = _a_loop_on(tmp_path, host_models.ClaudeCodeCaller(), proposer=host_models.CodexCaller())
+    assert loop.enrol("Ada")["warning_card"]["code"] == PROVIDER_MISMATCH
+
+
+def test_a_folder_whose_callers_are_its_providers_has_no_such_problem(tmp_path):
+    assert _a_loop_on(tmp_path, host_models.CodexCaller(), provider="codex", proposer=host_models.CodexCaller()).problems == []
+
+
+def test_a_local_model_is_on_nobodys_week_so_any_provider_may_carry_it(tmp_path):
+    assert _a_loop_on(tmp_path, OllamaCaller(), provider="codex").problems == []
+
+
+def test_a_caller_that_changed_after_enrolment_is_refused_before_it_is_called(tmp_path):
+    loop = _a_loop_on(tmp_path, host_models.ClaudeCodeCaller(), proposer=FakeLLM())
+    assert loop.problems == []
+    keyed = KEYED()
+    domain = loop.domain
+    free = domain.execution()
+    domain.execution = lambda: dataclasses.replace(free, models={"local": Model(keyed)})
+    assert loop._lacking()["warning_card"]["code"] == PAID_MODEL
+
+
 def _two_backends(domain) -> FallbackCaller:
     return FallbackCaller((domain.llm, FakeLLM()))
 
@@ -125,6 +314,29 @@ def test_a_model_with_a_fallback_is_refused_since_a_comparison_would_mix_backend
 def test_one_backend_behind_a_wrapper_is_one_backend(tmp_path, wrap):
     domain = domains.WordProblems(tmp_path)
     assert backends(wrap(domain.llm)) == 1
+
+
+@pytest.mark.parametrize("wrap", [EmptyRetry, lambda caller: FallbackCaller((caller,)),
+                                  lambda caller: TimingLLMCaller(EmptyRetry(caller), print)])
+def test_a_model_behind_a_retry_or_a_fallback_is_refused_since_a_refusal_must_never_be_sent_again(tmp_path, wrap):
+    domain = domains.WordProblems(tmp_path)
+    _with_caller(domain, wrap(host_models.ClaudeCodeCaller()))
+    problems = domain_problems(domain)
+    assert [code for code, _ in problems] == [RETRY_MODEL]
+    assert "ClaudeCodeCaller" in problems[0][1] and "provider_from_env" in problems[0][1]
+
+
+def test_a_proposer_behind_a_retry_is_refused_too(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    settings = LoopSettings(windows=(ProviderWindow("claude", 1000, datetime(2026, 10, 26, tzinfo=UTC)),))
+    loop = ShadowLoop(domain, tmp_path / "loop", settings, proposer=EmptyRetry(domains.proposes({"prompt": domains.WORKING})))
+    assert loop.enrol("Ada")["warning_card"]["code"] == RETRY_MODEL
+
+
+def test_a_timing_wrapper_retries_nothing_so_it_stands(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    _with_caller(domain, TimingLLMCaller(host_models.ClaudeCodeCaller(), print))
+    assert domain_problems(domain) == []
 
 
 def test_a_loop_with_a_fallback_model_or_proposer_enrols_nothing_and_runs_nothing(tmp_path):

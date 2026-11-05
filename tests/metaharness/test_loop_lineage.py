@@ -19,7 +19,7 @@ from g6.core.llm import FakeLLM
 from g6.metaharness.failure_strategy import FailureTraceStrategy
 from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
-from g6.metaharness.shadow import lineage
+from g6.metaharness.shadow import ADOPTIONS, lineage
 from g6.self_maintenance.pacing import ProviderWindow
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
@@ -239,3 +239,74 @@ def test_the_generations_are_the_loops_own_numbers(tmp_path):
     loop.tick()
     assert g6.__version__ == version and "version" not in lineage(loop.root / "workspace")["recent"][0]
     assert loop.status()["generation"] == 1
+
+
+# A person's rollback, beside the monitor's -----------------------------------------------------------------------------------
+
+def test_the_lineage_shows_a_persons_rollback_as_theirs_and_the_next_tick_runs_on_it(tmp_path):
+    loop, _ = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"
+    got = loop.demote(1, "  Ada ")
+    assert got["warning_card"]["code"] == "G6_E_LOOP_DEMOTED"
+    last = lineage(loop.root / "workspace")["recent"][-1]
+    assert (last["generation"], last["parent"], last["kind"], last["undoes"], last["restores"]) == (2, 1, "rollback", 1, 0)
+    assert last["asked_by"] == "Ada" and last["measured"] == {}
+    assert loop.status()["generation"] == 2 and loop.tick()["head_version"] == 2
+
+
+def test_the_monitors_rollback_names_nobody(tmp_path):
+    domain = domains.WordProblems(tmp_path, weak=0.6)
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    assert loop.tick()["outcome"] == "adopted"
+    domain.tutor.collapsed = True
+    assert loop.tick()["outcome"] == "rolled_back"
+    assert lineage(loop.root / "workspace")["recent"][-1]["asked_by"] == ""
+
+
+def test_the_log_keeps_who_took_a_generation_back_and_it_ends_a_rest(tmp_path):
+    loop, _ = _enrolled(tmp_path, domain=domains.WordProblems(tmp_path, weak=0.6))
+    assert loop.tick()["outcome"] == "adopted"
+    loop.log.cycle({"outcome": "idle", "at": NOW.isoformat()})
+    assert loop.log.quiet_streak() == 1
+    loop.demote(1, "Ada")
+    assert loop.log.quiet_streak() == 0
+    [row] = [body for kind, body in loop.log._rows() if kind == "demoted"]
+    assert row["by"] == "Ada" and row["undoes"] == 1 and row["head_version"] == 2
+
+
+@pytest.mark.parametrize("name", ["", "   ", "auto:loop"])
+def test_no_agent_name_takes_a_generation_back(tmp_path, name):
+    loop, _ = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"
+    assert loop.demote(1, name)["warning_card"]["code"] == "G6_E_META_APPROVAL_REQUIRED"
+    assert loop.mh._head()[0] == 1 and len(loop.mh.adoption_rows()) == 1
+
+
+def test_a_refused_demotion_writes_nothing_to_the_log(tmp_path):
+    loop, _ = _enrolled(tmp_path)
+    assert loop.demote(0, "Ada")["warning_card"]["code"] == "G6_E_LOOP_NOT_DEMOTABLE"
+    assert not [kind for kind, _ in loop.log._rows() if kind == "demoted"]
+
+
+def test_a_chain_a_person_moved_on_is_not_read_as_a_lost_generation(tmp_path):
+    loop, _ = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"
+    loop.demote(1, "Ada")
+    assert loop.tick()["warning_card"]["code"] != "G6_E_LOOP_RECORDS_UNREADABLE"
+
+
+def test_a_chain_cut_back_past_a_persons_rollback_runs_nothing_after_a_restart(tmp_path):
+    """Every row that stays still checks out, and no cycle saw the rollback: only the log's own row for it can show the loss.
+    What comes back is the very head the person took back."""
+    loop, domain = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"
+    chain = loop.root / "workspace" / ADOPTIONS
+    before = chain.read_bytes()
+    assert loop.demote(1, "Ada")["head_version"] == 2
+    chain.write_bytes(before)
+    again = ShadowLoop(domain, loop.root, SETTINGS, proposer=domains.proposes({"prompt": domains.WORKING}), now=lambda: NOW,
+                       clock=domains.Clock())
+    calls = len(domain.llm.calls)
+    got = again.tick()
+    assert got["warning_card"]["code"] == "G6_E_LOOP_RECORDS_UNREADABLE" and "generation 2" in got["message"]
+    assert got["completion_state"] == "blocked-escalated" and len(domain.llm.calls) == calls

@@ -14,21 +14,22 @@ file the person agreed to lift, by digest, length and modification time, and any
 survives it, whatever became of any count or record.
 
 **Stop** always works and asks nobody: it adds to the local ``STOP`` file, which is safe to repeat and works when the runner
-is already dead. It kills nothing and touches no container, so it reports whether the runner has stopped yet. The runner
-sees the file between ticks, so a tick under way finishes first. It also ends the person's start, so nothing but a new
-agreement brings the runner back, not a restart and not the file's removal.
+is already dead. It kills nothing and touches no container, so it reports whether the runner has stopped yet. A tick under
+way sees the file at its next model call, so a request already sent comes back first and nothing after it goes out. It also
+ends the person's start, so nothing but a new agreement brings the runner back, not a restart and not the file's removal.
 
 **Status** only reads: its files, no lock it could hold up and no model. What it shows of each provider's use is the
 runner's last heartbeat, with the time of that heartbeat, because opening the ledger would write to it.
 
-A folder left empty is ``improve`` under G6's state folder. Replies carry the library envelope, and a stop or status never
-imports the tick, so neither can fail for the reasons a tick can.
+A folder left empty is the one beside G6's state folder, ``~/.g6-improve`` by default. Replies carry the library envelope, and
+a stop or status never imports the tick, so neither can fail for the reasons a tick can.
 """
 from __future__ import annotations
 
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -51,6 +52,7 @@ from g6.self_maintenance.envelope import (
     record_stop,
     runner_alive,
     stop_reason,
+    stop_standing,
     stop_to_lift,
     stops_asked,
 )
@@ -76,8 +78,10 @@ STOP_FAILED = "G6_E_LOOP_STOP_FAILED"
 STATUS = "G6_E_LOOP_STATUS"
 PAUSED = "G6_E_LOOP_PAUSED"
 RUNNER_LOG = "runner.log"
-#: How long to watch a new runner take its lock: importing G6 takes seconds.
+#: How long to watch a new runner open its folder: importing G6 takes seconds.
 START_WAIT = 45.0
+#: The heartbeats of a runner not yet past opening its folder.
+OPENING = ("starting", "not-running")
 RECENT = 8
 # COPY: Said in every dialog: the name is a claim, and what declining does.
 NAME = ("Type your name to agree; it is recorded as you give it and is not authenticated. To refuse, decline: nothing "
@@ -101,7 +105,14 @@ def refused() -> dict | None:
 
 
 def _root(folder: str) -> Path:
-    return Path(folder).expanduser().resolve() if folder.strip() else g6_home() / "improve"
+    """The folder named, or the default: beside G6's state folder and not in it, since the server, the completion loop and
+    test runs all write there, and nothing but the loop writes here. A loop already in the earlier default stays where it
+    is, so that a stop with no folder named still reaches its runner."""
+    if folder.strip():
+        return Path(folder).expanduser().resolve()
+    home = g6_home()
+    default, earlier = home.with_name(f"{home.name}-improve"), home / "improve"
+    return earlier if _is_a_loop(earlier) and not _is_a_loop(default) else default
 
 
 def _is_a_loop(root: Path) -> bool:
@@ -119,17 +130,29 @@ def _log(root: Path) -> CycleLog | None:
     return CycleLog(root / CYCLE_LOG) if (root / CYCLE_LOG).is_file() else None
 
 
+def _pinned_python(settings: dict[str, Any]) -> str:
+    """The interpreter a folder pins its runner to, or ``""`` with none named. A ``ValueError`` says what is wrong with it."""
+    if "python" not in settings:
+        return ""
+    python = settings["python"]
+    if not isinstance(python, str) or not Path(python).is_absolute() or not Path(python).is_file():
+        raise ValueError(f"{SETTINGS_FILE}: python must be the full path of an interpreter, not {python!r}")
+    return python
+
+
 def _cannot_start(root: Path) -> dict | None:
     if not (root / SETTINGS_FILE).is_file():
         return _not_a_loop(root)
     try:
-        windows_from(read_settings(root))
+        settings = read_settings(root)
+        windows_from(settings)
+        _pinned_python(settings)
     except ValueError as exc:
         return _blocked(BAD_SETTINGS, f"{exc}"[:400], f"Fix {SETTINGS_FILE} in {root}; nothing was started.")
     if runner_alive(root):
         return _blocked(RUNNER_ALIVE, "a runner is already alive on this folder, so nothing was started",
-                        "Read g6_improve_status. If you have just stopped it, it ends once it sees the STOP file: within a "
-                        "minute of its current tick ending.")
+                        "Read g6_improve_status. If you have just stopped it, it ends once it sees the STOP file: at its next "
+                        "model call, or within a minute while it waits.")
     try:
         log = _log(root)
     except LedgerError as exc:
@@ -148,12 +171,13 @@ def _cannot_start(root: Path) -> dict | None:
     return None
 
 
-def _terms(root: Path, settings: dict[str, Any], standing: dict[str, Any]) -> str:
+def _terms(root: Path, settings: dict[str, Any], standing: dict[str, Any], stops: int) -> str:
     """A digest of all a dialog shows or stands on: the whole settings file, the Python file, who enrolled it, any stop in
-    place as ``stop_to_lift`` reads it, which is ``standing``, and any pause. Any write to the stop changes that."""
+    place as ``stop_to_lift`` reads it, which is ``standing``, the count of stops, and any pause. Any write to the stop
+    changes that. So does a stop that died between its two writes, which only the count shows."""
     log = _log(root)
     return digest_of({"settings": settings, "domain_file": file_digest(settings.get("domain_file")),
-                      "enrolled": log.enrolled(), "stop": standing, "paused": log.paused()})
+                      "enrolled": log.enrolled(), "stop": standing, "stops": stops, "paused": log.paused()})
 
 
 def asked(folder: str) -> tuple[Path, str, str] | dict:
@@ -164,44 +188,71 @@ def asked(folder: str) -> tuple[Path, str, str] | dict:
     cannot = _cannot_start(root)
     if cannot is not None:
         return cannot
-    settings, log = read_settings(root), _log(root)
-    terms = _terms(root, settings, stop_to_lift(root))
+    settings, log, stops = read_settings(root), _log(root), stops_asked(root)
+    terms = _terms(root, settings, stop_to_lift(root), stops)
     enrolled = log.enrolled()
     use = [f"{w.provider}: {w.allowance:g} a week{' (an estimate)' if w.estimated else ''}, keeping {w.reserve_share:.0%} for "
            "you until the week's last day" for w in windows_from(settings)]
+    python = _pinned_python(settings)
     question = [f"Start G6's self-improvement loop on {enrolled.get('domain', 'its domain')}?", f"Folder: {root}",
                 f"Python file: {settings.get('domain_file')}, as enrolled by {enrolled['by']} (the name they gave).", *use,
+                f"It runs on {python}." if python else ("It runs on the Python of this server, so any edit to that install "
+                                                        "stops its ticks until a person enrols again."),
                 f"Settings digest: {digest_of(settings)}.", RUNS]
     if stop_reason(root):
         question.append(f"Starting lifts the stop now in place ({stop_reason(root)}). Its file stays, and any write to it after "
                         "that stops the loop again.")
+    elif stops > (log.started() or {}).get("stops", 0):
+        question.append(f"A stop was asked for since the last start and no STOP file stands for it: {STOPS_FILE} in the folder "
+                        "says why. Starting goes past it.")
     if log.paused():
         question.append(f"The loop is paused, so it will spend nothing until you lift that: {log.paused()}"[:300])
     return root, "\n".join([*question, NAME]), terms
 
 
-def _spawn(root: Path) -> Any:
-    """The runner as a process of its own, on the same Python: no console, its own group, its output in its folder."""
+def _spawn(root: Path, settings: dict[str, Any]) -> Any:
+    """The runner as a process of its own: no console, its own group, its output in its folder. On the Python the settings the
+    person agreed to pin, isolated, since ``-P`` leaves ``PYTHONPATH`` standing and that puts a working tree ahead of any
+    install. With none pinned, on this server's Python, as the server's own environment has it. Either way it reads its
+    cached bytecode from a folder made empty for it, and writes none, so only the source the envelope pins can run: a
+    ``.pyc`` planted under ``__pycache__`` beside a pinned file would run in its place. These are flags, as ``-I`` reads no
+    ``PYTHON*`` setting."""
     detached = ({"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
                 else {"start_new_session": True})
+    python = _pinned_python(settings)
+    cache = tempfile.mkdtemp(prefix="g6-loop-no-bytecode-")
     with open(root / RUNNER_LOG, "ab") as log:
-        return subprocess.Popen([sys.executable, "-P", "-m", "g6.metaharness.loop", "run", str(root)], cwd=root,
-                                stdin=subprocess.DEVNULL, stdout=log, stderr=log, close_fds=True, **detached)
+        return subprocess.Popen([python or sys.executable, "-I" if python else "-P", "-B", "-X", f"pycache_prefix={cache}",
+                                 "-m", "g6.metaharness.loop", "run", str(root)],
+                                cwd=root, stdin=subprocess.DEVNULL, stdout=log, stderr=log, close_fds=True, **detached)
 
 
-def _watch(root: Path, process: Any) -> dict:
-    """Whether the runner took its lock, or ended first and why."""
+def _past_opening(root: Path, since: datetime) -> bool:
+    """Whether a runner spawned at ``since`` has got past opening its folder. Its lock cannot say: a runner refuses while it
+    holds it. Nor can a process number: on Windows a venv's ``python.exe`` is a launcher, and the runner is a child of it."""
+    beat = heartbeat(root) or {}
+    try:
+        return beat.get("state") not in OPENING and datetime.fromisoformat(beat.get("at", "")) >= since
+    except (TypeError, ValueError):
+        return False
+
+
+def _watch(root: Path, process: Any, since: datetime) -> dict:
+    """Whether the runner spawned at ``since`` got past opening its folder, or ended first, and how. Ended later, it is past
+    what this can see: its last heartbeat is what is left."""
     deadline = time.monotonic() + START_WAIT
     while time.monotonic() < deadline:
-        if runner_alive(root):
+        code = process.poll()
+        if code is not None:
+            said = (heartbeat(root) or {}).get("reason") or f"see {RUNNER_LOG} in the folder"
+            return _blocked(START_FAILED, f"the runner ended as it started, with exit code {code}: {said}"[:500], running=False,
+                            return_code=code, folder=str(root))
+        if _past_opening(root, since):
             return _envelope("qualified-draft", STARTED, f"the runner is alive on {root}", running=True, folder=str(root),
                              next_action="g6_improve_status reads it; the daily digest is under its folder; "
                                          "g6_improve_stop stops it.")
-        if process.poll() is not None:
-            said = (heartbeat(root) or {}).get("reason") or f"see {RUNNER_LOG} in the folder"
-            return _blocked(START_FAILED, f"the runner ended as it started: {said}"[:500], running=False, folder=str(root))
         time.sleep(0.1)
-    return _envelope("qualified-draft", STARTED, f"the runner was started on {root} and has not taken its lock yet",
+    return _envelope("qualified-draft", STARTED, f"the runner was started on {root} and has not opened its folder yet",
                      running=False, folder=str(root), next_action="Read g6_improve_status in a minute.")
 
 
@@ -217,7 +268,7 @@ def start(root: Path, who: str, shown: str | None = None) -> dict:
     try:
         if stops < 0:
             raise OSError(f"{STOPS_FILE} cannot be read")      # a restart would read two unreadable counts as one
-        if shown is not None and _terms(root, settings, agreed) != shown:
+        if shown is not None and _terms(root, settings, agreed, stops) != shown:
             return _blocked(TERMS_CHANGED, "what the person read is no longer what would start, so nothing was started",
                             ASK_AGAIN, running=False, folder=str(root))
         with Coordination(root / ".tick").mutex():
@@ -228,8 +279,9 @@ def start(root: Path, who: str, shown: str | None = None) -> dict:
             record_stop(root, why, at=datetime.now().astimezone().isoformat())
             return _blocked(START_STOPPED, f"a stop arrived while the start was being recorded, so nothing was started: {why}"
                             [:500], NOT_ASKED, running=False, folder=str(root))
-        return {**_watch(root, _spawn(root)), "started_by": who}
-    except (OSError, LedgerError, WorkspaceRefused) as exc:
+        spawned = datetime.now().astimezone()              # before the spawn: a runner can beat before this process looks
+        return {**_watch(root, _spawn(root, settings), spawned), "started_by": who}
+    except (OSError, LedgerError, WorkspaceRefused, ValueError) as exc:
         return _blocked(START_FAILED, f"the runner could not be started: {type(exc).__name__}: {exc}"[:500], running=False,
                         folder=str(root))
 
@@ -246,8 +298,8 @@ def stop(folder: str, reason: str = "") -> dict:
                         running=runner_alive(root), folder=str(root))
     record_stop(root, why, at=datetime.now().astimezone().isoformat())
     running = runner_alive(root)
-    said = ("the runner has been asked to stop and is still alive: it ends once it sees the STOP file, within a minute of "
-            "its current tick ending" if running else "the STOP file is in place and no runner is alive")
+    said = ("the runner has been asked to stop and is still alive: it ends once it sees the STOP file, at its next model "
+            "call, or within a minute while it waits" if running else "the STOP file is in place and no runner is alive")
     return _envelope("qualified-draft", STOP_ASKED, said, running=running, stopped=not running, stop=why, folder=str(root),
                      next_action="g6_improve_status says when it has gone." if running else
                      "g6_improve_start starts it again, and lifts the stop once the person agrees.")
@@ -292,7 +344,7 @@ def status(folder: str) -> dict:
                      constraint={"name": named[-1]["constraint"], "basis": named[-1].get("basis", ""),
                                  "tick": named[-1]["tick"]} if named else None,
                      last_cycle=_shown(cycles[-1]) if cycles else None, cycles=len(cycles), pause=pause,
-                     stop=stop_reason(root), started=started, generation=generations["current"],
+                     stop=stop_standing(root, started), started=started, generation=generations["current"],
                      lineage=generations["recent"],
                      digest={"path": str(page), "text": page.read_text(encoding="utf-8")} if page else None,
                      g6_status=STATUS_LINE)

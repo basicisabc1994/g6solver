@@ -63,7 +63,7 @@ def load_cases(path: str | Path) -> tuple[SuiteCase, ...]:
 
 class CodingReplay:
     """``cases``: the development pool. ``sealed``: a file alone in its folder, which the loop holds only as a vault. ``caller``: the
-    reviewer's model, declared unpaid: the loop never spends API credits."""
+    reviewer's model. The loop reads who pays from its type and refuses one with an API key."""
 
     name = "coding-replay"
 
@@ -102,6 +102,11 @@ class CodingReplay:
                 cause = ACCEPTED_DEFECT if self._labels.get(record.case_id) == WRONG else FALSE_ALARM
             found.append(FailureRecord(record.case_id, cause, record.changeable, record.note, record.independently_observed))
         return tuple(found)
+
+    def root_cause(self, cause: str) -> str | None:
+        """Where a wrong reading sits on the closed list of ``g6.metaharness.lessons``: a defect let through is a gap in verification, and a false alarm
+        sends a right patch to repair. Any other cause has no place on it yet."""
+        return {ACCEPTED_DEFECT: "verification_gap", FALSE_ALARM: "bad_remediation"}.get(cause)
 
 
 __all__ = ["ACCEPTED_DEFECT", "FALSE_ALARM", "READ_AS_WRITTEN", "CodingReplay", "load_cases", "right_verdict", "verdict_of"]

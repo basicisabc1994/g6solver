@@ -32,10 +32,17 @@ def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def in_cache(rel: Path) -> bool:
+    """Whether ``rel`` lies in a ``__pycache__`` folder, its name read as the system reads it (``os.path.normcase``)."""
+    return any(os.path.normcase(part) == os.path.normcase("__pycache__") for part in rel.parts[:-1])
+
+
 def build_manifest(root: str | os.PathLike[str], *, patterns: tuple[str, ...] = ("**/*.py",)) -> dict[str, str]:
-    """``relative/posix/path -> sha256`` for every file under ``root`` matching ``patterns`` (``__pycache__`` skipped)."""
+    """``relative/posix/path -> sha256`` for every file under ``root`` matching ``patterns`` (``__pycache__`` skipped, read
+    below ``root`` only, so a root installed under a folder of that name still has its files, and as the system reads a
+    folder's name: on Windows ``__PYCACHE__`` is the same folder, and a first import writes its cache there)."""
     base = Path(root)
-    found = {p for pattern in patterns for p in base.glob(pattern) if p.is_file() and "__pycache__" not in p.parts}
+    found = {p for pattern in patterns for p in base.glob(pattern) if p.is_file() and not in_cache(p.relative_to(base))}
     return {p.relative_to(base).as_posix(): _sha(p.read_bytes()) for p in sorted(found)}
 
 
@@ -148,5 +155,5 @@ def verify_installed(manifest: Mapping[str, str], *, expected_manifest_sha256: s
     return verify_tree(Path(g6.__file__).resolve().parent, manifest, expected_manifest_sha256=expected_manifest_sha256)
 
 
-__all__ = ["IntegrityResult", "build_manifest", "manifest_sha256", "manifest_text", "read_manifest", "verify_installed",
+__all__ = ["IntegrityResult", "build_manifest", "in_cache", "manifest_sha256", "manifest_text", "read_manifest", "verify_installed",
            "verify_tree", "write_manifest"]

@@ -33,6 +33,34 @@ def test_it_opens_with_the_status_line_and_covers_each_thing_the_owner_reads():
         assert f"## {heading}" in text
 
 
+def _reflex(**given) -> dict:
+    return {"level": "owner", "constraint": "gate", "stuck": True, "change": "level", "repeated": {},
+            "evidence": {"held": 7, "refusals": {"G6_E_META_OBJECTIVE_REGRESSED:wall_clock_s": 7}}} | given
+
+
+def test_its_first_line_says_what_limits_progress_at_which_level_and_what_only_the_owner_can_do():
+    lines = _render(reflex=_reflex()).splitlines()
+    assert lines[2].startswith("**What limits progress: gate, at the owner level.**") and lines[3] == STATUS
+    assert "7 stopped by G6_E_META_OBJECTIVE_REGRESSED:wall_clock_s" in lines[2]
+    assert "Stuck for 7 cycles with no adoption: the next attempt must change its level" in lines[2]
+    assert "Only the owner can change this" in lines[2]
+
+
+def test_a_level_that_is_not_the_owners_asks_nothing_of_the_owner():
+    line = _render(reflex=_reflex(level="loop", constraint="distinct", stuck=False, change=None, evidence={})).splitlines()[2]
+    assert line == "**What limits progress: distinct, at the loop level.** Nothing here needs the owner."
+
+
+def test_a_page_with_no_diagnosis_has_no_such_line():
+    assert "What limits progress" not in _render() and _render().splitlines()[2] == STATUS
+    assert "What limits progress" not in _render(reflex={"unreadable": "ValueError: x"})
+
+
+def test_the_first_line_is_flattened_as_every_line_is():
+    line = _render(reflex=_reflex(constraint="gate\n## A fake heading " + "x" * 400)).splitlines()[2]
+    assert "\n" not in line and "## A fake heading" in line and len(line) < 600
+
+
 def test_it_says_what_ran_in_plain_words():
     text = _render(cycles=[_cycle(1, "adopted"), _cycle(2, "no_winner"), _cycle(3, "no_winner")])
     assert "3 ticks" in text and "1 adopted" in text and "2 with no winner" in text
@@ -78,6 +106,12 @@ def test_the_lineage_shows_gains_and_losses_with_what_was_measured():
     assert "Now at generation 2." in text
     assert "Generation 1, from 0: failure_trace changed prompt; measured on 80 held-out cases, 0.3 before, 0.9 after" in text
     assert "Generation 2, from 1 (a rollback): went back to generation 0" in text
+
+
+def test_a_persons_rollback_says_whose_it_was_and_claims_no_figures():
+    generations = {"current": 2, "recent": [{"generation": 2, "parent": 1, "kind": "rollback", "asked_by": "Ada",
+                                             "change": "a person went back to generation 0", "measured": {}}]}
+    assert "Generation 2, from 1 (a rollback by Ada): a person went back to generation 0" in _render(generations=generations)
 
 
 def test_wall_clock_is_shown_as_reported_and_not_gated():

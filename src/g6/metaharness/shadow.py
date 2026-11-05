@@ -6,7 +6,9 @@ gate recommends is recorded there, and every later step runs on it, so the loop 
 touched or imitated: the profile store keeps the one version they confirmed, so anything opening this workspace as an
 ordinary meta-harness sees that version and no other; ``activate`` and ``rollback`` still need a person and are
 refused here; a live ``run`` is refused too, since nothing outside the loop may run on a head no person accepted. Each
-row is signed with the loop's ``auto:`` name, and the ledger refuses any other. Nothing here reaches outward. Whether a
+adoption is signed with the loop's ``auto:`` name, and the ledger refuses any other. The one row a person's name can
+stand on is a rollback, from ``demote``: taking the head back moves nothing outside this chain, and a daily reviewer needs
+a lever short of the stop. It asks for no measurement, so it claims none. Nothing here reaches outward. Whether a
 passed gate may ever stand in for a person outside this workspace is the owner's ruling, and ``g6.metaharness.loop``
 keeps it behind one named setting.
 
@@ -53,6 +55,8 @@ SHADOW_ONLY = "G6_E_LOOP_SHADOW_ONLY"
 NOT_ADOPTABLE = "G6_E_LOOP_NOT_ADOPTABLE"
 ADOPTED = "G6_E_LOOP_ADOPTED"
 ROLLED_BACK = "G6_E_LOOP_ROLLED_BACK"
+DEMOTED = "G6_E_LOOP_DEMOTED"
+NOT_DEMOTABLE = "G6_E_LOOP_NOT_DEMOTABLE"
 AUDITED = "G6_E_LOOP_AUDITED"
 MEASURED = "G6_E_LOOP_MEASURED"
 #: What the harness holds a run for when its executor raised, which a failed model call does.
@@ -90,7 +94,8 @@ def _measured(report: EvaluationReport) -> dict[str, Any]:
 
 def _generation(row: Mapping[str, Any]) -> dict[str, Any]:
     """A row of the chain as the lineage reads it."""
-    undoing = {"undoes": row["undoes"], "restores": row["target_version"]} if row["kind"] == "rollback" else {}
+    undoing = ({"undoes": row["undoes"], "restores": row["target_version"],
+                "asked_by": "" if is_automated(row["by"]) else row["by"]} if row["kind"] == "rollback" else {})
     return {"generation": row["version"], "parent": row.get("base_version"), "kind": row["kind"], "at": row["at"],
             "profile_digest": row["profile_digest"], "change": row.get("change", ""), "measured": row.get("measured", {}),
             **undoing, **{name: row.get(name, [] if name == "composed_from" else "") for name in FINDINGS}}
@@ -107,8 +112,11 @@ def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dic
     if kind not in ("adopt", "rollback"):
         return [f"unknown kind {kind!r}"]
     problems = []
-    if not is_automated(str(body.get("by") or "")):
-        problems.append("a shadow row is the loop's own: it never names a person")
+    who = str(body.get("by") or "")
+    if kind == "adopt" and not is_automated(who):
+        problems.append("an adoption is the loop's own: it never names a person")
+    if kind == "rollback" and not who.strip():
+        problems.append("a rollback names who asked for it")
     if body.get("scope") != SCOPE:
         problems.append(f"a shadow row holds only in scope {SCOPE!r}")
     rows = list(seen.values())
@@ -125,10 +133,12 @@ def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dic
 
 class ShadowHarness(MetaHarness):
     def __init__(self, workflow: Workflow, factory: ExecutorFactory | None, workspace: Path, *,
-                 clock: Callable[[], float], problems: list[tuple[str, str]]) -> None:
+                 clock: Callable[[], float], problems: list[tuple[str, str]],
+                 before_evaluation: Callable[[], None] = lambda: None) -> None:
         super().__init__(workflow, factory, workspace, theories=None, clock=clock, problems=problems)
         self.adoptions = ChainLedger(workspace / ADOPTIONS, validate=_rules) if not problems else None
         self._measured: tuple[tuple[str, str, int], ProposerView] | None = None
+        self._before_evaluation = before_evaluation
 
     def refresh(self) -> None:
         """Read every ledger again: another handle may have written them. What it wrote decides the head."""
@@ -206,6 +216,12 @@ class ShadowHarness(MetaHarness):
                           artifacts=self.artifacts)
         self._measured = key, view
         return view
+
+    def evaluate(self, proposal: Proposal, *, budget: int | None = None) -> dict[str, Any]:
+        """As ``MetaHarness.evaluate``, once ``before_evaluation`` has said it may run. What that raises ends the tick with
+        no report, so the split is not spent."""
+        self._before_evaluation()
+        return super().evaluate(proposal, budget=budget)
 
     def unfinished(self) -> list[Proposal]:
         """The candidates on this head that a run left with no result: proposed since the last tuning run was written, and
@@ -286,6 +302,32 @@ class ShadowHarness(MetaHarness):
         return _blocked(ROLLED_BACK, f"version {version} fell behind the version before it on {verdict.pairs} audited "
                         f"disagreements; the head is version {number}", **said, undoes=version, head_version=number)
 
+    @_serialized
+    def demote(self, generation: int, by: str) -> dict[str, Any]:
+        """A person takes the head back one version, as the monitor may: the row is theirs, and it measures nothing.
+        ``generation`` is the head they read, so a head that moved on since is theirs to read again."""
+        refused = self._refusal()
+        if refused:
+            return refused
+        rows = self.adoption_rows()
+        if generation != len(rows):
+            return _blocked(NOT_DEMOTABLE, f"the head is generation {len(rows)}, not {generation}, and nothing was changed",
+                            "Read the lineage again and name the generation that stands.")
+        adopted = _adopted(rows)
+        if adopted is None:
+            return _blocked(NOT_DEMOTABLE, f"generation {generation} is what a person confirmed: nothing adopted stands to "
+                            "take back, and nothing was changed")
+        number, previous = generation + 1, self._profile_at(adopted["base_version"])
+        self.adoptions.append("rollback", str(number), {
+            "kind": "rollback", "version": number, "base_version": generation, "target_version": adopted["base_version"],
+            "by": by, "scope": SCOPE, "at": _now(), "undoes": adopted["version"], "measured": {},
+            "profile": previous.model_dump(mode="json"), "profile_digest": previous.digest(),
+            "change": f"a person went back to generation {adopted['base_version']} from generation {adopted['version']}"})
+        return _envelope("qualified-draft", DEMOTED, f"generation {adopted['version']} is taken back: the head is generation "
+                         f"{number}, the profile of generation {adopted['base_version']}", head_version=number,
+                         undoes=adopted["version"], next_action="Later ticks run on it. The monitor compares it with the "
+                         "version before it, as with any head.")
+
     def _on_case(self, profile: Profile, case: SuiteCase) -> tuple[bool, dict[str, Any], int]:
         return dev_run(self.workflow, self.factory, profile, case, theories=self.theories, clock=self._clock,
                        artifacts=self.artifacts)
@@ -305,9 +347,11 @@ class ShadowHarness(MetaHarness):
 
 
 def adapt_shadow(workflow: Workflow, factory: ExecutorFactory | None = None, *, workspace: str | Path,
-                 clock: Callable[[], float] = time.monotonic) -> ShadowHarness:
-    return ShadowHarness(workflow, factory, Path(workspace).resolve(), clock=clock, problems=workflow.problems())
+                 clock: Callable[[], float] = time.monotonic,
+                 before_evaluation: Callable[[], None] = lambda: None) -> ShadowHarness:
+    return ShadowHarness(workflow, factory, Path(workspace).resolve(), clock=clock, problems=workflow.problems(),
+                         before_evaluation=before_evaluation)
 
 
-__all__ = ["ADOPTED", "ADOPTER", "NOT_ADOPTABLE", "ROLLED_BACK", "SCOPE", "SHADOW_ONLY", "ShadowHarness", "adapt_shadow",
-           "lineage"]
+__all__ = ["ADOPTED", "ADOPTER", "DEMOTED", "NOT_ADOPTABLE", "NOT_DEMOTABLE", "ROLLED_BACK", "SCOPE", "SHADOW_ONLY",
+           "ShadowHarness", "adapt_shadow", "lineage"]

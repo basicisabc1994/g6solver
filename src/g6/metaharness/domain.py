@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from g6.core.ledger import digest
+from g6.core.llm import AnthropicCaller, EmptyRetry, FakeLLM, FallbackCaller, OllamaCaller, OpenAICompatibleCaller
 from g6.core.vault import AccessDenied, Vault
 from g6.harness import Check
 from g6.metaharness.executor import ExecutorFactory
@@ -56,8 +57,15 @@ NO_JUDGE = "G6_E_LOOP_NO_INDEPENDENT_JUDGE"
 NO_SEALED = "G6_E_LOOP_NO_SEALED_SPLIT"
 SEALED_OVERLAP = "G6_E_LOOP_SEALED_OVERLAP"
 PAID_MODEL = "G6_E_LOOP_PAID_MODEL"
+UNKNOWN_CALLER = "G6_E_LOOP_UNKNOWN_CALLER"
+PROVIDER_MISMATCH = "G6_E_LOOP_PROVIDER_MISMATCH"
+RETRY_MODEL = "G6_E_LOOP_RETRY_MODEL"
 FALLBACK_MODEL = "G6_E_LOOP_FALLBACK_MODEL"
+#: What a caller may not send under, wherever it is found: at enrolment, or at a request.
+BARRED = (PAID_MODEL, UNKNOWN_CALLER, PROVIDER_MISMATCH)
 INDEPENDENT = "independent"
+#: Who pays for a caller's requests, where it is no provider's subscription.
+PAID, LOCAL = "paid", "local"
 #: Causes no profile can change: only a person can (recovery says who acts on each).
 PERSON_ONLY = (INTAKE_BLOCKED, ORACLE_SILENT)
 #: Shares of the development pool, in the order the seeded hash walks them.
@@ -127,6 +135,9 @@ class Domain(Protocol):
     def judge(self) -> Judge | None: ...
 
     def failures(self, view: ProposerView) -> tuple[FailureRecord, ...]: ...
+
+    # A domain may also give ``root_cause(cause)``: a member of ``g6.metaharness.lessons.ROOT_CAUSES``, or ``None``. It is no member of
+    # this protocol, which would make it required: a domain without it leaves no lesson, and nothing else changes.
 
 
 def reason_coded(view: ProposerView) -> tuple[FailureRecord, ...]:
@@ -250,12 +261,84 @@ def _judge_problems(judge: Judge | None, cases: Sequence[SuiteCase]) -> list[str
     return found
 
 
+def _behind(caller: Any) -> Iterator[Any]:
+    """The callers that answer through ``caller``, seen through the wrappers ``g6.core.llm`` has and any that hold a caller as
+    they do. A caller of a known type sends for itself, so nothing it holds is asked about. This reads what a domain declares,
+    so a wrapper can declare one caller and send through another: what holds there is the check at each request
+    (``ShadowLoop._barred``), which reads the caller that really sends."""
+    if who_pays(caller):
+        yield caller
+    elif hasattr(caller, "_callers"):
+        for inner in caller._callers:
+            yield from _behind(inner)
+    elif hasattr(caller, "_inner"):
+        yield from _behind(caller._inner)
+    else:
+        yield caller
+
+
 def backends(caller: Any) -> int:
-    """How many models can answer through ``caller``, seen through the wrappers ``g6.core.llm`` has. A wrapper of a domain's
-    own that holds a fallback under another name is not seen."""
-    if hasattr(caller, "_callers"):
-        return sum(backends(inner) for inner in caller._callers)
-    return backends(caller._inner) if hasattr(caller, "_inner") else 1
+    """How many models can answer through ``caller``. A wrapper of a domain's own that holds a fallback under another name
+    is not seen."""
+    return sum(1 for _ in _behind(caller))
+
+
+def who_pays(caller: Any) -> str:
+    """Who pays for what ``caller`` sends, read from its type and not from what anyone declares: the provider a host program
+    signs in to, whose subscription it is; ``PAID`` for one that carries an API key; ``LOCAL`` for one that bills nobody; and
+    ``""`` for a type nothing here knows. The Anthropic SDK finds a key of its own, so it is paid with none given. An HTTP
+    caller with no key has nothing to bill. A type can be several of these, and one that may carry a key is paid whatever else
+    it inherits, so that is read first; a host's constructor gives it no ``api_key`` at all. This reads the type: it cannot see
+    what a caller of a known type does inside."""
+    from g6.core.host_models import ClaudeCodeCaller, CodexCaller   # only when asked: it brings in the process-running code
+
+    if isinstance(caller, AnthropicCaller) or isinstance(caller, OpenAICompatibleCaller) and getattr(caller, "api_key", None):
+        return PAID
+    if isinstance(caller, ClaudeCodeCaller):
+        return "claude"
+    if isinstance(caller, CodexCaller):
+        return "codex"
+    return LOCAL if isinstance(caller, FakeLLM | OllamaCaller | OpenAICompatibleCaller) else ""
+
+
+def _retries(caller: Any) -> bool:
+    """Whether a wrapper ``g6.core.llm`` has would send a request again by itself. One of a domain's own is not seen."""
+    if isinstance(caller, EmptyRetry | FallbackCaller):
+        return True
+    return _retries(caller._inner) if hasattr(caller, "_inner") and not who_pays(caller) else False
+
+
+def caller_problems(callers: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """Why the loop sends nothing through these named callers, each with its stable code."""
+    payers = {name: {who_pays(found) for found in _behind(caller)} for name, caller in callers.items()}
+    paid, unknown = sorted(n for n, who in payers.items() if PAID in who), sorted(n for n, who in payers.items() if "" in who)
+    retried = sorted(name for name, caller in callers.items() if _retries(caller))
+    return [*([(PAID_MODEL, f"the loop never spends API credits, and these call with an API key: {paid}")] if paid else []),
+            *([(UNKNOWN_CALLER, f"nothing can say who pays for what these send: {unknown}. Use a host or local caller, or a "
+                                "wrapper that holds one as _inner")] if unknown else []),
+            *([(RETRY_MODEL, f"these send a request again by themselves: {retried}, and a classifier's refusal is never sent "
+                             "again. Use the caller bare, such as ClaudeCodeCaller(), and not through provider_from_env, "
+                             "which wraps it")] if retried else [])]
+
+
+def provider_problems(callers: Mapping[str, Any], provider: str) -> list[tuple[str, str]]:
+    """Why these callers are not on ``provider``, the one week a folder's use is charged to: a host caller signs in to its own
+    subscription, and an allowance pays only for that. A local caller is on nobody's week, so it fits any."""
+    others = sorted({who_pays(found) for caller in callers.values() for found in _behind(caller)} - {provider, PAID, LOCAL, ""})
+    return ([(PROVIDER_MISMATCH, f"this folder's calls are stated to go to {provider} and its callers sign in to "
+                                 f"{', '.join(others)}, so its allowance pays for nothing they send")] if others else [])
+
+
+def sender_problems(sender: Any, provider: str) -> list[tuple[str, str]]:
+    """Why ``sender``, the caller really sending a request, may not send it. It is judged as itself, with nothing unwrapped,
+    since nothing stands between it and the request, and whatever it holds is not what is going out."""
+    who, named = who_pays(sender), type(sender).__name__
+    if who == PAID:
+        return [(PAID_MODEL, f"the loop never spends API credits, and {named} sends with an API key")]
+    if not who:
+        return [(UNKNOWN_CALLER, f"nothing can say who pays for what {named} sends")]
+    return [] if who in (provider, LOCAL) else [(PROVIDER_MISMATCH, f"this folder's calls are stated to go to {provider} and "
+                                                f"{named} signs in to {who}, so its allowance pays for nothing it sends")]
 
 
 def domain_problems(domain: Domain) -> list[tuple[str, str]]:
@@ -270,14 +353,15 @@ def domain_problems(domain: Domain) -> list[tuple[str, str]]:
         shared = sorted(r["case_id"] for r in sealed.refs if r["case_id"] in seen or r["input_sha256"] in seen)
         if shared:
             found.append((SEALED_OVERLAP, f"sealed cases are also development cases: {shared[:5]}"))
-    paid = sorted(name for name, model in domain.execution().models.items() if model.paid)
+    models = domain.execution().models
+    paid = sorted(name for name, model in models.items() if model.paid)
     if paid:
         found.append((PAID_MODEL, f"the loop never spends API credits, and these declared models are paid: {paid}"))
-    mixed = sorted(name for name, model in domain.execution().models.items() if backends(model.caller) > 1)
+    mixed = sorted(name for name, model in models.items() if backends(model.caller) > 1)
     if mixed:
         found.append((FALLBACK_MODEL, f"these declared models can answer from more than one backend: {mixed}. A paired "
                                       "comparison would compare backends, and a limit on one would pass unseen"))
-    return found
+    return found + caller_problems({name: model.caller for name, model in models.items()})
 
 
 # The sealed split stays shut while the loop develops --------------------------------------------------------------
@@ -345,6 +429,9 @@ def sealed_closed(vault: Vault) -> Iterator[list[str]]:
         breaches.extend(_held_open(vault))
 
 
-__all__ = ["Cut", "Domain", "Execution", "FALLBACK_MODEL", "FEWEST", "FailureRecord", "Judge", "NO_JUDGE", "NO_SEALED",
-           "PAID_MODEL", "PERSON_ONLY", "SEALED_OVERLAP", "SHARES", "SealedSplit", "backends", "cut_pool", "domain_problems",
-           "judge_source", "reason_coded", "sealed_closed"]
+__all__ = ["BARRED", "Cut", "Domain", "Execution", "FALLBACK_MODEL", "FEWEST", "FailureRecord", "Judge", "LOCAL", "NO_JUDGE",
+           "NO_SEALED",
+           "PAID", "PAID_MODEL", "PERSON_ONLY", "PROVIDER_MISMATCH", "RETRY_MODEL", "SEALED_OVERLAP", "SHARES", "SealedSplit",
+           "UNKNOWN_CALLER",
+           "backends", "caller_problems", "cut_pool", "domain_problems", "judge_source", "provider_problems", "reason_coded",
+           "sealed_closed", "sender_problems", "who_pays"]

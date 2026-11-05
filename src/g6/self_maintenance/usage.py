@@ -15,9 +15,10 @@ What each tool reports was checked by running it, on 2026-11-01:
 A percentage says the same thing whatever the allowance is: use over allowance is what the provider reported. So the
 reading is exact as a share of the week, and only the allowance's unit stays an estimate, which the window says.
 
-The tool is asked between ticks and never inside one, and at most once per ``REFRESH``: a tick starts no process. Each
-reading carries when it was read, so what the loop charges after that goes on top of it until the next one. A reading that
-lags the provider's own count leaves the same gap in the other direction, and nothing here can see that.
+The tool is asked between ticks, at most once per ``REFRESH`` and once more when a week it reported ends, since what it said
+before says nothing of the next. Inside a tick it is asked once, just before a held-out evaluation (``read_now``), and at no
+other point. Each reading carries when it was read, so what the loop charges after that goes on top of it until the next one.
+A reading that lags the provider's own count leaves the same gap in the other direction, and nothing here can see that.
 
 **A limit met during a tick** can only be read from the ``LLMError`` the request raised, so ``limit_ends`` reads that text.
 No caller gives a limit a mark of its own, and ``g6.core.llm`` and ``g6.core.host_models`` are bound, so none can yet. It
@@ -41,31 +42,53 @@ names ``RateLimitError`` is a failed case. Neither do a host's words, whatever t
 
 A limit that does not read as one is a failed case, and the tick runs on as it always has. With every run failing the cycle
 has no winner, which is a result and no failure, so it pauses nothing, and the runner's rest outlasts ``REFRESH``, so
-Codex's reading holds the next tick. What it costs is the record: the cycle says no candidate won, and a limit during an
-evaluation reads as a refusal and spends one of the split's five. A limit the reading does not show, such as a passing
-throttle, goes on like that. The repair is a code of its own from those callers, which waits for an issuance window.
+Codex's reading holds the next tick. What it costs is the record: the cycle says no candidate won. The account is read just
+before a held-out evaluation, so a limit already there leaves the split unspent. A limit that arrives during the evaluation
+is not caught by that: it reads as a refusal, and spends one of the split's five on a reason untrue of the candidate. A limit
+the reading does not show, such as a passing throttle, goes on like that too. The repair is a code of its own from those
+callers, which waits for an issuance window.
+
+**A classifier or a permission stop** is read the same way: ``refused_by`` takes only G6's own code at the start of the text.
+``AnthropicCaller`` raises that code. Claude Code writes a refusal's ``stop_reason`` ahead of its long ``usage`` record, past
+the 300 characters ``g6.core.host_models`` keeps, so nothing in that error can show one, and that file is bound. So the loop
+has any Claude Code caller read the same fields from the whole result as parsed JSON, before it is cut: as a request goes out,
+the caller really sending it becomes a ``WatchedClaude`` (``read_stops``), whatever holds it. What that reads goes straight to
+the loop (``telling_stops``), so a wrapper that catches failed requests cannot retry a refusal or hide it, with the text that
+caller was given, so a wrapper that rewrites a request cannot send what was refused under another. A model's words stay
+inside the string ``result``, so they cannot read as a field. This was read from the text of Claude Code 2.1.316 and has not been
+seen at a real refusal, and a version that moves those fields is not read. Codex prints text, as above, so a refusal from it
+reads as a failed case, and the same request goes out again on a later tick. That too waits for an issuance window.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import re
 import subprocess
 import tempfile
 import threading
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from g6.core import component_process
+from g6.core import component_process, host_models
+from g6.core.llm import LLMError
 from g6.core.outside import clean_environment, find_program
 from g6.core.process_tree import ProcessTreeError
 from g6.self_maintenance.pacing import AccountReading, ProviderWindow
 
 REFRESH = timedelta(minutes=15)
+MODEL_REFUSED = "G6_E_MODEL_REFUSED"
+#: Claude Code's ``api_error`` values that say something other than the model's own reply stopped the turn.
+_STOPPED_BY = ("dlp_request_denied", "safety_monitor_blocked")
+_Tell = Callable[[str, tuple[str, ...]], None]
+_TELL: contextvars.ContextVar[_Tell | None] = contextvars.ContextVar("g6_loop_stops", default=None)
 ASK_TIMEOUT = 30.0
 WEEK_MINUTES = 7 * 24 * 60
+WEEK = timedelta(minutes=WEEK_MINUTES)
 FULL = 100
 READ_LIMITS = "account/rateLimits/read"
 #: What ``codex app-server`` needs before it answers: the third line is the only question.
@@ -150,6 +173,57 @@ def limit_ends(said: str, now: datetime) -> datetime | None:
     return now + (timedelta(minutes=min(seconds / 60, WEEK_MINUTES)) if seconds > 0 else REFRESH)
 
 
+def refused_by(said: str) -> str:
+    """What stopped a failed request, when a classifier or a permission did, or ``""``. It reads only G6's own code at the
+    start of the text: anything a server or a program said comes after that."""
+    return said[:300] if said.startswith(f"{MODEL_REFUSED}:") else ""
+
+
+def _stop_in(result: Mapping[str, Any]) -> str:
+    """What Claude Code's own result says stopped the turn, or ``""``."""
+    if result.get("stop_reason") == "refusal":
+        return "refusal"
+    if result.get("api_error") in _STOPPED_BY:
+        return str(result["api_error"])
+    denied = result.get("permission_denials")
+    return f"permission denied ({len(denied)})" if isinstance(denied, list) and denied else ""
+
+
+@contextmanager
+def telling_stops(tell: _Tell) -> Iterator[None]:
+    """Inside, a stop ``WatchedClaude`` reads goes to ``tell`` before anything else sees it, with what the bound caller says it
+    was given: its system text and request first, or for a session of its own, such as ``ToolSession``, a prompt alone. What
+    ``tell`` raises is what stops the request, so a wrapper between it and the loop cannot take the refusal for a failed request
+    and send it again."""
+    token = _TELL.set(tell)
+    try:
+        yield
+    finally:
+        _TELL.reset(token)
+
+
+class WatchedClaude(host_models.ClaudeCodeCaller):
+    """Claude Code as the loop calls it: as the bound caller, and a stop in its result raises G6's own code."""
+
+    def _reply(self, code: int, printed: str, errors: str, files: Any, hide: tuple[str, ...]) -> str:
+        stopped = _stop_in(host_models._result(printed) or {})
+        if stopped:
+            tell = _TELL.get()
+            if tell is not None:
+                tell(f"{MODEL_REFUSED}: {stopped}", hide)
+            raise LLMError(f"{MODEL_REFUSED}: {stopped}")
+        return super()._reply(code, printed, errors, files, hide)
+
+
+def read_stops(sender: Any) -> None:
+    """Have ``sender``, when it is any kind of Claude Code caller, read its whole result. It is done to the caller that is
+    sending, as it sends, so what holds it does not matter. Its class changes and nothing else does: a subclass of a domain's
+    own keeps all it has, and reads the result first."""
+    kind = type(sender)
+    if isinstance(sender, host_models.ClaudeCodeCaller) and not isinstance(sender, WatchedClaude):
+        sender.__class__ = type(kind.__name__, (WatchedClaude, kind), {})
+
+
 def _number(value: Any) -> bool:
     return isinstance(value, int | float) and not isinstance(value, bool)
 
@@ -184,7 +258,9 @@ def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datet
     """``limits`` as the meter reads them, or ``None`` when they do not read: use in the meter's own unit from the
     week's percentage, and a limit when a window is full or the provider says ordinary use is not allowed. One field that
     makes no sense loses the whole reply, since a reply that wrong says nothing about the rest. A limit whose reset has
-    passed is still a limit, so it is looked at again as one with no reset is."""
+    passed is still a limit, so it is looked at again as one with no reset is. A week whose own reset has passed is another
+    matter: a tool that has not caught up is saying last week's use, so that figure is left out and nothing stands for it.
+    That reset is kept apart as ``ended_at``: it says where the provider's weeks fall, and it ends no tick."""
     snapshot, allowed = limits.get("rateLimits"), limits.get("ordinaryUsageAllowed")
     if not isinstance(snapshot, Mapping) or not isinstance(allowed, bool | None):
         return None
@@ -195,6 +271,9 @@ def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datet
     full = [w for w in seen if w["usedPercent"] >= FULL]
     resets = [at for w in (full or seen) if (at := _reset(w, now)) is not None]
     until = (max(resets) if resets else now + REFRESH) if full or allowed is False else None
+    ended = week is not None and (_time(week.get("resetsAt")) or now + WEEK) <= now
+    if ended:
+        return AccountReading(limited_until=until, ended_at=_time(week.get("resetsAt")))
     if week is None:
         return AccountReading(limited_until=until)
     return AccountReading(used=window.allowance * week["usedPercent"] / FULL, estimated=False, limited_until=until,
@@ -222,8 +301,12 @@ class AccountReader:
         self.said = {provider: NOT_REPORTED for provider in self.windows}
         self._asked: datetime | None = None
 
+    def _reset_since(self, now: datetime) -> bool:
+        """Whether a week has ended since the tool was last asked, so what it said then says nothing of this one."""
+        return any(r.resets_at is not None and self._asked < r.resets_at <= now for r in self.readings.values())
+
     def refresh(self, now: datetime) -> None:
-        if self._asked is not None and now - self._asked < REFRESH:
+        if self._asked is not None and now - self._asked < REFRESH and not self._reset_since(now):
             return
         self._asked = now
         for provider in set(self.windows) & set(self.ask):
@@ -243,6 +326,14 @@ class AccountReader:
                 continue
             self.readings[provider] = replace(found, read_at=now)
             self.said[provider] = f"reported by its own tool at {now.isoformat(timespec='minutes')}"
+            if found.resets_at is not None:      # so a reply with no reset falls back on the week the tool last reported
+                self.windows[provider] = self.windows[provider].aligned(found.resets_at)
+                self.said[provider] += f"; its week ends at {found.resets_at.isoformat(timespec='minutes')}"
+
+    def read_now(self, now: datetime) -> None:
+        """Ask the tool whenever it was last asked: the one read a tick makes, just before a held-out evaluation."""
+        self._asked = None
+        self.refresh(now)
 
     def _no_reading(self, provider: str, now: datetime, why: str) -> None:
         """What the last good reading said stands while it holds. ``read_at`` stays as it was, so the meter goes on adding
@@ -261,5 +352,5 @@ class AccountReader:
         return self.readings.get(provider)
 
 
-__all__ = ["AccountReader", "NOT_REPORTED", "REFRESH", "UsageUnavailable", "codex_limits", "limit_ends", "limits_reading",
-           "read_limits"]
+__all__ = ["AccountReader", "MODEL_REFUSED", "NOT_REPORTED", "REFRESH", "UsageUnavailable", "WatchedClaude", "codex_limits",
+           "limit_ends", "limits_reading", "read_limits", "read_stops", "refused_by", "telling_stops"]

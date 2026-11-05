@@ -16,7 +16,7 @@ import pytest
 import g6
 from g6.core import stop
 from g6.core.ledger import LedgerError
-from g6.core.llm import EmptyRetry, FakeLLM, LLMError
+from g6.core.llm import FakeLLM, LLMError
 from g6.core.vault import AccessDenied
 from g6.harness import Check
 from g6.integrity import build_manifest
@@ -816,7 +816,7 @@ def test_a_view_cut_off_at_what_a_tick_reserved_is_not_kept(tmp_path, monkeypatc
 
 # What a tick reserves, at the design's example allowance ---------------------------------------------------------------
 EXAMPLE = LoopSettings(windows=(ProviderWindow("claude", 5000, START),))        # 20% kept back, and Method's defaults
-DAY_ONE, DAY_TWO = START + timedelta(hours=1), START + timedelta(days=1, hours=1)
+DAY_ONE, DAY_TWO, DAY_THREE = START + timedelta(hours=1), START + timedelta(days=1, hours=1), START + timedelta(days=2, hours=1)
 
 
 def _one_call(tmp_path, *, pool=86):
@@ -832,12 +832,13 @@ def test_a_one_call_domain_on_a_small_pool_is_admitted_on_day_one_at_the_example
     assert loop.tick()["outcome"] == "adopted"
 
 
-def test_a_one_call_domain_on_a_larger_pool_is_admitted_on_day_two_at_the_example_allowance(tmp_path):
+def test_a_one_call_domain_on_a_larger_pool_is_admitted_on_day_three_at_the_example_allowance(tmp_path):
+    """A race of ties runs every candidate on every case, so a tick's worst case here is over day two's ceiling of 2000."""
     days = [DAY_ONE]
     loop, _ = _enrolled(tmp_path, domain=_one_call(tmp_path, pool=240), settings=EXAMPLE, now=lambda: days[0])
     got = loop.tick()
     assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and "day 1's ceiling of 1000" in got["message"]
-    days[0] = DAY_TWO
+    days[0] = DAY_THREE
     assert loop.tick()["outcome"] == "adopted"
 
 
@@ -911,9 +912,17 @@ def test_no_tick_spends_past_what_it_reserved_when_all_it_may_do_is_done(tmp_pat
 
 def test_a_caller_that_retries_past_the_estimate_still_stops_at_what_was_reserved(tmp_path):
     domain = _one_call(tmp_path)
-    backend = FakeLLM(default="")
+    class RetriesBlanks(FakeLLM):
+        def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+            for _ in range(4):
+                text = super().complete(system, user, max_tokens=max_tokens)
+                if text.strip():
+                    return text
+            raise LLMError("empty completion on 4 attempts")
+
+    backend = RetriesBlanks(default="")
     run = domain.execution()
-    domain.execution = lambda: dataclasses.replace(run, models={"local": Model(EmptyRetry(backend), max_calls_per_run=1)})
+    domain.execution = lambda: dataclasses.replace(run, models={"local": Model(backend, max_calls_per_run=1)})
     proposer = FakeLLM(lambda system, user: json.dumps({"prompt": f"{domains.WORKING} Try {len(proposer.calls)}."}))
     loop, _ = _enrolled(tmp_path, domain=domain, settings=EXAMPLE, proposer=proposer, now=lambda: DAY_TWO)
     worst = loop.worst_case()
@@ -926,7 +935,7 @@ def test_a_race_never_takes_more_runs_than_its_bound(tmp_path):
     base = loop.mh._head()[1]
     candidates = [base.model_copy(update={"prompt": f"{domains.WORKING} {i}"}) for i in range(7)]
     ran = race(loop.workflow, loop.mh.factory, base, candidates, block=10, keep=0.5, budget=10 ** 6, clock=domains.Clock())
-    assert ran.calls_used <= race_calls(len(loop.cut.selection), len(candidates), 10, 0.5)
+    assert ran.calls_used <= race_calls(len(loop.cut.selection), len(candidates))
 
 # A provider's limit is a wait --------------------------------------------------------------------------------------------
 AT_A_LIMIT = ("G6_E_LLM_HOST_FAILED: claude exited 1 and gave an error result: "
@@ -1209,8 +1218,9 @@ def test_candidates_a_limit_stopped_before_their_race_race_after_the_reset(tmp_p
 
 def test_what_came_back_from_a_limit_is_in_the_reservation(tmp_path):
     days = [NOW]
-    fresh, _ = _loop(tmp_path / "fresh", domain=domains.WordProblems(tmp_path / "fresh"))
-    loop, domain = _enrolled(tmp_path, now=lambda: days[0], proposer=domains.proposes(*TWO_OFFERS))
+    uncapped = dataclasses.replace(SETTINGS, method=FAST.model_copy(update={"select_budget": 10 ** 6}))     # the cap would hide an entrant
+    fresh, _ = _loop(tmp_path / "fresh", domain=domains.WordProblems(tmp_path / "fresh"), settings=uncapped)
+    loop, domain = _enrolled(tmp_path, now=lambda: days[0], proposer=domains.proposes(*TWO_OFFERS), settings=uncapped)
     selection = {c.input for c in loop.cut.selection}
     Limited(domain, selection.__contains__)
     loop.tick()

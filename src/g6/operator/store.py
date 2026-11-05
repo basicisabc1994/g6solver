@@ -38,6 +38,14 @@ CREATE TABLE IF NOT EXISTS ledger (seq INTEGER PRIMARY KEY AUTOINCREMENT, ventur
 CREATE TRIGGER IF NOT EXISTS ledger_once BEFORE INSERT ON ledger WHEN NEW.kind <> 'charge'
     AND EXISTS (SELECT 1 FROM ledger WHERE ref = NEW.ref AND kind = NEW.kind)
 BEGIN SELECT RAISE(ABORT, 'a reservation is made once and released once'); END;
+CREATE TABLE IF NOT EXISTS week_books (owner TEXT NOT NULL, provider TEXT NOT NULL, week TEXT NOT NULL, book TEXT NOT NULL,
+    PRIMARY KEY (owner, provider, week));
+CREATE TABLE IF NOT EXISTS week_grids (owner TEXT NOT NULL, provider TEXT NOT NULL, reset TEXT NOT NULL,
+    PRIMARY KEY (owner, provider));
+CREATE TABLE IF NOT EXISTS book_holders (owner TEXT NOT NULL, provider TEXT NOT NULL, book TEXT NOT NULL, week TEXT NOT NULL,
+    PRIMARY KEY (owner, provider, book));
+CREATE TABLE IF NOT EXISTS reading_baselines (owner TEXT NOT NULL, provider TEXT NOT NULL, book TEXT NOT NULL,
+    read_at TEXT NOT NULL, charged REAL NOT NULL, PRIMARY KEY (owner, provider, book, read_at));
 """
 
 
@@ -56,6 +64,17 @@ BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END;
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _same_instant(one: str, other: str) -> bool:
+    """Whether two week names name one moment: the same text, or two renderings of one instant with their zones."""
+    if one == other:
+        return True
+    try:
+        a, b = datetime.fromisoformat(one), datetime.fromisoformat(other)
+    except ValueError:
+        return False
+    return a.tzinfo is not None and b.tzinfo is not None and a == b
 
 
 class BudgetRefused(RuntimeError):
@@ -95,16 +114,143 @@ class OwnerScope:
     def create_venture(self, name: str, *, caps: dict[str, float]) -> dict[str, Any]:
         """``caps`` gives each account in ``gates.ACCOUNTS`` a finite, non-negative monthly budget (0 = none may be
         spent). A missing or invalid cap is refused here, and would stop the venture if it reached the stop check."""
+        with self.conn:
+            venture_id = self._insert_venture(name, caps)
+        return self.venture(venture_id)
+
+    def _insert_venture(self, name: str, caps: dict[str, float]) -> str:
+        """Inside the caller's transaction: the venture's row and its history, and its id."""
         bad = [a for a in gates.ACCOUNTS if gates.cap_of(caps, a) is None]
         if bad:
             raise ValueError(f"caps must give a finite, non-negative monthly budget for {bad}")
         venture_id = uuid.uuid4().hex[:12]
         clean = {a: gates.cap_of(caps, a) for a in gates.ACCOUNTS}
-        with self.conn:
-            self.conn.execute("INSERT INTO ventures VALUES (?, ?, ?, ?, 'active', ?)",
-                              (venture_id, self.owner, name, json.dumps(clean), _now()))
-            self._append_evidence(venture_id, "created", "", {"name": name, "caps": clean})
-        return self.venture(venture_id)
+        self.conn.execute("INSERT INTO ventures VALUES (?, ?, ?, ?, 'active', ?)",
+                          (venture_id, self.owner, name, json.dumps(clean), _now()))
+        self._append_evidence(venture_id, "created", "", {"name": name, "caps": clean})
+        return venture_id
+
+    def has_venture(self, name: str) -> bool:
+        return self._named(name) is not None
+
+    def _named(self, name: str) -> str | None:
+        row = self.conn.execute("SELECT venture_id FROM ventures WHERE owner=? AND name=?", (self.owner, name)).fetchone()
+        return row["venture_id"] if row is not None else None
+
+    def _book_of(self, provider: str, week: str) -> str | None:
+        """The book a row gives ``week``, the row named for it in any zone, as one kept before weeks were named in UTC is."""
+        row = self.conn.execute("SELECT book FROM week_books WHERE owner=? AND provider=? AND week=?",
+                                (self.owner, provider, week)).fetchone()
+        if row is not None:
+            return row["book"]
+        rows = self.conn.execute("SELECT week, book FROM week_books WHERE owner=? AND provider=? ORDER BY rowid",
+                                 (self.owner, provider)).fetchall()
+        return next((row["book"] for row in rows if _same_instant(row["week"], week)), None)
+
+    def _holder(self, provider: str, book: str) -> str | None:
+        """Inside the caller's transaction: the week ``book`` last went to, or ``None`` while only its own week has had it. A
+        folder kept before this was recorded has the last row that gave the book a week instead."""
+        row = self.conn.execute("SELECT week FROM book_holders WHERE owner=? AND provider=? AND book=?",
+                                (self.owner, provider, book)).fetchone()
+        if row is None:
+            row = self.conn.execute("SELECT week FROM week_books WHERE owner=? AND provider=? AND book=? ORDER BY rowid DESC "
+                                    "LIMIT 1", (self.owner, provider, book)).fetchone()
+        return row["week"] if row is not None else None
+
+    def week_grid(self, provider: str) -> str | None:
+        """A moment one of the provider's weeks ended, as it last reported, or ``None`` before it has reported one."""
+        row = self.conn.execute("SELECT reset FROM week_grids WHERE owner=? AND provider=?", (self.owner, provider)).fetchone()
+        return row["reset"] if row is not None else None
+
+    def reading_baseline(self, provider: str, book: str, read_at: str, venture_id: str, account: str) -> float:
+        """What the ledger had charged under ``book`` when the account reading taken at ``read_at`` first reached a meter: the
+        first word stands, so every meter, in any process, measures what was charged since the reading from the same point.
+        The charge is summed in the transaction that keeps it, so a settlement on another connection cannot fall between."""
+        vid = self.resolve(venture_id)
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            charged = self.conn.execute("SELECT COALESCE(SUM(amount), 0) AS charged FROM ledger WHERE venture_id=? AND month=?"
+                                        " AND account=? AND kind='charge'", (vid, book, account)).fetchone()["charged"]
+            self.conn.execute("INSERT OR IGNORE INTO reading_baselines VALUES (?, ?, ?, ?, ?)",
+                              (self.owner, provider, book, read_at, float(charged)))
+            row = self.conn.execute("SELECT charged FROM reading_baselines WHERE owner=? AND provider=? AND book=? AND read_at=?",
+                                    (self.owner, provider, book, read_at)).fetchone()
+            self.conn.commit()
+            return float(row["charged"])
+        except BaseException:
+            self.conn.rollback()
+            raise
+
+    def week_ledger(self, provider: str, week: str, *, caps: dict[str, float], moved_from: str = "",
+                    grid: str = "") -> tuple[str, str]:
+        """The venture a provider's ``week`` is charged under and its book, the month its rows carry, decided in one
+        transaction so that what one process decides every other reads, and never decided twice: a week booked under its own
+        start has a venture of that name, and one booked under another has a row here, the first word standing.
+
+        A week goes on its own book, unless its end moved while ``moved_from`` (the week it was counted in until then) was
+        open: then it takes that week's book, so what was charged there still counts, through any number of moves, a return to
+        an earlier grid among them. Not when a venture of its own already exists, as a process has charged it under its own
+        book; nor when the book last went to a week other than the one this moved from, as what is charged there is that
+        week's, which this one did not make. Where the book went last is kept here each time a week is given one. Weeks are
+        compared as the instants they name, so one named in the settings' zone before weeks were named in UTC is the same week.
+        ``grid``: a moment one of the provider's weeks ends, kept (the latest standing) in this same transaction, so a move is
+        never kept without the book it gave its week."""
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            if grid:
+                self.conn.execute("INSERT OR REPLACE INTO week_grids VALUES (?, ?, ?)", (self.owner, provider, grid))
+            book, own = self._book_of(provider, week), self._own(provider, week)
+            if book is None and own is None and moved_from and not _same_instant(moved_from, week):
+                source = self._book_of(provider, moved_from) or self._own_book(provider, moved_from)
+                holder = self._holder(provider, source)
+                if holder is None or _same_instant(holder, moved_from):   # the book is where this week moved from
+                    self.conn.execute("INSERT INTO week_books VALUES (?, ?, ?, ?)", (self.owner, provider, week, source))
+                    book = source
+            if book is None:
+                found, book = own if own is not None else (None, week)
+            else:
+                found = self._named(f"{provider}@{book}")
+            found = found or self._insert_venture(f"{provider}@{book}", caps)
+            self.conn.execute("INSERT OR REPLACE INTO book_holders VALUES (?, ?, ?, ?)", (self.owner, provider, book, week))
+            self.conn.commit()
+            return found, book
+        except BaseException:
+            self.conn.rollback()
+            raise
+
+    def _own(self, provider: str, week: str) -> tuple[str, str] | None:
+        """Inside the caller's transaction: the venture named for ``week``'s own start and the book it carries, under the UTC
+        name or, from a folder enrolled before weeks were named in UTC, under the same instant in another zone (its rows carry
+        that rendering, so it stays the book); else ``None``. A week's own venture is never a row of ``week_books``, so a
+        week that moves on from it can be followed by another move."""
+        found = self._named(f"{provider}@{week}")
+        return (found, week) if found is not None else self._same_moment(provider, week)
+
+    def _own_book(self, provider: str, week: str) -> str:
+        own = self._own(provider, week)
+        return own[1] if own is not None else week
+
+    def _same_moment(self, provider: str, book: str) -> tuple[str, str] | None:
+        """Inside the caller's transaction: a venture of ``provider`` named for the moment ``book`` names, rendered in another
+        zone, as a folder enrolled before weeks were named in UTC holds one, and that rendering; else ``None``."""
+        try:
+            moment = datetime.fromisoformat(book)
+        except ValueError:
+            return None
+        if moment.tzinfo is None:
+            return None
+        prefix = f"{provider}@"
+        rows = self.conn.execute("SELECT venture_id, name FROM ventures WHERE owner=? AND substr(name, 1, ?) = ? ORDER BY rowid",
+                                 (self.owner, len(prefix), prefix)).fetchall()
+        for row in rows:
+            rendering = row["name"][len(prefix):]
+            try:
+                other = datetime.fromisoformat(rendering)
+            except ValueError:
+                continue
+            if other.tzinfo is not None and other == moment:
+                return row["venture_id"], rendering
+        return None
 
     def venture_named(self, name: str, *, caps: dict[str, float]) -> str:
         """The id of this owner's venture of this name, made once however many ask at the same moment."""

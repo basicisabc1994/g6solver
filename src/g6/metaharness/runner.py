@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The self-improvement loop with nobody at the keyboard: ``python -P -m g6.metaharness.loop run <folder>``.
+"""The self-improvement loop with nobody at the keyboard: ``python -P -B -X pycache_prefix=<an empty folder> -m
+g6.metaharness.loop run <folder>``, which reads and writes no cached bytecode, so only the source the envelope pins runs.
 
 The runner repeats one pass: stop check, tick, then wait until the next tick could be admitted or the next digest is due.
-No sleep is longer than ``NAP``, so a ``STOP`` is seen within a minute of a tick ending. Time comes in through ``now`` and
-``sleep``, so a week can pass in a test. Everything it needs to carry on is in the folder's records, so it restarts safely:
+No sleep is longer than ``NAP``, so a waiting runner sees a ``STOP`` within a minute, and a tick meets it at its next model
+call. Time comes in through ``now`` and ``sleep``, so a week can pass in a test. Everything it needs to carry on is in the folder's records, so it restarts safely:
 a crashed tick is charged its worst case, a rest is read back from the log, and only one runner can hold a folder.
 
 **Who may start it.** It runs only on a start that stands: of the starts and stops on record, the last is a start a person
@@ -23,15 +24,16 @@ anywhere. Three in a row that could not be recorded end the run as a stop does, 
 first, doubling to ``LONGEST_REST``, and the digest says so. A person enrolling or lifting a pause ends the rest.
 
 **A folder** holds ``settings.json``: ``windows`` (``g6.self_maintenance.pacing``), ``read_account`` (false leaves the
-meter on its own count) and ``domain_file``, a Python file the person owns, as ``G6_METAHARNESS`` names one. It lies
+meter on its own count), ``python`` (the interpreter ``g6_improve_start`` runs this on, where one is pinned) and
+``domain_file``, a Python file the person owns, as ``G6_METAHARNESS`` names one. It lies
 outside the folder, since the loop never writes what judges it, and defines ``LOOP = {"domain": ..., "proposer": ...}``,
 with ``method``, ``seed``, ``audit_per_tick`` and ``eval_calls`` where they differ from ``LoopSettings``. All of a folder's
 calls are billed to one provider, so with more than one window ``provider`` names the one they go to, and nothing runs
 without it. Nothing else is read from it, so neither file can reach ``person_free_adoption_outside_shadow``. Enrolling pins
 its digest, so an edit is a changed frozen item, and ``g6_improve_start`` refuses it before it could run.
 
-``enrol`` and ``resume`` are a person's: as in ``g6.workforce.decide``, an answer counts only when the domain's name is
-typed back at an interactive terminal. That is a convenience check, not proof that a person typed it.
+``enrol``, ``resume`` and ``demote`` are a person's: as in ``g6.workforce.decide``, an answer counts only when the domain's
+name is typed back at an interactive terminal. That is a convenience check, not proof that a person typed it.
 
 Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been
 established.
@@ -39,12 +41,14 @@ established.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import importlib.util
 import os
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from ctypes import wintypes
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -62,6 +66,7 @@ from g6.metaharness.loop import (
     LoopSettings,
     ShadowLoop,
 )
+from g6.metaharness import reflex
 from g6.metaharness.shadow import lineage
 from g6.self_maintenance import digest
 from g6.self_maintenance.envelope import (
@@ -70,6 +75,7 @@ from g6.self_maintenance.envelope import (
     CycleLog,
     beat,
     record_stop,
+    runner_alive,
     runner_lock,
     stop_reason,
     stops_asked,
@@ -87,6 +93,7 @@ BUSY_AGAIN = timedelta(seconds=30)
 CANNOT_OPEN = "G6_E_LOOP_CANNOT_OPEN"
 NOT_STARTED = "G6_E_LOOP_NOT_STARTED"
 SETTINGS_CHANGED = "G6_E_LOOP_SETTINGS_CHANGED"
+CACHED_BYTECODE = "G6_E_LOOP_CACHED_BYTECODE"
 #: What a tick is refused for that passes on its own: anything else with no cycle waits for a person.
 _WAITS = (BUDGET_WAIT, BUSY, STOPPED, stop.STOPPED)
 #: What a domain file may set beside its domain and proposer.
@@ -96,6 +103,18 @@ _MODULE = "g6_loop_domain"
 
 def _local_now() -> datetime:
     return datetime.now().astimezone()
+
+
+def _in_job() -> bool | None:
+    """Whether this process is in a Windows job, whose end ends it however it is detached, or ``None`` where that cannot be
+    asked. A run from a venv's ``python.exe`` is: that program is a launcher, and ending it alone ends this process."""
+    if os.name != "nt":
+        return None
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel.IsProcessInJob.argtypes = (wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL))
+    found = wintypes.BOOL()
+    return bool(found.value) if kernel.IsProcessInJob(kernel.GetCurrentProcess(), None, ctypes.byref(found)) else None
 
 
 class DomainChanged(ValueError):
@@ -139,7 +158,7 @@ def open_loop(root: Path, *, now: Callable[[], datetime] = _local_now, pinned: s
     reader = AccountReader(windows) if settings.get("read_account", True) is not False else None
     tuned = LoopSettings(windows=windows, **{name: declared[name] for name in _TUNING if name in declared})
     return ShadowLoop(declared["domain"], root, tuned, proposer=declared["proposer"], now=now, read_account=reader,
-                      domain_file=settings["domain_file"]), reader
+                      read_now=reader.read_now if reader is not None else None, domain_file=settings["domain_file"]), reader
 
 
 class Runner:
@@ -149,7 +168,7 @@ class Runner:
         self.last: dict[str, Any] = {}              # the last tick's reply
         self.not_before: datetime | None = None     # what that reply asked for
         self.day: date | None = None                # the day the digest last covered
-        loop.beat_fields = {"pid": os.getpid()}
+        loop.beat_fields = {"pid": os.getpid(), "in_job": _in_job()}
 
     def run(self) -> int:
         while True:
@@ -178,7 +197,7 @@ class Runner:
     def step(self) -> float | None:
         """One pass. The seconds to sleep, or ``None`` when a stop ended the run."""
         now = self.now()
-        halted = self.loop.cannot_record or stop_reason(self.loop.root)
+        halted = self.loop.stopped_by()
         if halted:
             self._end(now, halted)
             return None
@@ -226,6 +245,8 @@ class Runner:
         """When the tick after ``reply`` may run. A cycle that reached a result is followed at once, for the budget and
         the rest to bound. A budget wait lasts until a ceiling can rise, or a reported limit ends if that is sooner."""
         code = reply["warning_card"]["code"]
+        if code == STOPPED:
+            return now                      # the next pass reads the stop and ends the run
         if code == BUDGET_WAIT:
             room = self.loop.meter.next_room(now)
             told = reply.get("wait_until")
@@ -264,11 +285,14 @@ class Runner:
                          "g6.metaharness.loop resume <folder> --as <your name>")
         elif pause is not None:
             found.append(f"{pause['reason']}. {self.last.get('next_action', '')}")
-        return [*found, *(f"The allowance for {w.provider} is an estimate: put the real figure in {SETTINGS_FILE} when "
-                          "there is one." for w in self.loop.meter.windows.values() if w.estimated)]
+        return [*found, *(f"The allowance for {w.provider} is an estimate: put the real figure in {SETTINGS_FILE} when there "
+                          "is one. A runner alive keeps what it read, and a restart is refused until a new g6_improve_start."
+                          for w in self.loop.meter.windows.values() if w.estimated)]
 
-    def _stops(self, now: datetime, halted: str) -> list[str]:
+    def _stops(self, now: datetime, halted: str, today: Sequence[dict[str, Any]]) -> list[str]:
         found = [f"The runner ended: {halted}."] if halted else []
+        found += [f"A classifier or a permission stopped a request at tick {c['tick']} ({c['classifier_stop']['said']}). It is "
+                  "not sent again." for c in today if c.get("classifier_stop")]
         pause = self._pause()
         if pause is not None:
             found.append(pause["reason"])
@@ -276,8 +300,11 @@ class Runner:
         if until is not None and until > now:
             found.append(f"Backing off: {quiet} tick{'s' if quiet != 1 else ''} in a row found nothing to try, so nothing more "
                          f"is spent on it. The next try is at {until.isoformat(timespec='minutes')}.")
-        if self.last.get("warning_card", {}).get("code") == BUDGET_WAIT:
+        code = self.last.get("warning_card", {}).get("code")
+        if code == BUDGET_WAIT:
             found.append(f"Waiting for the budget: {self.last.get('message', '')}")
+        if code in (STOPPED, stop.STOPPED) and "charged" in self.last:
+            found.append(self.last["message"])
         return found
 
     def _page(self, day: date, now: datetime, halted: str) -> str:
@@ -289,9 +316,11 @@ class Runner:
         except ValueError as exc:
             generations = {"current": "unreadable", "recent": []}
             halted = f"{halted} The generations could not be read: {exc}"[:200].strip()
+        # read fresh: a row's own diagnosis opened that cycle, so it cannot know how that cycle ended
         return digest.render(day, domain=self.loop.domain.name, status=STATUS_LINE, cycles=today, use=self._use(now),
                              constraint=named[-1] if named else None, generations=generations,
-                             decisions=self._decisions(), stops=self._stops(now, halted))
+                             decisions=self._decisions(), stops=self._stops(now, halted, today),
+                             reflex=reflex.read(cycles) if any(c.get("reflex") for c in cycles) else None)
 
     def _digest(self, now: datetime, halted: str = "") -> None:
         """Today's page, and the day just ended, whole, when the date has moved on. A pass closes a day before its tick,
@@ -335,13 +364,30 @@ def _not_started(root: Path) -> str:
 
 def _refuse(root: Path, code: str, why: str, now: Callable[[], datetime]) -> int:
     print(why, file=sys.stderr)
-    beat(root, state="not-running", code=code, reason=why, at=now().isoformat())
+    beat(root, state="not-running", code=code, reason=why, pid=os.getpid(), in_job=_in_job(), at=now().isoformat())
     return 1
 
 
-def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable[[float], None] = time.sleep) -> int:
+def _launch_risk() -> str:
+    """Why cached bytecode could run in this process in place of the source the envelope pins, or ``""``. Python runs a
+    ``.pyc`` under ``__pycache__`` whose header matches its source, whatever its code, so the runner must read its cache
+    from a folder that held none and write none (``g6.mcp.improve._spawn`` starts it so)."""
+    prefix = sys.pycache_prefix
+    if not sys.dont_write_bytecode or prefix is None:
+        return (f"this runner could read cached bytecode in place of G6's source, so nothing ran: start it as python -B -X "
+                f"pycache_prefix=<an empty folder> -P -m g6.metaharness.loop run <folder>, as g6_improve_start does "
+                f"({CACHED_BYTECODE})")
+    if any(Path(prefix).rglob("*.pyc")):
+        return f"the folder this runner reads cached bytecode from holds some, so nothing ran: {prefix} ({CACHED_BYTECODE})"
+    return ""
+
+
+def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable[[float], None] = time.sleep,
+        unsafe: str = "") -> int:
     """Hold the folder and run until a stop. A stop already there ends it before anything is opened, so a restart after
-    a reboot honours it, and a folder with no start in force is refused before any of its code runs."""
+    a reboot honours it, and a folder with no start in force is refused before any of its code runs. ``unsafe``: why this
+    process could run something other than the pinned source (``_launch_risk``), which refuses it once the folder is open,
+    so its records say why."""
     if not root.is_dir():
         print(f"{root} is not a folder", file=sys.stderr)
         return 1
@@ -349,6 +395,8 @@ def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable
     if halted:
         record_stop(root, halted, at=now().isoformat())
         return 0
+    if not runner_alive(root):              # before the lock, so a run that dies at once still leaves word that it ran
+        beat(root, state="starting", pid=os.getpid(), in_job=_in_job(), at=now().isoformat())
     try:
         with runner_lock(root):
             try:
@@ -361,6 +409,8 @@ def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable
                 return _refuse(root, FROZEN_CHANGED, str(exc)[:500], now)
             except Exception as exc:  # noqa: BLE001 - the domain file is the person's own code: say why, and leave word
                 return _refuse(root, CANNOT_OPEN, f"The loop could not be opened: {type(exc).__name__}: {exc}"[:500], now)
+            if unsafe:
+                return _refuse(root, CACHED_BYTECODE, unsafe[:500], now)
             return Runner(loop, now=now, sleep=sleep, reader=reader).run()
     except WorkspaceRefused:
         print("A runner is already alive on this folder; this one did nothing.", file=sys.stderr)
@@ -406,20 +456,30 @@ def resume(root: Path, who: str) -> int:
     return 1 if loop is None else _said(loop.resume(who))
 
 
+def demote(root: Path, generation: int, who: str) -> int:
+    loop = _person(root, who, f"take generation {generation} back", pinned=_pinned(root))
+    return 1 if loop is None else _said(loop.demote(generation, who))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -P -m g6.metaharness.loop",
                                      description="Run G6's self-improvement loop on a folder, or act on it as a person.")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("run", help="run ticks until a STOP file appears").add_argument("folder")
-    for name, about in (("enrol", "confirm what judges this folder's domain"), ("resume", "lift a pause, having read why")):
+    for name, about in (("enrol", "confirm what judges this folder's domain"), ("resume", "lift a pause, having read why"),
+                        ("demote", "take back the generation at the head, having read the digest")):
         command = commands.add_parser(name, help=about)
         command.add_argument("folder")
+        if name == "demote":
+            command.add_argument("generation", type=int, help="the generation at the head, as the digest shows it")
         command.add_argument("--as", dest="who", required=True, help="your name; recorded as given, not authenticated")
     args = parser.parse_args(argv)
     root = Path(args.folder).expanduser().resolve()
     if args.command == "run":
-        return run(root)
+        return run(root, unsafe=_launch_risk())
+    if args.command == "demote":
+        return demote(root, args.generation, args.who)
     return {"enrol": enrol, "resume": resume}[args.command](root, args.who)
 
 
-__all__ = ["FIRST_REST", "LONGEST_REST", "NAP", "Runner", "enrol", "main", "open_loop", "resume", "run"]
+__all__ = ["FIRST_REST", "LONGEST_REST", "NAP", "Runner", "demote", "enrol", "main", "open_loop", "resume", "run"]

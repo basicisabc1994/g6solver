@@ -16,14 +16,18 @@ from g6.self_maintenance import envelope
 from g6.self_maintenance.envelope import (
     FINDINGS,
     STOPS_FILE,
+    TICK_BUDGET_SPENT,
     CycleLog,
     ask_to_stop,
     beat,
     heartbeat,
+    note_refusal,
     record_stop,
+    refused_requests,
     runner_alive,
     runner_lock,
     stop_reason,
+    stop_standing,
     stops_asked,
 )
 from g6.workspace._coordination import Coordination
@@ -86,6 +90,25 @@ def test_any_result_ends_the_streak_since_a_candidate_that_lost_is_a_result_not_
     assert log.failed_streak() == 1
 
 
+def test_a_tick_cut_off_at_its_own_reservation_is_no_fault(tmp_path):
+    """It stopped where the loop told it to. Nothing broke, and three of them must not stop a week."""
+    log = _log(tmp_path)
+    for _ in range(4):
+        _cycle(log, "blocked", code=TICK_BUDGET_SPENT)
+    assert log.failed_streak() == 0
+
+
+def test_a_cut_off_tick_neither_counts_in_a_streak_nor_ends_one(tmp_path):
+    """It is no result either: it compared nothing, so the faults on each side of it are still in a row."""
+    log = _log(tmp_path)
+    _cycle(log, "error")
+    _cycle(log, "blocked", code=TICK_BUDGET_SPENT)
+    _cycle(log, "blocked", code="G6_E_LOOP_FROZEN_CHANGED")
+    _cycle(log, "blocked", code=TICK_BUDGET_SPENT)
+    _cycle(log, "error")
+    assert log.failed_streak() == 3 and [c["outcome"] for c in log.failed_run()] == ["error", "blocked", "error"]
+
+
 def test_results_alone_are_never_a_streak(tmp_path):
     log = _log(tmp_path)
     for outcome in ("no_winner", "no_constraint", "refused", "rolled_back") * 3:
@@ -145,6 +168,8 @@ def test_only_a_person_resumes_it_or_enrols_a_domain(tmp_path, name):
         log.resume(name)
     with pytest.raises(LedgerError, match="a person"):
         log.enrol(name, {"evaluator": "a"})
+    with pytest.raises(LedgerError, match="a person"):
+        log.demote(name, undoes=1)
     assert log.paused() == "why"
 
 
@@ -189,6 +214,21 @@ def test_a_heartbeat_that_cannot_be_written_is_only_a_missed_beat(tmp_path, monk
     monkeypatch.setattr("g6.self_maintenance.envelope.os.replace", refused)
     beat(tmp_path, tick=2)
     assert heartbeat(tmp_path) == {"tick": 1}
+
+
+def test_a_reader_holding_the_heartbeat_for_a_moment_costs_no_beat(tmp_path, monkeypatch):
+    """A start reads it ten times a second, and a beat lost there is a whole nap in which the runner reads as still starting."""
+    beat(tmp_path, tick=1)
+    real, refusals = os.replace, [PermissionError("a reader holds the file")] * 2
+
+    def held_for_a_moment(*args):
+        if refusals:
+            raise refusals.pop()
+        real(*args)
+
+    monkeypatch.setattr("g6.self_maintenance.envelope.os.replace", held_for_a_moment)
+    beat(tmp_path, tick=2)
+    assert heartbeat(tmp_path) == {"tick": 2}
 
 
 def test_asking_to_stop_writes_the_file_and_repeating_keeps_the_first_reason(tmp_path):
@@ -442,6 +482,70 @@ def test_a_stop_that_cannot_be_counted_still_stops(tmp_path):
     assert "why" in ask_to_stop(tmp_path, "why") and (tmp_path / "STOP").is_file()
 
 
+# A stop that died between its two writes -----------------------------------------------------------------------------------
+
+def _counted_only(folder) -> None:
+    """What ``ask_to_stop`` leaves if it dies between its two writes."""
+    with open(folder / STOPS_FILE, "a", encoding="utf-8") as stops:
+        stops.write("the owner said no\n")
+
+
+def test_a_stop_that_died_before_its_file_stands_by_its_count(tmp_path):
+    _counted_only(tmp_path)
+    assert STOPS_FILE in stop_standing(tmp_path, {"stops": 0}) and stop_reason(tmp_path) == ""
+
+
+def test_no_stop_since_the_start_is_no_stop(tmp_path):
+    assert stop_standing(tmp_path, {"stops": 0}) == ""
+    _counted_only(tmp_path)
+    assert stop_standing(tmp_path, {"stops": 1}) == ""
+
+
+@pytest.mark.parametrize("start", [None, {}, {"by": "Ada"}])
+def test_with_no_count_on_a_start_there_is_nothing_to_compare(tmp_path, start):
+    _counted_only(tmp_path)
+    assert stop_standing(tmp_path, start) == ""
+
+
+def test_a_stop_file_speaks_for_itself_ahead_of_the_count(tmp_path):
+    ask_to_stop(tmp_path, "the owner's review")
+    assert "the owner's review" in stop_standing(tmp_path, {"stops": 0})
+
+
+def test_a_count_that_cannot_be_read_stands_as_a_stop(tmp_path):
+    (tmp_path / STOPS_FILE).mkdir()
+    assert stop_standing(tmp_path, {"stops": 0})
+
+
+# What was refused --------------------------------------------------------------------------------------------------------
+
+DIGEST = "a" * 64
+
+
+def test_a_refusal_is_kept_with_no_records_needed_and_reading_it_changes_nothing(tmp_path):
+    assert refused_requests(tmp_path) == set() and list(tmp_path.iterdir()) == []
+    note_refusal(tmp_path, DIGEST, "G6_E_MODEL_REFUSED: cyber\nand a second line")
+    assert refused_requests(tmp_path) == {DIGEST} and len((tmp_path / "refused.log").read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_a_refusal_that_cannot_be_kept_raises_nothing(tmp_path):
+    (tmp_path / "refused.log").mkdir()
+    note_refusal(tmp_path, DIGEST, "said")
+
+
+def test_a_line_a_crash_cut_short_is_no_digest(tmp_path):
+    note_refusal(tmp_path, DIGEST, "said")
+    with open(tmp_path / "refused.log", "a", encoding="utf-8") as cut:
+        cut.write("abc")
+    assert refused_requests(tmp_path) == {DIGEST}
+
+
+def test_refusals_that_cannot_be_read_are_refused_as_records_are(tmp_path):
+    (tmp_path / "refused.log").mkdir()
+    with pytest.raises(LedgerError, match="refused.log"):
+        refused_requests(tmp_path)
+
+
 # Is a runner alive? ----------------------------------------------------------------------------------------------------
 
 def test_a_folder_no_runner_ever_held_is_not_alive_and_looking_writes_nothing(tmp_path):
@@ -496,6 +600,19 @@ def test_the_log_knows_the_latest_generation_a_cycle_made(tmp_path):
 def test_a_cycle_that_made_no_generation_says_nothing_of_the_chain(tmp_path):
     log = _log(tmp_path)
     _cycle(log, "refused", head_version=7)                       # the head it began on, which can be a person's version
+    assert log.generation() == 0
+
+
+def test_the_log_counts_the_generation_a_person_made_by_taking_one_back(tmp_path):
+    log = _log(tmp_path)
+    _cycle(log, "adopted", head_version=1)
+    log.demote("Ada", undoes=1, head_version=2)
+    assert log.generation() == 2
+
+
+def test_a_demotion_that_names_no_generation_says_nothing_of_the_chain(tmp_path):
+    log = _log(tmp_path)
+    log.demote("Ada", undoes=1)
     assert log.generation() == 0
 
 

@@ -14,6 +14,7 @@ import socket
 import stat
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -98,8 +99,9 @@ class Rig:
         self.spawned: list[Path] = []
         self.server = build_server()
 
-        def spawn(root: Path) -> Finished:
+        def spawn(root: Path, settings: dict) -> Finished:
             self.spawned.append(root)
+            self.spawned_with = settings
             return Finished()
 
         monkeypatch.setattr(improve, "_spawn", spawn)
@@ -314,33 +316,100 @@ def test_a_pause_is_named_in_the_dialog(rig):
 def test_a_runner_that_ends_as_it_starts_is_a_failed_start_and_says_why(rig, monkeypatch):
     rig.enrol()
     beat(rig.root, state="not-running", reason="domain_file is missing")
-    monkeypatch.setattr(improve, "_spawn", lambda root: Finished(1))
+    monkeypatch.setattr(improve, "_spawn", lambda root, settings: Finished(1))
     got = rig.start()
     assert _code(got) == "G6_E_LOOP_START_FAILED" and "domain_file is missing" in got["message"]
     assert got["running"] is False and check_envelope(got) == []
 
 
-def test_a_runner_that_takes_its_lock_is_reported_alive(rig, monkeypatch):
+def test_a_failed_start_says_the_code_the_process_ended_with(rig, monkeypatch):
     rig.enrol()
-    held = runner_lock(rig.root)
+    monkeypatch.setattr(improve, "_spawn", lambda root, settings: Finished(3221225786))
+    got = rig.start()
+    assert _code(got) == "G6_E_LOOP_START_FAILED" and got["return_code"] == 3221225786 and "3221225786" in got["message"]
 
-    def spawn(root: Path) -> Finished:
-        held.__enter__()
-        return Finished(None)
 
-    monkeypatch.setattr(improve, "_spawn", spawn)
-    try:
-        got = rig.start()
-    finally:
-        held.__exit__(None, None, None)
+class Holding(Finished):
+    """A process still running, which says so through ``poll`` as a runner says so through its heartbeat."""
+
+    def __init__(self, each_poll) -> None:
+        super().__init__(None)
+        self.each_poll = each_poll
+
+    def poll(self) -> int | None:
+        return self.each_poll()
+
+
+def test_a_runner_past_opening_its_folder_is_reported_alive(rig, monkeypatch):
+    rig.enrol()
+
+    def running() -> None:
+        beat(rig.root, state="waiting", at=datetime.now(UTC).isoformat())
+
+    monkeypatch.setattr(improve, "_spawn", lambda root, settings: Holding(running))
+    got = rig.start()
     assert _code(got) == "G6_E_LOOP_STARTED" and got["running"] is True and got["completion_state"] == "qualified-draft"
     assert check_envelope(got) == []
+
+
+def test_a_runner_that_holds_its_lock_and_then_refuses_is_a_failed_start(rig, monkeypatch):
+    """A runner refuses while it holds the lock, so a look at the lock alone can say started of one that is about to end."""
+    rig.enrol()
+    held, polls = runner_lock(rig.root), []
+
+    def refuses() -> int | None:
+        polls.append(1)
+        if len(polls) == 1:
+            held.__enter__()
+            return None
+        if len(polls) == 3:
+            held.__exit__(None, None, None)
+            beat(rig.root, state="not-running", reason="domain_file is missing", at=datetime.now(UTC).isoformat())
+            return 1
+        return None
+
+    monkeypatch.setattr(improve, "_spawn", lambda root, settings: Holding(refuses))
+    got = rig.start()
+    assert _code(got) == "G6_E_LOOP_START_FAILED" and got["return_code"] == 1 and "domain_file is missing" in got["message"]
+
+
+def test_a_heartbeat_from_before_this_start_says_nothing_of_this_runner(rig, monkeypatch):
+    rig.enrol()
+    beat(rig.root, state="waiting", at=(datetime.now(UTC) - timedelta(hours=1)).isoformat())
+    monkeypatch.setattr(improve, "_spawn", lambda root, settings: Holding(lambda: None))
+    got = rig.start()
+    assert _code(got) == "G6_E_LOOP_STARTED" and got["running"] is False and "not opened" in got["message"]
+
+
+def test_a_heartbeat_written_before_the_spawn_returned_is_this_runners(rig, monkeypatch):
+    """A runner can open its folder before the process that started it is scheduled again. The wait is what makes this a
+    certainty: with no wait, a cutoff taken after the spawn can land on the heartbeat's own tick of the wall clock and pass."""
+    rig.enrol()
+
+    def opens_at_once(root: Path, settings: dict) -> Holding:
+        beat(root, state="waiting", at=datetime.now(UTC).isoformat())
+        time.sleep(0.05)
+        return Holding(lambda: None)
+
+    monkeypatch.setattr(improve, "_spawn", opens_at_once)
+    got = rig.start()
+    assert _code(got) == "G6_E_LOOP_STARTED" and got["running"] is True
+
+
+def test_a_starting_heartbeat_is_no_sign_it_got_past_opening(rig, monkeypatch):
+    rig.enrol()
+
+    def only_starting() -> None:
+        beat(rig.root, state="starting", at=datetime.now(UTC).isoformat())
+
+    monkeypatch.setattr(improve, "_spawn", lambda root, settings: Holding(only_starting))
+    assert rig.start()["running"] is False
 
 
 def test_a_program_that_cannot_be_started_is_a_refusal_not_a_raised_error(rig, monkeypatch):
     rig.enrol()
 
-    def fails(root: Path) -> None:
+    def fails(root: Path, settings: dict) -> None:
         raise OSError("no such interpreter")
 
     monkeypatch.setattr(improve, "_spawn", fails)
@@ -357,14 +426,81 @@ def test_the_runner_is_detached_so_it_outlives_the_session(rig, monkeypatch):
 
     monkeypatch.undo()                                                  # the real _spawn
     monkeypatch.setattr(subprocess, "Popen", popen)
-    improve._spawn(rig.root)
-    assert seen["argv"][1:] == ["-P", "-m", "g6.metaharness.loop", "run", str(rig.root)]
+    improve._spawn(rig.root, {})
+    assert seen["argv"][1:4] == ["-P", "-B", "-X"] and seen["argv"][4].startswith("pycache_prefix=")
+    assert seen["argv"][5:] == ["-m", "g6.metaharness.loop", "run", str(rig.root)]
     assert seen["argv"][0] == sys.executable and seen["stdin"] == subprocess.DEVNULL
     if os.name == "nt":
         assert seen["creationflags"] & subprocess.DETACHED_PROCESS
         assert seen["creationflags"] & subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         assert seen["start_new_session"] is True
+
+
+def _pin(rig: Rig, python) -> None:
+    path = rig.root / "settings.json"
+    path.write_text(json.dumps({**json.loads(path.read_text(encoding="utf-8")), "python": str(python)}), encoding="utf-8")
+
+
+def test_a_pinned_python_runs_the_runner_isolated_so_no_working_tree_can_come_first(rig, monkeypatch, tmp_path):
+    """``-P`` leaves ``PYTHONPATH`` standing, which puts a working tree in front of any install: seen by running it."""
+    seen: dict = {}
+
+    def popen(argv, **kwargs):
+        seen.update(kwargs, argv=argv)
+        return Finished()
+
+    monkeypatch.undo()
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    pinned = tmp_path / "python.exe"
+    pinned.write_bytes(b"")
+    improve._spawn(rig.root, {"python": str(pinned)})
+    argv = seen["argv"]
+    assert argv[:4] == [str(pinned), "-I", "-B", "-X"] and argv[4].startswith("pycache_prefix=")
+    assert argv[5:] == ["-m", "g6.metaharness.loop", "run", str(rig.root)]
+
+
+def test_the_dialog_names_a_pinned_python_and_what_having_none_means(rig, tmp_path):
+    rig.enrol()
+    rig.start(declined)
+    assert "the Python of this server" in rig.asked[-1] and "enrols again" in rig.asked[-1]
+    pinned = tmp_path / "python.exe"
+    pinned.write_bytes(b"")
+    _pin(rig, pinned)
+    rig.start(declined)
+    assert str(pinned) in rig.asked[-1] and "the Python of this server" not in rig.asked[-1]
+
+
+def test_the_python_a_person_agreed_to_is_the_one_that_starts_whatever_the_file_says_after(rig, tmp_path, monkeypatch):
+    rig.enrol()
+    pinned, other = tmp_path / "python.exe", tmp_path / "other.exe"
+    pinned.write_bytes(b"")
+    other.write_bytes(b"")
+    _pin(rig, pinned)
+    real = CycleLog.start
+
+    def written_after_the_check(self, *args, **kwargs):
+        recorded = real(self, *args, **kwargs)
+        _pin(rig, other)
+        return recorded
+
+    monkeypatch.setattr(CycleLog, "start", written_after_the_check)
+    improve.start(rig.root, "Ada")
+    assert rig.spawned_with["python"] == str(pinned)
+
+
+@pytest.mark.parametrize("python", ["python.exe", "", 7])
+def test_a_pinned_python_that_is_no_full_path_to_a_file_is_refused_before_anything_is_asked(rig, tmp_path, python):
+    rig.enrol()
+    path = rig.root / "settings.json"
+    path.write_text(json.dumps({**json.loads(path.read_text(encoding="utf-8")), "python": python}), encoding="utf-8")
+    assert _code(rig.start()) == "G6_E_LOOP_BAD_SETTINGS" and rig.asked == [] and rig.spawned == []
+
+
+def test_a_pinned_python_that_is_not_there_is_refused_too(rig, tmp_path):
+    rig.enrol()
+    _pin(rig, tmp_path / "gone" / "python.exe")
+    assert _code(rig.start()) == "G6_E_LOOP_BAD_SETTINGS" and rig.spawned == []
 
 
 # Stop -----------------------------------------------------------------------------------------------------------------
@@ -392,6 +528,11 @@ def test_stop_reports_a_runner_that_has_not_gone_yet_and_ends_nothing(rig):
     with runner_lock(rig.root):
         got = rig.call("g6_improve_stop", folder=str(rig.root))
         assert got["running"] is True and got["stopped"] is False and "still alive" in got["message"]
+
+
+def test_stop_says_it_lands_at_the_runners_next_model_call(rig):
+    with runner_lock(rig.root):
+        assert "next model call" in rig.call("g6_improve_stop", folder=str(rig.root))["message"]
 
 
 def test_stop_kills_nothing_and_touches_no_container(rig, monkeypatch):
@@ -678,6 +819,52 @@ def test_a_stop_with_no_count_to_write_to_still_stops_and_says_so(rig):
     assert _code(got) == improve.STOP_ASKED and "uncountable" in got["stop"] and stops_asked(rig.root) == 1
 
 
+def _a_stop_cut_off_before_its_file(rig: Rig, monkeypatch) -> None:
+    """A stop that dies between its two writes: the count went in, and the file never did."""
+    real = builtins.open
+
+    class Killed(BaseException):
+        pass
+
+    def killed_at_the_file(path, *args, **kwargs):
+        if Path(path).name == "STOP":
+            raise Killed
+        return real(path, *args, **kwargs)
+
+    with monkeypatch.context() as dying:
+        dying.setattr(builtins, "open", killed_at_the_file)
+        with pytest.raises(Killed):
+            envelope.ask_to_stop(rig.root, "the owner said no")
+    assert stops_asked(rig.root) == 1 and not (rig.root / "STOP").exists()
+
+
+def test_a_stop_cut_off_before_its_file_while_the_dialog_is_open_is_asked_about_again(rig, monkeypatch):
+    """Nothing but the count shows it, and a start records the count it sees, so it would absorb a stop nobody read."""
+    rig.enrol()
+    _, _, shown = improve.asked(str(rig.root))
+    _a_stop_cut_off_before_its_file(rig, monkeypatch)
+    got = improve.start(rig.root, "Ada", shown)
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_TERMS_CHANGED" and got["completion_state"] == "blocked-escalated"
+    assert CycleLog(rig.root / CYCLE_LOG).started() is None
+
+
+def test_the_dialog_names_a_stop_the_count_holds_with_no_file_standing_for_it(rig, monkeypatch):
+    rig.enrol()
+    _a_stop_cut_off_before_its_file(rig, monkeypatch)
+    rig.start(declined)
+    assert "no STOP file stands for it" in rig.asked[0] and "stops.log" in rig.asked[0]
+    rig.start()
+    assert rig.spawned == [rig.root] and CycleLog(rig.root / CYCLE_LOG).started()["stops"] == 1
+
+
+def test_a_stop_the_last_start_already_saw_is_not_named_again(rig):
+    rig.enrol()
+    rig.call("g6_improve_stop", folder=str(rig.root), reason="an old stop")
+    rig.start()
+    rig.start(declined)
+    assert "no STOP file stands for it" not in rig.asked[-1]
+
+
 def test_a_stop_that_cannot_change_a_stop_file_says_it_failed_since_a_start_could_clear_it(rig):
     rig.enrol()
     (rig.root / "STOP").write_text("an old stop\n", encoding="utf-8")
@@ -747,11 +934,13 @@ def test_a_stop_file_that_cannot_be_written_is_said(rig, monkeypatch):
     assert _code(got) == "G6_E_LOOP_STOP_FAILED" and got["completion_state"] == "blocked-escalated"
 
 
-def test_a_folder_left_empty_is_the_one_under_g6s_state_folder(rig, tmp_path):
-    home = tmp_path / "home" / "improve"
-    home.mkdir(parents=True)
+def test_a_folder_left_empty_lies_beside_g6s_state_folder_and_not_in_it(rig, tmp_path):
+    """The server, the completion loop and test runs all write in the state folder, and nothing else writes in this one."""
+    home = tmp_path / "home-improve"
+    home.mkdir()
     (home / "settings.json").write_text("{}", encoding="utf-8")
     assert rig.call("g6_improve_stop")["folder"] == str(home) and (home / "STOP").exists()
+    assert not (tmp_path / "home" / "improve").exists()
 
 
 # Status ---------------------------------------------------------------------------------------------------------------
@@ -835,11 +1024,25 @@ def test_status_says_the_stop_in_place(rig):
     assert "the owner's review" in improve.status(str(rig.root))["stop"]
 
 
+def test_status_says_a_stop_that_died_before_its_file_was_written(rig, monkeypatch):
+    rig.enrol()
+    rig.start()
+    _a_stop_cut_off_before_its_file(rig, monkeypatch)
+    assert "stops.log" in improve.status(str(rig.root))["stop"]
+
+
 def test_status_says_a_generation_the_log_saw_and_the_chain_lost(rig):
     _worked(rig)
     (rig.root / "workspace" / ADOPTIONS).write_text("", encoding="utf-8")
     got = improve.status(str(rig.root))
     assert got["pause"]["code"] == "G6_E_LOOP_RECORDS_UNREADABLE" and "generation 1" in got["pause"]["reason"]
+
+
+def test_status_says_a_generation_a_person_made_and_the_chain_lost(rig):
+    _worked(rig)
+    rig.log.demote("Ada", undoes=1, head_version=2)
+    got = improve.status(str(rig.root))
+    assert got["pause"]["code"] == "G6_E_LOOP_RECORDS_UNREADABLE" and "generation 2" in got["pause"]["reason"]
 
 
 def test_status_says_records_that_do_not_check_out_and_does_not_raise(rig):

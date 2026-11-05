@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import dataclasses
 import importlib.util
 import json
 import os
@@ -19,14 +20,17 @@ import pytest
 import g6
 from g6.core.ledger import LedgerError, digest
 from g6.core.llm import LLMError
+from g6.metaharness import Model
 from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
-from g6.metaharness.runner import FIRST_REST, LONGEST_REST, NAP, Runner, main, open_loop, run
+from g6.metaharness.runner import FIRST_REST, LONGEST_REST, NAP, Runner, _in_job, main, open_loop, run
+from g6.metaharness.shadow import lineage
 from g6.self_maintenance.digest import digest_path, latest
 from g6.self_maintenance.envelope import (
     CYCLE_LOG,
     CycleLog,
     ask_to_stop,
+    beat,
     heartbeat,
     runner_alive,
     runner_lock,
@@ -35,7 +39,7 @@ from g6.self_maintenance.envelope import (
     stops_asked,
 )
 from g6.self_maintenance.pacing import AccountReading, ProviderWindow, read_settings
-from g6.self_maintenance.usage import REFRESH
+from g6.self_maintenance.usage import REFRESH, AccountReader
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
 domains = sys.modules.setdefault(_spec.name, importlib.util.module_from_spec(_spec))
@@ -95,6 +99,75 @@ def test_it_ticks_until_a_stop_file_and_then_ends_cleanly(tmp_path):
     assert beat["state"] == "stopped" and "the test is over" in beat["reason"]
 
 
+def test_a_stop_during_a_tick_ends_the_run_at_once_and_the_days_page_says_what_it_cut_off(tmp_path):
+    runner, time, domain = _runner(tmp_path)
+    tutor, seen = domain.tutor, []
+
+    def stopped_at_the_third(system: str, user: str) -> str:
+        seen.append(user)
+        if len(seen) == 3:
+            ask_to_stop(runner.loop.root, "the owner wants the subscription back")
+        return tutor(system, user)
+
+    domain.llm._responder = stopped_at_the_third
+    assert runner.run() == 0 and len(seen) == 3 and time.naps == [1.0]
+    assert heartbeat(runner.loop.root)["state"] == "stopped"
+    page = latest(runner.loop.root).read_text(encoding="utf-8")
+    assert "The runner ended" in page and "at a model call after 3 requests" in page
+
+
+def _a_stop_dies_before_its_file(root: Path) -> None:
+    with open(root / "stops.log", "a", encoding="utf-8") as stops:
+        stops.write("the owner said no\n")
+
+
+def test_a_stop_that_died_before_its_file_ends_a_tick_in_flight_and_then_the_run(tmp_path):
+    runner, time, domain = _runner(tmp_path)
+    runner.loop.log.start("Ada", stops=0)
+    tutor, seen = domain.tutor, []
+
+    def stopped_at_the_third(system: str, user: str) -> str:
+        seen.append(user)
+        if len(seen) == 3:
+            _a_stop_dies_before_its_file(runner.loop.root)
+        return tutor(system, user)
+
+    domain.llm._responder = stopped_at_the_third
+    _stopped_after(time, timedelta(minutes=30))                          # so a run that misses it ends, and this fails
+    assert runner.run() == 0 and len(seen) == 3 and not (runner.loop.root / "STOP").exists()
+    assert heartbeat(runner.loop.root)["state"] == "stopped" and time.naps == [1.0]
+    assert not runner.loop.log.start_in_force()
+
+
+def test_a_waiting_runner_ends_at_a_stop_that_died_before_its_file_and_does_not_spin(tmp_path):
+    runner, time, _ = _runner(tmp_path, settings=_windows(("claude", 100)))
+    runner.loop.log.start("Ada", stops=0)
+    runner.step()
+    _a_stop_dies_before_its_file(runner.loop.root)
+    assert runner.step() is None and heartbeat(runner.loop.root)["state"] == "stopped"
+
+
+def test_a_tick_refused_for_a_stop_does_not_leave_the_runner_ticking_once_a_second(tmp_path):
+    """The tick and the runner must read the same stop, or the runner goes on, and asks again a second later, for ever."""
+    runner, time, domain = _runner(tmp_path)
+    runner.loop.log.start("Ada", stops=0)
+    _a_stop_dies_before_its_file(runner.loop.root)
+    _stopped_after(time, timedelta(minutes=5))
+    assert runner.run() == 0 and domain.llm.calls == [] and len(time.naps) <= 1
+
+
+def test_the_days_page_says_a_classifier_stopped_a_request_and_that_it_will_not_go_again(tmp_path):
+    runner, _, domain = _runner(tmp_path)
+
+    def refuses(system: str, user: str) -> str:
+        raise LLMError("G6_E_MODEL_REFUSED: cyber")
+
+    domain.llm._responder = refuses
+    runner.step()
+    said = latest(runner.loop.root).read_text(encoding="utf-8").split("## Stops and pauses")[1]
+    assert "A classifier or a permission stopped a request at tick 1" in said and "not sent again" in said
+
+
 def test_no_sleep_is_longer_than_a_minute_so_a_stop_is_seen_within_one(tmp_path):
     runner, time, _ = _runner(tmp_path, settings=_windows(("claude", 100)))     # never room: it only waits
     _stopped_after(time, timedelta(minutes=10))
@@ -147,6 +220,28 @@ def test_a_limit_met_during_a_tick_is_waited_out_and_the_days_page_says_so(tmp_p
     assert runner.run() == 0
     assert runner.loop.log.cycles()[0]["outcome"] == "adopted"
     assert datetime.fromisoformat(runner.loop.log.cycles()[0]["at"]) >= first + REFRESH
+
+
+def test_a_full_week_is_waited_out_to_its_reset_and_no_later(tmp_path):
+    """The old week's figure must not count against the new week's first ceiling: that slipped the next try a day."""
+    reset = START + timedelta(days=7)
+    window = ProviderWindow("claude", 5000, START)
+    domain = domains.WordProblems(tmp_path, pool=86)
+    run = domain.execution()
+    domain.execution = lambda: dataclasses.replace(run, models={"local": Model(domain.llm, max_calls_per_run=1)})
+    full = {"rateLimits": {"primary": {"usedPercent": 100, "windowDurationMins": 10080, "resetsAt": reset.timestamp()}}}
+    empty = {"rateLimits": {"primary": {"usedPercent": 0, "windowDurationMins": 10080,
+                                        "resetsAt": (reset + timedelta(days=7)).timestamp()}}}
+    answers = iter((full, empty))
+    reader = AccountReader((window,), ask={"claude": lambda: next(answers)})
+    runner, time, _ = _runner(tmp_path, domain=domain, settings=dataclasses.replace(SETTINGS, windows=(window,)),
+                              read_account=reader, reader=reader, at=reset - timedelta(seconds=1))
+    runner.step()
+    assert runner.last["warning_card"]["code"] == "G6_E_LOOP_BUDGET_WAIT" and runner.not_before == reset
+    calls = len(domain.llm.calls)
+    time.at = reset + timedelta(seconds=1)
+    runner.step()
+    assert runner.not_before <= time.at + REFRESH and len(domain.llm.calls) > calls
 
 
 def test_a_tick_that_raises_does_not_end_the_run_and_counts_as_a_failed_cycle(tmp_path, monkeypatch):
@@ -385,6 +480,15 @@ def test_a_digest_that_cannot_be_written_does_not_end_the_run(tmp_path, monkeypa
     assert runner.run() == 0 and runner.loop.log.cycles()
 
 
+def test_the_owner_told_to_change_an_estimate_is_told_what_changing_the_file_costs(tmp_path):
+    """Whole, past the digest's cut of a line. A runner alive keeps what it read, so nothing halts now: the next restart does."""
+    estimated = LoopSettings(windows=(ProviderWindow("claude", 1_000_000, START, estimated=True),), method=FAST, audit_per_tick=60)
+    runner, _, _ = _runner(tmp_path, settings=estimated)
+    runner.step()
+    owed = latest(runner.loop.root).read_text(encoding="utf-8").split("## Decisions for the owner")[1].split("##")[0]
+    assert "settings.json" in owed and "keeps what it read" in owed and "new g6_improve_start" in owed
+
+
 def test_the_account_is_read_between_ticks_not_in_one(tmp_path):
     class Reader:
         said = {"claude": "reported by its own tool"}
@@ -494,6 +598,16 @@ def test_the_account_reader_is_on_unless_the_settings_turn_it_off(tmp_path):
     assert open_loop(root, now=lambda: START)[1] is not None
 
 
+def test_a_folder_that_reads_its_account_reads_it_before_an_evaluation_too(tmp_path):
+    loop, reader = open_loop(_folder(tmp_path, read_account=True), now=lambda: START)
+    assert loop._read_now == reader.read_now
+
+
+def test_a_folder_that_turned_the_read_off_has_none_before_an_evaluation_either(tmp_path):
+    loop, reader = open_loop(_folder(tmp_path), now=lambda: START)
+    assert reader is None and loop._read_now is None
+
+
 def test_run_says_why_when_a_folder_cannot_be_opened_and_leaves_a_heartbeat(tmp_path, capsys):
     root = tmp_path / "loop"
     root.mkdir()
@@ -511,6 +625,47 @@ def test_run_with_a_stop_file_ends_before_it_opens_anything(tmp_path):
     root.mkdir()
     (root / "STOP").write_text("stay down\n", encoding="utf-8")
     assert run(root) == 0 and heartbeat(root) is None
+
+
+def test_a_starting_heartbeat_is_on_record_before_the_lock_is_taken(tmp_path, monkeypatch):
+    root, _ = _enrolled_folder(tmp_path)
+    seen, real = [], runner_lock
+
+    def noted(folder):
+        seen.append(heartbeat(root))
+        return real(folder)
+
+    monkeypatch.setattr("g6.metaharness.runner.runner_lock", noted)
+    assert run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root)) == 0
+    assert seen[0]["state"] == "starting" and seen[0]["pid"] == os.getpid() and seen[0]["at"] and "in_job" in seen[0]
+
+
+def test_a_refused_runner_leaves_the_heartbeat_of_the_one_alive_as_it_was(tmp_path, monkeypatch):
+    monkeypatch.setattr("g6.workspace._coordination.MUTEX_WAIT", 0.05)
+    root = tmp_path / "loop"
+    root.mkdir()
+    with runner_lock(root):
+        beat(root, state="waiting", pid=7)
+        assert run(root) == 1
+        assert heartbeat(root) == {"state": "waiting", "pid": 7}
+
+
+def test_every_heartbeat_of_a_run_says_whether_it_is_in_a_job(tmp_path):
+    runner, _, _ = _runner(tmp_path)
+    runner.step()
+    assert heartbeat(runner.loop.root)["in_job"] == _in_job()
+    (runner.loop.root / "STOP").write_text("done\n", encoding="utf-8")
+    assert runner.step() is None and heartbeat(runner.loop.root)["in_job"] == _in_job()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a Windows job")
+def test_the_system_is_asked_whether_this_process_is_in_a_job():
+    assert _in_job() in (True, False)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="elsewhere there is no such thing to ask")
+def test_where_a_job_means_nothing_it_is_not_said():
+    assert _in_job() is None
 
 
 def test_a_second_runner_on_a_folder_does_nothing(tmp_path, capsys, monkeypatch):
@@ -789,6 +944,49 @@ def test_only_a_person_at_a_terminal_lifts_a_pause(tmp_path, monkeypatch, capsys
     loop.log.reload()
     assert loop.log.paused() == ""
 
+
+def _adopted_folder(tmp_path: Path) -> Path:
+    root, _ = _enrolled_folder(tmp_path)
+    assert open_loop(root, now=lambda: START + timedelta(days=2))[0].tick()["outcome"] == "adopted"
+    return root
+
+
+def lineage_of(root: Path) -> dict:
+    return lineage(root / "workspace")
+
+
+def _chain_length(root: Path) -> int:
+    return len(lineage_of(root)["recent"])
+
+
+def test_a_person_takes_a_generation_back_by_typing_the_domains_name(tmp_path, monkeypatch, capsys):
+    root = _adopted_folder(tmp_path)
+    monkeypatch.setattr("g6.metaharness.runner._at_a_terminal", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "word-problems")
+    assert main(["demote", str(root), "1", "--as", "Ada"]) == 0
+    assert lineage_of(root)["recent"][-1]["asked_by"] == "Ada" and "generation 1" in capsys.readouterr().out
+
+
+def test_only_a_person_at_a_terminal_takes_a_generation_back(tmp_path, capsys):
+    root = _adopted_folder(tmp_path)
+    assert main(["demote", str(root), "1", "--as", "Ada"]) == 1
+    assert "terminal" in capsys.readouterr().err and _chain_length(root) == 1
+
+
+def test_the_wrong_name_typed_back_takes_nothing_back(tmp_path, monkeypatch):
+    root = _adopted_folder(tmp_path)
+    monkeypatch.setattr("g6.metaharness.runner._at_a_terminal", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "yes")
+    assert main(["demote", str(root), "1", "--as", "Ada"]) == 1 and _chain_length(root) == 1
+
+
+def test_taking_a_generation_back_does_not_run_a_domain_file_changed_since_it_was_enrolled(tmp_path, monkeypatch, capsys):
+    root = _adopted_folder(tmp_path)
+    changed, marker = _plants_a_marker(tmp_path)
+    (tmp_path / "domain.py").write_text(changed, encoding="utf-8")
+    monkeypatch.setattr("g6.metaharness.runner._at_a_terminal", lambda: True)
+    assert main(["demote", str(root), "1", "--as", "Ada"]) == 1 and not marker.exists()
+    assert "enrolled" in capsys.readouterr().err and _chain_length(root) == 1
 
 def test_the_module_runs_as_a_command_with_python_minus_p():
     env = {**os.environ, "PYTHONPATH": str(Path(g6.__file__).resolve().parents[1])}

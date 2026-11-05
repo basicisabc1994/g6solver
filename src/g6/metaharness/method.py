@@ -88,10 +88,12 @@ def strategies_for(method: Method, workflow: Any, *, reflector: Any = None, spac
 
 
 def tune(mh: Any, method: Method, *, approve: Callable[[dict[str, Any]], str | None], reflector: Any = None,
-         space: EditSpace | None = None, extra: Sequence[Strategy] = (), carried: Sequence[Any] = ()) -> TuningRun:
+         space: EditSpace | None = None, extra: Sequence[Strategy] = (), carried: Sequence[Any] = (),
+         cycles: list[dict[str, Any]] | None = None) -> TuningRun:
     """One tuning run of ``mh`` under ``method``; see the module docstring. ``approve`` gets the gate's recommendation
     (its card and decision) and returns the name of the person who accepts it, or ``None``. ``carried``: proposals an
-    earlier run made and could not finish, which race in the first cycle."""
+    earlier run made and could not finish, which race in the first cycle. ``cycles``: a list the run fills as it goes, so a
+    caller still has what it made when a later step raises."""
     refused = mh._refusal()
     if refused is None and not mh.workflow.suite.selection:
         refused = {"warning_card": {"code": NO_SELECTION_SPLIT},
@@ -102,21 +104,30 @@ def tune(mh: Any, method: Method, *, approve: Callable[[dict[str, Any]], str | N
         return _finish(mh, run, "blocked")
     _, base = mh._head()
     strategies, notes = strategies_for(method, mh.workflow, reflector=reflector, space=space)
-    strategies += list(extra)
+    strategies = [*strategies, *extra]
     run = TuningRun(method.digest(), mh.workflow.digest(), base.digest(), notes=notes)
+    if cycles is not None:
+        run.cycles = cycles
     champion = None
     for cycle in range(1, method.cycles + 1):
         proposals, stats = [], {}
-        for strategy in strategies:
-            reply = mh.propose(strategy, budget=method.propose_budget, max_candidates=method.candidates_per_cycle)
-            got = list(reply.get("proposals") or [])
-            proposals += got
-            stats[strategy.name] = {"proposed": len(got), "code": reply["warning_card"]["code"],
-                                    "attempts": getattr(strategy, "made", None),
-                                    "duplicates": getattr(strategy, "duplicates", None)}
-        racers = [*(carried if cycle == 1 else ()), *proposals, *([champion] if champion is not None else [])]
         record: dict[str, Any] = {"cycle": cycle, "strategies": stats, "raced": [], "winner": None,
                                   "new_champion": False, "selection_calls": 0, "stopped": "", "select_code": ""}
+        run.cycles.append(record)     # now, so a cycle that raises still shows what it made
+        for number, strategy in enumerate(strategies):
+            name = strategy.name if all(s.name != strategy.name for s in strategies[:number]) else f"{strategy.name}#{number}"
+            reply: dict[str, Any] = {}
+            try:
+                reply = mh.propose(strategy, budget=method.propose_budget, max_candidates=method.candidates_per_cycle)
+            finally:                  # a strategy cut off part way keeps what it had already measured
+                got = list(reply.get("proposals") or [])
+                stats[name] = {"proposed": len(got), "code": (reply.get("warning_card") or {}).get("code", ""),
+                               "attempts": getattr(strategy, "made", None),
+                               "duplicates": getattr(strategy, "duplicates", None),
+                               "offered": reply.get("valid", 0),
+                               "measured": getattr(strategy, "measured", None)}
+            proposals += got
+        racers = [*(carried if cycle == 1 else ()), *proposals, *([champion] if champion is not None else [])]
         if racers:
             selected = mh.select(racers, block=method.race_block, keep=method.race_keep, budget=method.select_budget)
             record["select_code"] = selected["warning_card"]["code"]
@@ -130,7 +141,6 @@ def tune(mh: Any, method: Method, *, approve: Callable[[dict[str, Any]], str | N
                 record["winner"] = winner.candidate_digest
                 record["new_champion"] = champion is None or winner.digest() != champion.digest()
                 champion = winner
-        run.cycles.append(record)
     if champion is None:
         return _finish(mh, run, "no_winner")
     run.champion = champion.candidate_digest

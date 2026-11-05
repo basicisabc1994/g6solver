@@ -149,6 +149,15 @@ def test_a_new_week_starts_empty():
     assert meter.reserve("claude", _day(8), 200).admitted
 
 
+def test_a_reading_gives_the_end_its_provider_reported_even_one_already_past():
+    soon, gone = _day(2) + timedelta(hours=1), _day(2) - timedelta(hours=1)
+    assert _meter().reading("claude", _day(2)).ends == START + timedelta(days=7)
+    assert _meter(read_account=lambda provider, start: AccountReading(resets_at=soon)).reading("claude", _day(2)).ends == soon
+    past = _meter(read_account=lambda provider, start: AccountReading(resets_at=gone))
+    assert past.reading("claude", _day(2)).ends == gone
+    assert past.reserve("claude", _day(2), 1).ends == gone + timedelta(days=7)   # a tick reserves in the week that came after
+
+
 def test_each_provider_has_its_own_week():
     windows = (ProviderWindow("claude", 100, START), ProviderWindow("codex", 1000, START + timedelta(days=3)))
     meter = BudgetMeter(windows, store=OperatorStore(":memory:"))
@@ -316,6 +325,140 @@ def _shared_meters_with(reading: AccountReading) -> list[BudgetMeter]:
     store = OperatorStore(":memory:")
     return [BudgetMeter((ProviderWindow("claude", 1000, START),), store=store, read_account=lambda provider, start: reading)
             for _ in range(2)]
+
+
+# A reading's figure is of one week ----------------------------------------------------------------------------------------
+
+RESET = START + timedelta(days=7)
+
+
+def test_a_figure_from_a_week_that_has_ended_says_nothing_of_the_new_one():
+    reading = AccountReading(used=1000, estimated=False, read_at=RESET - timedelta(hours=1), resets_at=RESET)
+    meter = _meter(read_account=lambda provider, start: reading)
+    assert meter.reading("claude", RESET - timedelta(seconds=1)).used == 1000
+    assert meter.reading("claude", RESET).used == 0 and meter.reserve("claude", RESET, 200).admitted
+
+
+def test_a_limit_still_ahead_stands_when_the_figure_beside_it_has_ended():
+    until = RESET + timedelta(hours=2)
+    reading = AccountReading(used=1000, estimated=False, limited_until=until, read_at=RESET - timedelta(hours=1), resets_at=RESET)
+    meter = _meter(read_account=lambda provider, start: reading)
+    seen = meter.reserve("claude", RESET + timedelta(hours=1), 1)
+    assert not seen.admitted and seen.wait_until == until and seen.used == 0
+
+
+def test_a_figure_with_no_reset_on_it_stands_as_it_did():
+    reading = AccountReading(used=500)
+    meter = _meter(read_account=lambda provider, start: reading)
+    assert meter.reading("claude", RESET).used == 500
+
+
+# The provider's own week ---------------------------------------------------------------------------------------------------
+
+OFF_THE_GRID = START + timedelta(days=3, hours=5)           # a reset the typed week_start does not lead to
+
+
+def test_a_window_moves_to_a_reset_it_was_not_on_and_stays_on_one_it_was():
+    window = ProviderWindow("claude", 1000, START)
+    assert window.aligned(OFF_THE_GRID).place(OFF_THE_GRID) == (OFF_THE_GRID, 1)
+    assert window.aligned(START + timedelta(days=14)) is window  # the same moment in another zone must not name a new week
+
+
+def test_a_reset_the_provider_reports_sets_the_day_of_the_week():
+    reading = AccountReading(used=100, estimated=False, read_at=START, resets_at=OFF_THE_GRID)
+    meter = _meter(read_account=lambda provider, start: reading)
+    seen = meter.reading("claude", OFF_THE_GRID - timedelta(hours=1))
+    assert seen.day == 7 and seen.ceiling == 1000                    # by the settings alone it would be day 4, at 800
+
+
+def test_a_reservation_ends_with_the_providers_week_and_not_the_settings(tmp_path):
+    reading = AccountReading(used=100, estimated=False, read_at=START, resets_at=OFF_THE_GRID)
+    meter = _meter(read_account=lambda provider, start: reading)
+    assert meter.reserve("claude", OFF_THE_GRID - timedelta(hours=1), 1).ends == OFF_THE_GRID
+
+
+def test_the_week_stays_where_the_provider_put_it_after_the_reading_goes():
+    readings = [AccountReading(used=100, estimated=False, read_at=START, resets_at=OFF_THE_GRID)]
+    meter = _meter(read_account=lambda provider, start: readings[0])
+    meter.reading("claude", START + timedelta(days=1))
+    readings[0] = None
+    assert meter.reading("claude", OFF_THE_GRID + timedelta(hours=1)).day == 1
+
+
+def test_a_reading_with_no_reset_on_it_moves_nothing():
+    meter = _meter(read_account=lambda provider, start: AccountReading(used=100, read_at=START))
+    assert meter.reading("claude", _day(4)).day == 4
+
+
+def test_the_room_a_tick_waits_for_follows_the_providers_days():
+    reading = AccountReading(used=0, estimated=False, read_at=START, resets_at=OFF_THE_GRID)
+    meter = _meter(read_account=lambda provider, start: reading)
+    meter.reading("claude", START + timedelta(hours=1))
+    assert meter.next_room(START + timedelta(hours=1)) == OFF_THE_GRID - timedelta(days=3)
+
+
+# The open week keeps its book when the provider's own week is learned ------------------------------------------------------
+
+def _learns_the_week(reset=OFF_THE_GRID):
+    """A meter on its typed week, and what hands it a reading part way through: ``readings[0]`` is what the tool has said."""
+    readings: list[AccountReading | None] = [None]
+    return _meter(read_account=lambda provider, start: readings[0]), readings
+
+
+def _reading(used: float, at: datetime, reset: datetime = OFF_THE_GRID) -> AccountReading:
+    return AccountReading(used=used, estimated=False, read_at=at, resets_at=reset)
+
+
+def test_a_tick_that_learns_the_providers_week_keeps_its_whole_charge_against_the_ceiling():
+    meter, readings = _learns_the_week()
+    now = _day(3)
+    tick = meter.reserve("claude", now, 100)
+    readings[0] = _reading(20, now + timedelta(seconds=1))
+    assert meter.reading("claude", now + timedelta(seconds=1)).used >= 20
+    assert meter.settle(tick, 50) == 50
+    later = now + timedelta(seconds=2)
+    seen = meter.reading("claude", later)
+    assert seen.used >= 50
+    assert not meter.reserve("claude", later, seen.ceiling - 40).admitted  # room for 20 used and this, and none for 50
+
+
+def test_what_was_charged_before_the_week_moved_still_counts():
+    meter, readings = _learns_the_week()
+    meter.settle(meter.reserve("claude", _day(3), 150), 150)
+    readings[0] = _reading(0, _day(3))
+    assert meter.reading("claude", _day(3) + timedelta(seconds=1)).used == 150
+
+
+def test_a_reservation_still_open_when_the_week_moves_stays_on_the_ceiling():
+    meter, readings = _learns_the_week()
+    meter.reserve("claude", _day(3), 150)
+    readings[0] = _reading(0, _day(3))
+    assert meter.reading("claude", _day(3) + timedelta(seconds=1)).used == 150
+
+
+def test_a_second_move_of_the_same_week_keeps_the_same_book():
+    meter, readings = _learns_the_week()
+    meter.settle(meter.reserve("claude", _day(3), 150), 150)
+    readings[0] = _reading(0, _day(3))
+    meter.reading("claude", _day(3))
+    readings[0] = _reading(0, _day(3), reset=OFF_THE_GRID + timedelta(hours=2))
+    assert meter.reading("claude", _day(3) + timedelta(seconds=1)).used == 150
+
+
+def test_the_week_after_a_move_opens_a_book_of_its_own():
+    meter, readings = _learns_the_week()
+    meter.settle(meter.reserve("claude", _day(3), 150), 150)
+    readings[0] = _reading(0, _day(3))
+    meter.reading("claude", _day(3))
+    readings[0] = None
+    assert meter.reading("claude", OFF_THE_GRID + timedelta(hours=1)).used == 0
+
+
+def test_a_reset_already_gone_opens_the_new_week_and_carries_nothing_over():
+    meter, readings = _learns_the_week()
+    meter.settle(meter.reserve("claude", _day(4), 150), 150)
+    readings[0] = _reading(900, OFF_THE_GRID - timedelta(hours=1))
+    assert meter.reading("claude", OFF_THE_GRID + timedelta(minutes=1)).used == 0
 
 
 # When room comes, and the settings file ----------------------------------------------------------------------------------

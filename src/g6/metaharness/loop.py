@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """The self-improvement loop's tick, in shadow: it works on any domain, with no person in it.
 
-One tick is one cycle of design 6.1. **Measure** the head on the tuning cases. **Identify** the constraint: the cause
+One tick is one cycle of design 6.1. It opens by reading its own records and saying what limits progress (``g6.metaharness.reflex``), which is recorded and
+changes nothing it does. **Measure** the head on the tuning cases. **Identify** the constraint: the cause
 a profile can change that costs the most cases, through ``self_maintenance.constraints``, and none at all when the
 failure records were not independently observed. **Exploit**, by proposing within the meta-harness's editable schema:
 ``method.tune`` runs its usual proposers, with ``FailureTraceStrategy`` shown only the constraint's failures, and races
@@ -12,7 +13,8 @@ gate recommends in the loop's own workspace (``g6.metaharness.shadow``), so the 
 The only person in it is the one who enrols a domain: they confirm what judges the work, once, and the loop runs from
 there. Someone has to say what "better" means, and it cannot be the thing being judged.
 
-``python -P -m g6.metaharness.loop run <folder>`` runs ticks on their own (``g6.metaharness.runner``).
+``python -P -B -X pycache_prefix=<an empty folder> -m g6.metaharness.loop run <folder>`` runs ticks on their own
+(``g6.metaharness.runner``).
 
 Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been
 established.
@@ -21,8 +23,10 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import importlib.machinery
 import math
 import os
+import sys
 import threading
 import time
 from collections import Counter
@@ -40,20 +44,25 @@ from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import LedgerError, digest
 from g6.core.llm import _WAITS, DEFAULT_MAX_TOKENS, LLMError
 from g6.core.model_calls import counting
-from g6.integrity import build_manifest, manifest_sha256
+from g6.integrity import build_manifest, in_cache, manifest_sha256
 from g6.metaharness.api import _blocked, _envelope, judging_sha256
 from g6.metaharness.domain import (
+    BARRED,
     FALLBACK_MODEL,
     Cut,
     Domain,
     FailureRecord,
     Judge,
     backends,
+    caller_problems,
     cut_pool,
     domain_problems,
     judge_source,
+    provider_problems,
     sealed_closed,
+    sender_problems,
 )
+from g6.metaharness import reflex
 from g6.metaharness.failure_strategy import FailureTraceStrategy
 from g6.metaharness.method import Method, tune
 from g6.metaharness.monitor import MIN_PAIRS
@@ -68,14 +77,17 @@ from g6.self_maintenance.envelope import (
     ENDS_A_STREAK,
     FINDINGS,
     MAX_FAILED_CYCLES,
+    TICK_BUDGET_SPENT,
     CycleLog,
     ask_to_stop,
     beat,
     file_digest,
-    stop_reason,
+    note_refusal,
+    refused_requests,
+    stop_standing,
 )
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
-from g6.self_maintenance.usage import limit_ends
+from g6.self_maintenance.usage import limit_ends, read_stops, refused_by, telling_stops
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
 
@@ -102,17 +114,15 @@ BUSY = "G6_E_LOOP_BUSY"
 RECORDS_UNREADABLE = "G6_E_LOOP_RECORDS_UNREADABLE"
 CANNOT_RECORD = "G6_E_LOOP_CANNOT_RECORD"
 SPLIT_REUSED = "G6_E_LOOP_SPLIT_REUSED"
-TICK_BUDGET_SPENT = "G6_E_LOOP_TICK_BUDGET_SPENT"
 UNMETERED_CALLER = "G6_E_LOOP_UNMETERED_CALLER"
-#: What enforces the envelope, beside ``JUDGING_PATTERNS``: the loop's own files, and what they spend, seal, pin and propose
-#: with. A test holds every module those files import to this set or that one.
-ENVELOPE_PATTERNS = ("metaharness/domain.py", "metaharness/failure_strategy.py", "metaharness/loop.py",
-                     "metaharness/method.py", "metaharness/pool.py", "metaharness/propose.py",
-                     "metaharness/recovery.py", "metaharness/reflect.py", "metaharness/runner.py",
-                     "metaharness/select.py", "metaharness/shadow.py", "self_maintenance/constraints.py",
-                     "self_maintenance/digest.py", "self_maintenance/envelope.py", "self_maintenance/pacing.py",
-                     "self_maintenance/usage.py", "operator/gates.py", "operator/store.py", "core/adaptation_gate.py",
-                     "core/llm.py", "core/vault.py", "integrity/*.py")
+CLASSIFIER_STOP = "G6_E_LOOP_CLASSIFIER_STOP"
+#: What enforces the envelope, beside ``JUDGING_PATTERNS``: all of G6. The loop's own files import much of the package and those
+#: files import more, so a list of them leaves out whatever an import reaches next. It is read in a tenth of a second, and a
+#: change to what runs is a person's to enrol again, as it is theirs to merge. Every kind of file Python imports from a
+#: package's folder counts, as a compiled module or a ``.pyc`` with no source beside it is imported as surely as source is,
+#: and an extension module before it. A ``__pycache__`` is left out: a first import writes one, and the runner reads none
+#: (``g6.metaharness.runner``).
+ENVELOPE_PATTERNS = tuple(sorted({f"**/*.{suffix.rsplit('.', 1)[-1]}" for suffix in importlib.machinery.all_suffixes()}))
 UNKNOWN = "unknown"
 #: What the gate holds this loop's candidates to (the owner's ruling, 2026-11-02: quality first, and optimisation only once
 #: everything is correct). Calls, time and cost are still measured, and reported as not gated. ``default_objectives`` and the
@@ -184,27 +194,103 @@ class _AtLimit(BaseException):
         self.until, self.said = until, said
 
 
+class _Halted(BaseException):
+    """A stop, met at a model call, on its way out of the tick as ``_AtLimit`` is, and for the same reason: nothing from the
+    run it cut off is written, so an evaluation it cut off is not one of the split's five."""
+
+    def __init__(self, code: str, said: str) -> None:
+        super().__init__(said)
+        self.code, self.said = code, said
+
+
+class _Refused(BaseException):
+    """A classifier or a permission stopped a request, on its way out of the tick as ``_AtLimit`` is. Nothing it cut off is
+    written, so an evaluation it cut off is not one of the split's five."""
+
+
+def _request_digest(system: str, user: str) -> str:
+    """What a request is known by once it has been refused: no text of it is kept."""
+    return hashlib.sha256(f"{system}\0{user}".encode("utf-8", "replace")).hexdigest()
+
+
+def _sender(counted: Any, asked: str) -> tuple[Any, str]:
+    """The caller sending the request being noted and the digest of that request, from ``counting``'s observer.
+    ``g6.core.model_calls`` says only that one is going out, and that file is bound, so both are read from the stack above the
+    note: the first ``self`` there is what calls the model, whatever holds it and whatever that declares, and the nearest of its
+    own frames that names a ``system`` and a ``user`` holds what it was given to send, whatever a wrapper was asked. A test holds
+    both for each built-in caller. With no object between the note and ``counted``, a plain function noted it, or another thread
+    did, and the stack cannot say: then it is what ``counted`` holds, as declared. Where no frame names that text it stays
+    ``asked``, and what a caller of a known type does to the text below those frames cannot be seen."""
+    frame = sys._getframe(2)
+    while frame is not None and "self" not in frame.f_locals:
+        frame = frame.f_back
+    found = frame.f_locals["self"] if frame is not None else counted
+    while frame is not None and frame.f_locals.get("self") is found:
+        if "system" in frame.f_locals and "user" in frame.f_locals:
+            asked = _request_digest(frame.f_locals["system"], frame.f_locals["user"])
+            break
+        frame = frame.f_back
+    return (counted.inner if found is counted else found), asked
+
+
 class _Requests:
     """What a tick has sent to its backends, the limit it reserved, and when the week it reserved in ends. Past either,
     nothing more goes out: a reset drops the ceiling to a new week's first day, and nothing is reserved under that one.
     ``stopped`` says which stopped it. A request takes its place in ``sent`` before it goes out, under one lock, so requests
-    running at once can never pass the limit between them."""
+    running at once can never pass the limit between them. During a tick each request looks at ``halted`` first, so a stop
+    lands at the next model call: a request already sent comes back first, since nothing here can end one. ``barring`` is what
+    a request's real sender is held to. After a refusal nothing more goes out that tick, and ``refused`` holds each request ever
+    refused here, which never goes out again. It only grows, and ``keeping`` is told of each as it happens, before any record
+    of the tick is written, so no failure of those records can send one twice."""
 
-    def __init__(self, now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
-        self.now = now
+    def __init__(self, now: Callable[[], datetime] = lambda: datetime.now(UTC),
+                 halted: Callable[[], _Halted | None] = lambda: None,
+                 barring: Callable[[Any], _Halted | None] = lambda sender: None,
+                 keeping: Callable[[str, str], None] = lambda request, said: None) -> None:
+        self.now, self.halted, self.barring, self.keeping = now, halted, barring, keeping
+        self.refused: set[str] = set()
         self._lock = threading.Lock()
+        self.generation = 0
         self.close()
 
     def open(self, limit: float, ends: datetime | None = None) -> None:
-        self.sent, self.limit, self.ends, self.stopped, self.unseen = 0, limit, ends, "", False
+        """A tick's limits, from here on. ``generation`` moves with each opening and closing, so a request that took its
+        look at one tick cannot be admitted under the next, or under none."""
+        with self._lock:
+            self.sent, self.limit, self.ends, self.stopped, self.unseen, self.refusal = 0, limit, ends, "", False, None
+            self.limited: tuple[datetime, str] | None = None
+            self.generation += 1
 
     def close(self) -> None:
         self.open(math.inf)
 
-    def admit(self, wait: float = 0.0, *, places: int = 0) -> None:
-        """Refuse what would pass the limit, and take ``places`` in ``sent`` in that same step. ``wait``: the seconds a
-        server asked for before this one goes out."""
+    def ends_by(self, moment: datetime) -> None:
+        """A provider has said the tick's week ends at ``moment``, which can come to light only once it is under way. What it
+        reserved covers nothing after that. A later end buys it nothing, and outside a tick there is no week to end."""
         with self._lock:
+            if self.ends is not None and moment < self.ends:
+                self.ends = moment
+
+    def admit(self, wait: float = 0.0, *, places: int = 0, generation: int | None = None,
+              live: Callable[[], bool] = lambda: True) -> None:
+        """Refuse what would pass the limit, and take ``places`` in ``sent`` in that same step. ``wait``: the seconds a
+        server asked for before this one goes out. ``generation``: the tick the request's call began in, and ``live`` whether
+        that call is still running, both checked again under the lock, as the stop is read outside it and the call can return,
+        and its tick close, while it is read."""
+        if self.refusal is not None:
+            raise _Refused(self.refusal["said"])
+        if self.limited is not None:
+            raise _AtLimit(*self.limited)
+        stopped = self.halted() if self.limit != math.inf else None
+        if stopped is not None:
+            raise stopped
+        with self._lock:
+            if self.refusal is not None:                  # one may have come while the stop was being read
+                raise _Refused(self.refusal["said"])
+            if self.limited is not None:                  # and a limit, met by another of the tick's requests
+                raise _AtLimit(*self.limited)
+            if (generation is not None and generation != self.generation) or not live():
+                raise LLMError(f"{TICK_BUDGET_SPENT}: this request came after its call returned, so nothing reserved covers it")
             if self.unseen or self.sent >= self.limit:
                 self.stopped = f"this tick has sent {self.sent} of the {self.limit:g} it reserved"
             elif self.ends is not None and self.now() + timedelta(seconds=wait) >= self.ends:
@@ -214,20 +300,57 @@ class _Requests:
                 return
         raise LLMError(f"{TICK_BUDGET_SPENT}: {self.stopped}")
 
-    def take(self, wait: float = 0.0) -> None:
+    def take(self, wait: float = 0.0, *, generation: int | None = None, live: Callable[[], bool] = lambda: True) -> None:
         """A request about to go out. It keeps its place whatever becomes of it: a failed one may have reached the model."""
-        self.admit(wait, places=1)
+        self.admit(wait, places=1, generation=generation, live=live)
+
+    def from_sender(self, sender: Any) -> None:
+        """Refuse a request its real sender may not send, before it goes out or takes a place."""
+        barred = self.barring(sender) if self.limit != math.inf else None
+        if barred is not None:
+            raise barred
 
     def count(self, requests: int) -> None:
         """Requests that had no boundary to take a place at."""
         with self._lock:
             self.sent += requests
 
-    def at_a_limit(self, failed: LLMError) -> None:
-        """End the tick when a request failed at a provider's limit. Outside a tick there is none to end."""
+    def at_a_limit(self, failed: LLMError, generation: int | None = None) -> None:
+        """End the tick when a request failed at a provider's limit (``met_a_limit``)."""
         until = limit_ends(str(failed), self.now())
-        if until is not None and self.limit != math.inf:
-            raise _AtLimit(until, str(failed)[:300]) from failed
+        if until is not None:
+            self.met_a_limit(until, str(failed)[:300], generation, failed)
+
+    def met_a_limit(self, until: datetime, reason: str, generation: int | None = None, cause: BaseException | None = None) -> None:
+        """End the tick at a provider's limit, and let nothing more of it go out: the limit is kept until the tick closes, so
+        another of its requests, on another thread, meets it too. ``generation``: the tick the request began in; one whose
+        tick has closed latches nothing on the next, and outside a tick there is none to end."""
+        with self._lock:
+            if self.limit == math.inf or (generation is not None and generation != self.generation):
+                return
+            self.limited = (until, reason)
+        raise _AtLimit(until, reason) from cause
+
+    def not_refused(self, request: str) -> None:
+        """Refuse what was refused once, whoever asks."""
+        if request in self.refused:
+            raise LLMError(f"{CLASSIFIER_STOP}: this request was refused once, and nothing sends it again")
+
+    def at_a_refusal(self, failed: Any, request: str, sent: str = "", generation: int | None = None) -> None:
+        """End the tick when a classifier or a permission stopped a request, and let nothing more go out of it. ``failed``: what
+        the request raised, or what ``WatchedClaude`` read before it raised anything. ``request``: the digest of what the tick
+        asked for, and ``sent``: of what went out, where a wrapper made that another request. Neither is sent again.
+        ``generation``: the tick the request began in; a refusal that comes once that tick has closed ends nothing of the
+        next, though what it refused is still never sent again."""
+        said = refused_by(str(failed))
+        if said and self.limit != math.inf:
+            with self._lock:
+                if generation is None or generation == self.generation:
+                    self.refusal = {"said": said, "request": sent or request, "asked": request}
+            for known in {request, sent or request}:
+                self.refused.add(known)
+                self.keeping(known, said)
+            raise _Refused(said)
 
 
 class _Resends(list):
@@ -236,19 +359,21 @@ class _Resends(list):
     is on a request. What ``take`` raises stops the resend, and leaves the caller as a failed request's ``LLMError``. That
     boundary comes before the wait and nothing marks its end, so a wakeup that runs late is not seen."""
 
-    def __init__(self, take: Callable[[float], None]) -> None:
+    def __init__(self, take: Callable[[float], None], limited: Callable[[dict[str, Any]], None] = lambda wait: None) -> None:
         super().__init__()
-        self.take = take
+        self.take, self.limited = take, limited
 
     def append(self, wait: dict[str, Any]) -> None:
+        if wait.get("status") == 429:      # a provider's limit, however short the wait it asks: the tick ends, nothing resent
+            self.limited(wait)
         self.take(wait["retry_after_s"])
         super().append(wait)
 
 
 @contextmanager
-def _gating_resends(take: Callable[[float], None]) -> Iterator[None]:
+def _gating_resends(take: Callable[[float], None], limited: Callable[[dict[str, Any]], None] = lambda wait: None) -> Iterator[None]:
     """As ``g6.core.llm.waits``, whose record is a plain list, with a record that is the gate above."""
-    token = _WAITS.set((*_WAITS.get(), _Resends(take)))
+    token = _WAITS.set((*_WAITS.get(), _Resends(take, limited)))
     try:
         yield
     finally:
@@ -257,9 +382,9 @@ def _gating_resends(take: Callable[[float], None]) -> Iterator[None]:
 
 class _Counted:
     """A model caller the host meters. Every call of a tick passes through one, and what it counts is what reached a
-    backend, not how often it was called: ``g6.core.model_calls`` notes each request as it goes out, so an ``EmptyRetry``
-    or a ``FallbackCaller`` wrapped around a built-in caller is charged attempt by attempt, and a ``Retry-After`` resend
-    takes its place from ``g6.core.llm.waits``. Nothing a run reports about itself enters the count.
+    backend, not how often it was called: ``g6.core.model_calls`` notes each request as it goes out, so a retry inside a
+    caller of a domain's own is charged attempt by attempt, and a ``Retry-After`` resend takes its place from
+    ``g6.core.llm.waits``. Nothing a run reports about itself enters the count.
 
     Each noted request takes its place at that same boundary, before it goes out, so a retry inside a caller stops at what
     the tick reserved. ``counting`` asks its observers not to raise, because an observer is normally a bystander at someone
@@ -270,27 +395,54 @@ class _Counted:
     A caller that answers with no request noted is refused, because nothing could say how often it asked. The limit of
     this: a caller that notes one request and retries unnoted looks like one request, and so do the Anthropic SDK's own
     retries. Only a usage record from the provider can show those, which is the relay of design section 3. A ``Retry-After``
-    resend is admitted as a request is, at its own boundary (``_Resends``), whichever caller sent it."""
+    resend is admitted as a request is, at its own boundary (``_Resends``), whichever caller sent it. A wrapper that sends from
+    a thread of its own is seen only when it answers, as a caller that noted nothing, because ``counting`` holds its observers
+    in a context that thread does not have: the tick adopts nothing and the loop pauses, but what it sent has gone. Closing that
+    takes a change to that bound file, which waits for an issuance window. One that copied the context has those observers, and
+    a request it sends once the call has returned is refused: the call's place is gone, and its tick may be."""
 
     def __init__(self, inner: Any, requests: _Requests) -> None:
         self.inner, self.requests = inner, requests
 
     def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
-        self.requests.admit()
+        generation = self.requests.generation
+        self.requests.admit(generation=generation)
+        asked = sent = _request_digest(system, user)
+        self.requests.not_refused(asked)
         took: list[None] = []
+        returned = False
+
+        def take(wait: float = 0.0) -> None:
+            self.requests.take(wait, generation=generation, live=lambda: not returned)
 
         def next_request() -> None:
-            self.requests.take()
+            nonlocal sent
+            sender, sent = _sender(self, asked)
+            self.requests.from_sender(sender)
+            read_stops(sender)
+            take()                            # a place first, so a wrapper that keeps trying stops at what the tick reserved
+            self.requests.not_refused(sent)
             took.append(None)
 
-        with counting(before_call=next_request) as noted, _gating_resends(self.requests.take):
+        def told(said: str, given: tuple[str, ...]) -> None:
+            self.requests.at_a_refusal(said, asked, _request_digest(*given[:2]) if len(given) > 1 else sent, generation)
+
+        def limited(wait: dict[str, Any]) -> None:
+            hint = float(wait.get("retry_after_s") or 0.0)
+            self.requests.met_a_limit(self.requests.now() + timedelta(seconds=max(hint, 0.0)),
+                                      "HTTP 429: the provider's limit was met", generation)
+
+        with counting(before_call=next_request) as noted, _gating_resends(take, limited), telling_stops(told):
             try:
                 text = self.inner.complete(system, user, max_tokens=max_tokens)
             except LLMError as failed:
-                self.requests.at_a_limit(failed)
+                self.requests.at_a_limit(failed, generation)
+                self.requests.at_a_refusal(failed, asked, sent, generation)
                 raise
             finally:
-                self.requests.count(noted() - len(took))     # a child's totals have no boundary
+                returned = True
+                # a child's totals have no boundary; one that took its place and is not yet noted gives none back
+                self.requests.count(max(noted() - len(took), 0))
             if not noted():
                 self.requests.unseen = True
                 raise LLMError(f"{UNMETERED_CALLER}: a model caller answered with no request noted")
@@ -299,8 +451,7 @@ class _Counted:
 
 def _workflow(domain: Domain, cut: Cut, settings: LoopSettings, requests: _Requests) -> Workflow:
     run, judge = domain.execution(), domain.judge()
-    models = {name: dataclasses.replace(model, caller=_Counted(model.caller, requests))
-              for name, model in run.models.items()}
+    models = {name: dataclasses.replace(model, caller=_Counted(model.caller, requests)) for name, model in run.models.items()}
     suite = Suite(dev=cut.tune, selection=cut.selection, held_out=cut.held_out,
                   provenance={"dev": "caller", "held_out": judge.answers_by})
     return Workflow(name=domain.name, task=run.task, checks=run.checks, oracle=judge.verdict, suite=suite,
@@ -337,10 +488,30 @@ def _in_reach(root: Path, domain: Domain) -> list[str]:
 
 
 def envelope_sha256() -> str:
-    """The enforcing code: no candidate changes the envelope (design 6.5), and a change a person made is theirs to
-    accept by enrolling again. It is a tripwire, not custody: the code that compares this digest is among what it
-    covers, so an edit to that code can skip the comparison. Holding it needs the read-only checkout of design 6.5."""
-    return manifest_sha256(build_manifest(_SOURCE, patterns=ENVELOPE_PATTERNS))
+    """The enforcing code and where it is installed: no candidate changes the envelope (design 6.5), and a change a person
+    made is theirs to accept by enrolling again. The place counts, so a run enrolled on a pinned install cannot be swapped
+    for a working tree that holds the same bytes today. It is a tripwire, not custody: the code that compares this digest is
+    among what it covers, so an edit to that code can skip the comparison. Holding it needs the read-only checkout of design
+    6.5."""
+    return digest({"code": manifest_sha256({**build_manifest(_SOURCE, patterns=ENVELOPE_PATTERNS), **_importable_caches(_SOURCE)}),
+                   "install": os.path.normcase(str(_SOURCE))})
+
+
+def _importable_caches(root: Path) -> dict[str, str]:
+    """Each file under a ``__pycache__`` folder that Python could import as a module, as ``build_manifest`` gives files. A cache
+    folder is a namespace package, so ``g6.x.__pycache__.name`` imports ``name.py``, ``name.pyc`` or an extension there. A cache
+    a first import writes is named for its interpreter (``select.cpython-312.pyc``), which no import statement can name, so it is
+    left out and a legitimate import changes nothing."""
+    suffixes = sorted(importlib.machinery.all_suffixes(), key=len, reverse=True)
+    found = {}
+    for path in root.rglob("*"):
+        if not in_cache(path.relative_to(root)) or not path.is_file():
+            continue
+        name = os.path.normcase(path.name)          # Windows imports ``planted.PY`` as it does ``planted.py``
+        suffix = next((s for s in suffixes if name.endswith(os.path.normcase(s))), None)
+        if suffix is not None and name[:-len(suffix)] and "." not in name[:-len(suffix)]:   # importlib checks no names
+            found[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return found
 
 
 def _judge_digest(judge: Judge | None) -> str:
@@ -377,12 +548,17 @@ class ShadowLoop:
                  now: Callable[[], datetime] = lambda: datetime.now(UTC),
                  clock: Callable[[], float] = time.monotonic,
                  read_account: Callable[[str, datetime], AccountReading | None] | None = None,
+                 read_now: Callable[[datetime], None] | None = None,
                  domain_file: str | Path | None = None) -> None:
-        self.domain, self.settings, self._now, self.domain_file = domain, settings, now, domain_file
+        self.domain, self.settings, self._now, self.domain_file, self._read_now = domain, settings, now, domain_file, read_now
         self.beat_fields: dict[str, Any] = {}     # what a runner adds to every heartbeat
         self.lost_cycles = 0                      # cycles in a row the log would not take: it cannot hold this count
         self.cannot_record = ""                   # why this process spends no more, set at MAX_FAILED_CYCLES of those
-        self.requests = _Requests(lambda: self._now())
+        self.evaluating = False                   # this tick has begun its held-out evaluation
+        self.waited = 0                           # ticks a budget wait turned away since the last cycle: a wait leaves no row
+        self.tuned: list[dict[str, Any]] = []     # this tick's tuning cycles as they happen, for a row that a raise cut short
+        self.requests = _Requests(lambda: self._now(), self._halted, self._barred,
+                                  lambda request, said: note_refusal(self.root, request, said))
         self._proposer = _Counted(proposer, self.requests)
         self.root = Path(root).resolve()
         reach = _in_reach(self.root, domain)
@@ -398,6 +574,7 @@ class ShadowLoop:
         if backends(proposer) > 1:
             self.problems.append((FALLBACK_MODEL, "the proposer can answer from more than one backend, so a limit on one would "
                                   "pass unseen and its calls could go where no window covers"))
+        self.problems += caller_problems({"the proposer": proposer})
         if not settings.windows:
             self.problems.append((NO_BUDGET, "no provider window: an unknown budget stops the loop"))
         named = tuple(self.meter.windows)
@@ -406,6 +583,8 @@ class ShadowLoop:
             self.problems.append((NO_BUDGET, f"the windows are for {', '.join(named)} and this folder's calls are stated to "
                                   f"go to {settings.provider or 'none of them'}: an allowance pays only for its own "
                                   "provider's requests, so LOOP must name the one they go to"))
+        elif named:
+            self.problems += provider_problems(self._callers(), self.provider)
         self._clock = clock
         self.cut, self.workflow, self.mh = None, None, None
         if not self.problems:
@@ -418,7 +597,42 @@ class ShadowLoop:
         self.workflow = _workflow(self.domain, self.cut, self.settings, self.requests)
         self.problems = _pool_problems(self.cut, self.workflow.policy) + self.workflow.problems()
         self.mh = None if self.problems else adapt_shadow(self.workflow, self.domain.execution().factory,
-                                                          workspace=self.root / "workspace", clock=self._clock)
+                                                          workspace=self.root / "workspace", clock=self._clock,
+                                                          before_evaluation=self._before_evaluation)
+
+    def _before_evaluation(self) -> None:
+        """Read the account once more before a held-out evaluation: a limit reads as a failed case, and an evaluation of
+        failed cases spends one of the split's five on a reason untrue of the candidate. So a run already under a limit ends
+        here, as one met in a request does, with nothing spent. The same read can move the end of the week, and the tick's
+        requests stop there, as at the end it reserved in. The limit of this: only a read can show a Codex limit, so one that
+        arrives during the evaluation still spends it, until an issuance window gives those callers a code."""
+        if self._read_now is not None:
+            now = self._now()
+            self._read_now(now)
+            seen = self.meter.reading(self.provider, now)
+            if seen.wait_until is not None:
+                raise _AtLimit(seen.wait_until, seen.reason)
+            self.requests.ends_by(seen.ends)
+        self.evaluating = True
+
+    def stopped_by(self) -> str:
+        """Why this folder is stopped, which a tick and the runner read alike: if the runner read less, a tick refused for a
+        stop would leave it going, and asking again."""
+        return self.cannot_record or stop_standing(self.root, self.log.started())
+
+    def _halted(self) -> _Halted | None:
+        """What stops a tick between two requests: this folder's stop, or G6's own."""
+        why = self.stopped_by()
+        if why:
+            return _Halted(STOPPED, why)
+        engaged = stop.engaged()
+        return _Halted(stop.STOPPED, f"G6 is stopped: {engaged}") if engaged is not None else None
+
+    def _barred(self, sender: Any) -> _Halted | None:
+        """Why the caller really sending a request may not send it. Enrolment can only read what a domain declares, so a
+        wrapper can declare one caller and send through another: this is the same rule, held to what goes out."""
+        problems = sender_problems(sender, self.provider)
+        return _Halted(*problems[0]) if problems else None
 
     def _calls_per_run(self) -> int:
         """The most one run can call: what the models declare, or, on G6's own executor with no step of the domain's, one
@@ -451,7 +665,7 @@ class ShadowLoop:
 
         def racing(entered: int) -> int:                     # failure traces offer one, and a champion races again
             return min(method.select_budget + per_run,
-                       per_run * race_calls(len(cut.selection), entered, method.race_block, method.race_keep))
+                       per_run * race_calls(len(cut.selection), entered))
 
         one_case = per_run * (per_run + 2)                   # base, candidate and a control matched to the candidate's calls
         return (2 * per_run * min(self.settings.audit_per_tick, len(cut.monitor)) + on_dev(1)
@@ -493,12 +707,10 @@ class ShadowLoop:
 
     def _refused(self) -> dict[str, Any] | None:
         """Why this tick is not a cycle. Each is a wait or a refusal: none spends, and none is a failed cycle."""
-        halted = self.cannot_record or stop_reason(self.root)
-        if halted:
-            return _blocked(STOPPED, halted, "Remove the STOP file to resume.")
-        engaged = stop.engaged()
-        if engaged is not None:
-            return _blocked(stop.STOPPED, f"G6 is stopped: {engaged}", "Whoever engaged the stop releases it.")
+        halted = self._halted()
+        if halted is not None:
+            return _blocked(halted.code, halted.said, "Remove the STOP file to resume." if halted.code == STOPPED else
+                            "Whoever engaged the stop releases it.")
         invalid = self._invalid()
         if invalid is not None:
             return invalid
@@ -529,9 +741,14 @@ class ShadowLoop:
         return "" if seen <= held else (f"the log saw generation {seen} and the chain of adoptions holds {held}: a "
                                         "generation's number must never be used twice")
 
+    def _callers(self) -> dict[str, Any]:
+        """Every caller a tick can send through, as the domain declares them now."""
+        models = self.domain.execution().models
+        return {"the proposer": self._proposer.inner, **{name: model.caller for name, model in models.items()}}
+
     def _lacking(self) -> dict[str, Any] | None:
         """The domain checked as it is now: a handle's first check says nothing of what has changed since."""
-        problems = domain_problems(self.domain)
+        problems = domain_problems(self.domain) + provider_problems(self._callers(), self.provider)
         if not problems:
             return None
         return _blocked(problems[0][0], "; ".join(why for _, why in problems),
@@ -542,13 +759,13 @@ class ShadowLoop:
         fact, and the pause is only its note."""
         cycles = self.log.since_resumed()
         for cycle in reversed(cycles):
-            if cycle["outcome"] == "sealed_breach" or cycle.get("code") == UNMETERED_CALLER:
+            if cycle["outcome"] == "sealed_breach" or cycle.get("code") in (UNMETERED_CALLER, CLASSIFIER_STOP, *BARRED):
                 return cycle["reason"]
-        streak = self.log.failed_streak()
-        if streak < MAX_FAILED_CYCLES:
+        streak = self.log.failed_run()
+        if len(streak) < MAX_FAILED_CYCLES:
             return ""
         return "three failed cycles in a row: " + "; ".join(
-            f"tick {c['tick']} {c['outcome']} ({str(c.get('reason', ''))[:160]})" for c in cycles[-streak:])
+            f"tick {c['tick']} {c['outcome']} ({str(c.get('reason', ''))[:160]})" for c in streak)
 
     @_exclusive
     def enrol(self, confirmed_by: str) -> dict[str, Any]:
@@ -637,25 +854,39 @@ class ShadowLoop:
                               wait_until=spend.wait_until.isoformat() if spend.wait_until else "")
 
     def _run(self) -> dict[str, Any]:
+        stops = [c["classifier_stop"] for c in self.log.cycles() if c.get("classifier_stop")]
+        self.requests.refused |= refused_requests(self.root) | {kept[name] for kept in stops for name in ("request", "asked")
+                                                                if name in kept}
         spend, waiting = self._reserve()
         if waiting is not None:
+            self.waited += 1
             return waiting
         self._beat("running", CYCLE)
+        opened = reflex.read(self.log.cycles())     # what limits progress, read before this cycle does anything
         recommended: list[dict[str, Any]] = []
         limit: _AtLimit | None = None
+        halted: _Halted | None = None
+        self.evaluating = False
+        self.tuned = []
         self.requests.open(spend.amount, spend.ends)
         with sealed_closed(self.domain.sealed().vault) as breaches:
             try:                      # a sealed file already held open: no cycle starts over it
                 row = self._row() if breaches else self._cycle(recommended)
             except _AtLimit as reached:
                 row, limit = self._row(), reached
+            except _Halted as reached:
+                row, halted = self._row(), reached
+            except _Refused:
+                row = self._row()
             except Exception as exc:  # noqa: BLE001 - an unattended loop records the failure and lives to its next tick
                 row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
                        "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]}
             finally:             # use nobody could count stays charged at its worst case
                 charged = self.meter.settle(spend, spend.amount if self.requests.unseen else self.requests.sent)
-        unseen, stopped = self.requests.unseen, self.requests.stopped
+        unseen, stopped, refusal = self.requests.unseen, self.requests.stopped, self.requests.refusal
         self.requests.close()
+        if self.tuned and "tuning" not in row:     # a tick cut short keeps what it had made
+            row["tuning"] = reflex.funnel(self.tuned)
         if breaches:                  # read only now: a strategy that swallowed the refusal adopts nothing either
             row |= {"outcome": "sealed_breach", "code": SEALED_BREACH,
                     "reason": f"{len(breaches)} sign(s) that the sealed split was within reach while developing. Nothing "
@@ -665,43 +896,72 @@ class ShadowLoop:
             row |= {"outcome": "error", "code": UNMETERED_CALLER,
                     "reason": "a model caller answered with no request noted, so the loop cannot count what it sends: "
                               "nothing is adopted, and a person gives it a caller that notes each request"}
+        elif refusal is not None:     # a cycle, so it is on the record, and a pause, so nothing rephrases it on the next tick
+            row |= {"outcome": "blocked", "code": CLASSIFIER_STOP, "classifier_stop": refusal,
+                    "reason": f"a classifier or a permission stopped a request ({refusal['said']}): nothing is adopted, it is "
+                              "not sent again, and a person reads this before the loop goes on"}
         elif limit is not None:       # a wait and no cycle, like any other: what ran is charged, and none of it counts
             self.meter.limit_reached(spend.provider, limit.until)
             try:
                 self.log.limit(spend.provider, limit.until.isoformat())
             except (OSError, LedgerError):
                 pass                  # this process still waits; after a restart the first request finds the limit again
+            self.waited += 1
             return _blocked(BUDGET_WAIT, f"{spend.provider} met a limit after {charged:g} requests, so this tick scored nothing "
                             f"and waits until {limit.until.isoformat()}: {limit.said}",
                             "The loop waits; it runs again when the limit ends.", wait_until=limit.until.isoformat(),
                             charged=charged)
+        elif halted is not None and halted.code in BARRED:   # a fault that is on the record, and holds the loop for a person
+            row |= {"outcome": "error", "code": halted.code, "reason": f"{halted.said}: nothing was sent, and nothing is adopted"}
+        elif halted is not None:      # also no cycle: what ran is charged, and none of it counts
+            return self._cut_off(halted, charged)
         elif stopped:                 # runs cut off mid-tick compared nothing: no gate result stands on them
             row |= {"outcome": "blocked", "code": TICK_BUDGET_SPENT, "reason": f"{stopped}, so nothing is adopted"}
         elif recommended:
             row |= self._adopt(recommended[-1]["decision"], row)
         seen = self.meter.reading(spend.provider, self._now())
         row["budget"] = {"provider": seen.provider, "day": seen.day, "charged": charged, "used": seen.used,
-                         "target": seen.target, "ceiling": seen.ceiling, "estimated": seen.estimated}
+                         "target": seen.target, "ceiling": seen.ceiling, "estimated": seen.estimated, "waited": self.waited}
+        row["reflex"] = opened
         return self._record(row)
+
+    def _cut_off(self, halted: _Halted, charged: float) -> dict[str, Any]:
+        """A stop met at a model call: say what it cut off, and note this folder's stop in the records, which this tick
+        holds, so no one else can. The file is what stops the loop, so a note that cannot be written changes nothing."""
+        dropped = (", and the held-out evaluation under way was dropped, so none of the split's five was spent"
+                   if self.evaluating else "")
+        if halted.code == STOPPED:
+            try:
+                self.log.stop(halted.said, at=self._now().isoformat(),
+                              cut_off={"charged": charged, "evaluation": self.evaluating})
+            except (OSError, LedgerError):
+                pass
+        return _blocked(halted.code, f"a stop ended this tick at a model call after {charged:g} requests{dropped}: {halted.said}",
+                        "A new g6_improve_start lets it run again." if halted.code == STOPPED else
+                        "Whoever engaged the stop releases it.", charged=charged)
 
     def _record(self, row: dict[str, Any]) -> dict[str, Any]:
         try:
             reply = self._reply(self.log.cycle(row))
         except (OSError, LedgerError) as exc:
-            return self.lost_cycle(exc)
-        self.lost_cycles = 0
+            return self.lost_cycle(exc, refusal=row.get("classifier_stop"))
+        self.lost_cycles = self.waited = 0
         self._pause_if_failing()
         return reply
 
-    def lost_cycle(self, exc: BaseException) -> dict[str, Any]:
+    def lost_cycle(self, exc: BaseException, *, refusal: dict[str, str] | None = None) -> dict[str, Any]:
         """A cycle the log would not take. The streak that pauses the loop is read from the log, so these leave it nothing
         to read and are counted here, for as long as this process lives. At ``MAX_FAILED_CYCLES`` in a row the loop stops
         for good: ``STOP`` and ``stops.log`` are other files, so a restart stays closed until a person starts it again, and
-        should those fail too, this process still spends no more. A cycle that is written starts the count again."""
+        should those fail too, this process still spends no more. A cycle that is written starts the count again. A cycle
+        that holds a ``refusal`` stops the loop at the first, since the pause a person must read would have stood on it."""
         self.lost_cycles += 1
         why = (f"{self.lost_cycles} of the {MAX_FAILED_CYCLES} cycles in a row that stop the loop could not be written to "
                f"its log ({type(exc).__name__}: {exc})")[:400]
-        if self.lost_cycles >= MAX_FAILED_CYCLES:
+        if refusal is not None:
+            why = (f"a classifier or a permission stopped a request ({refusal['said']}) and the log would not take that cycle "
+                   f"({type(exc).__name__}: {exc})")[:400]
+        if refusal is not None or self.lost_cycles >= MAX_FAILED_CYCLES:
             self.cannot_record = why
             try:
                 ask_to_stop(self.root, why)
@@ -740,6 +1000,23 @@ class ShadowLoop:
             self.log.resume(who)
         return _envelope("qualified-draft", RESUMED, "the loop is not paused", next_action="loop.tick()")
 
+    @_exclusive
+    def demote(self, generation: int, asked_by: str) -> dict[str, Any]:
+        """A person takes back the generation at the head, having read the digest. The loop goes on from what stood before."""
+        who = asked_by.strip()
+        if not who or is_automated(who):
+            return _blocked(APPROVAL_REQUIRED, "a person takes a generation back (no empty or auto: name)")
+        invalid = self._invalid()
+        if invalid is not None:
+            return invalid
+        lost = self._lost_generations()
+        if lost:
+            return _blocked(RECORDS_UNREADABLE, lost, "A person inspects the folder. Nothing runs on records that do not check out.")
+        taken = self.mh.demote(generation, who)
+        if taken["completion_state"] != "blocked-escalated":
+            self.log.demote(who, at=self._now().isoformat(), undoes=taken["undoes"], head_version=taken["head_version"])
+        return taken
+
     def _row(self) -> dict[str, Any]:
         version, head = self.mh._head()
         return {"at": self._now().isoformat(), "domain": self.domain.name, "head_version": version,
@@ -763,10 +1040,19 @@ class ShadowLoop:
         constraint = name_constraint(records, len(view.dev))
         row |= {"constraint": constraint.name, "basis": constraint.basis,
                 "observations": [list(o) for o in constraint.observations],
-                "failure_records": dict(Counter(r.cause for r in records))}
+                "failure_records": dict(Counter(r.cause for r in records)), "lessons": self._lessons(records)}
         if constraint.name == UNKNOWN:
             return {**row, "outcome": "no_constraint", "code": NO_CONSTRAINT, "reason": constraint.reason}
         return {**row, **self._exploit(constraint, recommended)}
+
+    def _lessons(self, records: Sequence[FailureRecord]) -> list[dict[str, Any]]:
+        """What this cycle's failures taught, as its row keeps them. This only records, so a domain's fault here costs the cycle nothing."""
+        try:
+            return [dataclasses.asdict(lesson) for lesson in reflex.lessons_from(
+                records, getattr(self.domain, "root_cause", None), generation=self.log.generation(), tick=len(self.log.cycles()) + 1,
+                scope=self.domain.name)]
+        except Exception:  # noqa: BLE001 - see above: a failure that leaves no lesson row is allowed, and one that stops the work is not
+            return []
 
     def _exploit(self, constraint: Constraint, recommended: list[dict[str, Any]]) -> dict[str, Any]:
         """Propose and gate. A recommendation is only held here: it is adopted once the sealed split is known untouched."""
@@ -778,11 +1064,13 @@ class ShadowLoop:
         strategy = FailureTraceStrategy(self._proposer, earlier=tuple(self.log.findings()))
         run = tune(self.mh, self.settings.method, approve=nobody, reflector=self._proposer,
                    space=self.domain.execution().space, extra=(_OnConstraint(strategy, constraint.case_ids),),
-                   carried=self.mh.unfinished())
+                   carried=self.mh.unfinished(), cycles=self.tuned)
         reasons = (run.decision or {}).get("reasons") or run.notes or ["no candidate beat the head"]
+        if (run.confirmation or {}).get("partial"):   # first, so the digest's one line for a tick keeps it
+            reasons = ["the evaluation stopped part way and still spent one of the split's five", *reasons]
         return {"confirmation": run.confirmation, "decision": run.decision, "champion": run.champion,
                 "outcome": run.outcome, "code": (run.decision or {}).get("code", CYCLE), "reason": "; ".join(reasons),
-                "recovery": run.recovery, **strategy.findings}
+                "recovery": run.recovery, "tuning": reflex.funnel(run.cycles), **strategy.findings}
 
     @_exclusive
     def leave_shadow(self) -> dict[str, Any]:

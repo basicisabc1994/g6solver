@@ -76,6 +76,7 @@ class _PoolStrategy:
     seed: int = 0
     made: int = 0                                         # changes attempted
     duplicates: int = 0                                   # attempts that repeated a profile already in the pool
+    measured: int = 0                                     # changes run on the tuning split
 
     lineage: dict[str, tuple[str, ...]] = field(default_factory=dict, init=False)
 
@@ -113,6 +114,7 @@ class _PoolStrategy:
                 if getattr(runner, "last_skipped", 0):
                     break                                 # the dev budget is spent: stop, store nothing cut short
                 continue                                  # this profile cannot run (an undeclared model or check)
+            self.measured += 1
             self.pool.add(profile, results)
             self.lineage[profile.digest()] = parents
             score = sum(results.values())
@@ -164,7 +166,21 @@ class Pooled:
     build on them: recovery's remedies seed the pool this way (frontier design §4.1)."""
 
     def __init__(self, inner: Any, pool: Pool) -> None:
-        self.inner, self.pool, self.name = inner, pool, inner.name
+        self.inner, self.pool, self.name, self._added, self._repeats = inner, pool, inner.name, 0, 0
+
+    def __getattr__(self, name: str) -> Any:
+        """What the strategy inside keeps count of, such as ``duplicates``: wrapping one must not hide its counts."""
+        return getattr(self.inner, name)
+
+    @property
+    def measured(self) -> int:
+        """The candidates run on the tuning split: the strategy's own count, or what this ran for one that keeps none."""
+        return getattr(self.inner, "measured", self._added)
+
+    @property
+    def duplicates(self) -> int:
+        """The repeats the pool caught: the strategy's own count, or what this caught for one that keeps none."""
+        return getattr(self.inner, "duplicates", self._repeats)
 
     @property
     def lineage(self) -> dict[str, tuple[str, ...]]:
@@ -179,6 +195,7 @@ class Pooled:
             except ValueError:
                 continue
             if self.pool.seen(profile):
+                self._repeats += 1
                 continue
             results = run_on_dev(runner, profile, ids)
             if results is None:
@@ -186,6 +203,7 @@ class Pooled:
                     break
                 continue
             self.pool.add(profile, results)
+            self._added += 1
         return out
 
 

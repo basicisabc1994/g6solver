@@ -16,7 +16,7 @@ from g6.core.llm import LLMError
 from g6.operator.store import OperatorStore
 from g6.self_maintenance import usage
 from g6.self_maintenance.pacing import AccountReading, BudgetMeter, ProviderWindow
-from g6.self_maintenance.usage import AccountReader, limit_ends, limits_reading, read_limits
+from g6.self_maintenance.usage import AccountReader, WatchedClaude, limit_ends, limits_reading, read_limits, refused_by
 
 START = datetime(2026, 10, 26, 8, 0, tzinfo=UTC)
 NOW = START + timedelta(days=2)
@@ -299,6 +299,40 @@ def test_any_other_field_that_makes_no_sense_makes_the_reply_unreadable(fields):
     assert limits_reading(_limits(25, **fields), WINDOW, NOW) is None
 
 
+def test_a_weekly_figure_whose_own_reset_has_passed_is_of_a_week_that_ended():
+    """A tool that has not caught up with its own reset says last week's use. Its own word on when that ended stands."""
+    gone = int((NOW - timedelta(seconds=1)).timestamp())
+    got = limits_reading(_limits(90, resets=gone), WINDOW, NOW)
+    assert got.used == 0 and got.estimated is True and got.resets_at is None and got.limited_until is None
+
+
+def test_a_figure_with_a_reset_on_the_moment_it_is_read_has_ended_too():
+    assert limits_reading(_limits(90, resets=int(NOW.timestamp())), WINDOW, NOW).used == 0
+
+
+def test_a_full_week_whose_reset_has_passed_is_looked_at_again_and_carries_no_figure():
+    gone = int((NOW - timedelta(hours=1)).timestamp())
+    got = limits_reading(_limits(100, resets=gone), WINDOW, NOW)
+    assert got.used == 0 and got.limited_until == NOW + usage.REFRESH
+
+
+def test_a_stale_reply_after_a_reset_does_not_carry_last_weeks_use_into_the_new_one():
+    reset = NOW + timedelta(minutes=1)
+    stale = _limits(90, resets=int(reset.timestamp()))
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(stale)})
+    meter = BudgetMeter((WINDOW,), store=OperatorStore(":memory:"), read_account=reader)
+    reader.refresh(NOW)
+    assert meter.reading("codex", NOW).used == 900
+    after = reset + timedelta(seconds=1)
+    reader.refresh(after)
+    assert meter.reading("codex", after).used == 0
+
+
+def test_a_reset_past_the_end_of_its_window_still_keeps_the_figure():
+    """That reset is nonsense, which says nothing of the figure. A reset that has passed says the figure is over."""
+    assert limits_reading(_limits(40, resets=FAR_OFF), WINDOW, NOW).used == 400
+
+
 def test_a_limit_whose_reset_has_passed_is_looked_at_again_later():
     gone = int((NOW - timedelta(hours=1)).timestamp())
     assert limits_reading(_limits(40, allowed=False, resets=gone), WINDOW, NOW).limited_until == NOW + usage.REFRESH
@@ -340,6 +374,55 @@ def test_the_tool_is_asked_at_most_once_in_a_while():
     assert tool.calls == 1 and reader("codex", START).used == 250.0
     reader.refresh(NOW + usage.REFRESH)
     assert tool.calls == 2 and reader("codex", START).used == 300.0
+
+
+def test_reading_now_asks_however_lately_the_tool_was_asked():
+    tool = Tool(_limits(25), _limits(30))
+    reader = AccountReader((WINDOW,), ask={"codex": tool})
+    reader.refresh(NOW)
+    reader.read_now(NOW + timedelta(seconds=1))
+    assert tool.calls == 2 and reader("codex", START).used == 300.0
+
+
+OFF_THE_GRID = int((START + timedelta(days=3, hours=5)).timestamp())
+
+
+def test_the_week_a_tool_reports_reaches_the_meter_and_is_said():
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(_limits(25, resets=OFF_THE_GRID))})
+    reader.refresh(NOW)
+    meter = BudgetMeter((WINDOW,), store=OperatorStore(":memory:"), read_account=reader)
+    assert meter.reading("codex", NOW + timedelta(days=1, hours=4)).day == 7
+    assert "its week ends at 2026-10-29T13:00" in reader.said["codex"]
+
+
+def test_a_reply_with_no_reset_stays_on_the_week_the_tool_last_reported():
+    """A figure with no reset of its own falls back on the window's week, so that week must be the one the tool reported."""
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(_limits(25, resets=OFF_THE_GRID), _limits(30, resets=None))})
+    reader.refresh(NOW)
+    reader.refresh(NOW + usage.REFRESH)
+    assert reader("codex", START).resets_at == datetime.fromtimestamp(OFF_THE_GRID, UTC)
+
+
+def test_a_reset_passing_is_read_at_once_and_not_up_to_a_refresh_later():
+    reset = NOW + timedelta(minutes=1)
+    tool = Tool(_limits(90, resets=int(reset.timestamp())), _limits(0))
+    reader = AccountReader((WINDOW,), ask={"codex": tool})
+    reader.refresh(NOW)
+    reader.refresh(reset - timedelta(seconds=1))
+    assert tool.calls == 1
+    reader.refresh(reset + timedelta(seconds=1))
+    assert tool.calls == 2 and reader("codex", START).used == 0
+
+
+def test_a_reset_gets_one_read_however_many_ticks_look_after_it():
+    reset = NOW + timedelta(minutes=1)
+    down = usage.UsageUnavailable("down")
+    tool = Tool(_at_the_limit(reset), down)
+    reader = AccountReader((WINDOW,), ask={"codex": tool})
+    reader.refresh(NOW)
+    for minutes in (2, 3, 4):
+        reader.refresh(NOW + timedelta(minutes=minutes))
+    assert tool.calls == 2
 
 
 @pytest.mark.parametrize("failure", [OSError("no such program"), usage.UsageUnavailable("it stopped"), None, {}])
@@ -432,7 +515,7 @@ def test_a_limit_kept_through_a_failure_lifts_at_the_first_read_past_its_reset()
     reader.refresh(NOW)
     reader.refresh(NOW + usage.REFRESH)
     assert reader("codex", START) is not None
-    assert not meter.reserve("codex", reset, 10).admitted                # its figure still stands until a read replaces it
+    assert not meter.reserve("codex", reset - timedelta(seconds=1), 10).admitted    # up to its reset, it stands
     past = reset + usage.REFRESH
     reader.refresh(past)
     assert meter.reserve("codex", past, 10).admitted
@@ -533,3 +616,66 @@ for line in sys.stdin:
 """
     read_limits(_program(tmp_path, server), timeout=30)
     assert "ANTHROPIC_API_KEY" not in seen.read_text(encoding="utf-8")
+
+
+# A stop a classifier or a permission made, read from what a model cannot write -----------------------------------------------
+
+REFUSAL_NOTICE = ("API Error: Claude can't help with this. Start a new session to continue. Learn more: "
+                  "https://www.anthropic.com/legal/aup Request ID: req_0000000000000000000000 Message ID: msg_00000000000000000000")
+
+
+def test_gs_own_code_for_a_refusal_is_a_stop():
+    assert refused_by("G6_E_MODEL_REFUSED: cyber") == "G6_E_MODEL_REFUSED: cyber"
+
+
+@pytest.mark.parametrize("said", ["HTTP 500 from u: G6_E_MODEL_REFUSED: a server's body", "G6_E_LLM_TIMEOUT: no answer", "",
+                                  "G6_E_LLM_HOST_FAILED: codex exited 1: G6_E_MODEL_REFUSED: what it printed",
+                                  "G6_E_LLM_RATE_LIMITED: HTTP 429 from u"])
+def test_any_other_failure_is_no_such_stop(said):
+    assert refused_by(said) == ""
+
+
+def _watched(printed: str, code: int = 0) -> str:
+    return WatchedClaude()._reply(code, printed, "", Path("."), ("system", "user"))
+
+
+@pytest.mark.parametrize("fields,said", [({"stop_reason": "refusal", "api_error": "invalid_request", "result": REFUSAL_NOTICE}, "refusal"),
+                                         ({"api_error": "safety_monitor_blocked", "result": "x"}, "safety_monitor_blocked"),
+                                         ({"api_error": "dlp_request_denied", "result": "x"}, "dlp_request_denied"),
+                                         ({"permission_denials": [{"tool_name": "Bash"}], "result": "x"}, "permission denied")])
+def test_a_stop_claude_code_reports_is_read_from_the_fields_of_its_whole_result(fields, said):
+    with pytest.raises(LLMError) as raised:
+        _watched(_claude_printed(**fields), code=1)
+    assert said in str(raised.value) and refused_by(str(raised.value))
+
+
+def test_a_refusal_with_no_error_flag_on_it_is_a_stop_all_the_same():
+    printed = json.dumps({"type": "result", "is_error": False, "stop_reason": "refusal", "result": ""})
+    with pytest.raises(LLMError, match="G6_E_MODEL_REFUSED"):
+        _watched(printed)
+
+
+def test_the_same_refusal_through_the_plain_caller_is_lost_with_the_text_it_cuts():
+    """Why a subclass is needed at all. The field is written ahead of the long usage record, and the bound caller keeps only
+    the last 300 characters of what was printed, so nothing in the error it raises can say so."""
+    said = _claude(_claude_printed(stop_reason="refusal", api_error="invalid_request", result=REFUSAL_NOTICE))
+    assert refused_by(said) == "" and "refusal" not in said
+
+
+@pytest.mark.parametrize("prose", ['"stop_reason":"refusal"', '"permission_denials":[{"tool_name":"Bash"}]',
+                                   "safety_monitor_blocked", '"api_error":"safety_monitor_blocked"', "I can't help with that."])
+def test_what_a_model_wrote_never_makes_such_a_stop(prose):
+    assert _watched(json.dumps({"type": "result", "is_error": False, "stop_reason": "end_turn", "result": prose})) == prose
+    with pytest.raises(LLMError) as raised:
+        _watched(_claude_printed(result=f"The reply was: {prose}"), code=1)
+    assert refused_by(str(raised.value)) == ""
+
+
+def test_an_ordinary_answer_comes_back_as_it_did():
+    printed = json.dumps({"type": "result", "is_error": False, "stop_reason": "end_turn", "permission_denials": [], "result": "4"})
+    assert _watched(printed) == "4"
+
+
+def test_a_codex_refusal_is_not_read_since_it_prints_text():
+    """The limit of this: what Codex prints cannot be told from a reply, as with its limits. It waits for an issuance window."""
+    assert refused_by(_codex("ERROR: This content may violate our usage policies.")) == ""
