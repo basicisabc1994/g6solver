@@ -17,6 +17,7 @@ from g6.mcp import improve
 from g6.metaharness.runner import _gate, open_loop
 from g6.self_maintenance.envelope import (
     CYCLE_LOG,
+    RUNNER_LOCK,
     STOP_FILE,
     STOPS_FILE,
     CycleLog,
@@ -838,3 +839,210 @@ def test_each_ending_beats_the_code_of_the_reading_that_ended_it(folder, monkeyp
     monkeypatch.setattr(runner, "open_loop", lambda *a, **k: pytest.fail("a stopped run opened its loop"))
     runner.run(folder.root, now=lambda: NOW)
     assert heartbeat(folder.root)["code"] == reading.code and reading.code in (STOPPED, STOP_UNREADABLE)
+
+
+# Review 4's classes: a start's bytes checked before it acts, any error in a stop path is unreadable, a stop honoured before
+# anything else, and every ending the one ending with its page --------------------------------------------------------------
+
+def _reformat(path: Path) -> None:
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    path.write_text("".join(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in rows),
+                    encoding="utf-8", newline="\n")
+
+
+def test_a_writer_that_opened_other_bytes_than_the_approved_writes_no_row(folder, monkeypatch):
+    _, _, shown = improve.asked(str(folder.root))
+    records, real = folder.root / CYCLE_LOG, CycleLog
+
+    def reformatted_first(path):
+        _reformat(path)                                     # the same chain, other bytes, after the locked reading
+        return real(path)
+
+    monkeypatch.setattr(improve, "CycleLog", reformatted_first)
+    changed = records.read_bytes()
+    got = improve.start(folder.root, "Ada", shown)
+    assert _code(got) == "G6_E_LOOP_TERMS_CHANGED" and folder.spawned == []
+    assert records.read_bytes() != changed or not CycleLog(records).start_in_force()
+    assert not CycleLog(records).start_in_force()
+
+
+@pytest.mark.parametrize("failure", [OSError("the disk is full"), RecursionError("deep"), KeyboardInterrupt()])
+def test_an_append_that_fails_after_its_row_landed_is_revoked_on_the_way_out(folder, monkeypatch, failure):
+    from g6.self_maintenance.envelope import stop_in_force
+
+    _, _, shown = improve.asked(str(folder.root))
+    real = CycleLog.start
+
+    def landed_then_failed(self, *args, **kwargs):
+        real(self, *args, **kwargs)
+        raise failure
+
+    monkeypatch.setattr(CycleLog, "start", landed_then_failed)
+    try:
+        got = improve.start(folder.root, "Ada", shown)
+    except KeyboardInterrupt:
+        got = None
+    assert folder.spawned == [] and (got is None or got["completion_state"] == "blocked-escalated")
+    assert stop_in_force(folder.root)                       # the start that landed was revoked, or a STOP stands for it
+
+
+def test_a_crash_right_after_the_append_leaves_a_start_only_on_the_approved_bytes(folder, monkeypatch):
+    from g6.self_maintenance.envelope import stop_in_force
+
+    _, _, shown = improve.asked(str(folder.root))
+    approved = stop_in_force(folder.root).records
+    real = CycleLog.start
+
+    class Crash(BaseException):
+        pass
+
+    def landed_then_died(self, *args, **kwargs):
+        real(self, *args, **kwargs)
+        raise Crash()
+
+    monkeypatch.setattr(CycleLog, "start", landed_then_died)
+    monkeypatch.setattr(improve, "_revoke", lambda *a: None)      # the process died: nothing after the append ran
+    with pytest.raises(Crash):
+        improve.start(folder.root, "Ada", shown)
+    after = stop_in_force(folder.root).records
+    assert after.startswith(approved) and after[len(approved):].count(b"\n") == 1 and folder.spawned == []
+
+
+#: Every stop path: no handler in these may name a list narrower than ``Exception``, unless a try around it does.
+STOP_PATHS = {"g6/self_maintenance/envelope.py": ["_absent", "_read_file", "_parsed", "_start_of", "stop_in_force",
+                                                  "record_stop", "ask_to_stop", "stop_seen", "stop_reason", "stop_standing",
+                                                  "stop_to_lift", "stops_asked"],
+              "g6/metaharness/loop.py": ["_reloaded", "_stop", "_halted", "_cut_off", "lost_cycle"],
+              "g6/mcp/improve.py": ["start", "stop", "asked", "_cannot_start", "_revoke"],
+              "g6/metaharness/runner.py": ["run", "_ending", "_folder_page", "_gated", "_end", "step"]}
+
+
+def _narrow_handlers(source: str, names: list[str]) -> list[str]:
+    import ast
+
+    broad = {"Exception", "BaseException"}
+
+    def is_broad(handler) -> bool:
+        kinds = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+        return handler.type is None or any(isinstance(kind, ast.Name) and kind.id in broad for kind in kinds)
+
+    found: list[str] = []
+
+    def walk(node, covered: bool, where: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.Try):
+                mine = any(is_broad(handler) for handler in child.handlers)
+                if child.handlers and not (mine or covered):
+                    found.append(f"{where}: line {child.lineno}")
+                for part in child.body:
+                    walk(part, covered or mine, where)
+                for part in (*child.handlers, *child.orelse, *child.finalbody):
+                    walk(part, covered, where)
+            else:
+                walk(child, covered, where)
+
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names:
+            walk(node, False, node.name)
+    return found
+
+
+def test_no_handler_in_a_stop_path_names_a_narrower_list_than_every_exception():
+    import g6
+
+    package = Path(g6.__file__).resolve().parent
+    narrow = {path: _narrow_handlers((package.parent / path).read_text(encoding="utf-8"), names)
+              for path, names in STOP_PATHS.items()}
+    assert not any(narrow.values()), narrow
+    sample = "def f():\n    try:\n        pass\n    except (OSError, ValueError):\n        pass\n"
+    assert _narrow_handlers(sample, ["f"]) == ["f: line 2"]          # what the old handlers were, the test finds
+
+
+STOP_STATES = {
+    "no stop": (lambda f: None, ""),
+    "a STOP file": (lambda f: ask_to_stop(f.root, "the owner said no"), STOPPED),
+    "a stop that died before its STOP file": (_journal_only, STOPPED),
+    "a stop on record after the start": (lambda f: CycleLog(f.root / CYCLE_LOG).stop("a tick cut it off"), STOPPED),
+    "a STOP that cannot be read": (lambda f: _unreadable(f.root / STOP_FILE), STOP_UNREADABLE),
+    "a journal that cannot be read": (lambda f: _unreadable(f.root / STOPS_FILE), STOP_UNREADABLE),
+    "records that cannot be read": (lambda f: _records_a_directory(f), STOP_UNREADABLE),
+}
+SETTINGS_STATES = {"cut short": b'{"truncated":', "not an object": b"[1, 2]", "no windows": b"{}"}
+
+
+@pytest.mark.parametrize("settings", list(SETTINGS_STATES))
+@pytest.mark.parametrize("state", list(STOP_STATES))
+def test_a_stop_is_honoured_before_the_settings_at_every_entry_point(folder, monkeypatch, state, settings):
+    from g6.metaharness import runner
+    from g6.self_maintenance.envelope import heartbeat
+
+    _agreed(folder)
+    change, expected = STOP_STATES[state]
+    change(folder)
+    (folder.root / "settings.json").write_bytes(SETTINGS_STATES[settings])
+    monkeypatch.setattr(runner, "open_loop", lambda *a, **k: pytest.fail("a run on broken settings opened its loop"))
+    dialog, started = improve.asked(str(folder.root)), improve.start(folder.root, "Ada")
+    runner.run(folder.root, now=lambda: NOW)
+    ended = heartbeat(folder.root)["code"]
+    if expected == STOP_UNREADABLE:
+        assert _code(dialog) == _code(started) == ended == STOP_UNREADABLE
+    elif expected == STOPPED:                              # a stop a start may lift: never hidden, and the run ends on it
+        assert _code(dialog) == _code(started) == "G6_E_LOOP_BAD_SETTINGS" and ended == STOPPED
+        assert dialog["stop_code"] == started["stop_code"] == STOPPED
+    else:                                                  # no stop: the settings are what refuse
+        assert _code(dialog) == _code(started) == "G6_E_LOOP_BAD_SETTINGS" and "stop_code" not in dialog
+        assert ended in ("G6_E_LOOP_CANNOT_OPEN", "G6_E_LOOP_SETTINGS_CHANGED")
+    assert folder.spawned == []
+
+
+def _settings_changed(f) -> None:
+    settings = json.loads((f.root / "settings.json").read_text(encoding="utf-8"))
+    settings["windows"][0]["allowance"] = 999_999
+    (f.root / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+
+
+ENDINGS = {
+    "a STOP file at the preflight": lambda f, m: ask_to_stop(f.root, "the owner said no"),
+    "a journal stop at the preflight": lambda f, m: _journal_only(f),
+    "records that cannot be read": lambda f, m: _records_a_directory(f),
+    "settings changed at the gate": lambda f, m: _settings_changed(f),
+    "settings that cannot be read": lambda f, m: (f.root / "settings.json").write_bytes(b"{"),
+    "a lock folder that is a file": lambda f, m: (f.root / RUNNER_LOCK).write_bytes(b"a file"),
+    "a loop that will not open": lambda f, m: m.setattr("g6.metaharness.runner.open_loop",
+                                                      lambda *a, **k: (_ for _ in ()).throw(RuntimeError("broken domain"))),
+}
+
+
+@pytest.mark.parametrize("ending", list(ENDINGS))
+def test_every_ending_writes_the_days_page_before_the_terminal_heartbeat(folder, monkeypatch, ending):
+    from g6.metaharness import runner
+    from g6.self_maintenance import digest as daily
+
+    _agreed(folder)
+    ENDINGS[ending](folder, monkeypatch)
+    order: list[str] = []
+    real_write, real_beat = daily.write, runner.beat
+    monkeypatch.setattr(daily, "write", lambda *a, **k: (order.append("page"), real_write(*a, **k))[1])
+    monkeypatch.setattr(runner, "beat", lambda *a, **k: (order.append(f"beat {k.get('state')}"), real_beat(*a, **k))[1])
+    assert runner.run(folder.root, now=lambda: NOW) in (0, 1)
+    terminal = [index for index, said in enumerate(order) if said.startswith("beat") and said != "beat starting"]
+    assert terminal and "page" in order[:terminal[-1]], order
+    assert daily.digest_path(folder.root, NOW.date()).is_file()
+
+
+def test_the_ending_inventory_covers_exceptions_before_the_hand_off():
+    import ast
+    import inspect
+    import textwrap
+
+    from g6.metaharness import runner
+
+    body = ast.parse(textwrap.dedent(inspect.getsource(runner.run))).body[0].body
+    guarded = [node for node in body if isinstance(node, ast.Try)]
+    assert len(guarded) == 1
+    broad = [handler for handler in guarded[0].handlers
+             if isinstance(handler.type, ast.Name) and handler.type.id == "Exception"]
+    assert broad and all(isinstance(part, ast.Return) and ast.unparse(part.value).startswith("_ending(")
+                         for handler in guarded[0].handlers for part in handler.body)
+    unguarded = [ast.unparse(node) for node in body[body.index(guarded[0]) + 1:]]
+    assert unguarded == [], unguarded                     # nothing after the hand-off's try runs outside it

@@ -49,7 +49,7 @@ from uuid import uuid4
 
 from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import ChainLedger, LedgerError, digest
-from g6.core.storage import PathRefused, plain_file
+from g6.core.storage import plain_file
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
 
@@ -355,7 +355,7 @@ def _absent(path: Path, root: Path) -> bool:
             if folder == root or folder == folder.parent:
                 return False
             folder = folder.parent
-        except OSError:
+        except Exception:  # noqa: BLE001 - a folder that cannot be listed, for any reason, does not show absence
             return False
 
 
@@ -364,8 +364,8 @@ def _read_file(path: Path, root: Path, *, timed: bool = False) -> tuple[bytes, i
     only when the open itself fails with not-found and the folder above is a readable directory. The bytes are read from
     one open handle, whose file is known by the handle itself (``fstat``: on Windows its volume and file index), and they
     stand only when that very file is what stands at the path once they are read, a regular file under this one name and no
-    link, holding as many bytes as were read. A file replaced or changed while it was read is read again. Any other failure
-    raises ``StopUnreadable``."""
+    link, holding as many bytes as were read. A file replaced or changed while it was read is read again. Any other failure,
+    of whatever kind, raises ``StopUnreadable``."""
     name = path.relative_to(root).as_posix()
     for _ in range(READ_TRIES):
         try:
@@ -382,14 +382,14 @@ def _read_file(path: Path, root: Path, *, timed: bool = False) -> tuple[bytes, i
             if _absent(path, root):
                 return None
             raise StopUnreadable(f"{name} cannot be read (the folder above it is not one that can be read)") from None
-        except OSError as exc:
+        except Exception as exc:  # noqa: BLE001 - any failure to read is unreadable, never an escape
             raise StopUnreadable(f"{name} cannot be read ({type(exc).__name__})") from exc
         try:
             kept = plain_file(path)                       # a regular file under this one name, no link
             now = path.stat()                             # and the file read is the one that stands there now
         except FileNotFoundError:
             continue
-        except (OSError, PathRefused) as exc:
+        except Exception as exc:  # noqa: BLE001 - any failure to read is unreadable, never an escape
             raise StopUnreadable(f"{name} cannot be read ({type(exc).__name__})") from exc
         read = (opened.st_dev, opened.st_ino)
         if (opened.st_ino and read == (kept.st_dev, kept.st_ino) == (now.st_dev, now.st_ino)
@@ -440,12 +440,12 @@ def stop_in_force(root: str | Path, *, known: tuple[str, Mapping[str, Any] | Non
     stop = journal = None
     try:
         stop = _read_file(root / STOP_FILE, root, timed=True)
-    except StopUnreadable as exc:
-        unread[STOP_FILE] = str(exc)
+    except Exception as exc:  # noqa: BLE001 - any failure here is a stop in force, never an escape
+        unread[STOP_FILE] = _unread(exc)
     try:
         journal = _read_file(root / STOPS_FILE, root)
-    except StopUnreadable as exc:
-        unread[STOPS_FILE] = str(exc)
+    except Exception as exc:  # noqa: BLE001 - as above
+        unread[STOPS_FILE] = _unread(exc)
     records_sha256, start, revoked = "", None, ""
     try:
         held = _read_file(root / CYCLE_LOG, root)
@@ -456,14 +456,20 @@ def stop_in_force(root: str | Path, *, known: tuple[str, Mapping[str, Any] | Non
             if held is not None:
                 try:
                     log = _parsed(held[0])
-                except (OSError, LedgerError, ValueError, RecursionError) as exc:
+                except Exception as exc:  # noqa: BLE001 - records the ledger cannot take, however it fails
                     raise StopUnreadable(f"the loop's records, which say what the last start lifted, cannot be read or "
                                          f"cannot be trusted ({type(exc).__name__})") from exc
             start, revoked = _start_of(log)
-    except StopUnreadable as exc:
-        unread["records"] = str(exc)
+    except Exception as exc:  # noqa: BLE001 - as above
+        unread["records"] = _unread(exc)
     records = held[0] if held is not None else b""
     seen = StopSeen(*(stop or (None, None)), (journal or (b"",))[0])   # what could be read: ``unread`` says what could not
+    why = ""
+    if not unread:
+        try:
+            why = seen.against(start) or (f"the last start was ended by a stop on record ({revoked})" if revoked else "")
+        except Exception as exc:  # noqa: BLE001 - a start the decision cannot be made against is no lift
+            unread["records"] = f"the last start cannot be read against the stop's files ({type(exc).__name__})"
     whole = digest({"stop": hashlib.sha256(stop[0]).hexdigest() if stop else None, "stop_mtime_ns": stop[1] if stop else None,
                     "journal": hashlib.sha256(journal[0]).hexdigest() if journal else None, "records": records_sha256,
                     "unread": sorted(unread)})
@@ -471,8 +477,12 @@ def stop_in_force(root: str | Path, *, known: tuple[str, Mapping[str, Any] | Non
         first = next(iter(unread.values()))
         return Stop(STOP_UNREADABLE, f"{first}, so a stop is in force until a person can read it", None, "", seen, log,
                     records_sha256, whole, tuple(unread), records)
-    why = seen.against(start) or (f"the last start was ended by a stop on record ({revoked})" if revoked else "")
     return Stop(STOPPED if why else "", why, start, revoked, seen, log, records_sha256, whole, (), records)
+
+
+def _unread(exc: BaseException) -> str:
+    """What a reading says of a file it could not read: the reason ``StopUnreadable`` gives, or the kind of failure."""
+    return str(exc) if isinstance(exc, StopUnreadable) else f"a stop's file could not be read ({type(exc).__name__})"
 
 
 def stop_seen(root: str | Path) -> StopSeen:
@@ -561,11 +571,11 @@ def ask_to_stop(root: str | Path, reason: str = "") -> str:
     with contextlib.ExitStack() as held:
         try:
             held.enter_context(stop_lock(root, wait=STOP_WAIT))
-        except (WorkspaceRefused, OSError):
+        except Exception:  # noqa: BLE001 - a stop never fails for a lock, whatever keeps it from it
             pass
         try:
             _durably(Path(root) / STOPS_FILE, said[:200] + "\n")
-        except OSError:
+        except Exception:  # noqa: BLE001 - the STOP file still stops; only a restart past its removal loses by it
             pass
         _durably(Path(root) / STOP_FILE, f"{said}\n{uuid4().hex}\n")
     return stop_reason(root)
@@ -598,18 +608,21 @@ def record_stop(root: str | Path, reason: str, *, at: str) -> str:
     """Note a stop in the records, so a start no longer stands once the ``STOP`` file is gone. The file is what stops the
     loop, so this never gets in its way and never raises: records that do not read, or a tick holding them, leave the note
     for later, and a runner notes its own stop as it ends. It returns why no note could be made (``""`` when one was, or
-    none was needed), for whoever ends the run to say."""
-    path = Path(root) / CYCLE_LOG
+    none was needed), for whoever ends the run to say. The records are absent only by the reading's own rule
+    (``_read_file``): a directory or anything else at their path is records that cannot be read, so the note is not made
+    and that is said."""
+    root = Path(root)
+    path = root / CYCLE_LOG
     try:
-        if not path.is_file():
+        if _read_file(path, root) is None:
             return ""
-        with Coordination(Path(root) / ".tick").mutex(wait=0):
+        with Coordination(root / ".tick").mutex(wait=0):
             log = CycleLog(path)
             if log.start_in_force():
                 log.stop(reason, at=at)
     except WorkspaceRefused:
         return "the records are held by a tick, so the stop is not noted in them"
-    except (OSError, LedgerError) as exc:
+    except Exception as exc:  # noqa: BLE001 - whatever keeps the note from being made is said, never raised
         return f"the records cannot be read, so the stop is not noted in them ({type(exc).__name__})"
     return ""
 

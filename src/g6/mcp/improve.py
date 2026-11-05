@@ -60,7 +60,6 @@ from g6.self_maintenance.envelope import (
 )
 from g6.self_maintenance.pacing import SETTINGS_FILE, read_settings, windows_from
 from g6.workspace._coordination import Coordination
-from g6.workspace._envelope import WorkspaceRefused
 
 #: What ``G6_MCP_SENSITIVE`` lists for starting the runner: ``metaharness.improve``, or ``metaharness``.
 SENSITIVE = ("metaharness", "improve")
@@ -138,30 +137,33 @@ def _pinned_python(settings: dict[str, Any]) -> str:
 
 
 def _cannot_start(root: Path, reading: Stop) -> dict | None:
-    """Why nothing may start on ``root``, from its settings and from ``reading``, the one reading of the stop's files and the
-    records (``stop_in_force``): this opens none of them."""
+    """Why nothing may start on ``root``, from ``reading``, the one reading of the stop's files and the records
+    (``stop_in_force``), and then from its settings: this opens none of the reading's files. The reading comes first, so a
+    stop that cannot be read is never said as anything else. A stop that can be read is what a start lifts, so it refuses
+    nothing here, and any refusal carries its code (``stop_code``), so it is never hidden either."""
+    if reading.code == STOP_UNREADABLE:
+        return _stop_unreadable(root, reading.reason)
+    held = {"stop_code": reading.code} if reading else {}
     if not (root / SETTINGS_FILE).is_file():
-        return _not_a_loop(root)
+        return {**_not_a_loop(root), **held}
     try:
         settings = read_settings(root)
         windows_from(settings)
         _pinned_python(settings)
-    except ValueError as exc:
-        return _blocked(BAD_SETTINGS, f"{exc}"[:400], f"Fix {SETTINGS_FILE} in {root}; nothing was started.")
+    except Exception as exc:  # noqa: BLE001 - settings that cannot be read, however, are settings to fix
+        return _blocked(BAD_SETTINGS, f"{exc}"[:400], f"Fix {SETTINGS_FILE} in {root}; nothing was started.", **held)
     if runner_alive(root):
         return _blocked(RUNNER_ALIVE, "a runner is already alive on this folder, so nothing was started",
                         "Read g6_improve_status. If you have just stopped it, it ends once it sees the STOP file: at its next "
-                        "model call, or within a minute while it waits.")
-    if reading.code == STOP_UNREADABLE:
-        return _stop_unreadable(root, reading.reason)
+                        "model call, or within a minute while it waits.", **held)
     enrol = (f'A person enrols it at their own terminal: python -P -m g6.metaharness.loop enrol "{root}" --as "Your name". '
              "An agent cannot do that step.")
     enrolled = reading.log.enrolled() if reading.log is not None else None
     if enrolled is None:
-        return _blocked(NOT_ENROLLED, "no person has enrolled a domain in this folder, so nothing was started", enrol)
+        return _blocked(NOT_ENROLLED, "no person has enrolled a domain in this folder, so nothing was started", enrol, **held)
     if enrolled["frozen"].get("domain_file") != file_digest(settings.get("domain_file")):
         return _blocked(FROZEN_CHANGED, "the Python file that declares this domain is not the one a person enrolled, so "
-                        "nothing was started and it did not run", enrol)
+                        "nothing was started and it did not run", enrol, **held)
     return None
 
 
@@ -290,8 +292,11 @@ def _revoke(root: Path, writer: CycleLog) -> None:
     why = "the start's row did not land on the records the person's terms bind, so it starts nothing"
     try:
         writer.stop(why, at=datetime.now().astimezone().isoformat())
-    except (OSError, LedgerError):
-        ask_to_stop(root, why)
+    except Exception:  # noqa: BLE001 - whatever keeps the row from being written, the STOP file stands in for it
+        try:
+            ask_to_stop(root, why)
+        except Exception:  # noqa: BLE001 - nothing more can be written; the start's caller is refused all the same
+            pass
 
 
 def _moved(root: Path) -> dict:
@@ -306,11 +311,12 @@ def start(root: Path, who: str, shown: str | None = None) -> dict:
     terms cover, by recording it: any other stop stands, and nothing starts. Under the tick lock and ``stop_lock`` it takes
     a fresh reading (``stop_in_force``), refuses if that reading is not the one the dialog showed, its whole digest being in
     the terms, and writes its row: no stop can land between the reading and the row, and a start refused there writes
-    nothing. The row goes onto the approved records themselves: the writer must open the chain that reading parsed (the
-    same last row, which names every row before it), the ledger appends only onto the head it opened, and once the row is
-    written a reading must find the approved bytes exactly with that one row after them, or the start is revoked by a stop
-    row and nothing is spawned. A reading that cannot be made, there or when the row will not take, starts nothing and says
-    so as any reader does."""
+    nothing. The row goes onto the approved records themselves: once the writer has opened them, a reading must find
+    exactly the approved bytes, or no row is written, and the ledger appends only onto the head it opened, so a crash or a
+    failed write after the append can leave a start only on approved bytes. Once the row is written a reading must find
+    those bytes with that one row after them, and on every way out of the append, an exception included, anything else
+    that landed is revoked by a stop row (a ``STOP`` file when that will not take) and nothing is spawned. A reading that
+    cannot be made, there or when the row will not take, starts nothing and says so as any reader does."""
     cannot = _cannot_start(root, stop_in_force(root))
     if cannot is not None:
         return cannot
@@ -326,12 +332,20 @@ def start(root: Path, who: str, shown: str | None = None) -> dict:
                                 ASK_AGAIN, running=False, folder=str(root))
             try:
                 writer = CycleLog(root / CYCLE_LOG)
-                if writer.head() != (reading.log.head() if reading.log is not None else ""):
-                    return _moved(root)          # the writer opened records other than the ones approved: no row
-                writer.start(who, at=datetime.now().astimezone().isoformat(), settings=digest_of(settings),
-                             **reading.seen.binding())
-            except (OSError, LedgerError):
-                moved = stop_in_force(root)      # the records would not take the row: say what a reading says of them
+                held = stop_in_force(root)       # once the writer has opened them: the bytes it would append onto
+                if held.code == STOP_UNREADABLE:
+                    return _stop_unreadable(root, held.reason)
+                if held.records != reading.records:
+                    return _moved(root)          # not exactly the bytes the person's terms bind: no row
+                try:
+                    writer.start(who, at=datetime.now().astimezone().isoformat(), settings=digest_of(settings),
+                                 **reading.seen.binding())
+                except BaseException:            # every way out of the append: whatever landed starts nothing
+                    if stop_in_force(root).records != reading.records:
+                        _revoke(root, writer)
+                    raise
+            except Exception:  # noqa: BLE001 - the records would not take the row: say what a reading says of them
+                moved = stop_in_force(root)
                 if moved.code == STOP_UNREADABLE:
                     return _stop_unreadable(root, moved.reason)
                 raise
@@ -345,7 +359,7 @@ def start(root: Path, who: str, shown: str | None = None) -> dict:
                             f"{halted.reason}"[:500], NOT_ASKED, running=False, folder=str(root), stop_code=halted.code)
         spawned = datetime.now().astimezone()              # before the spawn: a runner can beat before this process looks
         return {**_watch(root, _spawn(root, settings), spawned), "started_by": who}
-    except (OSError, LedgerError, WorkspaceRefused, ValueError) as exc:
+    except Exception as exc:  # noqa: BLE001 - a start that fails, however, starts nothing and says so
         return _blocked(START_FAILED, f"the runner could not be started: {type(exc).__name__}: {exc}"[:500], running=False,
                         folder=str(root))
 
@@ -357,7 +371,7 @@ def stop(folder: str, reason: str = "") -> dict:
         return _not_a_loop(root)
     try:
         why = ask_to_stop(root, reason)
-    except OSError as exc:
+    except Exception as exc:  # noqa: BLE001 - a stop that could not be written says so, whatever stopped it
         return _blocked(STOP_FAILED, f"the stop could not be written: {type(exc).__name__}: {exc}"[:400],
                         running=runner_alive(root), folder=str(root))
     record_stop(root, why, at=datetime.now().astimezone().isoformat())
