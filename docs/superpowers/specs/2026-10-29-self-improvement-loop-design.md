@@ -800,16 +800,22 @@ asked, and every other limit is looked at again after 15 minutes, for one refuse
 from the text of its program and has not been seen at a real limit. Its `api_error_status` of 429 and `api_error` of
 `usage_limit_reached` are read as JSON fields of an error result, where a model's quotes are escaped. They land in the 300
 characters its caller keeps only because the program writes them after its `usage` record, which no one promises, and a
-notice with neither field reads as a failed case. Codex prints text, so nothing in it tells its notice from a reply that says
-the same, and it is not read. A Codex limit is what `account/rateLimits/read` reports between ticks, so the tick that meets
-one runs on as failed cases. With every run failing it ends with no winner, a result and no failure, so it pauses nothing,
-and the runner's rest outlasts the 15 minutes between reads, so the reading holds the next tick. A limit during an evaluation
-costs more: it reads as a refusal and spends one of the split's five, on a record that says nothing true of the candidate.
-So the account is read once more just before a held-out evaluation, the one read a tick makes, and a limit it shows ends the
-tick there with the split unspent and the candidate carried to the next tick. A read that fails says nothing new, and the
-evaluation runs. This cannot catch a limit that arrives during the evaluation, or one the reading does not show: those still
-spend one of the five. That is the price of not reading Codex's words. The repair is a code of its own from those callers,
-at an issuance window.
+notice with neither field reads as a failed case.
+
+**Since 2026-11-05 each host's own output is read whole, by the caller the loop watches, before the bound caller cuts it.** As a
+request goes out, the Claude Code or Codex caller really sending it becomes a `WatchedClaude` or `WatchedCodex`, subclasses outside
+`g6/core`. `WatchedClaude` reads Claude Code's JSON result: on an error result, `api_error_status` 429 or `api_error`
+`usage_limit_reached` is a limit, and `api_error_status` 529 is its model overloaded, wherever the program writes them.
+`WatchedCodex` runs `codex exec --json` and reads only Codex's own events, `error` and `turn.failed`: Codex's `codex_error_info`
+(`usage_limit_exceeded`, `server_overloaded`, `cyber_policy` and the rest), or where an event carries none, the program's own
+fixed message at its start. A model's words are in item events, inside JSON strings, and never read. What either reads goes to the
+tick as G6's own code (`G6_E_MODEL_REFUSED`, `G6_E_LLM_RATE_LIMITED`, `G6_E_MODEL_AT_CAPACITY`) before any wrapper sees it. A limit
+or a model at capacity ends the tick as a wait: nothing is scored for either arm, no evaluation of the split's five is spent, and the
+limit is in the log before the tick's charges are settled, so a restart waits it out. It is looked at again after 15 minutes, and
+Codex's `account/rateLimits/read` holds the ticks after that. The account is still read once more just before a held-out
+evaluation. What Codex prints without `--json`, as the plain caller runs it, is text and is never read; a host caller the loop does
+not watch (one called from inside another caller, say) still reads a limit as a failed case. No recorded file on the machine held
+`codex exec --json` output, so which of `codex_error_info` and the message an exec event carries was not seen, and both are read.
 
 **Who pays is read from the caller's type.** `Model.paid` was the only guard on the rule that the loop never spends API credits,
 and a caller with a key left it at its default and passed. Now, for each declared model and the proposer, seen through G6's
@@ -853,8 +859,11 @@ the whole result as parsed JSON, where a model's words stay inside the string `r
 a wrapper of a domain's own that catches failed requests cannot retry a refusal or hide it. This was read from the text of Claude
 Code 2.1.316 and has not been seen at a real refusal, and it leans on two private names of a bound file, which tests hold. That
 program can also retry a refusal itself on a fallback model, if one is configured: G6 passes none, and a person's own settings are
-outside this. Codex prints text, so its refusal is a failed case, and the same request goes out again. The repair for both is a code
-of its own from those callers, at an issuance window.
+outside this. A Codex refusal is read the same way, by `WatchedCodex`, from Codex's own events (`cyber_policy`, `bio_policy`,
+`misalignment_policy_violation`, `too_many_denials`, or "This content was flagged for possible ..."), and is kept and never sent
+again as Claude Code's is. A refusal that comes back once its tick has closed, or with no tick open, is kept all the same, and
+one `refused.log` will not take stops the process and asks for a `STOP`, since only this process would hold it. The repair that
+lets both subclasses go is a code of their own from those callers and `--json` in `CodexCaller`, at an issuance window.
 
 So that nothing retries by itself, `EmptyRetry` and `FallbackCaller` are refused around a declared model or the proposer, with
 `G6_E_LOOP_RETRY_MODEL`, at enrolment and before each tick. `provider_from_env` wraps its callers in `EmptyRetry`, so a domain
