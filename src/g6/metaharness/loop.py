@@ -319,11 +319,12 @@ class _Requests:
         with self._lock:
             self.sent += requests
 
-    def at_a_limit(self, failed: LLMError, generation: int | None = None) -> None:
-        """End the tick when a request failed at a provider's limit (``met_a_limit``)."""
+    def at_a_limit(self, failed: Any, generation: int | None = None) -> None:
+        """End the tick when a request failed at a provider's limit or its model at capacity (``met_a_limit``). ``failed``:
+        what the request raised, or what a watched caller read before it raised anything."""
         until = limit_ends(str(failed), self.now())
         if until is not None:
-            self.met_a_limit(until, str(failed)[:300], generation, failed)
+            self.met_a_limit(until, str(failed)[:300], generation, failed if isinstance(failed, BaseException) else None)
 
     def met_a_limit(self, until: datetime, reason: str, generation: int | None = None, cause: BaseException | None = None) -> None:
         """End the tick at a provider's limit, and let nothing more of it go out: the limit is kept until the tick closes, so
@@ -339,6 +340,14 @@ class _Requests:
         """Refuse what was refused once, whoever asks."""
         if request in self.refused:
             raise LLMError(f"{CLASSIFIER_STOP}: this request was refused once, and nothing sends it again")
+
+    def provider_said(self, failed: Any, request: str, sent: str = "", generation: int | None = None) -> None:
+        """What a provider said stopped a request, read only from G6's own code at the start of ``failed``: a refusal
+        (``at_a_refusal``), or a limit or its model at capacity (``at_a_limit``). ``failed``: what the request raised, or what a
+        watched host caller read before it raised anything. Anything else is no statement of the provider's, and the request's
+        own failure stands."""
+        self.at_a_refusal(failed, request, sent, generation)
+        self.at_a_limit(failed, generation)
 
     def at_a_refusal(self, failed: Any, request: str, sent: str = "", generation: int | None = None) -> None:
         """Keep what a classifier or a permission refused, whether or not a tick is open, and end the tick it stopped.
@@ -435,7 +444,7 @@ class _Counted:
             took.append(None)
 
         def told(said: str, given: tuple[str, ...]) -> None:
-            self.requests.at_a_refusal(said, asked, _request_digest(*given[:2]) if len(given) > 1 else sent, generation)
+            self.requests.provider_said(said, asked, _request_digest(*given[:2]) if len(given) > 1 else sent, generation)
 
         def limited(wait: dict[str, Any]) -> None:
             hint = float(wait.get("retry_after_s") or 0.0)
@@ -446,8 +455,7 @@ class _Counted:
             try:
                 text = self.inner.complete(system, user, max_tokens=max_tokens)
             except LLMError as failed:
-                self.requests.at_a_limit(failed, generation)
-                self.requests.at_a_refusal(failed, asked, sent, generation)
+                self.requests.provider_said(failed, asked, sent, generation)
                 raise
             finally:
                 returned = True
@@ -645,8 +653,8 @@ class ShadowLoop:
         """Read the account once more before a held-out evaluation: a limit reads as a failed case, and an evaluation of
         failed cases spends one of the split's five on a reason untrue of the candidate. So a run already under a limit ends
         here, as one met in a request does, with nothing spent. The same read can move the end of the week, and the tick's
-        requests stop there, as at the end it reserved in. The limit of this: only a read can show a Codex limit, so one that
-        arrives during the evaluation still spends it, until an issuance window gives those callers a code."""
+        requests stop there, as at the end it reserved in. A limit that arrives during the evaluation is read from the
+        provider's own output as the request fails (``g6.self_maintenance.usage``), and spends nothing either."""
         if self._read_now is not None:
             now = self._now()
             self._read_now(now)
@@ -932,6 +940,7 @@ class ShadowLoop:
                 row = self._row() if breaches else self._cycle(recommended)
             except _AtLimit as reached:
                 row, limit = self._row(), reached
+                self._keep_limit(spend.provider, reached.until)    # first: nothing of the tick is settled or written before it
             except _Halted as reached:
                 row, halted = self._row(), reached
             except _Refused:
@@ -959,11 +968,6 @@ class ShadowLoop:
                     "reason": f"a classifier or a permission stopped a request ({refusal['said']}): nothing is adopted, it is "
                               "not sent again, and a person reads this before the loop goes on"}
         elif limit is not None:       # a wait and no cycle, like any other: what ran is charged, and none of it counts
-            self.meter.limit_reached(spend.provider, limit.until)
-            try:
-                self.log.limit(spend.provider, limit.until.isoformat())
-            except (OSError, LedgerError):
-                pass                  # this process still waits; after a restart the first request finds the limit again
             self.waited += 1
             return _blocked(BUDGET_WAIT, f"{spend.provider} met a limit after {charged:g} requests, so this tick scored nothing "
                             f"and waits until {limit.until.isoformat()}: {limit.said}",
@@ -986,6 +990,16 @@ class ShadowLoop:
                          "target": seen.target, "ceiling": seen.ceiling, "estimated": seen.estimated, "waited": self.waited}
         row["reflex"] = opened
         return self._record(row)
+
+    def _keep_limit(self, provider: str, until: datetime) -> None:
+        """A limit or capacity a provider reported: this process holds it, and the log keeps it for a restart. A log that would
+        not take it leaves this process waiting, and after a restart the first request meets the limit again, which reads as
+        one again and scores nothing."""
+        self.meter.limit_reached(provider, until)
+        try:
+            self.log.limit(provider, until.isoformat())
+        except (OSError, LedgerError):
+            pass
 
     def _cut_off(self, halted: _Halted, charged: float) -> dict[str, Any]:
         """A stop met at a model call: say what it cut off, and note this folder's stop in the records, which this tick

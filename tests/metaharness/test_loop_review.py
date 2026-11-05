@@ -1145,8 +1145,9 @@ def test_a_tick_is_read_once_whatever_the_reader_read_just_before_it(tmp_path):
 
 
 def test_the_limit_of_this_a_limit_that_arrives_during_an_evaluation_still_spends_it(tmp_path):
-    """Pinned so nobody takes the read for more than it is. Codex's words are not read, and the callers are bound, so nothing
-    tells this from a failed case until an issuance window gives them a code. The read before it saw no limit."""
+    """Pinned so nobody takes the read for more than it is. Here Codex's text parser runs inside another caller, so no caller the
+    loop watches reads it, and the plain caller's words are not read: nothing tells this from a failed case. The read before it
+    saw no limit. The Codex the loop sends through reads its own events (``test_provider_stops.py``)."""
     loop, domain = _reading(tmp_path, lambda: _account(5))
     held, tutor, host = {c.input for c in loop.cut.held_out}, domain.tutor, host_models.CodexCaller()
 
