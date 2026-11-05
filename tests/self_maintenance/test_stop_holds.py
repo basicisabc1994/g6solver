@@ -345,3 +345,141 @@ def test_a_restart_after_a_stop_cut_off_before_its_file_stays_closed_whatever_re
     _agreed(folder)
     _journal_only(folder)
     assert _readers(folder) == {"tick": STOPPED, "gate": STOPPED, "status": STOPPED, "dialog": STOPPED}
+
+
+# Review 1's classes, at their roots -------------------------------------------------------------------------------------
+
+def _records_a_directory(f) -> None:
+    (f.root / CYCLE_LOG).unlink()
+    (f.root / CYCLE_LOG).mkdir()
+
+
+def _records_cut_short(f) -> None:
+    held = (f.root / CYCLE_LOG).read_bytes()
+    (f.root / CYCLE_LOG).write_bytes(held[: len(held) // 2])
+
+
+def _records_one_byte_changed(f) -> None:
+    held = bytearray((f.root / CYCLE_LOG).read_bytes())
+    at = held.index(b'"by"')                            # inside the first row, so the tail and the size stay as they were
+    held[at + 1] = ord("B")
+    (f.root / CYCLE_LOG).write_bytes(bytes(held))
+
+
+def _a_start_with_lift_fields_no_reading_gives(f) -> None:
+    from g6.core.ledger import ChainLedger
+    ChainLedger(f.root / CYCLE_LOG).append("started", str(len(CycleLog(f.root / CYCLE_LOG)._rows()) + 1),
+                                           {"by": "Ada", "stops": "one", "lifted_bytes": "all"})
+
+
+DAMAGES = {
+    "records replaced by a directory": _records_a_directory,
+    "records cut short": _records_cut_short,
+    "records with one byte changed": _records_one_byte_changed,
+    "a start whose lift fields no reading gives": _a_start_with_lift_fields_no_reading_gives,
+    "a journal replaced by a directory": lambda f: _unreadable(f.root / STOPS_FILE),
+    "a STOP file replaced by a directory": lambda f: _unreadable(f.root / STOP_FILE),
+}
+
+
+@pytest.mark.parametrize("damage", list(DAMAGES))
+def test_every_consumer_gives_one_code_for_the_same_damaged_record(folder, damage):
+    from g6.self_maintenance.envelope import stop_in_force
+
+    _agreed(folder)
+    DAMAGES[damage](folder)
+
+    def code(call):
+        try:
+            return call()
+        except Exception as exc:  # noqa: BLE001 - a consumer that raises is what this looks for
+            return type(exc).__name__
+
+    seen = {"decision": stop_in_force(folder.root).code,
+            "gate": code(lambda: _gate(folder.root, read_settings(folder.root))[0]),
+            "dialog": code(lambda: improve.asked(str(folder.root))["warning_card"]["code"]),
+            "start": code(lambda: improve.start(folder.root, "Ada")["warning_card"]["code"]),
+            "tick": code(lambda: folder.loop.tick()["warning_card"]["code"]),
+            "status": code(lambda: improve.status(str(folder.root))["stop_code"])}
+    assert seen == dict.fromkeys(seen, STOP_UNREADABLE) and folder.spawned == []
+
+
+@pytest.mark.parametrize("fields", [{"lifted_bytes": "all"}, {"lifted_bytes": -1}, {"lifted": 7}, {"stops": True},
+                                    {"stops_sha256": "not hex"}, {"lifted_mtime_ns": "noon"}])
+def test_a_start_with_lift_fields_no_reading_gives_is_never_written(tmp_path, fields):
+    from g6.core.ledger import LedgerError
+
+    with pytest.raises(LedgerError, match="started"):
+        CycleLog(tmp_path / CYCLE_LOG).start("Ada", **fields)
+
+
+def test_lift_fields_no_reading_gives_are_a_stop_in_force_where_they_are_read_too(tmp_path):
+    from g6.self_maintenance.envelope import stop_in_force
+
+    ask_to_stop(tmp_path, "why")
+    assert stop_in_force(tmp_path, {"lifted": "a" * 64, "lifted_bytes": "all"}).code == STOP_UNREADABLE
+
+
+@pytest.mark.parametrize("journal", [b"x", b"operator requested stop", b"one\ntwo"])
+def test_with_no_start_on_record_any_bytes_in_the_journal_are_a_stop_the_dialog_names(folder, journal):
+    (folder.root / STOPS_FILE).write_bytes(journal)
+    _, question, _ = improve.asked(str(folder.root))
+    assert "no STOP file stands for it" in question and _readers(folder)["tick"] == STOPPED
+
+
+def test_a_line_cut_short_after_a_start_that_bound_only_a_count_is_a_stop(folder):
+    """A start from before the digest: whole lines only, so the bytes of a line a crash cut short still stand."""
+    from g6.self_maintenance.envelope import stop_in_force
+
+    (folder.root / STOPS_FILE).write_bytes(b"an old stop\n")
+    folder.loop.log.start("Ada", stops=1)
+    assert not stop_in_force(folder.root)
+    with open(folder.root / STOPS_FILE, "ab") as kept:
+        kept.write(b"a stop cut")
+    assert stop_in_force(folder.root).code == STOPPED
+
+
+def test_a_journal_a_start_saw_with_a_line_cut_short_is_lifted_with_it(folder):
+    (folder.root / STOPS_FILE).write_bytes(b"an old stop\na stop cut")
+    _agreed(folder)
+    assert _readers(folder)["tick"] == ""
+
+
+def test_a_stop_on_record_after_the_last_start_holds_every_reader_until_a_person_starts_again(folder):
+    _agreed(folder)
+    CycleLog(folder.root / CYCLE_LOG).stop("a tick met a stop and ended", at="noon")
+    assert _readers(folder) == {"tick": STOPPED, "gate": STOPPED, "status": STOPPED, "dialog": ""}
+    _agreed(folder)
+    assert _readers(folder) == {"tick": "", "gate": "", "status": "", "dialog": ""}
+
+
+def test_a_refused_start_writes_nothing_durable(folder, monkeypatch):
+    _, _, shown = improve.asked(str(folder.root))
+    improve.stop(str(folder.root), "while the dialog was open")
+    before = (folder.root / CYCLE_LOG).read_bytes()
+    got = improve.start(folder.root, "Ada", shown)
+    assert _code(got) == improve.TERMS_CHANGED and (folder.root / CYCLE_LOG).read_bytes() == before
+
+
+def test_a_stop_waiting_on_a_start_that_holds_the_lock_still_writes(folder):
+    from g6.self_maintenance.envelope import stop_lock
+
+    with stop_lock(folder.root):
+        reply = improve.stop(str(folder.root), "while a start held the lock")
+    assert _code(reply) == improve.STOP_ASKED and "while a start held the lock" in reply["stop"]
+
+
+def test_a_record_changed_mid_tick_with_its_size_and_tail_kept_cuts_the_tick_off(folder):
+    _agreed(folder)
+    domain, seen = folder.loop.domain, []
+    tutor = domain.tutor
+
+    def changed_after_the_first(system: str, user: str) -> str:
+        seen.append(user)
+        if len(seen) == 1:
+            _records_one_byte_changed(folder)
+        return tutor(system, user)
+
+    domain.llm._responder = changed_after_the_first
+    got = folder.loop.tick()
+    assert _code(got) == STOP_UNREADABLE and len(seen) == 1
