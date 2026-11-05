@@ -894,6 +894,22 @@ USER {USER}
 """
 
 
+#: Where the oracle image keeps the maintainers' material (``oracle_dockerfile``): their tree at the merge (``/oracle/fixed``), their
+#: diff (``/oracle/fix.patch``) and its file list (``/oracle/fix.files``).
+ORACLE = "/oracle"
+#: The oracle's material removed from a container made from the oracle image, as root, and its absence checked (PLAN.md,
+#: 2026-11-05, night, later, item 2).
+SEAL = f"rm -rf {ORACLE} && test ! -e {ORACLE}"
+
+
+def seal(docker: Any, name: str) -> None:
+    """Container ``name``, made from the oracle image, with the oracle's material gone (``SEAL``). Every such container is sealed
+    once what is taken from the oracle is in (the maintainers' fix, and their tests, copied in for scoring alone) and before any
+    code a candidate wrote is copied in or runs: a patch's code under test, a reviewer's written test, a probe, or G6's review of a
+    patch. A seal that fails ends the step, so no candidate code ever runs beside the oracle's material."""
+    checked(docker.sh(name, SEAL, user="root", timeout=120), "the oracle's material removed")
+
+
 def image_names(task: Task, g6_commit: str, variant: str = "") -> tuple[str, str]:
     short = g6_commit[:12] + (f"-{variant}" if variant else "")
     return f"g6we-task:{task.id}-{short}", f"g6we-oracle:{task.id}-{short}"
@@ -3367,8 +3383,10 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
                 extra: Mapping[str, Path] | None = None, modules: Sequence[str] | None = None,
                 folder: c.RunFolder | None = None, label: str = "", amended: bool = False) -> dict[str, Any]:
     """In a fresh container from the oracle image, with no network: the code (the parent's, the maintainers' fix or
-    a patch), the maintainers' test files when ``tests``, the bug's amendment when ``amended``, extra files, then
-    pytest on ``modules``."""
+    a patch), the maintainers' test files when ``tests``, then the oracle's material removed (``seal``), then the bug's
+    amendment when ``amended``, extra files (a reviewer's written test), and pytest on ``modules``. A patch is copied in and
+    applied before the seal, which runs none of its code; nothing a candidate wrote runs, and no extra file is copied in, before
+    it."""
     _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     name = f"g6we-check-{uuid.uuid4().hex[:10]}"
     body: dict[str, Any] = {"label": label}
@@ -3390,6 +3408,7 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
             files = out(ctx.docker.sh(name, "cat /oracle/fix.files"))
             pairs = [x for st, p in test_changes(files) for x in (st, p)]
             checked(ctx.docker.sh(name, APPLY_TESTS, task.repo, *pairs, workdir=task.repo), "the maintainers' tests")
+        seal(ctx.docker, name)
         if amended:
             checked(ctx.docker("cp", str(amendment(task.id)), f"{name}:/tmp/we-amend.patch", timeout=300), "amendment copy")
             checked(ctx.docker.sh(name, "git apply --whitespace=nowarn /tmp/we-amend.patch", workdir=task.repo),
@@ -3570,6 +3589,7 @@ def g6replay(ctx: Context, task: Task, code: str, args_file: Path) -> dict[str, 
             checked(ctx.docker("cp", code, f"{name}:/tmp/we.patch", timeout=300), "patch copy")
             checked(ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we.patch", workdir=task.repo),
                     "the patch")
+        seal(ctx.docker, name)          # G6's review runs the patch's code: nothing of the oracle's is left beside it
         args = {**body["args"], "repo": task.repo}
         done = ctx.docker("exec", "-i", "-u", USER, "-e", f"HOME={HOME}", "-w", task.repo, name, G6PY, "-I", "-",
                           input=(G6_REPLAY.replace("sys.stdin.read()", json.dumps(json.dumps(args)))).encode("utf-8"),
