@@ -858,6 +858,18 @@ so a request let in before a refusal of the same bytes was kept cannot leave aft
 read, or a refusal this process could not keep refuses every later request of the process, between ticks too. What a call's tick
 latched decides when the call comes back, whichever way, so a wrapper that catches a limit or a refusal cannot make it an answer.
 
+**One record per send (2026-11-06, second review).** What is known of a send lived in shared places that nested and concurrent
+calls overwrote: a flag and a variable on the call, a table that evicted entries still pending, an in-flight owner a nested call
+replaced, an identity taken before the wait. Now `admit` makes one immutable record for each send (`usage.Send`) once it may
+leave, after any wait and with the stop read again after it, from the bytes as they are then: its identity, whether its caller
+is watched, its call and thread. A send takes its one place there, so a reservation of one sends one. The record travels with the
+send to where its outcome is read, by the call's own folder for a host program, and is released only by that outcome; nothing
+pending is evicted, and each send is its own entry among those out. A refusal is kept under the refused send's own record, and
+how a failure is read comes from the record of the send that raised it, found from the failure's own frames, since a model call
+that is not a host program has no boundary at its end. Every limit a tick met is in the log before its charges are settled,
+whatever ended it. Any failure to write a refusal latches the stop, and the log keeps lone surrogates as they are. A test built
+from the code lists what the request path writes per request, and fails on anything that is not a send's record.
+
 No failure of the records can undo this. A refused request is kept as it happens, by its identity, in `refused.log`, a file no lock
 stands in front of, flushed to the disk before any other thread can see the refusal and before any record of the tick is written,
 and this process holds it too, for good. A handle reads `refused.log` and the cycles' records as it is built, before its first
