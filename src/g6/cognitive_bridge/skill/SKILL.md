@@ -72,7 +72,7 @@ Composed (Python only):
 - `false_confidence`: no result is `verified`; a dossier blocks on a missing or failed critical check, a checker that
   misses its planted negative control, a missing documentary section, or an unauthenticated review at R2 and R3.
 - `repetition_as_corroboration`: the conflict gate counts one source repeated as one lineage, and the selector
-  counts one variant's trials on one case as one case.
+  groups one variant's repeated trials on one case into one case, with the share that resolved.
 
 ## Blind spots
 
@@ -122,8 +122,10 @@ assert decision.completion_state == "qualified-draft" and decision.admitted_tria
 
 ## The four open problems
 
-- **Learning signals**: the selector learns only from trials an outside evaluator's hook admits; over MCP it has
-  none, so `rank_methods` is a cold start. Not yet: no trial store ships with it.
+- **Learning signals**: the selector learns only from trials an outside evaluator's hook admits, from the splits
+  `learn_from` names (held-out and shadow by default); a variant may be a solver op, a reviewer or a study arm
+  (`MethodVariant(..., kind="arm")`), so a study's records can train it. Over MCP it has none, so `rank_methods` is a
+  cold start. Not yet: no trial store ships with it.
 - **Evaluators the model cannot influence**: the frozen checkers, controls, standards and admission hooks are passed
   in by the evaluator, not written by the candidate. Not yet: they run in the caller's own process.
 - **Transfer by failure mode**: a dossier's failed criteria become failure-mode findings with the codes the standard

@@ -68,6 +68,8 @@ class MethodVariantInput(BaseModel):
     op: str = Field(min_length=1, max_length=100)
     estimated_cost: float = Field(ge=0, allow_inf_nan=False)
     expects: list[str] = Field(default_factory=list, max_length=50)
+    # Over MCP a variant is a G6 solver op; reviewer and arm variants are ranked from Python, with their trials.
+    kind: Literal["engine"] = "engine"
 
 
 #: Each op the block answers, with what it does (its ``help`` answer).

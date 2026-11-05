@@ -15,6 +15,9 @@
   conflict gate reads stance and lineage by `g6.epistemic_integrity`'s rules.
 - `IndependentAssuranceEvaluator` is renamed `InProcessAssuranceEvaluator`: it runs in this process and attests no
   isolation.
+- The selector can learn from a study's records: a `MethodVariant` may be any named method (`kind`: `engine`, the
+  default, or a reviewer or an arm), repeated trials of one variant on one case are grouped by case instead of
+  dropped, and `learn_from` names the splits it learns from (default held-out and shadow, as before).
 
 ## v0.2 — 2026-11-05
 

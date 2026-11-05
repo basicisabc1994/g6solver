@@ -13,7 +13,7 @@ The bridge uses G6's canonical nouns (`task`, `run`, `evidence`, `envelope`, `ri
 |---|---|---|
 | `risk_tier` | G6's R0 to R3. `ProblemSignature.risk` and `DomainStandard.risk` hold the tier's number (`risk=2` is R2) and each exposes `.risk_tier`. | G6's own |
 | `problem signature` | The features of a task the method selector matches trials on (`ProblemSignature`): domain, uncertainty, claim kind, `risk_tier`, budget and available evidence. | `task` |
-| `method variant` | One named way to meet an evidence need (`MethodVariant`): a representation run by a G6 solver op. | `tool` |
+| `method variant` | One named way to meet an evidence need (`MethodVariant`): a G6 solver op (`kind="engine"`, the default and the only kind the router runs), a reviewer, or an arm of a study. | `tool` |
 | `trial` | One evaluator-scored run of a method variant, or of a base and a changed harness, on one case (`EvaluatedTrial`, `PairedTrial`, `ControlTrial`). | `run` |
 | `cohort` | The frozen evaluation suite a trial's case was drawn from (`EvaluatedTrial.cohort_id`). | `evidence` |
 | `assurance dossier` | The evidence a claim's artifacts gave against a pinned domain standard's criteria, with its content digest (`CandidateDossier`); its `completion_state` is `qualified-draft` or `blocked-escalated`. | `evidence` |
@@ -60,16 +60,16 @@ An evaluated episode \(z\) contains the task signature, chosen method, evaluator
 
 ### 3.1 Context and inference
 
-A bounded context is \(x=(d,u,k,r,b,E)\): domain, uncertainty kind, claim type, risk, budget and available evidence. Training observations are matched by \((d,u,k,a)\); unrelated domain outcomes do not silently count toward success in the new domain. The approach intentionally avoids semantic embedding generalisation as evidence of cross-domain reliability.
+A bounded context is \(x=(d,u,k,r,b,E)\): domain, uncertainty kind, claim type, risk tier, budget and available evidence. Training observations are matched by \((d,u,k,a)\); unrelated domain outcomes do not silently count toward success in the new domain. The approach intentionally avoids semantic embedding generalisation as evidence of cross-domain reliability. The splits it learns from are a parameter (`learn_from`, default held-out and shadow, never the development split unless named).
 
-For a particular representation/engine variant \(a\), with independently evaluated resolutions \(w\) across \(n\) matched episodes, the reference selector computes
+For a particular variant \(a\) (a solver engine op, a reviewer or a study arm), with independently evaluated resolutions \(w\) across \(n\) matched cases, the reference selector computes the following. Repeated trials of one variant on one case under one frozen oracle are one case: it contributes the share of its trials that resolved to \(w\), and counts once in \(n\) and \(N\).
 
 \[
 \hat p_a=\frac{w+1}{n+2},\qquad
 U_a=\sqrt{\frac{2\ln(2+N)}{n+1}},
 \]
 
-where \(N\) counts evaluator-admitted historical episodes, not generated transcripts. This is a **heuristic Bayesian-smoothed proxy** and UCB-like uncertainty bonus, not a calibrated probability bound for real-world truth. A ranking score uses
+where \(N\) counts evaluator-admitted historical cases (each variant's case once), not generated transcripts. This is a **heuristic Bayesian-smoothed proxy** and UCB-like uncertainty bonus, not a calibrated probability bound for real-world truth. A ranking score uses
 
 \[
 \mathrm{score}(a\mid x)=

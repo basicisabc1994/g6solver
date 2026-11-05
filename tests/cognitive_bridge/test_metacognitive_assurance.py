@@ -444,8 +444,10 @@ def test_duplicate_case_variant_does_not_double_count_training_evidence():
     t = trial(1, "smt", resolved=True)
     repeated = replace(t, trial_id="a-second-name-for-the-same-case")
     selector = MetacognitiveMethodSelector([t, repeated], admit_trial=lambda a: True)
-    assert len(selector.trials) == 1
-    assert selector.rejected_trials == 1
+    # both trials are kept (grouped by case, not dropped), and the case still counts once
+    assert len(selector.trials) == 2 and selector.rejected_trials == 0
+    row = selector.select(context(), variants()[:1], required_methods=("formal",)).ordered_variants[0]
+    assert row["training_cases"] == 1 and row["historical_resolutions"] == 1
 
 
 def test_epistemic_gate_detects_cross_method_conflict_and_blocks():

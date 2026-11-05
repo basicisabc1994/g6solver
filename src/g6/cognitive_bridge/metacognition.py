@@ -20,6 +20,8 @@ from .mixed_methods import ENGINE_SPECS, ENGINE_OP_VARIANTS, ClaimIR, MethodRout
 
 CAPABILITIES = frozenset(ENGINE_SPECS)
 RISK_BANDS = range(4)
+#: The splits a trial can come from (``EvaluatedTrial.split``); a selector learns from the ones its ``learn_from`` names.
+SPLITS = ("training", "heldout", "shadow")
 
 
 @dataclass(frozen=True)
@@ -49,11 +51,14 @@ class ProblemSignature:
 
 @dataclass(frozen=True)
 class MethodVariant:
-    """A trusted, typed implementation of one evidence obligation.
+    """A trusted, typed way to meet one evidence obligation: any named method.
 
-    Representations label the specific mapping: 'DAG-json', 'DAG-dot',
-    'annotated-graph', 'SMT-logic', 'tabular-features' etc. The executable
-    operation is restricted to the existing G6 ENGINE_SPECS route.
+    ``kind`` says what it is. ``"engine"`` (the default) is a G6 solver op: its method is one of ENGINE_SPECS, its
+    engine that method's component and its op an allowlisted variant, so it can become an executable step.
+    Representations label the specific mapping: 'DAG-json', 'DAG-dot', 'annotated-graph', 'SMT-logic',
+    'tabular-features' etc. Any other kind (``"reviewer"``, ``"arm"`` of a study, ...) is ranked from its trials
+    like an engine, but names its own method, engine and op, is never one of ENGINE_SPECS' methods and is never
+    executed by the router.
     """
     id: str
     method: str
@@ -62,13 +67,21 @@ class MethodVariant:
     op: str
     estimated_cost: float
     expects: tuple[str, ...] = ()
+    kind: str = "engine"
 
     def __post_init__(self) -> None:
-        if self.method not in ENGINE_SPECS:
-            raise ValueError("method not in existing G6 engines")
-        expected = ENGINE_SPECS[self.method]
-        if self.engine != expected["component"] or self.op not in ENGINE_OP_VARIANTS[self.method]:
-            raise ValueError("method variant cannot arbitrarily substitute an executable backend")
+        if not isinstance(self.kind, str) or not self.kind.strip():
+            raise ValueError("a variant's kind names what it is: engine, reviewer, arm, ...")
+        if self.kind == "engine":
+            if self.method not in ENGINE_SPECS:
+                raise ValueError("method not in existing G6 engines")
+            expected = ENGINE_SPECS[self.method]
+            if self.engine != expected["component"] or self.op not in ENGINE_OP_VARIANTS[self.method]:
+                raise ValueError("method variant cannot arbitrarily substitute an executable backend")
+        elif self.method in ENGINE_SPECS:
+            raise ValueError("only an engine variant meets a G6 solver method")
+        elif not all((self.method, self.engine, self.op)):
+            raise ValueError("variant needs a method, an engine and an op")
         if not self.id or not self.representation:
             raise ValueError("variant needs ID and representation")
         if not math.isfinite(self.estimated_cost) or self.estimated_cost < 0:
@@ -104,7 +117,7 @@ class EvaluatedTrial:
             raise ValueError("evaluation trial needs IDs, context and evidence provenance")
         if type(self.resolved) is not bool or type(self.critical_regression) is not bool:
             raise ValueError("evaluator decisions must be booleans")
-        if self.split not in ("training", "heldout", "shadow"):
+        if self.split not in SPLITS:
             raise ValueError("evaluation split invalid")
         if not math.isfinite(self.actual_cost) or self.actual_cost < 0:
             raise ValueError("trial cost invalid")
@@ -144,28 +157,35 @@ class MetacognitiveMethodSelector:
     The `admit_trial` hook is a mandatory evaluator-side trust boundary.
     If omitted, NO historical data are used (safe cold start). A lambda
     returning True is useful for unit tests but is NOT a production oracle.
+
+    ``learn_from`` names the splits whose trials it learns from (``training``, ``heldout``, ``shadow``); the default,
+    held-out and shadow, keeps the development split out of the evidence. Repeated trials of one variant on one case
+    (under one frozen oracle) are all kept and grouped: the case counts once, with the share of its trials that
+    resolved. The same record twice (one ``trial_id``) is one record.
     """
     def __init__(self, trials: Sequence[EvaluatedTrial] = (), *,
                  admit_trial: Callable[[EvaluatedTrial], bool] | None = None,
                  exploration_weight: float = 0.15,
-                 seed: int = 0):
+                 seed: int = 0,
+                 learn_from: Sequence[str] = ("heldout", "shadow")):
         if not math.isfinite(exploration_weight) or not 0 <= exploration_weight <= 1:
             raise ValueError("exploration weight invalid")
+        learn = tuple(dict.fromkeys(learn_from))
+        if not learn or set(learn) - set(SPLITS):
+            raise ValueError(f"learn_from names the splits to learn from, among {', '.join(SPLITS)}")
         self.trials: tuple[EvaluatedTrial, ...] = ()
         self.rejected_trials = 0
         self.exploration_weight = exploration_weight
         self.seed = seed
         self.admit_trial = admit_trial
+        self.learn_from = learn
         clean: list[EvaluatedTrial] = []
         seen: set[str] = set()
-        seen_cases: set[tuple[str, str, str]] = set()
         for t in trials:
-            # A replayed record must be in evaluator-owned heldout/shadow, and
-            # cannot duplicate a previous trial id. The trusted admission hook
+            # A replayed record must be in a split it learns from, and cannot
+            # duplicate a previous trial id. The trusted admission hook
             # MUST check signature, frozen suite, evaluator and data access.
-            key = (t.oracle_digest, t.case_id, t.variant_id)
-            if (t.trial_id in seen or key in seen_cases
-                    or t.split not in ("heldout", "shadow") or admit_trial is None):
+            if t.trial_id in seen or t.split not in self.learn_from or admit_trial is None:
                 self.rejected_trials += 1
                 continue
             try:
@@ -177,8 +197,9 @@ class MetacognitiveMethodSelector:
                 continue
             clean.append(t)
             seen.add(t.trial_id)
-            seen_cases.add(key)
         self.trials = tuple(clean)
+        #: How many (oracle, case, variant) groups were admitted: the evidence count, whatever the repeats.
+        self._groups = len({(t.oracle_digest, t.case_id, t.variant_id) for t in self.trials})
 
     def _score(self, variant: MethodVariant, context: ProblemSignature) -> dict[str, Any]:
         specific = [x for x in self.trials
@@ -186,21 +207,25 @@ class MetacognitiveMethodSelector:
                     and x.uncertainty == context.uncertainty and x.claim_kind == context.claim_kind]
         # Do not transfer patterns from unrelated domains by default; such a
         # transfer is a hypothesis that requires evaluation, not prior evidence.
-        n = len(specific)
-        wins = sum(x.resolved and not x.critical_regression for x in specific)
-        critical = sum(x.critical_regression for x in specific)
+        cases: dict[tuple[str, str], list[EvaluatedTrial]] = {}
+        for x in specific:  # one variant's repeated trials on one case are one case, not several
+            cases.setdefault((x.oracle_digest, x.case_id), []).append(x)
+        n = len(cases)
+        wins = sum(sum(x.resolved and not x.critical_regression for x in group) / len(group)
+                   for group in cases.values())
+        critical = sum(sum(x.critical_regression for x in group) / len(group) for group in cases.values())
         mean = (wins + 1) / (n + 2)  # Beta(1,1) shrinkage, not calibration.
-        bonus = math.sqrt(2 * math.log(2 + max(1, len(self.trials))) / (n + 1))
+        bonus = math.sqrt(2 * math.log(2 + max(1, self._groups)) / (n + 1))
         # Novel/sparse methods are only explored by a separate low-risk policy.
         # Here uncertainty is disclosed; it cannot inflate an unsafe high-risk
         # method above a trained non-regressing method.
         exploration = self.exploration_weight * bonus if context.risk < 2 else 0.0
         regression_penalty = critical / max(1, n)
         score = (mean + exploration - regression_penalty) / (1.0 + variant.estimated_cost)
-        return {"variant_id": variant.id, "representation": variant.representation,
+        return {"variant_id": variant.id, "kind": variant.kind, "representation": variant.representation,
                 "method": variant.method, "engine": variant.engine, "op": variant.op,
                 "expected_cost": variant.estimated_cost,
-                "training_cases": n, "historical_resolutions": wins,
+                "training_cases": n, "repeated_trials": len(specific) - n, "historical_resolutions": wins,
                 "critical_regressions": critical, "smoothed_success_proxy": mean,
                 "exploration_bonus": exploration,
                 "ranking_score": score,
@@ -213,8 +238,10 @@ class MetacognitiveMethodSelector:
         if max_optional < 0 or max_optional > 10:
             raise ValueError("max optional methods invalid")
         required = tuple(dict.fromkeys(required_methods))
-        if not required or set(required) - CAPABILITIES:
-            raise ValueError("required methods must be explicit known G6 capabilities")
+        # A required method is a G6 solver capability or the method a non-engine variant names (a review, an arm).
+        known = CAPABILITIES | {v.method for v in variants if v.kind != "engine"}
+        if not required or set(required) - known:
+            raise ValueError("required methods must be explicit known G6 capabilities or methods a variant names")
         if len({v.id for v in variants}) != len(variants):
             raise ValueError("duplicate candidate method variant ids")
         options = [v for v in variants if v.estimated_cost <= context.budget
@@ -281,7 +308,7 @@ class MetacognitiveMethodSelector:
                     selected.append({**s, "obligation": "supplemental"})
                     remaining -= s["expected_cost"]
         policy = {"version": "meta-selector/0.2", "seed": self.seed,
-                  "exploration_weight": self.exploration_weight,
+                  "exploration_weight": self.exploration_weight, "learn_from": list(self.learn_from),
                   "trials": sorted(t.trial_id for t in self.trials),
                   "required": list(required), "context": vars(context),
                   "candidate_ids": sorted(v.id for v in variants)}

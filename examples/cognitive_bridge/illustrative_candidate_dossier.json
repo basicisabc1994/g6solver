@@ -11,8 +11,8 @@
           "id": "execution:claim1",
           "kind": "report",
           "length": 1659,
-          "sha256": "6ce86ba94e7aec9d93e829c86c21d001ab478d35fd0dcb04a4346a1ac0f9caae",
-          "source_ref": "g6:execution:6ce86ba94e7aec9d93e829c86c21d001ab478d35fd0dcb04a4346a1ac0f9caae"
+          "sha256": "f77690cd4fb7017723b782d017d1b71b5a93ff2abc93c254f85189f1f521c12f",
+          "source_ref": "g6:execution:f77690cd4fb7017723b782d017d1b71b5a93ff2abc93c254f85189f1f521c12f"
         },
         "control_tests": {
           "negative_count": 1,
@@ -32,18 +32,18 @@
         "verifier_manifest": {
           "id": "tiny_truth_table",
           "negative_control_hashes": [
-            "6a702c5e6745c6d71491d31d767bc66778dc98bf94f60780de20f372309b5de5"
+            "05984423828e60ffb25e86355041427c98c54c1346766e042d08281da67ae5ab"
           ],
           "owner": "external_evaluator",
           "positive_control_hashes": [
-            "6ce86ba94e7aec9d93e829c86c21d001ab478d35fd0dcb04a4346a1ac0f9caae"
+            "f77690cd4fb7017723b782d017d1b71b5a93ff2abc93c254f85189f1f521c12f"
           ],
           "version_sha256": "0d8559b7f487997a34e8b71c57872e09d9fbc504a39281a6892a85bc0c07fecd"
         }
       }
     ],
     "completion_state": "qualified-draft",
-    "content_sha256": "7fc2967f33acc1ba7bf84b0b191b6f574edc4ebed97665e3779e7dc2aeb10ca7",
+    "content_sha256": "ce48d9204b4c786e6378126c5f6b186f39ccd98eb31a03eb3c25277022f2b9bf",
     "documentary_sections": {
       "assumptions": "Classical Boolean logic only, two named variables.",
       "counterexamples_and_refutations": "Negative control removes premise A, admitting A=False B=False etc.",
@@ -111,7 +111,7 @@
   "epistemic_reconciliation": null,
   "evidence": [
     {
-      "source": "dossier:7fc2967f33acc1ba7bf84b0b191b6f574edc4ebed97665e3779e7dc2aeb10ca7",
+      "source": "dossier:ce48d9204b4c786e6378126c5f6b186f39ccd98eb31a03eb3c25277022f2b9bf",
       "summary": "assurance dossier for claim claim1"
     }
   ],
@@ -134,18 +134,20 @@
         "expected_cost": 2.0,
         "exploration_bonus": 0.22234557110512668,
         "historical_resolutions": 0,
+        "kind": "engine",
         "method": "formal",
         "obligation": "mandatory",
         "op": "check_validity",
         "ranking_note": "evaluator-admitted historical outcomes only; not a calibrated forecast",
         "ranking_score": 0.2407818570350422,
+        "repeated_trials": 0,
         "representation": "SMT",
         "smoothed_success_proxy": 0.5,
         "training_cases": 0,
         "variant_id": "smt"
       }
     ],
-    "policy_digest": "3418ce3bfccde9852017d9ae65d063eb87f3c065925c1b298bdcf013dada27ff",
+    "policy_digest": "933d0a1fc0b0bc0a1574723a5e0166714c29bb21e82def76c8e02e6dc37c85e1",
     "rejected_trials": 0,
     "requirements": [
       "formal"
@@ -162,8 +164,8 @@
     "method_execution_coverage": 1.0,
     "method_execution_coverage_definition": "executed non-blocked method steps / requested executable steps",
     "missing": [],
-    "run_id": "80ee0b6c3b374853b5be15e8b05ca040",
-    "selection_policy_digest": "3418ce3bfccde9852017d9ae65d063eb87f3c065925c1b298bdcf013dada27ff",
+    "run_id": "77fd2526339d48cbad61734bdd4e18a0",
+    "selection_policy_digest": "933d0a1fc0b0bc0a1574723a5e0166714c29bb21e82def76c8e02e6dc37c85e1",
     "standard_digest": "1cb9d446acc2117e1790bccef585ffe4ca21ea102c8e548ed529d219b3816d9f",
     "steps": [
       {
@@ -174,7 +176,7 @@
         "method": "formal",
         "metric": "validity_or_counterexample_under_formalised_assumptions",
         "op": "check_validity",
-        "request_id": "db85fea77fae",
+        "request_id": "4d5f6131cbcd",
         "result": {
           "completion_state": "qualified-draft",
           "component": "formal",
@@ -205,8 +207,8 @@
     ]
   },
   "next_action": "submit frozen artifact/check bundle to independent G6 promotion door",
-  "request_id": "c943f3dabf92",
-  "run_id": "80ee0b6c3b374853b5be15e8b05ca040",
+  "request_id": "d8159281bdd0",
+  "run_id": "77fd2526339d48cbad61734bdd4e18a0",
   "warning": "Independent external custody and G6 door replay are NOT established here.",
   "warning_card": {
     "code": "G6_E_COGNITIVE_NOT_PROMOTED",
