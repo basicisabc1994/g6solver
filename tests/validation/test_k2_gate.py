@@ -38,8 +38,8 @@ def _loop(monkeypatch, arm, on_tree, at_parent, *, parent_raises=False):
     def session(*a, **kw):
         sessions.append(a[6] if len(a) > 6 else kw)
         Docker.tree += 1
-        a[5].feed({"type": "result", "subtype": "success", "is_error": False})     # a repair that ends cleanly: its own success
-        kw["codes"].append(0)                                                       # and a clean exit
+        a[5].feed({"type": "result", "subtype": "success", "is_error": False, "session_id": "s1"})   # a repair that ends cleanly:
+        kw["codes"].append(0)                                              # its own success, of the first session, at exit 0
 
     def parent_check(ctx, task, found, ins):
         parents.append((found["test"], ins.at, ins.file))
@@ -57,7 +57,9 @@ def _loop(monkeypatch, arm, on_tree, at_parent, *, parent_raises=False):
 
     def critic(n):
         return {"verdict": "defect", "rule": "r", "why": "w", "test": TEST, "seconds": 1.0}
-    got = we.reviews_until_clean(ctx, SimpleNamespace(repo="/w/r"), run, "agent", "base", [], "key", we.c.Tally(), 1.0, 0.0, critic,
+    first = we.c.Tally()
+    first.feed({"type": "result", "subtype": "success", "is_error": False, "session_id": "s1"})    # the first session's own
+    got = we.reviews_until_clean(ctx, SimpleNamespace(repo="/w/r"), run, "agent", "base", [], "key", first, 1.0, 0.0, critic,
                                  finding=we.finding_rule(arm))
     return got, sessions, parents, writes
 

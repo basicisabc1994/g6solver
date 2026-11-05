@@ -2376,6 +2376,10 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
     gated = finding == "parent"          # K2 (PLAN.md, 2026-11-04, evening)
     at_parent: dict[str, str] = {}       # every round's test on the parent, in a container of its own, by case
     rounds, failing, reason, verdicts, seconds, broken, ended, timed_out = 0, [], "", [], 0.0, False, "", False
+    # the container's repairs continue the first session (``--continue``): the one whose own result the tally holds as the loop
+    # starts (the first session's, or K3's rule step's, which step_ending held to the first session's), fixed once; each repair's
+    # own result must name it, as on the host (``resume``), and with no id there is no session to continue and no repair starts
+    first = str(((tally.result if tally is not None else None) or {}).get("session_id") or "") if session is None else ""
     for n in range(1, MAX_REPAIRS + 2):
         if n > 1 or not after_step:
             if not starts(f"capture round-{n}"):
@@ -2423,14 +2427,16 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
             break
         before = tree()
         note = CRITIC_NOTE.format(**{k: critic.get(k, "") for k in ("rule", "why", "test")}) + REVIEW_ASK
-        if session is None:       # the container's repair, ended by its own stop, result and exit (``step_ending``), no other's
+        if session is None and not first:     # no first session to continue: no prompt to any session, and the run is "error"
+            ended = "error"
+        elif session is None:     # the container's repair, ended by its own stop, result, exit and session (``step_ending``)
             codes, earlier = [], tally.result
             stopped = run_session(ctx, run, agent, scout_again(docker_args), key, tally, note,
                                   c.NDJSON["numbered_stream"].format(tag="repair", n=n),
                                   seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)) if dog is None else dog.left(),
                                   stop_usd=stop, codes=codes, **({"deadline": dog} if dog is not None else {}))
             own = tally.result if tally.result is not earlier else None     # ``Tally.feed`` keeps each result as a new dict
-            ended = step_ending(stopped, own, codes[-1] if codes else None)
+            ended = step_ending(stopped, own, codes[-1] if codes else None, session=first)
             ended = "" if ended == "finished" else ended
         else:
             ended = session(note, c.NDJSON["numbered_stream"].format(tag="repair", n=n))

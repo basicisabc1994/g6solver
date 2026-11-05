@@ -396,6 +396,13 @@ def test_the_rule_step_resumes_the_session_on_the_runs_clock_tally_and_stop_and_
     assert we.rule_step(None, None, None, "agent", "base1", args, "key", tally, 7.5, 1000.0 - 100.0) == "error"  # no own result
 
 
+def _first_tally():
+    """The tally as the loop finds it: holding the first session's own success, which the loop's repairs continue."""
+    tally = we.c.Tally()
+    tally.feed(dict(SUCCESS))
+    return tally
+
+
 def _gated_loop(monkeypatch, after_step):
     kept, sessions = [], []
     on_tree = [we.ProbeRun(1, {"test_critic.py::test_owed": "failed"}, {}, ""),
@@ -419,7 +426,7 @@ def _gated_loop(monkeypatch, after_step):
     monkeypatch.setattr(we, "keep_first_patch", lambda ctx, task, agent, base, n=1: kept.append(n))
     monkeypatch.setattr(we, "parent_check", lambda *a: we.ProbeRun(1, {"test_critic.py::test_owed": "failed"}, {}, ""))
     got = we.reviews_until_clean(SimpleNamespace(docker=Docker(), arm="K3"), SimpleNamespace(repo="/w/r"),
-                                 SimpleNamespace(write_json=lambda *a: None), "agent", "base", [], "key", we.c.Tally(), 1.0, 0.0,
+                                 SimpleNamespace(write_json=lambda *a: None), "agent", "base", [], "key", _first_tally(), 1.0, 0.0,
                                  lambda n: {"verdict": "defect", "rule": "r", "why": "w", "test": "t", "seconds": 1.0},
                                  finding="parent", **({"after_step": True} if after_step else {}))
     return got, kept, sessions
@@ -633,7 +640,7 @@ def _timed_loop(monkeypatch, *, deadline, review_takes=0.0, start=0.0):
     monkeypatch.setattr(we, "keep_first_patch", lambda *a: None)
     monkeypatch.setattr(we, "parent_check", lambda *a: we.ProbeRun(1, {"test_critic.py::test_owed": "failed"}, {}, ""))
     got = we.reviews_until_clean(SimpleNamespace(docker=Docker(), arm="K3"), SimpleNamespace(repo="/w/r"),
-                                 SimpleNamespace(write_json=lambda *a: None), "agent", "base", [], "key", we.c.Tally(), 1.0, 0.0,
+                                 SimpleNamespace(write_json=lambda *a: None), "agent", "base", [], "key", _first_tally(), 1.0, 0.0,
                                  critique, finding="parent", after_step=True, deadline=deadline)
     return got, sessions, critiques
 
@@ -1213,6 +1220,102 @@ def test_review_2_a_container_repair_that_does_not_end_cleanly_ends_the_loop_and
 def test_review_2_a_container_repair_that_ends_cleanly_goes_on_to_the_next_review(monkeypatch):
     got, reviews = _repairing(monkeypatch, result=SUCCESS, code=0, stop="")
     assert "ended" not in got and reviews[:2] == [1, 2]
+
+
+# --- review 3, repair 2: one session-identity rule on both executors -------------------------------------------------------------
+def _container_loop(monkeypatch, first, repaired, arm="K3", after_step=True):
+    """Arm ``arm``'s loop in the container, its tally holding ``first`` (the result the loop's repairs continue), each repair
+    ending with the result ``repaired``. Returns the loop's result, the repairs started (their commands) and the reviews."""
+    tally, started, reviews, state = we.c.Tally(), [], [], [0]
+    tally.feed(first)
+
+    def repair(ctx, run, agent, command, key, tally_, text, name, *, codes, **kw):
+        started.append(list(command))
+        state[0] += 1
+        tally_.feed(dict(repaired))
+        codes.append(0)
+        return ""
+
+    def review(n):
+        reviews.append(n)
+        return {"verdict": "defect", "rule": "r", "why": "w", "test": "test"} if n == 1 else {"verdict": "none"}
+
+    monkeypatch.setattr(we, "run_session", repair)
+    monkeypatch.setattr(we, "run_set", lambda *a: we.ProbeRun(1, {"test_critic.py::test_rule": "failed"}, {}, ""))
+    monkeypatch.setattr(we, "parent_check", lambda *a: we.ProbeRun(1, {"test_critic.py::test_rule": "failed"}, {}, ""))
+    monkeypatch.setattr(we, "keep_first_patch", lambda *a: None)
+    got = we.reviews_until_clean(SimpleNamespace(arm=arm), SimpleNamespace(repo="/repo"), SimpleNamespace(write_json=lambda *a: None),
+                                 "agent", "base", ["claude", "--disallowedTools", "x"], "key", tally, 10, time.monotonic(), review,
+                                 finding="parent", tree=lambda: state[0], after_step=after_step)
+    return got, started, reviews
+
+
+def test_review_3_finding_1_a_container_repair_whose_result_names_another_session_ends_the_run_error(monkeypatch):
+    got, started, reviews = _container_loop(monkeypatch, {**SUCCESS, "session_id": "first"}, {**SUCCESS, "session_id": "other"})
+    assert got.get("ended") == "error" and len(started) == 1 and reviews == [1]
+    assert all("--continue" in command for command in started)       # the container keeps --continue
+
+
+def test_review_3_finding_4_a_container_first_session_whose_result_names_no_session_starts_no_repair(monkeypatch):
+    plain = {k: v for k, v in SUCCESS.items() if k != "session_id"}
+    got, started, _ = _container_loop(monkeypatch, plain, {**SUCCESS, "session_id": "new"}, arm="K2", after_step=False)
+    assert started == [] and got.get("ended") == "error"
+
+
+def test_review_3_a_container_repair_whose_result_names_its_first_session_goes_on(monkeypatch):
+    got, started, reviews = _container_loop(monkeypatch, {**SUCCESS, "session_id": "first"}, {**SUCCESS, "session_id": "first"})
+    assert "ended" not in got and len(started) == 1 and reviews == [1, 2]
+
+
+class _Sessions(_Docker):
+    """The agent's container, whose sessions each end with the result ``results`` gives in turn, at exit 0."""
+
+    def __init__(self, task, events, sent, results):
+        super().__init__(task, events, sent)
+        self.results, self.calls = list(results), 0
+
+    def sh(self, ctr, script, *args, **kw):
+        if script.startswith("git status --porcelain"):
+            return self.done(stdout=f"tree {self.calls}".encode())
+        return super().sh(ctr, script, *args, **kw)
+
+    def popen(self, *args, **kw):
+        self.calls += 1
+        self.events.append(("session", self.calls))
+        data = json.dumps(self.results.pop(0)).encode() + b"\n"
+        return SimpleNamespace(stdin=_Stdin(self.sent), stdout=io.BytesIO(data), stderr=io.BytesIO(), poll=lambda: 0,
+                               wait=lambda **kw: 0)
+
+
+def _container_run(monkeypatch, tmp_path, arm, results):
+    task, events, sent = we.load_tasks()[0], [], []
+    docker = _Sessions(task, events, sent, results)
+    ctx = we.Context(archive=we.c.Archive(tmp_path / "archive"), docker=docker, key_reader=lambda: "fake-key",
+                     issue_reader=lambda task: ("title", "issue"), tree_reader=lambda task: "tree", g6={"commit": "0" * 40},
+                     variant=we.ROUND3, arm=arm, environ={})
+    probe = we.ProbeRun(1, {"test_bug.py::test_bug": "failed"}, {})
+    reviews = []
+    monkeypatch.setattr(we, "key_check", lambda *a, **kw: {"ok": True})
+    monkeypatch.setattr(we, "start_net", lambda *a: ("net", "proxy"))
+    monkeypatch.setattr(we, "read_thread", lambda *a: "")
+    monkeypatch.setattr(we, "run_critic", lambda *a, **kw: (reviews.append(1), {"verdict": "defect", "test": "def test_bug(): 0",
+                                                                                "rule": "r", "why": "w"})[1])
+    monkeypatch.setattr(we, "run_set", lambda *a, **kw: probe)
+    monkeypatch.setattr(we, "parent_check", lambda *a, **kw: probe)
+    return we._run_task(ctx, task, dry=False, cap=10.0, stop=10.5), docker, ctx, reviews
+
+
+def test_review_3_a_container_k2_run_whose_repair_names_another_session_ends_error(monkeypatch, tmp_path):
+    record, docker, _, reviews = _container_run(monkeypatch, tmp_path, "K2", [SUCCESS, {**SUCCESS, "session_id": "other"},
+                                                                              SUCCESS])
+    assert docker.calls == 2 and reviews == [1] and record["status"] == "error" and record["repairs"]["ended"] == "error"
+
+
+def test_review_3_a_container_k3_first_session_whose_result_names_no_session_starts_no_rule_step(monkeypatch, tmp_path):
+    plain = {k: v for k, v in SUCCESS.items() if k != "session_id"}
+    record, docker, ctx, reviews = _container_run(monkeypatch, tmp_path, "K3", [plain, SUCCESS])
+    assert docker.calls == 1 and reviews == [] and record["status"] == "error" and record["rule_step"]["at"] == "rule step"
+    assert we.has_baseline(ctx.archive, record["run"]) and we.scored_run(ctx.archive, record["run"])     # a row, its baseline kept
 
 
 # --- the reviewer cases' export reads K3's round-1 where K3 keeps it ----------------------------------------------------------
