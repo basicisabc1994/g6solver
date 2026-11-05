@@ -2892,3 +2892,26 @@ merged in.
   - If not, stage 5's runs wait, and the pilot's counts by step say where conversion still fails.
 - **What it cannot show.** These are the bugs the change was read from, so the pilot shows only whether the rule step can
   convert at all. Stage 5 is the test.
+
+## 2026-11-05 (evening): the owner's rulings on the level, the adaptive arm and the wording, before any pilot or stage 5 run
+
+**Each primary is read at p < 0.05.** The owner, this evening, in place of p < 0.025.
+- This is settled before the K3 pilot's first run and before any stage 5 run, so no score has been seen.
+- The cost, stated plainly: with two primaries each read at 0.05, the chance that at least one passes by luck alone is up to
+  about 10%. Both primaries are reported whatever they show.
+
+**An adaptive arm joins stage 5 as a secondary measure. The owner chose this study and this machine.**
+- Stage 5's K3 arm is arm F: G6 frozen, the strong non-learning baseline and the loop-off ablation in one.
+- Arm L is G6 adaptive. It runs the same bugs in the same frozen draw order, in blocks, on the subscription.
+- Arm L may change its own checks between blocks only through the gate, with a person approving through G6's existing
+  approval tools.
+- Arm L starts only once G6's own code carries the loop's diagnose, propose and promote steps. It may run after arm F,
+  since the arms are independent runs.
+- Its procedure, block size, gate and measures go into their own dated section here before its first run.
+- It changes neither of stage 5's primaries.
+
+**The method-selection test, at no model cost, gets its own dated section before it runs.** It chooses a check method by
+the kind of uncertainty, using the verdicts already recorded. The owner wants it run.
+
+**Words.** Public copy says "checked" or "challenged", not "verified". The reliability state `verified` keeps its name in
+code and in the interfaces, since renaming it would break every surface that reads it.
