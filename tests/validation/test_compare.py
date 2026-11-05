@@ -60,6 +60,70 @@ def test_the_bar_for_two_primaries_is_stricter_and_the_rule_itself_is_unchanged(
     assert compare.judged([six], compare.TWO_PRIMARIES)
 
 
+def _two_runs(better=(), worse=(), same=(), *, arm="K3"):
+    """Two runs a bug: the loop passes both runs of each bug in ``better`` and arm A neither, the reverse on ``worse``, and both
+    pass both on ``same``."""
+    rows = {}
+    for bug in [*better, *worse, *same]:
+        for repeat in (1, 2):
+            rows[(arm, bug, repeat)] = {"maintainers": bug not in worse}
+            rows[("A", bug, repeat)] = {"maintainers": bug not in better}
+    return rows
+
+
+def test_the_frozen_rule_decides_by_bug_and_the_run_level_p_is_only_reported(capsys):
+    """PLAN.md, 2026-11-05 (night, later): six run wins from three bugs are p = 1/64 by run and 1/8 by bug; the rule reads the
+    bugs, so it is not met, and the run-level p is printed beside it."""
+    got = compare.compare(_two_runs("abc"), "K3", "A", "abc", (1, 2), "maintainers")
+    assert (got["wins"], got["losses"], got["p"]) == (6, 0, pytest.approx(1 / 64))
+    assert not compare.judged([got]) and not compare.judged([got], compare.TWO_PRIMARIES)      # by run, both would be met
+    assert got["bugs"] == {"better": 3, "worse": 0, "same": 0} and got["bug_p"] == pytest.approx(1 / 8)
+    five = compare.compare(_two_runs("abcde", same="f"), "K3", "A", "abcdef", (1, 2), "maintainers")
+    assert five["bug_p"] == pytest.approx(1 / 32) and compare.judged([five]) and not compare.judged([five], compare.TWO_PRIMARIES)
+    mixed = compare.compare(_two_runs("abcde", worse="f"), "K3", "A", "abcdef", (1, 2), "maintainers")   # 10 wins, 2 losses
+    assert mixed["p"] == pytest.approx(79 / 4096) and mixed["bug_p"] == pytest.approx(7 / 64) and not compare.judged([mixed])
+    compare.report(_two_runs("abc"), "stage 5", "abc", (1, 2), loop_arm="K3", others=("A",), scores=("maintainers",))
+    lines = capsys.readouterr().out.splitlines()
+    assert any("p 0.0156" in line and "bugs better 3 worse 0 same 0  p by bug 0.1250" in line for line in lines)
+    assert any("frozen rule: not shown; at 0.025: not cleared" in line for line in lines)
+
+
+def test_the_within_run_comparison_decides_by_bug_on_each_runs_final_patch_against_its_first():
+    rows = {("K3", bug, r): {"first": False, "maintainers": True} for bug in "abc" for r in (1, 2)}
+    got = compare.within(rows, "K3", "abc", (1, 2))
+    assert (got["better"], got["worse"], got["same"], got["pairs"], got["missing"]) == (3, 0, 0, 6, 0)
+    assert (got["converted"], got["broken"], got["run_p"], got["p"]) == (6, 0, pytest.approx(1 / 64), pytest.approx(1 / 8))
+    assert not compare.within_judged(got)                                  # by run it would be decided
+    rows.update({("K3", bug, r): {"first": False, "maintainers": True} for bug in "de" for r in (1, 2)})
+    assert compare.within_judged(compare.within(rows, "K3", "abcde", (1, 2)))         # five bugs better: p = 1/32
+    rows[("K3", "e", 2)] = {"maintainers": True}                           # no first verdict (no baseline): no pair, and counted
+    rows[("K3", "d", 1)] = {"first": True, "maintainers": False}           # a right first patch made wrong
+    got = compare.within(rows, "K3", "abcde", (1, 2))
+    assert (got["better"], got["same"], got["missing"], got["pairs"], got["broken"]) == (3, 1, 1, 8, 1)
+    assert not compare.within_judged(got)
+
+
+def test_saved_gives_a_runs_first_patch_verdict_from_its_newest_check_only_beside_a_final_verdict_it_agrees_with(tmp_path,
+                                                                                                             monkeypatch):
+    archive = compare.c.Archive(tmp_path)
+    (tmp_path / "loop").mkdir()
+    for arm, checks in (("K2", [("round-1", False), ("round-2", True), ("final", True)]), ("A", [("final", True)])):
+        run = archive.start("run", "bug", arm=arm, repeat=1)
+        run.finish({"agent_started": True}, "finished")
+        archive.start("check", "bug", checked_run=run.rel).finish(
+            {"checks": [{"patch": patch, "passes": ok} for patch, ok in checks]}, "finished")
+        (tmp_path / "loop" / f"{arm}-bug-1.json").write_text(json.dumps({"arm": arm, "task": "bug", "repeat": 1, "run": run.rel,
+                                                                         "passes": True, "failing": 0}), "utf-8")
+        if arm == "K2":
+            k2 = run
+    monkeypatch.setattr(compare.we, "amendment", lambda task: None)
+    got = compare.saved(tmp_path)
+    assert got[("K2", "bug", 1)]["first"] is False and "first" not in got[("A", "bug", 1)]
+    archive.start("check", "bug", checked_run=k2.rel).finish({"checks": [{"patch": "round-1", "passes": True},     # newer, and
+                                                                         {"patch": "final", "passes": False}]}, "finished")
+    assert "first" not in compare.saved(tmp_path)[("K2", "bug", 1)]        # its final patch does not give the row's verdict
+
+
 def test_the_report_says_beside_the_rule_if_a_result_also_clears_the_bar_for_two_primaries(capsys):
     def line(k1):
         rows = _cells(K1=k1, A="a0 b0 c0 d0 e0 f0", T="a0 b0 c0 d0 e0 f0")

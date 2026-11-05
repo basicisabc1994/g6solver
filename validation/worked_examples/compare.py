@@ -2,7 +2,9 @@
 """The frozen comparison (PLAN.md, 2026-10-31): the loop against plain Claude Code on bugs it was not tuned on.
 
 Reads saved rows only, so it uses no model and no container. Uplift is the loop's pass rate minus the other arm's on the
-same bugs and repeats. Every comparison is printed on the maintainers' tests and on the amended tests.
+same bugs and repeats. Every comparison is printed on the maintainers' tests and on the amended tests. Every decision (the frozen
+rule, ``judged``, and the within-run comparison, ``within_judged``) reads the sign test over bugs; the one over runs is printed
+beside it and decides nothing (PLAN.md, 2026-11-05, night, later).
 """
 from __future__ import annotations
 
@@ -42,9 +44,15 @@ def saved(root: Path) -> dict[tuple[str, str, int], dict[str, bool | None]]:
     has an amended verdict only if it was scored for this run on the diff as it stands. Each is read by one rule, the run's ending
     first (``wecommon.verdict``): a verdict saved under an ending the run no longer has is void. Every row, and every key, is found
     by ``wecommon.saved_rows``: a score is the run's arm's, task's and repeat's, as its start names them, and a row that is no run's
-    own takes no key, so it can change no run's score."""
+    own takes no key, so it can change no run's score. "first", for the within-run comparison (``within``): the run's first patch's
+    verdict on the maintainers' tests ("round-1": K3's baseline, any other K arm's first round), from the newest check of the run
+    by its exact name, given only beside a maintainers' verdict that check's final patch agrees with."""
     rows: dict[tuple[str, str, int], dict[str, bool | None]] = {}
     archive = c.Archive(root)
+    checks: dict[str, list[str]] = {}
+    for r in archive.rows():
+        if r.get("event") == "started" and r.get("kind") == "check" and "checked_run" in r:
+            checks.setdefault(str(r["checked_run"]), []).append(str(r["run"]))
     for one in c.saved_rows(archive):
         facts = one.facts
         passes = c.verdict(archive, facts.name, one.row)     # none for a run the admission rule does not admit now
@@ -56,12 +64,27 @@ def saved(root: Path) -> dict[tuple[str, str, int], dict[str, bool | None]]:
             amended = c.verdict(archive, facts.name, kept, amendment=c.sha256_file(diff))
         shown = {"arm": facts.arm, "run": facts.name}       # the report's readers: the run's own arm, and its folder by its name
         rows[one.key] = {"maintainers": passes, "amended": amended, "said": said_of(root, shown)}
+        first = first_of(root, checks.get(facts.name, ()), passes)
+        if first is not None:
+            rows[one.key]["first"] = first
         review, end = final_review.said_of(root, shown), end_of(root, shown)
         if review:
             rows[one.key]["review"] = review
         if end:
             rows[one.key]["end"] = end
     return rows
+
+
+def first_of(root: Path, checks: Sequence[str], passes: bool | None) -> bool | None:
+    """A run's first patch's verdict ("round-1") from the newest of its checks that has a record (``checks``, oldest first), only
+    when that check's final patch gives the maintainers' verdict ``passes``; else None."""
+    if passes is None:
+        return None
+    for name in reversed(checks):
+        by = {row.get("patch"): row.get("passes") for row in record(root / name / "run.json").get("checks") or []}
+        if "final" in by:
+            return bool(by["round-1"]) if "round-1" in by and bool(by["final"]) is passes else None
+    return None
 
 
 def record(path: Path) -> dict[str, Any]:
@@ -107,15 +130,20 @@ def end_of(root: Path, row: Mapping[str, Any]) -> str | None:
 
 
 def compare(rows: Rows, loop_arm: str, other: str, tasks: Iterable[str], repeats: Iterable[int], score: str) -> dict[str, Any]:
-    """One arm against another on the same bugs and repeats; a pair with a run missing counts neither way."""
+    """One arm against another on the same bugs and repeats; a pair with a run missing counts neither way. ``p`` is the sign test
+    over run pairs, reported and never decisive; ``bug_p`` is the sign test over bugs (``by_bug``), which every decision reads
+    (PLAN.md, 2026-11-05, night, later: two runs of one bug are not independent)."""
+    tasks, repeats = list(tasks), list(repeats)
     pairs = [(rows.get((loop_arm, t, r), {}).get(score), rows.get((other, t, r), {}).get(score))
              for t in tasks for r in repeats]
     seen = [(a, b) for a, b in pairs if a is not None and b is not None]
     wins, losses = sum(a and not b for a, b in seen), sum(b and not a for a, b in seen)
     passed, base = sum(bool(a) for a, _ in seen), sum(bool(b) for _, b in seen)
+    bugs = by_bug(rows, loop_arm, other, tasks, repeats, score)
     return {"loop": loop_arm, "other": other, "score": score, "pairs": len(seen), "missing": len(pairs) - len(seen),
             "loop_passed": passed, "other_passed": base, "uplift": (passed - base) / len(seen) if seen else None,
-            "wins": wins, "losses": losses, "p": sign_test(wins, losses)}
+            "wins": wins, "losses": losses, "p": sign_test(wins, losses), "bugs": bugs,
+            "bug_p": sign_test(bugs["better"], bugs["worse"])}
 
 
 def by_bug(rows: Rows, loop_arm: str, other: str, tasks: Iterable[str], repeats: Iterable[int], score: str) -> dict[str, int]:
@@ -171,9 +199,41 @@ def finished(rows: Rows, tasks: Sequence[str], arms: Sequence[str], repeats: Seq
 
 
 def judged(results: Sequence[Mapping[str, Any]], bar: float = 0.05) -> bool:
-    """The frozen rule: with no pair missing, more passes than every other arm, and p < 0.05 against each. ``bar``: the same rule at
-    another p, for the line beside it."""
-    return bool(results) and all(r["missing"] == 0 and r["loop_passed"] > r["other_passed"] and r["p"] < bar for r in results)
+    """The frozen rule: with no pair missing, more passes than every other arm, and p < 0.05 against each, the p of the sign test
+    over bugs (``compare``'s ``bug_p``: per bug, the loop arm's passes minus the other's; better, worse or the same), never the
+    run-level one, which is reported beside it (PLAN.md, 2026-11-05, night, later). ``bar``: the same rule at another p, for the
+    line beside it."""
+    return bool(results) and all(r["missing"] == 0 and r["loop_passed"] > r["other_passed"] and r["bug_p"] < bar for r in results)
+
+
+def within(rows: Rows, arm: str, tasks: Iterable[str], repeats: Iterable[int]) -> dict[str, Any]:
+    """The within-run comparison (PLAN.md, 2026-11-05, midday): each of ``arm``'s runs' final patch against its own first patch, on
+    the maintainers' tests, by bug (night, later): per bug, the final patches' passes minus the first patches' (``saved``'s
+    "maintainers" and "first"); better, worse or the same, and ``p``, the exact one-sided sign test on bugs better against bugs
+    worse, which decides (``within_judged``). A run with no first verdict (no Claude Code baseline, or no check of its first patch)
+    or no final one is no pair: it is counted (``missing``), and its bug counts neither way. The run-level counts (first patches
+    made right, ``converted``, and made wrong, ``broken``) and their sign test (``run_p``) are reported beside it, never decisive."""
+    repeats = list(repeats)
+    counts = {"better": 0, "worse": 0, "same": 0}
+    pairs = missing = converted = broken = 0
+    for task in tasks:
+        got = [(rows.get((arm, task, r), {}).get("first"), rows.get((arm, task, r), {}).get("maintainers")) for r in repeats]
+        whole = [(a, b) for a, b in got if a is not None and b is not None]
+        missing += len(got) - len(whole)
+        if len(whole) < len(got):
+            continue
+        pairs += len(whole)
+        converted += sum(b and not a for a, b in whole)
+        broken += sum(a and not b for a, b in whole)
+        ahead = sum(bool(b) for _, b in whole) - sum(bool(a) for a, _ in whole)
+        counts["better" if ahead > 0 else "worse" if ahead < 0 else "same"] += 1
+    return {"arm": arm, **counts, "p": sign_test(counts["better"], counts["worse"]), "pairs": pairs, "missing": missing,
+            "converted": converted, "broken": broken, "run_p": sign_test(converted, broken)}
+
+
+def within_judged(result: Mapping[str, Any], bar: float = 0.05) -> bool:
+    """The within-run comparison's decision: more bugs better than worse, and its sign test over bugs below ``bar``."""
+    return result["better"] > result["worse"] and result["p"] < bar
 
 
 def failure_rich(rows: Rows, tasks: Iterable[str], score: str) -> list[str]:
@@ -192,11 +252,11 @@ def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], 
         results = [compare(rows, loop_arm, other, tasks, repeats, score) for other in others]
         for r in [*results, *(compare(rows, loop_arm, other, tasks, repeats, score) for other in shown)]:
             uplift = "n/a" if r["uplift"] is None else f"{r['uplift']:+.1%}"
-            bugs = by_bug(rows, loop_arm, r["other"], tasks, repeats, score)
+            bugs = r["bugs"]
             span = interval(rows, loop_arm, r["other"], tasks, repeats, score)
             print(f"{name:22} {score:11} {loop_arm} {r['loop_passed']:3}/{r['pairs']:<3} {r['other']:2} {r['other_passed']:3}/{r['pairs']:<3}"
                   f" uplift {uplift:>7}  wins {r['wins']:2} losses {r['losses']:2}  p {r['p']:.4f}"
-                  f"  bugs better {bugs['better']} worse {bugs['worse']} same {bugs['same']}"
+                  f"  bugs better {bugs['better']} worse {bugs['worse']} same {bugs['same']}  p by bug {r['bug_p']:.4f}"
                   f"  95% by bug {f'{span[0]:+.0%} to {span[1]:+.0%}' if span else 'n/a'}"
                   + (f"  MISSING {r['missing']}" if r["missing"] else "") + ("  report only" if r["other"] in shown else ""))
         for arm in (loop_arm, *others, *shown):
