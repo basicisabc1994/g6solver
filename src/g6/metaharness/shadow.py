@@ -24,11 +24,14 @@ version, as the meta-harness's monitor does.
 rollback, so the lineage shows losses as well as gains. A row's ``version`` is its number and ``base_version`` its parent.
 It carries the profile's digest, the change in plain words, what the proposer found, and what was measured: the held-out
 split's figures before and after, as the gate read them, and for a rollback the same figures the other way with what the
-monitor saw. They are measurements on those splits, nothing stronger. These are the loop's own numbers, which have nothing
-to do with G6's version, its tags or its releases: those stay the owner's.
+monitor saw. They are measurements on those splits, nothing stronger. An adoption the loop wrote also carries ``frozen``:
+the digests of what judges, read before the cycle developed anything, which were still the ones on disk as it was
+written. These are the loop's own numbers, which have nothing to do with G6's version, its tags or its releases: those
+stay the owner's.
 """
 from __future__ import annotations
 
+import copy
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -168,10 +171,12 @@ class ShadowHarness(MetaHarness):
 
     @_serialized
     def adopt(self, decision: GateDecision, *, findings: Mapping[str, Any] | None = None,
-              last_check: Callable[[], dict[str, Any] | None] = lambda: None) -> dict[str, Any]:
+              last_check: Callable[[], dict[str, Any] | None] = lambda: None,
+              frozen: Mapping[str, str] | None = None) -> dict[str, Any]:
         """Make ``decision``'s candidate the loop's head and its next generation, with what its proposer ``findings``.
-        Only a recommendation this harness issued, on this head. ``last_check`` runs just before the row is written, and a
-        refusal from it stands in place of the adoption."""
+        Only a recommendation this harness issued, on this head. ``last_check`` runs last: the row is made first, so
+        nothing but its write comes after the check, under the lock this harness holds for every write, and a refusal from
+        it stands in place of the adoption. ``frozen``: the digests that check held the files to, which the row carries."""
         refused = self._refusal()
         if refused:
             return refused
@@ -188,16 +193,17 @@ class ShadowHarness(MetaHarness):
         report, why = self._recorded("report", decision.report_digest)
         if report is None:
             return _blocked(NOT_ADOPTABLE, why)
-        stopped = last_check()
+        number = len(self.adoption_rows()) + 1
+        row = {"kind": "adopt", "version": number, "base_version": version, "by": ADOPTER, "scope": SCOPE, "at": _now(),
+               "decision_digest": decision.digest(), "report_digest": decision.report_digest,
+               "profile_digest": proposal.candidate_digest, "profile": proposal.candidate.model_dump(mode="json"),
+               "proposer": decision.proposer, "diff": dict(proposal.diff), "change": _change(proposal),
+               "measured": _measured(report), **{name: value for name, value in (findings or {}).items() if name in FINDINGS},
+               **({"frozen": dict(frozen)} if frozen is not None else {})}
+        stopped = last_check()                  # last: the row is made, and only its write follows
         if stopped:
             return stopped
-        number = len(self.adoption_rows()) + 1
-        self.adoptions.append("adopt", str(number), {
-            "kind": "adopt", "version": number, "base_version": version, "by": ADOPTER, "scope": SCOPE, "at": _now(),
-            "decision_digest": decision.digest(), "report_digest": decision.report_digest,
-            "profile_digest": proposal.candidate_digest, "profile": proposal.candidate.model_dump(mode="json"),
-            "proposer": decision.proposer, "diff": dict(proposal.diff), "change": _change(proposal),
-            "measured": _measured(report), **{name: value for name, value in (findings or {}).items() if name in FINDINGS}})
+        self.adoptions.append("adopt", str(number), row)
         return _envelope("qualified-draft", ADOPTED, f"version {number} is the loop's head, in its own workspace only",
                          next_action="Later ticks run on it; the monitor compares it with the version before.",
                          head_version=number, head_profile=proposal.candidate_digest)
@@ -206,16 +212,17 @@ class ShadowHarness(MetaHarness):
         """The head on the tuning cases, run once for each head, case set and budget, so an unchanged head costs nothing
         however many ticks and proposers read it. A run the model failed measured the provider and not the head, so the
         next measurement runs such a view again, and until then the proposers read it. It is held in memory, so a restart
-        measures once more."""
+        measures once more. Each caller reads a copy of its own, so what one proposer, or a domain shown the view, does to
+        it, no later reader sees."""
         _, base = self._head()
         key = (base.digest(), self.workflow.digest(), budget.limit)
         kept = self._measured
         if kept is not None and kept[0] == key and not (measuring and any(f.code == RUN_FAILED for f in kept[1].failures)):
-            return kept[1]
+            return copy.deepcopy(kept[1])
         view = build_view(self.workflow, self.factory, base, theories=self.theories, clock=self._clock, budget=budget,
                           artifacts=self.artifacts)
         self._measured = key, view
-        return view
+        return copy.deepcopy(view)
 
     def evaluate(self, proposal: Proposal, *, budget: int | None = None) -> dict[str, Any]:
         """As ``MetaHarness.evaluate``, once ``before_evaluation`` has said it may run. What that raises ends the tick with

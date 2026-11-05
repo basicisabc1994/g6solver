@@ -558,6 +558,11 @@ def _judge_digest(judge: Judge | None) -> str:
     return hashlib.sha256(source.read_bytes()).hexdigest() if source is not None else ""
 
 
+def _differs(now: Mapping[str, str], breached: bool, recorded: Mapping[str, str]) -> list[str]:
+    """The frozen things whose digest ``now`` is not the one ``recorded``, and ``sealed`` when its bytes were breached."""
+    return sorted({name for name, value in now.items() if value != recorded.get(name)} | ({"sealed"} if breached else set()))
+
+
 def _exclusive(method: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
     """One operation at a time per folder, on what is written and not on what this handle last read: a restart can
     overlap a tick that is still running, and a person's process is not the loop's. The lock is the operating system's,
@@ -596,6 +601,7 @@ class ShadowLoop:
         self.evaluating = False                   # this tick has begun its held-out evaluation
         self.waited = 0                           # ticks a budget wait turned away since the last cycle: a wait leaves no row
         self.tuned: list[dict[str, Any]] = []     # this tick's tuning cycles as they happen, for a row that a raise cut short
+        self._frozen_seen: dict[str, str] | None = None   # the frozen digests this tick read before it developed anything
         self.requests = _Requests(lambda: self._now(), self._halted, self._barred,
                                   lambda request, said: note_refusal(self.root, request, said))
         self._proposer = _Counted(proposer, self.requests)
@@ -733,15 +739,19 @@ class ShadowLoop:
                 "sealed": digest({"vault": sealed.vault.digest if sealed is not None else "",
                                   "refs": [dict(r) for r in sealed.refs] if sealed is not None else []})}
 
-    def _changed(self) -> list[str]:
-        """Which of the frozen things differ from what a person enrolled. The vault's digest is of the files as sealed,
-        so the sealed bytes are compared as well."""
-        recorded, now = self.log.enrolled()["frozen"], self._frozen()
-        changed = {name for name, value in now.items() if value != recorded.get(name)}
+    def _frozen_now(self) -> tuple[dict[str, str], bool]:
+        """The frozen digests as they stand, and whether the sealed bytes changed since they were sealed, in one reading
+        with the slow part first: the sealed bytes are compared before anything is digested, so an edit made while they
+        are read is in the digests that follow, and nothing comes after the digests but what acts on them."""
         sealed = self.domain.sealed()
-        if sealed is not None and sealed.vault.verify_unchanged():
-            changed.add("sealed")
-        return sorted(changed)
+        breached = sealed is not None and bool(sealed.vault.verify_unchanged())
+        return self._frozen(), breached
+
+    def _changed(self, against: Mapping[str, str] | None = None) -> list[str]:
+        """Which of the frozen things differ from ``against``, the digests a tick read before it developed anything, or
+        from what a person enrolled when none are given. The vault's digest is of the files as sealed, so the sealed bytes
+        are compared as well."""
+        return _differs(*self._frozen_now(), self.log.enrolled()["frozen"] if against is None else against)
 
     def _invalid(self) -> dict[str, Any] | None:
         if self.problems:
@@ -768,10 +778,12 @@ class ShadowLoop:
         paused = self.log.paused() or self._must_stop()
         if paused:
             return _blocked(PAUSED, f"the loop is paused: {paused}", "A person reads why, then loop.resume('<name>').")
-        changed = self._changed()
+        now, breached = self._frozen_now()
+        changed = _differs(now, breached, self.log.enrolled()["frozen"])
         if changed:
             return _blocked(FROZEN_CHANGED, f"changed since a person enrolled this domain: {', '.join(changed)}. Nothing "
                             "measured against it would mean what it did", "A person checks the change and enrols again.")
+        self._frozen_seen = now                  # what this tick's adoption must still find on disk as it is written
         lacking = self._lacking()
         if lacking is not None:
             return lacking
@@ -867,6 +879,7 @@ class ShadowLoop:
     def tick(self) -> dict[str, Any]:
         """One cycle. A heartbeat follows every tick, so someone watching can tell a loop that is waiting from one that
         has died."""
+        self._frozen_seen = None                  # no tick adopts on a reading an earlier tick made
         reply = self._refused() or self._run()
         self._beat(reply["completion_state"], reply["warning_card"]["code"], reason=reply["message"])
         return reply
@@ -1022,13 +1035,23 @@ class ShadowLoop:
         return _blocked(CANNOT_RECORD, why, "A person frees the log, then starts the loop again with g6_improve_start.")
 
     def _adopt(self, decision: Any, row: dict[str, Any]) -> dict[str, Any]:
-        def still_frozen() -> dict[str, Any] | None:      # the tick's first check came before all it measured
-            changed = self._changed()
+        """Adopt ``decision`` only if the frozen digests this tick read before it developed anything are the ones on disk
+        as the adoption is written. The adoption runs that check last, with its row already made and under the lock it
+        writes with, and the row carries the digests. A change at any moment between is a refusal of its own, written in
+        this cycle's row, and the next tick is refused while it stands."""
+        seen = self._frozen_seen
+
+        def still_frozen() -> dict[str, Any] | None:
+            if seen is None:                     # nothing to hold the files to, so nothing to adopt on
+                return _blocked(FROZEN_CHANGED, "this cycle read no frozen digests before it developed anything, so "
+                                "nothing is adopted")
+            changed = self._changed(against=seen)
             return _blocked(FROZEN_CHANGED, f"changed during this cycle: {', '.join(changed)}. What it measured is not what "
-                            "a person enrolled, so nothing is adopted") if changed else None
+                            "a person enrolled, so nothing is adopted, and the next tick is refused while it stands"
+                            ) if changed else None
 
         adopted = self.mh.adopt(decision, findings={name: row[name] for name in FINDINGS if name in row},
-                                last_check=still_frozen)
+                                last_check=still_frozen, frozen=seen or {})
         said = {"code": adopted["warning_card"]["code"], "reason": adopted["message"]}
         if adopted["completion_state"] == "blocked-escalated":
             return {**said, "outcome": "blocked"}
