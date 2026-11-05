@@ -370,7 +370,7 @@ def test_a_restart_in_the_providers_next_week_starts_a_book_of_its_own(tmp_path)
     try:
         meter = _meter(store, resets_at=sunday)                   # the provider's weeks end on Sundays
         admission = meter.reserve("codex", MONDAY + timedelta(days=2), 300)
-        meter.settle(admission, 300)
+        meter.settle(admission, 300, MONDAY + timedelta(days=2, hours=1))   # the store's own clock is not this test's
     finally:
         store.close()
     store = OperatorStore(path)
@@ -713,7 +713,8 @@ def test_a_reservation_booked_in_another_zone_survives_two_moves_of_its_week_and
 def test_a_week_with_a_venture_of_its_own_in_another_zone_counts_with_the_other_week_it_may_overlap(tmp_path):
     """This held that the move counted the provider week's own 350 and not the settings week's 100, by which book it read.
     No book moves now, so neither stands in for the other: both count. The 100 was kept with no time of its own, so it
-    counts in every week it may have been spent in, the provider's among them, until the last of those is over."""
+    counts in every week it may have been spent in, the provider's among them; and as both are still open, both count in
+    every week after too, until they are settled."""
     from datetime import timezone
 
     settings = datetime(2026, 10, 26, tzinfo=timezone(timedelta(hours=10)))
@@ -726,7 +727,7 @@ def test_a_week_with_a_venture_of_its_own_in_another_zone_counts_with_the_other_
                             read_account=lambda *_: AccountReading(resets_at=provider + timedelta(days=7)))
         now = (provider + timedelta(days=2, hours=1)).astimezone(UTC)
         assert meter.reading("codex", now).used == 450 and not meter.reserve("codex", now, 151).admitted
-        assert meter.reading("codex", provider + timedelta(days=7)).used == 0
+        assert meter.reading("codex", provider + timedelta(days=7)).used == 450   # still open: they count until settled
     finally:
         store.close()
 
@@ -1066,3 +1067,16 @@ def test_an_install_under_a_folder_named_pycache_still_pins_its_source(tmp_path,
     enrolled = loop_module.envelope_sha256()
     (package / "mod.py").write_text("value = 2\n", encoding="utf-8")
     assert loop_module.envelope_sha256() != enrolled
+
+
+def test_a_tick_settles_in_full_what_a_tick_that_died_left_open(tmp_path):
+    """A tick runs under its folder's tick lock, so a reservation open when it starts is one a dead tick left: it is
+    settled in full, on the loop's clock, before the tick reserves its own, and counts in no week after."""
+    loop = _loop(tmp_path)
+    dead = loop.meter.reserve("claude", MONDAY + timedelta(days=2), 500)
+    assert dead.admitted
+    loop.tick()
+    charges = loop.meter.scope.conn.execute("SELECT amount FROM ledger WHERE ref = ? AND kind = 'charge'",
+                                            (dead.reservation,)).fetchall()
+    assert [row["amount"] for row in charges] == [500.0]
+    assert loop.meter.scope.week_held("claude", "model", MONDAY + timedelta(days=9), MONDAY + timedelta(days=16)) == []

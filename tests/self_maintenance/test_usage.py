@@ -469,7 +469,8 @@ def test_a_figure_kept_through_a_failure_goes_when_its_own_reset_passes():
     reader.refresh(NOW + usage.REFRESH)
     assert reader("codex", START).used == 250.0
     reader.refresh(reset + usage.REFRESH)
-    assert reader("codex", START) is None and "model calls" in reader.said["codex"]
+    gone = reader("codex", START)                       # not known now: nothing is admitted on it until a read succeeds
+    assert gone.used == 0 and gone.unread and "nothing is reserved" in reader.said["codex"]
 
 
 def test_a_figure_read_with_no_reset_goes_when_the_providers_week_ends():
@@ -479,7 +480,7 @@ def test_a_figure_read_with_no_reset_goes_when_the_providers_week_ends():
     reader.refresh(week_end - timedelta(minutes=1))
     assert reader("codex", START).used == 250.0
     reader.refresh(week_end + usage.REFRESH)
-    assert reader("codex", START) is None
+    assert reader("codex", START).unread
 
 
 def test_a_reply_with_no_week_in_it_leaves_the_figure_and_adds_its_limit():
@@ -533,8 +534,10 @@ def test_a_limit_kept_through_a_failure_lifts_at_the_first_read_past_its_reset()
     assert reader("codex", START) is not None
     assert not meter.reserve("codex", reset - timedelta(seconds=1), 10).admitted    # up to its reset, it stands
     past = reset + usage.REFRESH
-    reader.refresh(past)
-    assert meter.reserve("codex", past, 10).admitted
+    reader.refresh(past)                               # the limit is over, and the read past it fails too
+    refused = meter.reserve("codex", past, 10)
+    assert not refused.admitted and refused.wait_until is None and "could not be read" in refused.reason
+    assert meter.next_room(past) == past + usage.REFRESH
 
 
 def test_a_failed_read_past_the_limits_reset_forgets_it():
@@ -542,7 +545,18 @@ def test_a_failed_read_past_the_limits_reset_forgets_it():
     reader = AccountReader((WINDOW,), ask={"codex": Tool(_at_the_limit(reset), usage.UsageUnavailable("down"))})
     reader.refresh(NOW)
     reader.refresh(NOW + usage.REFRESH)
-    assert reader("codex", START) is None and "model calls" in reader.said["codex"]
+    assert reader("codex", START).unread and "nothing is reserved" in reader.said["codex"]
+
+
+def test_a_good_read_after_a_failure_that_left_nothing_standing_admits_again():
+    reset = NOW + timedelta(minutes=1)
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(_at_the_limit(reset), usage.UsageUnavailable("down"), _limits(10))})
+    meter = BudgetMeter((WINDOW,), store=OperatorStore(":memory:"), read_account=reader)
+    reader.refresh(NOW)
+    reader.refresh(NOW + usage.REFRESH)
+    assert not meter.reserve("codex", NOW + usage.REFRESH, 10).admitted
+    reader.refresh(NOW + usage.REFRESH * 2)
+    assert meter.reserve("codex", NOW + usage.REFRESH * 2, 10).admitted
 
 
 def test_a_good_read_lifts_a_limit_kept_through_a_failure():
@@ -695,3 +709,48 @@ def test_an_ordinary_answer_comes_back_as_it_did():
 def test_a_codex_refusal_is_not_read_since_it_prints_text():
     """The limit of this: what Codex prints cannot be told from a reply, as with its limits. It waits for an issuance window."""
     assert refused_by(_codex("ERROR: This content may violate our usage policies.")) == ""
+
+
+# Review wks1, finding 4: a failed process is no reading ------------------------------------------------------------------
+
+def _answers_then_exits(code, answer):
+    """``run_process`` as a tool that answers, then ends with ``code``: no program starts."""
+    import os
+
+    def ran(argv, *, stdin, stdout, **kwargs):
+        os.read(stdin, 4096)
+        os.write(stdout, (json.dumps({"id": 2, "result": answer}) + "\n").encode())
+        return code
+
+    return ran
+
+
+@pytest.mark.parametrize("exit_code", [1, 2, 73, 431, -9, None, "0", True])
+def test_failed_usage_process_cannot_replace_last_good_figure(tmp_path, monkeypatch, exit_code):
+    from contextlib import nullcontext
+
+    start = datetime(2026, 10, 26, tzinfo=UTC)
+    now = start + timedelta(days=6, hours=1)
+    reset = start + timedelta(days=7)
+    window = ProviderWindow("codex", 1000, start)
+
+    def limits(percent):
+        return {"rateLimits": {"primary": {"usedPercent": percent, "windowDurationMins": 10080,
+                                           "resetsAt": reset.timestamp()}}}
+
+    monkeypatch.setattr(usage.component_process, "run_process", _answers_then_exits(exit_code, limits(0)))
+    monkeypatch.setattr(usage.tempfile, "TemporaryDirectory", lambda **_: nullcontext(str(tmp_path)))
+    reader = usage.AccountReader((window,), ask={"codex": lambda: limits(95)})
+    reader.refresh(now)
+    assert reader("codex", now).used == 950
+    reader.ask["codex"] = lambda: usage.read_limits(["fake-usage-tool"])
+    later = now + timedelta(seconds=1)
+    reader.read_now(later)
+    store = OperatorStore(":memory:")
+    try:
+        meter = BudgetMeter((window,), store=store, read_account=reader)
+        admitted = meter.reserve("codex", later, 200)
+        assert not admitted.admitted, f"failed usage tool (exit {exit_code!r}) replaced 950 with 0 and admitted 200"
+        assert reader("codex", later).used == 950
+    finally:
+        store.close()

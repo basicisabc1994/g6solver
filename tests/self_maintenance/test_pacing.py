@@ -109,9 +109,17 @@ def test_the_whole_accounts_use_counts_and_the_loop_gives_way():
 
 
 def test_the_ledger_is_never_read_below_what_the_loop_itself_committed():
+    meter = _meter(read_account=lambda provider, start: AccountReading(used=10, read_at=_day(3) + timedelta(hours=1)))
+    meter.settle(meter.reserve("claude", _day(3), 300), 300, _day(3))
+    assert meter.reading("claude", _day(3) + timedelta(hours=1)).used == 300
+
+
+def test_a_reading_with_no_time_holds_none_of_the_charges_so_each_goes_on_top():
+    """Review wks1, finding 1: it cannot say which charges it already holds, so it is read as holding none: high, never
+    low."""
     meter = _meter(read_account=lambda provider, start: AccountReading(used=10))
-    meter.settle(meter.reserve("claude", _day(3), 300), 300)
-    assert meter.reading("claude", _day(3)).used == 300
+    meter.settle(meter.reserve("claude", _day(3), 300), 300, _day(3))
+    assert meter.reading("claude", _day(3)).used == 310
 
 
 def test_at_a_reported_limit_the_loop_waits_for_the_reset():
@@ -151,9 +159,19 @@ def test_a_limit_met_on_one_provider_holds_no_other():
 
 def test_a_new_week_starts_empty():
     meter = _meter()
-    assert meter.reserve("claude", _day(5), 800).admitted
-    assert not meter.reserve("claude", _day(5), 1).admitted
+    spend = meter.reserve("claude", _day(5), 800)
+    assert spend.admitted and not meter.reserve("claude", _day(5), 1).admitted
+    meter.settle(spend, 800, _day(5) + timedelta(hours=1))
     assert meter.reserve("claude", _day(8), 200).admitted
+
+
+def test_a_reservation_still_open_counts_in_every_week_from_its_start_until_it_is_settled():
+    """Review wks1, finding 6: a request it sent may still come back and be charged after its week ends."""
+    meter = _meter()
+    spend = meter.reserve("claude", _day(5), 800)
+    assert meter.reading("claude", _day(8)).used == 800 and meter.reading("claude", _day(15)).used == 800
+    meter.settle(spend, 800, _day(8) + timedelta(hours=1))
+    assert meter.reading("claude", _day(8)).used == 800 and meter.reading("claude", _day(15)).used == 0
 
 
 def test_a_reading_gives_the_end_its_provider_reported_even_one_already_past():
@@ -198,9 +216,9 @@ def test_7_a_pending_reservation_adds_to_what_the_account_reports():
 
 
 def test_7_a_charge_can_already_be_in_the_accounts_figure_so_it_does_not_add():
-    meter = _meter(read_account=lambda provider, start: AccountReading(used=350))
-    meter.settle(meter.reserve("claude", _day(3), 200), 100)   # settled: the account's 350 may include it
-    assert meter.reading("claude", _day(3)).used == 350
+    meter = _meter(read_account=lambda provider, start: AccountReading(used=350, read_at=_day(3) + timedelta(hours=1)))
+    meter.settle(meter.reserve("claude", _day(3), 200), 100, _day(3))   # settled before it was read: the 350 may include it
+    assert meter.reading("claude", _day(3) + timedelta(hours=1)).used == 350
 
 
 def test_7_with_no_account_reading_the_reservation_still_counts_once():
@@ -224,9 +242,10 @@ def test_7_the_estimate_flag_follows_whichever_figure_was_used():
     meter = _meter(read_account=lambda provider, start: AccountReading(used=350, estimated=True))
     meter.reserve("claude", _day(3), 200)
     assert meter.reading("claude", _day(3)).estimated
-    quiet = _meter(read_account=lambda provider, start: AccountReading(used=10, estimated=True))
-    quiet.settle(quiet.reserve("claude", _day(3), 100), 100)
-    assert not quiet.reading("claude", _day(3)).estimated
+    quiet = _meter(read_account=lambda provider, start: AccountReading(used=10, estimated=True,
+                                                                       read_at=_day(3) + timedelta(hours=1)))
+    quiet.settle(quiet.reserve("claude", _day(3), 100), 100, _day(3))
+    assert not quiet.reading("claude", _day(3) + timedelta(hours=1)).estimated
 
 # Finding 8: the ceiling is checked in the transaction that reserves --------------------------------------------------------
 
@@ -236,21 +255,28 @@ def _shared_meters(path, count: int, allowance: float = 1000, read_account=None)
 
 
 def test_8_two_admissions_that_each_read_room_cannot_both_pass_the_ceiling(tmp_path):
+    """A rival that tries to reserve once this one has read its room cannot get in before it writes: the room is read in
+    the transaction that writes, so the rival waits for it, reads the room again in its own, and finds none."""
     path = tmp_path / "operator.db"
     late: list = []
+    rivals: list[threading.Thread] = []
 
     meter, rival = _shared_meters(path, 2)
     read = meter._look
 
-    def another_tick_gets_in_first(provider, now):
+    def another_tick_tries_in_between(provider, now):
         seen = read(provider, now)
-        if not late:
-            late.append(rival.reserve("claude", _day(2), 300))  # after this one has read its room, before it writes
+        if not rivals:
+            rivals.append(threading.Thread(target=lambda: late.append(rival.reserve("claude", _day(2), 300))))
+            rivals[0].start()
+            rivals[0].join(0.5)
+            assert rivals[0].is_alive() and not late         # held at the lock, after this one read its room
         return seen
 
-    meter._look = another_tick_gets_in_first
+    meter._look = another_tick_tries_in_between
     got = meter.reserve("claude", _day(2), 300)                # 300 + 300 is over day two's 400
-    assert late[0].admitted and not got.admitted and "ceiling" in got.reason
+    rivals[0].join(10)
+    assert got.admitted and not late[0].admitted and "ceiling" in late[0].reason
     assert meter.reading("claude", _day(2)).used == 300
 
 
@@ -647,11 +673,15 @@ def test_reservations_on_two_grids_each_count_only_in_the_weeks_their_spans_over
         monday = _codex(store)
         done = monday.reserve("codex", MONDAY + timedelta(hours=2), 100)
         monday.settle(done, 100, MONDAY + timedelta(hours=3))            # over before any Tuesday week began
-        assert monday.reserve("codex", MONDAY + timedelta(days=2), 50).admitted   # open, and may send until Monday next
+        still_open = monday.reserve("codex", MONDAY + timedelta(days=2), 50)        # open: it counts wherever it may send
         tuesday = _codex(store, resets_at=MONDAY + timedelta(days=8))
         now = MONDAY + timedelta(days=3, hours=1)
         assert tuesday.reading("codex", now).used == 50
-        assert tuesday.reserve("codex", now, 350).admitted
+        later = tuesday.reserve("codex", now, 350)
+        assert later.admitted and tuesday.reading("codex", now).used == 400
+        assert tuesday.reading("codex", MONDAY + timedelta(days=8, hours=1)).used == 400     # both still open
+        tuesday.settle(still_open, 50, MONDAY + timedelta(days=2, hours=1))
+        tuesday.settle(later, 350, now + timedelta(hours=1))
         assert tuesday.reading("codex", now).used == 400
         assert tuesday.reading("codex", MONDAY + timedelta(days=8, hours=1)).used == 0    # nothing counts twice
     finally:
@@ -757,9 +787,11 @@ def test_an_old_week_that_went_monday_to_tuesday_and_back_before_holders_keeps_i
 def test_an_old_book_counts_in_every_week_that_held_it_and_in_none_after(tmp_path):
     start = datetime(2026, 10, 26, tzinfo=BRISBANE)
     moved, path = start + timedelta(days=1), tmp_path / "op.db"
-    _old_folder(path, [(start.isoformat(), 350)], holders=[(start.isoformat(), moved.isoformat())])
+    [(venture, reservation)] = _old_folder(path, [(start.isoformat(), 350)], holders=[(start.isoformat(), moved.isoformat())])
     store = OperatorStore(path)
     try:
+        _codex(store, start=start)                             # read into its span
+        store.for_owner(OWNER).settle(venture, reservation, metered=350, at=moved + timedelta(days=7) - timedelta(hours=1))
         for days, used in ((9, 350), (14, 350), (15, 0)):     # clear from the end of the last week that held it
             meter = _codex(store, start=start, resets_at=start + timedelta(days=days))
             assert meter.reading("codex", start + timedelta(days=days) - timedelta(hours=1)).used == used
@@ -922,3 +954,127 @@ def test_a_stop_between_two_writes_leaves_every_reservation_counted_once(tmp_pat
         assert store.conn.execute("SELECT COUNT(*) FROM ledger WHERE kind = 'release'").fetchone()[0] == 0
     finally:
         store.close()
+
+# Review wks1: the six findings of the first review of the week spans -------------------------------------------------------
+
+def test_untimed_charge_goes_on_top_of_an_undated_reading():
+    """Finding 1: a reading with no time cannot say which charges it already holds, so every one goes on top of it."""
+    start = datetime(2026, 10, 26, tzinfo=UTC)
+    now = start + timedelta(days=6, hours=1)
+    reading = [None]
+    store = OperatorStore(":memory:")
+    try:
+        meter = BudgetMeter((ProviderWindow("codex", 1000, start),), store=store, read_account=lambda *_: reading[0])
+        spend = meter.reserve("codex", now, 300)
+        assert spend.admitted
+        meter.settle(spend, 300)
+        reading[0] = AccountReading(used=700, resets_at=start + timedelta(days=7))
+        admitted = meter.reserve("codex", now, 200)
+        assert not admitted.admitted, "700 reported + 300 untimed + 200 newly admitted exceeds 1000"
+    finally:
+        store.close()
+
+
+def test_grid_change_between_look_and_reserve_cannot_admit_on_obsolete_week(tmp_path, monkeypatch):
+    """Finding 2: the week was chosen before the transaction that reserved, so a grid kept by another connection in
+    between was never read again."""
+    monday = datetime(2026, 10, 26, tzinfo=UTC)
+    now = monday + timedelta(days=6, hours=1)
+    path = tmp_path / "operator.db"
+    first, second = OperatorStore(path), OperatorStore(path)
+    try:
+        window = ProviderWindow("codex", 1000, monday)
+        authoritative = BudgetMeter((window,), store=second)
+        earlier = monday + timedelta(days=2)
+        spend = authoritative.reserve("codex", earlier, 500)
+        assert spend.admitted
+        authoritative.settle(spend, 500, earlier + timedelta(minutes=1))
+        authoritative.scope.keep_grid("codex", monday + timedelta(days=10))      # Thursday weeks leave Wednesday's out
+        stale = BudgetMeter((window,), store=first)
+        assert stale.reading("codex", now).used == 0
+        authoritative._read_account = lambda *_: AccountReading(resets_at=monday + timedelta(days=7))
+        reserve_span = stale.scope.reserve_span
+
+        def changed_before_transaction(*args, **kwargs):
+            assert authoritative.reading("codex", now).used == 500             # Monday weeks again, from another connection
+            return reserve_span(*args, **kwargs)
+
+        monkeypatch.setattr(stale.scope, "reserve_span", changed_before_transaction)
+        admitted = stale.reserve("codex", now, 700)
+        assert not admitted.admitted, "grid changed before BEGIN IMMEDIATE: 500 + 700 admitted against a 1000 week"
+    finally:
+        first.close()
+        second.close()
+
+
+def test_reading_does_not_expire_before_reset_during_repeated_hour():
+    """Finding 3: two times in one zone compare by their wall clocks, which repeat in the hour a clock goes back."""
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo("America/New_York")
+    now = datetime(2026, 11, 1, 1, 45, tzinfo=zone, fold=0)          # 45 minutes before the second 01:30
+    reset = datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=1)
+    assert now.astimezone(UTC) < reset.astimezone(UTC)
+    reading = AccountReading(used=950, estimated=False, resets_at=reset)
+    assert standing(reading, now.astimezone(UTC)).used == 950
+    assert standing(reading, now).used == 950, "same instant in local time discards 950 usage before the reset"
+
+
+def test_settlement_before_reservation_cannot_put_later_spend_in_earlier_reading():
+    """Finding 5: a settle time before the reservation began put its charge inside a reading taken before it."""
+    start = datetime(2026, 10, 26, tzinfo=UTC)
+    read_at = start + timedelta(days=6)
+    opened = read_at + timedelta(hours=1)
+    store = OperatorStore(":memory:")
+    try:
+        meter = BudgetMeter((ProviderWindow("codex", 1000, start),), store=store,
+                            read_account=lambda *_: AccountReading(used=500, read_at=read_at))
+        spend = meter.reserve("codex", opened, 300)
+        assert spend.admitted
+        with pytest.raises(ValueError):
+            meter.settle(spend, 300, read_at - timedelta(hours=1))
+        admitted = meter.reserve("codex", opened + timedelta(minutes=1), 300)
+        assert not admitted.admitted, "charge begun after the reading was absorbed into it via an impossible settle time"
+    finally:
+        store.close()
+
+
+def test_request_finishing_after_reset_is_counted_in_the_week_it_overlaps():
+    """Finding 6: a settled span was cut at the end of the week it was made in, so a request in flight across the reset
+    was charged to no week after it."""
+    start = datetime(2026, 10, 26, tzinfo=UTC)
+    reset = start + timedelta(days=7)
+    store = OperatorStore(":memory:")
+    try:
+        meter = BudgetMeter((ProviderWindow("codex", 1000, start),), store=store)
+        spend = meter.reserve("codex", reset - timedelta(minutes=1), 1000)
+        assert spend.admitted
+        meter.settle(spend, 1000, reset + timedelta(minutes=1))
+        admitted = meter.reserve("codex", reset + timedelta(minutes=2), 200)
+        assert not admitted.admitted, "settled span crosses reset but its 1000 charge disappears from the new week"
+    finally:
+        store.close()
+
+def test_a_reservation_a_dead_tick_left_open_is_settled_in_full_and_then_stops_counting():
+    """Open, it would count in every week to come (finding 6's ruling), so the next tick settles it, in full, on the
+    store's clock: charged its worst case once, in the weeks it ran through."""
+    clock = [_day(5)]
+    store = OperatorStore(":memory:", clock=lambda: clock[0])
+    meter = BudgetMeter((ProviderWindow("claude", 1000, START),), store=store)
+    assert meter.reserve("claude", _day(5), 300).admitted          # its tick died before it settled
+    assert meter.reading("claude", _day(15)).used == 300
+    clock[0] = _day(6)
+    assert meter.settle_open("claude") == 300 and meter.settle_open("claude") == 0
+    assert meter.reading("claude", _day(6)).used == 300 and meter.reading("claude", _day(8)).used == 0
+
+
+def test_the_store_dates_a_settlement_by_its_own_clock_and_never_before_the_reservation_began():
+    """Review wks1, finding 5: the time a settlement is dated by decides where its charge counts, so it is the store's."""
+    clock = [_day(3)]
+    store = OperatorStore(":memory:", clock=lambda: clock[0])
+    meter = BudgetMeter((ProviderWindow("claude", 1000, START),), store=store)
+    early = meter.reserve("claude", _day(3), 100)
+    clock[0] = _day(2)                                              # a clock that went back
+    meter.settle(early, 100)
+    held = store.for_owner("g6-loop").week_held("claude", "model", START, START + timedelta(days=7))
+    assert [h.settled for h in held] == [_day(3)]                  # held to the reservation's start

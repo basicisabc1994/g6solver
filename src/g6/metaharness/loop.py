@@ -601,7 +601,7 @@ class ShadowLoop:
             raise ValueError(f"[{EVALUATOR_IN_REACH}] the loop's folder overlaps {', '.join(reach)}: it never writes "
                              "what judges it")
         self.log = CycleLog(self.root / CYCLE_LOG)
-        self.meter = BudgetMeter(settings.windows, store=OperatorStore(self.root / "operator.db"),
+        self.meter = BudgetMeter(settings.windows, store=OperatorStore(self.root / "operator.db", clock=self._now),
                                  read_account=read_account)
         for provider, until in self.log.limits().items():
             self.meter.limit_reached(provider, until)
@@ -882,7 +882,10 @@ class ShadowLoop:
              tick=len(self.log.cycles()), state=state, code=code)
 
     def _reserve(self) -> tuple[Admission | None, dict[str, Any] | None]:
-        """This tick's worst case on the provider its calls go to, or the wait: room on another pays for none of them."""
+        """This tick's worst case on the provider its calls go to, or the wait: room on another pays for none of them. A
+        tick runs under its folder's tick lock, so a reservation still open here is one a tick that died left: it is
+        settled in full first, or it would count in every week to come."""
+        self.meter.settle_open(self.provider)
         spend = self.meter.reserve(self.provider, self._now(), self.worst_case())
         if spend.admitted:
             return spend, None
@@ -920,8 +923,7 @@ class ShadowLoop:
                 row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
                        "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]}
             finally:             # use nobody could count stays charged at its worst case
-                charged = self.meter.settle(spend, spend.amount if self.requests.unseen else self.requests.sent,
-                                            self._now())
+                charged = self.meter.settle(spend, spend.amount if self.requests.unseen else self.requests.sent)
         unseen, stopped, refusal = self.requests.unseen, self.requests.stopped, self.requests.refusal
         self.requests.close()
         if self.tuned and "tuning" not in row:     # a tick cut short keeps what it had made

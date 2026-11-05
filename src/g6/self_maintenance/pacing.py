@@ -27,10 +27,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from g6.operator.store import BudgetRefused, Held, OperatorStore
+from g6.operator.store import BudgetRefused, Held, OperatorStore, utc
 
 OWNER = "g6-loop"
 SETTINGS_FILE = "settings.json"
+#: How long a tool's reading lasts before it is asked again, and how soon an account that could not be read is looked at
+#: again.
+REFRESH = timedelta(minutes=15)
 _ACCOUNT = "model"
 _WEEK = timedelta(days=7)
 _DAY = timedelta(days=1)
@@ -50,27 +53,29 @@ class ProviderWindow:
             raise ValueError("a provider window needs a provider and a finite, positive allowance")
         if not 0 <= self.reserve_share < 1:
             raise ValueError("reserve_share must be in [0, 1)")
-        if self.week_start.tzinfo is None:
-            raise ValueError("week_start must carry a time zone: a naive time reads differently on another machine")
+        object.__setattr__(self, "week_start", utc(self.week_start))
 
     def place(self, now: datetime) -> tuple[datetime, int]:
         """The start of the provider week ``now`` falls in, and which day of it this is (1 to 7)."""
+        now = utc(now)
         elapsed = now - self.week_start
         start = self.week_start + _WEEK * (elapsed // _WEEK)
         return start, (now - start) // _DAY + 1
 
     def next_day(self, now: datetime) -> datetime:
         """When this provider's next day begins, which is when its ceiling can rise."""
+        now = utc(now)
         start, day = self.place(now)
         return start + _DAY * day
 
     def week_end(self, now: datetime) -> datetime:
         """When the provider week ``now`` falls in ends, which is the one time its ceiling falls."""
+        now = utc(now)
         return self.place(now)[0] + _WEEK
 
     def aligned(self, reset: datetime) -> ProviderWindow:
-        """This window on the provider's own week, given a moment one ends. Already on it, it is this same window, whatever
-        zone the moment is written in."""
+        """This window on the provider's own week, given a moment one ends. Already on it, it is this same window."""
+        reset = utc(reset)
         return self if self.place(reset)[0] == reset else replace(self, week_start=reset)
 
 
@@ -94,7 +99,7 @@ def windows_from(settings: Mapping[str, Any]) -> tuple[ProviderWindow, ...]:
     if not isinstance(rows, list) or not rows:
         raise ValueError(f"{SETTINGS_FILE} needs windows: a list of at least one provider's week")
     try:
-        return tuple(ProviderWindow(str(row["provider"]), float(row["allowance"]), datetime.fromisoformat(row["week_start"]),
+        return tuple(ProviderWindow(str(row["provider"]), float(row["allowance"]), utc(datetime.fromisoformat(row["week_start"])),
                                     float(row.get("reserve_share", 0.2)), row.get("estimated", True) is not False)
                      for row in rows)
     except (KeyError, TypeError, AttributeError) as exc:
@@ -118,13 +123,18 @@ class AccountReading:
     read_at: datetime | None = None         # when the figure was read; a charge after that cannot be in it
     resets_at: datetime | None = field(default=None, compare=False)     # when the week that figure is of ends, which sets the week
     ended_at: datetime | None = field(default=None, compare=False)      # a week's end already past, which still says where its weeks fall
+    unread: str = ""                        # why a tool that reports could not be read, with no good figure left standing
+
+    def __post_init__(self) -> None:
+        for name in ("limited_until", "read_at", "resets_at", "ended_at"):
+            object.__setattr__(self, name, utc(getattr(self, name)))
 
 
 def standing(reading: AccountReading | None, now: datetime) -> AccountReading | None:
     """What ``reading`` still says at ``now``. Its figure is of the week that ends at its reset, so from that reset on it says
-    nothing: the figure is not known until the tool is read again, and the meter counts its own ledger. The reset stays, as
-    it says where the provider's weeks fall and when the week a tick reserved in ended, and so does a limit, which holds
-    until its own end."""
+    nothing: the figure is not known until the tool is read again. The reset stays, as it says where the provider's weeks
+    fall and when the week a tick reserved in ended, and so does a limit, which holds until its own end."""
+    now = utc(now)
     if reading is None or reading.resets_at is None or reading.resets_at > now:
         return reading
     return replace(reading, used=0.0, estimated=True, read_at=None)
@@ -146,19 +156,23 @@ class Admission:
     amount: float = 0.0
     ends: datetime | None = None     # when this week ends, as a provider last said; a reservation covers nothing sent after
 
+    def __post_init__(self) -> None:
+        for name in ("wait_until", "ends"):
+            object.__setattr__(self, name, utc(getattr(self, name)))
+
 
 def _used(held: Sequence[Held], account: AccountReading | None) -> tuple[float, bool]:
     """What a week has used, from the reservations that overlap it, and whether the account's figure is what set it. A
-    charge may already be in that figure, so the larger of the two stands. A charge settled after the figure was read cannot
-    be in it, nor can one whose settlement has no time, nor a reservation still open, so each goes on top. A reading with
-    no date gives nothing to tell them apart."""
+    charge settled by the time the figure was read may already be in it, so the larger of the two stands. A charge settled
+    after it cannot be, nor can one with no time, nor a reservation still open, so each goes on top. A reading with no
+    time of its own cannot say which charges it holds, so every charge goes on top of it: high, never low."""
     pending = sum(h.amount for h in held if h.charged is None)
     charged = sum(h.charged for h in held if h.charged is not None)
     if account is None:
         return charged + pending, False
     read_at = account.read_at
-    since = 0.0 if read_at is None else sum(h.charged for h in held
-                                            if h.charged is not None and (h.settled is None or h.settled > read_at))
+    since = sum(h.charged for h in held
+                if h.charged is not None and (read_at is None or h.settled is None or h.settled > read_at))
     figure = account.used + since
     above = figure > charged
     return (figure if above else charged) + pending, above
@@ -178,21 +192,29 @@ class BudgetMeter:
 
     def reading(self, provider: str, now: datetime) -> Admission:
         """Where this provider's week stands; ``admitted`` is left false, since nothing was asked for."""
+        now = utc(now)
         return self._look(provider, now)[0]
 
     def limit_reached(self, provider: str, until: datetime) -> None:
         """A limit a request ran into, which the account's figure may not show yet: it stands as a reported one does. It
         is held in memory, and the loop's records hand it back after a restart."""
+        until = utc(until)
         self._limits[provider] = until
 
     def next_room(self, now: datetime) -> datetime:
-        """The next time any ceiling can rise: the soonest a tick refused for its budget could be admitted."""
-        return min(window.next_day(now) for window in self.windows.values())
+        """The next time any ceiling can rise: the soonest a tick refused for its budget could be admitted. An account that
+        could not be read is looked at again a refresh later."""
+        now = utc(now)
+        soonest = min(window.next_day(now) for window in self.windows.values())
+        unread = self._read_account is not None and any(
+            (seen := self._read_account(provider, now)) is not None and seen.unread for provider in self.windows)
+        return min(soonest, now + REFRESH) if unread else soonest
 
     def _look(self, provider: str, now: datetime) -> tuple[Admission, AccountReading | None, datetime]:
         """Where this provider's week stands, what the account says of it, and when the week began. The week is where the
         provider last said its weeks fall, kept in the store so a restart with no reading stays on it; a reading that says
         where they fall now moves it there. That moves no reservation: each counts in whichever week its span overlaps."""
+        now = utc(now)
         window = self.windows.get(provider)
         if window is None:
             return Admission(provider, 0, 0.0, 0.0, 0.0, False, reason=f"no budget window for {provider!r}"), None, now
@@ -204,6 +226,9 @@ class BudgetMeter:
         if kept is not None:
             window = self.windows[provider] = window.aligned(kept)
         account = standing(self._read_account(provider, now), now) if self._read_account is not None else None
+        if account is not None and account.unread:
+            refused = refused or (f"{provider}'s account could not be read ({account.unread}), so nothing is reserved on it "
+                                  "until it reads again")
         reset = (account.resets_at or account.ended_at) if account is not None else None
         if reset is not None:
             window = self.windows[provider] = window.aligned(reset)
@@ -224,35 +249,45 @@ class BudgetMeter:
 
     def reserve(self, provider: str, now: datetime, worst_case: float) -> Admission:
         """Reserve ``worst_case`` when the week's ceiling allows it. A refusal is an admission with ``admitted`` false
-        and its reason: the loop waits, and never spends elsewhere. The ceiling is checked inside the transaction that
-        reserves, on every reservation overlapping the week as they stand then, so two ticks that each read room cannot both
-        pass it. The reservation spans from ``now`` to the end of the week, the latest its tick may send."""
-        seen, account, start = self._look(provider, now)
-        if seen.reason:
-            return seen
+        and its reason: the loop waits, and never spends elsewhere. Everything admission reads (the kept grid, the week, its
+        venture, every reservation overlapping it, and so the reading's baseline) is read inside the one transaction that
+        writes the reservation, so nothing it was checked against can change before it is written. The reservation runs
+        from ``now``, in the week ``now`` falls in."""
+        now = utc(now)
+        seen: list[tuple[Admission, datetime]] = []
 
-        def over_the_ceiling(held: list[Held]) -> str:
-            used = _used(held, account)[0]
-            if used + worst_case <= seen.ceiling + _SLACK:
-                return ""
-            return f"{used:g} used plus a worst case of {worst_case:g} is over day {seen.day}'s ceiling of {seen.ceiling:g}"
+        def decide() -> tuple[str, datetime, datetime, datetime]:
+            look, _, start = self._look(provider, now)
+            if not look.reason and look.used + worst_case > look.ceiling + _SLACK:
+                look = replace(look, reason=f"{look.used:g} used plus a worst case of {worst_case:g} is over day "
+                                            f"{look.day}'s ceiling of {look.ceiling:g}")
+            seen.append((look, start))
+            return look.reason, start, now, start + _WEEK
 
-        end = start + _WEEK
+        allowance = self.windows[provider].allowance if provider in self.windows else 0.0
         try:
-            venture, reservation = self.scope.reserve_span(
-                provider, week=start, start=now, end=end, account=_ACCOUNT, amount=worst_case,
-                caps={_ACCOUNT: self.windows[provider].allowance, "cash": 0}, admit=over_the_ceiling)
+            venture, reservation = self.scope.reserve_span(provider, account=_ACCOUNT, amount=worst_case,
+                                                           caps={_ACCOUNT: allowance, "cash": 0}, decide=decide)
         except BudgetRefused as exc:
-            return replace(seen, reason=str(exc))
-        return replace(seen, admitted=True, venture=venture, reservation=reservation, amount=float(worst_case), ends=end)
+            if not seen:
+                return Admission(provider, 0, 0.0, 0.0, 0.0, False, reason=str(exc))
+            return replace(seen[-1][0], reason=str(exc))
+        look, start = seen[-1]
+        return replace(look, admitted=True, venture=venture, reservation=reservation, amount=float(worst_case),
+                       ends=start + _WEEK)
 
     def settle(self, admission: Admission, used: float, now: datetime | None = None) -> float:
-        """Charge what the host counted, up or down; a tick that never settles stays charged in full. ``now``: when its
-        spend ended, on the clock the account's readings are dated by. It ends the reservation's span, and a reading taken
-        after it may hold the charge. Without it the span runs to the end of its week, and the charge goes on top of every
-        reading: high, never low."""
+        """Charge what the host counted, up or down; a tick that never settles stays charged in full, in every week from
+        its start. The store dates the settlement by its own clock; ``now`` is a time a caller gives instead, for recovery
+        and tests, refused when it is before the reservation began."""
+        now = utc(now)
         return self.scope.settle(admission.venture, admission.reservation, metered=used, at=now)
 
+    def settle_open(self, provider: str) -> float:
+        """Settle in full every reservation on ``provider`` still open (``OwnerScope.settle_open``): only for an owner that
+        knows none of its ticks is running, as the loop under its folder's tick lock does."""
+        return self.scope.settle_open(provider, _ACCOUNT)
 
-__all__ = ["AccountReading", "Admission", "BudgetMeter", "ProviderWindow", "SETTINGS_FILE", "ceiling", "read_settings",
-           "standing", "target", "windows_from"]
+
+__all__ = ["REFRESH", "AccountReading", "Admission", "BudgetMeter", "ProviderWindow", "SETTINGS_FILE", "ceiling",
+           "read_settings", "standing", "target", "utc", "windows_from"]

@@ -11,10 +11,14 @@ Evidence, the ledger and the queue's decisions are append-only: database trigger
 month (the archive kept a lifetime ledger beside a month counter it charged after the run: audit 011, VEN-005).
 
 A provider's weeks (``g6.self_maintenance.pacing``) are kept as spans. Each reservation made on them carries, beside its
-ledger row and in the same transaction, its own time span: its start, the end of the provider week it was made under,
-and that week's start, as instants in UTC. Its settlement is dated too. It is filed under the week it was made in, for
-good: nothing moves between weeks when a provider says its weeks fall elsewhere, and a reading counts every reservation
-whose span overlaps the week it reads (``week_held``).
+ledger row and in the same transaction, its start, the start of the provider week it was made under and that week's end,
+as instants in UTC. Its settlement is dated by the store's own clock as it is written, never before the reservation
+began. It is filed under the week it was made in, for good: nothing moves between weeks when a provider says its weeks
+fall elsewhere, and a reading counts every reservation whose span, from its start to its settlement or, while open, on
+without end, overlaps the week it reads (``week_held``).
+
+Every instant that enters this module goes through ``utc`` first, so two renderings of one instant are one instant: two
+times in one zone compare by their wall clocks, which repeat in the hour a clock goes back.
 """
 from __future__ import annotations
 
@@ -23,7 +27,8 @@ import math
 import os
 import sqlite3
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -52,14 +57,32 @@ CREATE TABLE IF NOT EXISTS week_spans (ref TEXT PRIMARY KEY, owner TEXT NOT NULL
     week_us INTEGER NOT NULL, start_us INTEGER NOT NULL, end_us INTEGER NOT NULL,
     CHECK (typeof(week_us) = 'integer' AND typeof(start_us) = 'integer' AND typeof(end_us) = 'integer'
            AND start_us < end_us));
-CREATE INDEX IF NOT EXISTS week_spans_by_end ON week_spans (owner, provider, end_us);
+CREATE INDEX IF NOT EXISTS week_spans_by_start ON week_spans (owner, provider, start_us);
 CREATE TABLE IF NOT EXISTS week_settled (ref TEXT PRIMARY KEY, at_us INTEGER NOT NULL CHECK (typeof(at_us) = 'integer'));
+CREATE TRIGGER IF NOT EXISTS week_settled_after_start BEFORE INSERT ON week_settled
+    WHEN NEW.at_us < (SELECT start_us FROM week_spans WHERE ref = NEW.ref)
+BEGIN SELECT RAISE(ABORT, 'a settlement cannot end before its reservation began'); END;
 """
 #: What the book code before week spans kept, read once into spans (``OwnerScope.adopt_books``) and never written again.
 _OLD_MOVES = ("week_books", "book_holders")
-_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _MICROSECOND = timedelta(microseconds=1)
 _WEEK = timedelta(days=7)
+
+
+def utc(moment: Any) -> Any:
+    """The one way an instant enters the loop's budget (this module, ``pacing`` and ``usage``): ``moment`` as the same
+    instant in UTC, so every comparison and every stored value is of instants, never of wall clocks. ``None`` stays
+    ``None``; a time with no zone is a ``ValueError``, as a naive time reads differently on another machine."""
+    if moment is None:
+        return None
+    if not isinstance(moment, datetime):
+        raise TypeError(f"{moment!r} is not a moment")
+    if moment.tzinfo is None or moment.utcoffset() is None:
+        raise ValueError("a moment needs its zone: a naive time reads differently on another machine")
+    return moment.astimezone(UTC)
+
+
+_EPOCH = utc(datetime(1970, 1, 1, tzinfo=UTC))
 
 
 def append_only(table: str, key: str = "seq") -> str:
@@ -76,13 +99,16 @@ BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END;
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds")
+    return utc(datetime.now(UTC)).isoformat(timespec="seconds")
+
+
+def _wall_clock() -> datetime:
+    return utc(datetime.now(UTC))
 
 
 def _us(moment: datetime) -> int:
     """A moment as whole microseconds since 1970 in UTC: one instant has one number, in whatever zone it was written."""
-    if moment.tzinfo is None:
-        raise ValueError("a moment needs its zone: a naive time reads differently on another machine")
+    moment = utc(moment)
     return (moment - _EPOCH) // _MICROSECOND
 
 
@@ -94,24 +120,25 @@ def _instant(text: Any) -> datetime:
     """A moment the store wrote as text, which must carry its zone; a ``ValueError`` when it does not read as one."""
     if not isinstance(text, str):
         raise ValueError(f"{text!r} is not a moment")
-    moment = datetime.fromisoformat(text)
-    if moment.tzinfo is None:
-        raise ValueError(f"{text!r} names no zone")
-    return moment
+    return utc(datetime.fromisoformat(text))
 
 
 def _week_name(week: datetime) -> str:
     """The month a provider week's ledger rows carry, and its venture's name after the provider: its start in UTC."""
+    week = utc(week)
     return _moment(_us(week)).isoformat()
 
 
 @dataclass(frozen=True)
 class Held:
     """One reservation on a provider's weeks as it stands: what it reserved; what it was charged, once settled; and when it
-    was settled, on the clock the provider's readings are dated by. ``settled`` is ``None`` while that is not known."""
+    was settled. ``settled`` is ``None`` while it is open, and for a charge the book code made with no time of its own."""
     amount: float
     charged: float | None = None
     settled: datetime | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "settled", utc(self.settled))
 
 
 class BudgetRefused(RuntimeError):
@@ -119,10 +146,15 @@ class BudgetRefused(RuntimeError):
 
 
 class OperatorStore:
-    """``path`` defaults to ``$G6_HOME/operator.db``; ``":memory:"`` keeps nothing past the process."""
+    """``path`` defaults to ``$G6_HOME/operator.db``; ``":memory:"`` keeps nothing past the process. ``clock``: the store's
+    own clock, which dates a settlement as it is written; the wall clock unless the owner of the store runs on another,
+    as a loop whose ticks run on a clock of their own does."""
 
-    def __init__(self, path: str | os.PathLike[str] = "operator.db") -> None:
+    def __init__(self, path: str | os.PathLike[str] = "operator.db", *,
+                 clock: Callable[[], datetime] | None = None) -> None:
         self.conn = open_db(path)
+        self.clock = clock or _wall_clock
+        self._depth = 0                       # how deep this connection is inside ``OwnerScope.immediate``
         self.conn.executescript(_SCHEMA + append_only("evidence") + append_only("ledger")
                                 + append_only("week_spans", "ref") + append_only("week_settled", "ref"))
 
@@ -182,75 +214,105 @@ class OwnerScope:
         row = self.conn.execute("SELECT reset FROM week_grids WHERE owner=? AND provider=?", (self.owner, provider)).fetchone()
         return _instant(row["reset"]) if row is not None else None
 
+    @contextmanager
+    def immediate(self) -> Iterator[None]:
+        """One ``BEGIN IMMEDIATE`` transaction: what is read inside it is what a write inside it is checked against, as no
+        other connection can write until it ends. A use inside one already open joins it, so a store method that writes
+        on its own can also be one step of a larger check."""
+        if self.store._depth:
+            self.store._depth += 1
+            try:
+                yield
+            finally:
+                self.store._depth -= 1
+            return
+        self.conn.execute("BEGIN IMMEDIATE")
+        self.store._depth = 1
+        try:
+            yield
+        except BaseException:
+            self.store._depth = 0
+            self.conn.rollback()
+            raise
+        self.store._depth = 0
+        self.conn.commit()
+
     def keep_grid(self, provider: str, reset: datetime) -> None:
         """Where the provider's weeks fall, as it now says: a moment one of them ends. The latest word stands. It moves the
         weeks a reading looks at, and no reservation."""
-        with self.conn:
+        reset = utc(reset)
+        with self.immediate():
             self.conn.execute("INSERT OR REPLACE INTO week_grids VALUES (?, ?, ?)", (self.owner, provider, _week_name(reset)))
 
     def week_venture(self, provider: str, week: datetime) -> str:
         """The venture the reservations made in the provider week that began at ``week`` are filed under, or ``""`` before
         one is made."""
+        week = utc(week)
         return self._named(f"{provider}@{_week_name(week)}") or ""
 
     def week_held(self, provider: str, account: str, start: datetime, end: datetime) -> list[Held]:
         """Every reservation of ``provider`` on ``account`` whose span overlaps [``start``, ``end``), as it stands, in one
         read, so a settlement on another connection is all in it or not at all.
 
-        A reservation's span runs from its start to when it was settled, or, while it is open or when that time is not known,
-        to the end of the week it was made in, the latest its tick may send. A settlement dated before the start is held to
-        the start, since the spend cannot end before it began."""
-        return self._held(provider, account, _us(start), _us(end))
-
-    def _held(self, provider: str, account: str, start: int, end: int) -> list[Held]:
+        A reservation's span runs from its start to when it was settled. While it is open it runs on without end, as a
+        request it sent may still come back and be charged, so it counts in every week from its start until it is settled;
+        so does a charge the book code made with no time of its own."""
+        start, end = utc(start), utc(end)
         rows = self.conn.execute(
-            "SELECT s.start_us AS opened, s.end_us AS closes, t.at_us AS settled,"
+            "SELECT t.at_us AS settled,"
             " SUM(CASE l.kind WHEN 'reserve' THEN l.amount ELSE 0 END) AS amount,"
             " COUNT(CASE l.kind WHEN 'reserve' THEN 1 END) AS reserves,"
             " SUM(CASE l.kind WHEN 'charge' THEN l.amount END) AS charged"
             " FROM week_spans s JOIN ledger l ON l.ref = s.ref"
             " JOIN ventures v ON v.venture_id = l.venture_id AND v.owner = s.owner"
             " LEFT JOIN week_settled t ON t.ref = s.ref"
-            " WHERE s.owner = ? AND s.provider = ? AND l.account = ? AND s.start_us < ? AND s.end_us > ?"
-            " GROUP BY s.ref", (self.owner, provider, account, end, start)).fetchall()
-        held = []
-        for row in rows:
-            last = row["closes"] - 1 if row["settled"] is None else min(row["closes"] - 1, max(row["opened"], row["settled"]))
-            if row["reserves"] and last >= start:
-                held.append(Held(float(row["amount"]), None if row["charged"] is None else float(row["charged"]),
-                                 None if row["settled"] is None else _moment(row["settled"])))
-        return held
+            " WHERE s.owner = ? AND s.provider = ? AND l.account = ? AND s.start_us < ? AND (t.at_us IS NULL OR t.at_us >= ?)"
+            " GROUP BY s.ref", (self.owner, provider, account, _us(end), _us(start))).fetchall()
+        return [Held(float(row["amount"]), None if row["charged"] is None else float(row["charged"]),
+                     None if row["settled"] is None else _moment(row["settled"])) for row in rows if row["reserves"]]
 
-    def reserve_span(self, provider: str, *, week: datetime, start: datetime, end: datetime, account: str, amount: float,
-                     caps: dict[str, float], admit: Callable[[list[Held]], str]) -> tuple[str, str]:
-        """Reserve ``amount`` on ``account`` for what ``provider`` is sent from ``start`` until ``end``, in the provider week
-        that began at ``week``, and return the venture it is filed under and the reservation. One transaction: the week's
-        venture, made once and named for the week's start in UTC, with ``caps``; ``admit``, given every reservation of
-        ``provider`` whose span overlaps [``week``, ``end``) as it stands under the lock, which says why not, or nothing; the
-        operator's own stop check on that venture; and the ledger's row with its span. A stop at any point leaves all of them
-        or none."""
+    def reserve_span(self, provider: str, *, account: str, amount: float, caps: dict[str, float],
+                     decide: Callable[[], tuple[str, datetime, datetime, datetime]]) -> tuple[str, str]:
+        """Reserve ``amount`` on ``account`` for ``provider``, and return the venture it is filed under and the reservation.
+        One ``BEGIN IMMEDIATE`` transaction (``immediate``), opened before anything is read: ``decide()`` reads inside it
+        everything admission rests on and gives why not, or nothing, with the start of the provider week, the reservation's
+        own start and the week's end; then the week's venture, made once and named for the week's start in UTC, with
+        ``caps``; the operator's own stop check on it; and the ledger's row with its span. Nothing it was checked against can
+        change before it is written. A refusal is ``BudgetRefused``, raised once the transaction has ended with no
+        reservation in it: what ``decide`` itself kept, such as where the provider's weeks fall, stays kept."""
         value = gates.amount_of(amount)
         if value is None:
             raise BudgetRefused(f"a reservation must be a finite, positive amount, got {amount!r}")
-        span = _us(week), _us(start), _us(end)
-        if not span[0] <= span[1] < span[2]:
-            raise ValueError("a reservation starts in the week it is made under and ends after it starts")
-        month = _week_name(week)
-        self.conn.execute("BEGIN IMMEDIATE")
-        try:
-            vid = self._named(f"{provider}@{month}") or self._insert_venture(f"{provider}@{month}", caps)
-            why = admit(self._held(provider, account, span[0], span[2]))
-            why = why or gates.spend_refusal(self.venture(vid), self._committed(vid, month), account, value)
-            if why:
-                raise BudgetRefused(why)
-            reservation = uuid.uuid4().hex
-            self._append_ledger(vid, month, account, "reserve", value, reservation)
-            self.conn.execute("INSERT INTO week_spans VALUES (?, ?, ?, ?, ?, ?)", (reservation, self.owner, provider, *span))
-            self.conn.commit()
-            return vid, reservation
-        except BaseException:
-            self.conn.rollback()
-            raise
+        with self.immediate():
+            why, week, start, end = decide()
+            if not why:
+                week, start, end = utc(week), utc(start), utc(end)
+                span = _us(week), _us(start), _us(end)
+                if not span[0] <= span[1] < span[2]:
+                    raise ValueError("a reservation starts in the week it is made under and ends after it starts")
+                month = _week_name(week)
+                vid = self._named(f"{provider}@{month}") or self._insert_venture(f"{provider}@{month}", caps)
+                why = gates.spend_refusal(self.venture(vid), self._committed(vid, month), account, value) or ""
+            if not why:
+                reservation = uuid.uuid4().hex
+                self._append_ledger(vid, month, account, "reserve", value, reservation)
+                self.conn.execute("INSERT INTO week_spans VALUES (?, ?, ?, ?, ?, ?)", (reservation, self.owner, provider, *span))
+        if why:
+            raise BudgetRefused(why)
+        return vid, reservation
+
+    def settle_open(self, provider: str, account: str) -> float:
+        """Settle in full, on the store's clock, every reservation of ``provider`` still open, and give what was charged. Only
+        an owner that knows none of its spends is running may: the loop does, under its folder's tick lock, where an open
+        reservation is a tick that died before it settled. Until then it counts in every week from its start."""
+        with self.immediate():
+            rows = self.conn.execute(
+                "SELECT l.venture_id, l.ref FROM week_spans s JOIN ledger l ON l.ref = s.ref AND l.kind = 'reserve'"
+                " JOIN ventures v ON v.venture_id = l.venture_id AND v.owner = s.owner"
+                " WHERE s.owner = ? AND s.provider = ? AND l.account = ?"
+                " AND NOT EXISTS (SELECT 1 FROM ledger x WHERE x.ref = s.ref AND x.kind = 'release') ORDER BY l.seq",
+                (self.owner, provider, account)).fetchall()
+            return sum(self._settle(row["venture_id"], row["ref"], None, None, None) for row in rows)
 
     def adopt_books(self, providers: Sequence[str]) -> dict[str, str]:
         """Read into spans, once, every reservation of ``providers`` that the book code before spans kept: under a week's
@@ -265,8 +327,7 @@ class OwnerScope:
         unread: dict[str, str] = {}
         if not any(self._old_reservations(providers).values()):     # looked at again under the lock, before anything is read
             return unread
-        self.conn.execute("BEGIN IMMEDIATE")
-        try:
+        with self.immediate():
             for provider, mine in self._old_reservations(providers).items():
                 try:
                     spans = self._old_spans(provider, mine) if mine else []
@@ -278,11 +339,7 @@ class OwnerScope:
                 for ref, span in spans:
                     self.conn.execute("INSERT INTO week_spans VALUES (?, ?, ?, ?, ?, ?)", (ref, self.owner, provider, *span))
                     self._date_old_charge(ref, span[1])
-            self.conn.commit()
-            return unread
-        except BaseException:
-            self.conn.rollback()
-            raise
+        return unread
 
     def _old_reservations(self, providers: Sequence[str]) -> dict[str, list[sqlite3.Row]]:
         """Each provider's reservations with no span: those the book code before spans made, under its weeks' ventures."""
@@ -429,34 +486,41 @@ class OwnerScope:
         ``metered`` is different: the host's own count of what the run used, taken where the run cannot touch it. When
         given it is the charge, up or down, and ``reported`` is not read.
 
-        ``at``: when the spend ended, kept in the same transaction. For a reservation on a provider's weeks it ends the span
-        (``week_held``) and dates the charge against a reading of the account."""
+        A reservation on a provider's weeks is dated as it settles, by the store's own clock, and never before it began:
+        that one value ends its span (``week_held``) and dates its charge against a reading, for every reader alike.
+        ``at`` is a time a caller gives instead, for recovery and tests; one before the reservation began is refused."""
+        at = utc(at)
         if metered is not None and (isinstance(metered, bool) or not isinstance(metered, int | float)
                                     or not math.isfinite(metered) or metered < 0):
             raise ValueError(f"a metered amount must be finite and not negative, got {metered!r}")
-        ended = _us(at) if at is not None else None
         vid = self.resolve(venture_id)
-        self.conn.execute("BEGIN IMMEDIATE")
         try:
-            row = self.conn.execute("SELECT month, account, amount FROM ledger WHERE venture_id=? AND ref=?"
-                                    " AND kind='reserve'", (vid, reservation)).fetchone()
-            if row is None:
-                raise LookupError("no such reservation for this venture")
-            charged = float(row["amount"])
-            reported_value = gates.amount_of(reported)
-            if metered is not None:
-                charged = float(metered)
-            elif reported_value is not None and reported_value > charged:
-                charged = reported_value
-            self._append_ledger(vid, row["month"], row["account"], "release", row["amount"], reservation)
-            self._append_ledger(vid, row["month"], row["account"], "charge", charged, reservation)
-            if ended is not None:
-                self.conn.execute("INSERT INTO week_settled VALUES (?, ?)", (reservation, ended))
-            self.conn.commit()
-            return charged
+            with self.immediate():
+                return self._settle(vid, reservation, reported, metered, at)
         except sqlite3.IntegrityError as exc:
-            self.conn.rollback()
             raise ValueError("this reservation is already settled") from exc
-        except BaseException:
-            self.conn.rollback()
-            raise
+
+    def _settle(self, vid: str, reservation: str, reported: float | None, metered: float | None,
+                at: datetime | None) -> float:
+        """Inside the caller's transaction: ``settle``, of a venture already resolved."""
+        at = utc(at)
+        row = self.conn.execute("SELECT month, account, amount FROM ledger WHERE venture_id=? AND ref=?"
+                                " AND kind='reserve'", (vid, reservation)).fetchone()
+        if row is None:
+            raise LookupError("no such reservation for this venture")
+        span = self.conn.execute("SELECT start_us FROM week_spans WHERE ref=?", (reservation,)).fetchone()
+        if span is not None and at is not None and _us(at) < span["start_us"]:
+            raise ValueError(f"a settlement cannot end at {at.isoformat()}, before its reservation began at "
+                             f"{_moment(span['start_us']).isoformat()}")
+        charged = float(row["amount"])
+        reported_value = gates.amount_of(reported)
+        if metered is not None:
+            charged = float(metered)
+        elif reported_value is not None and reported_value > charged:
+            charged = reported_value
+        self._append_ledger(vid, row["month"], row["account"], "release", row["amount"], reservation)
+        self._append_ledger(vid, row["month"], row["account"], "charge", charged, reservation)
+        if span is not None:
+            ended = _us(at) if at is not None else max(_us(self.store.clock()), span["start_us"])
+            self.conn.execute("INSERT INTO week_settled VALUES (?, ?)", (reservation, ended))
+        return charged
