@@ -3075,3 +3075,18 @@ the test is reported as not run. The selector would then be choosing by its tie 
   `learn_from` left at its default. Nothing else in the section changes.
 - **The class, so it is not repeated:** a git reference named by a pattern, not exactly. From now on, a reference read for a
   registration is named exactly, and its hash is written next to it.
+
+**Unknown is missing, never a failure: set before any pilot count or stage 5 run.** The first Codex review of
+`claude/study-trust` (`67ea51d`) found two rules in the within-run comparison that could change what it decides. Both are
+repaired on that branch (`158b1a9`), in its review loop.
+- **A first patch whose verdict is unknown** was read as a failed first patch. A passing final patch then counted as a
+  conversion, so unknown verdicts could manufacture improved bugs. Now an unknown verdict, on either patch, is missing: the
+  run gives no pair.
+- **A bug with one repeat missing** lost all its pairs. Now it keeps the pairs it has, and the missing repeat is counted apart.
+- **What changes on the record:**
+  - No recorded first verdict is unknown (0 of 375), so the first rule changes nothing recorded.
+  - The second changes only the run-level pair counts, which no script prints and which never decide. For example, M9's
+    held-out pairs go from 10 to 14. Every by-bug count is unchanged.
+- **The pilot's count follows the same rule.** The pilot's counting script read a check's `passes` as a boolean even when it
+  was absent, which is the same class. It now counts only a recorded `true` or `false`, and a run without both is reported
+  under "no pair". The pilot has no run yet, so nothing it counts has changed.
