@@ -133,8 +133,10 @@ def _checks(root: Path, task: str) -> dict[str, list[dict[str, Any]]]:
 
 
 def labelled(root: Path, task: str) -> list[tuple[str, Path, Any]]:
-    """Each recorded patch of ``task`` with its verdict. Counts of tests stay on this side: only passed or failed leaves here."""
-    checks, rows = _checks(root, task), []
+    """Each recorded patch of ``task`` with its verdict. Counts of tests stay on this side: only passed or failed leaves here. Arm
+    K3 keeps its first patch, "round-1", in its baseline folder (``run.baseline_of``), not in ``rounds``; it is a case only while
+    its bytes have the digest kept at its capture (``run.baseline_bytes``), the arm read from the run's start (``run.started_row``)."""
+    checks, rows, archive = _checks(root, task), [], c.Archive(root)
     for path in sorted((root / "loop").glob(f"*-{task}-*.json")):
         rec = json.loads(path.read_text("utf-8"))
         if rec.get("status") != "finished":
@@ -147,7 +149,14 @@ def labelled(root: Path, task: str) -> list[tuple[str, Path, Any]]:
                 rows.append((task, folder / "final.patch", json.loads(again.read_text("utf-8")).get("amended_passes")))
             continue
         by = {check.get("patch"): bool(check.get("passes")) for check in checks.get(run, [])}
-        rows += [(task, folder / "rounds" / f"{name}.patch", ok) for name, ok in by.items() if name != "final"]
+        first = Path(we.FIRST_PATCH).stem if we.rule_led(str(we.started_row(archive, run).get("arm") or "")) else None
+        for name, ok in by.items():
+            if name == "final":
+                continue
+            if name != first:
+                rows.append((task, folder / "rounds" / f"{name}.patch", ok))
+            elif we.baseline_bytes(archive, run) is not None:     # K3's baseline, its bytes checked against the kept digest
+                rows.append((task, we.baseline_of(folder), ok))
         rows.append((task, folder / "final.patch", by.get("final", rec.get("passes"))))
     return rows
 

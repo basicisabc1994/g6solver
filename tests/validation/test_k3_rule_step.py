@@ -859,3 +859,33 @@ def test_one_admission_rule_every_entry_point_asks_a_saved_k3_row_whose_baseline
         loop.one(tmp_path, "g6", "K3", "fake-1", 1)
     assert loop.rescore(tmp_path, "g6") == []
     assert compare.saved(tmp_path)[("K3", "fake-1", 1)]["maintainers"] is None
+
+
+# --- the reviewer cases' export reads K3's round-1 where K3 keeps it ----------------------------------------------------------
+def test_the_reviewer_export_finds_k3s_round_1_in_its_baseline_only_while_it_has_its_kept_digest(tmp_path):
+    import export_reviewer_cases as ex
+    archive, task, runs = we.c.Archive(tmp_path), "black-5634", {}
+    (tmp_path / "loop").mkdir()
+    for arm in ("K3", "K2"):
+        run = archive.start("run", task, arm=arm)
+        if arm == "K3":
+            _keep_baseline(archive, run, b"the first session's tree")
+            run.write("rounds/rule.patch", b"after the rule step")
+        else:
+            run.write("rounds/round-1.patch", b"K2's first patch")
+        run.write("final.patch", b"final " + arm.encode())
+        run.finish({"arm": arm, "agent_started": True}, "finished")
+        checks = [{"patch": "round-1", "passes": False}, *([{"patch": "rule", "passes": True}] if arm == "K3" else []),
+                  {"patch": "final", "passes": True}]
+        archive.start("check", task, checked_run=run.rel).finish({"checks": checks}, "finished")
+        (tmp_path / "loop" / f"{arm}-{task}-1.json").write_text(json.dumps({"arm": arm, "task": task, "repeat": 1, "run": run.rel,
+                                                                             "status": "finished", "passes": True}), "utf-8")
+        runs[arm] = run
+    k3, k2, baseline = runs["K3"].path, runs["K2"].path, we.baseline_of(runs["K3"].path)
+    got = {(path, ok) for _, path, ok in ex.labelled(tmp_path, task)}
+    assert got == {(baseline, False), (k3 / "rounds" / "rule.patch", True), (k3 / "final.patch", True),
+                   (k2 / "rounds" / "round-1.patch", False), (k2 / "final.patch", True)}
+    assert len(ex.distinct(ex.labelled(tmp_path, task))) == 5                   # the baseline is a case, with its label
+    baseline.write_bytes(b"something else")                                    # its bytes no longer have the kept digest
+    assert {path for _, path, _ in ex.labelled(tmp_path, task)} == {k3 / "rounds" / "rule.patch", k3 / "final.patch",
+                                                                     k2 / "rounds" / "round-1.patch", k2 / "final.patch"}
