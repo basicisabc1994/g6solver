@@ -452,14 +452,16 @@ def test_a_run_that_meets_the_usage_limit_ends_limited_with_its_reset_and_no_rev
 def test_a_limited_run_is_never_scored_and_may_be_made_again(monkeypatch, tmp_path):
     import compare
     import loop
+    made = we.c.Archive(tmp_path).start("run", "t", arm="K1", executor="host")    # the run as the archive holds it
+    made.finish({"executor": "host", "agent_started": True, "cost_usd": 0.0}, "limited")
     monkeypatch.setattr(loop, "tool", lambda command, *a, **kw: json.dumps(
-        {"status": "limited", "run": "run/t/1", "limit": {"resets": "resets 7pm"}}) if command == "run"
+        {"status": "limited", "run": made.rel, "limit": {"resets": "resets 7pm"}}) if command == "run"
         else pytest.fail("a limited run is never checked"))
     with pytest.raises(SystemExit, match="limited"):
         loop.one(tmp_path, "g6", "K1", "t", 1)
     assert not (tmp_path / "loop").exists()
     (tmp_path / "loop").mkdir()
-    (tmp_path / "loop" / "K1-t-1.json").write_text(json.dumps({"arm": "K1", "task": "t", "repeat": 1, "run": "run/t/1",
+    (tmp_path / "loop" / "K1-t-1.json").write_text(json.dumps({"arm": "K1", "task": "t", "repeat": 1, "run": made.rel,
                                                                "status": "limited", "passes": False, "failing": None}), "utf-8")
     monkeypatch.setattr(we, "amendment", lambda task: None)
     assert compare.saved(tmp_path)[("K1", "t", 1)]["maintainers"] is None
@@ -489,7 +491,7 @@ def test_a_session_whose_init_names_another_mcp_server_or_tool_is_stopped_and_th
     import loop
     monkeypatch.setattr(loop, "tool", lambda command, *a, **kw: json.dumps(record))
     with pytest.raises(SystemExit, match="refused"):
-        loop.one(tmp_path, "g6", "K1", "t", 1)
+        loop.one(ctx.archive.root, "g6", "K1", "t", 1)       # the archive the run was made in, which the admission rule reads
 
 
 def test_a_model_refusal_fallback_is_recorded_with_the_models_that_wrote(monkeypatch, tmp_path):
@@ -664,11 +666,13 @@ def test_a_run_a_refusal_ended_is_scored_on_its_patch_and_never_made_again_while
     import compare
     import loop
     asked = []
+    ran = we.c.Archive(tmp_path).start("run", "t", arm="K1", executor="host")     # the run as the archive holds it
+    ran.finish({"executor": "host", "agent_started": True, "cost_usd": 0.0}, "model_refused")
 
     def tool(command, *args, **kw):
         asked.append(command)
         if command == "run":
-            return json.dumps({"status": "model_refused", "run": "run/t/1", "cost_usd": 0.0})
+            return json.dumps({"status": "model_refused", "run": ran.rel, "cost_usd": 0.0})
         return json.dumps({"checks": [{"patch": "final", "passes": True, "failing": 0, "fail_to_pass_failing": []}]})
 
     monkeypatch.setattr(loop, "tool", tool)
@@ -1185,6 +1189,7 @@ def test_a_saved_verdict_holds_only_under_the_ending_it_was_made_under_on_either
     row = loop.one(tmp_path, "g6", "K1", "t", 1)                        # given again from the ending it has now
     assert (row["status"], row["passes"], row["ending_sha256"]) == ("error", False, we.c.ending_sha256(tmp_path, {"run": run.rel}))
     container = archive.start("run", "c")                               # a container run has no ending file: its row holds as before
+    container.finish({"agent_started": True}, "finished")              # on its own record, which the admission rule reads
     kept = {"arm": "A", "task": "c", "repeat": 1, "run": container.rel, "status": "finished", "passes": True, "failing": 0}
     (tmp_path / "loop" / "A-c-1.json").write_text(json.dumps(kept), "utf-8")
     assert loop.one(tmp_path, "g6", "A", "c", 1) == kept and compare.saved(tmp_path)[("A", "c", 1)]["maintainers"] is True

@@ -250,7 +250,7 @@ def test_a_k3_run_that_ends_before_its_first_patch_is_kept_has_no_baseline_no_ro
 def _has_no_baseline(monkeypatch, record, ctx, task):
     """A K3 run with no Claude Code baseline, as the archive alone says: ``no_first_patch``, no row, and no check."""
     assert record["status"] == we.NO_FIRST_PATCH == "no_first_patch" and "repairs" not in record
-    assert not we.has_baseline(ctx.archive, record["run"]) and not we.scored_run(ctx.archive, record)
+    assert not we.has_baseline(ctx.archive, record["run"]) and not we.scored_run(ctx.archive, record["run"])
     assert not we.baseline_of(ctx.archive.root / record["run"]).exists()
     ctx.archive.start("validate", task.id).finish({"fail_to_pass": ["t"], "pass_to_pass": []}, "finished")
     monkeypatch.setattr(we, "_oracle_run", lambda *a, **kw: pytest.fail("a run with no first patch has no baseline to score"))
@@ -319,7 +319,7 @@ def test_a_stopped_k3_run_is_saved_and_read_as_k2s_with_the_same_ending_and_chec
     status = "timeout" if k3.get("step_ends") == "timeout" else "cap_cost"
     ours, _, _, ctx, task = _run(monkeypatch, tmp_path, "K3", **k3)
     theirs, *_ = _run(monkeypatch, tmp_path, "K2", **k2)
-    assert ours["status"] == theirs["status"] == status and we.scored_run(ctx.archive, ours)
+    assert ours["status"] == theirs["status"] == status and we.scored_run(ctx.archive, ours["run"])
     rows = [_row_of(monkeypatch, ctx.archive.root, ours, "K3"), _row_of(monkeypatch, ctx.archive.root, theirs, "K2")]
     assert [{k: v for k, v in row.items() if k not in ("arm", "run", "cost_usd")} for row in rows] == [
         {"task": task.id, "repeat": 1, "status": status, "why": None, "passes": False, "failing": None, "tests": []}] * 2
@@ -848,17 +848,47 @@ def test_one_admission_rule_every_entry_point_asks_a_saved_k3_row_whose_baseline
     monkeypatch.setattr(loop, "tool", lambda command, *a, **kw: json.dumps({"status": "finished", "run": run.rel, "arm": "K3"})
                         if command == "run" else json.dumps({"checks": [{"patch": "final", "passes": True, "failing": 0,
                                                                          "fail_to_pass_failing": []}]}))
-    assert we.scored_run(archive, {"run": run.rel, "arm": "K3", "status": "finished"})
+    assert we.scored_run(archive, run.rel)
     row = loop.one(tmp_path, "g6", "K3", "fake-1", 1)
     assert row["passes"] is True and loop.rescore(tmp_path, "g6")[0]["amended_passes"] is True
     assert compare.saved(tmp_path)[("K3", "fake-1", 1)]["maintainers"] is True
     we.baseline_of(run.path).write_bytes(b"something else")         # its bytes no longer have the digest kept with them
-    assert we.unscored_why(archive, row) == "its baseline changed since it was kept" and not we.scored_run(archive, row)
+    assert we.unscored_why(archive, run.rel) == "its baseline changed since it was kept" and not we.scored_run(archive, run.rel)
     monkeypatch.setattr(loop, "tool", lambda *a, **kw: pytest.fail("a run the rule no longer admits is neither run nor checked"))
     with pytest.raises(SystemExit, match="baseline changed"):
         loop.one(tmp_path, "g6", "K3", "fake-1", 1)
     assert loop.rescore(tmp_path, "g6") == []
     assert compare.saved(tmp_path)[("K3", "fake-1", 1)]["maintainers"] is None
+
+
+def test_repair_1_a_saved_row_naming_another_arm_is_refused_by_every_entry_point_for_a_k3_run_whose_baseline_changed(monkeypatch,
+                                                                                                                    tmp_path):
+    """Review 1, finding 1: the arm is one fact, and the admission rule reads it from the archive (the run's started row), never
+    from a row a caller passes; so is the run's baseline and its ending (``unscored_why(archive, run_rel)``)."""
+    archive, task = we.c.Archive(tmp_path), SimpleNamespace(id="fake-1")
+    archive.start("validate", task.id).finish({"fail_to_pass": ["t"], "pass_to_pass": []}, "finished")
+    run = archive.start("run", task.id, arm="K3", executor="host")
+    _keep_baseline(archive, run, b"first patch")
+    run.write("final.patch", b"final patch")
+    run.finish({"arm": "K3", "executor": "host", "agent_started": True}, "finished")
+    we.baseline_of(run.path).write_bytes(b"changed after capture")
+    row = {"arm": "K2", "task": task.id, "repeat": 1, "run": run.rel, "status": "finished", "passes": True, "failing": 0,
+           we.c.MADE_UNDER: we.c.ending_sha256(tmp_path, {"run": run.rel})}
+    (tmp_path / "loop").mkdir()
+    (tmp_path / "loop" / "K2-fake-1-1.json").write_text(json.dumps(row), encoding="utf-8")
+    diff = tmp_path / "amendment.patch"
+    diff.write_text("a diff", encoding="utf-8")
+    monkeypatch.setattr(we, "amendment", lambda name: diff)
+    monkeypatch.setattr(we, "_oracle_run", lambda *a, **kw: pytest.fail("a changed baseline is never scored"))
+    monkeypatch.setattr(loop, "tool", lambda *a, **kw: pytest.fail("a run the rule refuses is neither run nor checked"))
+    with pytest.raises(SystemExit, match="baseline changed"):
+        we.check(SimpleNamespace(archive=archive), task, run.rel)
+    scores = compare.saved(tmp_path)[("K2", task.id, 1)]
+    assert (scores["maintainers"], scores["amended"]) == (None, None)
+    assert loop.rescore(tmp_path, "g6") == []
+    with pytest.raises(SystemExit, match="baseline changed"):
+        loop.one(tmp_path, "g6", "K2", task.id, 1)
+    assert we.unscored_why(archive, run.rel) == "its baseline changed since it was kept" and not we.scored_run(archive, run.rel)
 
 
 # --- the reviewer cases' export reads K3's round-1 where K3 keeps it ----------------------------------------------------------

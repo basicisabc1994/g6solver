@@ -2851,26 +2851,40 @@ def merge_rounds(ctx: Context, agent: str, run: Any) -> None:
     copy_in(ctx, agent, f"{WE}/rounds", run, "rounds", skip=frozenset({FIRST_PATCH.casefold(), RULE_PATCH.casefold()}))
 
 
-def unscored_why(archive: c.Archive, record: Mapping[str, Any]) -> str:
-    """The one admission rule: "" when a run may be saved as a row and offered to ``check``, else why not. ``loop.one`` (a new row
-    and a saved one), ``loop.rescore``, ``check`` and ``compare.saved`` ask it, and nothing else decides it. A K3 run (``record``'s
-    arm) only while it has its Claude Code baseline, read from the archive (``has_baseline``), whatever its ending says. Then
-    every arm's alike: its ending, read from its own folder (``wecommon.ending``), must have a verdict to give
-    (``wecommon.scoreable``), so a stopped or failed run is scored on what it left, as every arm's is, and a K3 run whose
-    baseline was kept is a row on the same endings as K2's. ``wecommon.scoreable`` is this rule's second half; ``wecommon.verdict``
-    and ``wecommon.holds`` ask that half again of a row this rule admitted."""
-    rel = str(record.get("run") or "")
-    if rule_led(str(record.get("arm") or "")) and not has_baseline(archive, rel):
+def ending_of(archive: c.Archive, rel: str) -> dict[str, Any] | None:
+    """Run ``rel``'s ending as the archive holds it, never as a caller's row says it: ``wecommon.ending`` of the run's own record
+    in its folder (``run.json``; the index's end of the run when the record cannot be read), so a host run's ending file
+    decides when it has one. No status (or None) when the archive holds no ending for it."""
+    try:
+        record = json.loads((archive.root / rel / "run.json").read_text(encoding="utf-8")) if rel else None
+    except (OSError, ValueError):
+        record = None
+    if not isinstance(record, dict):
+        record = next((dict(r) for r in reversed(archive.rows()) if r.get("event") == "ended" and r.get("run") == rel), {})
+    return c.ending(archive.root, {**record, "run": rel})
+
+
+def unscored_why(archive: c.Archive, rel: str) -> str:
+    """The one admission rule: "" when run ``rel`` may be saved as a row and offered to ``check``, else why not. ``loop.one`` (a
+    new row and a saved one), ``loop.rescore``, ``check`` and ``compare.saved`` ask it, and nothing else decides it. It takes the
+    run's name and nothing a caller says of it: every fact comes from the archive. A K3 run, by the arm its started row names
+    (``started_row``), only while it has its Claude Code baseline (``has_baseline``), whatever its ending says. Then every arm's
+    alike: its ending as the archive holds it (``ending_of``) must have a verdict to give (``wecommon.scoreable``), so a stopped
+    or failed run is scored on what it left, as every arm's is, and a K3 run whose baseline was kept is a row on the same
+    endings as K2's. ``wecommon.scoreable`` is this rule's second half; ``wecommon.verdict`` and ``wecommon.holds`` ask that half
+    again of a row this rule admitted."""
+    rel = str(rel or "")
+    if rule_led(str(started_row(archive, rel).get("arm") or "")) and not has_baseline(archive, rel):
         return "its baseline changed since it was kept" if kept_digest(archive, rel) else "it has no Claude Code baseline"
-    end = c.ending(archive.root, record)
+    end = ending_of(archive, rel)
     if not c.scoreable(end):
         return f"it ended {(end or {}).get('status') or 'with no ending on record'}: it has no verdict to give (wecommon.ending)"
     return ""
 
 
-def scored_run(archive: c.Archive, record: Mapping[str, Any]) -> bool:
-    """Whether the one admission rule (``unscored_why``) admits the run of ``record``."""
-    return not unscored_why(archive, record)
+def scored_run(archive: c.Archive, rel: str) -> bool:
+    """Whether the one admission rule (``unscored_why``) admits run ``rel``."""
+    return not unscored_why(archive, rel)
 
 
 # --- arms V3 and V4: arm K's loop with the reviewer's test written before any patch (PLAN.md, 2026-11-04) ---------------
@@ -3480,12 +3494,8 @@ def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool
         raise SystemExit("no run to check")
     src = Path(src)
     rel = str(src.relative_to(ctx.archive.root)).replace("\\", "/")
-    try:
-        done = json.loads((src / "run.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):    # no record, or one a stop cut short: it says nothing of how the run ended (wecommon.ending)
-        done = {}
     arm = str(started_row(ctx.archive, rel).get("arm") or "")    # the run's arm is never read from its own record
-    why = unscored_why(ctx.archive, {**done, "run": rel, "arm": arm})     # the one admission rule, as loop.one asks it
+    why = unscored_why(ctx.archive, rel)     # the one admission rule, as loop.one asks it, from the archive alone
     if why:
         raise SystemExit(f"{run_rel or src.name}: {why}")
     first = None

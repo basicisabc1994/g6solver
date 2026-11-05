@@ -54,7 +54,7 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
     saved, archive = root / "loop" / f"{arm}-{task}-{repeat}.json", c.Archive(root)
     if saved.is_file():
         rec = json.loads(saved.read_text("utf-8"))
-        if we.scored_run(archive, {**rec, "arm": arm}) and c.holds(root, rec, rec):    # admitted now, and saved under this ending
+        if we.scored_run(archive, str(rec.get("run") or "")) and c.holds(root, rec, rec):   # admitted now, saved under this ending
             return rec
     else:
         rec = last_json(tool("run", "--task", task, "--g6", g6, "--arm", arm, "--model", SONNET, "--repeat", str(repeat)))
@@ -63,8 +63,9 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
         if rec.get("status") == "refused" and "already made" in str(rec.get("why")):   # made before a crash: check it
             rec = [r for r in distill.main_row(root / c.NDJSON["ledger"])
                    if (r.get("task"), r.get("arm"), r.get("repeat")) == (task, arm, repeat)][-1]
-    end, made = c.ending(root, rec), c.ending_sha256(root, rec)     # how the run ended, from its own folder (``wecommon.ending``)
-    why = we.unscored_why(archive, {**rec, "arm": arm})   # the one admission rule: refused, limited, no ending, or K3's baseline
+    rel = str(rec.get("run") or "")      # the run's name is all that is taken from what the runner printed or a row saved
+    end, made = we.ending_of(archive, rel), c.ending_sha256(root, {"run": rel})    # how the run ended, as the archive holds it
+    why = we.unscored_why(archive, rel)   # the one admission rule: refused, limited, no ending, or K3's baseline
     if why:              # refused, never counted as a failed run; limited: made again after the reset; a K3 run with no baseline
         status = (end or {}).get("status") or "no ending"
         said = (((rec.get("limit") or {}).get("resets") or "no reset given") if status == "limited"
@@ -95,8 +96,9 @@ def rescore(root: Path, g6: str) -> list[dict[str, Any]]:
     for path in sorted((root / "loop").glob("*-*.json")):
         row, saved = json.loads(path.read_text("utf-8")), root / "loop" / "amended" / path.name
         diff = we.amendment(row["task"])
-        end, made = c.ending(root, row), c.ending_sha256(root, row)   # a run that may not be scored has no verdict: none is made
-        if not diff or not we.scored_run(archive, row):                # the one admission rule (run.unscored_why)
+        rel = str(row.get("run") or "")
+        end, made = we.ending_of(archive, rel), c.ending_sha256(root, {"run": rel})   # how it ended, as the archive holds it
+        if not diff or not we.scored_run(archive, rel):                # the one admission rule (run.unscored_why): none is made
             continue
         sha = c.sha256_file(diff)
         kept = json.loads(saved.read_text("utf-8")) if saved.is_file() else None

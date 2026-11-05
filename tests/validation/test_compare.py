@@ -226,8 +226,9 @@ def test_a_test_record_a_killed_run_cut_short_is_no_record(tmp_path):
 
 def test_a_saved_k_run_carries_its_end_and_no_other_arm_gains_a_field(tmp_path, monkeypatch):
     _archive(tmp_path, monkeypatch, {"arm": "K1", "task": "y-1", "passes": True, "run": "run"}, {"arm": "A", "task": "y-1", "passes": True})
-    (tmp_path / "run").mkdir()
-    (tmp_path / "run" / "run.json").write_text(json.dumps({"repairs": {"status": compare.CLEAN, "critic": {"verdicts": ["none"]}}}), "utf-8")
+    (tmp_path / "run").mkdir(exist_ok=True)              # _archive made the run's folder and record; this is its record in full
+    (tmp_path / "run" / "run.json").write_text(json.dumps({"status": "finished", "repairs": {"status": compare.CLEAN, "critic": {
+        "verdicts": ["none"]}}}), "utf-8")
     rows = compare.saved(tmp_path)
     assert rows[("K1", "y-1", 1)]["end"] == "nothing found" and "end" not in rows[("A", "y-1", 1)]
 
@@ -446,6 +447,10 @@ def _archive(root, monkeypatch, *rows):
         row = {"repeat": 1, "run": f"run/{row['task']}/{row['arm']}", "status": "finished", "failing": 0 if row.get("passes") else 1,
                **row}
         (root / "loop" / f"{row['arm']}-{row['task']}-1.json").write_text(json.dumps(row), "utf-8")
+        made = root / row["run"]    # and the run's own record in the archive, which the admission rule reads (run.unscored_why)
+        made.mkdir(parents=True, exist_ok=True)
+        if not (made / "run.json").exists():
+            (made / "run.json").write_text(json.dumps({"status": row["status"], "agent_started": True}), "utf-8")
     (root / "loop" / "cegis.json").write_text('{"status": "inconclusive"}', "utf-8")
     return compare.c.sha256_file(diff)
 

@@ -45,7 +45,7 @@ def saved(root: Path) -> dict[tuple[str, str, int], dict[str, bool | None]]:
     archive = c.Archive(root)
     for path in (root / "loop").glob("*-*.json"):
         row, again = json.loads(path.read_text("utf-8")), root / "loop" / "amended" / path.name
-        admitted = we.scored_run(archive, row)   # the one admission rule (run.unscored_why), asked again of every saved row
+        admitted = we.scored_run(archive, str(row.get("run") or ""))   # the one admission rule, from the archive alone
         passes = c.verdict(root, row, row) if admitted else None      # none for a run that may not be scored, on either score
         amended = passes
         diff = we.amendment(row["task"]) if admitted else None

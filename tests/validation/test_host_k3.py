@@ -88,7 +88,7 @@ def test_a_host_k3_run_keeps_round_1_resumes_the_host_session_with_the_rule_step
     assert mirrored[0] < _captured(docker, we.FIRST_PATCH) < mirrored[1] < _captured(docker, we.RULE_PATCH)
     assert [step for step, _ in record["step_ends"]] == ["first session", "capture round-1.patch", "rule session",
                                                           "capture rule.patch", "review 1"]
-    assert _ending(ctx, record) == "finished" and we.scored_run(ctx.archive, record)
+    assert _ending(ctx, record) == "finished" and we.scored_run(ctx.archive, record["run"])
     ctx.archive.start("validate", task.id).finish({"fail_to_pass": ["t"], "pass_to_pass": []}, "finished")
     seen = []
     monkeypatch.setattr(we, "_oracle_run", lambda ctx_, task_, *, patch, label, **kw: (seen.append((label, patch.read_bytes())),
@@ -102,7 +102,7 @@ def test_a_host_k3_run_that_ends_before_its_first_patch_is_no_first_patch_on_rec
     assert record["status"] == we.NO_FIRST_PATCH and _ending(ctx, record) == we.NO_FIRST_PATCH, record.get("error")
     assert len(starts) == 1 and asked == [] and record["rule_step"] == {"ended": "error", "at": "first session",
                                                                        "instruction": we.RULE_DIGEST}
-    assert not we.has_baseline(ctx.archive, record["run"]) and not we.scored_run(ctx.archive, record)
+    assert not we.has_baseline(ctx.archive, record["run"]) and not we.scored_run(ctx.archive, record["run"])
     ctx.archive.start("validate", task.id).finish({"fail_to_pass": ["t"], "pass_to_pass": []}, "finished")
     monkeypatch.setattr(we, "_oracle_run", lambda *a, **kw: pytest.fail("a run with no first patch has no baseline to score"))
     with pytest.raises(SystemExit, match="no Claude Code baseline"):
@@ -126,7 +126,7 @@ def test_a_failure_after_a_host_k3_runs_no_first_patch_ending_never_makes_it_mor
     folder = ctx.archive.root / record["run"]
     assert "the mirror failed" in record["error"] and (folder / we.c.AFTER).is_file() and len(starts) == 1
     assert record["status"] == we.NO_FIRST_PATCH and we.c.ending(ctx.archive.root, record)["status"] == we.NO_FIRST_PATCH
-    assert not we.c.scoreable(we.c.ending(ctx.archive.root, record)) and not we.scored_run(ctx.archive, record)
+    assert not we.c.scoreable(we.c.ending(ctx.archive.root, record)) and not we.scored_run(ctx.archive, record["run"])
 
 
 def test_a_host_k3_run_at_the_usage_limit_in_its_first_session_stays_limited_and_may_be_made_again(monkeypatch, tmp_path):
@@ -141,7 +141,7 @@ def test_a_host_k3_rule_step_that_does_not_end_cleanly_is_a_row_with_its_own_end
                                                                               ("s1", RULE_TREE, helpers.stream("s1")[:-1])])
     assert record["status"] == "error" and _ending(ctx, record) == "error", record.get("error")
     assert len(starts) == 2 and asked == [] and record["rule_step"]["at"] == "rule step"
-    assert we.has_baseline(ctx.archive, record["run"]) and we.scored_run(ctx.archive, record)    # stop symmetry: a row
+    assert we.has_baseline(ctx.archive, record["run"]) and we.scored_run(ctx.archive, record["run"])    # stop symmetry: a row
     assert not (ctx.archive.root / record["run"] / "rounds" / we.RULE_PATCH).exists()
 
 
@@ -160,7 +160,7 @@ def test_a_host_k3_run_whose_review_ended_after_the_deadline_ends_timeout_on_rec
     monkeypatch.setattr(we, "run_critic", critic)
     record, _, starts, ctx, *_ = helpers.host_run(monkeypatch, tmp_path, "K3", [("s1", FIRST_TREE, None), ("s1", RULE_TREE, None)])
     assert record["status"] == "timeout" and _ending(ctx, record) == "timeout" and late == [1], record.get("error")
-    assert we.has_baseline(ctx.archive, record["run"]) and we.scored_run(ctx.archive, record)     # as K2's timed-out runs are
+    assert we.has_baseline(ctx.archive, record["run"]) and we.scored_run(ctx.archive, record["run"])     # as K2's timed-out runs are
 
 
 # --- item 3: the run's watchdog ends a host session's processes, as it ends a container session's ----------------------------
