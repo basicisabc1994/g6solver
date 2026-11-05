@@ -2783,8 +2783,16 @@ def ended_as(ctx: Context, run: Any, status: str, *, dry: bool, dog: Watchdog | 
     and is scored as K2's timed-out runs are. A refusal at its first prompt's check keeps its own status, and a dry run is never
     scored. So does any ending with no verdict that is made again (``wecommon.UNSCORED``): a host run that met the subscription's
     usage limit, or whose session G6 refused, is "limited" or "refused" wherever it stopped, as K2's is. On the host every ending
-    the run writes is decided by this rule (``RunFolder.ending_rule``), so the one written early is the one its end decides."""
-    if dry or status in c.UNSCORED or ctx.variant != ROUND3 or not rule_led(ctx.arm):
+    the run writes is decided by this rule (``RunFolder.ending_rule``). First of all, an ending already on record stands, for
+    every arm: the ending decided first (``RunFolder.end``) is never written over, and this rule then gives it back, as
+    ``wecommon.ending`` reads it, so what the run wrote early and what its end decides are one answer."""
+    if dry:
+        return status
+    if (ctx.archive.root / run.rel / c.ENDING).exists():
+        recorded = (c.ending(ctx.archive.root, {"run": run.rel}) or {}).get("status")
+        if recorded:
+            return str(recorded)
+    if status in c.UNSCORED or ctx.variant != ROUND3 or not rule_led(ctx.arm):
         return status
     if not has_baseline(ctx.archive, run.rel):
         return NO_FIRST_PATCH

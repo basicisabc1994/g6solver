@@ -163,6 +163,30 @@ def test_a_host_k3_run_whose_review_ended_after_the_deadline_ends_timeout_on_rec
     assert we.has_baseline(ctx.archive, record["run"]) and we.scored_run(ctx.archive, record["run"])     # as K2's timed-out runs are
 
 
+def test_repair_2_an_ending_written_early_stands_and_ended_as_gives_the_same_answer(monkeypatch, tmp_path):
+    """Review 1, finding 3: a failed rule session writes "error" at once; its mirror then ends past the deadline. The ending
+    decided first stands: the record, the ending on file and ``ended_as`` give one answer, and nothing writes over it."""
+    active, late, calls = [], [], []
+    monkeypatch.setattr(we.Watchdog, "start", lambda dog: active.append(dog))
+    monkeypatch.setattr(we.Watchdog, "now", lambda dog: dog.deadline + (1 if late else -10))
+    mirror = box_mcp.mirror
+
+    def slow_mirror(*args, **kw):
+        calls.append(1)
+        result = mirror(*args, **kw)
+        if len(calls) == 2:                         # the rule session has written "error"; its mirror ends past the deadline
+            late.append(True)
+        return result
+
+    monkeypatch.setattr(box_mcp, "mirror", slow_mirror)
+    record, _, _, ctx, *_ = k3_host_run(monkeypatch, tmp_path, [("s1", FIRST_TREE, None), ("s1", RULE_TREE, helpers.stream("s1")[:-1])])
+    assert we.has_baseline(ctx.archive, record["run"])
+    assert any(step == "rule session" and at > active[0].deadline for step, at in record["step_ends"])      # the step was late
+    run = SimpleNamespace(rel=record["run"])
+    assert record["status"] == _ending(ctx, record) == we.ended_as(ctx, run, "error", dry=False, dog=active[0]) == "error"
+    assert we.ended_as(ctx, run, "finished", dry=False, dog=active[0]) == "error"       # asked again later: the first stands
+
+
 # --- item 3: the run's watchdog ends a host session's processes, as it ends a container session's ----------------------------
 def test_a_resumed_host_session_is_registered_with_the_runs_watchdog_which_ends_its_processes_once_when_it_fires(monkeypatch,
                                                                                                                  tmp_path):
