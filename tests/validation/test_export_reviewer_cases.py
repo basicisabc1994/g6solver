@@ -60,6 +60,43 @@ def test_near_changes_share_a_window_and_a_window_stays_inside_the_file():
     assert ex.windows([(10, 11), (100, 100)], total=200, around=5) == [(5, 16), (95, 105)]
 
 
+def _git_diff(tmp_path, old: str, new: str, *, quote: bool = True) -> str:
+    """A real git patch from ``old`` to ``new`` (two files in ``tmp_path``), as git writes it; git only reads them."""
+    import subprocess
+    got = subprocess.run(["git", "-c", f"core.quotepath={'true' if quote else 'false'}", "diff", "--no-index", "--", old, new],
+                         cwd=tmp_path, capture_output=True, timeout=30)
+    assert got.returncode == 1, got.stderr
+    return got.stdout.decode("utf-8")
+
+
+def test_review_3_finding_7_a_path_git_quotes_and_escapes_is_read_as_git_reads_it(tmp_path):
+    (tmp_path / "old.py").write_text("value = 1\n", "utf-8")
+    (tmp_path / "café.py").write_text("value = 2\n", "utf-8")
+    diff = _git_diff(tmp_path, "old.py", "café.py")
+    assert '"b/caf\\303\\251.py"' in diff                                     # quoted and escaped in git's own header
+    assert ex.changed(diff) == {"café.py": [(1, 1)]}
+
+
+def test_review_3_finding_7_a_change_to_a_file_git_quotes_is_read_under_its_own_name(tmp_path):
+    name = "café.py"
+    diff = ('diff --git "a/caf\\303\\251.py" "b/caf\\303\\251.py"\n--- "a/caf\\303\\251.py"\n+++ "b/caf\\303\\251.py"\n'
+            "@@ -3,2 +3,2 @@ def f():\n keep\n-old\n+new\n")
+    assert ex.changed(diff) == {name: [(3, 4)]}
+
+
+def test_a_renamed_file_is_named_as_gits_reader_names_it_its_new_path():
+    diff = ("diff --git a/src/old name.py b/src/new.py\nsimilarity index 80%\nrename from src/old name.py\nrename to src/new.py\n"
+            "--- a/src/old name.py\n+++ b/src/new.py\n@@ -5,2 +5,2 @@\n keep\n-old\n+new\n")
+    assert ex.changed(diff) == {"src/new.py": [(5, 6)]}
+
+
+def test_a_path_with_a_space_is_read_whole(tmp_path):
+    (tmp_path / "my mod.py").write_text("a = 1\nb = 2\n", "utf-8")
+    (tmp_path / "other.py").write_text("a = 1\nb = 3\n", "utf-8")
+    diff = _git_diff(tmp_path, "my mod.py", "other.py").replace("b/other.py", "b/my mod.py")
+    assert ex.changed(diff) == {"my mod.py": [(1, 2)]}
+
+
 def test_a_new_file_has_nothing_to_show_and_is_no_error():
     text = ex.context(DIFF, {"src/pkg/core.py": "\n".join(f"line{i}" for i in range(1, 80))})
     assert "src/pkg/core.py" in text and "line11" in text and "new.py" not in text

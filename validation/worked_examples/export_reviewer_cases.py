@@ -11,6 +11,7 @@ import json
 import re
 import subprocess
 import tarfile
+import tempfile
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -47,15 +48,38 @@ def is_source(path: str) -> bool:
     return path.endswith((".py", ".pyi")) and "tests/" not in f"/{path}" and not name.startswith("test_") and name != "conftest.py"
 
 
+def touched(part: str) -> list[str]:
+    """The files one part of a patch touches, as git's own reader of its patch format names them (``git apply --numstat -z``, run on
+    the part's bytes in an empty folder, which only reads them: no tree is changed), so a name git quotes or escapes is read as
+    git reads it. Each file by its name after the patch (for a rename, the new one). None for a part git cannot read."""
+    with tempfile.TemporaryDirectory() as empty:
+        got = subprocess.run(["git", "apply", "--numstat", "-z"], input=part.encode("utf-8", errors="surrogateescape"), cwd=empty,
+                             capture_output=True, timeout=60)
+    if got.returncode != 0:
+        return []
+    fields, names = got.stdout.split(b"\0"), []
+    while fields:
+        field = fields.pop(0)
+        if not field:
+            continue
+        _, _, name = field.split(b"\t", 2)
+        if not name and len(fields) >= 2:                  # a rename: its old name, then its new one, each a field of its own
+            _, name = fields.pop(0), fields.pop(0)
+        names.append(name.decode("utf-8", errors="replace"))
+    return names
+
+
 def changed(diff: str) -> dict[str, list[tuple[int, int]]]:
-    """The source files a diff touches, each with the parent's line ranges it changed. A file's sections are found by its header line."""
+    """The source files a diff touches, each with the parent's line ranges it changed. Each part begins at git's own ``diff --git``
+    line, which no line inside a hunk can begin with (a hunk's lines begin with a space, "+" or "-"); which file a part is about is
+    read by git (``touched``), never by a pattern of this module's own."""
     found: dict[str, list[tuple[int, int]]] = {}
-    for section in re.split(r"^diff --git ", diff, flags=re.M)[1:]:
-        named = re.search(r"^\+\+\+ b/(.+)$", section, re.M)
-        if not named or not is_source(named[1].strip()):
+    for section in re.split(r"^(?=diff --git )", diff, flags=re.M):
+        names = touched(section) if section.startswith("diff --git ") else []
+        if not names or not is_source(names[0]):
             continue
         spans = [(int(m[1]), int(m[1]) + max(int(m[2] or 1), 1) - 1) for m in _HUNK.finditer(section)]
-        found[named[1].strip()] = spans
+        found[names[0]] = spans
     return found
 
 
