@@ -240,9 +240,20 @@ class Archive:
             stream.write(json.dumps(dict(row), ensure_ascii=False) + "\n")
 
     def rows(self) -> list[dict[str, Any]]:
+        """Every row of the index, for every reader. A torn last line, which a write cut short leaves, is skipped; a line that
+        cannot be read anywhere before it is an error, as before."""
         if not self.index.is_file():
             return []
-        return [json.loads(line) for line in self.index.read_text(encoding="utf-8").splitlines() if line.strip()]
+        lines = [line for line in self.index.read_bytes().splitlines() if line.strip()]
+        rows = []
+        for at, line in enumerate(lines):
+            try:
+                rows.append(json.loads(line.decode("utf-8")))
+            except ValueError:          # UnicodeDecodeError is a ValueError too
+                if at == len(lines) - 1:
+                    break
+                raise
+        return rows
 
     def start(self, kind: str, task: str, **meta: Any) -> RunFolder:
         stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%S%fZ")

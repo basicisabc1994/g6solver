@@ -14,6 +14,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -135,13 +136,19 @@ class _Docker:
 
 
 def _run(monkeypatch, tmp_path, arm, *, step_ends="", thread="", fail=(), first=SUCCESS, agent_rewrites=False,
-         loop_writes=False, loop_ends=None, loop_result=None, key_ok=True, tree_ok=True):
+         loop_writes=False, loop_ends=None, loop_result=None, key_ok=True, tree_ok=True, first_stop="", loop_late=False,
+         rule_session_id=""):
     """``_run_task`` for ``arm`` with fakes only: no model, no container. Returns the record, what happened in order, the
     prompts sent, the context and the task."""
     task, events, sent = we.load_tasks()[0], [], []
     docker = _Docker(task, events, sent, fail, tree_ok)
     real_read = we.read_stream
-    monkeypatch.setattr(we, "read_stream", lambda *a, **kw: (docker.deadlines.append(kw.get("deadline")), real_read(*a, **kw))[1])
+
+    def read(*a, **kw):             # the first session's stream: as it is, or stopped as ``first_stop`` says
+        docker.deadlines.append(kw.get("deadline"))
+        return first_stop or real_read(*a, **kw)
+
+    monkeypatch.setattr(we, "read_stream", read)
     if first is not SUCCESS:
         docker.popen = lambda *a, **kw: (events.append(("first session",)), SimpleNamespace(
             stdin=_Stdin(sent), stdout=io.BytesIO(json.dumps(first).encode() + b"\n"), stderr=io.BytesIO(),
@@ -153,7 +160,7 @@ def _run(monkeypatch, tmp_path, arm, *, step_ends="", thread="", fail=(), first=
         if agent_rewrites:          # the agent owns the container's rounds folder, and writes over the first patch there
             docker.files[f"{we.WE}/rounds/round-1.patch"] = b"the agent's own round-1"
         if not step_ends:
-            tally.feed(dict(SUCCESS))
+            tally.feed({**SUCCESS, **({"session_id": rule_session_id} if rule_session_id else {})})
         if codes is not None:
             codes.append(0)
         return step_ends
@@ -165,6 +172,8 @@ def _run(monkeypatch, tmp_path, arm, *, step_ends="", thread="", fail=(), first=
             we.keep_first_patch(a[0], a[1], a[3], a[4], 2)
         if loop_ends:               # a repair's own result, which the run's status is read from as K2's is
             a[7].feed(dict(loop_ends))
+        if loop_late:               # a review that ended after the run's deadline, as the watchdog records it
+            kw["deadline"].ends.append(("review 1", kw["deadline"].deadline + 1.0))
         return loop_result or {"status": "no_counterexample_in_domain"}
 
     monkeypatch.setattr(we, "key_check", lambda *a, **kw: {"ok": key_ok})
@@ -198,7 +207,9 @@ def test_a_k3_run_sends_arm_as_prompt_keeps_round_1_resumes_with_the_rule_step_k
     assert not (folder / "rounds" / "round-1.patch").exists() and we.has_baseline(ctx.archive, record["run"])
     assert record["first_patch_sha256"] == hashlib.sha256(FIRST).hexdigest() and record["status"] == "finished"
     deadline = ctx.docker.deadlines[0]                              # the run's one deadline, read by every step after it
-    assert ctx.docker.loop_kw[0]["deadline"] == deadline
+    assert ctx.docker.loop_kw[0]["deadline"].deadline == deadline and not ctx.docker.loop_kw[0]["deadline"].late()
+    assert [step for step, _ in record["step_ends"]] == ["first session", "capture round-1.patch", "rule session",
+                                                          "capture rule.patch"]
 
 
 def test_k2s_run_is_as_it_was_no_digest_no_step_and_its_loop_saves_round_1(monkeypatch, tmp_path):
@@ -301,15 +312,17 @@ def _row_of(monkeypatch, root, record, arm):
 @pytest.mark.parametrize(("k3", "k2", "labels"), [
     ({"step_ends": "cap_cost"}, {"first": EXPENSIVE}, ["round-1", "final"]),           # stopped in the rule step
     ({"loop_ends": CAPPED}, {"loop_ends": CAPPED}, ["round-1", "rule", "final"]),      # stopped in the review loop
+    ({"step_ends": "timeout"}, {"first_stop": "timeout"}, ["round-1", "final"]),       # timed out, by stop symmetry
 ])
 def test_a_stopped_k3_run_is_saved_and_read_as_k2s_with_the_same_ending_and_check_scores_its_first_patch(monkeypatch, tmp_path,
                                                                                                         k3, k2, labels):
+    status = "timeout" if k3.get("step_ends") == "timeout" else "cap_cost"
     ours, _, _, ctx, task = _run(monkeypatch, tmp_path, "K3", **k3)
     theirs, *_ = _run(monkeypatch, tmp_path, "K2", **k2)
-    assert ours["status"] == theirs["status"] == "cap_cost" and we.scored_run(ctx.archive, ours)
+    assert ours["status"] == theirs["status"] == status and we.scored_run(ctx.archive, ours)
     rows = [_row_of(monkeypatch, ctx.archive.root, ours, "K3"), _row_of(monkeypatch, ctx.archive.root, theirs, "K2")]
     assert [{k: v for k, v in row.items() if k not in ("arm", "run", "cost_usd")} for row in rows] == [
-        {"task": task.id, "repeat": 1, "status": "cap_cost", "why": None, "passes": False, "failing": None, "tests": []}] * 2
+        {"task": task.id, "repeat": 1, "status": status, "why": None, "passes": False, "failing": None, "tests": []}] * 2
     got = compare.saved(ctx.archive.root)
     assert got[("K3", task.id, 1)] == got[("K2", task.id, 1)] and got[("K3", task.id, 1)]["maintainers"] is False
     ctx.archive.start("validate", task.id).finish({"fail_to_pass": ["t"], "pass_to_pass": []}, "finished")
@@ -357,16 +370,17 @@ def test_a_capture_holding_the_runs_key_fails_its_step_and_keeps_nothing(tmp_pat
 
 def test_the_rule_step_resumes_the_session_on_the_runs_clock_tally_and_stop_and_never_past_its_deadline(monkeypatch, tmp_path):
     calls, tally = [], we.c.Tally()
+    tally.feed(dict(SUCCESS))                                       # the first session's own result, which the step continues
 
     def session(ctx, run, agent, command, key, tally_, text, name, *, seconds, stop_usd, codes=None, deadline=None):
-        calls.append({"command": command, "key": key, "tally": tally_, "text": text, "name": name, "deadline": deadline,
-                      "stop_usd": stop_usd})
+        calls.append({"command": command, "key": key, "tally": tally_, "text": text, "name": name,
+                      "deadline": deadline.deadline, "stop_usd": stop_usd})
         codes.append(0)
         tally_.feed(dict(SUCCESS))
         return ""
 
     monkeypatch.setattr(we, "run_session", session)
-    monkeypatch.setattr(we, "kept", lambda ctx, task, agent, base, run, name, deadline: (calls.append((name, deadline)),
+    monkeypatch.setattr(we, "kept", lambda ctx, task, agent, base, run, name, deadline: (calls.append((name, deadline.deadline)),
                                                                                          "finished")[1])
     monkeypatch.setattr(we.time, "monotonic", lambda: 1000.0)
     args = ["exec", "-i", "agent", "claude", "-p", "--disallowedTools", "WebFetch"]
@@ -481,9 +495,32 @@ def test_the_baseline_is_kept_once_in_a_folder_of_its_own_and_scored_only_while_
     assert [row["patch"] for row in we.check(ctx, task, run.rel)["checks"]] == ["round-1", "final"]
     assert seen[0] == ("round-1", b"the first session's tree")
     baseline.write_bytes(b"something else")                         # its bytes no longer have the digest kept with them
-    assert not we.has_baseline(archive, run.rel)
-    with pytest.raises(SystemExit, match="no Claude Code baseline"):
+    assert not we.has_baseline(archive, run.rel) and we.baseline_bytes(archive, run.rel) is None
+    with pytest.raises(SystemExit, match="baseline changed"):       # a refusal, never a score on round-1
         we.check(ctx, task, run.rel)
+
+
+def test_check_scores_the_baseline_bytes_it_verified_and_never_reads_the_path_again(monkeypatch, tmp_path):
+    archive = we.c.Archive(tmp_path / "archive")
+    archive.start("validate", "fake-1").finish({"fail_to_pass": ["t"], "pass_to_pass": []}, "finished")
+    run = archive.start("run", "fake-1", arm="K3")
+    _keep_baseline(archive, run, b"the first session's tree")
+    run.write("final.patch", "final")
+    run.finish({"arm": "K3", "agent_started": True}, "finished")
+    begun = archive.start
+
+    def start(kind, *a, **kw):
+        folder = begun(kind, *a, **kw)
+        if kind == "check":                                         # after the baseline was read and checked
+            we.baseline_of(run.path).write_bytes(b"replaced while the check ran")
+        return folder
+
+    seen = []
+    monkeypatch.setattr(archive, "start", start)
+    monkeypatch.setattr(we, "_oracle_run", lambda ctx, task, *, patch, label, **kw: (seen.append((label, patch.read_bytes())),
+                                                                                    {"results": {"t": "passed"}})[1])
+    we.check(SimpleNamespace(archive=archive), SimpleNamespace(id="fake-1"), run.rel)
+    assert seen[0] == ("round-1", b"the first session's tree")
 
 
 def _link(target: Path, link: Path) -> None:
@@ -536,25 +573,32 @@ def test_a_capture_that_cannot_start_or_finish_before_the_deadline_ends_timeout_
     assert we.has_baseline(archive, run.rel)
 
 
-def test_a_resumed_session_reads_the_runs_deadline_however_long_its_process_takes_to_start(monkeypatch, tmp_path):
-    now, deadlines = [1000.0], []
+@pytest.mark.parametrize(("starts_in", "sent"), [(30.0, []), (5.0, [b"text"])])
+def test_a_resumed_session_reads_the_runs_deadline_and_gets_no_prompt_once_it_has_passed(monkeypatch, tmp_path, starts_in, sent):
+    now, deadlines, written = [1000.0], [], []
+
+    class Stdin(io.BytesIO):
+        def close(self):
+            written.append(self.getvalue())
+            super().close()
 
     def popen(*a, **kw):
-        now[0] += 30.0                                              # the process starts after the deadline
-        return SimpleNamespace(stdin=io.BytesIO(), stdout=io.BytesIO(), poll=lambda: 0, wait=lambda **kw: 0)
+        now[0] += starts_in                                         # 30 s: the process starts after the deadline
+        return SimpleNamespace(stdin=Stdin(), stdout=io.BytesIO(), poll=lambda: 0, wait=lambda **kw: 0)
 
     def read_stream(lines, tally, *, deadline, **kw):
         deadlines.append(deadline)
-        return "timeout" if now[0] >= deadline else ""
+        return ""
 
     monkeypatch.setattr(we.time, "monotonic", lambda: now[0])
     monkeypatch.setattr(we, "read_stream", read_stream)
     run = we.c.Archive(tmp_path / "archive").start("run", "fake-1", arm="K3")
     ctx = SimpleNamespace(docker=SimpleNamespace(popen=popen), client_env=lambda key: {}, archive=run.archive)
     codes = []
-    assert we.run_session(ctx, run, "agent", ["claude"], "key", we.c.Tally(), "text", "rule_stream.jsonl", seconds=20.0,
-                          stop_usd=1.0, codes=codes, deadline=1020.0) == "timeout"
-    assert deadlines == [1020.0] and codes == [0]
+    ended = we.run_session(ctx, run, "agent", ["claude"], "key", we.c.Tally(), "text", "rule_stream.jsonl", seconds=20.0,
+                           stop_usd=1.0, codes=codes, deadline=1020.0)
+    assert [w for w in written if w] == sent and codes == [0]
+    assert (ended, deadlines) == (("timeout", []) if not sent else ("", [1020.0]))
 
 
 def _timed_loop(monkeypatch, *, deadline, review_takes=0.0, start=0.0):
@@ -596,12 +640,177 @@ def test_k2s_loop_after_the_step_reads_the_runs_one_deadline_and_no_review_follo
     got, sessions, critiques = _timed_loop(monkeypatch, deadline=50.0, review_takes=60.0)   # review 1 crosses it
     assert critiques == [1] and sessions == [] and got["ended"] == "timeout"
     got, sessions, critiques = _timed_loop(monkeypatch, deadline=500.0, review_takes=1.0)
-    assert sessions[0]["deadline"] == 500.0 and sessions[0]["seconds"] <= 500.0 - 1.0          # no allowance of its own
+    assert sessions[0]["deadline"].deadline == 500.0 and sessions[0]["seconds"] <= 500.0 - 1.0  # no allowance of its own
     assert critiques == [1, 2] and "ended" not in got and got["status"] == "no_counterexample_in_domain"
 
 
-def test_a_k3_run_whose_loop_meets_the_deadline_ends_timeout(monkeypatch, tmp_path):
-    record, _, _, ctx, _ = _run(monkeypatch, tmp_path, "K3", loop_result={"status": "inconclusive", "ended": "timeout",
-                                                                          "reason": "the run's deadline passed"})
-    assert record["status"] == "timeout" and we.has_baseline(ctx.archive, record["run"])
-    assert ctx.docker.loop_kw[0]["deadline"] == ctx.docker.deadlines[0]
+def test_a_k3_run_with_a_step_that_ended_after_the_deadline_ends_timeout_as_finish_reads_it_and_is_k2s_row(monkeypatch, tmp_path):
+    """Whatever the step returned: the loop says it reproduced nothing, and the run is "timeout" because its end was late."""
+    record, _, _, ctx, task = _run(monkeypatch, tmp_path, "K3", loop_late=True)
+    assert record["status"] == "timeout" and record["status_detail"] == "finished" and we.has_baseline(ctx.archive, record["run"])
+    assert ctx.docker.loop_kw[0]["deadline"].deadline == ctx.docker.deadlines[0] and record["step_ends"][-1][0] == "review 1"
+    row = _row_of(monkeypatch, ctx.archive.root, record, "K3")
+    assert (row["status"], row["passes"], row["failing"]) == ("timeout", False, None)        # as K2's timed-out runs are
+
+
+def test_the_watchdog_fires_once_ends_every_process_it_watches_sets_its_flag_and_then_no_step_starts():
+    now, ended = [0.0], []
+    dog = we.Watchdog(10.0, clock=lambda: now[0])
+    with dog.watching(lambda: ended.append("session")), dog.watching(lambda: ended.append("review")):
+        assert dog.may_start("review 1") and not dog.end("review 1") and dog.left() == 10.0
+        now[0] = 10.0                                               # the deadline, exactly
+        assert dog.due() and dog.due() and sorted(ended) == ["review", "session"]
+    assert dog.fired.is_set() and not dog.may_start("repair 1") and dog.late() and dog.left() == 0.0
+    with dog.watching(lambda: ended.append("after")):
+        pass
+    assert ended.count("after") == 0 and len(ended) == 2
+
+
+def test_the_watchdogs_timer_fires_by_itself_at_the_deadline():
+    ended = []
+    dog = we.Watchdog(time.monotonic() + 0.05)
+    with dog.watching(lambda: ended.append("session")):
+        dog.start()
+        try:
+            assert dog.fired.wait(5.0) and ended == ["session"]
+        finally:
+            dog.stop()
+
+
+def test_the_watchdogs_docker_bounds_each_call_by_what_is_left_and_never_bounds_cleanup():
+    now, calls = [0.0], []
+    dog = we.Watchdog(10.0, clock=lambda: now[0])
+
+    class Raw:
+        def __call__(self, *a, timeout=None, **kw):
+            calls.append((a[0], timeout))
+            return SimpleNamespace(returncode=0)
+
+        def sh(self, ctr, script, *a, timeout=600, **kw):
+            calls.append(("sh", timeout))
+            return SimpleNamespace(returncode=0)
+
+    docker = dog.docker(Raw())
+    docker("cp", "agent:/x", "/y", timeout=900)
+    docker.sh("agent", "true", timeout=300)
+    docker("exec", "agent", "true")
+    assert calls == [("cp", 10.0), ("sh", 10.0), ("exec", 10.0)]
+    now[0] = 10.0
+    with pytest.raises(subprocess.TimeoutExpired):                  # no docker process starts after the deadline
+        docker("cp", "agent:/x", "/y", timeout=900)
+    docker("rm", "-f", "agent", timeout=300)
+    assert calls[-1] == ("rm", 300) and dog.fired.is_set() and we.unbounded(docker) is docker.raw
+
+
+def test_a_capture_is_ended_mid_way_when_the_watchdog_fires(monkeypatch, tmp_path):
+    now = [100.0]
+    monkeypatch.setattr(we.time, "monotonic", lambda: now[0])
+    archive = we.c.Archive(tmp_path / "archive")
+    run = archive.start("run", "fake-1", arm="K3")
+
+    class Docker:
+        def sh(self, *a, timeout, **kw):
+            return SimpleNamespace(returncode=0)
+
+        def __call__(self, *a, timeout, **kw):                      # the transfer needs a minute; its process ends at its timeout
+            now[0] += min(60.0, timeout)
+            if timeout < 60.0:
+                raise subprocess.TimeoutExpired("docker cp", timeout)
+            Path(a[2]).write_bytes(b"tree")
+            return SimpleNamespace(returncode=0)
+
+    dog = we.Watchdog(105.0)
+    ctx = SimpleNamespace(docker=Docker(), archive=archive)
+    assert we.kept(ctx, SimpleNamespace(repo="/w/r"), "agent", "base", run, we.FIRST_PATCH, dog) == "timeout"
+    assert now[0] == 105.0 and dog.ends == [("capture round-1.patch", 105.0)] and dog.late()
+    assert not we.has_baseline(archive, run.rel) and not dog.may_start("rule session")
+
+
+def test_a_review_is_ended_mid_way_when_the_watchdog_fires(monkeypatch, tmp_path):
+    import tarfile
+    now, ended, asked = [1000.0], [], []
+    dog = we.Watchdog(1010.0, clock=lambda: now[0])
+    archive = we.c.Archive(tmp_path / "archive")
+    run = archive.start("run", "fake-1", arm="K3")
+    empty = io.BytesIO()
+    tarfile.open(fileobj=empty, mode="w").close()
+
+    class Docker:
+        def __call__(self, *a, **kw):
+            return SimpleNamespace(returncode=0, stdout=empty.getvalue(), stderr=b"")
+
+        def sh(self, *a, **kw):
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    def codex(pack, timeout):
+        asked.append(timeout)
+        now[0] += 30.0                                              # the review runs past the deadline
+        dog.due()                                                   # and the watchdog's timer fires while it runs
+        return ""
+
+    monkeypatch.setattr(we, "copy_out", lambda *a: True)
+    monkeypatch.setattr(we, "run_codex", codex)
+    monkeypatch.setattr(we, "end_codex", lambda pack: ended.append(pack.name))
+    ctx = SimpleNamespace(archive=archive, docker=dog.docker(Docker()), critic=None, arm="K3", watchdog=dog)
+    we.run_critic(ctx, SimpleNamespace(repo="/w/r"), run, "agent", "base", "title", "issue")
+    assert asked == [10.0] and len(ended) == 1 and dog.fired.is_set() and not dog.may_start("repair 1")
+
+
+def test_a_late_copy_refuses_a_destination_that_resolves_inside_the_baseline(monkeypatch, tmp_path):
+    archive = we.c.Archive(tmp_path / "archive")
+    run = archive.start("run", "fake-1", arm="K3")
+    _keep_baseline(archive, run, b"first")
+    baseline = we.baseline_of(run.path)
+    (run.path / "claude_projects").mkdir()
+    _link(baseline.parent, run.path / "claude_projects" / "nested")   # however it came there, it leads into baseline/
+
+    def copy_out(docker, agent, src, dest):
+        (dest / "nested").mkdir(parents=True)
+        (dest / "nested" / "notes.txt").write_bytes(b"late")
+        return True
+
+    monkeypatch.setattr(we, "copy_out", copy_out)
+    with pytest.raises(RuntimeError, match="baseline"):
+        we.copy_in(SimpleNamespace(archive=archive, docker=None), "agent", "/projects", run, "claude_projects")
+    assert baseline.read_bytes() == b"first" and not (baseline.parent / "notes.txt").exists()
+
+
+def test_the_index_reader_skips_a_torn_last_line_and_still_refuses_a_torn_line_before_it(tmp_path):
+    archive = we.c.Archive(tmp_path)
+    archive.append({"event": "started", "run": "run/x/1"})
+    for torn in (b'{"event": "ended", "run": "run/x/1", "sta', b'{"event": "ended", "why": "\xc3'):
+        archive.index.write_bytes(b'{"event": "started", "run": "run/x/1"}\n' + torn)
+        assert archive.rows() == [{"event": "started", "run": "run/x/1"}]
+    archive.index.write_bytes(b'{"event": "started"}\n{"event": "ended", "sta\n{"event": "kept"}\n')
+    with pytest.raises(ValueError):
+        archive.rows()
+
+
+@pytest.mark.parametrize("torn", ["the index's last line", "the run's record"])
+def test_k2s_check_is_as_it_was_after_a_torn_write(monkeypatch, tmp_path, torn):
+    archive = we.c.Archive(tmp_path / "archive")
+    archive.start("validate", "fake-1").finish({"fail_to_pass": ["t"], "pass_to_pass": []}, "finished")
+    run = archive.start("run", "fake-1", arm="K2")
+    run.write("rounds/round-1.patch", b"first")
+    run.write("final.patch", b"final")
+    if torn == "the run's record":
+        run.write("run.json", b'{"arm": "K2", "agent_started": true,')
+    else:
+        run.finish({"arm": "K2", "agent_started": True}, "finished")
+        with open(archive.index, "ab") as index:
+            index.write(b'{"event": "ended", "run": "run/fake-1/x", "sta')
+    labels = []
+    monkeypatch.setattr(we, "_oracle_run", lambda ctx, task, *, label, **kw: (labels.append(label), {"results": {"t": "passed"}})[1])
+    we.check(SimpleNamespace(archive=archive), SimpleNamespace(id="fake-1"), run.rel)
+    assert labels == ["round-1", "final"]
+
+
+def test_the_rule_session_must_continue_the_first_session_and_a_run_whose_does_not_is_an_error_row(monkeypatch, tmp_path):
+    assert we.step_ending("", SUCCESS, 0, session="s1") == "finished"
+    assert we.step_ending("", {**SUCCESS, "session_id": "another"}, 0, session="s1") == "error"
+    assert we.step_ending("", {**SUCCESS, "session_id": "s1"}, 0, session="") == "error"         # no first id to continue
+    record, events, _, ctx, task = _run(monkeypatch, tmp_path, "K3", rule_session_id="another-session")
+    assert record["status"] == "error" and record["rule_step"]["ended"] == "error" and record["rule_step"]["at"] == "rule step"
+    assert not any(e[0] == "loop" for e in events) and we.has_baseline(ctx.archive, record["run"])
+    row = _row_of(monkeypatch, ctx.archive.root, record, "K3")
+    assert row["status"] == "error"                                 # the baseline is kept, so it is a row, by stop symmetry
