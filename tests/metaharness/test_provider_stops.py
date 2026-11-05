@@ -363,10 +363,13 @@ def test_a_codex_refusal_stands_though_the_turn_then_completed_and_a_limit_on_th
     assert usage.codex_said(_jsonl(*STARTED, {"type": "turn.completed", "error": {"message": LIMIT}})).startswith(RATE_LIMITED)
 
 
-@pytest.mark.parametrize("info,said", [({"response_too_many_failed_attempts": {"http_status_code": 429}}, RATE_LIMITED),
+@pytest.mark.parametrize("info,said", [({"response_too_many_failed_attempts": {"http_status_code": 429}}, ""),
+                                       ({"usage_limit_exceeded": {"http_status_code": 500}}, RATE_LIMITED),
                                        ({"http_connection_failed": {"http_status_code": 500}}, ""),
                                        ("server_overloaded", "G6_E_MODEL_AT_CAPACITY"), ("cyber_policy", MODEL_REFUSED)])
 def test_codexs_own_classification_decides_whatever_its_message_says(info, said):
+    """Changed on purpose (review 2 of claude/refusals-recorded): a classification is known only when its name is exactly a
+    known kind, whatever HTTP status it carries; any other is no stop, and a failure."""
     got = usage.codex_said(_jsonl(*_failed("some message", info)))
     assert got.startswith(said) if said else got == ""
 
@@ -966,7 +969,419 @@ def test_ref1_every_way_a_request_can_leave_passes_the_one_check():
 
     assert callers(loop_module, {"admit", "take", "sending"}) == {
         ("_Requests.take", "admit"), ("_Gate.sending", "admit"), ("_Counted.complete", "admit"),
-        ("_Counted.complete.take", "take"), ("_Counted.complete.next_request", "take"), ("_Resends.append", "take")}
+        ("_Counted.complete.resend", "take"), ("_Counted.complete.next_request", "take"), ("_Resends.append", "take")}
     assert callers(usage, {"sending", "_sending"}) == {
         ("_sending", "sending"), ("WatchedClaude._command", "_sending"), ("WatchedClaude._launch", "_sending"),
         ("WatchedCodex._command", "_sending")}
+
+# Review 2 of this change: each send is one record, made once it may leave and kept until its own outcome is read --------
+
+def _answers(argv, files, text="an answer"):
+    Path(argv[argv.index("--output-last-message") + 1]).write_text(text, encoding="utf-8")
+    return 0, _jsonl(COMPLETED), ""
+
+
+def test_ref2_1_a_line_separator_inside_codexs_message_is_no_line_break(monkeypatch):
+    event = {"type": "error", "message": "Request refused:\u2028policy stop", "codex_error_info": "cyber_policy"}
+    printed = json.dumps(event, ensure_ascii=False) + "\n" + json.dumps(COMPLETED)
+    assert refused_by(usage.codex_said(printed))
+    monkeypatch.setattr(CodexCaller, "locate", lambda self: "fake-codex")
+    monkeypatch.setattr(host_models, "_run", lambda argv, stdin, cwd, files, *rest: (_answers(argv, files)[0], printed, ""))
+    requests = _Requests()
+    requests.open(10)
+    with pytest.raises(_Refused):
+        _Counted(CodexCaller(), requests).complete("system", "request")
+    assert requests.refused
+
+
+def _stop_file_halt(root):
+    from g6.metaharness.loop import STOPPED, _Halted
+
+    def halted():
+        reason = stop_reason(root)
+        return _Halted(STOPPED, reason) if reason else None
+
+    return halted
+
+
+def test_ref2_2_a_stop_written_while_a_send_waits_is_read_when_it_wakes(tmp_path, monkeypatch):
+    from g6.self_maintenance.envelope import ask_to_stop
+
+    requests = _Requests(halted=_stop_file_halt(tmp_path))
+    waiting, first_out, release = threading.Event(), threading.Event(), threading.Event()
+    sent = []
+    real_wait = requests._settled.wait
+    monkeypatch.setattr(requests._settled, "wait", lambda timeout=None: waiting.set() or real_wait(timeout))
+    monkeypatch.setattr(CodexCaller, "locate", lambda self: "fake-codex")
+
+    def run(argv, stdin, cwd, files, *rest):
+        sent.append(stdin)
+        if len(sent) == 1:
+            first_out.set()
+            assert release.wait(5)
+        return _answers(argv, files)
+
+    monkeypatch.setattr(host_models, "_run", run)
+    caller = _Counted(CodexCaller(), requests)
+    threads = [threading.Thread(target=lambda: _quietly(caller.complete, "system", "identical")) for _ in range(2)]
+    threads[0].start()
+    assert first_out.wait(5)
+    threads[1].start()
+    assert waiting.wait(5)
+    ask_to_stop(tmp_path, "the owner stopped it while the second send waited")
+    release.set()
+    for thread in threads:
+        thread.join(5)
+    assert len(sent) == 1
+
+
+def _quietly(call, *args):
+    try:
+        return call(*args)
+    except BaseException as exc:
+        return exc
+
+
+def test_ref2_3_a_nested_identical_send_leaves_its_parents_entry_where_it_was(monkeypatch):
+    monkeypatch.setattr(CodexCaller, "locate", lambda self: "fake-codex")
+    nested_done, release = threading.Event(), threading.Event()
+    sent = []
+    requests = _Requests()
+    caller = _Counted(CodexCaller(), requests)
+
+    def run(argv, stdin, cwd, files, *rest):
+        sent.append(stdin)
+        if len(sent) == 1:
+            assert caller.complete("system", "same") == "an answer"
+            nested_done.set()
+            assert release.wait(5)
+            return 1, json.dumps({"type": "error", "codex_error_info": "cyber_policy"}), ""
+        return _answers(argv, files)
+
+    monkeypatch.setattr(host_models, "_run", run)
+    first = threading.Thread(target=lambda: _quietly(caller.complete, "system", "same"))
+    third = threading.Thread(target=lambda: _quietly(caller.complete, "system", "same"))
+    first.start()
+    assert nested_done.wait(5)
+    third.start()
+    third.join(0.3)
+    release.set()
+    first.join(5)
+    third.join(5)
+    assert len(sent) == 2 and not requests.in_flight
+
+
+def test_ref2_4_no_number_of_failed_sends_evicts_a_pending_sends_record(monkeypatch):
+    monkeypatch.setattr(CodexCaller, "locate", lambda self: "fake-codex")
+    requests = _Requests()
+    caller = _Counted(CodexCaller(), requests)
+    parent = []
+
+    def run(argv, stdin, cwd, files, *rest):
+        if "nested launch" in stdin:
+            raise LLMError("a launch that failed")
+        parent.append(usage.request_identity(argv, stdin, files.parent))
+        if len(parent) == 1:
+            for n in range(300):
+                with pytest.raises(LLMError, match="a launch that failed"):
+                    caller.complete("system", f"nested launch {n}")
+        return 1, json.dumps({"type": "error", "codex_error_info": "cyber_policy"}), ""
+
+    monkeypatch.setattr(host_models, "_run", run)
+    for _ in range(2):
+        with pytest.raises(LLMError):
+            caller.complete("system", "parent request")
+    assert len(parent) == 1 and requests.refused == {parent[0]} and not usage._SENT and not requests.in_flight
+
+
+def test_ref2_5_an_unknown_classification_with_a_status_is_a_failure_whatever_follows(monkeypatch):
+    monkeypatch.setattr(CodexCaller, "locate", lambda self: "fake-codex")
+    events = [{"type": "error", "message": "?", "codex_error_info": {"future_kind": {"http_status_code": 429}}}, COMPLETED]
+
+    def run(argv, stdin, cwd, files, *rest):
+        _answers(argv, files)
+        return 0, _jsonl(*events), ""
+
+    monkeypatch.setattr(host_models, "_run", run)
+    with pytest.raises(LLMError, match="turn failed"):
+        _Counted(CodexCaller(), _Requests()).complete("system", "request")
+
+
+class FollowsUp:
+    """A wrapper of a domain's own that, when its host caller fails, asks another model before it raises the failure."""
+
+    def __init__(self, inner, followup) -> None:
+        self._inner, self.followup = inner, followup
+
+    def complete(self, system, user, *, max_tokens=1024):
+        try:
+            return self._inner.complete(system, user, max_tokens=max_tokens)
+        except LLMError:
+            self.followup.complete("followup system", "followup request")
+            raise
+
+
+def test_ref2_6_a_watched_send_is_read_by_its_own_record_whatever_was_sent_after_it(monkeypatch):
+    monkeypatch.setattr(ClaudeCodeCaller, "locate", lambda self: "fake-claude")
+    printed = json.dumps({"type": "result", "is_error": True, "api_error_status": 500, "result": "ordinary failure"})
+    monkeypatch.setattr(host_models, "_run", lambda *args: (1, printed, 'tool diagnostic: "api_error_status":429'))
+    requests = _Requests()
+    requests.open(10)
+    with pytest.raises(LLMError, match="G6_E_LLM_HOST_FAILED"):
+        _Counted(FollowsUp(ClaudeCodeCaller(), FakeLLM(default="an answer")), requests).complete("system", "request")
+    assert requests.limited is None
+
+
+def test_ref2_7_a_refusal_is_kept_under_the_send_that_raised_it_not_one_nested_inside_it():
+    child = FakeLLM(default="child answer")
+
+    def respond(system, user):
+        child.complete("child system", "child request")
+        raise LLMError(f"{MODEL_REFUSED}: parent request refused")
+
+    parent, requests = FakeLLM(respond), _Requests()
+    caller = _Counted(parent, requests)
+    for _ in range(2):
+        with pytest.raises(LLMError):
+            caller.complete("parent system", "parent request")
+    assert len(parent.calls) == 1 and requests.refused == {_request_digest("parent system", "parent request")}
+
+
+def test_ref2_8_a_nested_host_send_does_not_change_how_the_outer_send_is_read(monkeypatch):
+    monkeypatch.setattr(CodexCaller, "locate", lambda self: "fake-codex")
+    monkeypatch.setattr(host_models, "_run", lambda argv, stdin, cwd, files, *rest: _answers(argv, files, "child answer"))
+    child = CodexCaller()
+
+    def respond(system, user):
+        child.complete("child system", "child request")
+        raise LLMError(f"{MODEL_REFUSED}: parent refused")
+
+    parent, requests = FakeLLM(respond), _Requests()
+    caller = _Counted(parent, requests)
+    for _ in range(2):
+        with pytest.raises(LLMError):
+            caller.complete("parent system", "parent request")
+    assert len(parent.calls) == 1 and requests.refused == {_request_digest("parent system", "parent request")}
+
+
+@pytest.mark.parametrize("reserved,calls,out", [(0, 1, 0), (1, 1, 1), (3, 3, 3), (3, 4, 3)])
+@pytest.mark.parametrize("host", [True, False])
+def test_ref2_9_a_reserved_place_is_one_send_at_every_boundary(monkeypatch, reserved, calls, out, host):
+    sent = []
+    monkeypatch.setattr(CodexCaller, "locate", lambda self: "fake-codex")
+
+    def run(argv, stdin, cwd, files, *rest):
+        sent.append(stdin)
+        return _answers(argv, files)
+
+    monkeypatch.setattr(host_models, "_run", run)
+    backend = CodexCaller() if host else FakeLLM(lambda system, user: sent.append(user) or "an answer")
+    requests = _Requests()
+    requests.open(reserved)
+    caller = _Counted(backend, requests)
+    refused = [_quietly(caller.complete, "system", f"request {i}") for i in range(calls)]
+    assert len(sent) == out == requests.sent
+    assert all("G6_E_LOOP_TICK_BUDGET_SPENT" in str(failed) for failed in refused if isinstance(failed, BaseException))
+
+
+def _bare_loop(root, now, keeping=None):
+    """A loop with nothing of a domain about it, enough to run ``_run`` around a cycle of a test's own."""
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from g6.self_maintenance.envelope import CYCLE_LOG, CycleLog
+
+    loop = ShadowLoop.__new__(ShadowLoop)
+    loop.root, loop.log, loop.cannot_record = root, CycleLog(root / CYCLE_LOG), ""
+    loop.requests = _Requests(now=lambda: now, keeping=keeping or (lambda identity, said: note_refusal(root, identity, said)))
+    loop._now, loop._beat, loop._row = (lambda: now), (lambda *args, **kwargs: None), (lambda: {"outcome": "idle"})
+    loop.domain = SimpleNamespace(sealed=lambda: SimpleNamespace(vault=None))
+    loop._reserve = lambda: (SimpleNamespace(provider="codex", amount=10, ends=now + timedelta(days=1)), None)
+    return loop, nullcontext
+
+
+@pytest.mark.parametrize("ending", ["refusal", "limit", "error", "death"])
+def test_ref2_10_every_limit_the_tick_met_is_on_the_record_before_its_charges_settle(tmp_path, monkeypatch, ending):
+    from types import SimpleNamespace
+
+    from g6.metaharness import loop as loop_module
+
+    now = datetime(2026, 11, 6, tzinfo=UTC)
+    loop, nullcontext = _bare_loop(tmp_path, now)
+    monkeypatch.setattr(loop_module, "sealed_closed", lambda vault: nullcontext([]))
+    first, second = now + timedelta(minutes=15), now + timedelta(seconds=90)
+
+    class Died(BaseException):
+        pass
+
+    def cycle(recommended):
+        for until in (first, second):
+            try:
+                loop.requests.met_a_limit(until, f"{RATE_LIMITED}: a limit")
+            except _AtLimit:
+                pass
+        if ending == "refusal":
+            loop.requests.provider_said(f"{MODEL_REFUSED}: policy", "b" * 64)
+        elif ending == "limit":
+            loop.requests.take()
+        elif ending == "error":
+            raise RuntimeError("the cycle fell over")
+        raise Died()
+
+    loop._cycle = cycle
+
+    class Settled(BaseException):
+        pass
+
+    seen = []
+
+    def settle(admission, charged):
+        seen.append(dict(loop.log.limits()))
+        raise Settled()
+
+    loop.meter = SimpleNamespace(settle=settle, limit_reached=lambda provider, until: None)
+    with pytest.raises(Settled):
+        loop._run()
+    # each is on the record, the latest written last, so a restart waits for the last of them
+    assert seen == [{"codex": max(first, second)}]
+    assert {row["until"] for row in _limit_rows(loop)} == {first.isoformat(), second.isoformat()}
+
+
+def _limit_rows(loop):
+    return [entry["body"] for entry in loop.log._chain.entries() if entry["kind"] == "limited"]
+
+
+def test_ref2_11_a_refusal_that_cannot_be_written_is_still_never_sent_again(tmp_path):
+    from g6.metaharness.loop import STOPPED, _Halted
+
+    loop = ShadowLoop.__new__(ShadowLoop)
+    loop.root, loop.cannot_record = tmp_path, ""
+    requests = _Requests(halted=lambda: _Halted(STOPPED, loop.cannot_record) if loop.cannot_record else None,
+                         keeping=loop._keep_refusal)
+
+    def refuse(system, user):
+        raise LLMError(f"{MODEL_REFUSED}: provider diagnostic \ud800")
+
+    backend = FakeLLM(refuse)
+    caller = _Counted(backend, requests)
+    failures = [_quietly(caller.complete, "system", "same refused request") for _ in range(2)]
+    assert len(backend.calls) == 1 and all(isinstance(failed, LLMError) for failed in failures)
+    assert _request_digest("system", "same refused request") in refused_requests(tmp_path)    # kept, surrogate and all
+
+
+def test_ref2_11_the_log_reads_back_what_was_said_exactly_and_a_write_it_cannot_make_latches_the_stop(tmp_path, monkeypatch):
+    from g6.metaharness import loop as loop_module
+
+    assert note_refusal(tmp_path, "a" * 64, "said \ud800 here")
+    assert (tmp_path / REFUSED_FILE).read_bytes().decode("utf-8", "surrogatepass").split(" ", 1)[1].startswith("said \ud800")
+    loop = ShadowLoop.__new__(ShadowLoop)
+    loop.root, loop.cannot_record = tmp_path, ""
+    monkeypatch.setattr(loop_module, "note_refusal", lambda *args: (_ for _ in ()).throw(ValueError("cannot encode")))
+    loop._keep_refusal("b" * 64, f"{MODEL_REFUSED}: \ud800")
+    assert loop.cannot_record and "would not keep it" in stop_reason(tmp_path)
+
+
+def test_ref2_12_a_surrogate_pair_and_the_character_it_stands_for_are_two_requests():
+    system, refused, allowed = "system\0", "\ud800\udc00", "\U00010000"
+
+    def respond(system_, user):
+        if user == refused:
+            raise LLMError(f"{MODEL_REFUSED}: denied")
+        return "allowed answer"
+
+    caller = _Counted(FakeLLM(respond), _Requests())
+    with pytest.raises(LLMError, match=MODEL_REFUSED):
+        caller.complete(system, refused)
+    assert caller.complete(system, allowed) == "allowed answer"
+    assert len({_request_digest(*pair) for pair in [(system, refused), (system, allowed), ("system", "\ud800\udc00"),
+                                                    ("system", "\U00010000"), ("", "\0"), ("\0", "")]}) == 6
+
+
+def test_ref2_13_a_send_is_known_by_its_bytes_as_they_are_once_it_has_waited(monkeypatch):
+    monkeypatch.setattr(ClaudeCodeCaller, "locate", lambda self: "fake-claude")
+    requests = _Requests()
+    waiting, first_out, release = threading.Event(), threading.Event(), threading.Event()
+    real_identity, second_file, sent = usage.request_identity, [], []
+
+    def identity(argv, stdin, root):
+        if threading.current_thread().name == "second":
+            second_file.append(Path(root) / "files" / "system_prompt.md")
+        return real_identity(argv, stdin, root)
+
+    monkeypatch.setattr(usage, "request_identity", identity)
+    real_wait = requests._settled.wait
+    monkeypatch.setattr(requests._settled, "wait", lambda timeout=None: waiting.set() or real_wait(timeout))
+
+    def run(argv, stdin, cwd, files, *rest):
+        sent.append(real_identity(argv, stdin, files.parent))
+        if threading.current_thread().name == "first":
+            first_out.set()
+            assert release.wait(5)
+            return 0, json.dumps({"type": "result", "is_error": False, "result": "an answer"}), ""
+        return 1, json.dumps({"type": "result", "is_error": True, "stop_reason": "refusal", "result": ""}), ""
+
+    monkeypatch.setattr(host_models, "_run", run)
+    caller = _Counted(ClaudeCodeCaller(), requests)
+    first = threading.Thread(target=lambda: _quietly(caller.complete, "original", "same user"), name="first")
+    second = threading.Thread(target=lambda: _quietly(caller.complete, "original", "same user"), name="second")
+    first.start()
+    assert first_out.wait(5)
+    second.start()
+    assert waiting.wait(5)
+    second_file[0].write_text("changed", encoding="utf-8")
+    release.set()
+    first.join(5)
+    second.join(5)
+    assert len(sent) == 2 and requests.refused == {sent[1]}
+    _quietly(caller.complete, "changed", "same user")
+    assert sent.count(sent[1]) == 1
+
+
+def test_ref2_the_request_path_keeps_no_per_send_state_but_each_sends_record():
+    """Built from the code: everything the loop's request path writes per request. Any variable rebound, any attribute set,
+    and any container written there that is not a send's record, its list of records, or the tick's own latches, fails."""
+    import ast
+    import inspect
+
+    from g6.metaharness import loop as loop_module
+
+
+    def writes(tree):
+        names, attributes, calls, rebinding = [], [], [], []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Nonlocal | ast.Global):
+                rebinding.extend(node.names)
+            if isinstance(node, ast.Assign | ast.AugAssign | ast.AnnAssign | ast.Delete):
+                for target in node.targets if isinstance(node, ast.Assign | ast.Delete) else [node.target]:
+                    for leaf in ast.walk(target):
+                        if isinstance(leaf, ast.Name) and isinstance(leaf.ctx, ast.Store | ast.Del):
+                            names.append(leaf.id)
+                        elif isinstance(leaf, ast.Attribute) and isinstance(leaf.ctx, ast.Store | ast.Del):
+                            attributes.append(leaf.attr)
+                        elif isinstance(leaf, ast.Subscript) and isinstance(leaf.ctx, ast.Store | ast.Del):
+                            attributes.append(f"{ast.unparse(leaf.value)}[]")
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in (
+                    "append", "add", "update", "pop", "extend", "remove", "setdefault", "discard", "clear"):
+                calls.append(f"{ast.unparse(node.func.value)}.{node.func.attr}")
+        return names, attributes, calls, rebinding
+
+    def source(func):
+        text = inspect.getsource(func)
+        indent = len(text) - len(text.lstrip())
+        return ast.parse("\n".join(line[indent:] for line in text.splitlines()))
+
+    names, attributes, calls, rebinding = writes(source(loop_module._Counted.complete))
+    assert rebinding == [] and len(names) == len(set(names))                 # nothing rebound: each name is set once
+    assert attributes == ["unseen"] and calls == ["sends.append"]            # the tick's latch, and the call's records
+    for method in (loop_module._Requests.admit, loop_module._Requests.release, loop_module._Requests.at_a_refusal,
+                   loop_module._Requests.met_a_limit, loop_module._Requests.provider_said, loop_module._Requests.take):
+        _, attributes, calls, rebinding = writes(source(method))
+        assert rebinding == [] and set(attributes) <= {*loop_module._Requests.TICK_STATE, "self.in_flight[]"}, method.__name__
+        assert set(calls) <= {"self.refused.add", "self.in_flight.setdefault", "self.in_flight.setdefault(known, []).append"}, \
+            method.__name__
+    for method in (loop_module._Gate.sending, loop_module._Gate.told, loop_module._Gate.done):
+        _, attributes, calls, _ = writes(source(method))
+        assert attributes == [] and calls == (["self.sends.append"] if method.__name__ == "sending" else [])
+    for func in (usage._sending, usage._forget, usage._stopped, usage._released):
+        _, attributes, calls, rebinding = writes(source(func))
+        assert rebinding == [] and set(attributes) <= {"_SENT[]"} and set(calls) <= {"_SENT.pop", "opened.append"}

@@ -294,14 +294,15 @@ def ask_to_stop(root: str | Path, reason: str = "") -> str:
 def note_refusal(root: str | Path, request: str, said: str) -> bool:
     """Keep what a classifier or a permission refused, first and in a file no lock stands in front of, because a refused
     request is never sent again whether or not its cycle reaches the log, or a tick is open at all. ``request``: a digest, never
-    its text. It is on the disk before this returns ``True``. One that cannot be written raises nothing and returns ``False``:
-    the caller decides what this process does, since only it still holds the refusal."""
+    its text. It is on the disk before this returns ``True``. What was said is kept as UTF-8 with any lone surrogate kept as it
+    is, so it is written and read back exactly. One that cannot be written raises nothing and returns ``False``: the caller
+    decides what this process does, since only it still holds the refusal."""
     try:
-        with open(Path(root) / REFUSED_FILE, "a", encoding="utf-8") as kept:
+        with open(Path(root) / REFUSED_FILE, "a", encoding="utf-8", errors="surrogatepass") as kept:
             kept.write(f"{request} {' '.join(said.split())}\n")
             kept.flush()
             os.fsync(kept.fileno())
-    except OSError:
+    except (OSError, ValueError):
         return False
     return True
 
@@ -310,12 +311,16 @@ def refused_requests(root: str | Path) -> set[str]:
     """The digest of each request ``note_refusal`` kept. A line a crash cut short is no digest. A file that cannot be read
     raises as records that do not check out do, since nothing could then say what must not be sent."""
     try:
-        text = (Path(root) / REFUSED_FILE).read_text(encoding="utf-8", errors="replace")
+        held = (Path(root) / REFUSED_FILE).read_bytes()
     except FileNotFoundError:
         return set()
     except OSError as exc:
         raise LedgerError(f"{REFUSED_FILE} cannot be read ({type(exc).__name__})") from exc
-    return {found for found in (line.split(" ", 1)[0] for line in text.splitlines()) if len(found) == DIGEST_LENGTH}
+    try:
+        text = held.decode("utf-8", "surrogatepass")
+    except UnicodeDecodeError:                  # a line a crash cut short mid-character: the digests before it still read
+        text = held.decode("utf-8", "replace")
+    return {found for found in (line.split(" ", 1)[0] for line in text.split("\n")) if len(found) == DIGEST_LENGTH}
 
 
 def record_stop(root: str | Path, reason: str, *, at: str) -> None:

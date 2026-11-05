@@ -93,6 +93,7 @@ from g6.self_maintenance.envelope import (
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
 from g6.self_maintenance.usage import (
     ProviderStop,
+    Send,
     limit_ends,
     read_stops,
     refused_by,
@@ -254,13 +255,19 @@ class _Requests:
     running at once can never pass the limit between them. ``barring`` is what a request's real sender is held to during a
     tick.
 
-    Every request passes ``admit``, tick or no tick, at each place one can leave: as a call begins, as each request is noted,
-    as a ``Retry-After`` resend is made, and where a watched host caller's program is about to start. There ``halted`` is read
-    first, so a stop, or a refusal this process could not keep, refuses everything after it. After a refusal nothing more of
-    its tick goes out, and ``refused`` holds each request ever refused here, by the one identity of what was sent, which never
-    goes out again. A request with an identity is held there until no identical one is still out (``in_flight``), so one let
-    in before a refusal of the same bytes was kept cannot leave after it. ``refused`` only grows, and ``keeping`` is told of
-    each refusal under the lock and before any other thread can see it."""
+    Every send passes ``admit``, tick or no tick, once, at the place it leaves: as it is noted, for any caller but a watched
+    host caller, and where a watched host caller's program is about to start, for that one; a ``Retry-After`` resend and the
+    start of a call pass it too, with no send of their own. There ``halted`` is read first, and read again after any wait, so
+    a stop, or a refusal this process could not keep, refuses everything after it. ``admit`` makes the send's record
+    (``usage.Send``) once it may leave, from the bytes as they are then, and that record is all that is known of the send:
+    what was refused is recorded under it, and it is released by its own outcome (``release``). After a refusal nothing more of
+    its tick goes out, and ``refused`` holds each request ever refused here, by the identity of what was sent, which never
+    goes out again. A send waits while an identical one of another call is out on another thread (``in_flight``, where each
+    send is its own entry), so one let in before a refusal of the same bytes was kept cannot leave after it. ``refused`` only
+    grows, and ``keeping`` is told of each refusal under the lock and before any other thread can see it."""
+
+    #: What a tick latches, and the only state here that is not a send's own record: per tick, never per request.
+    TICK_STATE = ("sent", "limit", "ends", "stopped", "unseen", "refusal", "limited", "met", "generation")
 
     def __init__(self, now: Callable[[], datetime] = lambda: datetime.now(UTC),
                  halted: Callable[[], _Halted | None] = lambda: None,
@@ -270,7 +277,7 @@ class _Requests:
         self.refused: set[str] = set()
         self._lock = threading.Lock()
         self._settled = threading.Condition(self._lock)
-        self.in_flight: dict[str, tuple[object, int]] = {}
+        self.in_flight: dict[str, list[Send]] = {}
         self.generation = 0
         self.close()
 
@@ -280,6 +287,7 @@ class _Requests:
         with self._lock:
             self.sent, self.limit, self.ends, self.stopped, self.unseen, self.refusal = 0, limit, ends, "", False, None
             self.limited: tuple[datetime, str] | None = None
+            self.met: tuple[tuple[datetime, str], ...] = ()
             self.generation += 1
 
     def close(self) -> None:
@@ -292,26 +300,33 @@ class _Requests:
             if self.ends is not None and moment < self.ends:
                 self.ends = moment
 
+    def _out_elsewhere(self, identity: str, owner: object, thread: int) -> bool:
+        """Whether a send of ``identity`` is out for another call on another thread: one this thread holds open is its own."""
+        return any(held.owner is not owner and held.thread != thread for held in self.in_flight.get(identity, ()))
+
     def admit(self, wait: float = 0.0, *, places: int = 0, generation: int | None = None,
-              live: Callable[[], bool] = lambda: True, identity: str | None = None, owner: object = None) -> None:
-        """The one check on a request that may leave: refuse what is stopped, refused or past the limit, and take ``places``
-        in ``sent`` in that same step. ``wait``: the seconds a server asked for before this one goes out. ``generation``: the
-        tick the request's call began in, and ``live`` whether that call is still running, both checked again under the lock,
-        as the stop is read outside it and the call can return, and its tick close, while it is read. ``identity``: what is
-        about to be sent, never sent again once refused, and held while an identical request of another call (``owner``) is
-        out; it stays out until that call releases it."""
-        if self.refusal is not None:
-            raise _Refused(self.refusal["said"])
-        if self.limited is not None:
-            raise _AtLimit(*self.limited)
-        stopped = self.halted()
-        if stopped is not None:
-            if self.limit != math.inf:
-                raise stopped
-            raise LLMError(f"{stopped.code}: {stopped.said}")
-        here = (owner, threading.get_ident())
-        with self._lock:
-            while True:
+              live: Callable[[], bool] = lambda: True, identity: str | None = None, owner: object = None,
+              identify: Callable[[], str] | None = None, watched: bool = False, sender: Any = None) -> Send | None:
+        """The one check on what may leave: refuse what is stopped, refused or past the limit, take ``places`` in ``sent`` in
+        that same step, and hand back the send's record. ``wait``: the seconds a server asked for before this one goes out.
+        ``generation``: the tick the request's call began in, and ``live`` whether that call is still running, both checked
+        again under the lock, as the stop is read outside it and the call can return, and its tick close, while it is read.
+        ``identity``, or ``identify`` to read it from the bytes as they are now: what is about to be sent, never sent again
+        once refused, held while an identical send of another call is out, and read again, with the stop, after each wait.
+        With neither, nothing is sent here, and no record is made."""
+        here = threading.get_ident()
+        while True:
+            if self.refusal is not None:
+                raise _Refused(self.refusal["said"])
+            if self.limited is not None:
+                raise _AtLimit(*self.limited)
+            stopped = self.halted()
+            if stopped is not None:
+                if self.limit != math.inf:
+                    raise stopped
+                raise LLMError(f"{stopped.code}: {stopped.said}")
+            known = identify() if identify is not None else identity
+            with self._lock:
                 if self.refusal is not None:              # one may have come while the stop was being read
                     raise _Refused(self.refusal["said"])
                 if self.limited is not None:              # and a limit, met by another of the tick's requests
@@ -319,33 +334,42 @@ class _Requests:
                 if (generation is not None and generation != self.generation) or not live():
                     raise LLMError(f"{TICK_BUDGET_SPENT}: this request came after its call returned, so nothing reserved "
                                    "covers it")
-                out = self.in_flight.get(identity) if identity is not None else None
-                if out is None or out[0] is owner or out[1] == here[1]:    # its own, or one this thread holds open
-                    break
-                self._settled.wait(1.0)                   # an identical request is out: what becomes of it decides
-            if self.unseen or self.sent >= self.limit:
-                self.stopped = f"this tick has sent {self.sent} of the {self.limit:g} it reserved"
-            elif self.ends is not None and self.now() + timedelta(seconds=wait) >= self.ends:
-                self.stopped = f"this tick's week ended at {self.ends.isoformat()} and nothing is reserved in the new one"
-            else:
-                self.sent += places                       # a place first, so a wrapper that keeps trying stops at the limit
-                if identity is not None and identity in self.refused:
-                    raise LLMError(f"{CLASSIFIER_STOP}: this request was refused once, and nothing sends it again")
-                if identity is not None:
-                    self.in_flight[identity] = here
-                return
-        raise LLMError(f"{TICK_BUDGET_SPENT}: {self.stopped}")
+                if known is not None and self._out_elsewhere(known, owner, here):
+                    self._settled.wait(1.0)               # an identical send is out: what becomes of it decides, and then
+                    continue                              # the stop and the bytes are read again
+                if self.unseen or self.sent + places > self.limit or (places == 0 and self.sent >= self.limit):
+                    self.stopped = f"this tick has sent {self.sent} of the {self.limit:g} it reserved"
+                elif self.ends is not None and self.now() + timedelta(seconds=wait) >= self.ends:
+                    self.stopped = f"this tick's week ended at {self.ends.isoformat()} and nothing is reserved in the new one"
+                else:
+                    self.sent += places                   # a place first, so a wrapper that keeps trying stops at the limit
+                    if known is not None and known in self.refused:
+                        raise LLMError(f"{CLASSIFIER_STOP}: this request was refused once, and nothing sends it again")
+                    if known is None:
+                        return None
+                    record = Send(known, watched, owner, self.generation, here, sender)
+                    self.in_flight.setdefault(known, []).append(record)
+                    return record
+            raise LLMError(f"{TICK_BUDGET_SPENT}: {self.stopped}")
 
     def take(self, wait: float = 0.0, *, generation: int | None = None, live: Callable[[], bool] = lambda: True,
-             identity: str | None = None, owner: object = None) -> None:
-        """A request about to go out. It keeps its place whatever becomes of it: a failed one may have reached the model."""
-        self.admit(wait, places=1, generation=generation, live=live, identity=identity, owner=owner)
+             identity: str | None = None, owner: object = None, identify: Callable[[], str] | None = None,
+             watched: bool = False, sender: Any = None) -> Send | None:
+        """A send about to go out, which takes one place: it keeps it whatever becomes of it, as a failed one may have reached
+        the model."""
+        return self.admit(wait, places=1, generation=generation, live=live, identity=identity, owner=owner,
+                          identify=identify, watched=watched, sender=sender)
 
-    def release(self, owner: object) -> None:
-        """A call is over: what it had out is out no longer, and an identical request held for it may go on."""
+    def release(self, done: Send | object) -> None:
+        """A send's outcome is in (a record), or a call is over (its owner): what it had out is out no longer, and an
+        identical send held for it may go on. Only that send's own entry goes."""
         with self._lock:
-            for identity in [i for i, held in self.in_flight.items() if held[0] is owner]:
-                del self.in_flight[identity]
+            for identity, held in list(self.in_flight.items()):
+                kept = [record for record in held if record is not done and record.owner is not done]
+                if kept:
+                    self.in_flight[identity] = kept
+                else:
+                    del self.in_flight[identity]
             self._settled.notify_all()
 
     def recheck(self, generation: int) -> None:
@@ -379,41 +403,50 @@ class _Requests:
             self.met_a_limit(until, str(failed)[:300], generation, failed if isinstance(failed, BaseException) else None)
 
     def met_a_limit(self, until: datetime, reason: str, generation: int | None = None, cause: BaseException | None = None) -> None:
-        """End the tick at a provider's limit, and let nothing more of it go out: the limit is kept until the tick closes, so
-        another of its requests, on another thread, meets it too. ``generation``: the tick the request began in; one whose
-        tick has closed latches nothing on the next, and outside a tick there is none to end."""
+        """End the tick at a provider's limit, and let nothing more of it go out: the first limit is kept until the tick
+        closes, so another of its requests, on another thread, meets it too, and every limit met is listed (``met``) for the
+        records. ``generation``: the tick the request began in; one whose tick has closed latches nothing on the next, and
+        outside a tick there is none to end."""
         with self._lock:
             if self.limit == math.inf or (generation is not None and generation != self.generation):
                 return
-            self.limited = (until, reason)
-        raise _AtLimit(until, reason) from cause
+            self.met = (*self.met, (until, reason))
+            if self.limited is None:
+                self.limited = (until, reason)
+            limited = self.limited
+        raise _AtLimit(*limited) from cause
 
-    def provider_said(self, failed: Any, request: str, generation: int | None = None) -> None:
-        """What a provider said stopped a request, read only from G6's own code at the start of ``failed``: a refusal
+    def provider_said(self, failed: Any, request: Send | str | None, generation: int | None = None) -> None:
+        """What a provider said stopped a send, read only from G6's own code at the start of ``failed``: a refusal
         (``at_a_refusal``), or a limit or its model at capacity (``at_a_limit``). ``failed``: what the request raised, or what a
-        watched host caller read before it raised anything. ``request``: the identity of what was sent. Anything else is no
-        statement of the provider's, and the request's own failure stands."""
+        watched host caller read before it raised anything. ``request``: the record of the send it was of, or its identity.
+        Anything else is no statement of the provider's, and the request's own failure stands."""
         self.at_a_refusal(failed, request, generation)
         self.at_a_limit(failed, generation)
 
-    def at_a_refusal(self, failed: Any, request: str, generation: int | None = None) -> None:
+    def at_a_refusal(self, failed: Any, request: Send | str | None, generation: int | None = None) -> None:
         """Keep what a classifier or a permission refused, whether or not a tick is open, and end the tick it stopped.
-        ``failed``: what the request raised, or what a watched caller read before it raised anything. ``request``: the one
-        identity of what was sent, never sent again. ``generation``: the tick the request began in; a refusal that comes once
-        that tick has closed ends nothing of the next, though what it refused is still never sent again. Under the lock, in
-        order: it is kept (``keeping``), then it is in ``refused`` and ends its tick, so no other thread sees it before it is
-        on the disk, and no request goes out between; then it leaves for the tick, so nothing is scored and no record of the
-        tick is written before it is kept."""
+        ``failed``: what the request raised, or what a watched caller read before it raised anything. ``request``: the record
+        of the refused send, or its identity, never sent again; with neither known, the tick ends and nothing can be barred.
+        ``generation``: the tick the request began in; a refusal that comes once that tick has closed ends nothing of the
+        next, though what it refused is still never sent again. Under the lock, in order: it is kept (``keeping``), and then,
+        whatever keeping it did, it is in ``refused`` and ends its tick, so no other thread sees it before it is on the disk,
+        and no request goes out between; then it leaves for the tick, so nothing is scored and no record of the tick is
+        written before it is kept."""
         said = refused_by(str(failed))
         if not said:
             return
+        identity = request.identity if isinstance(request, Send) else request
         with self._lock:
-            if request not in self.refused:
-                self.keeping(request, said)
-                self.refused.add(request)
-            if self.limit != math.inf and (generation is None or generation == self.generation):
-                self.refusal = {"said": said, "request": request}
-            self._settled.notify_all()
+            try:
+                if identity is not None and identity not in self.refused:
+                    self.keeping(identity, said)
+            finally:
+                if identity is not None:
+                    self.refused.add(identity)
+                if self.limit != math.inf and (generation is None or generation == self.generation):
+                    self.refusal = {"said": _writable(said), "request": identity}
+                self._settled.notify_all()
         if self.limit != math.inf:
             raise _Refused(said)
 
@@ -447,16 +480,50 @@ def _gating_resends(take: Callable[[float], None], limited: Callable[[dict[str, 
 
 class _Gate:
     """One call's gate in front of a watched host caller (``usage.telling_stops``): its program starts only past ``admit``,
-    by the identity of what it is started with, and what the provider said of that goes to the tick."""
+    which makes the send's record from what it is started with as it leaves; what the provider said of that send goes to
+    the tick under that record; and the send is released by its own outcome."""
 
-    def __init__(self, requests: _Requests, generation: int, live: Callable[[], bool], owner: object) -> None:
-        self.requests, self.generation, self.live, self.owner = requests, generation, live, owner
+    def __init__(self, requests: _Requests, generation: int, live: Callable[[], bool], owner: object,
+                 sends: list[Send]) -> None:
+        self.requests, self.generation, self.live, self.owner, self.sends = requests, generation, live, owner, sends
 
-    def sending(self, identity: str) -> None:
-        self.requests.admit(generation=self.generation, live=self.live, identity=identity, owner=self.owner)
+    def sending(self, identify: Callable[[], str], sender: Any) -> Send:
+        record = self.requests.admit(places=1, generation=self.generation, live=self.live, owner=self.owner,
+                                     identify=identify, watched=True, sender=sender)
+        self.sends.append(record)
+        return record
 
-    def told(self, said: str, identity: str) -> None:
-        self.requests.provider_said(said, identity, self.generation)
+    def told(self, said: str, record: Send | str) -> None:
+        self.requests.provider_said(said, record, self.generation)
+
+    def done(self, record: Send) -> None:
+        self.requests.release(record)
+
+
+def _raised_by(failed: BaseException, sends: Sequence[Send]) -> Send | None:
+    """The send whose failure ``failed`` is, read from its own frames: the innermost frame on its way out, or on the way out of
+    what it was raised from, of a caller this call let a send out for, with what it was given to send where its caller is
+    not watched. A send that came back has no frame there. With none found, it is this call's one send, or not known."""
+    seen: set[int] = set()
+    error: BaseException | None = failed
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        frames, tb = [], error.__traceback__
+        while tb is not None:
+            frames.append(tb.tb_frame)
+            tb = tb.tb_next
+        for frame in reversed(frames):
+            caller = frame.f_locals.get("self")
+            for record in reversed(sends):
+                if caller is None or record.sender is not caller:
+                    continue
+                if record.watched:
+                    return record
+                system, user = frame.f_locals.get("system"), frame.f_locals.get("user")
+                if isinstance(system, str) and isinstance(user, str) and _request_digest(system, user) == record.identity:
+                    return record
+        error = error.__cause__ or error.__context__
+    return sends[0] if len(sends) == 1 else None
 
 
 class _Counted:
@@ -465,17 +532,18 @@ class _Counted:
     caller of a domain's own is charged attempt by attempt, and a ``Retry-After`` resend takes its place from
     ``g6.core.llm.waits``. Nothing a run reports about itself enters the count.
 
-    Each noted request takes its place at that same boundary, before it goes out, so a retry inside a caller stops at what
-    the tick reserved. ``counting`` asks its observers not to raise, because an observer is normally a bystander at someone
-    else's request. This one is the gate on that request: it raises before anything is sent or counted, and what it raises
-    is the ``LLMError`` a failed request raises, which every caller here passes on. That file is bound, so its sentence
-    stays until an issuance window.
+    Each send takes its place once, before it goes out, so a retry inside a caller stops at what the tick reserved: as it is
+    noted, or for a watched host caller where its program starts. ``counting`` asks its observers not to raise, because an
+    observer is normally a bystander at someone else's request. This one is the gate on that request: it raises before
+    anything is sent or counted, and what it raises is the ``LLMError`` a failed request raises, which every caller here
+    passes on. That file is bound, so its sentence stays until an issuance window.
 
-    What was refused is known by what was sent: for a host caller, what its program is started with, checked where it starts
-    (``_Gate``); for any other, the system text and request its own frame names, checked as it is noted. What a request
-    raised is read for a provider's statement only from a caller the loop does not watch: a watched host caller's own reading
-    of its structured output is all that decides for it. Whichever way the call comes back, what its tick latched decides
-    last (``recheck``), so a wrapper that catches the limit or the refusal cannot turn it into an answer.
+    Each send's record (``usage.Send``) is all that is known of it: no flag or variable here holds a send's state. What was
+    refused is known by what was sent: for a host caller, what its program is started with, read where it starts (``_Gate``);
+    for any other, the system text and request its own frame names, read as it is noted. What a call raised is read by the
+    record of the send that raised it (``_raised_by``): a watched host caller's own reading of its structured output is all
+    that decides for it, and the text reader is for any other. Whichever way the call comes back, what its tick latched
+    decides last (``recheck``), so a wrapper that catches the limit or the refusal cannot turn it into an answer.
 
     A caller that answers with no request noted is refused, because nothing could say how often it asked. The limit of
     this: a caller that notes one request and retries unnoted looks like one request, and so do the Anthropic SDK's own
@@ -490,48 +558,61 @@ class _Counted:
         self.inner, self.requests = inner, requests
 
     def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
-        generation, owner = self.requests.generation, object()
+        generation, owner, ended = self.requests.generation, object(), threading.Event()
         self.requests.admit(generation=generation)
-        sent = _request_digest(system, user)
-        took: list[None] = []
-        returned, host = False, False
+        asked = _request_digest(system, user)
+        sends: list[Send] = []                # this call's sends, each its own record, in the order they were let out
 
         def live() -> bool:
-            return not returned
-
-        def take(wait: float = 0.0) -> None:
-            self.requests.take(wait, generation=generation, live=live, identity=None if host else sent, owner=owner)
+            return not ended.is_set()
 
         def next_request() -> None:
-            nonlocal sent, host
-            sender, sent = _sender(self, sent)
+            sender, identity = _sender(self, asked)
             self.requests.from_sender(sender)
             read_stops(sender)
-            host = watched(sender)            # a host caller is checked where its program starts, by what it is started with
-            take()                            # a place first, so a wrapper that keeps trying stops at what the tick reserved
-            took.append(None)
+            if not watched(sender):           # a watched host caller takes its one place where its program starts
+                sends.append(self.requests.take(generation=generation, live=live, identity=identity, owner=owner,
+                                                sender=sender))
+
+        def resend(wait: float = 0.0) -> None:
+            self.requests.take(wait, generation=generation, live=live, owner=owner)
 
         def limited(wait: dict[str, Any]) -> None:
             hint = float(wait.get("retry_after_s") or 0.0)
             self.requests.met_a_limit(self.requests.now() + timedelta(seconds=max(hint, 0.0)),
                                       "HTTP 429: the provider's limit was met", generation)
 
-        with (counting(before_call=next_request) as noted, _gating_resends(take, limited),
-              telling_stops(_Gate(self.requests, generation, live, owner))):
+        def finish(latched: bool) -> None:
+            ended.set()
+            self.requests.release(owner)
+            # a child's totals have no boundary; one that took its place and is not yet noted gives none back
+            self.requests.count(max(noted() - len(sends), 0))
+            if latched:                               # what the tick latched decides, unless the process is going down
+                self.requests.recheck(generation)
+
+        with (counting(before_call=next_request) as noted, _gating_resends(resend, limited),
+              telling_stops(_Gate(self.requests, generation, live, owner, sends))):
             try:
                 text = self.inner.complete(system, user, max_tokens=max_tokens)
             except LLMError as failed:
-                if not host:
-                    self.requests.provider_said(failed, sent, generation)
-                elif isinstance(failed, ProviderStop):    # told already, unless the reply was read where the gate is not
-                    self.requests.provider_said(failed.said, failed.identity, generation)
+                try:
+                    if isinstance(failed, ProviderStop):  # told already, unless the reply was read where the gate is not
+                        self.requests.provider_said(failed.said, failed.record, generation)
+                    else:                                 # read as the send that raised it is: text only if not watched
+                        raised = _raised_by(failed, sends)
+                        if (raised is None and not any(s.watched for s in sends)) or (raised is not None
+                                                                                       and not raised.watched):
+                            self.requests.provider_said(failed, raised, generation)
+                finally:
+                    finish(True)
                 raise
-            finally:
-                returned = True
-                self.requests.release(owner)
-                # a child's totals have no boundary; one that took its place and is not yet noted gives none back
-                self.requests.count(max(noted() - len(took), 0))
-                self.requests.recheck(generation)
+            except (Exception, _AtLimit, _Refused, _Halted):
+                finish(True)
+                raise
+            except BaseException:                         # a death stays a death, and is never read as a refusal
+                finish(False)
+                raise
+            finish(True)
             if not noted():
                 self.requests.unseen = True
                 raise LLMError(f"{UNMETERED_CALLER}: a model caller answered with no request noted")
@@ -744,10 +825,13 @@ class ShadowLoop:
         """Keep a refused request's digest on the disk before anything else happens (``note_refusal``). One no file would take
         is held by this process alone, and a restart could send it again: so this process sends nothing more, and asks for a
         stop a person must lift."""
-        if note_refusal(self.root, request, said):
-            return
-        why = (f"a request was refused ({' '.join(said.split())[:160]}) and {REFUSED_FILE} would not keep it, so a restart "
-               "could send it again")[:400]
+        try:
+            if note_refusal(self.root, request, said):
+                return
+        except Exception:  # noqa: BLE001 - any failure to keep it is a refusal only this process holds
+            pass
+        why = _writable(f"a request was refused ({' '.join(said.split())[:160]}) and {REFUSED_FILE} would not keep it, so a "
+                        "restart could send it again")[:400]
         self.cannot_record = why
         try:
             ask_to_stop(self.root, why)
@@ -763,7 +847,7 @@ class ShadowLoop:
         """Every request refused here, from ``refused.log`` and from the cycles that recorded a refusal: what a cycle of an
         earlier version kept as ``asked`` still counts."""
         stops = [c["classifier_stop"] for c in self.log.cycles() if c.get("classifier_stop")]
-        return refused_requests(self.root) | {kept[name] for kept in stops for name in ("request", "asked") if name in kept}
+        return refused_requests(self.root) | {kept[name] for kept in stops for name in ("request", "asked") if kept.get(name)}
 
     def _halted(self) -> _Halted | None:
         """What stops any request, in a tick or not: what was refused could not be read, this folder's stop, or G6's own."""
@@ -1027,7 +1111,6 @@ class ShadowLoop:
                 row = self._row() if breaches else self._cycle(recommended)
             except _AtLimit as reached:
                 row, limit = self._row(), reached
-                self._keep_limit(spend.provider, reached.until)    # first: nothing of the tick is settled or written before it
             except _Halted as reached:
                 row, halted = self._row(), reached
             except _Refused:
@@ -1035,7 +1118,10 @@ class ShadowLoop:
             except Exception as exc:  # noqa: BLE001 - an unattended loop records the failure and lives to its next tick
                 row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
                        "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]}
-            finally:             # use nobody could count stays charged at its worst case
+            finally:             # every limit the tick met is kept first, whatever ended it; then what it used is settled
+                for until in sorted({until for until, _ in self.requests.met} | ({limit.until} if limit else set())):
+                    self._keep_limit(spend.provider, until)
+                # use nobody could count stays charged at its worst case
                 charged = self.meter.settle(spend, spend.amount if self.requests.unseen else self.requests.sent)
         unseen, stopped, refusal = self.requests.unseen, self.requests.stopped, self.requests.refusal
         self.requests.close()
@@ -1122,8 +1208,8 @@ class ShadowLoop:
         why = (f"{self.lost_cycles} of the {MAX_FAILED_CYCLES} cycles in a row that stop the loop could not be written to "
                f"its log ({type(exc).__name__}: {exc})")[:400]
         if refusal is not None:
-            why = (f"a classifier or a permission stopped a request ({refusal['said']}) and the log would not take that cycle "
-                   f"({type(exc).__name__}: {exc})")[:400]
+            why = _writable(f"a classifier or a permission stopped a request ({refusal['said']}) and the log would not take "
+                            f"that cycle ({type(exc).__name__}: {exc})")[:400]
         if refusal is not None or self.lost_cycles >= MAX_FAILED_CYCLES:
             self.cannot_record = why
             try:
