@@ -594,15 +594,29 @@ cognitive work, with programming as the first toy model. So P2 was built first a
   (sealed breach, unmetered caller, classifier stop, barred caller), then the tick's reservation spent. A safety stop a
   frozen change outranks still pauses the loop, since the pause reads every status and is read before the frozen digests.
   A cycle that adopts nothing ends on the same check, so a change is `G6_E_LOOP_FROZEN_CHANGED` whether or not a candidate
-  won, and whatever else held; a wait or a stop met at a model call writes no cycle, and the next tick's reading refuses
-  the change. The judge is pinned by files listed whole, never by following imports: the verdict function selected, by its
-  file and qualified name, each check by its file and name, every file Python could import under the roots that hold the
-  verdict and the checks (the folders they are in, or the `roots` a domain declares), and every module loaded from
-  anywhere outside those, G6 and the installation, by its bytes. A verdict or check in no such place is refused at
-  enrolment (`G6_E_LOOP_JUDGE_UNPINNED`). Each case's answer is pinned by an exact encoding (`answer_identity`): each value
-  with its exact type, a float by its IEEE bytes, set members and mapping items in the order of their encodings, an
-  object by its class and its whole `__dict__`, and no pickle or `repr`; one with no exact encoding, or one the split's
-  reference cannot render, is refused at enrolment (`G6_E_LOOP_ANSWER_UNIDENTIFIABLE`). What gets past it: an edit in the
+  won, and whatever else held, a cycle that raised past its own guard included (`fault`, held to the tick's reading, or to
+  the enrolment when it read none); a wait or a stop met at a model call writes no cycle, and the next tick's reading
+  refuses the change. A safety stop in a cycle the log would not take stops the loop at once, as a `STOP` a restarted
+  handle reads. The judge is pinned by files listed whole, never by following imports: the verdict function selected, by
+  its file and qualified name, each check by its file and name, every regular file of any suffix under the roots that
+  hold the verdict and the checks (the folders they are in, or the `roots` a domain declares), data files and archives as
+  much as source, and every module loaded from anywhere outside those, G6 and the installation, by its bytes. A verdict or
+  check in no such place, or a link or junction anywhere under a root, is refused at enrolment
+  (`G6_E_LOOP_JUDGE_UNPINNED`), and one made later is a change at the next reading; no root, nor what a link under one
+  points at, may be the loop's folder or lie around it, by path or by the identity the file system gives a folder. The
+  judge is given exactly what was identified: an answer is admitted only as `None`, a `bool`, an `int`, a finite `float`,
+  a `str`, a `list` or a `dict` with `str` keys, each of exactly that type, as a tree no deeper than 64; its encoding keeps
+  dict order and float bytes, its identity is that encoding's digest, and enrolment builds the answer each judge reads by
+  decoding it, a fresh tree that shares nothing with what the domain holds. Anything else, and anything that raises while
+  it is read, is refused at enrolment by case id (`G6_E_LOOP_ANSWER_UNIDENTIFIABLE`); such a value keeps an identity of
+  its own kind (framed type, value and state, no pickle or `repr`), so a cut's digest still says when it changes.
+
+  **The freeze's threat model is honest drift (the owner's ruling, 2026-11-05).** A candidate cannot write the judge's
+  files: proposers edit a view and candidates run confined. What the freeze guards against is a person or another process
+  editing what judges in ordinary ways during a cycle, not code written to evade the check. So a person declares as a root
+  every folder the judge reads or loads code from. Left out, as limits and not findings: a module imported from an archive
+  outside the roots, a file run with `runpy` outside them, and a timestamp-valid bytecode cache replaced by hand (the
+  runner runs with `-B` and a fresh cache prefix, so a cache under a root is not what it loads), as well as an edit in the
   moment after the last read and before the write, bytes changed and put back between the two reads, and state that lives
   in no file: a module's globals or a class's attributes changed as it runs, a closure's cells, a callable object's
   attributes. Each proposer, and the
