@@ -100,6 +100,46 @@ def completed(cp: Any, what: str, *, ok: Container[int] = (0,)) -> Any:
     return cp
 
 
+#: The last line a command run in a container with its own report (``reporting``, ``run.Docker.sh(..., own_exit=True)``) prints,
+#: naming its own exit. Only the shell that ran the command in the container prints it, after the command ended; the container
+#: runtime prints nothing of the kind, and its own failures (a stopped or missing container, a killed exec, the daemon's error) end
+#: the docker command with 1 or 125 to 127, exits a command has too (study review 3, findings 1 and 7).
+OWN_EXIT = "g6we-own-exit="
+
+
+def reporting(script: str) -> str:
+    """``script`` as a shell runs it with its own report: its exit named on the last line of its output, then the shell exits with it."""
+    return f'{script}\ncode=$?; printf "\\n{OWN_EXIT}%s\\n" "$code"; exit "$code"'
+
+
+def own_exit(cp: Any, what: str, *, ok: Container[int]) -> Any:
+    """The one reader of a command's own exit in a container, for a site that reads an exit but 0 as the command's answer (``git
+    apply``'s "does not apply", ``cat``'s "no such file"). A 0 is the command's: the runtime ends its own failures with a status
+    but 0. Any other status is the command's only when the command's own report (``OWN_EXIT``, its output's last line) names that
+    very status; with none, the runtime failed, the command's answer is unknown, and it raises (RuntimeError), so a caller records
+    nothing, never a "no". A reported exit ``ok`` does not name raises too. Every site is listed by tests/validation/
+    test_command_results.py."""
+    code = getattr(cp, "returncode", None)
+    if not isinstance(code, int) or isinstance(code, bool):
+        return completed(cp, what, ok=ok)
+    if code != 0:
+        data = getattr(cp, "stdout", b"") or b""
+        data = data.encode("utf-8", "surrogateescape") if isinstance(data, str) else data
+        if data.rstrip(b"\n").rpartition(b"\n")[2] != f"{OWN_EXIT}{code}".encode():
+            said = _text(getattr(cp, "stderr", b""))
+            raise RuntimeError(f"{what}: no exit of its own was reported, so the container runtime failed ({code}) and its answer "
+                               f"is unknown: {said[-600:]}")
+    return completed(cp, what, ok=ok)
+
+
+def told(cp: Any) -> bytes:
+    """A reported command's output (``reporting``) without its report."""
+    data = getattr(cp, "stdout", b"") or b""
+    data = data.encode("utf-8", "surrogateescape") if isinstance(data, str) else data
+    head, _, last = data.rstrip(b"\n").rpartition(b"\n")
+    return head if last.startswith(OWN_EXIT.encode()) else data
+
+
 def price_of(model: str) -> dict[str, float]:
     name = str(model or "")
     for known, price in PRICES.items():
@@ -646,19 +686,54 @@ def _root(root: Path | Archive) -> Path:
     return root.root if isinstance(root, Archive) else Path(root)
 
 
+def _same(one: Path, other: Path) -> bool:
+    """Whether two paths are one file or folder, as the file system resolves them, junctions and links followed."""
+    try:
+        return os.path.samefile(one, other)
+    except OSError:                     # one that is not there is no other
+        return False
+
+
+def _folders(root: Path | Archive) -> tuple[Path, Path]:
+    """The saved rows' folder and the amended verdicts' (``SAVED``, ``AMENDED``), refused (ValueError) when they are one folder by
+    identity, as a junction or link from one to the other makes them: a row read or written in one would be the other's (study
+    review 3, finding 14). Every reader and writer of the rows (``shelf``, ``keep``) and of a store (``beside``) asks it, at each
+    access."""
+    rows, amended = _root(root) / SAVED, _root(root) / SAVED / AMENDED
+    if _same(rows, amended):
+        raise ValueError(f"{SAVED}/{AMENDED} is the saved rows' folder itself, by a junction or a link")
+    return rows, amended
+
+
 def beside(root: Path | Archive, name: str) -> Path:
     """A store kept beside the saved rows, in their folder (``SAVED``), by its one name: a review's or a replay's folder of records
     (``final_review`` and the like), or one of the training's own files (``evolve.json``, ``cegis.json``). Never the rows' folder
-    itself, nor the amended verdicts' (``AMENDED``): only ``shelf`` reads a row, and only ``keep`` writes one. A file kept here
-    that is no row is found by ``shelf`` and refused, as it names no run. Names are compared as the file system resolves them
-    (``os.path.normcase``, and on Windows the trailing dots and spaces it drops), and an existing store that is the amended
-    verdicts' folder by another name is refused too (study review 2, finding 13)."""
+    itself, nor the amended verdicts' (``AMENDED``): only ``shelf`` reads a row, and only ``keep`` writes one. Names are compared as
+    the file system resolves them (``os.path.normcase``, and on Windows the trailing dots and spaces it drops). At every access the
+    store is checked by identity, junctions and links followed: it is refused (ValueError) if it is the rows' folder, the amended
+    verdicts', or another entry of either (another store, or a row by a second name), or if it is a file that holds a row of a run
+    the archive started, admitted or barring its key, which only ``keep`` may write (study review 3, findings 9, 13 and 14). A
+    file kept here that is no run's row is found by ``shelf`` and refused, as it names no run."""
     resolved = os.path.normcase(name.rstrip(". ") if os.name == "nt" else name)
     if not name or Path(name).name != name or resolved in (".", "..", "", os.path.normcase(AMENDED)):
         raise ValueError(f"{name!r} is no store beside the saved rows")
-    store, amended = _root(root) / SAVED / name, _root(root) / SAVED / AMENDED
-    if store.exists() and amended.exists() and os.path.samefile(store, amended):
-        raise ValueError(f"{name!r} is the amended verdicts' folder by another name")
+    rows, amended = _folders(root)
+    store = rows / name
+    if not os.path.lexists(store):
+        return store
+    file = store.is_file()             # a folder can be only a folder, and a file with one name only itself
+    entries = not file or os.stat(store).st_nlink > 1
+    others = [rows, amended, *(Path(e.path) for folder in (rows, amended) if entries and folder.is_dir()
+                               for e in os.scandir(folder) if (file or e.is_dir())
+                               and not (folder == rows and os.path.normcase(e.name) == resolved))]
+    if any(_same(store, other) for other in others):
+        raise ValueError(f"{name!r} is the saved rows' folder, the amended verdicts', or another of their entries, by a junction "
+                         "or a link")
+    if store.is_file():
+        archive = root if isinstance(root, Archive) else Archive(Path(root))
+        held, _ = _found(archive, SAVED, store, lambda run: run_facts(archive, run) if run else None)
+        if held.key is not None:
+            raise ValueError(f"{name!r} holds the row of {held.run!r}, which only the saved rows' writer writes")
     return store
 
 
@@ -867,7 +942,7 @@ def shelf(root: Path | Archive, amendment: Callable[[str], Path | None]) -> Shel
         return facts[name]
 
     found, read = [], {}
-    for folder, where in ((SAVED, archive.root / SAVED), (AMENDED, archive.root / SAVED / AMENDED)):
+    for folder, where in zip((SAVED, AMENDED), _folders(archive)):      # two folders by identity (study review 3, finding 14)
         for path in sorted(where.glob("*.json")) if where.is_dir() else ():
             one, row = _found(archive, folder, path, facts_of)
             found.append(one)
@@ -907,6 +982,12 @@ def saved_row(root: Path | Archive, arm: str, task: str, repeat: Any, amendment:
     return shelf(root, amendment).get((arm, task, repeat))
 
 
+def durable(path: Path) -> None:
+    """``path``'s bytes flushed to the disk (``os.fsync``), before anything that says they were kept is written."""
+    with open(path, "r+b") as stream:
+        os.fsync(stream.fileno())
+
+
 def _whole(path: Path, data: bytes) -> None:
     """``data`` at ``path``, whole or not at all: written to a file of its own in the same folder (a name no reader looks for), flushed
     to the disk, then put in place by ``os.replace``, so a stop leaves the file as it was or as it is now, never cut short."""
@@ -936,7 +1017,7 @@ def keep(root: Path | Archive, row: Mapping[str, Any], *, amended: bool = False,
              else disagrees(facts, row) or ("its run's start names no repeat" if facts.repeat is None else ""))
     if wrong:
         raise ArchiveError(f"no row of {name!r} is written: {wrong}")
-    folder = archive.root / SAVED / AMENDED if amended else archive.root / SAVED
+    folder = _folders(archive)[1 if amended else 0]     # refused when the two are one folder (study review 3, finding 14)
     file = file or saved_name(facts.arm, facts.task, facts.repeat)
     if Path(file).name != file or not file.endswith(".json"):
         raise ValueError(f"{file!r} is no saved row's name")

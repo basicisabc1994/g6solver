@@ -306,7 +306,7 @@ def test_a_limit_is_saved_as_failed_with_its_text_and_is_not_counted(tmp_path):
     row = _row(root, "A")
     raised = _review(tmp_path, _Reviewer(LLMError("G6_E_LLM_HOST_FAILED: codex exited 1: You've hit your usage limit.")))
     assert raised["said"] == "failed" and "usage limit" in raised["error"] and fr.no_review(raised)
-    fr.keep(root, row, raised, pr.FOLDER)
+    fr.keep(root, row, raised, pr.FOLDER, sha=fr._kept(root, row).stem)
     assert fr.said_of(root, row, pr.FOLDER) is None and len(fr.waiting(root, [TASK], pr.FOLDER)) == 1
     printed = _review(tmp_path, _Reviewer("ERROR: You've hit your usage limit. Try again at 3:05 PM."))
     assert printed["said"] == "failed" and printed["verdict"] == "unread" and "usage limit" in printed["reply_end"]
@@ -452,8 +452,8 @@ def test_each_review_is_saved_by_the_patchs_digest_in_its_own_folder(tmp_path, m
 def test_a_saved_review_is_skipped_and_a_failed_one_is_made_again(tmp_path, monkeypatch, capsys):
     root = tmp_path / "round3"
     done, again = _row(root, "A"), _row(root, "L9", body=PATCH + " ")
-    fr.keep(root, done, {"said": "defect"}, pr.FOLDER)
-    fr.keep(root, again, {"said": "failed"}, pr.FOLDER)
+    fr.keep(root, done, {"said": "defect"}, pr.FOLDER, sha=fr._kept(root, done).stem)
+    fr.keep(root, again, {"said": "failed"}, pr.FOLDER, sha=fr._kept(root, again).stem)
     reviewer = _Reviewer(QUIET)
     got = _main(tmp_path, monkeypatch, capsys, reviewer, rows=())
     assert len(reviewer.calls) == 1 and sorted(one["said"] for one in got["saved"].values()) == ["defect", "none"]

@@ -1501,4 +1501,6 @@ def test_repair_4_the_export_labels_the_baseline_bytes_it_checked_and_never_read
     sha = lambda data: hashlib.sha256(data).hexdigest()[:16]               # noqa: E731
     assert (task, sha(b"unscored replacement patch")) not in cases
     held, ok = cases[(task, sha(b"checked first-session patch\r\n"))]
-    assert ok is False and ex.diff_of(held) == "checked first-session patch\n"     # as read_text gave a patch's text before
+    assert ok is False and ex.diff_of(held) == "checked first-session patch\r\n"   # the bytes as they are: git reads its names
+    assert ex.shown(ex.diff_of(held)) == "checked first-session patch\n"           # (study review 3, finding 6); as a case shows
+    # the diff, as read_text gave a patch's text before

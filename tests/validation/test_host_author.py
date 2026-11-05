@@ -1012,10 +1012,14 @@ def test_a_runs_ending_is_written_when_decided_and_a_failure_after_it_never_make
     monkeypatch.setattr(box_mcp, "mirror", mirror)
     record, *_ = host_run(monkeypatch, tmp_path, "A", [("s1", "", lines)])
     run = tmp_path / "archive" / record["run"]
-    decided = "finished" if status == "error" else status
     assert record["status"] == status and "the mirror failed" in record["error"]
-    assert seen[failing - 1]["status"] == decided                    # on record before the mirror that failed
-    assert json.loads((run / "ending.json").read_text("utf-8"))["status"] == decided and (run / "failed_after_ending.json").is_file()
+    if status == "error":      # an ending scored on the patch waits for the final patch (study review 3, finding 5): none is on
+        assert seen[failing - 1] is None                 # record before the final mirror, and the failure there is the ending
+        assert json.loads((run / "ending.json").read_text("utf-8"))["status"] == "error" and not (run / "final.patch").exists()
+    else:
+        assert seen[failing - 1]["status"] == status                 # on record before the mirror that failed
+        assert json.loads((run / "ending.json").read_text("utf-8"))["status"] == status
+        assert (run / "failed_after_ending.json").is_file()
     assert we.c.ending(tmp_path / "archive", record["run"])["status"] == status and we.c.scoreable(record) is (status == "error")
 
 

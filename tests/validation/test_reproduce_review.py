@@ -167,7 +167,7 @@ FROZEN_SAVED = """{{
 }}"""
 
 
-def _frozen_calls(run):
+def _frozen_calls(sha):
     name, repo = "g6we-review-0000000000", "/home/tester/work/black"
     return [["run", "-d", "--name", name, "--label", "g6we=1", "--network", "none", "--security-opt", "seccomp=unconfined",
              "--security-opt", "apparmor=unconfined", "-u", "tester", "-e", "HOME=/home/tester", "-w", repo,
@@ -176,7 +176,7 @@ def _frozen_calls(run):
             ["exec", "-i", "-u", "root", name, "sh", "-c",
              'mkdir -p "$(dirname "/opt/we/critic/test_critic.py")" && cat > "/opt/we/critic/test_critic.py" && chmod 644 '
              '"/opt/we/critic/test_critic.py"'],
-            ["cp", f"<tmp>/round3/run/{run}/final.patch", f"{name}:/tmp/we.patch"],
+            ["cp", f"<tmp>/round3/critic_packs/held-{sha}-{os.getpid()}.patch", f"{name}:/tmp/we.patch"],   # the bytes read
             ["rm", "-f", name]]
 
 
@@ -190,7 +190,8 @@ def test_the_frozen_review_is_byte_for_byte_what_it_was(tmp_path, monkeypatch, c
             FROZEN_SAVED.format(run="run/L91").replace("\n", os.linesep).encode("utf-8"),
         "loop/final_review/5da3889b34525a0b01340507a691e293618f811c696fdbf2ecc19cfd13a2151e.json":
             FROZEN_SAVED.format(run="run/A1").replace("\n", os.linesep).encode("utf-8")}
-    assert got["calls"] == [*_frozen_calls("L91"), *_frozen_calls("A1")]
+    assert got["calls"] == [*_frozen_calls("59c01c68c0d0ca432c95f3c694d7f370bde83265b81007d1979ccfaf6fef7ca1"),
+                            *_frozen_calls("5da3889b34525a0b01340507a691e293618f811c696fdbf2ecc19cfd13a2151e")]
     assert got["scripts"] == ["git apply --binary --whitespace=nowarn /tmp/we.patch"] * 2
     issue = "review {}\n\na title\n\nthe issue\n\nthe thread"
     assert critic.seen == [{"candidate.patch": "patch two", "critic_prompt.md": we.PATCH_CRITIC, "parent/src/app.py": "print('parent')\n",
@@ -437,10 +438,10 @@ def test_a_training_patch_has_no_futility_stop(tmp_path, monkeypatch, capsys):
 def test_a_saved_review_is_skipped_and_a_failed_one_is_made_again(tmp_path):
     root = tmp_path / "round3"
     row = _row(root, "A")
-    fr.keep(root, row, {"said": "none"}, fr.REPRODUCE)
+    fr.keep(root, row, {"said": "none"}, fr.REPRODUCE, sha=fr._kept(root, row).stem)
     assert fr.waiting(root, [TASK], fr.REPRODUCE) == [] and fr.said_of(root, row, fr.REPRODUCE) == "none"
     assert len(fr.waiting(root, [TASK])) == 1                     # the frozen review's own record is apart
-    fr.keep(root, row, {"said": "failed"}, fr.REPRODUCE)
+    fr.keep(root, row, {"said": "failed"}, fr.REPRODUCE, sha=fr._kept(root, row).stem)
     assert len(fr.waiting(root, [TASK], fr.REPRODUCE)) == 1 and fr.saved(root, row, fr.REPRODUCE) == {
         "task": TASK, "first_seen_in": "run/A1", "said": "failed"}
     assert (root / "loop" / fr.REPRODUCE / f"{c.sha256_file(root / row['run'] / 'final.patch')}.json").is_file()

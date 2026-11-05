@@ -188,15 +188,15 @@ def test_the_default_is_the_training_bugs_so_no_held_out_patch_is_read():
 
 def test_a_saved_review_stands_and_a_failed_one_is_made_again(tmp_path):
     row = _row(tmp_path, "A")
-    fr.keep(tmp_path, row, {"said": "none"})
+    fr.keep(tmp_path, row, {"said": "none"}, sha=fr._kept(tmp_path, row).stem)
     assert fr.waiting(tmp_path, ["x-1"]) == [] and fr.said_of(tmp_path, row) == "none"
-    fr.keep(tmp_path, row, {"said": "failed"})
+    fr.keep(tmp_path, row, {"said": "failed"}, sha=fr._kept(tmp_path, row).stem)
     assert len(fr.waiting(tmp_path, ["x-1"])) == 1 and fr.said_of(tmp_path, row) is None
 
 
 def test_a_changed_patch_has_no_review(tmp_path):
     row = _row(tmp_path, "A")
-    fr.keep(tmp_path, row, {"said": "none"})
+    fr.keep(tmp_path, row, {"said": "none"}, sha=fr._kept(tmp_path, row).stem)
     (tmp_path / row["run"] / "final.patch").write_text("changed", "utf-8")
     assert fr.said_of(tmp_path, row) is None
 
@@ -204,7 +204,7 @@ def test_a_changed_patch_has_no_review(tmp_path):
 def test_the_comparison_reads_the_review_beside_the_runs_and_only_where_there_is_one(tmp_path, monkeypatch):
     monkeypatch.setattr(compare.we, "amendment", lambda task: None)
     reviewed = _row(tmp_path, "A")
-    fr.keep(tmp_path, reviewed, {"said": "reproduced"})
+    fr.keep(tmp_path, reviewed, {"said": "reproduced"}, sha=fr._kept(tmp_path, reviewed).stem)
     _row(tmp_path, "T", body="another")
     rows = compare.saved(tmp_path)
     assert rows[("A", "x-1", 1)]["review"] == "reproduced" and "review" not in rows[("T", "x-1", 1)]
@@ -214,7 +214,7 @@ def test_the_review_changes_no_verdict_and_no_rule(tmp_path, monkeypatch):
     monkeypatch.setattr(compare.we, "amendment", lambda task: None)
     reviewed = _row(tmp_path, "A")
     before = compare.saved(tmp_path)[("A", "x-1", 1)]
-    fr.keep(tmp_path, reviewed, {"said": "reproduced"})
+    fr.keep(tmp_path, reviewed, {"said": "reproduced"}, sha=fr._kept(tmp_path, reviewed).stem)
     after = compare.saved(tmp_path)[("A", "x-1", 1)]
     assert {k: after[k] for k in ("maintainers", "amended", "said")} == {k: before[k] for k in ("maintainers", "amended", "said")}
 
@@ -237,7 +237,7 @@ def test_the_trust_table_leaves_out_runs_with_no_review():
 
 def test_review_results_are_saved_outside_the_rows_the_comparison_counts(tmp_path):
     row = _row(tmp_path, "A")
-    fr.keep(tmp_path, row, {"said": "none"})
+    fr.keep(tmp_path, row, {"said": "none"}, sha=fr._kept(tmp_path, row).stem)
     assert [p.name for p in (tmp_path / "loop").glob("*-*.json")] == ["A-x-1-1.json"]
     assert (tmp_path / "loop" / fr.FOLDER / f"{c.sha256_file(tmp_path / row['run'] / 'final.patch')}.json").is_file()
 

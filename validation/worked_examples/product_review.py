@@ -19,6 +19,7 @@ failed, at a Codex limit or otherwise, is saved as failed with what it said, is 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import tarfile
@@ -239,16 +240,17 @@ def review(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, *
     review's ``issue.txt`` holds. A pack whose head does not fit starts nothing and asks no one, as the product asks no one."""
     started = time.monotonic()
     found: dict[str, Any] = {"verdict": "failed", "rule": "", "why": "", "test": "", "error": ""}
-    raw = patch.read_bytes()
+    raw = patch.read_bytes()      # one read: the review is kept by these bytes' digest (study review 3, finding 11)
+    sha = hashlib.sha256(raw).hexdigest()
     diff, issue = raw.decode("utf-8", "replace"), f"{title}\n\n{text}"
     files = touched(raw.decode("utf-8", "surrogateescape"))    # a name keeps its bytes, as the product's listing keeps them
     size, asking = 0, False
     if not _read_whole(diff, issue):
         found["error"] = TOO_LONG
-        return {**found, "said": said(found), "pack_chars": size, "cut": False, "seconds": round(time.monotonic() - started, 1)}
+        return {**found, "said": said(found), "patch_sha256": sha, "pack_chars": size, "cut": False, "seconds": round(time.monotonic() - started, 1)}
     if any(not _named(rel) for rel in files):
         found["error"] = UNNAMED
-        return {**found, "said": said(found), "pack_chars": size, "cut": False, "seconds": round(time.monotonic() - started, 1)}
+        return {**found, "said": said(found), "patch_sha256": sha, "pack_chars": size, "cut": False, "seconds": round(time.monotonic() - started, 1)}
     name = f"g6we-review-{uuid.uuid4().hex[:10]}"
     image, _ = we.image_names(task, str(ctx.g6["commit"]), ctx.variant)
     try:
@@ -276,7 +278,7 @@ def review(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, *
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
         if asking:
             found["failed_at"] = "reviewer"
-    return {**found, "said": said(found), "pack_chars": size, "cut": size == MAX_PACK_CHARS,
+    return {**found, "said": said(found), "patch_sha256": sha, "pack_chars": size, "cut": size == MAX_PACK_CHARS,
             "seconds": round(time.monotonic() - started, 1)}
 
 

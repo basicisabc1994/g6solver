@@ -201,14 +201,16 @@ def review_bug(ctx: we.Context, root: Path, task: we.Task, rows: Sequence[Mappin
     if not rows:
         return []                                     # nothing waits, so no one is asked
     saved = bug_record(root, task.id, ins)
-    found = (fr.read(saved) or {}).get("found")       # one cut short is no record, and the bug is asked again
+    # one cut short is no record, nor one of another bug (``of_bug``, study review 3, finding 10), and the bug is asked again
+    found = (fr.of_bug(fr.read(saved), task.id) or {}).get("found")
     got = []
     if not isinstance(found, dict) or no_answer(found):    # a saved answer meets the same test as a fresh one
         started = time.monotonic()
         found, _, _ = ask(ctx, task, root / str(rows[0]["run"]) / "final.patch", title, text, ins.text, ins.at, ins.file,
                           candidate=False, run=False)
-        if no_answer(found):
-            return [_keep(root, rows[0], verdict(found, None, None), started, ins=ins)]    # no review: asked again next run
+        if no_answer(found):        # no review: asked again next run, kept by the patch's bytes as they stand
+            sha = hashlib.sha256((root / str(rows[0]["run"]) / "final.patch").read_bytes()).hexdigest()
+            return [_keep(root, rows[0], verdict(found, None, None), started, sha, ins=ins)]
         saved.parent.mkdir(parents=True, exist_ok=True)
         fr.write_whole(saved, json.dumps({"task": task.id, "instruction": ins.digest, "found": found}, indent=1))
     for row in rows:

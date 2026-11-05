@@ -134,10 +134,18 @@ def test_a_check_whose_docker_step_fails_or_gives_no_exit_is_no_clean_review(mon
     monkeypatch.setattr(we, "write_in", lambda *a, **kw: None)
     monkeypatch.setattr(we, "run_set", broken)
     docker = _Docker(True)
-    docker.sh = lambda agent, script, *a, **kw: type("Done", (), {"stdout": b"", "stderr": b"", "returncode": 125})()
+    status = {"code": 0}
+
+    def sh(agent, script, *a, **kw):      # the probes' docker step fails; the round's capture before it succeeds
+        return type("Done", (), {"stdout": b"", "stderr": b"", "returncode": 125 if script == "probe" else status["code"]})()
+
+    docker.sh = sh
     ctx = type("Ctx", (), {"docker": docker, "arm": "V4"})()
     got = we.reviews_with_bug_test(ctx, type("T", (), {"repo": "/w/r"})(), _Run(), "agent", "b", [], "k", None, 1.0, 0.0, bug())
     assert got["status"] == "inconclusive" and "failed to run" in got["reason"]
+    status["code"] = 125                  # study review 3: a round's capture that failed fails its step, never a missing patch
+    with pytest.raises(RuntimeError, match="capture of round 1"):
+        we.reviews_with_bug_test(ctx, type("T", (), {"repo": "/w/r"})(), _Run(), "agent", "b", [], "k", None, 1.0, 0.0, bug())
 
 
 def test_a_test_that_reproduces_nothing_on_the_parent_sends_nothing_back(monkeypatch):
@@ -262,6 +270,8 @@ def test_the_bug_test_before_the_agent_comes_out_of_the_runs_one_allowance(monke
 
     class Docker:
         def __call__(self, *a, **kw):
+            if a[:1] == ("cp",) and str(a[1]).endswith("/final.patch"):     # the final patch's copy leaves its file, as docker's 0 says
+                Path(a[2]).write_bytes(b"")
             return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
 
         def sh(self, ctr, script, *a, **kw):

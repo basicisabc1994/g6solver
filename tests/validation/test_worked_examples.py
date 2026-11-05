@@ -378,6 +378,8 @@ class FakeDocker:
             return Done(b"2.1.309 (Claude Code)")
         if args[0] == "image" and args[1] == "inspect":
             return Done(b"sha256:img")
+        if args[0] == "cp" and args[1].endswith("/final.patch"):     # a healthy copy leaves its file (study review 3, finding 4)
+            Path(args[2]).write_bytes(b"")
         return Done(b"")
 
     def sh(self, ctr, script, *args, timeout=600, user="tester", workdir=None, env_names=()):

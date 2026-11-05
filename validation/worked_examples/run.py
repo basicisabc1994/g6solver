@@ -31,6 +31,7 @@ import math
 import os
 import queue
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -740,9 +741,11 @@ def convert_start(root: Path, task: str, repeat: int) -> tuple[Path, dict[str, s
     held = c.saved_row(root, case["arm"], task, case["of"], amendment)
     if held is None:
         raise ValueError(f"{case['arm']}-{case['of']} of {task} has no saved row that is its run's own")
+    import final_review as fr      # here, as it imports this module
+
     patch = held.facts.folder / "final.patch"
-    found = json.loads((c.beside(root, "final_review") / f"{c.sha256_file(patch)}.json").read_text("utf-8"))
-    if not isinstance(found, dict) or found.get("task") != task:    # a review is one bug's (study review 2, finding 12)
+    found = fr.saved(root, held.record())      # a saved review's one reader: this bug's (study review 3, finding 10)
+    if found is None:
         raise ValueError(f"{case['arm']}-{case['of']} of {task} has no saved review of its own bug")
     if found.get("said") != "reproduced":
         raise ValueError(f"{case['arm']}-{case['of']} of {task} has no reproduced finding")
@@ -803,10 +806,12 @@ class Docker:
                            env=dict(env) if env is not None else None)
 
     def sh(self, ctr: str, script: str, *args: str, timeout: float = 600, user: str = USER,
-           workdir: str | None = None) -> subprocess.CompletedProcess:
+           workdir: str | None = None, own_exit: bool = False) -> subprocess.CompletedProcess:
+        """``script`` in a shell in the container; with ``own_exit``, run so that it reports its own exit (``wecommon.reporting``),
+        which ``wecommon.own_exit`` reads."""
         extra = ["-w", workdir] if workdir else []
-        return self("exec", "-u", user, "-e", f"HOME={HOME}", *extra, ctr, "sh", "-c", script, "we", *args,
-                    timeout=timeout)
+        return self("exec", "-u", user, "-e", f"HOME={HOME}", *extra, ctr, "sh", "-c",
+                    c.reporting(script) if own_exit else script, "we", *args, timeout=timeout)
 
     def popen(self, *args: str, env: Mapping[str, str] | None = None) -> subprocess.Popen:
         return subprocess.Popen([self.exe, *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -824,6 +829,9 @@ def err(cp: Any) -> str:
 
 
 completed, EXITS, APPLY_EXITS = c.completed, c.EXITS, c.APPLY_EXITS      # the one reader of a command's result (wecommon)
+own_exit = c.own_exit           # and of a command's own exit in a container, where an exit but 0 is its answer
+#: ``git apply`` of the candidate's patch, the one script every check, review and replay applies it by, with its own report
+APPLY = "git apply --binary --whitespace=nowarn /tmp/we.patch"
 
 
 def checked(cp: Any, what: str) -> str:
@@ -1158,10 +1166,11 @@ def r3_ledger(archive: c.Archive, record: Mapping[str, Any]) -> dict[str, Any]:
 # --- the hook that saves each round's patch, and the patch capture -------------------------------------------------------
 def diff_script(repo: str, base: str, dest: str) -> str:
     """The working tree's diff against ``base``, new files included, through a separate index: the repository's own
-    index is never touched."""
-    return (f'idx=$(mktemp) && cd "{repo}" && GIT_INDEX_FILE="$idx" git read-tree {base} >/dev/null 2>&1; '
-            f'GIT_INDEX_FILE="$idx" git add -A >/dev/null 2>&1; '
-            f'GIT_INDEX_FILE="$idx" git diff --cached --binary {base} > "{dest}" 2>/dev/null; rm -f "$idx"')
+    index is never touched. The script exits with the first step's failure, so a capture that failed is never read as one made
+    (study review 3, finding 4)."""
+    return (f'idx=$(mktemp) && cd "{repo}" && GIT_INDEX_FILE="$idx" git read-tree {base} >/dev/null 2>&1 && '
+            f'GIT_INDEX_FILE="$idx" git add -A >/dev/null 2>&1 && '
+            f'GIT_INDEX_FILE="$idx" git diff --cached --binary {base} > "{dest}" 2>/dev/null; code=$?; rm -f "$idx"; (exit $code)')
 
 
 def hook_script(repo: str, base: str) -> str:
@@ -1807,10 +1816,20 @@ def redact_tree(folder: Path, redact: c.Redactor) -> int:
 
 
 def copy_out(docker: Any, ctr: str, src: str, dest: Path) -> bool:
-    """Whether ``src`` was copied out of the container to ``dest``: docker's 1 (no such file, or no copy) is a no; any other
-    status raises (``completed``)."""
+    """Whether ``src`` was copied out of the container to ``dest``. Docker's 1 is its no for a missing file and for its own failure
+    alike (a missing container, the daemon's error), so after it the container itself is asked: a 0 from ``ABSENT`` (nothing is
+    there) is a no, and anything else (it is there, or the container did not answer) raises, so a failed copy is never read as
+    an absent file (study review 3, finding 4)."""
     cp = completed(docker("cp", f"{ctr}:{src}", str(dest), timeout=900), f"the copy of {src}", ok=(0, 1))
-    return cp.returncode == 0 and dest.exists()
+    if cp.returncode != 0:
+        checked(docker.sh(ctr, ABSENT.format(path=shlex.quote(src)), user="root", timeout=60),
+                f"the copy of {src}, which failed with the file there or the container not answering")
+        return False
+    return dest.exists()
+
+
+#: A 0 only when nothing is at ``path`` (no file, folder or link): the container's own answer that a copy found nothing
+ABSENT = "[ ! -e {path} ] && [ ! -L {path} ]"
 
 
 def key_check(ctx: Context, task: Task, image: str, key: str, tag: str, *, net: str = "",
@@ -2144,8 +2163,8 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
     ended, why = host_ending(stop, facts, code=code, limit=limit, by_g6=by_g6, left=left)
     if ended in ("refused", "limited"):
         run.write(f"{stem}_{'refused' if ended == 'refused' else 'limit'}.txt", why)
-    if ended:       # a session that did not end cleanly ends its run: the run's ending, before anything after it can fail
-        run.end(ended, why=why)
+    if ended and not c.on_patch({"status": ended}):    # a session that did not end cleanly ends its run: the run's ending, before
+        run.end(ended, why=why)     # anything after it can fail; one scored on its patch waits for the patch (review 3, finding 5)
     return ended
 
 
@@ -2176,8 +2195,10 @@ def probe_gate(ctx: Context, task: Task, agent: str, where: str, tree: str) -> l
 
 
 def read_in(docker: Any, agent: str, path: str) -> str:
-    """A file's text in a container, "" when there is none (``cat``'s 1); any other status raises (``completed``)."""
-    return out(completed(docker.sh(agent, f"cat {path} 2>/dev/null", timeout=60), f"the read of {path}", ok=(0, 1)))
+    """A file's text in a container, "" when there is none (``cat``'s own 1, as its report names it: ``own_exit``); any other
+    status, and a 1 the container runtime gave, raises."""
+    done = own_exit(docker.sh(agent, f"cat {path} 2>/dev/null", timeout=60, own_exit=True), f"the read of {path}", ok=(0, 1))
+    return c.told(done).decode("utf-8", errors="replace").strip() if done.returncode == 0 else ""
 
 
 def probe_sets(arm: str) -> list[tuple[str, str]]:
@@ -2189,12 +2210,18 @@ def run_set(ctx: Context, task: Task, agent: str, where: str) -> ProbeRun:
     """One probe set on the tree as it stands. A hidden set is copied in for the run and removed: the agent cannot read it."""
     held = where != f"{WE}/probes"
     if held:
-        ctx.docker.sh(agent, f"rm -rf {HELD_COPY}; [ -d {where} ] && cp -r {where} {HELD_COPY} && chown -R {USER} {HELD_COPY}; "
-                             "true", user="root", timeout=60)
+        checked(ctx.docker.sh(agent, held_copy(where), user="root", timeout=60), "the held probes' copy")
     said = checked(ctx.docker.sh(agent, probe_script(HELD_COPY if held else where), workdir=task.repo, timeout=300), "the probes")
     if held:
-        ctx.docker.sh(agent, f"rm -rf {HELD_COPY}", user="root", timeout=60)
+        checked(ctx.docker.sh(agent, f"rm -rf {HELD_COPY}", user="root", timeout=60), "the held probes' copy removed")
     return read_probes(said)
+
+
+def held_copy(where: str) -> str:
+    """A hidden probe set copied in for one run, over whatever an earlier copy left: the old copy removed, then the set, if there is
+    one, copied and given to the agent's user. Each step's failure is the script's exit, so a copy that failed never leaves an
+    earlier one to be run in its place (study review 3, findings 8 and 12); no set there is no copy, and no failure."""
+    return (f"rm -rf {HELD_COPY} && {{ [ ! -d {where} ] || {{ cp -r {where} {HELD_COPY} && chown -R {USER} {HELD_COPY}; }}; }}")
 
 
 def critic_files(n: int) -> tuple[str, str]:
@@ -2291,8 +2318,9 @@ def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
         checked(ctx.docker.sh(agent, f"mkdir -p {WE}/probes; chown -R root:root {WE}/probes {WE}/tree.json; "
                                      f"chmod -R go-rwx {WE}/probes {WE}/tree.json; true", user="root", timeout=60),
                 "keep the first scout's work from the second")
-        ctx.docker.sh(agent, f"mv {HOME}/.claude/projects {WE}/scout-projects; chown -R root:root {WE}/scout-projects; "
-                             f"chmod -R go-rwx {WE}/scout-projects; true", user="root", timeout=60)
+        checked(ctx.docker.sh(agent, f"[ ! -e {HOME}/.claude/projects ] || {{ mv {HOME}/.claude/projects {WE}/scout-projects && "
+                                     f"chown -R root:root {WE}/scout-projects && chmod -R go-rwx {WE}/scout-projects; }}",
+                              user="root", timeout=60), "hide the first scout's sessions from the second")
         for i in range(hidden_scouts(ctx.arm)):
             where, tree_at = hidden_at(i)
             tag = f"hidden{i + 1}" if i else "hidden"
@@ -2369,15 +2397,14 @@ def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
         for label, where in (("scout", f"{WE}/probes"),
                              *((f"held{i}", hidden_at(i)[0]) for i in range(hidden_scouts(ctx.arm)))):
             held = where != f"{WE}/probes"
-            if held:
-                ctx.docker.sh(agent, f"rm -rf {HELD_COPY}; [ -d {where} ] && cp -r {where} {HELD_COPY} && "
-                                     f"chown -R {USER} {HELD_COPY}; true", user="root", timeout=60)
+            if held:            # the one copy ``run_set`` makes (study review 3, finding 12)
+                checked(ctx.docker.sh(agent, held_copy(where), user="root", timeout=60), "the held probes' copy")
             got = checked(ctx.docker.sh(agent, f"COLUMNS=300 {probes_at(HELD_COPY if held else where)} --maxfail=10 -rfE "
                                                "> /tmp/we-check.txt 2>&1; code=$?; tail -c 12000 /tmp/we-check.txt; "
                                                'echo "exit=$code"; rm -f /tmp/we-check.txt', workdir=task.repo, timeout=300),
                           "the probes' check")
             if held:
-                ctx.docker.sh(agent, f"rm -rf {HELD_COPY}", user="root", timeout=60)
+                checked(ctx.docker.sh(agent, f"rm -rf {HELD_COPY}", user="root", timeout=60), "the held probes' copy removed")
             run.write(f"repair_check_{rounds[0]}_{label}.txt", got)
             found = probe_failures(got, label)
             failing |= found
@@ -2401,7 +2428,8 @@ def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
 
 def keep_first_patch(ctx: Context, task: Task, agent: str, base: str, n: int = 1) -> None:
     """The patch before a review, where ``check`` scores each round, so that what the repair changed can be seen."""
-    ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/rounds/round-{n}.patch"), workdir=task.repo, timeout=300)
+    checked(ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/rounds/round-{n}.patch"), workdir=task.repo, timeout=300),
+            f"the capture of round {n}'s patch")
 
 
 def finding_rule(arm: str) -> str:
@@ -3032,7 +3060,7 @@ def reviews_with_bug_test(ctx: Context, task: Task, run: Any, agent: str, base: 
 
     def tree() -> str:
         """The tree as the patch the run records (``diff_script``, new files included), by its digest."""
-        return checked(ctx.docker.sh(agent, f"{diff_script(task.repo, base, patch_at)}; sha256sum {patch_at}; rm -f {patch_at}",
+        return checked(ctx.docker.sh(agent, f"{diff_script(task.repo, base, patch_at)} && sha256sum {patch_at}; code=$?; rm -f {patch_at}; (exit $code)",
                                      workdir=task.repo, timeout=300), "the tree's patch")
 
     rounds, failing, reason = 0, [], ""
@@ -3040,7 +3068,7 @@ def reviews_with_bug_test(ctx: Context, task: Task, run: Any, agent: str, base: 
         rounds = n
         keep_first_patch(ctx, task, agent, base, n)
         try:     # a check copies the test's whole folder, so the folder goes first and the test is written alone (review v2)
-            checked_ctx.docker.sh(agent, f"rm -rf {ins.at}", user="root", timeout=60)
+            checked(checked_ctx.docker.sh(agent, f"rm -rf {ins.at}", user="root", timeout=60), "the bug test's folder cleared")
             write_in(ctx.docker, agent, f"{ins.at}/{ins.file}", bug["test"] + "\n", user="root")
             got = run_set(checked_ctx, task, agent, ins.at)
         except RuntimeError as exc:
@@ -3186,7 +3214,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                 checked(ctx.docker("cp", str(start), f"{agent}:/tmp/we-start.patch", timeout=300), "the starting patch")
                 checked(ctx.docker.sh(agent, "git apply --binary --whitespace=nowarn /tmp/we-start.patch", workdir=task.repo, timeout=120),
                         "apply the starting patch")
-                ctx.docker.sh(agent, "rm -f /tmp/we-start.patch", user="root", timeout=60)
+                checked(ctx.docker.sh(agent, "rm -f /tmp/we-start.patch", user="root", timeout=60), "the starting patch removed")
         run.write("prompt.txt", text_in)
         if round3 and rule_led(ctx.arm):    # K3's first session is arm A's, byte for byte, by digest (PLAN.md, 2026-11-05)
             record["first_prompt_sha256"], why = first_prompt_check(task, title, text, text_in)
@@ -3361,16 +3389,19 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                       seconds=round(time.monotonic() - started, 1))
         if host:   # the subscription's sessions: what the stream says they would cost, never counted as the API's spend
             record.update(executor="host", subscription_usd_estimate=record["agent_usd"], cost_usd=0.0)
-            run.end(record["status_detail"])     # the run's ending, decided: before the final mirror and the patch's capture
         run.write("final_report.txt", str(result.get("result") or ""))
         if host:   # the agent's tree is the workspace: into the container again, over whatever a review's test left there
             box_mcp.mirror(workspace, ctx.docker, container=agent, repo=task.repo, user=USER, timeout=BOX_TIMEOUT_S)
-        ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/final.patch"), workdir=task.repo, timeout=600)
+        checked(ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/final.patch"), workdir=task.repo, timeout=600),
+                "the final patch's capture")      # a failed capture ends the run "error" (study review 3, finding 4)
         final = run.fresh_path("final.patch")
         if not copy_out(ctx.docker, agent, f"{WE}/final.patch", final):
-            final.write_bytes(b"")
+            raise RuntimeError("the final patch was captured, but the container has no file of it to copy")
+        c.durable(final)
         record["final_patch_bytes"] = final.stat().st_size
         record["final_patch_sha256"] = c.sha256_file(final)
+        if host:   # the run's ending, decided, written only once its final patch is on the disk (study review 3, finding 5)
+            run.end(record["status_detail"])
         if round2:   # G6's key file never leaves the container
             checked(ctx.docker("exec", "-u", USER, agent, "rm", "-f", KEY_FILE, timeout=60), "remove G6's key file")
         for src, name in ((f"{WE}/rounds", "rounds"), (f"{HOME}/.claude/projects", "claude_projects"),
@@ -3464,8 +3495,8 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
         seal(ctx.docker, name)
         if patch is not None and patch.stat().st_size:
             checked(ctx.docker("cp", str(patch), f"{name}:/tmp/we.patch", timeout=300), "patch copy")
-            applied = completed(ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we.patch", workdir=task.repo),
-                                "the patch's apply", ok=APPLY_EXITS)      # git's own "does not apply", read next
+            applied = own_exit(ctx.docker.sh(name, APPLY, workdir=task.repo, own_exit=True), "the patch's apply",
+                               ok=APPLY_EXITS)     # git's own "does not apply", read next; the runtime's failure raises
             body["patch_applied"] = applied.returncode == 0
             if applied.returncode != 0:
                 body["apply_error"] = err(applied)[-600:]
@@ -3517,13 +3548,15 @@ def amend(ctx: Context, task: Task) -> dict[str, Any]:
     if v is None:
         raise SystemExit("validate the task first")
     run = ctx.archive.start("amend", task.id, g6_commit=ctx.g6.get("commit"))
-    base = _oracle_run(ctx, task, folder=run, label="base", amended=True)
-    fixed = _oracle_run(ctx, task, fix=True, folder=run, label="fixed", amended=True)
+    data = diff.read_bytes()        # one read, before either control: both run this private copy, and its digest is certified
+    private = run.write("amendment.patch", data)       # (study review 3, finding 3)
+    base = _oracle_run(ctx, task, folder=run, label="base", amended=private)
+    fixed = _oracle_run(ctx, task, fix=True, folder=run, label="fixed", amended=private)
     before, results = base.get("results") or {}, fixed.get("results") or {}
     f2p, p2p = fail_to_pass(before, results)
     seen = sum(before.get(k) in ("failed", "error") for k in f2p)   # absent from a report is not a failure anyone saw
     lost = sorted(k for k in [*v["record"]["fail_to_pass"], *v["record"]["pass_to_pass"]] if results.get(k) != "passed")
-    return run.finish({"sha256": c.sha256_file(diff), "fail_to_pass": f2p, "pass_to_pass": p2p, "parent_failed": seen,
+    return run.finish({"sha256": hashlib.sha256(data).hexdigest(), "fail_to_pass": f2p, "pass_to_pass": p2p, "parent_failed": seen,
                        "lost": lost, "ok": bool(seen), "base": base, "fixed": fixed,
                        "why": "" if seen else "no amended test was seen failing on the parent's code and passing with the fix"},
                       "finished" if seen else "refused")
@@ -3811,7 +3844,7 @@ def build_images(archive: c.Archive, task: Task, g6_commit: str, docker: Docker 
         d = archive.root / "build" / (f"{name}-{task.id}-{g6_commit[:12]}" + (f"-{variant}" if variant else ""))
         d.mkdir(parents=True, exist_ok=True)
         (d / "Dockerfile").write_bytes(text.encode("utf-8"))
-        docker("image", "rm", "-f", tag, timeout=600)     # a failed build must never leave an older image in its place
+        completed(docker("image", "rm", "-f", tag, timeout=600), f"the removal of {tag}", ok=EXITS)    # its effect read next:
         rec[f"{name}_id"] = build(docker, d, tag, folder, name)
     return folder.finish(rec, "finished")
 

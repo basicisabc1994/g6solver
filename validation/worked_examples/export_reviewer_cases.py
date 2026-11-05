@@ -117,7 +117,7 @@ def _fit(text: str, limit: int) -> str:
 
 def case_text(issue: str, diff: str, files: Mapping[str, str]) -> str:
     code = context(diff, files)
-    return "\n\n".join((f"The issue, as the engineer saw it:\n\n{_fit(issue, MAX_ISSUE)}", f"The candidate fix, as a diff on the parent:\n\n{_fit(diff, MAX_PATCH)}",
+    return "\n\n".join((f"The issue, as the engineer saw it:\n\n{_fit(issue, MAX_ISSUE)}", f"The candidate fix, as a diff on the parent:\n\n{_fit(shown(diff), MAX_PATCH)}",
                         *([f"The code round the change, as it stood before the fix:\n\n{code}"] if code else []), ASK))
 
 
@@ -148,8 +148,14 @@ def distinct(rows: Iterable[tuple[str, Path | bytes, Any]]) -> dict[tuple[str, s
 def diff_of(data: bytes) -> str:
     """A case's patch as text, from the bytes its id was made from: UTF-8 with a byte that is not held as it is (``surrogateescape``,
     never a replacement character, so the file names ``changed`` reads from it are git's own, and two names git keeps apart stay
-    apart all the way through: study review 1, finding 14), and its line ends made "\\n", as ``Path.read_text`` read a patch before."""
-    return data.decode("utf-8", errors="surrogateescape").replace("\r\n", "\n").replace("\r", "\n")
+    apart all the way through: study review 1, finding 14). Its line ends are left as they are, so git is given every name's bytes
+    (study review 3, finding 6); only the diff a case shows has them made "\\n" (``shown``)."""
+    return data.decode("utf-8", errors="surrogateescape")
+
+
+def shown(diff: str) -> str:
+    """The diff as a case shows it, its line ends made "\\n", as ``Path.read_text`` read a patch before."""
+    return diff.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def row(task: str, sha: str, text: str, ok: bool) -> dict[str, str]:

@@ -16,6 +16,8 @@ review does. Its reviews are saved apart, in ``REPRODUCE``.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import hashlib
 import io
 import json
 import os
@@ -114,8 +116,30 @@ def said(found: Mapping[str, Any], failing: Iterable[str]) -> str:
     return "reproduced" if list(failing) else "opinion"
 
 
+@contextlib.contextmanager
+def held(ctx: we.Context, patch: Path) -> Any:
+    """``patch`` read once, as a private copy beside the reviewers' packs, and the digest of its bytes: a reviewer reads those
+    bytes, its test runs on them, and the review is kept by that digest (``keep``), whatever the patch file holds by then (study
+    review 3, finding 11). The copy is removed after."""
+    raw = patch.read_bytes()
+    sha = hashlib.sha256(raw).hexdigest()
+    own = ctx.archive.root / "critic_packs" / f"held-{sha}-{os.getpid()}.patch"
+    own.parent.mkdir(parents=True, exist_ok=True)
+    own.write_bytes(raw)
+    try:
+        yield own, sha
+    finally:
+        own.unlink(missing_ok=True)
+
+
 def review(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str) -> dict[str, Any]:
-    """One review of one saved patch, in its own container with no network, from the agent's image and never the oracle's."""
+    """One review of one saved patch, in its own container with no network, from the agent's image and never the oracle's. The
+    patch is read once (``held``): the review comes back with the digest of the bytes its reviewer read (``patch_sha256``)."""
+    with held(ctx, patch) as (own, sha):
+        return {**_review(ctx, task, own, title, text), "patch_sha256": sha}
+
+
+def _review(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str) -> dict[str, Any]:
     started = time.monotonic()
     found: dict[str, Any] = {"verdict": "failed", "rule": "", "why": "", "test": "", "error": ""}
     proof = f"review {uuid.uuid4().hex}"
@@ -145,8 +169,8 @@ def review(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str) -
             we.write_in(ctx.docker, name, f"{we.CRITIC_AT}/test_critic.py", found["test"] + "\n", user="root")
             base = we.run_set(ctx, task, name, we.CRITIC_AT)
             we.checked(ctx.docker("cp", str(patch), f"{name}:/tmp/we.patch", timeout=300), "patch copy")
-            if we.completed(ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we.patch", workdir=task.repo),
-                            "the patch's apply", ok=we.APPLY_EXITS).returncode != 0:
+            if we.own_exit(ctx.docker.sh(name, we.APPLY, workdir=task.repo, own_exit=True), "the patch's apply",
+                           ok=we.APPLY_EXITS).returncode != 0:
                 raise RuntimeError("the patch does not apply")
             now = we.run_set(ctx, task, name, we.CRITIC_AT)
     except (RuntimeError, OSError, subprocess.SubprocessError, tarfile.TarError) as exc:
@@ -208,8 +232,8 @@ def parent_run(ctx: we.Context, task: we.Task, name: str, test: str, where: str,
 def patch_run(ctx: we.Context, task: we.Task, name: str, patch: Path, where: str) -> we.ProbeRun:
     """The second half: ``patch`` applied in ``name``, and the test in ``where`` run again."""
     we.checked(ctx.docker("cp", str(patch), f"{name}:/tmp/we.patch", timeout=300), "patch copy")
-    if we.completed(ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we.patch", workdir=task.repo),
-                    "the patch's apply", ok=we.APPLY_EXITS).returncode != 0:
+    if we.own_exit(ctx.docker.sh(name, we.APPLY, workdir=task.repo, own_exit=True), "the patch's apply",
+                   ok=we.APPLY_EXITS).returncode != 0:     # git's own no; the runtime's failure raises (review 3, finding 1)
         raise RuntimeError("the patch does not apply")
     return we.run_set(ctx, task, name, where)
 
@@ -290,7 +314,13 @@ def reproduce_review(ctx: we.Context, task: we.Task, patch: Path, title: str, te
     scenario (``REPRODUCE_FIRST``), and G6 runs it on the parent and on the patch. Step 2: ``run.PATCH_CRITIC``, unchanged, then
     step 1's results, judges the patch as ``review`` does, and ``said`` classifies it as it classifies the frozen review. A step 1
     saved whole in ``earlier`` is not asked again, so a run resumes where it stopped; one that failed is made again, and with a
-    step 1 that failed no judge is asked."""
+    step 1 that failed no judge is asked. The patch is read once (``held``), as ``review`` reads it."""
+    with held(ctx, patch) as (own, sha):
+        return {**_reproduce(ctx, task, own, title, text, earlier), "patch_sha256": sha}
+
+
+def _reproduce(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str,
+               earlier: Mapping[str, Any] | None = None) -> dict[str, Any]:
     started = time.monotonic()
     first = dict((earlier or {}).get("reproduce") or {})
     if first.get("said") in (None, "failed"):
@@ -369,10 +399,15 @@ def said_of(root: Path, row: Mapping[str, Any], folder: str = FOLDER) -> str | N
 
 
 def keep(root: Path, row: Mapping[str, Any], found: Mapping[str, Any], folder: str = FOLDER, *, sha: str | None = None) -> None:
-    """Save a review under the patch's digest, whole or not at all: it is written beside its place and moved there, so a run cut
-    short leaves no half record. ``sha``, where given, is the digest of the bytes the review read, so a patch file changed since
-    is not given this review."""
-    path = c.beside(root, folder) / f"{sha}.json" if sha else _kept(root, row, folder)
+    """Save a review under the digest of the bytes its reviewer read, whole or not at all: it is written beside its place and moved
+    there, so a run cut short leaves no half record. The digest is ``sha``, else the review's own (``patch_sha256``, which
+    ``review``, ``reproduce_review`` and the product's review give), on every path, the frozen one included; a review with neither
+    is refused (ValueError), as the patch file as it stands now may hold bytes no reviewer read (study review 3, finding 11)."""
+    sha = sha or found.get("patch_sha256")
+    if not isinstance(sha, str) or not sha:
+        raise ValueError("a review is kept only under the digest of the bytes its reviewer read, and this one names none")
+    found = {k: v for k, v in found.items() if k != "patch_sha256"}     # the digest names the file: the record is as it was
+    path = c.beside(root, folder) / f"{sha}.json"
     _another_bug(path, row["task"])
     path.parent.mkdir(exist_ok=True)
     write_whole(path, json.dumps({"task": row["task"], "first_seen_in": row.get("run"), **found}, indent=1))

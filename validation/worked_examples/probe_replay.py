@@ -67,8 +67,9 @@ def _sealed(docker: Any, task: we.Task, oracle: str, code: str, patch: Path | No
         we.seal(docker, name)
         if patch is not None:
             we.checked(docker("cp", str(patch), f"{name}:/tmp/we-{code}.patch", timeout=300), "patch")
-            done = we.completed(docker.sh(name, f"git apply --binary --whitespace=nowarn /tmp/we-{code}.patch", workdir=task.repo),
-                                "the patch's apply", ok=we.APPLY_EXITS)      # git's own "does not apply", read next
+            done = we.own_exit(docker.sh(name, f"git apply --binary --whitespace=nowarn /tmp/we-{code}.patch", workdir=task.repo,
+                                         own_exit=True), "the patch's apply", ok=we.APPLY_EXITS)   # git's own "does not apply"
+            # read next; a status the runtime gave (no report of git's own) raises (study review 3, finding 7)
             return name, done.returncode == 0
     except BaseException:
         docker("rm", "-f", name, timeout=300)
@@ -100,9 +101,9 @@ def replay_task(docker: Any, root: Path, task: we.Task, g6: str) -> dict[str, An
                     break
                 probes = f"/tmp/p-{row['label']}"
                 we.checked(docker("cp", str(row["probes"]), f"{name}:{probes}", timeout=300), "probes")
-                docker.sh(name, f"find {probes} -name __pycache__ -prune -exec rm -rf {{}} +; chmod -R a+rX {probes}",
-                          user="root", timeout=60)
                 try:            # RUN ends with ``true``: an exit but 0 is the exec's own failure, and its output no answer
+                    we.checked(docker.sh(name, f"find {probes} -name __pycache__ -prune -exec rm -rf {{}} + && chmod -R a+rX "
+                                               f"{probes}", user="root", timeout=60), "the probes' preparation")
                     cells[row["label"]] = summary(we.checked(docker.sh(name, RUN.format(probes=probes), workdir=task.repo,
                                                                        timeout=300), "the probes"))
                 except RuntimeError as exc:      # could not run: never a pass (study review 2, finding 7)
