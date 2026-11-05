@@ -440,6 +440,7 @@ class RunFacts:
     ending_sha256: str | None            # the digest of its ending's files (``ENDING``, ``AFTER``); None when it has neither
     kept: Mapping[str, str]              # each patch a capture kept (``FIRST_PATCH``: K3's baseline), by the digest recorded then
     folder: Path
+    repeat: int | None = None            # as its start names it; None for a start that names none (every round 3 run's names one)
 
 
 def run_facts(archive: Archive | Path, name: str, rows: Iterable[Mapping[str, Any]] | None = None) -> RunFacts | None:
@@ -474,9 +475,11 @@ def run_facts(archive: Archive | Path, name: str, rows: Iterable[Mapping[str, An
     for r in rows:
         if r.get("event") == "kept" and r.get("run") == name and r.get("patch") and r.get("sha256"):
             kept.setdefault(str(r["patch"]), str(r["sha256"]))
+    repeat = started.get("repeat")
     return RunFacts(name=name, arm=str(started.get("arm") or ""), task=str(started.get("task") or ""), executor=executor,
                     ending=_ending_from(files, executor, folder, rows, name),
-                    ending_sha256=digest.hexdigest() if files else None, kept=MappingProxyType(kept), folder=folder)
+                    ending_sha256=digest.hexdigest() if files else None, kept=MappingProxyType(kept), folder=folder,
+                    repeat=repeat if isinstance(repeat, int) and not isinstance(repeat, bool) else None)
 
 
 def _ending_from(files: Mapping[str, bytes], executor: str, folder: Path, rows: list[Mapping[str, Any]],
@@ -581,13 +584,62 @@ def scored_run(archive: Archive, name: str) -> bool:
 
 
 def disagrees(facts: RunFacts, row: Mapping[str, Any]) -> str:
-    """"" when every attribution a saved row (or a caller) makes of its run, its arm and its task where it names them, is the
-    run's own (``run_facts``), else why not. A row that disagrees is refused, never re-labelled: what it says of the run is never
-    a fact, and a score is attributed to the arm and task the run's start names, or to none."""
+    """"" when every attribution a saved row (or a caller) makes of its run, its arm, its task and its repeat where it names them,
+    is the run's own (``run_facts``), else why not. A row that disagrees is refused, never re-labelled: what it says of the run is
+    never a fact, and a score is attributed to the arm, task and repeat the run's start names, or to none. A start that names no
+    repeat has none to disagree with."""
     for key in ("arm", "task"):
         if key in row and str(row.get(key) or "") != getattr(facts, key):
             return f"it says {key} {row.get(key)!r} of a run whose start names {key} {getattr(facts, key)!r}"
+    if "repeat" in row and facts.repeat is not None and row.get("repeat") != facts.repeat:
+        return f"it says repeat {row.get('repeat')!r} of a run whose start names repeat {facts.repeat!r}"
     return ""
+
+
+#: Where each run's saved row is kept (``loop.one``), and its amended verdict beside it (``loop.rescore``), under one name for both.
+SAVED, AMENDED = "loop", "amended"
+
+
+def saved_name(arm: str, task: str, repeat: Any) -> str:
+    """The name a run's saved row (and its amended one) is kept under, made from its arm, task and repeat as its start names them."""
+    return f"{arm}-{task}-{repeat}.json"
+
+
+@dataclass(frozen=True)
+class Saved:
+    """A saved row that is its run's own, as ``saved_rows`` finds it: the run's facts, the row as it is (read for its verdict only,
+    through ``verdict``), and what the facts make of it: its key (arm, task, repeat) and the name its amended verdict is under."""
+    facts: RunFacts
+    row: Mapping[str, Any]
+    key: tuple[str, str, Any]
+    name: str
+
+
+def saved_rows(root: Path | Archive) -> list[Saved]:
+    """Every saved row under ``SAVED`` that is its run's own, with its run's facts: the one way every reader finds a saved row and
+    attributes it (review 4, findings 1, 2, 6 and 7, the attribution class met a fifth time). A row is read for two things only: the
+    run it names, exactly (``run_facts``), and the verdict it holds (``verdict``). Its arm, task and repeat are its run's start's,
+    and so is its name (``saved_name``), whatever its file is called; a start that names no repeat leaves the row's. A row that
+    names no run the index started, or says of its run an arm, task or repeat that is not the run's own (``disagrees``), is no
+    run's: it takes no key, gives no score and changes none. Where two rows take one key, the one kept under the key's own name
+    is its row, else the first by name."""
+    archive = root if isinstance(root, Archive) else Archive(Path(root))
+    index, found = archive.rows(), {}
+    for path in sorted((archive.root / SAVED).glob("*-*.json")):
+        row = json.loads(path.read_text("utf-8"))
+        facts = run_facts(archive, str(row.get("run") or ""), index) if isinstance(row, dict) else None
+        if facts is None or disagrees(facts, row):
+            continue
+        key = (facts.arm, facts.task, facts.repeat if facts.repeat is not None else row.get("repeat"))
+        one = Saved(facts=facts, row=MappingProxyType(row), key=key, name=saved_name(*key))
+        if key not in found or path.name == one.name:
+            found[key] = one
+    return list(found.values())
+
+
+def saved_row(root: Path | Archive, arm: str, task: str, repeat: Any) -> Saved | None:
+    """The saved row of the run whose start names this arm, task and repeat (``saved_rows``), or None."""
+    return next((one for one in saved_rows(root) if one.key == (arm, task, repeat)), None)
 
 
 def verdict(root: Path | Archive, name: str, kept: Mapping[str, Any] | None, *, amendment: str | None = None) -> bool | None:

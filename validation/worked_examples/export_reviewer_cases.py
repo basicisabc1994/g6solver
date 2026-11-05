@@ -182,20 +182,21 @@ def labelled(root: Path, task: str) -> list[tuple[str, Path | bytes, Any]]:
     admission rule admits (``run.scored_run``) and that finished gives cases, and its folder is opened by its exact name only. Arm
     K3 keeps its first patch, "round-1", in its baseline folder (``run.baseline_of``), not in ``rounds``; it is a case only while
     its bytes have the digest kept at its capture (``run.baseline_bytes``), and it is handed on as those bytes, never as its path,
-    so the case is what was checked. The row's name is taken exactly as it holds it, and a row whose arm or task is not its run's
-    (``wecommon.disagrees``), or whose run is not of ``task``, gives no case."""
+    so the case is what was checked. Every row, and the bug it is of, is found by ``wecommon.saved_rows`` (its run's start's, never
+    its file's name or what it says), so a row that is no run's own gives no case. A verdict a row holds is read by the one rule,
+    ``wecommon.verdict``: an amended one only when it was saved for this run, under its ending, on the diff as it stands (review 4,
+    finding 2), and a final patch's maintainers' verdict, where its check gives none, the same way."""
     checks, rows, archive = _checks(root, task), [], c.Archive(root)
-    for path in sorted((root / "loop").glob(f"*-{task}-*.json")):
-        rec = json.loads(path.read_text("utf-8"))
-        facts = c.run_facts(archive, str(rec.get("run") or ""))
-        if (facts is None or facts.task != task or c.disagrees(facts, rec) or not we.scored_run(archive, facts.name)
-                or (facts.ending or {}).get("status") != "finished"):
+    for one in c.saved_rows(archive):
+        facts = one.facts
+        if facts.task != task or not we.scored_run(archive, facts.name) or (facts.ending or {}).get("status") != "finished":
             continue
         run, folder = facts.name, facts.folder
         if task in AMENDED:
-            again = root / "loop" / "amended" / path.name
-            if again.is_file():
-                rows.append((task, folder / "final.patch", json.loads(again.read_text("utf-8")).get("amended_passes")))
+            again, diff = root / c.SAVED / c.AMENDED / one.name, we.amendment(task)
+            if again.is_file() and diff is not None:
+                kept = json.loads(again.read_text("utf-8"))
+                rows.append((task, folder / "final.patch", c.verdict(archive, run, kept, amendment=c.sha256_file(diff))))
             continue
         by = {check.get("patch"): bool(check.get("passes")) for check in checks.get(run, [])}
         first = Path(we.FIRST_PATCH).stem if we.rule_led(facts.arm) else None
@@ -206,7 +207,7 @@ def labelled(root: Path, task: str) -> list[tuple[str, Path | bytes, Any]]:
                 rows.append((task, folder / "rounds" / f"{name}.patch", ok))
             elif (checked := we.baseline_bytes(archive, run)) is not None:    # K3's baseline: the bytes checked by the kept digest
                 rows.append((task, checked, ok))
-        rows.append((task, folder / "final.patch", by.get("final", rec.get("passes"))))
+        rows.append((task, folder / "final.patch", by["final"] if "final" in by else c.verdict(archive, run, one.row)))
     return rows
 
 
@@ -237,11 +238,10 @@ def parent_files(task: str, paths: Iterable[str], cache: Path) -> dict[str, str]
 
 
 def issue_for(root: Path, task: str) -> str:
-    rec = json.loads((root / "loop" / f"K1-{task}-1.json").read_text("utf-8"))
-    facts = c.run_facts(c.Archive(root), str(rec["run"]))      # its folder, by the run's exact name only, as the row holds it
-    if facts is None:
-        raise SystemExit(f"{rec['run']!r} is no run the archive started")
-    return issue_of((facts.folder / "prompt.txt").read_text("utf-8", errors="replace"))
+    one = c.saved_row(root, "K1", task, 1)       # the saved row of the run whose start names K1, this bug and repeat 1
+    if one is None:
+        raise SystemExit(f"no saved row of K1 {task} 1 is its run's own")
+    return issue_of((one.facts.folder / "prompt.txt").read_text("utf-8", errors="replace"))
 
 
 def main() -> None:

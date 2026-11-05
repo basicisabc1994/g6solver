@@ -50,11 +50,22 @@ def last_json(text: str) -> dict[str, Any]:
 def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]:
     """One run and its independent check, saved under ``loop/`` once, with the digest of the ending it was made under. A saved row
     is given only while it holds (``wecommon.holds``): a row saved under another ending is void, and is made again from the run's
-    ending as it is now, its check included, only if the run may be scored now; the run itself is never made again for it."""
-    saved, archive = root / "loop" / f"{arm}-{task}-{repeat}.json", c.Archive(root)
+    ending as it is now, its check included, only if the run may be scored now; the run itself is never made again for it.
+
+    The row is kept under the name the run's own start gives (``wecommon.saved_name``), which is the arm, task and repeat asked
+    for: a run of any other is refused, never re-labelled. A row kept there that is not the asked run's own (one that names another
+    arm's, bug's or repeat's run, or says of its run what its start does not) is refused on both paths, never given and never
+    written over (review 4, findings 1 and 7)."""
+    saved, archive = root / c.SAVED / c.saved_name(arm, task, repeat), c.Archive(root)
+    asked = {"arm": arm, "task": task, "repeat": repeat}
     if saved.is_file():
         rec = json.loads(saved.read_text("utf-8"))
-        if c.holds(archive, str(rec.get("run") or ""), rec):      # admitted now, and saved under the ending the run has now
+        rel = str(rec.get("run") or "")
+        facts = c.run_facts(archive, rel)
+        if facts is None or c.disagrees(facts, rec) or c.disagrees(facts, asked):      # the admission rule's word first
+            why = we.unscored_why(archive, rel) or c.disagrees(facts, rec) or c.disagrees(facts, asked)
+            raise SystemExit(f"refused: {saved.name} holds no row of {arm} {task} {repeat}'s own run: {why}")
+        if c.holds(archive, facts.name, rec):      # admitted now, and saved under the ending the run has now
             return rec
     else:
         rec = last_json(tool("run", "--task", task, "--g6", g6, "--arm", arm, "--model", SONNET, "--repeat", str(repeat)))
@@ -67,14 +78,14 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
     facts = c.run_facts(archive, rel)    # every fact of the run, from the archive (wecommon.run_facts)
     end, made = (facts.ending, facts.ending_sha256) if facts is not None else (None, None)
     why = we.unscored_why(archive, rel)   # the one admission rule: refused, limited, no ending, no such run, or K3's baseline
-    if not why and facts is not None:     # and a run of the arm and task asked for, by its start: never re-labelled
-        why = c.disagrees(facts, {"arm": arm, "task": task})
+    if not why and facts is not None:     # and a run of the arm, task and repeat asked for, by its start: never re-labelled
+        why = c.disagrees(facts, asked)
     if why:              # refused, never counted as a failed run; limited: made again after the reset; a K3 run with no baseline
         status = (end or {}).get("status") or "no ending"
         said = (((rec.get("limit") or {}).get("resets") or "no reset given") if status == "limited"
                 else "; ".join(str(x) for x in (why, (end or {}).get("why") or rec.get("why")) if x))
         raise SystemExit(f"{status}: {arm} {task} {repeat}: {said}")
-    row = {"arm": arm, "task": task, "repeat": repeat, "run": facts.name, "status": end.get("status"),
+    row = {"arm": facts.arm, "task": facts.task, "repeat": repeat, "run": facts.name, "status": end.get("status"),
            "why": rec.get("why"), "cost_usd": rec.get("cost_usd"), "passes": False, "failing": None, "tests": [],
            **({c.MADE_UNDER: made} if made else {})}
     if c.on_patch(end):      # finished, or ended by a model refusal: scored on the patch it left
@@ -94,16 +105,15 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
 def rescore(root: Path, g6: str) -> list[dict[str, Any]]:
     """Every saved run of a bug with an amendment, its final patch scored on the amended tests, saved beside the
     maintainers' verdict under ``loop/amended/`` (PLAN.md, 2026-10-31). A verdict holds for one run, one diff and the ending it was
-    made under (``wecommon.holds``), and is scored again if any changes. No model; the saved rows stay as they are."""
+    made under (``wecommon.holds``), and is scored again if any changes. No model; the saved rows stay as they are. Each row is
+    found, and attributed, by ``wecommon.saved_rows``: its run's arm, task and repeat, and the name its amended verdict is kept
+    under, are its run's start's, and a row that is no run's own is never rescored."""
     rows, archive = [], c.Archive(root)
-    for path in sorted((root / "loop").glob("*-*.json")):
-        row, saved = json.loads(path.read_text("utf-8")), root / "loop" / "amended" / path.name
-        diff = we.amendment(row["task"])
-        rel = str(row.get("run") or "")
+    for one in c.saved_rows(archive):
+        facts, row, saved = one.facts, one.row, root / c.SAVED / c.AMENDED / one.name
+        diff = we.amendment(facts.task)
+        rel = facts.name
         if not diff or not we.scored_run(archive, rel):                # the one admission rule (run.unscored_why): none is made
-            continue
-        facts = c.run_facts(archive, rel)                              # how it ended, as the archive holds it
-        if c.disagrees(facts, row):                                    # a row whose arm or task is not its run's is refused
             continue
         end, made = facts.ending, facts.ending_sha256
         sha = c.sha256_file(diff)
@@ -113,12 +123,12 @@ def rescore(root: Path, g6: str) -> list[dict[str, Any]]:
             continue
         passes = False      # a made run that did not end on its patch failed on either score, with no check
         if c.on_patch(end):
-            final = [x for x in last_json(tool("check", "--task", row["task"], "--g6", g6, "--run", facts.name, "--amended",
+            final = [x for x in last_json(tool("check", "--task", facts.task, "--g6", g6, "--run", facts.name, "--amended",
                                                timeout=1200)).get("checks", []) if x.get("patch") == "final"]
             passes = final[-1].get("passes") if final else None
             if not isinstance(passes, bool):       # no verdict is not a failed run
-                raise SystemExit(f"no amended verdict for {path.stem}")
-        rows.append({**{k: row.get(k) for k in ("arm", "task", "repeat")}, "run": facts.name, "passes": row.get("passes"),
+                raise SystemExit(f"no amended verdict for {Path(one.name).stem}")
+        rows.append({**dict(zip(("arm", "task", "repeat"), one.key)), "run": facts.name, "passes": row.get("passes"),
                      "amended_passes": passes,
                      "amendment_sha256": sha, **({c.MADE_UNDER: made} if made else {})})
         saved.parent.mkdir(exist_ok=True)

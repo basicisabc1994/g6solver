@@ -14,7 +14,6 @@ from __future__ import annotations
 import collections
 import hashlib
 import io
-import json
 import re
 import tokenize
 from collections.abc import Iterable, Mapping, Sequence
@@ -134,21 +133,22 @@ def overlap(kinds: Mapping[str, str], said: Said, a: str, b: str) -> dict[str, o
 
 
 def runs_of(root: Path, tasks: Iterable[str], score: str) -> dict[str, list[tuple[str, object, bool]]]:
-    """Each bug's finished runs with a non-empty final patch and a truth on ``score``, as (digest, normalised change, right)."""
+    """Each bug's finished runs with a non-empty final patch and a truth on ``score``, as (digest, normalised change, right). Each
+    run, its bug and how it ended are its own facts (``wecommon.saved_rows``), never what its saved row says."""
     wanted, verdicts, cache = set(tasks), compare.saved(root), {}
     out: dict[str, list[tuple[str, object, bool]]] = collections.defaultdict(list)
-    for path in sorted((root / "loop").glob("*-*.json")):
-        row = json.loads(path.read_text("utf-8"))
-        patch = root / str(row.get("run")) / "final.patch"
-        truth = verdicts.get((row.get("arm"), row.get("task"), row.get("repeat")), {}).get(score)
-        if row.get("task") not in wanted or row.get("status") != "finished" or truth is None or not patch.is_file() \
+    for saved in c.saved_rows(root):
+        facts = saved.facts
+        patch = facts.folder / "final.patch"
+        truth = verdicts.get(saved.key, {}).get(score)
+        if facts.task not in wanted or (facts.ending or {}).get("status") != "finished" or truth is None or not patch.is_file() \
                 or not patch.stat().st_size:
             continue
         raw = patch.read_bytes()                  # one read: the digest and the change are of these bytes
         sha = hashlib.sha256(raw).hexdigest()
         if sha not in cache:
             cache[sha] = change(raw.decode("utf-8", errors="surrogateescape"))
-        out[row["task"]].append((sha, cache[sha], bool(truth)))
+        out[facts.task].append((sha, cache[sha], bool(truth)))
     return out
 
 

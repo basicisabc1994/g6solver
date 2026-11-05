@@ -16,7 +16,6 @@ review, failed or not.
 """
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from fractions import Fraction
 from pathlib import Path
@@ -59,21 +58,23 @@ def groups() -> list[tuple[str, list[str], bool]]:
 def patches(root: Path, tasks: Iterable[str]) -> dict[str, dict[str, Any]]:
     """Each distinct final patch of these bugs' finished runs, by digest and in digest order: its bug, its truth on each score
     (None where its runs' verdicts differ or none was scored), the scores it is split on, and each reviewer's ``said`` and
-    ``verdict`` from its saved review (None where there is no saved review)."""
+    ``verdict`` from its saved review (None where there is no saved review). Each run, its bug and how it ended are its own facts,
+    found by ``wecommon.saved_rows``, never what its saved row says."""
     wanted, verdicts = set(tasks), compare.saved(root)
     found: dict[str, dict[str, Any]] = {}
-    for path in sorted((root / "loop").glob("*-*.json")):
-        row = json.loads(path.read_text("utf-8"))
-        patch = root / str(row.get("run")) / "final.patch"
-        if row.get("task") not in wanted or row.get("status") != "finished" or not patch.is_file() or not patch.stat().st_size:
+    for saved in c.saved_rows(root):
+        facts = saved.facts
+        patch = facts.folder / "final.patch"
+        if facts.task not in wanted or (facts.ending or {}).get("status") != "finished" or not patch.is_file() \
+                or not patch.stat().st_size:
             continue
         sha = c.sha256_file(patch)
-        one = found.setdefault(sha, {"task": row["task"], "seen": {score: set() for score in SCORES}})
-        if one["task"] != row["task"]:      # every review is saved by a patch's digest alone, so one patch is one bug's
-            raise ValueError(f"the patch {sha[:12]} is on two bugs, {one['task']} and {row['task']}, and a review is saved by "
+        one = found.setdefault(sha, {"task": facts.task, "seen": {score: set() for score in SCORES}})
+        if one["task"] != facts.task:      # every review is saved by a patch's digest alone, so one patch is one bug's
+            raise ValueError(f"the patch {sha[:12]} is on two bugs, {one['task']} and {facts.task}, and a review is saved by "
                              "its digest alone")
         for score in SCORES:
-            value = verdicts.get((row["arm"], row["task"], row["repeat"]), {}).get(score)
+            value = verdicts.get(saved.key, {}).get(score)
             if value is not None:
                 one["seen"][score].add(bool(value))
     for sha, one in found.items():

@@ -58,6 +58,7 @@ def judged_on() -> set[str]:
 def verdicts(root: Path, arm: str, tasks: Sequence[str], repeats: Sequence[int] = (1, 2)) -> list[dict[str, Any]]:
     """The saved runs of ``arm`` on ``tasks``, each with ``pass`` on the amended tests, which are the maintainers' on most bugs."""
     rows, found = compare.saved(root), []
+    own = {one.key: one for one in c.saved_rows(root)}     # each saved row by its run's own arm, task and repeat
     for task in tasks:
         for repeat in repeats:
             got = rows.get((arm, task, repeat))
@@ -65,8 +66,8 @@ def verdicts(root: Path, arm: str, tasks: Sequence[str], repeats: Sequence[int] 
                 continue
             if got["amended"] is None:
                 raise ValueError(f"no verdict for {arm} {task} {repeat}: rescore first")
-            row = json.loads((root / "loop" / f"{arm}-{task}-{repeat}.json").read_text("utf-8"))
-            found.append({**row, "pass": got["amended"]})
+            one = own[(arm, task, repeat)]
+            found.append({**one.row, "arm": arm, "task": task, "repeat": repeat, "run": one.facts.name, "pass": got["amended"]})
     return found
 
 

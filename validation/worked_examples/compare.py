@@ -40,29 +40,27 @@ def saved(root: Path) -> dict[tuple[str, str, int], dict[str, bool | None]]:
     """Each saved run's two verdicts; None is missing, and a missing verdict is neither a pass nor a failure. A finished
     run with no independent verdict has none on either score. A bug with no amendment has one score, and an amended bug
     has an amended verdict only if it was scored for this run on the diff as it stands. Each is read by one rule, the run's ending
-    first (``wecommon.verdict``): a verdict saved under an ending the run no longer has is void."""
+    first (``wecommon.verdict``): a verdict saved under an ending the run no longer has is void. Every row, and every key, is found
+    by ``wecommon.saved_rows``: a score is the run's arm's, task's and repeat's, as its start names them, and a row that is no run's
+    own takes no key, so it can change no run's score."""
     rows: dict[tuple[str, str, int], dict[str, bool | None]] = {}
     archive = c.Archive(root)
-    for path in (root / "loop").glob("*-*.json"):
-        row, again = json.loads(path.read_text("utf-8")), root / "loop" / "amended" / path.name
-        name = str(row.get("run") or "")                 # the row names its run, exactly, and holds the verdict judged; no fact
-        facts = c.run_facts(archive, name)               # every fact of the run, from the archive
-        own = facts is not None and not c.disagrees(facts, row)      # a row whose arm or task is not its run's is refused
-        passes = c.verdict(archive, name, row)          # none for a run the admission rule does not admit, or a refused row
+    for one in c.saved_rows(archive):
+        facts = one.facts
+        passes = c.verdict(archive, facts.name, one.row)     # none for a run the admission rule does not admit now
         amended = passes
-        diff = we.amendment(facts.task) if own and we.scored_run(archive, name) else None
+        diff = we.amendment(facts.task) if we.scored_run(archive, facts.name) else None
         if diff:
+            again = root / c.SAVED / c.AMENDED / one.name
             kept = json.loads(again.read_text("utf-8")) if again.is_file() else None
-            amended = c.verdict(archive, name, kept, amendment=c.sha256_file(diff))
-        # a score is the run's arm's and task's, as its start names them; a refused row's key holds no score of any run
-        key = (facts.arm, facts.task, row["repeat"]) if own else (row["arm"], row["task"], row["repeat"])
-        shown = {**row, "arm": facts.arm, "run": facts.name} if own else {**row, "run": ""}   # the report's readers: the exact
-        rows[key] = {"maintainers": passes, "amended": amended, "said": said_of(root, shown)}     # name's folder, or none
+            amended = c.verdict(archive, facts.name, kept, amendment=c.sha256_file(diff))
+        shown = {"arm": facts.arm, "run": facts.name}       # the report's readers: the run's own arm, and its folder by its name
+        rows[one.key] = {"maintainers": passes, "amended": amended, "said": said_of(root, shown)}
         review, end = final_review.said_of(root, shown), end_of(root, shown)
         if review:
-            rows[key]["review"] = review
+            rows[one.key]["review"] = review
         if end:
-            rows[key]["end"] = end
+            rows[one.key]["end"] = end
     return rows
 
 

@@ -729,7 +729,7 @@ def test_every_scoring_entry_point_asks_one_rule_and_gives_no_verdict_to_a_limit
     (tmp_path / "loop" / "K1-t-1.json").write_text(json.dumps({"arm": "K1", "task": "t", "repeat": 1, "run": "run/t/1",
                                                                "status": status, "passes": False, "failing": 3}), "utf-8")
     monkeypatch.setattr(we, "amendment", lambda task: None)
-    assert compare.saved(tmp_path)[("K1", "t", 1)]["maintainers"] is None
+    assert compare.saved(tmp_path).get(("K1", "t", 1), {}).get("maintainers") is None    # review 4: no run's row takes no key
 
 
 @pytest.mark.parametrize("code", [-9, None])
@@ -1199,7 +1199,7 @@ def test_a_saved_verdict_holds_only_under_the_ending_it_was_made_under_on_either
 def test_a_saved_pass_for_a_run_that_may_not_be_scored_is_never_returned_or_run_again(monkeypatch, tmp_path, status):
     import compare
     import loop
-    run = we.c.Archive(tmp_path).start("run", "t", executor="host")
+    run = we.c.Archive(tmp_path).start("run", "t", executor="host", arm="K1", repeat=1)     # as its saved row says
     run.end(status)
     (tmp_path / "loop").mkdir()
     (tmp_path / "loop" / "K1-t-1.json").write_text(json.dumps({"arm": "K1", "task": "t", "repeat": 1, "run": run.rel,
