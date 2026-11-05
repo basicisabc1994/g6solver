@@ -585,7 +585,13 @@ cognitive work, with programming as the first toy model. So P2 was built first a
   starts and again last thing before an adoption is written. The adoption is written only if the digests the tick read
   before it developed anything are the ones on disk at that last check, which runs with the adoption's row already made
   and under the lock that writes it, sealed bytes first and digests after; the row carries those digests, and a change is
-  a refusal of its own in the cycle's row, which the next tick refuses again. What gets past it: an edit in the moment
+  a refusal of its own in the cycle's row, which the next tick refuses again. `ShadowHarness.adopt` is the one function that
+  writes an adoption, and it refuses a caller with no reading or no last check. A cycle that adopts nothing is held to the
+  same check as it ends, so a change is `G6_E_LOOP_FROZEN_CHANGED` whether or not a candidate won. The judge is pinned by
+  the verdict function selected, by its file and qualified name, and by the bytes of each of the person's files its module
+  reaches through its import graph (G6's own package is the envelope's, an installed package the installation's), and each
+  case's answer by its value with its type (`answer_identity`), never a JSON rendering two answers can share. What gets
+  past it: an edit in the moment
   after the last read and before the write, and bytes changed and put back between the two reads. Each proposer, and the
   domain shown the measured view, reads a copy of its own; a sealed-split guard inside the process (limits below); a loop
   folder that may not overlap what judges it.
