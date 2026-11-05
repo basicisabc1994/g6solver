@@ -841,6 +841,23 @@ def _differs(now: Mapping[str, str], breached: bool, recorded: Mapping[str, str]
     return sorted({name for name, value in now.items() if value != recorded.get(name)} | ({"sealed"} if breached else set()))
 
 
+def _reloaded(loop: ShadowLoop) -> dict[str, Any] | None:
+    """The tick's writer read again, or the reply when it cannot be: whatever the reload fails with, the stop reading says
+    what it is, a stop in force (``STOP_UNREADABLE``) when the records do not read, and records that read but do not follow
+    from what this handle held, ``LedgerError``, which ``_exclusive`` answers as records that cannot be trusted."""
+    try:
+        loop.log.reload()
+    except Exception as exc:  # noqa: BLE001 - any failure of the reload is the reading's to say, never an escape
+        halted = stop_in_force(loop.root)
+        if halted.code != STOP_UNREADABLE:
+            raise LedgerError(f"{type(exc).__name__}: {exc}") from exc
+        reply = _blocked(STOP_UNREADABLE, halted.reason[:400], "A person makes the loop's records readable; a new "
+                         "g6_improve_start lets it run again.")
+        loop._beat(reply["completion_state"], STOP_UNREADABLE, reason=reply["message"])
+        return reply
+    return None
+
+
 def _exclusive(method: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
     """One operation at a time per folder, on what is written and not on what this handle last read: a restart can
     overlap a tick that is still running, and a person's process is not the loop's. The lock is the operating system's,
@@ -851,16 +868,9 @@ def _exclusive(method: Callable[..., dict[str, Any]]) -> Callable[..., dict[str,
     def invoke(self: ShadowLoop, *args: Any, **kwargs: Any) -> dict[str, Any]:
         try:
             with Coordination(self.root / ".tick").mutex():
-                try:
-                    self.log.reload()
-                except (OSError, LedgerError) as exc:
-                    halted = stop_in_force(self.root)
-                    if halted.code != STOP_UNREADABLE:
-                        raise LedgerError(f"{type(exc).__name__}: {exc}") from exc
-                    reply = _blocked(STOP_UNREADABLE, halted.reason[:400], "A person makes the loop's records readable; a new "
-                                     "g6_improve_start lets it run again.")
-                    self._beat(reply["completion_state"], STOP_UNREADABLE, reason=reply["message"])
-                    return reply
+                refused = _reloaded(self)
+                if refused is not None:
+                    return refused
                 if self.mh is not None:
                     self.mh.refresh()
                 return method(self, *args, **kwargs)
@@ -1342,7 +1352,7 @@ class ShadowLoop:
             try:
                 self.log.stop(halted.said, at=self._now().isoformat(),
                               cut_off={"charged": charged, "evaluation": self.evaluating})
-            except (OSError, LedgerError):
+            except Exception:  # noqa: BLE001 - a note that cannot be written, for any reason, changes nothing
                 pass
         return _blocked(halted.code, f"a stop ended this tick at a model call after {charged:g} requests{dropped}: {halted.said}",
                         "A new g6_improve_start lets it run again." if halted.code in FOLDER_STOPS else
@@ -1376,8 +1386,8 @@ class ShadowLoop:
             self.cannot_record = why
             try:
                 ask_to_stop(self.root, why)
-            except OSError:
-                pass                  # the run still ends on what is held here
+            except Exception:  # noqa: BLE001 - the run still ends on what is held here, whatever kept the file
+                pass
         return _blocked(CANNOT_RECORD, why, "A person frees the log, then starts the loop again with g6_improve_start.")
 
     def _still_frozen(self) -> Held | dict[str, Any]:
