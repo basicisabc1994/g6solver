@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 from g6.core.reliability_envelope import warning_card
 
@@ -102,12 +102,14 @@ class CognitiveAssuranceOrchestrator:
                                 context, model_hashes,
                                 "blocked-escalated" if missing else "qualified-draft")
 
-    def execute(self, compiled: CompiledResearch, *, approved: bool = False) -> dict[str, Any]:
+    def execute(self, compiled: CompiledResearch, *, approved: bool = False,
+                allow: Iterable[str] = ()) -> dict[str, Any]:
+        """Run the approved plan through G6's checked door; ``allow`` is the person's allow for a sensitive op."""
         if not approved or self.registry is None or compiled.completion_state != "qualified-draft":
             return refusal(EXECUTION_NOT_APPROVED, "approved, fully specified plan and connected G6 registry required")
         # Ensure the approved plan is the same canonical plan before touching
         # any engine: MixedMethodExecutor re-derives the steps and refuses edits.
-        out = MixedMethodExecutor(self.registry).execute(compiled.executable_plan, approved=True)
+        out = MixedMethodExecutor(self.registry, allow=allow).execute(compiled.executable_plan, approved=True)
         return {**out, "selection_policy_digest": compiled.decision.policy_digest,
                 "standard_digest": compiled.standard_digest,
                 "claim_id": compiled.original_claim.id}

@@ -52,8 +52,11 @@ Alone, over MCP: `g6_invoke("cognitive_bridge", "rank_methods", params_json)`. F
 
 Composed (Python only):
 
-- `MixedMethodExecutor` runs an approved plan's steps on G6's solvers. It re-derives the plan first and refuses an
-  edited one (`G6_E_COGNITIVE_PLAN_TAMPERED`), and runs nothing without approval (`G6_E_COGNITIVE_APPROVAL_REQUIRED`).
+- `MixedMethodExecutor` runs an approved plan's steps through G6's checked door (`g6.core.door.invoke_checked`, the
+  call `g6.invoke` makes): a sensitive op runs only when the person allowed it (`allow=` or `G6_MCP_SENSITIVE`), and
+  a component's own `verified` is held at `qualified-draft` with the door's card. It re-derives the plan first and
+  refuses an edited one (`G6_E_COGNITIVE_PLAN_TAMPERED`), and runs nothing without approval
+  (`G6_E_COGNITIVE_APPROVAL_REQUIRED`).
 - `CognitiveAssuranceOrchestrator` joins the selector, the router, the executor and the assurance checker: compile,
   execute with approval, then assess the produced bytes against the standard's criteria.
 

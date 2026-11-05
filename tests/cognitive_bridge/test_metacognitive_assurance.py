@@ -10,6 +10,7 @@ import json
 from dataclasses import replace
 
 import pytest
+from returns.result import Success as FakeSuccess
 
 from g6.cognitive_bridge import (
     AdaptationPromotionGate, CandidateDossier, ClaimIR, CognitiveAssuranceOrchestrator,
@@ -223,12 +224,8 @@ def test_tool_mismatch_refused_for_meta_variants():
         MethodVariant("escape", "formal", "SMT", "graph_reasoning", "explain", 0)
 
 
-class FakeSuccess:
-    def __init__(self, out):
-        self.out = out
-
-    def unwrap(self):
-        return self.out
+# FakeSuccess is the registry's own answer type (imported above): G6's door reads an answer by that class, so a
+# stand-in class of another name would read as a failure there.
 
 
 class FakeRegistry:

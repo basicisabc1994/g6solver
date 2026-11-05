@@ -11,7 +11,9 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import asdict, dataclass
-from typing import Any, Mapping, Protocol, Sequence
+from typing import Any, Iterable, Mapping, Protocol, Sequence
+
+from g6.core.door import SENSITIVE_ENV, allowed_sensitive, invoke_checked
 
 from .codes import APPROVAL_REQUIRED, PLAN_TAMPERED, refusal
 
@@ -184,17 +186,27 @@ class MethodRouter:
 
 class RegistryLike(Protocol):
     def invoke(self, name: str, op: str, params: dict[str, Any] | None = None,
-               *, block_sensitive: bool = False) -> Any: ...
+               *, block_sensitive: bool = False, llm: Any = None) -> Any: ...
 
 
 class MixedMethodExecutor:
     """Opt-in execution, with no uncontrolled imports, tools, models, or code evaluation.
 
-    Pass the *actual* g6.core.registry.get_registry() in a G6 installation.
-    In a unit test, provide a fake registry with the identical invoke contract.
+    Each step goes through G6's checked door (``g6.core.door.invoke_checked``, the call ``g6.invoke`` makes): a
+    sensitive op runs only when the person allowed it (``allow`` here, as ``g6.invoke(..., allow=...)`` takes it, or
+    ``G6_MCP_SENSITIVE`` where G6 was started), and a component's own ``verified`` is held at ``qualified-draft`` with
+    the door's card unless G6 re-ran its check. Pass G6's registry (``g6.core.registry.get_registry()``); a test may
+    pass any object with the registry's ``invoke`` contract.
     """
-    def __init__(self, registry: RegistryLike) -> None:
+    def __init__(self, registry: RegistryLike, *, allow: Iterable[str] = ()) -> None:
         self.registry = registry
+        self.allow = frozenset(allow)
+
+    def _invoke(self, step: MethodStep) -> dict[str, Any]:
+        how =(f"Allow it in your own code with MixedMethodExecutor(registry, allow=('{step.component}.{step.op}',)), "
+               f"or list {step.component}.{step.op} (or {step.component}) in {SENSITIVE_ENV} where you start G6.")
+        return invoke_checked(step.component, step.op, dict(step.params), allow=allowed_sensitive() | self.allow,
+                              how_to_allow=how, registry=self.registry)
 
     def execute(self, plan: MethodPlan, *, approved: bool = False) -> dict[str, Any]:
         if not approved:
@@ -226,19 +238,18 @@ class MixedMethodExecutor:
             result = {"id": step.id, "claim_id": step.claim_id, "method": step.method,
                       "component": step.component, "op": step.op, "metric": step.metric}
             try:
-                raw = self.registry.invoke(step.component, step.op, dict(step.params), block_sensitive=True)
-                # Actual G6 registry returns returns.result.Success/Failure.
-                response = raw.unwrap()
-                if not isinstance(response, dict):
-                    raise ValueError("registry did not return an evidence envelope")
-                label = response.get("completion_state", "qualified-draft")
-                if label not in {"verified", "qualified-draft", "blocked-escalated"}:
-                    raise ValueError("component emitted an unrecognised label")
-                # A composed result never inherits the component's verified status
-                # unless G6's independent top-level gate explicitly rechecks it.
-                result["completion_state"] = ("blocked-escalated"
-                                              if label == "blocked-escalated" else "qualified-draft")
-                result["result"] = response
+                reply = self._invoke(step)
+                result["warning_card"], result["request_id"] = reply["warning_card"], reply["request_id"]
+                if "result" not in reply:  # refused, or failed, before any answer: the door's error says why
+                    result["completion_state"], result["reason"] = "blocked-escalated", str(reply["error"])[:400]
+                else:
+                    response = reply["result"]
+                    if not isinstance(response, dict):
+                        raise ValueError("registry did not return an evidence envelope")
+                    # The door decided the state; a composed step never claims more than qualified-draft.
+                    result["completion_state"] = ("blocked-escalated" if reply["completion_state"] == "blocked-escalated"
+                                                  else "qualified-draft")
+                    result["result"] = response
             except Exception as exc:  # registry is a trust boundary
                 result["completion_state"] = "blocked-escalated"
                 result["reason"] = f"{type(exc).__name__}: {exc}"[:400]

@@ -10,6 +10,8 @@ import itertools
 import json
 from pathlib import Path
 
+from returns.result import Success
+
 from g6.cognitive_bridge import (
     ClaimIR, CognitiveAssuranceOrchestrator, Criterion, DomainStandard, FrozenVerifier, IndependentAssuranceEvaluator, MetacognitiveMethodSelector,
     MethodVariant, ProblemSignature,
@@ -17,19 +19,12 @@ from g6.cognitive_bridge import (
 from g6.cognitive_bridge.assurance import DOCUMENT_FIELDS, canonical_json, sha256
 
 
-class _Success:
-    def __init__(self, value):
-        self.value = value
-
-    def unwrap(self):
-        return self.value
-
-
 class StubRegistry:
-    """Demonstrates the real G6 registry invoke signature; no G6 solver here."""
-    def invoke(self, name, op, params=None, *, block_sensitive=False):
+    """The G6 registry's invoke contract (it answers with returns.result.Success); no G6 solver here. The executor
+    reaches it through G6's checked door, which asks for a sensitive op to be refused unless the person allowed it."""
+    def invoke(self, name, op, params=None, *, block_sensitive=False, llm=None):
         assert (name, op, block_sensitive) == ("formal", "check_validity", True)
-        return _Success({"component": name, "op": op,
+        return Success({"component": name, "op": op,
                          "completion_state": "qualified-draft",
                          "formula": params["formula"],
                          "premises": params["premises"],
@@ -116,12 +111,11 @@ def main() -> None:
         evaluator=IndependentAssuranceEvaluator(evaluator_id="review_runner"),
         verifiers={"tiny_truth_table": checker}, artifacts={"logical_entailment": actual},
         documentation=documentation, candidate_actor="research_agent")
-    assert output["completion_state"] == "qualified-draft"
-    assert output["verified"] is False
+    assert output["completion_state"] == "qualified-draft"  # its only state field, and never more than this
     report_path = Path(__file__).resolve().parent / "illustrative_candidate_dossier.json"
     report_path.write_text(json.dumps(output, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({"completion_state": output["completion_state"],
-                      "verified": output["verified"],
+                      "card": output["warning_card"]["code"],
                       "dossier_digest": output["dossier"]["content_sha256"],
                       "negative_controls_detected": output["dossier"]["metrics"]["negative_controls_detected"],
                       "sample_path": str(report_path)}, indent=2))

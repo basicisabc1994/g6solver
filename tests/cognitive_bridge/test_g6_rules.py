@@ -8,11 +8,11 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from returns.result import Success
+from returns.result import Failure, Success
 
 from g6.cognitive_bridge import (
     ClaimIR, CognitiveAssuranceOrchestrator, Criterion, DomainStandard, FrozenVerifier, MetacognitiveMethodSelector,
-    MethodVariant, ProblemSignature, ScopedAssertion,
+    MethodRouter, MethodVariant, MixedMethodExecutor, ProblemSignature, ScopedAssertion,
 )
 from g6.cognitive_bridge.assurance import DOCUMENT_FIELDS, canonical_json
 
@@ -71,6 +71,51 @@ def test_assertions_without_a_gate_are_judged_not_a_name_error():
     json.dumps(report)  # the report is plain data
     assert canonical_json(report["dossier"])
     assert report["warning_card"]["code"] == "G6_E_COGNITIVE_ASSURANCE_BLOCKED"
+
+
+class _ClaimingRegistry:
+    """The registry's invoke contract for a component that calls its own answer verified; ``sensitive`` ops are
+    refused on an untrusted surface, as the real registry refuses a component's ``__g6_sensitive_ops__``."""
+
+    def __init__(self, sensitive: frozenset[tuple[str, str]] = frozenset()) -> None:
+        self.sensitive, self.calls = sensitive, []
+
+    def invoke(self, name, op, params=None, *, block_sensitive=False, llm=None):
+        if block_sensitive and (name, op) in self.sensitive:
+            return Failure(f"[G6_E_SENSITIVE_COMPONENT_DENIED] {name}.{op} is not available on this surface")
+        self.calls.append((name, op))
+        return Success({"completion_state": "verified", "answer": {"valid": True}})
+
+
+def _formal_plan():
+    return MethodRouter().plan([ClaimIR("q", "Check it", ("formal",), {"formal": {"formula": "True"}})])
+
+
+def test_a_components_own_verified_is_held_by_g6s_door():
+    # 9ebfbbe's executor called registry.invoke directly: the step's result kept the component's own "verified" and
+    # no door card said it was held. Through G6's checked door the copy says qualified-draft and the card says why.
+    step = MixedMethodExecutor(_ClaimingRegistry()).execute(_formal_plan(), approved=True)["steps"][0]
+    assert step["completion_state"] == "qualified-draft"
+    assert step["result"]["completion_state"] == "qualified-draft"
+    assert step["result"]["claimed_completion_state"] == "verified"
+    assert step["warning_card"]["code"] == "G6_E_PROMOTION_LAW"
+
+
+def test_a_sensitive_op_runs_only_with_the_persons_allow(monkeypatch):
+    # The door's rule: refused unless the person allowed it, in their own code or in G6_MCP_SENSITIVE. 9ebfbbe always
+    # refused a sensitive op, whatever the person allowed, and took no allow at all.
+    monkeypatch.delenv("G6_MCP_SENSITIVE", raising=False)
+    registry = _ClaimingRegistry(sensitive=frozenset({("formal", "check_validity")}))
+    refused = MixedMethodExecutor(registry).execute(_formal_plan(), approved=True)["steps"][0]
+    assert refused["completion_state"] == "blocked-escalated" and registry.calls == []
+    assert refused["warning_card"]["code"] == "G6_E_SENSITIVE_COMPONENT_DENIED"
+    assert "allow=('formal.check_validity',)" in refused["reason"]
+    allowed = MixedMethodExecutor(registry, allow=("formal.check_validity",)).execute(_formal_plan(), approved=True)
+    assert allowed["steps"][0]["completion_state"] == "qualified-draft"
+    monkeypatch.setenv("G6_MCP_SENSITIVE", "formal.check_validity")
+    by_setting = MixedMethodExecutor(registry).execute(_formal_plan(), approved=True)
+    assert by_setting["steps"][0]["completion_state"] == "qualified-draft"
+    assert registry.calls == [("formal", "check_validity")] * 2
 
 
 def test_risk_is_the_number_of_g6s_risk_tier():
