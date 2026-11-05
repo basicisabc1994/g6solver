@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Arm K3 (PLAN.md, 2026-11-05, morning, later, items 1 and 4): K2 plus one step. The first session is arm A's prompt byte for
-byte, checked by digest before the agent starts; its patch is saved as ``round-1.patch``; then the same session is resumed with
-the rule step; the patch after it is saved as ``rule.patch`` and scored beside the others; then K2's loop runs unchanged."""
+byte, checked by digest before the agent starts; its patch is kept in the archive as ``round-1.patch``; then the same session is
+resumed with the rule step; the patch after it is kept as ``rule.patch`` and scored beside the others; then K2's loop runs
+unchanged. Each of those four steps goes on only from a recognised success (``step_ending``), and a K3 run that did not finish is
+never a row, never offered to ``check`` and never scored (``scored_run``)."""
 from __future__ import annotations
 
 import hashlib
@@ -17,9 +19,13 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "validation" / "worked_examples"))
 
+import compare  # noqa: E402
+import loop  # noqa: E402
 import run as we  # noqa: E402
 
 SONNET = we.R3_MODELS[1]
+SUCCESS = {"type": "result", "subtype": "success", "is_error": False, "session_id": "s1"}
+FIRST, AFTER_RULE = b"first-session-tree", b"after-rule-tree"
 
 
 def _sha(text: str) -> str:
@@ -43,6 +49,28 @@ def test_the_rule_step_is_one_constant_pinned_by_its_digest():
     assert we.RULE_DIGEST == _sha(we.RULE_STEP)[:16] == "3e99c1c0b233732a"
 
 
+@pytest.mark.parametrize(("stop", "result", "code", "ending"), [
+    ("", SUCCESS, 0, "finished"),
+    ("timeout", SUCCESS, 0, "timeout"),
+    ("cap_cost", SUCCESS, 0, "cap_cost"),
+    ("", None, 0, "error"),                                                   # no result of its own
+    ("", SUCCESS, 1, "error"),                                                # a success that exited 1
+    ("", SUCCESS, None, "error"),                                             # an exit nobody read
+    ("", {**SUCCESS, "is_error": True}, 0, "error"),
+    ("", {**SUCCESS, "is_error": None}, 0, "error"),                          # no word on error is no success
+    ("", {**SUCCESS, "subtype": "future_terminal_status"}, 0, "error"),       # an ending nobody knows
+    ("", {**SUCCESS, "subtype": "error_max_turns", "is_error": True}, 1, "cap_turns"),
+    ("", {**SUCCESS, "subtype": "error_max_budget_usd", "is_error": True}, 1, "cap_cost"),
+])
+def test_step_ending_lets_only_a_recognised_success_through(stop, result, code, ending):
+    assert we.step_ending(stop, result, code) == ending
+
+
+def test_a_capture_is_a_success_only_with_its_command_at_0_and_its_file_kept():
+    assert we.step_ending("", we.CAPTURED, 0) == "finished"
+    assert we.step_ending("", None, 0) == we.step_ending("", we.CAPTURED, 1) == "error"
+
+
 class _Stdin(io.BytesIO):
     def __init__(self, sent):
         super().__init__()
@@ -53,47 +81,89 @@ class _Stdin(io.BytesIO):
         super().close()
 
 
-def _run(monkeypatch, tmp_path, arm, *, step_ends="", thread=""):
-    """``_run_task`` for ``arm`` with fakes only: no model, no container. Returns the record and what happened, in order."""
+class _Docker:
+    """The agent's container in memory, with ``docker cp``'s own rules: a folder copied to a path that exists goes inside it."""
+
+    def __init__(self, task, events, sent, fail=()):
+        self.task, self.events, self.sent, self.fail = task, events, sent, set(fail)
+        self.files, self.tree = {}, FIRST
+
+    @staticmethod
+    def done(code=0, stdout=b""):
+        return SimpleNamespace(returncode=code, stdout=stdout, stderr=b"")
+
+    def __call__(self, *a, **kw):
+        if a[0] == "cp" and ":" in a[1]:
+            src, dest = a[1].split(":", 1)[1], Path(a[2])
+            if src in self.files:
+                target = dest / Path(src).name if dest.is_dir() else dest
+                if not target.parent.is_dir():
+                    return self.done(1)
+                target.write_bytes(self.files[src])
+                return self.done()
+            kids = {p: b for p, b in self.files.items() if p.startswith(src + "/")}
+            if not kids or not dest.parent.is_dir():
+                return self.done(1)
+            root = dest / Path(src).name if dest.exists() else dest
+            for path, body in kids.items():
+                (root / path[len(src) + 1:]).parent.mkdir(parents=True, exist_ok=True)
+                (root / path[len(src) + 1:]).write_bytes(body)
+        return self.done()
+
+    def sh(self, ctr, script, *a, **kw):
+        if script == we.TREE_STATE:
+            return self.done(stdout=json.dumps({"head": self.task.parent, "tree": "tree", "dirty": 0, "commits": 1}).encode())
+        if script == we.ARM_STATE:
+            return self.done(stdout=b'{"mcp_servers": [], "skills": []}')
+        saved = re.search(r'git diff --cached --binary .* > "([^"]+)"', script)
+        if saved:
+            if "/rounds/" in saved[1]:
+                self.events.append(("saved", Path(saved[1]).name))
+            if Path(saved[1]).name in self.fail:
+                return self.done(1)
+            self.files[saved[1]] = self.tree
+        return self.done()
+
+    def popen(self, *a, **kw):
+        self.events.append(("first session",))
+        return SimpleNamespace(stdin=_Stdin(self.sent), stdout=io.BytesIO(json.dumps(SUCCESS).encode() + b"\n"),
+                               stderr=io.BytesIO(), poll=lambda: 0, wait=lambda **kw: 0)
+
+
+def _run(monkeypatch, tmp_path, arm, *, step_ends="", thread="", fail=(), first=SUCCESS, agent_rewrites=False,
+         loop_writes=False):
+    """``_run_task`` for ``arm`` with fakes only: no model, no container. Returns the record, what happened in order, the
+    prompts sent, the context and the task."""
     task, events, sent = we.load_tasks()[0], [], []
+    docker = _Docker(task, events, sent, fail)
+    if first is not SUCCESS:
+        docker.popen = lambda *a, **kw: (events.append(("first session",)), SimpleNamespace(
+            stdin=_Stdin(sent), stdout=io.BytesIO(json.dumps(first).encode() + b"\n"), stderr=io.BytesIO(),
+            poll=lambda: 1, wait=lambda **kw: 1))[1]
 
-    class Docker:
-        def __call__(self, *a, **kw):
-            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
-
-        def sh(self, ctr, script, *a, **kw):
-            if script == we.TREE_STATE:
-                value = {"head": task.parent, "tree": "tree", "dirty": 0, "commits": 1}
-            elif script == we.ARM_STATE:
-                value = {"mcp_servers": [], "skills": []}
-            else:
-                saved = re.search(rf"{we.WE}/rounds/([\w.-]+\.patch)", script)
-                if saved:
-                    events.append(("saved", saved[1]))
-                return self()
-            return SimpleNamespace(returncode=0, stdout=json.dumps(value).encode(), stderr=b"")
-
-        def popen(self, *a, **kw):
-            events.append(("first session",))
-            return SimpleNamespace(stdin=_Stdin(sent), stdout=io.BytesIO(), stderr=io.BytesIO(), poll=lambda: 0,
-                                   wait=lambda **kw: 0)
-
-    def session(ctx, run, agent, command, key, tally, text, name, *, seconds, stop_usd):
+    def session(ctx, run, agent, command, key, tally, text, name, *, seconds, stop_usd, codes=None):
         events.append(("resumed", name, text, list(command)))
+        docker.tree = AFTER_RULE
+        if agent_rewrites:          # the agent owns the container's rounds folder, and writes over the first patch there
+            docker.files[f"{we.WE}/rounds/round-1.patch"] = b"the agent's own round-1"
+        if not step_ends:
+            tally.feed(dict(SUCCESS))
+        if codes is not None:
+            codes.append(0)
         return step_ends
 
-    def loop(*a, finding="any", after_step=False, **kw):
+    def review_loop(*a, finding="any", after_step=False, **kw):
         events.append(("loop", finding, after_step))
+        if loop_writes:             # the loop's own capture before review 2
+            we.keep_first_patch(a[0], a[1], a[3], a[4], 2)
         return {"status": "no_counterexample_in_domain"}
 
     monkeypatch.setattr(we, "key_check", lambda *a, **kw: {"ok": True})
     monkeypatch.setattr(we, "start_net", lambda *a: ("net", "proxy"))
     monkeypatch.setattr(we, "read_thread", lambda *a: thread)
-    monkeypatch.setattr(we, "read_stream", lambda *a, **kw: "")
     monkeypatch.setattr(we, "run_session", session)
-    monkeypatch.setattr(we, "keep_first_patch", lambda ctx, task, agent, base, n=1: events.append(("saved", f"round-{n}.patch")))
-    monkeypatch.setattr(we, "reviews_until_clean", loop)
-    ctx = we.Context(archive=we.c.Archive(tmp_path / "archive"), docker=Docker(), key_reader=lambda: "dummy",
+    monkeypatch.setattr(we, "reviews_until_clean", review_loop)
+    ctx = we.Context(archive=we.c.Archive(tmp_path / "archive"), docker=docker, key_reader=lambda: "dummy-key-value",
                      issue_reader=lambda task: ("title", "issue"), tree_reader=lambda task: "tree", g6={"commit": "0" * 40},
                      variant=we.ROUND3, arm=arm, environ={})
     record = we._run_task(ctx, task, dry=False, cap=10.0, stop=10.5)
@@ -101,10 +171,10 @@ def _run(monkeypatch, tmp_path, arm, *, step_ends="", thread=""):
 
 
 @pytest.mark.parametrize("thread", ["", "\n\nThe issue's discussion so far:\n\nmember on 2026-01-01: the rule is ..."])
-def test_a_k3_run_sends_arm_as_prompt_saves_round_1_resumes_with_the_rule_step_saves_rule_then_runs_k2s_loop(monkeypatch, tmp_path,
+def test_a_k3_run_sends_arm_as_prompt_keeps_round_1_resumes_with_the_rule_step_keeps_rule_then_runs_k2s_loop(monkeypatch, tmp_path,
                                                                                                             thread):
     """The discussion is read as K2 reads it (``gets_thread``), and arm A's builder is given the same text."""
-    record, events, sent, _, task = _run(monkeypatch, tmp_path, "K3", thread=thread)
+    record, events, sent, ctx, task = _run(monkeypatch, tmp_path, "K3", thread=thread)
     a_prompt = we.prompt(task, "title", "issue" + thread, "A")
     assert sent == [a_prompt.encode("utf-8")]
     assert record["first_prompt_sha256"] == _sha(a_prompt)
@@ -113,7 +183,10 @@ def test_a_k3_run_sends_arm_as_prompt_saves_round_1_resumes_with_the_rule_step_s
     assert [e[:2] if e[0] != "loop" else e for e in events] == [
         ("first session",), ("saved", "round-1.patch"), ("resumed", "rule_stream.jsonl"), ("saved", "rule.patch"),
         ("loop", "parent", True)]
-    assert record["rule_step"] == {"ended": "", "instruction": we.RULE_DIGEST}
+    assert record["rule_step"] == {"ended": "", "at": "", "instruction": we.RULE_DIGEST}
+    rounds = ctx.archive.root / record["run"] / "rounds"
+    assert (rounds / "round-1.patch").read_bytes() == FIRST and (rounds / "rule.patch").read_bytes() == AFTER_RULE
+    assert record["status"] == "finished"
 
 
 def test_k2s_run_is_as_it_was_no_digest_no_step_and_its_loop_saves_round_1(monkeypatch, tmp_path):
@@ -133,35 +206,88 @@ def test_a_k3_run_whose_first_prompt_is_not_arm_as_is_refused_before_the_agent_s
     assert we.latest(ctx.archive, "run", task.id) is None            # ``check`` finds no run to score
 
 
-def test_a_stop_in_the_rule_step_ends_the_run_with_no_review(monkeypatch, tmp_path):
-    record, events, _, _, _ = _run(monkeypatch, tmp_path, "K3", step_ends="cap_cost")
-    assert [e[0] for e in events] == ["first session", "saved", "resumed", "saved"]
-    assert record["status_detail"] == "cap_cost" and "repairs" not in record
-    assert record["rule_step"]["ended"] == "cap_cost"
+@pytest.mark.parametrize(("case", "at", "status", "seen"), [
+    ({"first": {**SUCCESS, "subtype": "error_max_turns", "is_error": True}}, "first session", "cap_turns", ["first session"]),
+    ({"first": {**SUCCESS, "subtype": "future_terminal_status"}}, "first session", "error", ["first session"]),
+    ({"fail": ("round-1.patch",)}, "first patch", "error", ["first session", "saved"]),
+    ({"step_ends": "cap_cost"}, "rule step", "cap_cost", ["first session", "saved", "resumed"]),
+    ({"fail": ("rule.patch",)}, "rule step", "error", ["first session", "saved", "resumed", "saved"]),
+])
+def test_each_k3_step_goes_on_only_from_a_recognised_success_and_a_run_stopped_there_is_never_scored(monkeypatch, tmp_path, case,
+                                                                                                   at, status, seen):
+    record, events, _, ctx, task = _run(monkeypatch, tmp_path, "K3", **case)
+    assert [e[0] for e in events] == seen and record["status"] == status
+    assert record["rule_step"]["ended"] == status and record["rule_step"]["at"] == at and "repairs" not in record
+    assert we.latest(ctx.archive, "run", task.id) is None and not we.scored_run(record)
+    ctx.archive.start("validate", task.id).finish({"fail_to_pass": ["t"], "pass_to_pass": []}, "finished")
+    monkeypatch.setattr(we, "_oracle_run", lambda *a, **kw: pytest.fail("a K3 run that did not finish is never scored"))
+    with pytest.raises(SystemExit, match="never scored"):
+        we.check(ctx, task, record["run"])
+    monkeypatch.setattr(loop, "tool", lambda *a, **kw: json.dumps(record))
+    with pytest.raises(SystemExit, match="never scored"):
+        loop.one(ctx.archive.root, "g6", "K3", task.id, 1)
+    assert not (ctx.archive.root / "loop").exists()
 
 
-def test_the_rule_step_resumes_the_session_on_the_runs_clock_tally_and_stop(monkeypatch):
-    calls, scripts = [], []
-    tally = object()
+def test_the_first_patch_is_in_the_archive_before_the_step_and_nothing_after_it_replaces_it(monkeypatch, tmp_path):
+    """The loop's later rounds come in beside the two captures through a folder of their own, so ``docker cp`` never puts the
+    container's ``rounds`` inside the archive's, and nothing the agent leaves in the container replaces what was kept."""
+    record, _, _, ctx, task = _run(monkeypatch, tmp_path, "K3", agent_rewrites=True, loop_writes=True)
+    rounds = ctx.archive.root / record["run"] / "rounds"
+    assert record["status"] == "finished"
+    assert (rounds / "round-1.patch").read_bytes() == FIRST and (rounds / "rule.patch").read_bytes() == AFTER_RULE
+    assert (rounds / "round-2.patch").read_bytes() == AFTER_RULE and not (rounds / "rounds").exists()
+    ctx.archive.start("validate", task.id).finish({"fail_to_pass": ["t"], "pass_to_pass": []}, "finished")
+    monkeypatch.setattr(we, "_oracle_run", lambda *a, **kw: {"results": {"t": "passed"}})
+    assert [row["patch"] for row in we.check(ctx, task, record["run"])["checks"]] == ["round-1", "rule", "round-2", "final"]
 
-    def session(ctx, run, agent, command, key, tally_, text, name, *, seconds, stop_usd):
+
+def test_a_capture_holding_the_runs_key_fails_its_step_and_keeps_nothing(tmp_path):
+    """A kept patch is its real bytes, as the final patch is, so a token-shaped string in the code stays as it is; the run's own
+    key never stays in the archive."""
+    archive = we.c.Archive(tmp_path / "archive", redact=we.c.Redactor("the-runs-own-key-1234"))
+    run = archive.start("run", "fake-1", arm="K3")
+    body = {"value": b""}
+
+    class Docker:
+        def __call__(self, *a, **kw):
+            Path(a[2]).write_bytes(body["value"])
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+        def sh(self, *a, **kw):
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    ctx, task = SimpleNamespace(docker=Docker(), archive=archive), SimpleNamespace(repo="/w/r")
+    body["value"] = b"+key = 'the-runs-own-key-1234'\n"
+    assert we.kept(ctx, task, "agent", "base", run, "round-1.patch") == "error"
+    assert not (run.path / "rounds" / "round-1.patch").exists()
+    body["value"] = b"+token = 'sk-ant-abcdefgh1234'\n"
+    assert we.kept(ctx, task, "agent", "base", run, "rule.patch") == "finished"
+    assert (run.path / "rounds" / "rule.patch").read_bytes() == body["value"]
+
+
+def test_the_rule_step_resumes_the_session_on_the_runs_clock_tally_and_stop_and_never_past_its_deadline(monkeypatch, tmp_path):
+    calls, tally = [], we.c.Tally()
+
+    def session(ctx, run, agent, command, key, tally_, text, name, *, seconds, stop_usd, codes=None):
         calls.append({"command": command, "key": key, "tally": tally_, "text": text, "name": name, "seconds": seconds,
                       "stop_usd": stop_usd})
-        return "timeout"
+        codes.append(0)
+        tally_.feed(dict(SUCCESS))
+        return ""
 
     monkeypatch.setattr(we, "run_session", session)
+    monkeypatch.setattr(we, "kept", lambda ctx, task, agent, base, run, name: (calls.append(name), "finished")[1])
     monkeypatch.setattr(we.time, "monotonic", lambda: 1000.0)
-    ctx = SimpleNamespace(docker=SimpleNamespace(sh=lambda agent, script, **kw: scripts.append(script)))
-    task = SimpleNamespace(repo="/w/r")
     args = ["exec", "-i", "agent", "claude", "-p", "--disallowedTools", "WebFetch"]
-    got = we.rule_step(ctx, task, None, "agent", "base1", args, "key", tally, 7.5, 1000.0 - 100.0)
-    assert got == "timeout" and len(calls) == 1
-    assert calls[0] == {"command": we.scout_again(args), "key": "key", "tally": tally, "text": we.RULE_STEP,
-                        "name": "rule_stream.jsonl", "seconds": we.c.WALL_CLOCK_S - 100.0, "stop_usd": 7.5}
-    assert scripts == [we.diff_script("/w/r", "base1", f"{we.WE}/rounds/rule.patch")]
-    monkeypatch.setattr(we.time, "monotonic", lambda: 1000.0 + we.c.WALL_CLOCK_S)
-    we.rule_step(ctx, task, None, "agent", "base1", args, "key", tally, 7.5, 1000.0)
-    assert calls[1]["seconds"] == 60.0                              # a repair's floor, as K's repairs have
+    assert we.rule_step(None, None, None, "agent", "base1", args, "key", tally, 7.5, 1000.0 - 100.0) == "finished"
+    assert calls == [{"command": we.scout_again(args), "key": "key", "tally": tally, "text": we.RULE_STEP,
+                      "name": "rule_stream.jsonl", "seconds": we.c.WALL_CLOCK_S - 100.0, "stop_usd": 7.5}, "rule.patch"]
+    calls.clear()
+    assert we.rule_step(None, None, None, "agent", "base1", args, "key", tally, 7.5, 1000.0 - we.c.WALL_CLOCK_S) == "timeout"
+    assert calls == []                                              # no session, and no minute past the run's deadline
+    monkeypatch.setattr(we, "run_session", lambda *a, codes=None, **kw: (codes.append(0), "")[1])
+    assert we.rule_step(None, None, None, "agent", "base1", args, "key", tally, 7.5, 1000.0 - 100.0) == "error"  # no own result
 
 
 def _gated_loop(monkeypatch, after_step):
@@ -194,7 +320,7 @@ def _gated_loop(monkeypatch, after_step):
 def test_after_the_step_the_loop_leaves_round_1_as_the_first_sessions_patch_and_runs_as_k2s(monkeypatch):
     k3, k3_kept, k3_sessions = _gated_loop(monkeypatch, True)
     k2, k2_kept, k2_sessions = _gated_loop(monkeypatch, False)
-    assert k2_kept == [1, 2] and k3_kept == [2]                     # review 1 reads the patch saved as rule.patch
+    assert k2_kept == [1, 2] and k3_kept == [2]                     # review 1 reads the patch kept as rule.patch
     assert k3 == k2 and k3_sessions == k2_sessions and k3["rounds"] == 2 and k3["finding"] == "parent"
 
 
@@ -203,7 +329,7 @@ def test_check_scores_the_rule_patch_after_round_1_and_every_other_arms_patches_
     task = SimpleNamespace(id="fake-1")
     archive.start("validate", task.id).finish({"fail_to_pass": ["test_issue"], "pass_to_pass": []}, "finished")
     runs = {}
-    for arm, names in (("K3", ("round-2", "rule", "round-1")), ("K2", ("round-10", "round-2", "round-1"))):
+    for arm, names in (("K3", ("round-2", "rule", "round-1")), ("K2", ("round-10", "round-2", "round-1", "rule"))):
         run = archive.start("run", task.id, arm=arm)
         (run.path / "rounds").mkdir()
         for name in names:
@@ -211,12 +337,25 @@ def test_check_scores_the_rule_patch_after_round_1_and_every_other_arms_patches_
         run.write("final.patch", "final")
         run.finish({"arm": arm, "agent_started": True}, "finished")
         runs[arm] = run.rel
-    scored = []
-    monkeypatch.setattr(we, "_oracle_run", lambda ctx, task, *, patch, label, **kw: (
-        scored.append(label), {"results": {"test_issue": "passed" if patch.read_text() == "rule" else "failed"}})[1])
+    monkeypatch.setattr(we, "_oracle_run", lambda ctx, task, *, patch, label, **kw: {
+        "results": {"test_issue": "passed" if patch.read_text() == "rule" else "failed"}})
     ctx = SimpleNamespace(archive=archive)
     k3 = we.check(ctx, task, runs["K3"])
     assert [row["patch"] for row in k3["checks"]] == ["round-1", "rule", "round-2", "final"]
     assert [row["passes"] for row in k3["checks"]] == [False, True, False, False]
     k2 = we.check(ctx, task, runs["K2"])
     assert [row["patch"] for row in k2["checks"]] == ["round-1", "round-2", "round-10", "final"]
+
+
+def test_compare_never_scores_a_k3_row_that_did_not_finish_and_reads_every_other_arms_rows_as_before(tmp_path):
+    (tmp_path / "loop").mkdir()
+    rows = {"K3-fake-1-1": {"status": "cap_cost", "passes": False, "failing": None},
+            "K2-fake-1-1": {"status": "cap_cost", "passes": False, "failing": None},
+            "K3-fake-1-2": {"status": "finished", "passes": True, "failing": 0}}
+    for name, row in rows.items():
+        arm, _, _, repeat = name.split("-")
+        (tmp_path / "loop" / f"{name}.json").write_text(json.dumps({"arm": arm, "task": "fake-1", "repeat": int(repeat),
+                                                                   "run": f"run/fake-1/{name}", **row}), encoding="utf-8")
+    got = compare.saved(tmp_path)
+    assert ("K3", "fake-1", 1) not in got
+    assert got[("K2", "fake-1", 1)]["maintainers"] is False and got[("K3", "fake-1", 2)]["maintainers"] is True

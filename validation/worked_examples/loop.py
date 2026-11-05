@@ -56,6 +56,8 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
                if (r.get("task"), r.get("arm"), r.get("repeat")) == (task, arm, repeat)][-1]
     if rec.get("status") == "refused":   # never counted as a failed run
         raise SystemExit(f"refused: {arm} {task} {repeat}: {rec.get('why')}")
+    if not we.scored_run({**rec, "arm": arm}):     # a K3 run that did not finish is no row (run.step_ending)
+        raise SystemExit(f"not a row: {arm} {task} {repeat} ended {rec.get('status')}; a K3 run that did not finish is never scored")
     row = {"arm": arm, "task": task, "repeat": repeat, "run": rec.get("run"), "status": rec.get("status"),
            "why": rec.get("why"), "cost_usd": rec.get("cost_usd"), "passes": False, "failing": None, "tests": []}
     if rec.get("status") == "finished":

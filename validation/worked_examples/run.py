@@ -1611,8 +1611,9 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
 
 
 def run_session(ctx: Context, run: Any, agent: str, command: list[str], key: str, tally: c.Tally, text_in: str, name: str,
-                *, seconds: float, stop_usd: float) -> str:
-    """One Claude Code session in the container, its stream saved as ``name``: how it ended, as ``read_stream`` says."""
+                *, seconds: float, stop_usd: float, codes: list[int | None] | None = None) -> str:
+    """One Claude Code session in the container, its stream saved as ``name``: how it ended, as ``read_stream`` says. ``codes``,
+    when given, receives the session's exit code, which arm K3's steps read (``step_ending``)."""
     proc = ctx.docker.popen(*command, env=ctx.client_env(key))
     stream = open(run.fresh_path(name), "w", encoding="utf-8", newline="\n")
     try:
@@ -1626,7 +1627,9 @@ def run_session(ctx: Context, run: Any, agent: str, command: list[str], key: str
         if proc.poll() is None:
             ctx.docker.sh(agent, KILL_AGENT, user="root", timeout=60)
             proc.kill()
-        proc.wait(timeout=60)
+        code = proc.wait(timeout=60)
+        if codes is not None:
+            codes.append(code)
 
 
 def probe_gate(ctx: Context, task: Task, agent: str, where: str, tree: str) -> list[str]:
@@ -1978,7 +1981,14 @@ only the issue's own example, and run it. Where the reference and your code disa
 example and the reference it names disagree, say so in your reply and follow the reference. Then reply with the list and
 what you changed."""
 RULE_DIGEST = hashlib.sha256(RULE_STEP.encode("utf-8")).hexdigest()[:16]
+FIRST_PATCH = "round-1.patch"  # the first session's tree, kept in the archive before the step: the within-run baseline
 RULE_PATCH = "rule.patch"      # the tree after the step, in ``rounds`` beside each round's patch, scored by ``check`` as "rule"
+#: K3's steps from its first session to its first review, in order; each goes on only from the one before's success. The rule
+#: step is its session and then its patch, each read by ``step_ending``.
+K3_STEPS = ("first session", "first patch", "rule step")
+#: What a capture reports to ``step_ending`` when its file is kept: a capture has no result of its own, and this is its success.
+CAPTURED = {"subtype": "success", "is_error": False}
+ROUND_PATCH = re.compile(r"round-(\d+)\.patch")
 
 
 def rule_led(arm: str) -> bool:
@@ -1999,15 +2009,96 @@ def first_prompt_check(task: Task, title: str, text: str, sent: str) -> tuple[st
                  "would not be Claude Code alone, so the run is refused before the agent starts and is never scored")
 
 
+def step_ending(stop: str | None, result: Mapping[str, Any] | None, code: int | None) -> str:
+    """How one of K3's steps ended (``K3_STEPS``), by the one rule every step's caller uses. "finished" only for a success it
+    recognises: no stop, a result of the step's own whose subtype is "success" and whose ``is_error`` is False, and an exit of
+    0. Anything else is the status the run ends with: the stop; the cap a result names ("cap_turns", "cap_cost"), as
+    ``status_of`` reads one; else "error", which takes in no result, a non-zero or unread exit, and any result it does not know."""
+    if stop:
+        return stop
+    sub = str((result or {}).get("subtype") or "")
+    if result is not None and sub == "success" and result.get("is_error") is False and code == 0:
+        return "finished"
+    return "cap_turns" if "max_turns" in sub else "cap_cost" if "budget" in sub else "error"
+
+
+def kept(ctx: Context, task: Task, agent: str, base: str, run: Any, name: str) -> str:
+    """One of K3's captures: the tree's patch against ``base`` made in the container, then copied at once into the run's
+    archive folder as ``rounds/<name>``, written once (``fresh_path``), before the agent works again. It keeps the patch's real
+    bytes, as ``final.patch`` keeps them, so the within-run comparison scores what each session left. A patch that holds the run's
+    key is not kept. Its ending by ``step_ending``: "finished" only when the command exited 0 and the file is kept."""
+    done = ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/rounds/{name}"), workdir=task.repo, timeout=300)
+    dest = run.fresh_path(f"rounds/{name}")
+    ok = done.returncode == 0 and copy_out(ctx.docker, agent, f"{WE}/rounds/{name}", dest)
+    if ok and any(secret.encode("utf-8") in dest.read_bytes() for secret in ctx.archive.redact.secrets):
+        ok = False
+    if not ok and dest.exists():
+        dest.unlink()
+    return step_ending("", CAPTURED if ok else None, done.returncode)
+
+
 def rule_step(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, tally: c.Tally,
               stop: float, started: float) -> str:
-    """Arm K3's step, after the first patch is saved as ``round-1.patch``: the same session resumed with ``RULE_STEP``, as a
-    repair resumes it, on the run's one clock, tally and stop, so its turns and spend count against the run's allowance. Then
-    the tree is saved as ``RULE_PATCH``. Returns how the session ended, as ``read_stream`` says ("" when it ran to its end)."""
-    ended = run_session(ctx, run, agent, scout_again(docker_args), key, tally, RULE_STEP, "rule_stream.jsonl",
-                        seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
-    ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/rounds/{RULE_PATCH}"), workdir=task.repo, timeout=300)
-    return ended
+    """Arm K3's step, after the first patch is kept: the same session resumed with ``RULE_STEP``, as a repair resumes it, on the
+    run's one clock, tally and stop, so its turns and spend count against the run's allowance. It is given what is left of the
+    run's deadline and no more: none left is "timeout", with no session. Its ending (``step_ending``) reads its own result only,
+    never one an earlier session left in the tally; from a success, the tree is then kept as ``RULE_PATCH``."""
+    left = c.WALL_CLOCK_S - (time.monotonic() - started)
+    if left <= 0:
+        return "timeout"
+    before, codes = tally.result, []
+    stopped = run_session(ctx, run, agent, scout_again(docker_args), key, tally, RULE_STEP, "rule_stream.jsonl",
+                          seconds=left, stop_usd=stop, codes=codes)
+    own = tally.result if tally.result is not before else None      # ``Tally.feed`` keeps each result as a new dict
+    ended = step_ending(stopped, own, codes[-1] if codes else None)
+    return kept(ctx, task, agent, base, run, RULE_PATCH) if ended == "finished" else ended
+
+
+def rule_led_start(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, tally: c.Tally,
+                   stop: float, started: float, first: tuple[str | None, int | None]) -> dict[str, str]:
+    """Arm K3 from the end of its first session to its first review (``K3_STEPS``): the first session's ending, from its stop and
+    exit (``first``) and its result, the only one in the tally yet; the first patch kept; the rule step, its session and then its
+    patch kept. Each runs only when the one before it ended "finished"; the first that did not is where the run ends, with its
+    status ("ended") and its step ("at"). Both are "" when every step finished."""
+    steps = (lambda: step_ending(first[0], tally.result, first[1]),
+             lambda: kept(ctx, task, agent, base, run, FIRST_PATCH),
+             lambda: rule_step(ctx, task, run, agent, base, docker_args, key, tally, stop, started))
+    for at, step in zip(K3_STEPS, steps):
+        ended = step()
+        if ended != "finished":
+            return {"ended": ended, "at": at, "instruction": RULE_DIGEST}
+    return {"ended": "", "at": "", "instruction": RULE_DIGEST}
+
+
+def merge_rounds(ctx: Context, agent: str, run: Any) -> None:
+    """Arm K3's late copy of the container's ``rounds``, which the loop's later rounds are in: into a folder of the run's that
+    did not exist, so ``docker cp`` never puts it inside the archive's ``rounds``; masked there as every copy out of a container
+    is (``redact_tree``); then into ``rounds`` file by file, never over a file already there and never as one of the two
+    captures (``FIRST_PATCH``, ``RULE_PATCH``), which only ``kept`` writes. Nothing the agent leaves in the container replaces
+    what was kept, and a link is never followed out of the copy."""
+    late = run.path / f"rounds-late-{uuid.uuid4().hex[:8]}"
+    try:
+        if not copy_out(ctx.docker, agent, f"{WE}/rounds", late):
+            return
+        redact_tree(late, ctx.archive.redact)
+        own, inside = {FIRST_PATCH.casefold(), RULE_PATCH.casefold()}, late.resolve()
+        for path in sorted(late.rglob("*")):
+            rel = path.relative_to(late)
+            dest = run.path / "rounds" / rel
+            if (path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(inside)
+                    or rel.as_posix().casefold() in own or dest.exists()):
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, dest)
+    finally:
+        shutil.rmtree(late, ignore_errors=True)
+
+
+def scored_run(record: Mapping[str, Any]) -> bool:
+    """Whether a run may be saved as a row, offered to ``check`` and scored: the one rule ``loop.one``, ``compare.saved`` and
+    ``check`` ask of a run's record. Every other arm's run as before; a K3 run only when it finished, which it does only when
+    each of its steps ended as a recognised success (``step_ending``)."""
+    return not rule_led(str(record.get("arm") or "")) or record.get("status") == "finished"
 
 
 # --- arms V3 and V4: arm K's loop with the reviewer's test written before any patch (PLAN.md, 2026-11-04) ---------------
@@ -2297,7 +2388,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             if proc.poll() is None:
                 ctx.docker.sh(agent, KILL_AGENT, user="root", timeout=60)
                 proc.kill()
-            proc.wait(timeout=60)
+            first_code = proc.wait(timeout=60)
         drain.join(timeout=30)
         run.write("stderr.txt", b"".join(errors).decode("utf-8", errors="replace"))
         if looped and holds_loop(ctx.arm) and not dry and not ended:
@@ -2307,11 +2398,11 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             keep_first_patch(ctx, task, agent, base)
             record["repairs"] = review_once(ctx, task, run, agent, docker_args, key, tally, stop, started,
                                             lambda: run_critic(ctx, task, run, agent, base, title, text))
-        stepped = critic_led and rule_led(ctx.arm) and not dry and not ended
-        if stepped:      # K3: the first patch is saved before the step, then the step's patch, then K2's loop on it
-            keep_first_patch(ctx, task, agent, base)
-            ended = rule_step(ctx, task, run, agent, base, docker_args, key, tally, stop, started)
-            record["rule_step"] = {"ended": ended, "instruction": RULE_DIGEST}
+        stepped = critic_led and rule_led(ctx.arm) and not dry
+        if stepped:      # K3: the first session, its patch kept, the rule step; each only from a recognised success (step_ending)
+            record["rule_step"] = rule_led_start(ctx, task, run, agent, base, docker_args, key, tally, stop, started,
+                                                 (ended, first_code))
+            ended = record["rule_step"]["ended"]
         if critic_led and not dry and not ended:
             record["repairs"] = reviews_until_clean(ctx, task, run, agent, base, docker_args, key, tally, stop, started,
                                                     lambda n: run_critic(ctx, task, run, agent, base, title, text, n),
@@ -2338,6 +2429,9 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             checked(ctx.docker("exec", "-u", USER, agent, "rm", "-f", KEY_FILE, timeout=60), "remove G6's key file")
         for src, name in ((f"{WE}/rounds", "rounds"), (f"{HOME}/.claude/projects", "claude_projects"),
                           (f"{HOME}/.g6", "g6_home")):
+            if name == "rounds" and round3 and rule_led(ctx.arm):     # K3: its two captures are kept already, as made
+                merge_rounds(ctx, agent, run)
+                continue
             copy_out(ctx.docker, agent, src, run.path / name)
             redact_tree(run.path / name, ctx.archive.redact)
         saved: dict[str, Any] = {}
@@ -2475,10 +2569,31 @@ def amend_control(archive: c.Archive, task_id: str) -> dict[str, Any] | None:
 
 
 def scored_patches(rounds: Path) -> list[Path]:
-    """The patches ``check`` scores before the final one, in the order a run made them: each round's (``round-<n>.patch``, by
-    ``n``), and arm K3's patch after its rule step (``RULE_PATCH``), made after round 1's and before review 1."""
-    found = [*rounds.glob("**/round-*.patch"), *rounds.glob(f"**/{RULE_PATCH}")]
-    return sorted(found, key=lambda p: (1, 1) if p.name == RULE_PATCH else (int(p.stem.split("-")[1]), 0))
+    """Arm K3's patches before its final one, in the order its run made them, found and named by one rule: the files at the top
+    of ``rounds``, where its captures and its late copy put them (``kept``, ``merge_rounds``), whose names are exactly
+    ``round-<n>.patch``, by n, or exactly ``RULE_PATCH``, just after round 1's. Each is one label, its stem, so the rule step's
+    patch is scored once; a name in another case or folder is none of them."""
+    names = sorted(p.name for p in rounds.iterdir() if p.is_file()) if rounds.is_dir() else []
+    order = [(int(m[1]), 0, name) for name in names if (m := ROUND_PATCH.fullmatch(name))]
+    order += [(1, 1, name) for name in names if name == RULE_PATCH]
+    return [rounds / name for *_, name in sorted(order)]
+
+
+def patches_to_score(rounds: Path, arm: str) -> list[tuple[str, Path]]:
+    """The one rule ``check`` selects and labels a run's patches by, before its final one: arm K3's (``scored_patches``); every
+    other arm's exactly as before K3 (a0ad0a8): each ``round-*.patch`` anywhere under ``rounds``, by its number, a
+    ``RULE_PATCH`` among them or not. Each label is the patch's stem."""
+    found = scored_patches(rounds) if rule_led(arm) else sorted(rounds.glob("**/round-*.patch"),
+                                                                 key=lambda p: int(p.stem.split("-")[1]))
+    return [(path.stem, path) for path in found]
+
+
+def run_record(archive: c.Archive, rel: str) -> dict[str, Any]:
+    """A run's record: its ``run.json``, or, for a run that never wrote one, what the archive's index says at its start."""
+    done = archive.root / rel / "run.json"
+    if done.is_file():
+        return json.loads(done.read_text(encoding="utf-8"))
+    return next((dict(r) for r in archive.rows() if r.get("event") == "started" and r.get("run") == rel), {})
 
 
 def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool = False) -> dict[str, Any]:
@@ -2489,13 +2604,16 @@ def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool
     if src is None:
         raise SystemExit("no run to check")
     src = Path(src)
+    rel = str(src.relative_to(ctx.archive.root)).replace("\\", "/")
+    done = run_record(ctx.archive, rel)
+    if not scored_run(done):     # named or not, a K3 run that did not finish is never offered to the check
+        raise SystemExit(f"{rel} is arm {done.get('arm')}'s and ended {done.get('status') or 'with no ending on record'}: "
+                         "a K3 run that did not finish is never scored")
     f2p, p2p = v["record"]["fail_to_pass"], v["record"]["pass_to_pass"]
-    folder = ctx.archive.start("recheck" if amended else "check", task.id,
-                               checked_run=str(src.relative_to(ctx.archive.root)).replace("\\", "/"))
-    patches = [] if amended else scored_patches(src / "rounds")
+    folder = ctx.archive.start("recheck" if amended else "check", task.id, checked_run=rel)
+    patches = [] if amended else patches_to_score(src / "rounds", str(done.get("arm") or ""))
     rows = []
-    for patch in [*patches, src / "final.patch"]:
-        label = patch.stem
+    for label, patch in [*patches, ("final", src / "final.patch")]:
         body = _oracle_run(ctx, task, patch=patch, folder=folder, label=label, amended=amended)
         if body.get("patch_applied", True) and not body.get("results") and str(body.get("pytest_exit")).strip() != "124":
             raise RuntimeError(f"no test report for {label}")   # a check that did not happen is not a failed patch
