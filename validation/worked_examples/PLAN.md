@@ -3060,3 +3060,18 @@ the test is reported as not run. The selector would then be choosing by its tie 
 - **The record:** the result goes into this file whatever it shows.
 - **The selector's own record:** what it chose, by context and on how many trials, is the first entry of G6's metacognitive
   record.
+
+**Correction to the method-selection test, before anything is built or run.** The section above names PR #8's selector
+"unchanged, at the PR's head `9ebfbbe`". That is wrong.
+- **What I read:** I read the module from a reference picked by a pattern match, which found `claude/pr8-mergeable` before the
+  PR's head. That branch makes PR #8 mergeable.
+- **What `9ebfbbe` can do:** at the PR's head, a method variant must be one of G6's solver engines, so a reviewer cannot be a
+  variant at all. Two repeated trials of one case are also dropped there.
+- **What `claude/pr8-mergeable` adds:** its commit `c6c80c8` adds the variant's `kind` (here `reviewer`), groups a variant's
+  repeated trials on one case so the case counts once, and adds `learn_from`.
+- **The scoring formula is unchanged between the two:** a smoothed success rate, less a regression penalty, divided by one
+  plus the cost. In this test every patch has at most one verdict per method, so grouping changes no score.
+- **So the selector is pinned at the commit that ends `claude/pr8-mergeable`'s review loop,** with `kind="reviewer"` and
+  `learn_from` left at its default. Nothing else in the section changes.
+- **The class, so it is not repeated:** a git reference named by a pattern, not exactly. From now on, a reference read for a
+  registration is named exactly, and its hash is written next to it.
