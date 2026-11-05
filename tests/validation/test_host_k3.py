@@ -187,6 +187,35 @@ def test_repair_2_an_ending_written_early_stands_and_ended_as_gives_the_same_ans
     assert we.ended_as(ctx, run, "finished", dry=False, dog=active[0]) == "error"       # asked again later: the first stands
 
 
+DEFECT = {"verdict": "defect", "rule": "r", "why": "w", "test": helpers.TEST, "seconds": 0.0}
+
+
+def _gated(monkeypatch):
+    monkeypatch.setattr(we, "run_set", lambda *a, **kw: helpers.ON_TREE)
+    monkeypatch.setattr(we, "parent_check", lambda *a, **kw: helpers.AT_PARENT)
+
+
+def test_repair_5_a_host_k3_repair_resumes_the_first_session_by_its_own_id_and_one_naming_another_ends_the_run_error(monkeypatch,
+                                                                                                                      tmp_path):
+    """Review 1, finding 6: the session a repair resumes is fixed once, from the first session's own result, never read again
+    from the tally; a repair whose own result names another session ends the run "error", as a rule step's does."""
+    _gated(monkeypatch)
+    record, _, starts, ctx, *_ = k3_host_run(monkeypatch, tmp_path, [
+        ("s1", FIRST_TREE, None), ("s1", RULE_TREE, None), ("other-session", "def f():\n    return 3\n", None),
+        ("other-session", "def f():\n    return 4\n", None)], review=lambda n: DEFECT if n <= 2 else CLEAN)
+    assert [start["argv"][-2:] for start in starts[1:]] == [["--resume", "s1"]] * 2 and len(starts) == 3
+    assert record["status"] == "error" and _ending(ctx, record) == "error" and record["repairs"]["ended"] == "error"
+
+
+def test_repair_5_a_host_k2_repair_naming_another_session_ends_the_run_error_too(monkeypatch, tmp_path):
+    _gated(monkeypatch)
+    monkeypatch.setattr(we, "run_critic", lambda *a, **kw: DEFECT)
+    record, _, starts, ctx, *_ = helpers.host_run(monkeypatch, tmp_path, "K2", [
+        ("s1", FIRST_TREE, None), ("other-session", RULE_TREE, None), ("other-session", "def f():\n    return 3\n", None)])
+    assert len(starts) == 2 and starts[1]["argv"][-2:] == ["--resume", "s1"]
+    assert record["status"] == "error" and _ending(ctx, record) == "error" and record["repairs"]["ended"] == "error"
+
+
 # --- item 3: the run's watchdog ends a host session's processes, as it ends a container session's ----------------------------
 def test_a_resumed_host_session_is_registered_with_the_runs_watchdog_which_ends_its_processes_once_when_it_fires(monkeypatch,
                                                                                                                  tmp_path):

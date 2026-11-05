@@ -3224,11 +3224,27 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             box_mcp.mirror(workspace, ctx.docker, container=agent, repo=task.repo, user=USER, timeout=BOX_TIMEOUT_S)
             return ended
 
+        first_session = ""       # the host's first session, by the id its own result gave: fixed once, the only one resumed
+
+        def resume(note: str, name: str) -> str:
+            """The first host session resumed, for K3's rule step and arm K's repairs alike, by ``first_session`` and never by the
+            tally's latest id, which any session's stream sets. A resumed session that ended cleanly but whose own result names
+            another session (or none) ends its run "error", written at once, as a session that did not end cleanly does."""
+            before = tally.result
+            ended = turn(note, name, first_session, dog)
+            own = tally.result if tally.result is not before else None      # ``Tally.feed`` keeps each result as a new dict
+            if not ended and str((own or {}).get("session_id") or "") != first_session:
+                run.end("error", why=f"the resumed session's result names session {(own or {}).get('session_id')!r}, not the "
+                                     f"first session's {first_session!r}")
+                ended = "error"
+            return ended
+
         # the host session resumed, for K3's rule step and arm K's repairs alike; in the container they continue it there
-        resumed = (lambda note, name: turn(note, name, tally.session_id, dog)) if host else None
+        resumed = resume if host else None
         if host:
             record["agent_started"] = True
             ended = turn(text_in, c.NDJSON["stream"])
+            first_session = str((tally.result or {}).get("session_id") or "")
             first_code = None if ended else 0     # its exit is read by host_ending: a clean session is a clean exit
             if dog is not None:
                 dog.end("first session")
