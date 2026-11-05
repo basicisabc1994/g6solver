@@ -75,7 +75,7 @@ import time
 import tomllib
 from collections.abc import Callable, Iterable
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from xml.etree import ElementTree
@@ -732,18 +732,43 @@ def _at_newlines(text: str) -> list[str]:
     return lines[:-1] if not lines[-1] else lines
 
 
+#: A byte that is not UTF-8, as ``_decoded`` first reads it.
+_NOT_UTF8 = re.compile("[\udc80-\udcff]")
+#: A file's mode in git, and the mode git gives one a side does not hold.
+LINK_MODE, NO_MODE = "120000", "000000"
+
+
+def _decoded(raw: bytes) -> str:
+    """``raw`` as text, as read: each byte that is not UTF-8 one U+FFFD of its own, and every line ending as it stands."""
+    return _NOT_UTF8.sub("�", raw.decode("utf-8", "surrogateescape"))
+
+
+def _normal(text: str) -> str:
+    """``text`` with the line endings ``Path.read_text`` gives (``_text``): each CRLF, and each CR alone, one newline."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _cut_lines(text: str, limit: int) -> str:
+    """``text`` cut to its first ``limit`` characters, each line then ending in a newline: a new file as the patch shows it."""
+    return "".join(f"{line}\n" for line in _at_newlines(text[:limit]))
+
+
 @dataclass(frozen=True)
 class FileRead:
-    """One file a patch holds, as ``diff_read`` found it: its path; its text now as a reader is shown it, with the line
-    endings ``_text`` gives (None where the file is gone); the line naming its bytes where that text is not them (``""``
-    where it is); whether it is new since the base, which then holds no text of it; and whether G6 left it unread, as it
-    leads out of the repository (``Change.outside_links``) and G6 never reads such a file in its own process (review M1)."""
+    """One file a patch holds, as ``diff_read`` found it: its path; its text now as read (``_decoded``: no line ending changed
+    and nothing cut; None where the file is gone); the line naming its bytes, or the path a link names, where the text the
+    patch shows of it is not that (``""`` where it is); whether it is new since the base, which then holds no text of it;
+    whether G6 left it unread, as it leads out of the repository, and G6 never reads such a file in its own process (review
+    M1); how much of its text the patch shows, with the line endings ``_normal`` gives (``limit``; None: all of it); and its
+    mode at the base and now, as git's listing gives them (``""`` where it gives none)."""
 
     rel: str
     new: str | None
     note: str = ""
     added: bool = False
     unread: bool = False
+    limit: int | None = None
+    modes: tuple[str, str] = ("", "")
 
 
 @dataclass(frozen=True)
@@ -767,53 +792,102 @@ def _bytes_line(raw: bytes, shown: str, what: str) -> str:
     return f"\\ G6: {what} shows here only in part; its bytes have SHA-256 {hashlib.sha256(raw).hexdigest()}\n"
 
 
+#: The diff ``diff_read`` asks git for: its listing of the tracked files that changed, one record each (``--raw -z``, so a
+#: name is never quoted), then the patch itself, in one run over one read of each file. ``--text``: an attribute never hides
+#: a file's lines; with ``--no-renames`` a moved file is a file gone and a file added.
+_DIFF = ("diff", "--patch-with-raw", "-z", "--no-renames", "--no-color", "--no-ext-diff", "--no-textconv", "--text")
+
+
+def _listing(output: bytes) -> tuple[list[tuple[str, str, str]], bytes]:
+    """The records ``_DIFF`` gives first, each (path, mode at the base, mode now), and the patch after them, one NUL past the
+    last record. A record not in git's form refuses the read, as G6 would not know what the patch holds."""
+    found, at = [], 0
+    try:
+        while output.startswith(b":", at):
+            meta = output.index(b"\0", at)
+            end = output.index(b"\0", meta + 1)
+            old, now, _, _, status = output[at + 1:meta].decode("ascii").split(" ")
+            if status[:1] in ("R", "C"):
+                raise ValueError(f"a record of two paths ({status})")
+            found.append((output[meta + 1:end].decode("utf-8", "surrogateescape"), old, now))
+            at = end + 1
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise RepoRefused("G6_E_GIT_COMMAND_FAILED", f"git diff gave a listing G6 cannot read ({exc})"[:200]) from exc
+    patch = output[at + 1:] if found and output.startswith(b"\0", at) else output[at:]
+    if patch.strip() and not found:      # a patch whose files git did not list: what it holds cannot all be shown
+        raise RepoRefused("G6_E_GIT_COMMAND_FAILED", "git diff gave a patch with no listing of its files")
+    return found, patch
+
+
+def _leads_out(repo: Path, rel: str) -> bool:
+    """Whether a folder on ``rel``'s way is a link or junction and the path resolves outside ``repo``, or cannot be resolved:
+    what lies there is outside the repository, and G6 does not read it (M1). ``rel`` itself being a link is not this."""
+    parts = PurePosixPath(rel).parts
+    if not any(_linked(repo.joinpath(*parts[:end])) for end in range(1, len(parts))):
+        return False
+    try:
+        return not (repo / rel).resolve().is_relative_to(repo.resolve())
+    except (OSError, RuntimeError):
+        return True
+
+
 def diff_read(change: Change) -> DiffRead:
-    """The change, read once. Its ``text`` is one unified diff: git's own for tracked files (each file's text, never a
-    ``textconv`` filter's); then a line for each tracked file the change holds, naming the digest of its bytes as they
-    stand, or of the path a link names, as git shows a file after its filters (line endings by ``core.autocrlf`` or
-    ``.gitattributes``, a ``clean`` driver), so two working files that run differently could give one diff, and with these
-    lines cannot; then each untracked file the change holds as added lines (at most ``DIFF_FILE_CHARS`` of it), so a scan of
-    the diff sees a new test file too, each followed by a line naming its bytes where its text is not them
-    (``_bytes_line``). A removed file has no bytes, so no line. Its ``files`` are what that read found of each file the
-    change holds. A file outside the tree (``outside_links``) is never read (M1): it has no line, and no text in ``files``,
-    unless it is a tracked link itself, whose text is the path it names, read without following it."""
+    """The change, read once, its ``files`` exactly the files of that read: the tracked ones git's own listing names, in the
+    same run as the patch (``_DIFF``), and the untracked ones the change holds that its listing names. Its ``text``, what the
+    patch is known by, is one unified diff: git's own for tracked files (each file's text, never a ``textconv`` filter's),
+    which holds each one's mode; then a line for each tracked file, naming the digest of its bytes as they stand, or of the
+    path a link names, as git shows a file after its filters (line endings by ``core.autocrlf`` or ``.gitattributes``, a
+    ``clean`` driver), so two working files that run differently could give one diff, and with these lines cannot; then
+    each untracked file as added lines (at most ``DIFF_FILE_CHARS`` of it, each byte that is not UTF-8 one U+FFFD), so a scan
+    of the diff sees a new test file too, each followed by a line naming its bytes, or the path a link names, where its text
+    is not them (``_bytes_line``). A link is known by the path it names, as git holds a link, never by what it leads to. A
+    removed file has no bytes, so no line. A file below a link that leads out of the repository is never read (M1): it has
+    no line, and no text in ``files``."""
     # a private index built from the base tree (the review of VS-4, finding 1): git's flags, its stat cache and an
     # entry written into the repository's own index hide nothing (review C2 too)
-    diffed, others = _private(change.repo, change.base_commit,   # --text: an attribute never hides a file's lines
-                              ("diff", "--no-color", "--no-ext-diff", "--no-textconv", "--text"),
-                              ("ls-files", "--others", "--exclude-standard", "-z"))
+    listed, others = _private(change.repo, change.base_commit, _DIFF, ("ls-files", "--others", "--exclude-standard", "-z"))
+    tracked, diffed = _listing(listed)
     shown = diffed.decode("utf-8", "replace")
     new = set(_paths(others)) | _tracked_new(change.repo, change.base_commit)   # a force-added file too (F4)
-    text, files, root, outside = shown + _bytes_line(diffed, shown, "the diff of the tracked files"), [], \
-        change.repo.resolve(), set(change.outside_links)
-    for rel in sorted(set(change.files) - new):
+    text, files, root = shown + _bytes_line(diffed, shown, "the diff of the tracked files"), [], change.repo.resolve()
+
+    def found(rel: str, added: bool, modes: tuple[str, str]) -> tuple[FileRead, bytes | None, bool]:
+        """The file at ``rel`` as it stands, its bytes where G6 read them, and whether it is a link, whose bytes are the
+        path it names."""
         path = change.repo / rel
-        if path.is_symlink():      # its text is the path it names, as git holds a link: read, the link is never followed
+        if _leads_out(change.repo, rel):
+            return FileRead(rel, None, added=added, unread=True, modes=modes), None, False
+        if path.is_symlink():     # read as the path it names: the link is never followed
             named = os.readlink(path)
-            text += f"\\ G6: the link {rel} as it stands names a path with SHA-256 {hashlib.sha256(os.fsencode(named)).hexdigest()}\n"
-            files.append(FileRead(rel, named))
-        elif rel in outside:
-            files.append(FileRead(rel, None, unread=True))
-        elif not path.is_file():
-            files.append(FileRead(rel, None))
-        elif not path.resolve().is_relative_to(root):
-            files.append(FileRead(rel, None, unread=True))
-        else:
-            raw = path.read_bytes()
-            text += f"\\ G6: the bytes of {rel} as they stand have SHA-256 {hashlib.sha256(raw).hexdigest()}\n"
-            now = _text(raw)
-            files.append(FileRead(rel, now, _bytes_line(raw, now, rel)))
+            return FileRead(rel, named, added=added, modes=modes), os.fsencode(named), True
+        if rel in change.outside_links or (path.is_file() and not path.resolve().is_relative_to(root)):
+            return FileRead(rel, None, added=added, unread=True, modes=modes), None, False
+        if not path.is_file():
+            return FileRead(rel, None, added=added, modes=modes), None, False
+        raw = path.read_bytes()
+        return FileRead(rel, _decoded(raw), added=added, modes=modes), raw, False
+
+    def named(rel: str, raw: bytes) -> str:
+        return f"\\ G6: the link {rel} as it stands names a path with SHA-256 {hashlib.sha256(raw).hexdigest()}\n"
+
+    for rel, old, now in sorted(tracked):
+        one, raw, link = found(rel, False, (old, now))
+        if raw is not None:
+            text += named(rel, raw) if link else \
+                f"\\ G6: the bytes of {rel} as they stand have SHA-256 {hashlib.sha256(raw).hexdigest()}\n"
+            one = replace(one, note=_bytes_line(raw, _normal(one.new), rel))
+        files.append(one)
     for rel in sorted(new & set(change.files)):
-        if rel in outside:
-            files.append(FileRead(rel, None, added=True, unread=True))
+        one, raw, link = found(rel, True, ("", LINK_MODE))
+        if raw is None:
+            files.append(replace(one, modes=("", "")))
             continue
-        raw = (change.repo / rel).read_bytes()
-        lines = _at_newlines(_text(raw)[:DIFF_FILE_CHARS])
-        shown = "".join(f"{line}\n" for line in lines)
-        note = _bytes_line(raw, shown, rel)
+        shown = _cut_lines(_normal(one.new), DIFF_FILE_CHARS)
+        lines = _at_newlines(shown)
+        note = named(rel, raw) if link else _bytes_line(raw, shown, rel)
         text += (f"--- /dev/null\n+++ b/{rel}\n@@ -0,0 +1,{len(lines)} @@\n" + "".join(f"+{line}\n" for line in lines)
                  + note)
-        files.append(FileRead(rel, shown, note, added=True))
+        files.append(replace(one, note=note, limit=DIFF_FILE_CHARS, modes=("", LINK_MODE if link else "")))
     return DiffRead(text, tuple(files))
 
 
@@ -2116,6 +2190,16 @@ def read_at(repo: Path, commit: str, rel: str, *, timeout_s: float = GIT_TIMEOUT
     if not _git(repo, "ls-tree", "-r", "-z", "--name-only", commit, "--", rel, timeout_s=timeout_s).strip(b"\0"):
         return None
     return _text(_git(repo, "show", f"{commit}:{rel}", timeout_s=timeout_s))
+
+
+def text_at(repo: Path, commit: str, rel: str, *, timeout_s: float = GIT_TIMEOUT_S) -> str | None:
+    """``rel``'s text at ``commit`` as git holds it (``_decoded``: no line ending changed, and each byte that is not UTF-8 one
+    U+FFFD), or None when it was not there, read with the hardened git call as ``read_at`` reads it: what a reader is shown
+    of the base is made from this, after what looks like a secret in it is found."""
+    rel = inside(repo, rel, "path")
+    if not _git(repo, "ls-tree", "-r", "-z", "--name-only", commit, "--", rel, timeout_s=timeout_s).strip(b"\0"):
+        return None
+    return _decoded(_git(repo, "show", "--no-textconv", f"{commit}:{rel}", timeout_s=timeout_s))
 
 
 #: The most paths one ``texts_at`` git call names.

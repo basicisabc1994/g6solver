@@ -252,15 +252,17 @@ def test_a_secret_in_a_parent_file_the_pack_cuts_never_reaches_the_reviewer(rig,
     from g6.context.redact import scrub
 
     secret = "made-up-value-for-this-test-77"
-    read = repo_tests.diff_read(rig.change)
-    patch = loop._shown(rig.change, read).text      # the patch as the reviewer reads it, made from the one read's files
+    first, assignment = "value = 0\n\n\n\n", f"token = '{secret}'\n"    # the change is to the first line, far from the value
+    draft = _files(rig, monkeypatch, {"mod.py": first + "#\n" + assignment}, {"mod.py": "value = 1\n\n\n\n#\n" + assignment})
+    patch = loop._shown(draft, repo_tests.diff_read(draft)).text     # the patch as the reviewer reads it, from the files
     head = loop._head(patch, TASK, "review " + "0" * 32) + "\n\nparent/mod.py:\n"
-    assignment = f"token = '{secret}'\n"
     room = loop.MAX_PACK_CHARS - len(head) - (len(assignment) - 2)      # the cap falls after the value, before its quote
-    parent = "#" * (room - 1) + "\n" + assignment
+    parent = first + "#" * (room - 1 - len(first)) + "\n" + assignment
     assert secret not in scrub(parent) and secret in scrub(parent[:-2])
-    monkeypatch.setattr(repo_tests, "read_at", lambda *args: parent)
-    found = loop.run_critic(rig.change, TASK, rig.critic, loop.harness().critic, rig.session / "sets" / "critic", patch=read)
+    change = _files(rig, monkeypatch, {"mod.py": parent}, {"mod.py": parent.replace("value = 0", "value = 1")})
+    read = repo_tests.diff_read(change)
+    assert loop._shown(change, read).text == patch
+    found = loop.run_critic(change, TASK, rig.critic, loop.harness().critic, rig.session / "sets" / "critic", patch=read)
     assert len(rig.calls) == 1 and secret not in rig.calls[0] and found["masked"] >= 1
     assert rig.calls[0].startswith("issue.txt:\n") and patch in rig.calls[0]       # the head the review reads stays whole
 
@@ -286,12 +288,15 @@ def _sent(rig, read: repo_tests.DiffRead, task: str = TASK, change: repo_tests.C
 def _files(rig, monkeypatch, base: dict[str, str], now: dict[str, str], rendering: str = "") -> repo_tests.Change:
     """A change of the files in ``now``, written where they stand, against a base that held ``base`` (a file it lacks is new
     since), with ``rendering`` what git's own diff of them says: the patch is read from these files, as ``diff_read`` reads."""
+    from tests.harness.test_review_copy import listing
+
     for rel, text in now.items():
         (rig.repo / rel).write_bytes(text.encode("utf-8"))
-    rels = tuple(sorted(now))
-    monkeypatch.setattr(repo_tests, "_private", lambda *args: [rendering.encode(),
+    rels, listed = tuple(sorted(now)), listing(base, now)
+    monkeypatch.setattr(repo_tests, "_private", lambda *args: [(listed + b"\0" if listed else b"") + rendering.encode(),
                                                                "".join(f"{rel}\0" for rel in rels if rel not in base).encode()])
     monkeypatch.setattr(repo_tests, "read_at", lambda repo, commit, rel, **kwargs: base.get(rel))
+    monkeypatch.setattr(repo_tests, "text_at", lambda repo, commit, rel, **kwargs: base.get(rel))
     return repo_tests.Change(rig.repo, rig.base, rig.base, rig.base, rels, {}, {}, rels, ())
 
 

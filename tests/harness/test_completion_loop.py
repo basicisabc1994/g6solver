@@ -1410,13 +1410,14 @@ def test_a_patch_quoted_in_a_task_that_fits_cannot_stand_for_the_patch_itself(wo
 
 def test_the_head_fits_to_the_character_and_the_pack_is_the_same_text_it_was(world, monkeypatch):
     world.edit()
-    change, patch = repo_tests.change(world.repo, world.base), the_patch(world)
+    change = repo_tests.change(world.repo, world.base)
+    shown = loop._shown(change, repo_tests.diff_read(change))      # the patch as the reviewer reads it
     proof = f"review {'0' * 32}"
-    room = loop.MAX_PACK_CHARS - len(loop._head(patch, "", proof))
-    assert loop._read_whole(patch, "t" * room) and not loop._read_whole(patch, "t" * (room + 1))
-    assert loop._pack(change, patch, "t" * room, proof).endswith(f"candidate.patch:\n{the_patch(world)}")      # to its last character
-    pack = loop._pack(change, patch, TASK, proof)
-    assert pack == (f"issue.txt:\n{proof}\n\n{TASK}\n\ncandidate.patch:\n{the_patch(world)}\n\nparent/mod.py:\n{BASE}")
+    room = loop.MAX_PACK_CHARS - len(loop._head(shown.masked, "", proof))
+    assert loop._read_whole(shown.masked, "t" * room) and not loop._read_whole(shown.masked, "t" * (room + 1))
+    assert loop._pack(change, shown, "t" * room, proof).endswith(f"candidate.patch:\n{shown.text}")      # to its last character
+    pack = loop._pack(change, shown, TASK, proof)
+    assert pack == (f"issue.txt:\n{proof}\n\n{TASK}\n\ncandidate.patch:\n{shown.text}\n\nparent/mod.py:\n{BASE}")
 
 
 def test_whatever_the_diff_itself_cuts_is_past_what_a_review_can_read():
