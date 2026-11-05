@@ -27,7 +27,7 @@ from .epistemic import ScopedAssertion, CrossMethodConflictGate
 __g6_component__ = True
 __g6_block__ = "CognitiveBridgeBlock"
 __g6_sensitive_ops__: tuple[str, ...] = ()
-__g6_requires__: tuple[str, ...] = ()
+__g6_requires__: tuple[str, ...] = ("epistemic_integrity", "reasoning")
 __g6_mitigates__: tuple[str, ...] = ("ad_hoc_choice", "false_confidence", "repetition_as_corroboration")
 __g6_introduces__: tuple[str, ...] = ("unevaluated_model_shipped",)
 __g6_outside__: tuple = ()

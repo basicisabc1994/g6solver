@@ -1,9 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Non-LLM conflict detection across explicit, scope-bound method assertions.
 
-This is a conservative conflict tripwire, NOT a fact verifier and not a
-replacement for `g6.epistemic_integrity`. An independent evaluator must
-admit a statement before it can be used as evidence. No score averaging.
+This is a conservative conflict tripwire, NOT a fact checker. It builds on
+`g6.epistemic_integrity`: each admitted assertion becomes an evidence record
+whose lineage is its source, so one source repeated is one lineage
+(`collapse_independence`) and support with opposition on one scope is
+contested (`detect_contested`), by that component's rules, not a second set.
+An independent evaluator must admit a statement before it can be used as
+evidence. No score averaging.
 """
 from __future__ import annotations
 
@@ -11,7 +15,12 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
+from g6.core.evidence import EvidenceRecord
+from g6.epistemic_integrity import adjudicator
+
 HEX64 = re.compile("[0-9a-f]{64}\\Z")
+#: An assertion's stance as an evidence record states it (``g6.core.evidence.EvidenceStance``).
+_STANCE = {"supports": "supports", "refutes": "opposes", "unknown": "context_only"}
 
 
 @dataclass(frozen=True)
@@ -48,7 +57,6 @@ class CrossMethodConflictGate:
         groups: dict[tuple[str, str, str], list[ScopedAssertion]] = {}
         refused: list[str] = []
         duplicate_sources: list[str] = []
-        observed: dict[tuple[str, str, str, str], str] = {}
         for row in assertions:
             admitted = False
             if self.admit_assertion is not None:
@@ -59,32 +67,28 @@ class CrossMethodConflictGate:
             if not admitted:
                 refused.append(row.evidence_ref)
                 continue
-            key = (row.claim_id, row.proposition_id, row.scope_digest)
-            source_key = (*key, row.evidence_ref)
-            if source_key in observed:
-                # One source repeated is not independent corroboration.
-                # If it changes its stance, it is itself inconsistent.
-                duplicate_sources.append(row.evidence_ref)
-                if observed[source_key] != row.stance:
-                    groups.setdefault(key, []).append(row)
-                continue
-            observed[source_key] = row.stance
-            groups.setdefault(key, []).append(row)
+            groups.setdefault((row.claim_id, row.proposition_id, row.scope_digest), []).append(row)
         findings = []
         conflicts = 0
         for (claim_id, proposition_id, scope), data in groups.items():
-            stances = {row.stance for row in data}
-            if "supports" in stances and "refutes" in stances:
+            # Only exactly the same proposition and scope are compared. Each assertion is an evidence record whose
+            # lineage is its source: one source repeated is one lineage, not corroboration, and a source that changes
+            # its stance contests itself (epistemic_integrity's rules).
+            records = tuple(EvidenceRecord(row.evidence_ref, supports_or_opposes=_STANCE[row.stance],
+                                           independence_group=row.evidence_ref, claim_id=claim_id) for row in data)
+            lineages = adjudicator.collapse_independence(records)
+            duplicate_sources += [source for source, members in lineages.items() for _ in members[1:]]
+            if adjudicator.detect_contested(records, lineages):
                 label, status = "contested", "blocked-escalated"
                 conflicts += 1
-            elif stances <= {"unknown"}:
+            elif all(r.supports_or_opposes == "context_only" for r in records):
                 label, status = "undetermined", "blocked-escalated"
             else:
                 label, status = "consistent_with_admitted_evidence", "qualified-draft"
             findings.append({"claim_id": claim_id, "proposition_id": proposition_id,
                              "scope_digest": scope, "status": label,
                              "completion_state": status,
-                             "source_count": len(data),
+                             "source_count": len(lineages),
                              "methods": sorted({r.method for r in data}),
                              "warning": "Consistency does not establish truth or domain correctness"})
         # Every unadmitted claim is insufficient. Do not call it a successful

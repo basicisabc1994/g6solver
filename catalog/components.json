@@ -881,7 +881,10 @@
       "rank_methods",
       "assurance_schema"
     ],
-    "requires": [],
+    "requires": [
+      "epistemic_integrity",
+      "reasoning"
+    ],
     "sensitive_ops": [],
     "vetting": null
   },

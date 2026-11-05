@@ -4,13 +4,19 @@
 This module can recommend an isolated shadow trial, not activate a guard,
 change protected evaluators, mint G6 `verified`, or bypass owner merge.
 Real separation requires evaluator-owned records plus isolated execution.
+
+The gate's statistic is the meta-harness gate's own (``g6.reasoning.sign_test_p`` at alpha / max_evaluations, the
+rule ``g6.metaharness.schema.EvidencePolicy`` states), and its protected paths start from G6's
+(``g6.core.adaptation_gate.protected_hits``); its other conditions are stricter additions on top.
 """
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
+
+from g6.core.adaptation_gate import protected_hits
+from g6.reasoning import sign_test_p
 
 from .assurance import CandidateDossier
 
@@ -137,15 +143,13 @@ class ControlTrial:
             raise ValueError("control outcome invalid")
 
 
-def exact_sign_p(wins: int, losses: int) -> float:
-    n = wins + losses
-    if n == 0:
-        return 1.0
-    return sum(math.comb(n, k) for k in range(wins, n + 1)) / (2 ** n)
+#: The one-sided exact sign test the meta-harness gate decides by (``g6.metaharness.evaluate`` uses it): one rule for
+#: "the change won on paired cases", whichever gate asks.
+exact_sign_p = sign_test_p
 
 
 def protected_paths(paths: Sequence[str]) -> list[str]:
-    """Conservative local denylist PLUS real G6 protected hits when installed.
+    """G6's protected paths (``g6.core.adaptation_gate.protected_hits``) plus this gate's stricter local denylist.
 
     A failure in G6's existing policy fails closed rather than being silently
     replaced by this extension's shorter static list.
@@ -154,11 +158,7 @@ def protected_paths(paths: Sequence[str]) -> list[str]:
              or p.replace("\\", "/").startswith(("src/g6/core/", "g6/core/", ".github/"))
              or any(part in p.lower().replace("\\", "/") for part in PROTECTED_PARTS)]
     try:
-        from g6.core.adaptation_gate import protected_hits as existing_policy
-    except ImportError:
-        return local  # standalone unit-test environment; not a production approval
-    try:
-        upstream = existing_policy(tuple(paths))
+        upstream = protected_hits(tuple(paths))
     except Exception:
         return list(paths)  # upstream policy broken => refuse every changed path
     return sorted(set(local).union(upstream))
@@ -231,8 +231,8 @@ class AdaptationPromotionGate:
             violations.append("insufficient discriminating pairs")
         if wins <= losses:
             violations.append("candidate has no positive paired advantage")
-        p_value = exact_sign_p(wins, losses)
-        threshold = self.alpha / self.max_evaluations  # preregistered Bonferroni bound
+        p_value = sign_test_p(wins, losses)
+        threshold = self.alpha / self.max_evaluations  # preregistered Bonferroni bound, as EvidencePolicy.threshold
         if p_value > threshold:
             violations.append(f"paired sign test not below preregistered threshold {threshold:.6g}")
         return {"completion_state": "blocked-escalated" if violations else "qualified-draft",

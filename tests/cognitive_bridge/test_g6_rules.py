@@ -118,6 +118,46 @@ def test_a_sensitive_op_runs_only_with_the_persons_allow(monkeypatch):
     assert registry.calls == [("formal", "check_validity")] * 2
 
 
+def test_the_adaptation_gate_decides_by_the_meta_harness_gates_own_statistic():
+    # 9ebfbbe's adaptation.py computed its own sign test beside the one the meta-harness gate decides by: one fact,
+    # two rules. The PR's interface (exact_sign_p, the gate's arguments and extra conditions) stays.
+    import importlib
+
+    from g6.cognitive_bridge import AdaptationPromotionGate, ControlTrial, GuardChange, PairedTrial, adaptation
+    from g6.metaharness.schema import EvidencePolicy
+    from g6.reasoning import sign_test_p
+
+    evaluate = importlib.import_module("g6.metaharness.evaluate")  # the package's evaluate() shadows the module
+    assert adaptation.exact_sign_p is sign_test_p is evaluate.sign_test_p
+    change = GuardChange("g", PIN, PIN2, "c" * 64, ("src/g6/cognitive_bridge/guard.py",), "cognitive_bridge", "agent",
+                         "outside", ("false_confidence",))
+    pairs = [PairedTrial(f"h{i}", "c" * 64, i >= 22, True, False, "holdout", f"outside://{i}") for i in range(26)]
+    controls = [ControlTrial("n", True, "negative", "outside://n"), ControlTrial("p", True, "positive", "outside://p")]
+    report = AdaptationPromotionGate(admit_pair=lambda p: True, admit_control=lambda c: True).assess(
+        change, pairs, controls, detected_failures=("false_confidence",))
+    assert report["p_one_sided"] == sign_test_p(report["wins"], report["losses"])
+    assert report["multiplicity_corrected_threshold"] == EvidencePolicy(alpha=0.05, max_evaluations=5).threshold
+
+
+def test_the_conflict_gate_reads_stance_and_lineage_by_epistemic_integritys_rule(monkeypatch):
+    # 9ebfbbe's epistemic.py decided "contested" and "one source repeated" with rules of its own beside
+    # g6.epistemic_integrity's. The gate now hands each admitted assertion to those rules as an evidence record.
+    from g6.cognitive_bridge import CrossMethodConflictGate
+    from g6.epistemic_integrity import adjudicator
+
+    rows = [ScopedAssertion("c", "p", PIN, "supports", "formal", "e1", "r1"),
+            ScopedAssertion("c", "p", PIN, "refutes", "causal", "e2", "r2")]
+    gate = CrossMethodConflictGate(admit_assertion=lambda a: True)
+    assert gate.reconcile(rows)["conflicts"] == 1
+    seen = []
+    real = adjudicator.collapse_independence
+    monkeypatch.setattr(adjudicator, "collapse_independence", lambda records: seen.append(records) or real(records))
+    monkeypatch.setattr(adjudicator, "detect_contested", lambda records, groups: False)
+    assert gate.reconcile(rows)["conflicts"] == 0  # the contested decision is epistemic_integrity's
+    assert [r.source_uri_or_artifact_id for r in seen[0]] == ["e1", "e2"]
+    assert [r.supports_or_opposes for r in seen[0]] == ["supports", "opposes"]
+
+
 def test_risk_is_the_number_of_g6s_risk_tier():
     # 9ebfbbe's risk was a bare 0..3 scale; G6's canonical noun is risk_tier, R0 to R3. The number stays the field
     # (it orders tiers), and every surface names the tier.

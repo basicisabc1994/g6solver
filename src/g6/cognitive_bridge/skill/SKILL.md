@@ -59,6 +59,10 @@ Composed (Python only):
   (`G6_E_COGNITIVE_APPROVAL_REQUIRED`).
 - `CognitiveAssuranceOrchestrator` joins the selector, the router, the executor and the assurance checker: compile,
   execute with approval, then assess the produced bytes against the standard's criteria.
+- The cross-method conflict gate reads stance and lineage by `epistemic_integrity`'s rules: one source repeated is
+  one lineage, and support with opposition on the same scope is contested.
+- The adaptation gate's paired sign test is `reasoning.sign_test_p`, the statistic the meta-harness gate decides by,
+  at alpha divided by the number of evaluations; its protected paths start from `g6.core.adaptation_gate`'s.
 
 ## Failure modes it catches
 
@@ -67,7 +71,7 @@ Composed (Python only):
   budget, or the plan blocks.
 - `false_confidence`: no result is `verified`; a dossier blocks on a missing or failed critical check, a checker that
   misses its planted negative control, a missing documentary section, or an unauthenticated review at R2 and R3.
-- `repetition_as_corroboration`: the conflict gate counts one source repeated as one source, and the selector
+- `repetition_as_corroboration`: the conflict gate counts one source repeated as one lineage, and the selector
   counts one variant's trials on one case as one case.
 
 ## Blind spots
