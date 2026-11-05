@@ -2753,3 +2753,49 @@ The pre-spend rule of the morning's section stands as written.
 - **Left open.** One existing test, `test_reproduce_review.py` line 345, fails on the tip. It pins git apply's error wording,
   which the shared container wrapper now reports differently, while the verdict stays `failed`. It is looked at before
   replay 6's development check runs.
+
+## 2026-11-05 (midday): the owner's ruling on the within-run comparison, and two review loops
+
+**Owner's ruling, 2026-11-05.** "Within run comparison can count towards this", on the subscription.
+
+**How it is read, set before any stage 5 run.**
+- **Two tests can decide the claim of uplift:**
+  - the frozen rule: the loop arm against arm A by bug, two runs each;
+  - the within-run comparison: each loop run's final patch against its own first patch, by bug, two runs, on the
+    maintainers' tests.
+
+  Each is the exact one-sided sign test on bugs better against bugs worse.
+- **The bar.** The study's rule for two primaries (2026-11-01, M9 and K1: `compare.TWO_PRIMARIES`) reads each test at
+  p < 0.025, so the chance of a false claim stays at 5%. If the owner wants each at 0.05 instead, that is set before stage 5's
+  first run.
+- **Both are always reported,** whichever one decides, on all determined bugs and with arm T beside arm A.
+- **Runs with no Claude Code baseline.** A refused first prompt or `no_first_patch` gives no within-run pair. They are counted by
+  arm and reported.
+
+**The host session's follow-up-2: its review loop ended at its limit on c57f253.**
+- Four reviews and three repairs, with findings 7, 2, 2 and 2, all reproduced. It never reached a clean review.
+- **Review 1's seven findings** were superseded by a redesign. The line-split scan was replaced by one constant naming every
+  newline-delimited JSON file the runs write (`wecommon.NDJSON`), with a behavioural test for each of ten readers. The guard is
+  a lint over those tests.
+- **Review 3's finding 2** was rejected as a stated limit of that lint.
+- **Open from review 4, for their own change:**
+  1. the workspace root can be redirected between its check and the packing;
+  2. a name Windows holds as named, such as `COM0.py`, is refused.
+- **Neither blocks a pilot on development bugs.** This is an inference, not a test:
+  - The first needs the root swapped for a junction mid-run, and the author's five file tools cannot make one.
+  - The second refuses a run visibly and cannot score one wrongly.
+
+**K3's review loop.**
+- **The review loop.** Three reviews and three repairs so far, with findings 15, 6 and 7, all reproduced. Two were rejected:
+  review 1's 12 and 15, for one treatment of stops across arms.
+- **Classes met three times, so their design changed.**
+  - The deadline: one watchdog per run, which ends every process at the deadline. Any step that ends late makes the run
+    `timeout`.
+  - The baseline: its bytes are checked against their digest where they are used, and a mismatch is a refusal.
+- **The tip and the last review.** The tip is 426b44a. The fourth review is the last; whatever it finds stays open for its
+  own change.
+- **A slip, recorded.** A pushed commit message (fe17778) uses a barred word. It cannot change without a force-push, so it
+  stays.
+- **Still to do before the pilot:**
+  - the host session's `turn()` must take K3's rule step, watchdog and copy rule;
+  - `export_reviewer_cases` must find K3's first patch in `baseline/`.
