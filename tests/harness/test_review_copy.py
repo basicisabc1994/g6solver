@@ -49,13 +49,18 @@ class Recorded:
         return f"READ: {token}\nRULE: no defect\nVERDICT: none\nWHY: no defect\n"
 
 
+def blob_id(rel: str) -> str:
+    """The object name a fake listing gives the base's blob of `rel`."""
+    return hashlib.sha1(rel.encode()).hexdigest()
+
+
 def listing(base: dict, now: dict, modes: dict | None = None) -> bytes:
     """Git's ``--raw -z`` records for the tracked files of ``base`` and ``now``, as ``repo_tests._DIFF`` gives them first."""
     records = []
     for rel in sorted(base):
         gone = now.get(rel) is None
         old, new = (modes or {}).get(rel, ("100644", "000000" if gone else "100644"))
-        records.append(f":{old} {new} 0000000 0000000 {'D' if gone else 'M'}\0{rel}\0".encode())
+        records.append(f":{old} {new} {blob_id(rel)} {'0' * 40} {'D' if gone else 'M'}\0{rel}\0".encode())
     return b"".join(records)
 
 
@@ -75,7 +80,7 @@ def held(tmp_path: Path, monkeypatch, base: dict, now: dict, rendering: bytes = 
     monkeypatch.setattr(repo_tests, "_private", lambda *args: [listed + b"\0" + rendering if listed else rendering, new])
     monkeypatch.setattr(repo_tests, "_tracked_new", lambda *args: set())
     monkeypatch.setattr(repo_tests, "read_at", lambda repo, commit, rel, **kwargs: base.get(rel))
-    monkeypatch.setattr(repo_tests, "text_at", lambda repo, commit, rel, **kwargs: base.get(rel))
+    monkeypatch.setattr(repo_tests, "blob_text", lambda repo, name, **kwargs: {blob_id(rel): text for rel, text in base.items()}[name])
     return repo_tests.Change(tmp_path, "a" * 40, "a" * 40, "a" * 40, rels, {}, {},
                              tuple(rel for rel in rels if rel.endswith(".py")), (), outside_links=outside)
 
@@ -146,7 +151,7 @@ def test_finding_3_gits_blank_context_setting_cannot_part_a_name_from_its_value(
                                                                + result.stdout, b""])
     monkeypatch.setattr(repo_tests, "_tracked_new", lambda *args: set())
     monkeypatch.setattr(repo_tests, "read_at", lambda *args: before)
-    monkeypatch.setattr(repo_tests, "text_at", lambda *args: before)
+    monkeypatch.setattr(repo_tests, "blob_text", lambda *args, **kwargs: before)
     reviewer = Recorded()
     loop.run_critic(change, "Keep the configuration valid", reviewer, "Review the patch", tmp_path,
                     patch=repo_tests.diff_read(change))
@@ -264,14 +269,24 @@ def test_a_file_whose_bytes_are_not_utf8_is_shown_with_a_mark_for_each_and_the_l
 
 
 def test_a_file_that_leads_out_of_the_repository_is_named_and_never_read(tmp_path, monkeypatch):
-    change = held(tmp_path, monkeypatch, {"out.py": "kept = 1\n", "mod.py": "a = 1\n"},
-                  {"out.py": "NEVER-READ = 1\n", "mod.py": "a = 2\n"}, outside=("out.py",))
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    (outside / "out.py").write_text("NEVER-READ = 1\n", encoding="utf-8")
+    try:
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(outside), str(tmp_path / "linked"))
+        else:
+            (tmp_path / "linked").symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"this system does not let the test make a link: {exc}")
+    change = held(tmp_path, monkeypatch, {"linked/out.py": "kept = 1\n", "mod.py": "a = 1\n"},
+                  {"linked/out.py": "unchanged", "mod.py": "a = 2\n"})
+    (outside / "out.py").write_text("NEVER-READ = 1\n", encoding="utf-8")     # what lies past the link, written last
     read = repo_tests.diff_read(change)
     copy = loop._shown(change, read)
     assert "NEVER-READ" not in read.text and "NEVER-READ" not in copy.text and "-kept = 1" not in copy.text
-    assert "\\ G6: out.py leads out of the repository" in copy.text and "+a = 2\n" in copy.text
-
-
+    assert "\\ G6: linked/out.py leads out of the repository" in copy.text and "+a = 2\n" in copy.text
 def test_a_removed_file_is_shown_removed_and_a_lost_last_newline_as_git_shows_it(tmp_path, monkeypatch):
     copy = shown(held(tmp_path, monkeypatch, {"gone.py": "x = 1\n", "mod.py": "y = 1\n"}, {"gone.py": None, "mod.py": "y = 1"}))
     assert "--- a/gone.py\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-x = 1\n" in copy.text
@@ -302,7 +317,7 @@ def test_a_base_that_cannot_be_read_asks_no_reviewer(tmp_path, monkeypatch):
         raise repo_tests.RepoRefused("G6_E_GIT_COMMAND_FAILED", "git show failed")
 
     monkeypatch.setattr(repo_tests, "read_at", unreadable)
-    monkeypatch.setattr(repo_tests, "text_at", unreadable)
+    monkeypatch.setattr(repo_tests, "blob_text", unreadable)
     reviewer = Recorded()
     with pytest.raises(repo_tests.RepoRefused):
         loop.run_critic(change, "Keep a at two", reviewer, "Review the patch", tmp_path, patch=repo_tests.diff_read(change))
@@ -315,7 +330,7 @@ def test_a_round_is_known_by_its_read_and_its_reviewer_reads_the_copy_made_from_
     listed = listing({"mod.py": "value = 0\n"}, {"mod.py": "value = 1\n"}) + b"\0"
     monkeypatch.setattr(repo_tests, "_private", lambda *args: [listed + rendering, b""])
     monkeypatch.setattr(repo_tests, "read_at", lambda *args: "value = 0\n")
-    monkeypatch.setattr(repo_tests, "text_at", lambda *args: "value = 0\n")
+    monkeypatch.setattr(repo_tests, "blob_text", lambda *args, **kwargs: "value = 0\n")
     read = repo_tests.diff_read(rig.change)
     assert read.text.startswith("diff --git") and [one.rel for one in read.files] == ["mod.py"]
     ended = loop.advance(rig.repo, "Keep value one", rig.base, rig.session, critic=rig.critic)
@@ -389,8 +404,8 @@ def test_mask1_finding_2_a_file_below_a_link_out_is_named_and_never_opened_again
     monkeypatch.setattr(repo_tests, "_tracked_new", lambda *args: set())
 
     def no_git(*args, **kwargs):
-        if args[1] == "ls-tree" and args[-1] == "mod.py":
-            return b""
+        if args[1:] == ("cat-file", "blob", blob_id("mod.py")):
+            return b"value = 42\n"
         raise AssertionError("the unread file's base must not be requested")
 
     monkeypatch.setattr(repo_tests, "_git", no_git)
@@ -506,3 +521,150 @@ def test_a_read_git_does_not_list_whole_is_refused_never_shown_short(tmp_path, m
     monkeypatch.setattr(repo_tests, "_private", lambda *args: [output, b""])
     with pytest.raises(repo_tests.RepoRefused):
         repo_tests.diff_read(change)
+
+# --- review-mask2's eight findings: git's records by git's rules, one rule for what is shown, containment on the open file
+
+@pytest.mark.parametrize("record", [
+    b":100644 100644 " + b"a" * 40 + b" " + b"0" * 40 + b" X\0mod.py\0\0",
+    b":100644 100644 " + b"a" * 40 + b" " + b"0" * 40 + b" U\0mod.py\0\0",
+    b":not-a-mode 100644 " + b"a" * 40 + b" " + b"0" * 40 + b" M\0mod.py\0\0",
+    b":100644 100644 not-an-object " + b"0" * 40 + b" M\0mod.py\0\0",
+    b":100644 100644 0000000 0000000 M\0mod.py\0\0",
+    b":100644 100644 " + b"a" * 40 + b" " + b"0" * 40 + b" M\0\0\0",
+    b":100644 100644 " + b"a" * 40 + b" " + b"0" * 40 + b" M 9\0mod.py\0\0",
+], ids=["unknown-status", "unmerged", "invalid-mode", "invalid-object", "abbreviated-object", "empty-path",
+        "a-shape-never-seen"])
+def test_mask2_finding_1_a_record_not_in_gits_form_refuses_the_read(tmp_path, monkeypatch, record):
+    change = repo_tests.Change(tmp_path, "a" * 40, "a" * 40, "a" * 40, (), {}, {}, (), ())
+    monkeypatch.setattr(repo_tests, "_private", lambda *args: [record, b""])
+    monkeypatch.setattr(repo_tests, "_tracked_new", lambda *args: set())
+    with pytest.raises(repo_tests.RepoRefused, match="listing") as refused:
+        repo_tests.diff_read(change)
+    assert refused.value.code == "G6_E_GIT_COMMAND_FAILED"
+
+
+@pytest.mark.parametrize("rel", ["-mod.py", "@mod.py"])
+def test_mask2_finding_2_a_name_git_listed_is_reviewed_as_git_named_it(tmp_path, rel):
+    repo = make_repo(tmp_path)
+    (repo / rel).write_bytes(b"value = 0\n")
+    git(repo, "add", "--", rel)
+    git(repo, "commit", "-q", "-m", "base")
+    (repo / rel).write_bytes(b"value = 1\n")
+    base = git(repo, "rev-parse", "HEAD").strip()
+    change = repo_tests.Change(repo, base, base, base, (rel,), {}, {}, (), ())
+    read = repo_tests.diff_read(change)
+    assert [one.rel for one in read.files] == [rel]
+    reviewer = Recorded()
+    found = loop.run_critic(change, "Keep value one", reviewer, "Review", tmp_path, patch=read, whole=True)
+    assert found["verdict"] == "none" and "-value = 0\n+value = 1\n" in reviewer.sent[0]
+
+
+def test_mask2_finding_3_a_value_named_past_the_cut_is_masked_on_a_line_like_it_before_the_cut(tmp_path, monkeypatch):
+    value = "made-up-duplicate-value-0123456789"
+    duplicate = f'    "{value}",\n'
+    raw = ('values = [\n' + duplicate + ']\npassword = "' + "x" * repo_tests.DIFF_FILE_CHARS
+           + '"\ncfg = {\n    "api_key":\n' + duplicate + '}\n')
+    assert raw.rindex(value) > repo_tests.DIFF_FILE_CHARS
+    change = held(tmp_path, monkeypatch, {}, {"new.py": raw})
+    reviewer = Recorded()
+    found = loop.run_critic(change, "Keep the configuration valid", reviewer, "Review", tmp_path,
+                            patch=repo_tests.diff_read(change), whole=True)
+    assert reviewer.sent and found["verdict"] == "none" and value not in reviewer.sent[0]
+
+
+def test_mask2_finding_4_a_value_over_lines_of_which_one_is_shown_hides_no_line(tmp_path, monkeypatch):
+    before = ("-----BEGIN PRIVATE KEY-----\nmade-up-key-body\n-----END PRIVATE KEY-----\n"
+              "# after one\n# after two\nvalue = 0\n")
+    change = held(tmp_path, monkeypatch, {"mod.py": before}, {"mod.py": before.replace("value = 0", "value = 1")})
+    read = repo_tests.diff_read(change)
+    shown = loop._shown(change, read)
+    assert shown.masked.count(MASK) == 1 and not shown.hidden
+    task = "t" * (loop.MAX_PACK_CHARS - len(loop._sent_head(shown.masked, "", "review " + "0" * 32)))
+    reviewer = Recorded()
+    found = loop.run_critic(change, task, reviewer, "Review", tmp_path, patch=read, whole=True)
+    assert "parent/mod.py:" not in reviewer.sent[0] and found["verdict"] == "none"
+    over = shown_two = held(tmp_path, monkeypatch, {"mod.py": before},
+                            {"mod.py": before.replace("# after one", "# after 1")})
+    assert loop._shown(over, repo_tests.diff_read(shown_two)).hidden      # two of the key's lines are shown
+
+
+def test_mask2_finding_5_an_earlier_outside_verdict_never_hides_a_file_as_it_stands_now(tmp_path):
+    repo = make_repo(tmp_path)
+    (repo / "calc.py").write_bytes(b"value = 1\n")
+    change = dataclasses.replace(repo_tests.change(repo), outside_links=("calc.py",))   # an earlier read's verdict
+    read = repo_tests.diff_read(change)
+    reviewer = Recorded()
+    found = loop.run_critic(change, "Keep value one", reviewer, "Review", tmp_path, patch=read, whole=True)
+    assert found["verdict"] == "none" and "+value = 1\n" in reviewer.sent[0]
+
+
+def test_mask2_finding_6_a_tracked_links_base_is_read_by_its_object_name_wherever_it_leads_now(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    link, outside = repo / "ln", tmp_path / "outside.txt"
+    real_resolve, real_is_symlink, real_readlink = Path.resolve, Path.is_symlink, os.readlink
+    monkeypatch.setattr(Path, "resolve", lambda path, *a, **kw: outside if path == link else real_resolve(path, *a, **kw))
+    monkeypatch.setattr(Path, "is_symlink", lambda path: path == link or real_is_symlink(path))
+    monkeypatch.setattr(os, "readlink", lambda path: "../outside.txt" if Path(path) == link else real_readlink(path))
+    listed = b":120000 120000 " + b"b" * 40 + b" " + b"0" * 40 + b" M\0ln\0\0"
+    monkeypatch.setattr(repo_tests, "_private", lambda *args: [listed, b""])
+    monkeypatch.setattr(repo_tests, "_tracked_new", lambda *args: set())
+    asked = []
+
+    def git_blob(root, *args, **kwargs):
+        asked.append(args)
+        assert args == ("cat-file", "blob", "b" * 40), "the base was looked up by a path"
+        return b"../old-outside.txt"
+
+    monkeypatch.setattr(repo_tests, "_git", git_blob)
+    change = repo_tests.Change(repo, "a" * 40, "a" * 40, "a" * 40, ("ln",), {}, {}, (), (), outside_links=("ln",))
+    read = repo_tests.diff_read(change)
+    assert read.files[0].new == "../outside.txt" and not read.files[0].unread
+    reviewer = Recorded()
+    found = loop.run_critic(change, "Review the link target", reviewer, "Review", tmp_path, patch=read, whole=True)
+    assert found["verdict"] == "none" and "-../old-outside.txt\n" in reviewer.sent[0] and "+../outside.txt\n" in reviewer.sent[0]
+
+
+def test_mask2_finding_7_a_task_value_over_a_lone_cr_hides_lines_as_a_files_does(tmp_path):
+    task = 'password = "made-up-first-part\rmade-up-second-part"'
+    change = repo_tests.Change(tmp_path, "a" * 40, "a" * 40, "a" * 40, (), {}, {}, (), ())
+    reviewer = Recorded()
+    found = loop.run_critic(change, task, reviewer, "Review", tmp_path, patch=repo_tests.DiffRead("", ()), whole=True)
+    assert found["verdict"] == "failed" and found["error"] == loop.HIDDEN
+    assert "made-up-first-part" not in reviewer.sent[0] and "made-up-second-part" not in reviewer.sent[0]
+
+
+def test_mask2_finding_8_a_folder_swapped_for_a_link_out_as_the_file_is_opened_is_never_read(tmp_path, monkeypatch):
+    repo, outside = make_repo(tmp_path), tmp_path / "outside"
+    folder, saved = repo / "nested", repo / "saved"
+    folder.mkdir()
+    outside.mkdir()
+    (folder / "mod.py").write_bytes(b"value = 0\n")
+    (outside / "mod.py").write_bytes(b"outside_repository_content = 12345\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "nested")
+    (folder / "mod.py").write_bytes(b"value = 1\n")
+    change = repo_tests.change(repo)
+    real_open, swapped = os.open, []
+
+    def swap_as_it_opens(path, *args, **kwargs):
+        if Path(path) == folder / "mod.py" and not swapped:      # after every check G6 makes before the open
+            folder.rename(saved)
+            if os.name == "nt":
+                import _winapi
+                _winapi.CreateJunction(str(outside), str(folder))
+            else:
+                folder.symlink_to(outside, target_is_directory=True)
+            swapped.append(True)
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", swap_as_it_opens)
+    try:
+        read = repo_tests.diff_read(change)
+    finally:
+        monkeypatch.setattr(os, "open", real_open)
+        if swapped:
+            os.rmdir(folder) if os.name == "nt" else folder.unlink()
+            saved.rename(folder)
+    assert swapped and read.files[0].unread and read.files[0].new is None
+    assert "outside_repository_content" not in read.text

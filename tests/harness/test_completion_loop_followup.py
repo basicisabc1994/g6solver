@@ -288,7 +288,7 @@ def _sent(rig, read: repo_tests.DiffRead, task: str = TASK, change: repo_tests.C
 def _files(rig, monkeypatch, base: dict[str, str], now: dict[str, str], rendering: str = "") -> repo_tests.Change:
     """A change of the files in ``now``, written where they stand, against a base that held ``base`` (a file it lacks is new
     since), with ``rendering`` what git's own diff of them says: the patch is read from these files, as ``diff_read`` reads."""
-    from tests.harness.test_review_copy import listing
+    from tests.harness.test_review_copy import blob_id, listing
 
     for rel, text in now.items():
         (rig.repo / rel).write_bytes(text.encode("utf-8"))
@@ -296,7 +296,7 @@ def _files(rig, monkeypatch, base: dict[str, str], now: dict[str, str], renderin
     monkeypatch.setattr(repo_tests, "_private", lambda *args: [(listed + b"\0" if listed else b"") + rendering.encode(),
                                                                "".join(f"{rel}\0" for rel in rels if rel not in base).encode()])
     monkeypatch.setattr(repo_tests, "read_at", lambda repo, commit, rel, **kwargs: base.get(rel))
-    monkeypatch.setattr(repo_tests, "text_at", lambda repo, commit, rel, **kwargs: base.get(rel))
+    monkeypatch.setattr(repo_tests, "blob_text", lambda repo, name, **kwargs: {blob_id(rel): text for rel, text in base.items()}[name])
     return repo_tests.Change(rig.repo, rig.base, rig.base, rig.base, rels, {}, {}, rels, ())
 
 
