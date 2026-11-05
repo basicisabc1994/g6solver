@@ -10,6 +10,13 @@ person agreed to lift, and anything else, or any later write, stands, so a stop 
 runner ended by a stop needs a person's start again, even with the file gone: the records say the last start was stopped. A
 heartbeat is written whole or not at all, and a heartbeat that cannot be written is one missed, never a failed tick.
 
+**Is a stop in force?** One function says, ``stop_in_force``, and every reader acts on it: a start, the runner, a tick,
+status and the digest. A stop through the tool is a line in ``stops.log``, written and flushed to disk before its ``STOP``
+file, so a stop that dies between the two still stands for every reader. Both files are read in one reading (``stop_seen``),
+and a start binds that reading whole: the ``STOP`` file it lifts, and the bytes of ``stops.log``, by count and digest, so a
+rewrite that leaves as many lines is no unchanged record. A file that cannot be read is never a value: it is a stop in force,
+``G6_E_LOOP_STOP_UNREADABLE``, and the reason names the file.
+
 **Is a runner alive?** A runner holds an operating-system lock for as long as it lives, so one that crashed, or a machine
 that rebooted, never reads as alive, and no process number can be mistaken for it. Looking writes nothing.
 
@@ -26,6 +33,7 @@ import json
 import os
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, ContextManager
@@ -38,6 +46,10 @@ from g6.workspace._envelope import WorkspaceRefused
 
 STOP_FILE = "STOP"
 STOPS_FILE = "stops.log"
+#: A stop is in force, and says why.
+STOPPED = "G6_E_LOOP_STOPPED"
+#: A record that says whether a stop was asked for cannot be read, so a stop is in force: nothing can show it was lifted.
+STOP_UNREADABLE = "G6_E_LOOP_STOP_UNREADABLE"
 REFUSED_FILE = "refused.log"
 DIGEST_LENGTH = 64                      # of a SHA-256, in hex
 HEARTBEAT_FILE = "heartbeat.json"
@@ -196,56 +208,156 @@ class CycleLog:
         return streak
 
 
-def stop_reason(root: str | Path) -> str:
-    """Why the ``STOP`` file in the loop's folder halts it, or ``""``. It stands unless it is the very file the last start
-    lifted: the same digest, length and modification time, since bytes alone cannot say a person wrote again. What was added
-    after those bytes is the stop in force, and any other change leaves the whole file standing. One that cannot be read, or
-    that records which cannot be read might have lifted, still stops."""
-    path, log = Path(root) / STOP_FILE, Path(root) / CYCLE_LOG
+class StopUnreadable(OSError):
+    """A file that says whether a stop was asked for cannot be read. No reader takes it for no stop: ``stop_in_force``
+    makes it a stop in force, ``STOP_UNREADABLE``."""
+
+
+@dataclass(frozen=True)
+class Stop:
+    """Whether a stop is in force: ``code`` is ``STOPPED``, ``STOP_UNREADABLE`` or ``""`` for none, ``reason`` says why."""
+
+    code: str = ""
+    reason: str = ""
+
+    def __bool__(self) -> bool:
+        return bool(self.code)
+
+
+@dataclass(frozen=True)
+class StopSeen:
+    """One reading of all that says whether a stop was asked for: the ``STOP`` file (``None`` with none), its modification
+    time, taken before its bytes, and the journal of stops, ``stops.log`` (empty with none)."""
+
+    stop: bytes | None = None
+    stop_mtime_ns: int | None = None
+    journal: bytes = b""
+
+    def lift(self) -> dict[str, Any]:
+        """The ``STOP`` file as it stands, for a start to record what a person agreed to lift; nothing with no file. No start
+        moves or deletes the file: this record is all that lifting is."""
+        if self.stop is None:
+            return {}
+        return {"lifted": hashlib.sha256(self.stop).hexdigest(), "lifted_bytes": len(self.stop),
+                "lifted_mtime_ns": self.stop_mtime_ns}
+
+    def binding(self) -> dict[str, Any]:
+        """All a start records of this reading, and all a dialog's terms bind: the ``STOP`` file it lifts, and the journal
+        by its count and its digest, so a journal rewritten to as many lines is not the one the start saw."""
+        return {**self.lift(), "stops": self.journal.count(b"\n"), "stops_sha256": hashlib.sha256(self.journal).hexdigest()}
+
+    def by_file(self, start: Mapping[str, Any] | None) -> str:
+        """Why the ``STOP`` file halts the loop run on ``start``, or ``""``. It stands unless it is the very file that start
+        lifted: the same digest, length and modification time, since bytes alone cannot say a person wrote again. What was
+        added after those bytes is the stop in force, and any other change leaves the whole file standing."""
+        if self.stop is None:
+            return ""
+        held, start = self.stop, start or {}
+        lifted = start.get("lifted_bytes", 0)
+        if start.get("lifted") and hashlib.sha256(held[:lifted]).hexdigest() == start["lifted"]:
+            if len(held) > lifted:
+                held = held[lifted:]
+            elif self.stop_mtime_ns == start.get("lifted_mtime_ns"):
+                return ""
+        text = held.decode("utf-8", "replace").strip()
+        return f"a STOP file is present: {text.splitlines()[0]}" if text else "a STOP file is present"
+
+    def by_journal(self, start: Mapping[str, Any] | None) -> str:
+        """Why the journal halts the loop run on ``start``: it is not the journal that start bound, by whichever of its count
+        and digest the start recorded, so a stop was asked for since, whether or not its ``STOP`` file was written. With no
+        start on record, every stop in the journal is one no start saw. A start that bound neither has nothing here to
+        compare (the runner refuses such a start on its own, ``runner._gate``)."""
+        counted, digested = (0, None) if start is None else (start.get("stops"), start.get("stops_sha256"))
+        if (counted is None or counted == self.journal.count(b"\n")) and (
+                digested is None or digested == hashlib.sha256(self.journal).hexdigest()):
+            return ""
+        return (f"a stop was asked for and its STOP file was not written: {STOPS_FILE} in the folder says why, and is not "
+                "what the last start saw")
+
+    def against(self, start: Mapping[str, Any] | None) -> str:
+        """Why a stop is in force for the loop run on ``start``, or ``""``: the ``STOP`` file speaks first."""
+        return self.by_file(start) or self.by_journal(start)
+
+
+def _read_stop(root: str | Path) -> tuple[bytes | None, int | None]:
+    path = Path(root) / STOP_FILE
     try:
-        written, held = path.stat().st_mtime_ns, path.read_bytes()
+        written = path.stat().st_mtime_ns     # before the read: a write between them leaves an old time, so the stop stands
+        return path.read_bytes(), written
     except (FileNotFoundError, NotADirectoryError):
-        return ""
+        return None, None
     except OSError as exc:
-        return _unreadable(exc)
+        raise StopUnreadable(f"the {STOP_FILE} file cannot be read ({type(exc).__name__})") from exc
+
+
+def _read_journal(root: str | Path) -> bytes:
     try:
-        start = (CycleLog(log).started() or {}) if log.is_file() else {}
+        return (Path(root) / STOPS_FILE).read_bytes()
+    except (FileNotFoundError, NotADirectoryError):
+        return b""
+    except OSError as exc:
+        raise StopUnreadable(f"{STOPS_FILE} cannot be read ({type(exc).__name__})") from exc
+
+
+def _last_start(root: str | Path) -> dict | None:
+    log = Path(root) / CYCLE_LOG
+    return CycleLog(log).started() if log.is_file() else None
+
+
+def stop_seen(root: str | Path) -> StopSeen:
+    """One reading of the ``STOP`` file and the journal of stops. A file that cannot be read raises ``StopUnreadable``, so
+    no reader can take it for no stop."""
+    stop, written = _read_stop(root)
+    return StopSeen(stop, written, _read_journal(root))
+
+
+_ON_RECORD: Any = object()
+
+
+def stop_in_force(root: str | Path, start: Mapping[str, Any] | None = _ON_RECORD) -> Stop:
+    """Whether a stop is in force on this folder and why: the one answer a start, the runner, a tick, status and the digest
+    all act on. ``start``: the start on record as the caller holds it, ``None`` with none; left out, it is read from the
+    records. Anything that cannot be read, the ``STOP`` file, the journal or the records that say what was lifted, is a stop
+    in force, ``STOP_UNREADABLE``, never a value: nothing could show that a person lifted it."""
+    try:
+        seen = stop_seen(root)
+        if start is _ON_RECORD:
+            start = _last_start(root)
+    except StopUnreadable as exc:
+        return Stop(STOP_UNREADABLE, f"{exc}, so a stop is in force until a person can read it")
+    except (OSError, LedgerError) as exc:
+        return Stop(STOP_UNREADABLE, f"the records that say what the last start lifted cannot be read ({type(exc).__name__}), "
+                                     "so a stop is in force until a person can read them")
+    why = seen.against(start)
+    return Stop(STOPPED, why) if why else Stop()
+
+
+def stop_reason(root: str | Path) -> str:
+    """Why the ``STOP`` file alone halts the loop, for the start on record, or ``""``: the file's part of ``stop_in_force``.
+    One that cannot be read, or that records which cannot be read might have lifted, still stops."""
+    try:
+        stop, written = _read_stop(root)
+        start = _last_start(root) if stop is not None else None
+    except StopUnreadable as exc:
+        return _unreadable(exc.__cause__ or exc)
     except (OSError, LedgerError) as exc:
         return _unreadable(exc)
-    lifted = start.get("lifted_bytes", 0)
-    if start.get("lifted") and hashlib.sha256(held[:lifted]).hexdigest() == start["lifted"]:
-        if len(held) > lifted:
-            held = held[lifted:]
-        elif written == start.get("lifted_mtime_ns"):
-            return ""
-    text = held.decode("utf-8", "replace").strip()
-    return f"a STOP file is present: {text.splitlines()[0]}" if text else "a STOP file is present"
+    return StopSeen(stop, written).by_file(start)
 
 
 def stop_standing(root: str | Path, start: Mapping[str, Any] | None) -> str:
-    """Why this folder is stopped, for whatever runs on ``start``, the start on record: its ``STOP`` file, or a stop counted
-    since that start which died before its file was written, which is a stop a person asked for all the same. A count that
-    cannot be read is no count that start saw, so it stands too. ``""`` when nothing stops it."""
-    why, asked = stop_reason(root), (start or {}).get("stops")
-    if why or asked is None or stops_asked(root) == asked:
-        return why
-    return f"a stop was asked for and its STOP file was not written: {STOPS_FILE} in the folder says why"
+    """Why this folder is stopped for the loop run on ``start``, or ``""``: ``stop_in_force``'s reason."""
+    return stop_in_force(root, start).reason
 
 
-def _unreadable(exc: Exception) -> str:
+def _unreadable(exc: BaseException) -> str:
     return f"a STOP file is present and could not be read ({type(exc).__name__})"
 
 
 def stop_to_lift(root: str | Path) -> dict[str, Any]:
-    """The ``STOP`` file as it stands, for a start to record what a person agreed to lift, or nothing when there is none
-    to read. No start moves or deletes the file: this record is all that lifting is."""
-    path = Path(root) / STOP_FILE
-    try:
-        written = path.stat().st_mtime_ns     # before the read: a write between them leaves an old time, so the stop stands
-        held = path.read_bytes()
-    except OSError:
-        return {}
-    return {"lifted": hashlib.sha256(held).hexdigest(), "lifted_bytes": len(held), "lifted_mtime_ns": written}
+    """The ``STOP`` file's part of what a start binds (``StopSeen.lift``). One that cannot be read raises
+    ``StopUnreadable``: an unreadable file is never one with nothing to lift."""
+    return StopSeen(*_read_stop(root)).lift()
 
 
 def file_digest(path: Any) -> str:
@@ -257,37 +369,38 @@ def file_digest(path: Any) -> str:
 
 
 def stops_asked(root: str | Path) -> int:
-    """How many stops have been asked for on this folder, from the file ``ask_to_stop`` adds to. A start records this, so a
-    restart sees any stop after it, even with the ``STOP`` file gone. One that cannot be read is ``-1``, which is no count a
-    start ever recorded."""
-    try:
-        return (Path(root) / STOPS_FILE).read_bytes().count(b"\n")
-    except FileNotFoundError:
-        return 0
-    except OSError:
-        return -1
+    """How many stops the journal ``ask_to_stop`` adds to holds. One that cannot be read raises ``StopUnreadable``: no
+    count stands for it."""
+    return _read_journal(root).count(b"\n")
+
+
+def _durably(path: Path, text: str) -> None:
+    """Add ``text`` to ``path`` and flush it to disk before returning, so nothing reads or acts on a stop the disk lacks."""
+    with open(path, "a", encoding="utf-8") as kept:
+        kept.write(text)
+        kept.flush()
+        os.fsync(kept.fileno())
 
 
 def ask_to_stop(root: str | Path, reason: str = "") -> str:
     """Add this stop to the ``STOP`` file, making it if need be, so the first reason stands and repeating is safe. It kills
-    nothing: the runner reads the file before each model call and ends itself. It returns why the folder is stopped.
+    nothing: the runner reads the file before each model call and ends itself. It returns why the ``STOP`` file stops it.
 
     Each stop writes a token of its own there, so no two stops leave the same bytes, and that is what keeps a stop: a start
     lifts only the file a person agreed to, so it needs no record to know a new stop when it sees one. A stop that cannot
     change the file raises, because the file it could not change may be lifted.
 
-    It is also counted, first and in a file no lock stands in front of, because the records can be held for as long as a
-    tick lasts and a stop may never wait. The count serves a restart after a person has removed the file, when no note of
-    the stop reached the records, and it is all there is of a stop that dies before its file is written, which a tick and a
-    runner read as a stop (``stop_standing``). A count that cannot be written is left, and only that restart loses by it."""
+    The stop is first a line in the journal of stops, flushed to disk, in a file no lock stands in front of, because the
+    records can be held for as long as a tick lasts and a stop may never wait. Every reader honours that line
+    (``stop_in_force``), so a stop that dies before its ``STOP`` file is written stands all the same, and the line serves a
+    restart after a person has removed the file, when no note of the stop reached the records. A line that cannot be
+    written is left: the ``STOP`` file still stops, and only that restart loses by it."""
     said = " ".join(reason.split()) or "stopped through g6_improve_stop"
     try:
-        with open(Path(root) / STOPS_FILE, "a", encoding="utf-8") as stops:
-            stops.write(said[:200] + "\n")
+        _durably(Path(root) / STOPS_FILE, said[:200] + "\n")
     except OSError:
         pass
-    with open(Path(root) / STOP_FILE, "a", encoding="utf-8") as stop:
-        stop.write(f"{said}\n{uuid4().hex}\n")
+    _durably(Path(root) / STOP_FILE, f"{said}\n{uuid4().hex}\n")
     return stop_reason(root)
 
 
@@ -371,6 +484,7 @@ def heartbeat(root: str | Path) -> dict | None:
 
 
 __all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY",
-           "REFUSED_FILE", "RUNNER_LOCK", "STOPS_FILE", "STOP_FILE", "TICK_BUDGET_SPENT", "ask_to_stop", "beat", "file_digest",
-           "heartbeat", "note_refusal", "record_stop", "refused_requests", "stop_standing",
-           "runner_alive", "runner_lock", "stop_reason", "stop_to_lift", "stops_asked"]
+           "REFUSED_FILE", "RUNNER_LOCK", "STOPPED", "STOPS_FILE", "STOP_FILE", "STOP_UNREADABLE", "Stop", "StopSeen",
+           "StopUnreadable", "TICK_BUDGET_SPENT", "ask_to_stop", "beat", "file_digest", "heartbeat", "note_refusal",
+           "record_stop", "refused_requests", "stop_in_force", "stop_seen", "stop_standing", "runner_alive", "runner_lock",
+           "stop_reason", "stop_to_lift", "stops_asked"]

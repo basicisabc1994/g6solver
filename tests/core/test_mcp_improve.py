@@ -652,14 +652,14 @@ def test_a_stop_arriving_while_a_start_is_recorded_wins_over_it(rig, monkeypatch
 def test_a_stop_arriving_just_after_a_start_read_an_old_stop_still_wins(rig, monkeypatch):
     rig.enrol()
     (rig.root / "STOP").write_text("an old stop\n", encoding="utf-8")
-    real = envelope.stop_to_lift
+    real = envelope.stop_seen                                            # the start's one reading of the stop state
 
     def a_stop_after_the_read(root):
         found = real(root)
         improve.stop(str(rig.root), "a late stop")
         return found
 
-    monkeypatch.setattr(improve, "stop_to_lift", a_stop_after_the_read)
+    monkeypatch.setattr(improve, "stop_seen", a_stop_after_the_read)
     got = improve.start(rig.root, "Ada")
     assert rig.spawned == [] and _code(got) == "G6_E_LOOP_START_STOPPED" and "a late stop" in stop_reason(rig.root)
 
@@ -716,7 +716,7 @@ def test_a_stop_that_no_record_took_survives_a_start_and_says_it_stopped(rig, mo
 def test_a_start_lifts_the_stop_it_agreed_to_with_no_count_to_read(rig, monkeypatch):
     rig.enrol()
     improve.stop(str(rig.root), "the owner's review")
-    monkeypatch.setattr(improve, "stops_asked", lambda root: 7)          # whatever a count says, it is not what decides
+    monkeypatch.setattr(envelope, "stops_asked", lambda root: 7)         # whatever a count says, it is not what decides
     assert _code(improve.start(rig.root, "Ada")) != "G6_E_LOOP_START_STOPPED" and stop_reason(rig.root) == ""
 
 
@@ -737,8 +737,8 @@ def test_a_stop_count_that_cannot_be_read_refuses_the_start(rig, monkeypatch):
     _a_stop_while_it_is_recorded(rig, monkeypatch)
     offered = improve.asked(str(rig.root))
     got = improve.start(rig.root, "Ada")
-    assert isinstance(offered, dict) and _code(offered) == "G6_E_LOOP_RECORDS_UNREADABLE"
-    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_RECORDS_UNREADABLE" and got["completion_state"] == "blocked-escalated"
+    assert isinstance(offered, dict) and _code(offered) == "G6_E_LOOP_STOP_UNREADABLE"
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_STOP_UNREADABLE" and got["completion_state"] == "blocked-escalated"
     monkeypatch.undo()
     assert CycleLog(rig.root / CYCLE_LOG).started() is None
 
@@ -760,7 +760,11 @@ def test_a_stop_that_cannot_be_counted_is_no_stop_lost_so_a_read_only_count_refu
 
 def test_a_count_that_breaks_after_the_check_is_never_recorded_as_what_a_start_saw(rig, monkeypatch):
     rig.enrol()
-    monkeypatch.setattr(improve, "stops_asked", lambda root: -1)
+
+    def broken(root):
+        raise envelope.StopUnreadable("stops.log cannot be read (PermissionError)")
+
+    monkeypatch.setattr(improve, "stop_seen", broken)                    # the start's one reading, not a -1 count
     got = improve.start(rig.root, "Ada")
     assert rig.spawned == [] and got["completion_state"] == "blocked-escalated"
     monkeypatch.undo()

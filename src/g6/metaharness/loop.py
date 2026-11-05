@@ -80,14 +80,17 @@ from g6.self_maintenance.envelope import (
     ENDS_A_STREAK,
     FINDINGS,
     MAX_FAILED_CYCLES,
+    STOP_UNREADABLE,
+    STOPPED,
     TICK_BUDGET_SPENT,
     CycleLog,
+    Stop,
     ask_to_stop,
     beat,
     file_digest,
     note_refusal,
     refused_requests,
-    stop_standing,
+    stop_in_force,
 )
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
 from g6.self_maintenance.usage import limit_ends, read_stops, refused_by, telling_stops
@@ -97,7 +100,8 @@ from g6.workspace._envelope import WorkspaceRefused
 NOT_ENROLLED = "G6_E_LOOP_NOT_ENROLLED"
 POOL_TOO_SMALL = "G6_E_LOOP_POOL_TOO_SMALL"
 EVALUATOR_IN_REACH = "G6_E_LOOP_EVALUATOR_IN_REACH"
-STOPPED = "G6_E_LOOP_STOPPED"
+#: This folder's stops: one asked for, and one whose record cannot be read (``stop_in_force``).
+FOLDER_STOPS = (STOPPED, STOP_UNREADABLE)
 PAUSED = "G6_E_LOOP_PAUSED"
 RESUMED = "G6_E_LOOP_RESUMED"
 FROZEN_CHANGED = "G6_E_LOOP_FROZEN_CHANGED"
@@ -650,16 +654,21 @@ class ShadowLoop:
             self.requests.ends_by(seen.ends)
         self.evaluating = True
 
+    def _stop(self) -> Stop:
+        """This folder's stop, which a tick and the runner read alike: if the runner read less, a tick refused for a stop
+        would leave it going, and asking again. The start is the one this handle verified, which only a holder of the tick
+        lock can change."""
+        return Stop(STOPPED, self.cannot_record) if self.cannot_record else stop_in_force(self.root, self.log.started())
+
     def stopped_by(self) -> str:
-        """Why this folder is stopped, which a tick and the runner read alike: if the runner read less, a tick refused for a
-        stop would leave it going, and asking again."""
-        return self.cannot_record or stop_standing(self.root, self.log.started())
+        """Why this folder is stopped, or ``""``."""
+        return self._stop().reason
 
     def _halted(self) -> _Halted | None:
         """What stops a tick between two requests: this folder's stop, or G6's own."""
-        why = self.stopped_by()
-        if why:
-            return _Halted(STOPPED, why)
+        found = self._stop()
+        if found:
+            return _Halted(found.code, found.reason)
         engaged = stop.engaged()
         return _Halted(stop.STOPPED, f"G6 is stopped: {engaged}") if engaged is not None else None
 
@@ -747,7 +756,8 @@ class ShadowLoop:
         halted = self._halted()
         if halted is not None:
             return _blocked(halted.code, halted.said, "Remove the STOP file to resume." if halted.code == STOPPED else
-                            "Whoever engaged the stop releases it.")
+                            "A person makes the stop's files readable; a new g6_improve_start lets it run again."
+                            if halted.code == STOP_UNREADABLE else "Whoever engaged the stop releases it.")
         invalid = self._invalid()
         if invalid is not None:
             return invalid
@@ -972,14 +982,14 @@ class ShadowLoop:
         holds, so no one else can. The file is what stops the loop, so a note that cannot be written changes nothing."""
         dropped = (", and the held-out evaluation under way was dropped, so none of the split's five was spent"
                    if self.evaluating else "")
-        if halted.code == STOPPED:
+        if halted.code in FOLDER_STOPS:
             try:
                 self.log.stop(halted.said, at=self._now().isoformat(),
                               cut_off={"charged": charged, "evaluation": self.evaluating})
             except (OSError, LedgerError):
                 pass
         return _blocked(halted.code, f"a stop ended this tick at a model call after {charged:g} requests{dropped}: {halted.said}",
-                        "A new g6_improve_start lets it run again." if halted.code == STOPPED else
+                        "A new g6_improve_start lets it run again." if halted.code in FOLDER_STOPS else
                         "Whoever engaged the stop releases it.", charged=charged)
 
     def _record(self, row: dict[str, Any]) -> dict[str, Any]:

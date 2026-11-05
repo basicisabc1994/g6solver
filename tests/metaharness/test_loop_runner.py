@@ -34,6 +34,7 @@ from g6.self_maintenance.envelope import (
     heartbeat,
     runner_alive,
     runner_lock,
+    stop_in_force,
     stop_reason,
     stop_to_lift,
     stops_asked,
@@ -835,13 +836,13 @@ def test_a_start_with_no_settings_on_record_stands_on_nothing(tmp_path):
 
 def test_a_run_uses_the_settings_it_checked_not_a_later_write(tmp_path, monkeypatch):
     root, _ = _enrolled_folder(tmp_path)
-    real, seen = stops_asked, []
+    real, seen = stop_in_force, []
 
-    def written_after_the_check(folder):
+    def written_after_the_check(folder, *start):                         # the gate's stop reading, after it read settings
         _grow_allowance(root)
-        return real(folder)
+        return real(folder, *start)
 
-    monkeypatch.setattr("g6.metaharness.runner.stops_asked", written_after_the_check)
+    monkeypatch.setattr("g6.metaharness.runner.stop_in_force", written_after_the_check)
     assert run(root, now=lambda: START + timedelta(days=2), sleep=lambda seconds: (seen.append(heartbeat(root)),
                                                                                    _then_stop(root)(seconds))) == 0
     assert seen[0]["use"][0]["ceiling"] < 1_000_000

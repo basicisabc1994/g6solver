@@ -10,9 +10,10 @@ a crashed tick is charged its worst case, a rest is read back from the log, and 
 **Who may start it.** It runs only on a start that stands: of the starts and stops on record, the last is a start a person
 agreed to in the client's dialog (``g6_improve_start``). So ``run`` from a shell starts nothing of its own, and it is
 refused before any of the folder's code runs. A scheduled restart carries on a start until a stop ends it, and a stop ends
-it for good, even if its file is later removed: a start records how many stops had been asked for, and any stop since
-closes it, whether or not the records could be written at the time. This is a check and not a boundary: a process with the
-owner's rights can reach this code, or write the records, which are hash-chained and not signed.
+it for good, even if its file is later removed: a start records the journal of stops it saw, and any stop since closes
+it, whether or not the records could be written at the time. What says so is ``stop_in_force``, as for every reader. This
+is a check and not a boundary: a process with the owner's rights can reach this code, or write the records, which are
+hash-chained and not signed.
 
 **What it never does.** It starts no engineer, pushes nothing, and spends only within the pacing rule. A pause, a changed
 frozen item, records that do not check out or a spent held-out split stop the ticks until a person acts, and the runner
@@ -60,6 +61,7 @@ from g6.metaharness.loop import (
     BUDGET_WAIT,
     BUSY,
     CYCLE_FAILED,
+    FOLDER_STOPS,
     FROZEN_CHANGED,
     STATUS_LINE,
     STOPPED,
@@ -72,13 +74,14 @@ from g6.self_maintenance import digest
 from g6.self_maintenance.envelope import (
     CYCLE_LOG,
     ENDS_A_STREAK,
+    STOP_UNREADABLE,
     CycleLog,
     beat,
     record_stop,
     runner_alive,
     runner_lock,
+    stop_in_force,
     stop_reason,
-    stops_asked,
 )
 from g6.self_maintenance.pacing import SETTINGS_FILE, read_settings, windows_from
 from g6.self_maintenance.usage import AccountReader
@@ -95,7 +98,7 @@ NOT_STARTED = "G6_E_LOOP_NOT_STARTED"
 SETTINGS_CHANGED = "G6_E_LOOP_SETTINGS_CHANGED"
 CACHED_BYTECODE = "G6_E_LOOP_CACHED_BYTECODE"
 #: What a tick is refused for that passes on its own: anything else with no cycle waits for a person.
-_WAITS = (BUDGET_WAIT, BUSY, STOPPED, stop.STOPPED)
+_WAITS = (BUDGET_WAIT, BUSY, *FOLDER_STOPS, stop.STOPPED)
 #: What a domain file may set beside its domain and proposer.
 _TUNING = ("method", "seed", "audit_per_tick", "eval_calls", "provider")
 _MODULE = "g6_loop_domain"
@@ -245,7 +248,7 @@ class Runner:
         """When the tick after ``reply`` may run. A cycle that reached a result is followed at once, for the budget and
         the rest to bound. A budget wait lasts until a ceiling can rise, or a reported limit ends if that is sooner."""
         code = reply["warning_card"]["code"]
-        if code == STOPPED:
+        if code in FOLDER_STOPS:
             return now                      # the next pass reads the stop and ends the run
         if code == BUDGET_WAIT:
             room = self.loop.meter.next_room(now)
@@ -303,7 +306,7 @@ class Runner:
         code = self.last.get("warning_card", {}).get("code")
         if code == BUDGET_WAIT:
             found.append(f"Waiting for the budget: {self.last.get('message', '')}")
-        if code in (STOPPED, stop.STOPPED) and "charged" in self.last:
+        if code in (*FOLDER_STOPS, stop.STOPPED) and "charged" in self.last:
             found.append(self.last["message"])
         return found
 
@@ -348,9 +351,15 @@ def _gate(root: Path, settings: dict[str, Any]) -> tuple[str, str]:
     if start is None:
         return NOT_STARTED, ("no start stands on this folder, so nothing ran. Only a person starts the loop, in the client's "
                              "dialog, through g6_improve_start; after that a restart carries on until a stop")
-    if start.get("stops") != stops_asked(root):
-        return NOT_STARTED, ("a stop has been asked for since the last start, so nothing ran: only a new g6_improve_start "
-                             "undoes that")
+    if start.get("stops") is None and start.get("stops_sha256") is None:
+        return NOT_STARTED, ("the start on record bound no journal of stops, so a stop since it could not be seen and nothing "
+                             "ran: only a new g6_improve_start undoes that")
+    halted = stop_in_force(root, start)
+    if halted.code == STOP_UNREADABLE:
+        return STOP_UNREADABLE, f"{halted.reason}, so nothing ran: a person makes it readable, then g6_improve_start"[:400]
+    if halted:
+        return NOT_STARTED, (f"a stop has been asked for since the last start, so nothing ran ({halted.reason}): only a new "
+                             "g6_improve_start undoes that")[:400]
     if start.get("settings") != digest_of(settings):
         return SETTINGS_CHANGED, (f"{SETTINGS_FILE} is not what the person agreed to at the last start, so nothing ran: "
                                   "g6_improve_start shows them what stands now")
@@ -384,10 +393,10 @@ def _launch_risk() -> str:
 
 def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable[[float], None] = time.sleep,
         unsafe: str = "") -> int:
-    """Hold the folder and run until a stop. A stop already there ends it before anything is opened, so a restart after
-    a reboot honours it, and a folder with no start in force is refused before any of its code runs. ``unsafe``: why this
-    process could run something other than the pinned source (``_launch_risk``), which refuses it once the folder is open,
-    so its records say why."""
+    """Hold the folder and run until a stop. A ``STOP`` file already there ends it before anything is opened, so a restart
+    after a reboot honours it, and a folder with no start in force, or any other stop in force (``stop_in_force``, in the
+    gate), is refused before any of its code runs. ``unsafe``: why this process could run something other than the pinned
+    source (``_launch_risk``), which refuses it once the folder is open, so its records say why."""
     if not root.is_dir():
         print(f"{root} is not a folder", file=sys.stderr)
         return 1

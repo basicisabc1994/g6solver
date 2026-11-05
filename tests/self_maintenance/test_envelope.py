@@ -447,7 +447,9 @@ def test_a_stop_whose_time_cannot_be_read_stands_and_gives_a_start_nothing_to_li
         return real(path, **kwargs)
 
     monkeypatch.setattr(Path, "stat", refused)
-    assert "could not be read" in stop_reason(tmp_path) and envelope.stop_to_lift(tmp_path) == {}
+    assert "could not be read" in stop_reason(tmp_path)
+    with pytest.raises(envelope.StopUnreadable):                         # never a file with nothing to lift
+        envelope.stop_to_lift(tmp_path)
 
 
 def test_the_limit_of_this_a_writer_that_puts_the_old_time_back_is_not_seen(tmp_path):
@@ -469,12 +471,14 @@ def test_what_a_start_lifts_is_the_file_as_it_stands(tmp_path):
 
 def test_a_stop_that_cannot_be_read_gives_a_start_nothing_to_lift(tmp_path):
     (tmp_path / "STOP").mkdir()
-    assert envelope.stop_to_lift(tmp_path) == {}
+    with pytest.raises(envelope.StopUnreadable):                         # it raises: nothing to lift is a value it is not
+        envelope.stop_to_lift(tmp_path)
 
 
 def test_a_count_that_cannot_be_read_is_no_count_a_start_recorded(tmp_path):
     (tmp_path / STOPS_FILE).mkdir()
-    assert stops_asked(tmp_path) == -1
+    with pytest.raises(envelope.StopUnreadable):                         # no count, -1 or any other, stands for it
+        stops_asked(tmp_path)
 
 
 def test_a_stop_that_cannot_be_counted_still_stops(tmp_path):
@@ -501,10 +505,16 @@ def test_no_stop_since_the_start_is_no_stop(tmp_path):
     assert stop_standing(tmp_path, {"stops": 1}) == ""
 
 
-@pytest.mark.parametrize("start", [None, {}, {"by": "Ada"}])
+@pytest.mark.parametrize("start", [{}, {"by": "Ada"}])
 def test_with_no_count_on_a_start_there_is_nothing_to_compare(tmp_path, start):
     _counted_only(tmp_path)
     assert stop_standing(tmp_path, start) == ""
+
+
+def test_with_no_start_on_record_every_stop_in_the_journal_stands(tmp_path):
+    """This once pinned the opposite: no start meant nothing to compare. Now a stop no start saw stands, as the dialog says."""
+    _counted_only(tmp_path)
+    assert STOPS_FILE in stop_standing(tmp_path, None)
 
 
 def test_a_stop_file_speaks_for_itself_ahead_of_the_count(tmp_path):
