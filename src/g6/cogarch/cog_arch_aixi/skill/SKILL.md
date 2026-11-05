@@ -87,7 +87,7 @@ from a fresh load. Give `depth` at least one cycle of bits (action, observation 
 - One environment's result says nothing of another's.
 - A registered Python callback runs in its caller's process. A callback that hangs cannot be interrupted by these
   cooperative deadline checks; G6 checks again only when it returns. External effects cannot be rolled back, and
-  range checks on reported percepts do not verify those effects. Register only code you control.
+  range checks on reported percepts do not check those effects. Register only code you control.
 
 ## What it needs
 

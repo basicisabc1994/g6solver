@@ -46,10 +46,10 @@ owner asked: 2026-10-20, the "No fine-tuning ... a human diagnoses failures" par
         <div class="band__head"><p class="label">The founder</p><h2 class="h2">Built by Dr Dan</h2></div>
         <div class="band__body prose-body">
             <p>Dr Dan is an Australian-trained dental surgeon with a decade of clinical experience and an MSc in Artificial Intelligence, specialising in natural language processing.</p>
-            <p>Dentistry is unusually difficult to automate. It requires practitioners to integrate evidence, biomechanics, engineering, biomaterials, ethics, artistry and hands-on judgement&mdash;often under uncertainty, where the consequences of error are real. Safe decisions cannot come from pattern recognition alone. They must be diagnosed, verified, documented and continually reassessed.</p>
+            <p>Dentistry is unusually difficult to automate. It requires practitioners to integrate evidence, biomechanics, engineering, biomaterials, ethics, artistry and hands-on judgement&mdash;often under uncertainty, where the consequences of error are real. Safe decisions cannot come from pattern recognition alone. They must be diagnosed, checked, documented and continually reassessed.</p>
             <p>G6 grew from Dr Dan&rsquo;s work translating this clinical discipline into a technical system. He identified the heuristics, safeguards and decision-making methods that make complex clinical practice reliable, then combined them with his knowledge of modern AI architectures.</p>
             <p>The result is a fundamentally different approach: not a replacement for large language models, but a complementary system designed to make them safer, more dependable and more useful. G6 adds the structure needed to trace decisions, diagnose failures and validate improvements before deployment.</p>
-            <p>G6 exists because powerful AI is not enough. Domain experts need systems they can interrogate, verify and trust&mdash;built with the same rigour they apply to their own work.</p>
+            <p>G6 exists because powerful AI is not enough. Domain experts need systems they can interrogate, check and trust&mdash;built with the same rigour they apply to their own work.</p>
         </div>
     </div>
 </section>
@@ -60,7 +60,7 @@ owner asked: 2026-10-20, the "No fine-tuning ... a human diagnoses failures" par
         <div class="band__body prose-body">
             <p>G6 builds symbolic meta-models — deterministic, non-neural-network systems — that live on top of LLMs. These augment language models with explicit continual learning, reasoning, and memory that the models themselves lack.</p>
             <p>Rather than competing with foundation labs building better deep learning, G6 takes an orthogonal approach. We integrate symbolic AI — formal logic, explicit rules, human-readable representations — with modern deep learning to get the best of both worlds.</p>
-            <p>G6 builds deterministic algorithms that replace LLM calls for recurring problem classes. Your base model&rsquo;s weights never change. As the system encounters problems, it distils verified solutions into reusable code artifacts tailored to the problem class. Each artifact is interpretable, auditable, and reusable. (The distillation pipeline is fully wired; the template library is in early development &mdash; most tasks currently use the full LLM reasoning path.)</p>
+            <p>G6 builds deterministic algorithms that replace LLM calls for recurring problem classes. Your base model&rsquo;s weights never change. As the system encounters problems, it distils checked solutions into reusable code artifacts tailored to the problem class. Each artifact is interpretable, auditable, and reusable. (The distillation pipeline is fully wired; the template library is in early development &mdash; most tasks currently use the full LLM reasoning path.)</p>
             <p><strong>G6 engineers itself, and you stay in charge.</strong> It diagnoses why its answers fail, proposes fixes, tests each one on held-out tasks it has never seen, and keeps a change only when it wins and a person approves it. In a worked example on one local model, that lifted some public task sets by a wide margin within minutes, and changed nothing where it found nothing it could prove. Results will vary with your task and the data you have. <a href="{% url 'pages:research' %}#reading" class="link">How to read the results</a></p>
         </div>
     </div>
@@ -74,7 +74,7 @@ owner asked: 2026-10-20, the "No fine-tuning ... a human diagnoses failures" par
             <li><h3 class="h3">Self-Modification</h3><p>Supervised code rewriting. Agents debug and improve their own reasoning under safety constraints.</p></li>
             <li><h3 class="h3">Failure Engineering</h3><p>Built-in failure detection and rollback. When an agent cannot continue safely it stops and names the next human action.</p></li>
             <li><h3 class="h3">Alignment Engineering</h3><p>Safety and correctness by design. Not bolted on. Agents seek clarification instead of guessing.</p></li>
-            <li><h3 class="h3">Formal Methods</h3><p>Mathematical verification support. SAT solving, theorem proving, and program synthesis can provide stronger guarantees when the backend is configured and the property is formally specified.</p></li>
+            <li><h3 class="h3">Formal Methods</h3><p>Mathematical checks. SAT solving, theorem proving, and program synthesis can provide stronger guarantees when the backend is configured and the property is formally specified.</p></li>
             <li><h3 class="h3">Symbolic ML</h3><p>Hybrid neural-symbolic reasoning. Combines statistical learning with logical inference for reliable outputs.</p></li>
             <li><h3 class="h3">Skill Evolution</h3><p>Evolutionary skill synthesis &mdash; candidate strategies are proposed from failures, scored on a validation set, and the top-scoring ones are kept.</p></li>
         </ol>

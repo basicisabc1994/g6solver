@@ -7,7 +7,7 @@ refund window. The script then works through the change the way G6 governs one:
 1. The failing task: ``g6.harness`` blocks it on the check "states the refund window".
 2. The diagnosis: the failed check and the output that failed it.
 3. A proposed change to the template, made in its own git worktree so the project is untouched.
-4. Verification in that worktree: the project's tests and a held-out suite (written separately; here it stands in
+4. Checks in that worktree: the project's tests and a held-out suite (written separately; here it stands in
    for a reviewer the proposer never sees) are run before and after the change (``regression_delta``); the change's
    paths are checked (``classify_change_scope``); the failing task is re-run against the changed template.
 5. The decision: ``govern_patch_promotion``, bound to the exact diff (``patch_digest``). This project opts in to

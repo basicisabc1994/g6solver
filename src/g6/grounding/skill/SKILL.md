@@ -112,7 +112,7 @@ It loads no model and registers no oracle. Antonyms without review and numbers i
 Optional `g6[nli]` supplies sentence-transformers for Python's `LocalNLICaller(weights)`, explicitly injected into
 `NLIJudge`. Provision licensed weights yourself: there is no default or download, only local safe-tensor weights,
 no custom model code. Missing extra/weights, unknown labels, truncation or inference failures block review. Classifier
-errors remain possible; no model verdict verifies a claim. Other calls work without this extra.
+errors remain possible; no model verdict settles a claim. Other calls work without this extra.
 
 Nothing outside G6: standard-library checks with their own BM25 retriever (the block's input uses pydantic). A
 `judge` (an entailment model or an LLM through `g6.core.llm`) is optional and Python-only.

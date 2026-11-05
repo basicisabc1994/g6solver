@@ -1,7 +1,7 @@
 # G6
 
 **Build agents from parts you can check.** G6 is an open-source library of AI components for reasoning,
-evidence, verification and action control. Its north star is **AI for AI**: agents construct applications,
+evidence, checks and action control. Its north star is **AI for AI**: agents construct applications,
 propose redesigns and test hypotheses against frozen checks, with evaluation and activation outside the candidate's
 writable scope. Components and workflow tools are available today; benefits for a particular application require testing.
 

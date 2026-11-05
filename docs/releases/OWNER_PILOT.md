@@ -52,7 +52,7 @@ stopped at `ImportError: cannot import name 'line_count'`, reproduced afterwards
 | 9 | Codex's form has no Decline | The client's; the owner accepts it |
 | 10 | An agent can run `g6 workflow inspect` itself, and nothing technical stops it running the terminal confirm under a typed name | A stated limit: local settings assume a trusted host, and a recorded name is not authenticated |
 
-The fixes are verified by tests written first; the pilot was not run a second time on them.
+The fixes are checked by tests written first; the pilot was not run a second time on them.
 
 Share observations without credentials or personal information. This pilot is the owner's own; it does not meet the
 broader trial with unfamiliar people, which the minimal launch set aside.

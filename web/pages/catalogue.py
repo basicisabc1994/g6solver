@@ -82,8 +82,8 @@ PLAIN: dict[str, tuple[str, str, str]] = {
                             "cannot carry",
                             "confident conclusions built on weak evidence"),
     "evidence": ("Certificates",
-                 "Gives the final verdict on a piece of work: verified, a qualified draft, or blocked, with every gap "
-                 "named",
+                 "Gives the final verdict on a piece of work: verified, qualified-draft or blocked-escalated, with "
+                 "every gap named",
                  "work called verified when the evidence does not support it"),
     "formal": ("The logic checker",
                "Settles small logic questions exactly with a solver, and labels each answer for what it is",

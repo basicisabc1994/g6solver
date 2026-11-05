@@ -3,7 +3,7 @@
 Most people who could use AI to check their work cannot build the software that does the checking. A worked example
 is that software for one real-world problem. It is not G6 packaged whole: each one is a restricted subset of G6's
 components, set up for that one problem and nothing else, so you can see what G6 does on a task you know.
-
+{: .why }
 
 Download one, double-click it, and it opens a private page in your web browser. Nothing is sent anywhere except to the
 AI model you choose: a free model that runs on your own computer, or your own Anthropic, OpenAI or OpenRouter key.
@@ -16,8 +16,8 @@ They are not code-signed: [Get started](../install.md) says how to open them. In
 page a worked example is called a bundle, and a developer can run one from a copy of the code (`pip install .`,
 then for example `g6 bundle check-claims`). A new one is listed only once it has an offline end-to-end test.
 
-Every result carries a label: **qualified-draft** (usable, read the notes) or **blocked-escalated**
-(not safe to rely on; the page says why). The worked examples never label their own output **verified**.
+Every result carries a label: `qualified-draft` (usable, read the notes) or `blocked-escalated`
+(not safe to rely on; the page says why). The worked examples never label their own output `verified`.
 How well each one does on real tasks has not been measured yet.
 
 | Worked example | What it does for you | Status | Download |

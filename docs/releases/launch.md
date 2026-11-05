@@ -18,7 +18,7 @@ Early alpha. Individual capabilities have been tested; general application-level
 - **The skill.** `using-g6` tells the agent to review a Python patch before saying the task is done, to state the
   task as numbered requirements with their checks, to show the report verbatim, and to repair: fix what G6
   reproduced, add each earlier reproduction as a stated check, review again, and stop after three rounds, when a round
-  changes nothing, or when the report says only the person can decide. It never calls a patch verified, and never
+  changes nothing, or when the report says only the person can decide. It never calls a patch `verified`, and never
   merges.
 - **The rest of the library**, as the README's status table describes it.
 

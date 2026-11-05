@@ -55,7 +55,7 @@ its authority and whether it may instruct; retrieved text is always untrusted da
 - `RerankDecision`: kept and dropped indices plus the retrieval fingerprint.
 - `validate_rerank_decision`: refuses duplicate, foreign, boolean or out-of-range indices and stale fingerprints
   (`G6_E_CONTEXT_RERANK_INVALID`); returns only the kept indices.
-- `subagent_packet`: a child packet: governance, the task, a few component and verification items, the subagent's
+- `subagent_packet`: a child packet: governance, the task, a few `component` and `verification` items, the subagent's
   task, at most ten handles, no repository text, at most 2,000 tokens.
 - `synthesize_subagent_results`: subagent reports as one untrusted `model_output` item.
 - `scrub`: replaces recognised secrets with `[REDACTED]`.

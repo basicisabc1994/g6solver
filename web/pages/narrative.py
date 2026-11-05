@@ -36,7 +36,7 @@ LIMITS: tuple[dict, ...] = tuple(
          ("metaharness", "reasoning"), "why_benchmarks_lie"),
         ("metacognition", "They do not know what they do not know",
          "To a model, a guess and a fact sound the same.",
-         "Every G6 result says what was checked: verified, a qualified draft, or blocked with the reason.",
+         "Every G6 result says what was checked: verified, qualified-draft or blocked-escalated, with the reason.",
          ("epistemic_integrity", "evidence", "invariants"), "metacognition_missing_skill"),
         ("done", "They say it is done when it is not",
          "Nothing inside an agent checks its own finish.",
