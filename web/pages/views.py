@@ -121,13 +121,18 @@ def _diagrams(text: str) -> str:
     return "\n".join(out)
 
 
-def render_markdown(name: str) -> tuple[str, str]:
-    """A content/*.md file as HTML with its links made site URLs, and its title (the first heading)."""
-    text = _diagrams(_planned(_FRONT_MATTER.sub("", (CONTENT_DIR / name).read_text(encoding="utf-8"), count=1)))
+def markdown_html(text: str) -> str:
+    """Markdown as the site renders it, with its links made site URLs (tests/site/test_honesty.py reads copy this way)."""
+    text = _diagrams(_planned(_FRONT_MATTER.sub("", text, count=1)))
     body = markdown.markdown(text, extensions=["tables", "fenced_code", "codehilite", "toc", "admonition", "attr_list"],
                              extension_configs={"codehilite": {"guess_lang": False, "css_class": "highlight"}})
     # Pygments' token classes, coloured in content.css
-    body = _MD_LINK.sub(lambda m: f'href="/{m.group(1).strip("/")}/{m.group(2) or ""}"', body)
+    return _MD_LINK.sub(lambda m: f'href="/{m.group(1).strip("/")}/{m.group(2) or ""}"', body)
+
+
+def render_markdown(name: str) -> tuple[str, str]:
+    """A content/*.md file as HTML with its links made site URLs, and its title (the first heading)."""
+    body = markdown_html((CONTENT_DIR / name).read_text(encoding="utf-8"))
     heading = _H1.search(body)
     return body, (re.sub(r"<[^>]+>", "", heading.group(1)).strip() if heading else "G6")
 
