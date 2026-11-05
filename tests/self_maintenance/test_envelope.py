@@ -414,16 +414,16 @@ def test_a_stop_arriving_between_the_time_and_the_bytes_stands(tmp_path, monkeyp
     """The time is taken first, so a write between the two leaves an old time beside new bytes."""
     (tmp_path / "STOP").write_text("agreed\n", encoding="utf-8")
     os.utime(tmp_path / "STOP", ns=(LONG_AGO, LONG_AGO))
-    real, fired = Path.read_bytes, []
+    real, fired = Path.open, []
 
-    def a_stop_just_before_the_read(path):
-        if path.name == "STOP" and not fired:
+    def a_stop_just_before_the_read(path, mode="r", *args, **kwargs):
+        if path.name == "STOP" and "r" in mode and not fired:          # the open that reads the bytes, after the time
             fired.append(path)
             ask_to_stop(tmp_path, "a late stop")
-        return real(path)
+        return real(path, mode, *args, **kwargs)
 
     with monkeypatch.context() as hooked:
-        hooked.setattr(Path, "read_bytes", a_stop_just_before_the_read)
+        hooked.setattr(Path, "open", a_stop_just_before_the_read)
         agreed = envelope.stop_to_lift(tmp_path)
     _log(tmp_path).start("Ada", **agreed)
     assert fired and stop_reason(tmp_path)
@@ -495,36 +495,41 @@ def _counted_only(folder) -> None:
 
 
 def test_a_stop_that_died_before_its_file_stands_by_its_count(tmp_path):
+    _log(tmp_path).start("Ada", stops=0)
     _counted_only(tmp_path)
-    assert STOPS_FILE in stop_standing(tmp_path, {"stops": 0}) and stop_reason(tmp_path) == ""
+    assert STOPS_FILE in stop_standing(tmp_path) and stop_reason(tmp_path) == ""
 
 
 def test_no_stop_since_the_start_is_no_stop(tmp_path):
-    assert stop_standing(tmp_path, {"stops": 0}) == ""
+    _log(tmp_path).start("Ada", stops=0)
+    assert stop_standing(tmp_path) == ""
     _counted_only(tmp_path)
-    assert stop_standing(tmp_path, {"stops": 1}) == ""
+    _log(tmp_path).start("Ada", stops=1)
+    assert stop_standing(tmp_path) == ""
 
 
-@pytest.mark.parametrize("start", [{}, {"by": "Ada"}])
-def test_with_no_count_on_a_start_there_is_nothing_to_compare(tmp_path, start):
+@pytest.mark.parametrize("fields", [{}, {"settings": "s"}])
+def test_with_no_count_on_a_start_there_is_nothing_to_compare(tmp_path, fields):
     _counted_only(tmp_path)
-    assert stop_standing(tmp_path, start) == ""
+    _log(tmp_path).start("Ada", **fields)
+    assert stop_standing(tmp_path) == ""
 
 
 def test_with_no_start_on_record_every_stop_in_the_journal_stands(tmp_path):
     """This once pinned the opposite: no start meant nothing to compare. Now a stop no start saw stands, as the dialog says."""
     _counted_only(tmp_path)
-    assert STOPS_FILE in stop_standing(tmp_path, None)
+    assert STOPS_FILE in stop_standing(tmp_path)
 
 
 def test_a_stop_file_speaks_for_itself_ahead_of_the_count(tmp_path):
     ask_to_stop(tmp_path, "the owner's review")
-    assert "the owner's review" in stop_standing(tmp_path, {"stops": 0})
+    _log(tmp_path).start("Ada", stops=1)
+    assert "the owner's review" in stop_standing(tmp_path)
 
 
 def test_a_count_that_cannot_be_read_stands_as_a_stop(tmp_path):
     (tmp_path / STOPS_FILE).mkdir()
-    assert stop_standing(tmp_path, {"stops": 0})
+    assert stop_standing(tmp_path)
 
 
 # What was refused --------------------------------------------------------------------------------------------------------

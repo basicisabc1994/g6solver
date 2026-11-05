@@ -214,7 +214,7 @@ def _readers(f) -> dict[str, str]:
         question = offered[1]
         dialog = STOPPED if any(said in question for said in ("Starting lifts the stop", "no STOP file stands for it",
                                                               "ended by a stop on record")) else ""
-    return {"tick": halted.code if halted else "", "gate": {NOT_STARTED: STOPPED}.get(gate, gate),
+    return {"tick": halted.code if halted else "", "gate": gate,     # the gate gives a stop's own code, never NOT_STARTED
             "status": status.get("stop_code", "?") if bool(status["stop"]) else "", "dialog": dialog}
 
 
@@ -414,10 +414,15 @@ def test_a_start_with_lift_fields_no_reading_gives_is_never_written(tmp_path, fi
 
 
 def test_lift_fields_no_reading_gives_are_a_stop_in_force_where_they_are_read_too(tmp_path):
+    """A start no reading gives, written by a producer that skipped the rules, is read only from the records: no reader
+    takes a start of its own any more."""
+    from g6.core.ledger import ChainLedger
     from g6.self_maintenance.envelope import stop_in_force
 
     ask_to_stop(tmp_path, "why")
-    assert stop_in_force(tmp_path, {"lifted": "a" * 64, "lifted_bytes": "all"}).code == STOP_UNREADABLE
+    (tmp_path / CYCLE_LOG).parent.mkdir(parents=True, exist_ok=True)
+    ChainLedger(tmp_path / CYCLE_LOG).append("started", "1", {"by": "Ada", "lifted": "a" * 64, "lifted_bytes": "all"})
+    assert stop_in_force(tmp_path).code == STOP_UNREADABLE
 
 
 @pytest.mark.parametrize("journal", [b"x", b"operator requested stop", b"one\ntwo"])
@@ -612,3 +617,224 @@ def test_a_runner_ended_by_a_stop_beats_that_stops_code_not_the_last_ticks(folde
     monkeypatch.setattr(runner, "_digest", lambda *args: None)
     _unreadable(folder.root / STOPS_FILE)
     assert runner.step() is None and heartbeat(folder.root)["code"] == STOP_UNREADABLE
+
+
+# Review 3's classes: the read's identity is the handle's, the start's row lands on the approved bytes, older readers are
+# fields of the one reading, and one ending for every way the runner ends --------------------------------------------------
+
+@pytest.mark.parametrize("name", [STOP_FILE, STOPS_FILE, CYCLE_LOG])
+def test_a_file_replaced_once_its_bytes_are_read_is_read_again_from_the_file_now_there(tmp_path, monkeypatch, name):
+    from g6.self_maintenance.envelope import _read_file
+
+    path = tmp_path / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"old bytes\n")
+    other = tmp_path / "other"
+    other.write_bytes(b"new bytes\n")                      # as many bytes, another file
+    real_open, swapped = Path.open, []
+
+    class Swaps:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return self.handle.__exit__(*exc)
+
+        def fileno(self):
+            return self.handle.fileno()
+
+        def read(self, *args):
+            data = self.handle.read(*args)
+            self.handle.close()
+            os.replace(other, path)
+            swapped.append(True)
+            return data
+
+    monkeypatch.setattr(Path, "open", lambda self, mode="r", *a, **k: (
+        Swaps(real_open(self, mode, *a, **k)) if self == path and not swapped else real_open(self, mode, *a, **k)))
+    assert _read_file(path, tmp_path)[0] == b"new bytes\n" and swapped
+
+
+def test_this_machine_names_a_file_alike_through_its_open_handle_and_its_path(tmp_path):
+    path = tmp_path / "f"
+    path.write_bytes(b"x")
+    with path.open("rb") as handle:
+        held = os.fstat(handle.fileno())
+    named = path.stat()
+    assert held.st_ino and (held.st_dev, held.st_ino) == (named.st_dev, named.st_ino)
+
+
+def _states_for_readers(f) -> dict:
+    def revoked(g):
+        CycleLog(g.root / CYCLE_LOG).stop("a tick durably ended the start")
+
+    def lifted(g):
+        improve.stop(str(g.root), "the owner said no")
+        _agreed(g)
+
+    return {**{name: change for name, (change, _) in ON_DISK.items()}, "a start revoked on record": revoked,
+            "a stop that died before its STOP file": _journal_only, "a STOP file a start lifted": lifted,
+            "a stop through the tool": lambda g: improve.stop(str(g.root), "the owner said no")}
+
+
+READER_STATES = list(_states_for_readers(None))
+
+
+@pytest.mark.parametrize("state", READER_STATES)
+def test_every_older_reader_is_a_field_of_the_one_full_reading(folder, state):
+    from g6.self_maintenance import envelope
+
+    _agreed(folder)
+    _states_for_readers(folder)[state](folder)
+    found = envelope.stop_in_force(folder.root)
+
+    def said(read):
+        try:
+            return read()
+        except envelope.StopUnreadable:
+            return "raised"
+
+    assert said(lambda: envelope.stop_standing(folder.root)) == found.reason
+    assert said(lambda: envelope.stop_seen(folder.root)) == (
+        "raised" if {STOP_FILE, STOPS_FILE} & set(found.unread) else found.seen)
+    assert said(lambda: envelope.stop_to_lift(folder.root)) == ("raised" if STOP_FILE in found.unread else found.seen.lift())
+    assert said(lambda: envelope.stops_asked(folder.root)) == (
+        "raised" if STOPS_FILE in found.unread else found.seen.journal.count(b"\n"))
+    assert said(lambda: envelope.stop_reason(folder.root)) == (
+        f"a STOP file is present and could not be read ({found.reason})"
+        if STOP_FILE in found.unread or found.seen.stop is not None and "records" in found.unread
+        else found.seen.by_file(found.start))
+
+
+def test_no_reader_takes_an_argument_that_skips_part_of_the_reading():
+    import ast
+    import inspect
+
+    from g6.self_maintenance import envelope
+
+    assert list(inspect.signature(envelope.stop_in_force).parameters) == ["root", "known"]
+    for reader in (envelope.stop_standing, envelope.stop_seen, envelope.stop_reason, envelope.stop_to_lift,
+                   envelope.stops_asked):
+        assert list(inspect.signature(reader).parameters) == ["root"], reader
+        calls = [node for node in ast.walk(ast.parse(inspect.getsource(reader)))
+                 if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "stop_in_force"]
+        assert len(calls) == 1 and len(calls[0].args) == 1 and not calls[0].keywords, reader
+
+
+def _reformatted(path: Path) -> None:
+    """The same chain, entry for entry, in other bytes (compact, where the ledger writes a space after each separator):
+    what a reformatting editor leaves."""
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    path.write_text("".join(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in rows),
+                    encoding="utf-8", newline="\n")
+
+
+def _another_chain(path: Path) -> None:
+    """Another valid chain: the records with a row written after the start's."""
+    CycleLog(path).pause("a row the start never approved")
+
+
+@pytest.mark.parametrize("after", [_reformatted, _another_chain])
+def test_a_start_whose_row_did_not_land_on_the_approved_bytes_is_revoked_and_spawns_nothing(folder, monkeypatch, after):
+    from g6.self_maintenance.envelope import stop_in_force
+
+    _, _, shown = improve.asked(str(folder.root))
+    real = CycleLog.start
+
+    def then_changed(self, *args, **kwargs):
+        row = real(self, *args, **kwargs)
+        after(self.path)                                     # once the row is on disk, before the start reads it back
+        return row
+
+    monkeypatch.setattr(CycleLog, "start", then_changed)
+    got = improve.start(folder.root, "Ada", shown)
+    assert _code(got) == "G6_E_LOOP_TERMS_CHANGED" and folder.spawned == [], got["message"]
+    assert stop_in_force(folder.root).code in (STOPPED, STOP_UNREADABLE)
+
+
+def test_a_start_that_lands_where_it_was_approved_is_the_approved_bytes_and_one_row(folder):
+    from g6.self_maintenance.envelope import stop_in_force
+
+    before = stop_in_force(folder.root)
+    _agreed(folder)
+    after = stop_in_force(folder.root)
+    assert after.records.startswith(before.records) and after.records[len(before.records):].count(b"\n") == 1
+
+
+def _returns(function) -> list[str]:
+    """Each way ``function`` returns, as its source reads, nested functions left out."""
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
+    found: list[str] = []
+
+    def walk(node):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            if isinstance(child, ast.Return):
+                found.append(ast.unparse(child.value) if child.value is not None else "None")
+            if isinstance(child, ast.Raise) or (isinstance(child, ast.Call) and "exit" in ast.unparse(child.func)):
+                found.append(f"raise or exit: {ast.unparse(child)}")
+            walk(child)
+
+    walk(tree.body[0])
+    return found
+
+
+def test_every_way_the_runner_ends_goes_through_the_one_ending():
+    from g6.metaharness import runner
+
+    ways = _returns(runner.run)
+    assert ways and all(way.startswith("_ending(") for way in ways if not way.startswith("Runner(")), ways
+    assert [way for way in ways if way.startswith("Runner(")] == ["Runner(loop, now=now, sleep=sleep, reader=reader).run()"]
+    assert _returns(runner.Runner.run) == ["0"]                  # only once a pass returned None, which only its end does
+    step = _returns(runner.Runner.step)
+    assert step[0] == "self._end(now, halted)" and all(way.startswith("min(") for way in step[1:]), step
+    assert _returns(runner.Runner._end) == [] and "_ending(" in __import__("inspect").getsource(runner.Runner._end)
+
+
+@pytest.mark.parametrize("journal, code", [(b"", NOT_STARTED), (b"a stop no start saw\n", STOPPED)])
+def test_the_gate_says_not_started_only_with_no_start_and_no_stop(tmp_path, journal, code):
+    root = tmp_path / "loop"
+    root.mkdir()
+    (root / STOPS_FILE).write_bytes(journal)
+    assert _gate(root, {})[0] == code
+
+
+def test_noting_a_stop_never_raises_and_says_what_it_could_not_note(folder, monkeypatch):
+    from g6.self_maintenance.envelope import record_stop
+
+    records, real = folder.root / CYCLE_LOG, Path.stat
+
+    def denied(path, *args, **kwargs):
+        if path == records:
+            raise PermissionError("denied")
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", denied)
+    assert "cannot be read" in record_stop(folder.root, "why", at=NOW.isoformat())
+
+
+@pytest.mark.parametrize("ending", ["preflight STOP", "gate stop", "unreadable stop"])
+def test_each_ending_beats_the_code_of_the_reading_that_ended_it(folder, monkeypatch, ending):
+    from g6.metaharness import runner
+    from g6.self_maintenance.envelope import beat, heartbeat, stop_in_force
+
+    _agreed(folder)
+    beat(folder.root, state="waiting", code="an earlier tick's code")
+    if ending == "preflight STOP":
+        ask_to_stop(folder.root, "the owner said no")
+    elif ending == "gate stop":
+        _journal_only(folder)
+    else:
+        _unreadable(folder.root / STOPS_FILE)
+    reading = stop_in_force(folder.root)
+    monkeypatch.setattr(runner, "open_loop", lambda *a, **k: pytest.fail("a stopped run opened its loop"))
+    runner.run(folder.root, now=lambda: NOW)
+    assert heartbeat(folder.root)["code"] == reading.code and reading.code in (STOPPED, STOP_UNREADABLE)

@@ -277,6 +277,28 @@ def _watch(root: Path, process: Any, since: datetime) -> dict:
                      running=False, folder=str(root), next_action="Read g6_improve_status in a minute.")
 
 
+def _appended_onto(landed: Stop, approved: Stop) -> bool:
+    """Whether the records as they stand now are the approved reading's bytes, exactly, and one row after them."""
+    added = landed.records[len(approved.records):]
+    return ("records" not in landed.unread and landed.records.startswith(approved.records)
+            and added.endswith(b"\n") and added.count(b"\n") == 1)
+
+
+def _revoke(root: Path, writer: CycleLog) -> None:
+    """End a start whose row did not land where it was approved: a stop row after it, by the writer that wrote it, and a
+    ``STOP`` file when even that will not take, so nothing runs on it either way."""
+    why = "the start's row did not land on the records the person's terms bind, so it starts nothing"
+    try:
+        writer.stop(why, at=datetime.now().astimezone().isoformat())
+    except (OSError, LedgerError):
+        ask_to_stop(root, why)
+
+
+def _moved(root: Path) -> dict:
+    return _blocked(TERMS_CHANGED, "the loop's records changed between the reading the person's terms bind and the start's "
+                    "row, so nothing was started", ASK_AGAIN, running=False, folder=str(root))
+
+
 def start(root: Path, who: str, shown: str | None = None) -> dict:
     """Record who started it and start the runner. What the person read may have moved while the dialog was up, so
     ``shown``, the terms ``asked`` gave, must still be what stands, and a change asks them again. The start records what
@@ -284,8 +306,11 @@ def start(root: Path, who: str, shown: str | None = None) -> dict:
     terms cover, by recording it: any other stop stands, and nothing starts. Under the tick lock and ``stop_lock`` it takes
     a fresh reading (``stop_in_force``), refuses if that reading is not the one the dialog showed, its whole digest being in
     the terms, and writes its row: no stop can land between the reading and the row, and a start refused there writes
-    nothing. A reading that cannot be made, there or when the row will not take, starts nothing and says so as any reader
-    does."""
+    nothing. The row goes onto the approved records themselves: the writer must open the chain that reading parsed (the
+    same last row, which names every row before it), the ledger appends only onto the head it opened, and once the row is
+    written a reading must find the approved bytes exactly with that one row after them, or the start is revoked by a stop
+    row and nothing is spawned. A reading that cannot be made, there or when the row will not take, starts nothing and says
+    so as any reader does."""
     cannot = _cannot_start(root, stop_in_force(root))
     if cannot is not None:
         return cannot
@@ -300,13 +325,19 @@ def start(root: Path, who: str, shown: str | None = None) -> dict:
                 return _blocked(TERMS_CHANGED, "what the person read is no longer what would start, so nothing was started",
                                 ASK_AGAIN, running=False, folder=str(root))
             try:
-                CycleLog(root / CYCLE_LOG).start(who, at=datetime.now().astimezone().isoformat(),
-                                                 settings=digest_of(settings), **reading.seen.binding())
+                writer = CycleLog(root / CYCLE_LOG)
+                if writer.head() != (reading.log.head() if reading.log is not None else ""):
+                    return _moved(root)          # the writer opened records other than the ones approved: no row
+                writer.start(who, at=datetime.now().astimezone().isoformat(), settings=digest_of(settings),
+                             **reading.seen.binding())
             except (OSError, LedgerError):
                 moved = stop_in_force(root)      # the records would not take the row: say what a reading says of them
                 if moved.code == STOP_UNREADABLE:
                     return _stop_unreadable(root, moved.reason)
                 raise
+            if not _appended_onto(stop_in_force(root), reading):
+                _revoke(root, writer)            # the row did not land on the approved records: it starts nothing
+                return _moved(root)
         halted = stop_in_force(root)
         if halted:
             record_stop(root, halted.reason, at=datetime.now().astimezone().isoformat())

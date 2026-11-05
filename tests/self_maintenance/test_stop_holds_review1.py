@@ -106,15 +106,15 @@ def test_corrupt_lift_records_get_the_shared_unreadable_code(active, monkeypatch
     records = active.root / CYCLE_LOG
     if damage == "truncated":
         records.write_bytes(b'{"truncated":')
-    else:
-        read = Path.read_bytes
+    else:                                       # denied at the open the reading reads from (the reviewer's was read_bytes)
+        opened = Path.open
 
-        def denied(path):
-            if path == records:
+        def denied(path, mode="r", *args, **kwargs):
+            if path == records and "r" in mode:
                 raise PermissionError("review: records cannot be read")
-            return read(path)
+            return opened(path, mode, *args, **kwargs)
 
-        monkeypatch.setattr(Path, "read_bytes", denied)
+        monkeypatch.setattr(Path, "open", denied)
 
     def code(call):
         try:
