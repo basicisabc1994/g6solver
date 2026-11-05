@@ -2,8 +2,9 @@
 """Arm K3 (PLAN.md, 2026-11-05, morning, later, items 1 and 4): K2 plus one step. The first session is arm A's prompt byte for
 byte, checked by digest before the agent starts; its patch is kept in the archive as ``round-1.patch``; then the same session is
 resumed with the rule step; the patch after it is kept as ``rule.patch`` and scored beside the others; then K2's loop runs
-unchanged. Each of those four steps goes on only from a recognised success (``step_ending``), and a K3 run that did not finish is
-never a row, never offered to ``check`` and never scored (``scored_run``)."""
+unchanged. Each of those steps goes on only from a recognised success (``step_ending``). A K3 run that stops is saved and read
+as K2's run with the same ending is; only a run with no Claude Code baseline, refused at its first prompt's check or ended
+before its first patch was kept (``no_first_patch``), is never a row and never offered to ``check`` (``scored_run``)."""
 from __future__ import annotations
 
 import hashlib
@@ -131,7 +132,7 @@ class _Docker:
 
 
 def _run(monkeypatch, tmp_path, arm, *, step_ends="", thread="", fail=(), first=SUCCESS, agent_rewrites=False,
-         loop_writes=False):
+         loop_writes=False, loop_ends=None):
     """``_run_task`` for ``arm`` with fakes only: no model, no container. Returns the record, what happened in order, the
     prompts sent, the context and the task."""
     task, events, sent = we.load_tasks()[0], [], []
@@ -156,6 +157,8 @@ def _run(monkeypatch, tmp_path, arm, *, step_ends="", thread="", fail=(), first=
         events.append(("loop", finding, after_step))
         if loop_writes:             # the loop's own capture before review 2
             we.keep_first_patch(a[0], a[1], a[3], a[4], 2)
+        if loop_ends:               # a repair's own result, which the run's status is read from as K2's is
+            a[7].feed(dict(loop_ends))
         return {"status": "no_counterexample_in_domain"}
 
     monkeypatch.setattr(we, "key_check", lambda *a, **kw: {"ok": True})
@@ -206,27 +209,55 @@ def test_a_k3_run_whose_first_prompt_is_not_arm_as_is_refused_before_the_agent_s
     assert we.latest(ctx.archive, "run", task.id) is None            # ``check`` finds no run to score
 
 
-@pytest.mark.parametrize(("case", "at", "status", "seen"), [
+EXPENSIVE = {"type": "assistant", "session_id": "s1", "message": {"id": "m1", "model": SONNET,
+                                                                   "usage": {"output_tokens": 2000000}}}
+CAPPED = {"type": "result", "subtype": "error_max_budget_usd", "is_error": True, "session_id": "s1"}
+
+
+@pytest.mark.parametrize(("case", "at", "ended", "seen"), [
     ({"first": {**SUCCESS, "subtype": "error_max_turns", "is_error": True}}, "first session", "cap_turns", ["first session"]),
     ({"first": {**SUCCESS, "subtype": "future_terminal_status"}}, "first session", "error", ["first session"]),
+    ({"first": EXPENSIVE}, "first session", "cap_cost", ["first session"]),
     ({"fail": ("round-1.patch",)}, "first patch", "error", ["first session", "saved"]),
-    ({"step_ends": "cap_cost"}, "rule step", "cap_cost", ["first session", "saved", "resumed"]),
-    ({"fail": ("rule.patch",)}, "rule step", "error", ["first session", "saved", "resumed", "saved"]),
 ])
-def test_each_k3_step_goes_on_only_from_a_recognised_success_and_a_run_stopped_there_is_never_scored(monkeypatch, tmp_path, case,
-                                                                                                   at, status, seen):
+def test_a_k3_run_that_ends_before_its_first_patch_is_kept_has_no_baseline_no_row_and_no_check(monkeypatch, tmp_path, case, at,
+                                                                                               ended, seen):
     record, events, _, ctx, task = _run(monkeypatch, tmp_path, "K3", **case)
-    assert [e[0] for e in events] == seen and record["status"] == status
-    assert record["rule_step"]["ended"] == status and record["rule_step"]["at"] == at and "repairs" not in record
-    assert we.latest(ctx.archive, "run", task.id) is None and not we.scored_run(record)
+    assert [e[0] for e in events] == seen and record["status"] == we.NO_FIRST_PATCH == "no_first_patch"
+    assert record["rule_step"]["ended"] == ended and record["rule_step"]["at"] == at and "repairs" not in record
+    assert not we.scored_run(record) and not (ctx.archive.root / record["run"] / "rounds" / "round-1.patch").exists()
     ctx.archive.start("validate", task.id).finish({"fail_to_pass": ["t"], "pass_to_pass": []}, "finished")
-    monkeypatch.setattr(we, "_oracle_run", lambda *a, **kw: pytest.fail("a K3 run that did not finish is never scored"))
-    with pytest.raises(SystemExit, match="never scored"):
+    monkeypatch.setattr(we, "_oracle_run", lambda *a, **kw: pytest.fail("a run with no first patch has no baseline to score"))
+    with pytest.raises(SystemExit, match="no Claude Code baseline"):
         we.check(ctx, task, record["run"])
     monkeypatch.setattr(loop, "tool", lambda *a, **kw: json.dumps(record))
-    with pytest.raises(SystemExit, match="never scored"):
+    with pytest.raises(SystemExit, match="no Claude Code baseline"):
         loop.one(ctx.archive.root, "g6", "K3", task.id, 1)
     assert not (ctx.archive.root / "loop").exists()
+
+
+def _row_of(monkeypatch, root, record, arm):
+    monkeypatch.setattr(loop, "tool", lambda *a, **kw: json.dumps(record))
+    return loop.one(root, "g6", arm, record["task"], 1)
+
+
+@pytest.mark.parametrize(("k3", "k2", "labels"), [
+    ({"step_ends": "cap_cost"}, {"first": EXPENSIVE}, ["round-1", "final"]),           # stopped in the rule step
+    ({"loop_ends": CAPPED}, {"loop_ends": CAPPED}, ["round-1", "rule", "final"]),      # stopped in the review loop
+])
+def test_a_stopped_k3_run_is_saved_and_read_as_k2s_with_the_same_ending_and_check_scores_its_first_patch(monkeypatch, tmp_path,
+                                                                                                        k3, k2, labels):
+    ours, _, _, ctx, task = _run(monkeypatch, tmp_path, "K3", **k3)
+    theirs, *_ = _run(monkeypatch, tmp_path, "K2", **k2)
+    assert ours["status"] == theirs["status"] == "cap_cost" and we.scored_run(ours)
+    rows = [_row_of(monkeypatch, ctx.archive.root, ours, "K3"), _row_of(monkeypatch, ctx.archive.root, theirs, "K2")]
+    assert [{k: v for k, v in row.items() if k not in ("arm", "run", "cost_usd")} for row in rows] == [
+        {"task": task.id, "repeat": 1, "status": "cap_cost", "why": None, "passes": False, "failing": None, "tests": []}] * 2
+    got = compare.saved(ctx.archive.root)
+    assert got[("K3", task.id, 1)] == got[("K2", task.id, 1)] and got[("K3", task.id, 1)]["maintainers"] is False
+    ctx.archive.start("validate", task.id).finish({"fail_to_pass": ["t"], "pass_to_pass": []}, "finished")
+    monkeypatch.setattr(we, "_oracle_run", lambda *a, **kw: {"results": {"t": "passed"}})
+    assert [row["patch"] for row in we.check(ctx, task, ours["run"])["checks"]] == labels
 
 
 def test_the_first_patch_is_in_the_archive_before_the_step_and_nothing_after_it_replaces_it(monkeypatch, tmp_path):
@@ -345,17 +376,3 @@ def test_check_scores_the_rule_patch_after_round_1_and_every_other_arms_patches_
     assert [row["passes"] for row in k3["checks"]] == [False, True, False, False]
     k2 = we.check(ctx, task, runs["K2"])
     assert [row["patch"] for row in k2["checks"]] == ["round-1", "round-2", "round-10", "final"]
-
-
-def test_compare_never_scores_a_k3_row_that_did_not_finish_and_reads_every_other_arms_rows_as_before(tmp_path):
-    (tmp_path / "loop").mkdir()
-    rows = {"K3-fake-1-1": {"status": "cap_cost", "passes": False, "failing": None},
-            "K2-fake-1-1": {"status": "cap_cost", "passes": False, "failing": None},
-            "K3-fake-1-2": {"status": "finished", "passes": True, "failing": 0}}
-    for name, row in rows.items():
-        arm, _, _, repeat = name.split("-")
-        (tmp_path / "loop" / f"{name}.json").write_text(json.dumps({"arm": arm, "task": "fake-1", "repeat": int(repeat),
-                                                                   "run": f"run/fake-1/{name}", **row}), encoding="utf-8")
-    got = compare.saved(tmp_path)
-    assert ("K3", "fake-1", 1) not in got
-    assert got[("K2", "fake-1", 1)]["maintainers"] is False and got[("K3", "fake-1", 2)]["maintainers"] is True

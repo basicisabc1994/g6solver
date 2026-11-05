@@ -43,8 +43,6 @@ def saved(root: Path) -> dict[tuple[str, str, int], dict[str, bool | None]]:
     rows: dict[tuple[str, str, int], dict[str, bool | None]] = {}
     for path in (root / "loop").glob("*-*.json"):
         row, again = json.loads(path.read_text("utf-8")), root / "loop" / "amended" / path.name
-        if not we.scored_run(row):      # a K3 run that did not finish is never scored, a row of it or not
-            continue
         passes = None if row.get("status") == "finished" and row.get("failing") is None else bool(row["passes"])
         amended = passes
         diff = we.amendment(row["task"])

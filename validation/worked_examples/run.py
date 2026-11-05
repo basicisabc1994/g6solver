@@ -1986,6 +1986,10 @@ RULE_PATCH = "rule.patch"      # the tree after the step, in ``rounds`` beside e
 #: K3's steps from its first session to its first review, in order; each goes on only from the one before's success. The rule
 #: step is its session and then its patch, each read by ``step_ending``.
 K3_STEPS = ("first session", "first patch", "rule step")
+#: The status of a K3 run that ended before its first patch was kept, whatever ended it (kept in ``rule_step``'s "ended"): it
+#: has no Claude Code baseline, so the report counts it by arm and it is no row.
+NO_FIRST_PATCH = "no_first_patch"
+NO_BASELINE = ("refused", NO_FIRST_PATCH)      # K3's two endings with no Claude Code baseline (``scored_run``)
 #: What a capture reports to ``step_ending`` when its file is kept: a capture has no result of its own, and this is its success.
 CAPTURED = {"subtype": "success", "is_error": False}
 ROUND_PATCH = re.compile(r"round-(\d+)\.patch")
@@ -2095,10 +2099,10 @@ def merge_rounds(ctx: Context, agent: str, run: Any) -> None:
 
 
 def scored_run(record: Mapping[str, Any]) -> bool:
-    """Whether a run may be saved as a row, offered to ``check`` and scored: the one rule ``loop.one``, ``compare.saved`` and
-    ``check`` ask of a run's record. Every other arm's run as before; a K3 run only when it finished, which it does only when
-    each of its steps ended as a recognised success (``step_ending``)."""
-    return not rule_led(str(record.get("arm") or "")) or record.get("status") == "finished"
+    """Whether a run may be saved as a row and offered to ``check``, which ``loop.one`` and ``check`` ask of its record. A run
+    that was made is scored on what it left, a stopped or failed one as every arm's is, so only a run with no Claude Code
+    baseline is not (``NO_BASELINE``): a K3 run refused at its first prompt's check, or ended before its first patch was kept."""
+    return record.get("status") not in NO_BASELINE
 
 
 # --- arms V3 and V4: arm K's loop with the reviewer's test written before any patch (PLAN.md, 2026-11-04) ---------------
@@ -2403,6 +2407,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             record["rule_step"] = rule_led_start(ctx, task, run, agent, base, docker_args, key, tally, stop, started,
                                                  (ended, first_code))
             ended = record["rule_step"]["ended"]
+            if ended and record["rule_step"]["at"] != "rule step":    # ended before its first patch was kept: no baseline
+                ended = NO_FIRST_PATCH
         if critic_led and not dry and not ended:
             record["repairs"] = reviews_until_clean(ctx, task, run, agent, base, docker_args, key, tally, stop, started,
                                                     lambda n: run_critic(ctx, task, run, agent, base, title, text, n),
@@ -2606,9 +2612,9 @@ def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool
     src = Path(src)
     rel = str(src.relative_to(ctx.archive.root)).replace("\\", "/")
     done = run_record(ctx.archive, rel)
-    if not scored_run(done):     # named or not, a K3 run that did not finish is never offered to the check
-        raise SystemExit(f"{rel} is arm {done.get('arm')}'s and ended {done.get('status') or 'with no ending on record'}: "
-                         "a K3 run that did not finish is never scored")
+    if not scored_run(done):     # named or not, a run with no first patch is never offered to the check
+        raise SystemExit(f"{rel} is arm {done.get('arm')}'s and ended {done.get('status')}: it has no Claude Code baseline to "
+                         "score")
     f2p, p2p = v["record"]["fail_to_pass"], v["record"]["pass_to_pass"]
     folder = ctx.archive.start("recheck" if amended else "check", task.id, checked_run=rel)
     patches = [] if amended else patches_to_score(src / "rounds", str(done.get("arm") or ""))
