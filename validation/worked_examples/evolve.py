@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any
 
 import agentic
-import compare
 import distill
 import heuristics
 import library
@@ -56,18 +55,18 @@ def judged_on() -> set[str]:
 
 
 def verdicts(root: Path, arm: str, tasks: Sequence[str], repeats: Sequence[int] = (1, 2)) -> list[dict[str, Any]]:
-    """The saved runs of ``arm`` on ``tasks``, each with ``pass`` on the amended tests, which are the maintainers' on most bugs."""
-    rows, found = compare.saved(root), []
-    own = {one.key: one for one in c.saved_rows(root)}     # each saved row by its run's own arm, task and repeat
+    """The saved runs of ``arm`` on ``tasks``, each with ``pass`` on the amended tests, which are the maintainers' on most bugs. Each
+    run, its arm, task and repeat, and its verdicts come from one read by the saved rows' one reader (``wecommon.shelf``), as the
+    row ``loop.one`` keeps (``Saved.record``): never a score read apart from its run (study review 1, finding 22)."""
+    own, found = {one.key: one for one in c.saved_rows(root, we.amendment)}, []     # each by its run's own arm, task and repeat
     for task in tasks:
         for repeat in repeats:
-            got = rows.get((arm, task, repeat))
-            if got is None:
+            one = own.get((arm, task, repeat))
+            if one is None:
                 continue
-            if got["amended"] is None:
+            if one.amended is None:
                 raise ValueError(f"no verdict for {arm} {task} {repeat}: rescore first")
-            one = own[(arm, task, repeat)]
-            found.append({**one.row, "arm": arm, "task": task, "repeat": repeat, "run": one.facts.name, "pass": got["amended"]})
+            found.append({**one.record(), "pass": one.amended})
     return found
 
 
@@ -186,7 +185,7 @@ class Training:
         return SearchResult(None, "stopped", False, self.n)
 
     def proposed(self, child: heuristics.Heuristic, arm: str) -> dict[str, Any]:
-        path, spec = we.HARNESS / f"{arm}.json", self.root / "loop" / f"evolve_{arm}.json"
+        path, spec = we.HARNESS / f"{arm}.json", c.beside(self.root, f"evolve_{arm}.json")
         entry: dict[str, Any] = {"arm": arm, "id": child.id, "operator": child.operator}
         if path.is_file() and spec.is_file() and self.committed(path):    # a restart: this text was proposed and committed
             entry.update(json.loads(spec.read_text("utf-8")), outcome="to run")
@@ -264,7 +263,7 @@ def train(root: Path, g6: str, tasks: Sequence[str], parent: str, caller: Any, *
     out = {"parent": parent, "best": runner.best, "stopped": runner.stopped, "cegis": said, "candidates": runner.made,
            "records": {"failed": sum(r["kind"] == "failed" for r in runner.rows),
                        "near_miss": sum(r["kind"] == "near_miss" for r in runner.rows)}}
-    (root / "loop" / "evolve.json").write_text(json.dumps(out, indent=1, default=str), "utf-8")
+    c.beside(root, "evolve.json").write_text(json.dumps(out, indent=1, default=str), "utf-8")
     return out
 
 

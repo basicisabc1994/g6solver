@@ -25,6 +25,8 @@ def _saved(root, *, task="black-5634", arm="A", repeat=1, said="reproduced"):
     (run / "final.patch").write_text("a patch", "utf-8")
     (root / "loop" / "final_review").mkdir(parents=True)
     (root / "loop" / f"{arm}-{task}-{repeat}.json").write_text(json.dumps({"run": f"run/{task}/1"}), "utf-8")
+    c.Archive(root).append({"event": "started", "run": f"run/{task}/1", "kind": "run", "arm": arm, "task": task,   # and its start:
+                            "repeat": repeat})          # the run is found by its own facts, never a row's (study review 1)
     review = root / "loop" / "final_review" / f"{c.sha256_file(run / 'final.patch')}.json"
     review.write_text(json.dumps({**FOUND, "said": said}), "utf-8")
 

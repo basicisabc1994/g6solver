@@ -452,7 +452,7 @@ def test_a_run_that_meets_the_usage_limit_ends_limited_with_its_reset_and_no_rev
 def test_a_limited_run_is_never_scored_and_may_be_made_again(monkeypatch, tmp_path):
     import compare
     import loop
-    made = we.c.Archive(tmp_path).start("run", "t", arm="K1", executor="host")    # the run as the archive holds it
+    made = we.c.Archive(tmp_path).start("run", "t", arm="K1", executor="host", repeat=1)    # the run as the archive holds it
     made.finish({"executor": "host", "agent_started": True, "cost_usd": 0.0}, "limited")
     monkeypatch.setattr(loop, "tool", lambda command, *a, **kw: json.dumps(
         {"status": "limited", "run": made.rel, "limit": {"resets": "resets 7pm"}}) if command == "run"
@@ -666,7 +666,7 @@ def test_a_run_a_refusal_ended_is_scored_on_its_patch_and_never_made_again_while
     import compare
     import loop
     asked = []
-    ran = we.c.Archive(tmp_path).start("run", "t", arm="K1", executor="host")     # the run as the archive holds it
+    ran = we.c.Archive(tmp_path).start("run", "t", arm="K1", executor="host", repeat=1)     # the run as the archive holds it
     ran.finish({"executor": "host", "agent_started": True, "cost_usd": 0.0}, "model_refused")
 
     def tool(command, *args, **kw):
@@ -1168,7 +1168,7 @@ def test_a_saved_verdict_holds_only_under_the_ending_it_was_made_under_on_either
     import compare
     import loop
     archive = we.c.Archive(tmp_path)
-    run = archive.start("run", "t", executor="host", arm="K1")         # the arm its rows are saved under, as its start says
+    run = archive.start("run", "t", executor="host", arm="K1", repeat=1)    # the arm and repeat its rows are saved under, as its start says
     run.end("finished")
     diff = tmp_path / "amendment.patch"
     diff.write_text("a diff", encoding="utf-8")
@@ -1188,11 +1188,12 @@ def test_a_saved_verdict_holds_only_under_the_ending_it_was_made_under_on_either
     assert loop.rescore(tmp_path, "g6")[0]["amended_passes"] is False
     row = loop.one(tmp_path, "g6", "K1", "t", 1)                        # given again from the ending it has now
     assert (row["status"], row["passes"], row["ending_sha256"]) == ("error", False, we.c.ending_sha256(tmp_path, run.rel))
-    container = archive.start("run", "c", arm="A")                      # a container run has no ending file: its row holds as before
+    container = archive.start("run", "c", arm="A", repeat=1)            # a container run has no ending file: its row holds as before
     container.finish({"agent_started": True}, "finished")              # on its own record, which the admission rule reads
     kept = {"arm": "A", "task": "c", "repeat": 1, "run": container.rel, "status": "finished", "passes": True, "failing": 0}
     (tmp_path / "loop" / "A-c-1.json").write_text(json.dumps(kept), "utf-8")
-    assert loop.one(tmp_path, "g6", "A", "c", 1) == kept and compare.saved(tmp_path)[("A", "c", 1)]["maintainers"] is True
+    given = loop.one(tmp_path, "g6", "A", "c", 1)        # the row made from the run's facts and its verdict (study review 1)
+    assert {k: given[k] for k in kept} == kept and compare.saved(tmp_path)[("A", "c", 1)]["maintainers"] is True
 
 
 @pytest.mark.parametrize("status", ["limited", "refused"])

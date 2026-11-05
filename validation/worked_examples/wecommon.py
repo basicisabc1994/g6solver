@@ -8,16 +8,18 @@ ended, with its cost, and the stop reads it.
 """
 from __future__ import annotations
 
+import collections
 import datetime as dt
 import hashlib
 import json
 import os
 import re
 import stat
+import tempfile
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from contextlib import contextmanager
-from dataclasses import dataclass, field
+from contextlib import contextmanager, suppress
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -441,6 +443,7 @@ class RunFacts:
     kept: Mapping[str, str]              # each patch a capture kept (``FIRST_PATCH``: K3's baseline), by the digest recorded then
     folder: Path
     repeat: int | None = None            # as its start names it; None for a start that names none (every round 3 run's names one)
+    cost_usd: float | None = None        # what its end in the index says it cost; None while no end is there
 
 
 def run_facts(archive: Archive | Path, name: str, rows: Iterable[Mapping[str, Any]] | None = None) -> RunFacts | None:
@@ -476,10 +479,13 @@ def run_facts(archive: Archive | Path, name: str, rows: Iterable[Mapping[str, An
         if r.get("event") == "kept" and r.get("run") == name and r.get("patch") and r.get("sha256"):
             kept.setdefault(str(r["patch"]), str(r["sha256"]))
     repeat = started.get("repeat")
+    ended = next((r for r in reversed(rows) if r.get("event") == "ended" and r.get("run") == name), None)
+    cost = (ended or {}).get("cost_usd")
     return RunFacts(name=name, arm=str(started.get("arm") or ""), task=str(started.get("task") or ""), executor=executor,
                     ending=_ending_from(files, executor, folder, rows, name),
                     ending_sha256=digest.hexdigest() if files else None, kept=MappingProxyType(kept), folder=folder,
-                    repeat=repeat if isinstance(repeat, int) and not isinstance(repeat, bool) else None)
+                    repeat=repeat if isinstance(repeat, int) and not isinstance(repeat, bool) else None,
+                    cost_usd=float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else None)
 
 
 def _ending_from(files: Mapping[str, bytes], executor: str, folder: Path, rows: list[Mapping[str, Any]],
@@ -586,17 +592,22 @@ def scored_run(archive: Archive, name: str) -> bool:
 def disagrees(facts: RunFacts, row: Mapping[str, Any]) -> str:
     """"" when every attribution a saved row (or a caller) makes of its run, its arm, its task and its repeat where it names them,
     is the run's own (``run_facts``), else why not. A row that disagrees is refused, never re-labelled: what it says of the run is
-    never a fact, and a score is attributed to the arm, task and repeat the run's start names, or to none. A start that names no
-    repeat has none to disagree with."""
+    never a fact, and a score is attributed to the arm, task and repeat the run's start names, or to none. A repeat said of a run
+    whose start names none disagrees with it: no repeat is ever taken from a row (study review 1, finding 6)."""
     for key in ("arm", "task"):
         if key in row and str(row.get(key) or "") != getattr(facts, key):
             return f"it says {key} {row.get(key)!r} of a run whose start names {key} {getattr(facts, key)!r}"
-    if "repeat" in row and facts.repeat is not None and row.get("repeat") != facts.repeat:
-        return f"it says repeat {row.get('repeat')!r} of a run whose start names repeat {facts.repeat!r}"
+    said = row.get("repeat")
+    if "repeat" in row and (said != facts.repeat or isinstance(said, bool)):
+        return f"it says repeat {said!r} of a run whose start names " + (
+            f"repeat {facts.repeat!r}" if facts.repeat is not None else "no repeat")
     return ""
 
 
+# --- the saved rows: one module reads and writes them -------------------------------------------------------------------
 #: Where each run's saved row is kept (``loop.one``), and its amended verdict beside it (``loop.rescore``), under one name for both.
+#: This module alone names these folders, finds a file in them, reads a row or writes one (``shelf``, ``keep``); every other reader
+#: asks ``shelf`` (tests/validation/test_saved_rows.py lists, from every module's own code, each place that names them).
 SAVED, AMENDED = "loop", "amended"
 
 
@@ -605,71 +616,297 @@ def saved_name(arm: str, task: str, repeat: Any) -> str:
     return f"{arm}-{task}-{repeat}.json"
 
 
-@dataclass(frozen=True)
-class Saved:
-    """A saved row that is its run's own, as ``saved_rows`` finds it: the run's facts, the row as it is (read for its verdict only,
-    through ``verdict``), and what the facts make of it: its key (arm, task, repeat) and the name its amended verdict is under."""
-    facts: RunFacts
-    row: Mapping[str, Any]
-    key: tuple[str, str, Any]
-    name: str
+def _root(root: Path | Archive) -> Path:
+    return root.root if isinstance(root, Archive) else Path(root)
 
 
-def saved_rows(root: Path | Archive) -> list[Saved]:
-    """Every saved row under ``SAVED`` that is its run's own, with its run's facts: the one way every reader finds a saved row and
-    attributes it (review 4, findings 1, 2, 6 and 7, the attribution class met a fifth time). A row is read for two things only: the
-    run it names, exactly (``run_facts``), and the verdict it holds (``verdict``). Its arm, task and repeat are its run's start's,
-    and so is its name (``saved_name``), whatever its file is called; a start that names no repeat leaves the row's. A row that
-    names no run the index started, or says of its run an arm, task or repeat that is not the run's own (``disagrees``), is no
-    run's: it takes no key, gives no score and changes none. Where two rows take one key, the one kept under the key's own name
-    is its row, else the first by name."""
-    archive = root if isinstance(root, Archive) else Archive(Path(root))
-    index, found = archive.rows(), {}
-    for path in sorted((archive.root / SAVED).glob("*-*.json")):
-        row = json.loads(path.read_text("utf-8"))
-        facts = run_facts(archive, str(row.get("run") or ""), index) if isinstance(row, dict) else None
-        if facts is None or disagrees(facts, row):
-            continue
-        key = (facts.arm, facts.task, facts.repeat if facts.repeat is not None else row.get("repeat"))
-        one = Saved(facts=facts, row=MappingProxyType(row), key=key, name=saved_name(*key))
-        if key not in found or path.name == one.name:
-            found[key] = one
-    return list(found.values())
+def beside(root: Path | Archive, name: str) -> Path:
+    """A store kept beside the saved rows, in their folder (``SAVED``), by its one name: a review's or a replay's folder of records
+    (``final_review`` and the like), or one of the training's own files (``evolve.json``, ``cegis.json``). Never the rows' folder
+    itself, nor the amended verdicts' (``AMENDED``): only ``shelf`` reads a row, and only ``keep`` writes one. A file kept here
+    that is no row is found by ``shelf`` and refused, as it names no run."""
+    if not name or Path(name).name != name or name in (".", "..", AMENDED):
+        raise ValueError(f"{name!r} is no store beside the saved rows")
+    return _root(root) / SAVED / name
 
 
-def saved_row(root: Path | Archive, arm: str, task: str, repeat: Any) -> Saved | None:
-    """The saved row of the run whose start names this arm, task and repeat (``saved_rows``), or None."""
-    return next((one for one in saved_rows(root) if one.key == (arm, task, repeat)), None)
+def _own(facts: RunFacts, kept: Mapping[str, Any] | None, amendment: str | None) -> bool:
+    """Whether ``kept`` is a verdict saved for this run (and diff): it names the run exactly, and says nothing of it that its start
+    does not (``disagrees``)."""
+    return (kept is not None and kept.get("run") == facts.name and not disagrees(facts, kept)
+            and (amendment is None or kept.get("amendment_sha256") == amendment))
+
+
+def judge(facts: RunFacts | None, kept: Mapping[str, Any] | None, *, amendment: str | None = None,
+          why: str | None = None) -> bool | None:
+    """The one rule a run's saved verdict is read by, on the run's facts as they were read (``run_facts``): ``verdict`` asks it, and
+    so do ``shelf`` (and through it every reader of a saved row) and ``loop.one`` on the facts it read again after its check.
+    ``kept`` is only the verdict being judged: the run's saved row for the maintainers' tests, or its amended one for the diff whose
+    digest is ``amendment``. None for a run the admission rule does not admit now (``unscored_why``), and for a verdict that is
+    missing (none, or one saved for another run or diff, or one whose arm, task or repeat is not the run's own). A made run that
+    did not end on its patch (``on_patch``: an error, a cap or the clock, a stop before its agent) failed on either score, which
+    needs no check, whatever a row says (study review 1, finding 13). A verdict saved under an ending the run no longer has
+    (``MADE_UNDER``) is void, None until it is checked again. Else the verdict as saved, when it is one: for the maintainers' tests
+    none for a run with no count of failing tests, and a verdict that is not true or false is none, never a pass or a failure.
+    ``why``: the admission rule's word on the run, where the caller read it already with these facts (``shelf``)."""
+    if facts is None or (_why_not(facts, facts.name) if why is None else why) or not _own(facts, kept, amendment):
+        return None
+    if not on_patch(facts.ending):
+        return False
+    if kept.get(MADE_UNDER) != facts.ending_sha256:
+        return None
+    got = kept.get("amended_passes" if amendment is not None else "passes")
+    if amendment is None and kept.get("failing") is None:
+        return None
+    return got if isinstance(got, bool) else None
+
+
+def _stands(facts: RunFacts | None, kept: Mapping[str, Any] | None, amendment: str | None = None, why: str | None = None) -> bool:
+    return (facts is not None and not (_why_not(facts, facts.name) if why is None else why) and _own(facts, kept, amendment)
+            and kept.get(MADE_UNDER) == facts.ending_sha256)
 
 
 def verdict(root: Path | Archive, name: str, kept: Mapping[str, Any] | None, *, amendment: str | None = None) -> bool | None:
-    """Run ``name``'s verdict on one score: the one rule ``loop.one``, ``loop.rescore`` and ``compare.saved`` read a saved verdict
-    by. Every fact about the run comes from ``run_facts``; ``kept`` is only the verdict being judged: the run's saved row for the
-    maintainers' tests, or its amended one for the diff whose digest is ``amendment``. None for a run the admission rule does not
-    admit now (``unscored_why``), and for a verdict that is missing (none, or one saved for another run or diff). A verdict saved
-    under an ending the run no longer has (``MADE_UNDER``) is void, never given: a made run that did not end on its patch
-    (``on_patch``) failed, which needs no check; any other is None until it is checked again. Else the verdict as saved, and for
-    the maintainers' tests none for a run on its patch with no count of failing tests. A saved verdict whose arm or task is not
-    the run's own (``disagrees``) is refused."""
-    facts = run_facts(root, name)
-    if (_why_not(facts, str(name or "")) or kept is None or kept.get("run") != facts.name or disagrees(facts, kept)
-            or (amendment is not None and kept.get("amendment_sha256") != amendment)):
-        return None
-    if kept.get(MADE_UNDER) != facts.ending_sha256:
-        return None if on_patch(facts.ending) else False
-    if amendment is not None:
-        return kept.get("amended_passes")
-    return None if on_patch(facts.ending) and kept.get("failing") is None else bool(kept.get("passes"))
+    """Run ``name``'s verdict on one score, by the one rule (``judge``) on the run's facts as ``run_facts`` reads them now."""
+    return judge(run_facts(root, name), kept, amendment=amendment)
 
 
 def holds(root: Path | Archive, name: str, kept: Mapping[str, Any] | None, *, amendment: str | None = None) -> bool:
     """Whether a saved verdict (``verdict``'s ``kept``) is run ``name``'s own and stands: the admission rule admits the run now,
     and the verdict was saved for this run (and diff) under the ending the run has now. One that does not hold is made again, or
-    not given. One whose arm or task is not the run's own (``disagrees``) never holds."""
-    facts = run_facts(root, name)
-    return (kept is not None and not _why_not(facts, str(name or "")) and kept.get("run") == facts.name
-            and not disagrees(facts, kept) and (amendment is None or kept.get("amendment_sha256") == amendment)
-            and kept.get(MADE_UNDER) == facts.ending_sha256)
+    not given. One whose arm, task or repeat is not the run's own (``disagrees``) never holds."""
+    return _stands(run_facts(root, name), kept, amendment)
+
+
+@dataclass(frozen=True)
+class Found:
+    """One file in the saved rows' folders as ``shelf`` read it: where it is (``folder``: ``SAVED`` for a run's row, ``AMENDED`` for
+    its amended verdict; ``file``, its name there), the run it names (``run``, "" for none), that run's key as its start names it
+    (``key``: arm, task and repeat; None for a name no start has, or a start that names no repeat), and why it is refused ("" for
+    a row that is its run's own). ``torn``: it cannot be read as one JSON object, as a write an older writer cut short leaves it;
+    it bars nothing, and the next write of its run replaces it (``keep``)."""
+    folder: str
+    file: str
+    run: str
+    key: tuple[str, str, int] | None
+    why: str = ""
+    torn: bool = False
+
+
+@dataclass(frozen=True)
+class Saved:
+    """A saved row that is its run's own, as ``shelf`` read it, in one read: the run's facts, its key (arm, task and repeat, as its
+    start names them), the file its row is kept in, and the verdicts that one read of the row and of its amended row gives by the
+    one rule (``judge``). It holds no row, so no reader can pair a score with another read of one, or read a field of one."""
+    facts: RunFacts
+    key: tuple[str, str, int]
+    file: str
+    admitted: bool                   # whether the one admission rule admits the run (``unscored_why``), as this read found it
+    passes: bool | None              # on the maintainers' tests
+    holds: bool                      # whether that verdict stands as saved (``holds``)
+    failing: int | None              # how many of the maintainers' tests its check found failing, while the verdict stands
+    tests: tuple[str, ...]           # which of them (the first twenty), while the verdict stands
+    amended: bool | None             # on the amended tests as they stand; the maintainers' verdict where the bug has no amendment
+    amended_holds: bool
+    amended_file: str | None         # the file its amended verdict is kept in, if any
+    amendment_sha256: str | None     # the digest of the bug's amendment it was judged on; None for a bug with none
+
+    @property
+    def name(self) -> str:
+        """The name its rows are written under when none is kept yet (``saved_name``)."""
+        return saved_name(*self.key)
+
+    @property
+    def scores(self) -> dict[str, bool | None]:
+        return {"maintainers": self.passes, "amended": self.amended}
+
+    def record(self) -> dict[str, Any]:
+        """The row as ``loop.one`` keeps it, made from the run's facts and this verdict alone: what the loop and the training read."""
+        f, end = self.facts, self.facts.ending or {}
+        return {"arm": f.arm, "task": f.task, "repeat": f.repeat, "run": f.name, "status": end.get("status"), "why": end.get("why"),
+                "cost_usd": f.cost_usd, "passes": self.passes, "failing": self.failing, "tests": list(self.tests),
+                **({MADE_UNDER: f.ending_sha256} if f.ending_sha256 else {})}
+
+    def amended_record(self) -> dict[str, Any]:
+        """The amended row as ``loop.rescore`` keeps it, made the same way."""
+        f = self.facts
+        return {"arm": f.arm, "task": f.task, "repeat": f.repeat, "run": f.name, "passes": self.passes,
+                "amended_passes": self.amended, "amendment_sha256": self.amendment_sha256,
+                **({MADE_UNDER: f.ending_sha256} if f.ending_sha256 else {})}
+
+
+@dataclass(frozen=True)
+class Shelf:
+    """What ``shelf`` read of the saved rows' folders, in one read: every row that is its run's own (``rows``, by file name), and
+    every file it found there, refused or not (``found``)."""
+    rows: tuple[Saved, ...]
+    found: tuple[Found, ...]
+
+    def get(self, key: tuple[str, str, int]) -> Saved | None:
+        return next((one for one in self.rows if one.key == key), None)
+
+    def bars(self, key: tuple[str, str, int], *, amended: bool = False, run: str | None = None, file: str | None = None) -> str:
+        """Why no row of the run of ``key`` may be given or written (``amended``: its amended verdict), "" when nothing bars it: a file
+        refused for anything but being torn that is kept under the key's name or names a run of that key, or a row of another run
+        kept in the file it would be written to (``file``, else the key's name): another key's run, or, with ``run`` (the run it is
+        written for), any other run. ``loop.one`` and ``loop.rescore`` ask it before any run or check, the same way, and ``keep``
+        reads the file it writes again just before it writes, by the same rule."""
+        folder, dest = (AMENDED if amended else SAVED), os.path.normcase(file or saved_name(*key))
+        for f in self.found:
+            if f.folder != folder or f.torn:
+                continue
+            where, there = (f"{SAVED}/{AMENDED}/{f.file}" if amended else f"{SAVED}/{f.file}"), os.path.normcase(f.file) == dest
+            if f.why and (f.key == key or there):        # a name is the file system's: on Windows, one in another case is the file
+                return f"{where}: {f.why}"
+            if not f.why and there and (f.key != key or (run is not None and f.run != run)):
+                return f"{where} holds the row of {f.run}, a run of {' '.join(map(str, f.key or ()))}: never written over"
+        return ""
+
+
+def _found(archive: Archive, folder: str, path: Path, facts_of: Callable[[str], RunFacts | None]) -> tuple[Found, dict | None]:
+    """One file, read once: what it is (``Found``), and the row it holds when that is its run's own. From a row only the run it
+    names is read here, and what it says of that run's arm, task and repeat, to refuse it if any is not the run's own."""
+    if not plain(path):
+        return Found(folder, path.name, "", None, "it is no plain file (a folder or a link)"), None
+    try:
+        row = json.loads(path.read_bytes().decode("utf-8"))
+    except ValueError:                  # UnicodeDecodeError is a ValueError too
+        row = None
+    if not isinstance(row, dict):
+        return Found(folder, path.name, "", None, "it cannot be read as one JSON object, as a write cut short leaves it",
+                     torn=True), None
+    name = row.get("run") if isinstance(row.get("run"), str) else ""
+    facts = facts_of(name)
+    if facts is None:
+        return Found(folder, path.name, name, None, f"{name!r} is no run the archive started"), None
+    key = (facts.arm, facts.task, facts.repeat) if facts.repeat is not None else None
+    wrong = disagrees(facts, row) or ("its run's start names no repeat" if key is None else "")
+    if wrong:                           # the admission rule's word first, as every entry point gives it
+        return Found(folder, path.name, name, key, "; ".join(x for x in (_why_not(facts, name), wrong) if x)), None
+    return Found(folder, path.name, name, key), row
+
+
+def _unique(found: list[Found]) -> list[Found]:
+    """A run whose rows more than one file of a folder holds, or a key more than one run's row holds, has no row: each is refused."""
+    runs = collections.Counter((f.folder, f.run) for f in found if not f.why)
+    keys: dict[Any, set[str]] = collections.defaultdict(set)
+    for f in found:
+        if not f.why and f.folder == SAVED:
+            keys[f.key].add(f.run)
+    out = []
+    for f in found:
+        if not f.why and runs[(f.folder, f.run)] > 1:
+            f = replace(f, why=f"{runs[(f.folder, f.run)]} files hold a row of its run")
+        elif not f.why and f.folder == SAVED and len(keys[f.key]) > 1:
+            f = replace(f, why=f"{len(keys[f.key])} runs' rows hold its key")
+        out.append(f)
+    return out
+
+
+def shelf(root: Path | Archive, amendment: Callable[[str], Path | None]) -> Shelf:
+    """The one reader of the saved rows (study review 1: the attribution class met a sixth time, its design now enforced). It finds
+    every ``*.json`` in the rows' folder (``SAVED``) and in the amended verdicts' (``AMENDED``), whatever the name, and reads each
+    once. From a row it reads only the run it names, exactly, the verdict being judged and the digest of the ending it was made
+    under; every attribution (arm, task, repeat, status) is the run's own (``run_facts``, read once a run, with the index read
+    once). It refuses a row that names no run the index started, whose run's start names no repeat, that says of its run what the
+    run's facts do not (``disagrees``), or whose run or key another file's row holds too (``_unique``): a refused row is never
+    re-labelled, takes no key and gives no score. Each row that is its run's own comes back with its run's facts and its verdicts
+    together (``Saved``), made from this one read by the one rule (``judge``): on the maintainers' tests; and on the amended tests
+    from the amended row that names its run, for a run admitted now on a bug with an amendment (``amendment``: the bug's diff, or
+    None, which ``run.amendment`` gives; every caller passes it), else the maintainers' verdict, as ``compare`` reads a bug with
+    none. Rows come in the order of their files' names."""
+    archive = root if isinstance(root, Archive) else Archive(Path(root))
+    index, facts = archive.rows(), {}
+
+    def facts_of(name: str) -> RunFacts | None:
+        if name not in facts:
+            facts[name] = run_facts(archive, name, index) if name else None
+        return facts[name]
+
+    found, read = [], {}
+    for folder, where in ((SAVED, archive.root / SAVED), (AMENDED, archive.root / SAVED / AMENDED)):
+        for path in sorted(where.glob("*.json")) if where.is_dir() else ():
+            one, row = _found(archive, folder, path, facts_of)
+            found.append(one)
+            read[(folder, one.file)] = row
+    found = _unique(found)
+    amended = {f.run: (f.file, read[(AMENDED, f.file)]) for f in found if f.folder == AMENDED and not f.why}
+    rows = []
+    for f in found:
+        if f.folder != SAVED or f.why:
+            continue
+        run, row = facts_of(f.run), read[(SAVED, f.file)]
+        why = _why_not(run, run.name)            # the admission rule, read once a row, for every verdict below
+        passes, stands = judge(run, row, why=why), _stands(run, row, why=why)
+        failing, tests = row.get("failing"), row.get("tests")
+        a_file, a_row = amended.get(run.name, (None, None))
+        diff = amendment(run.task) if not why else None
+        sha = sha256_file(diff) if diff is not None else None
+        rows.append(Saved(
+            facts=run, key=f.key, file=f.file, admitted=not why, passes=passes, holds=stands,
+            failing=failing if stands and isinstance(failing, int) and not isinstance(failing, bool) else None,
+            tests=tuple(str(t) for t in tests) if stands and isinstance(tests, list) else (),
+            amended=judge(run, a_row, amendment=sha, why=why) if sha else passes,
+            amended_holds=bool(sha) and _stands(run, a_row, sha, why), amended_file=a_file, amendment_sha256=sha))
+    return Shelf(rows=tuple(rows), found=tuple(found))
+
+
+def saved_rows(root: Path | Archive, amendment: Callable[[str], Path | None]) -> list[Saved]:
+    """Every saved row that is its run's own, with its run's facts and its verdicts (``shelf``)."""
+    return list(shelf(root, amendment).rows)
+
+
+def saved_row(root: Path | Archive, arm: str, task: str, repeat: Any, amendment: Callable[[str], Path | None]) -> Saved | None:
+    """The saved row of the run whose start names this arm, task and repeat (``shelf``), or None."""
+    return shelf(root, amendment).get((arm, task, repeat))
+
+
+def _whole(path: Path, data: bytes) -> None:
+    """``data`` at ``path``, whole or not at all: written to a file of its own in the same folder (a name no reader looks for), flushed
+    to the disk, then put in place by ``os.replace``, so a stop leaves the file as it was or as it is now, never cut short."""
+    handle, part = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".part")
+    try:
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(part, path)
+    except BaseException:
+        with suppress(OSError):
+            os.unlink(part)
+        raise
+
+
+def keep(root: Path | Archive, row: Mapping[str, Any], *, amended: bool = False, file: str | None = None) -> Path:
+    """The one writer of the saved rows: ``loop.one``'s row, or ``loop.rescore``'s amended one (``amended``), written whole or not at
+    all (``_whole``), in the file its run's row is kept in already (``file``), else under the name its run's start gives
+    (``saved_name``). It is refused (``ArchiveError``), and nothing is written, for a row that names no run the index started, of a
+    start that names no repeat, or that says of its run what the run's facts do not; and for a file there that holds another run's
+    row, read again here, just before the write, so another run's row is never written over. A torn file there is replaced."""
+    archive = root if isinstance(root, Archive) else Archive(Path(root))
+    name = row.get("run") if isinstance(row.get("run"), str) else ""
+    facts = run_facts(archive, name) if name else None
+    wrong = (f"{name!r} is no run the archive started" if facts is None
+             else disagrees(facts, row) or ("its run's start names no repeat" if facts.repeat is None else ""))
+    if wrong:
+        raise ArchiveError(f"no row of {name!r} is written: {wrong}")
+    folder = archive.root / SAVED / AMENDED if amended else archive.root / SAVED
+    file = file or saved_name(facts.arm, facts.task, facts.repeat)
+    if Path(file).name != file or not file.endswith(".json"):
+        raise ValueError(f"{file!r} is no saved row's name")
+    path = folder / file
+    try:
+        held = json.loads(path.read_bytes().decode("utf-8"))
+    except FileNotFoundError:
+        held = None
+    except ValueError:                  # torn: replaced
+        held = None
+    if isinstance(held, dict) and held.get("run") != facts.name:
+        raise ArchiveError(f"{path.name} holds the row of {held.get('run')!r}, another run's: it is never written over")
+    folder.mkdir(parents=True, exist_ok=True)
+    _whole(path, json.dumps(dict(row), indent=1).encode("utf-8"))
+    return path
+
 
 
 def scoreable(record: Mapping[str, Any] | None) -> bool:

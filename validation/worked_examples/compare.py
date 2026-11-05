@@ -42,28 +42,22 @@ def saved(root: Path) -> dict[tuple[str, str, int], dict[str, bool | None]]:
     """Each saved run's two verdicts; None is missing, and a missing verdict is neither a pass nor a failure. A finished
     run with no independent verdict has none on either score. A bug with no amendment has one score, and an amended bug
     has an amended verdict only if it was scored for this run on the diff as it stands. Each is read by one rule, the run's ending
-    first (``wecommon.verdict``): a verdict saved under an ending the run no longer has is void. Every row, and every key, is found
-    by ``wecommon.saved_rows``: a score is the run's arm's, task's and repeat's, as its start names them, and a row that is no run's
-    own takes no key, so it can change no run's score. "first", for the within-run comparison (``within``): the run's first patch's
-    verdict on the maintainers' tests ("round-1": K3's baseline, any other K arm's first round), from the newest check of the run
-    by its exact name, given only beside a maintainers' verdict that check's final patch agrees with."""
+    first (``wecommon.judge``): a verdict saved under an ending the run no longer has is void. Every row, every key and both
+    verdicts come from one read by the saved rows' one reader (``wecommon.shelf``): a score is the run's arm's, task's and repeat's,
+    as its start names them, and a row that is no run's own takes no key, so it can change no run's score. "first", for the within-run
+    comparison (``within``): the run's first patch's verdict on the maintainers' tests ("round-1": K3's baseline, any other K arm's
+    first round), from the newest check of the run by its exact name, given only beside a maintainers' verdict that check's final
+    patch agrees with."""
     rows: dict[tuple[str, str, int], dict[str, bool | None]] = {}
     archive = c.Archive(root)
     checks: dict[str, list[str]] = {}
     for r in archive.rows():
         if r.get("event") == "started" and r.get("kind") == "check" and "checked_run" in r:
             checks.setdefault(str(r["checked_run"]), []).append(str(r["run"]))
-    for one in c.saved_rows(archive):
-        facts = one.facts
-        passes = c.verdict(archive, facts.name, one.row)     # none for a run the admission rule does not admit now
-        amended = passes
-        diff = we.amendment(facts.task) if we.scored_run(archive, facts.name) else None
-        if diff:
-            again = root / c.SAVED / c.AMENDED / one.name
-            kept = json.loads(again.read_text("utf-8")) if again.is_file() else None
-            amended = c.verdict(archive, facts.name, kept, amendment=c.sha256_file(diff))
+    for one in c.saved_rows(archive, we.amendment):
+        facts, passes = one.facts, one.passes      # none for a run the admission rule does not admit now
         shown = {"arm": facts.arm, "run": facts.name}       # the report's readers: the run's own arm, and its folder by its name
-        rows[one.key] = {"maintainers": passes, "amended": amended, "said": said_of(root, shown)}
+        rows[one.key] = {**one.scores, "said": said_of(root, shown)}
         first = first_of(root, checks.get(facts.name, ()), passes)
         if first is not None:
             rows[one.key]["first"] = first
@@ -77,13 +71,16 @@ def saved(root: Path) -> dict[tuple[str, str, int], dict[str, bool | None]]:
 
 def first_of(root: Path, checks: Sequence[str], passes: bool | None) -> bool | None:
     """A run's first patch's verdict ("round-1") from the newest of its checks that has a record (``checks``, oldest first), only
-    when that check's final patch gives the maintainers' verdict ``passes``; else None."""
+    when that check's final patch gives the maintainers' verdict ``passes``; else None. A verdict that is not true or false is
+    unknown, never a failure: an unknown first patch is no baseline, and an unknown final one agrees with nothing (study review 1,
+    finding 19)."""
     if passes is None:
         return None
     for name in reversed(checks):
         by = {row.get("patch"): row.get("passes") for row in record(root / name / "run.json").get("checks") or []}
         if "final" in by:
-            return bool(by["round-1"]) if "round-1" in by and bool(by["final"]) is passes else None
+            first, final = by.get("round-1"), by["final"]
+            return first if isinstance(first, bool) and isinstance(final, bool) and final is passes else None
     return None
 
 
@@ -153,7 +150,7 @@ def by_bug(rows: Rows, loop_arm: str, other: str, tasks: Iterable[str], repeats:
     counts = {"better": 0, "worse": 0, "same": 0}
     for task in tasks:
         ours, theirs = ([rows.get((arm, task, r), {}).get(score) for r in repeats] for arm in (loop_arm, other))
-        if None in ours or None in theirs:
+        if not repeats or None in ours or None in theirs:      # no repeat asked is no pair, never a bug the same
             continue
         ahead = sum(map(bool, ours)) - sum(map(bool, theirs))
         counts["better" if ahead > 0 else "worse" if ahead < 0 else "same"] += 1
@@ -210,9 +207,10 @@ def within(rows: Rows, arm: str, tasks: Iterable[str], repeats: Iterable[int]) -
     """The within-run comparison (PLAN.md, 2026-11-05, midday): each of ``arm``'s runs' final patch against its own first patch, on
     the maintainers' tests, by bug (night, later): per bug, the final patches' passes minus the first patches' (``saved``'s
     "maintainers" and "first"); better, worse or the same, and ``p``, the exact one-sided sign test on bugs better against bugs
-    worse, which decides (``within_judged``). A run with no first verdict (no Claude Code baseline, or no check of its first patch)
-    or no final one is no pair: it is counted (``missing``), and its bug counts neither way. The run-level counts (first patches
-    made right, ``converted``, and made wrong, ``broken``) and their sign test (``run_p``) are reported beside it, never decisive."""
+    worse, which decides (``within_judged``). A run with no first verdict (no Claude Code baseline, no check of its first patch, or
+    one that is unknown) or no final one is no pair: it is counted (``missing``), and its bug counts neither way. The run-level
+    counts (pairs, first patches made right, ``converted``, and made wrong, ``broken``) keep every pair a bug has, a bug with a run
+    missing included (study review 1, finding 5), and their sign test (``run_p``) is reported beside it, never decisive."""
     repeats = list(repeats)
     counts = {"better": 0, "worse": 0, "same": 0}
     pairs = missing = converted = broken = 0
@@ -220,11 +218,11 @@ def within(rows: Rows, arm: str, tasks: Iterable[str], repeats: Iterable[int]) -
         got = [(rows.get((arm, task, r), {}).get("first"), rows.get((arm, task, r), {}).get("maintainers")) for r in repeats]
         whole = [(a, b) for a, b in got if a is not None and b is not None]
         missing += len(got) - len(whole)
-        if len(whole) < len(got):
-            continue
         pairs += len(whole)
         converted += sum(b and not a for a, b in whole)
         broken += sum(a and not b for a, b in whole)
+        if not got or len(whole) < len(got):      # no repeat asked is no pair, never a bug the same
+            continue
         ahead = sum(bool(b) for _, b in whole) - sum(bool(a) for a, _ in whole)
         counts["better" if ahead > 0 else "worse" if ahead < 0 else "same"] += 1
     return {"arm": arm, **counts, "p": sign_test(counts["better"], counts["worse"]), "pairs": pairs, "missing": missing,

@@ -898,7 +898,7 @@ def test_a_k3_run_that_kept_no_first_patch_was_made_and_is_never_made_again(tmp_
 def test_one_admission_rule_every_entry_point_asks_a_saved_k3_row_whose_baseline_changed_has_no_verdict(monkeypatch, tmp_path):
     """``unscored_why`` is the one rule: a saved row is given, rescored and compared only while it admits the run now."""
     archive = we.c.Archive(tmp_path)
-    run = archive.start("run", "fake-1", arm="K3")
+    run = archive.start("run", "fake-1", arm="K3", repeat=1)      # study review 1, finding 6: a row's repeat is its start's
     _keep_baseline(archive, run, b"the first session's tree")
     run.finish({"arm": "K3", "agent_started": True}, "finished")
     diff = tmp_path / "amendment.patch"
@@ -954,7 +954,7 @@ def test_repair_1_a_saved_row_naming_another_arm_is_refused_by_every_entry_point
 def test_review_2_finding_3_a_saved_rows_status_never_overrides_the_runs_archived_ending(monkeypatch, tmp_path):
     archive, task = we.c.Archive(tmp_path), SimpleNamespace(id="fake-1")
     archive.start("validate", task.id).finish({"fail_to_pass": ["test_bug"], "pass_to_pass": []}, "finished")
-    run = archive.start("run", task.id, arm="K2")
+    run = archive.start("run", task.id, arm="K2", repeat=1)      # study review 1, finding 6: a row's repeat is its start's
     run.write("final.patch", b"patch")
     run.finish({"arm": "K2", "agent_started": True}, "finished")
     (tmp_path / "loop").mkdir()
@@ -1139,7 +1139,7 @@ def test_review_3_finding_5_compare_never_scores_a_run_under_the_arm_a_saved_row
 def test_review_3_finding_6_the_export_reads_the_index_by_its_torn_tail_rule(tmp_path):
     import export_reviewer_cases as ex
     archive = we.c.Archive(tmp_path)
-    run = archive.start("run", "bug", arm="K2", executor="host")
+    run = archive.start("run", "bug", arm="K2", executor="host", repeat=1)      # study review 1, finding 6
     run.finish({"executor": "host"}, "finished")
     run.write("final.patch", b"patch")
     (tmp_path / "loop").mkdir()
@@ -1450,7 +1450,7 @@ def test_the_reviewer_export_finds_k3s_round_1_in_its_baseline_only_while_it_has
     archive, task, runs = we.c.Archive(tmp_path), "black-5634", {}
     (tmp_path / "loop").mkdir()
     for arm in ("K3", "K2"):
-        run = archive.start("run", task, arm=arm)
+        run = archive.start("run", task, arm=arm, repeat=1)      # study review 1, finding 6: a row's repeat is its start's
         if arm == "K3":
             _keep_baseline(archive, run, b"the first session's tree")
             run.write("rounds/rule.patch", b"after the rule step")
@@ -1462,7 +1462,8 @@ def test_the_reviewer_export_finds_k3s_round_1_in_its_baseline_only_while_it_has
                   {"patch": "final", "passes": True}]
         archive.start("check", task, checked_run=run.rel).finish({"checks": checks}, "finished")
         (tmp_path / "loop" / f"{arm}-{task}-1.json").write_text(json.dumps({"arm": arm, "task": task, "repeat": 1, "run": run.rel,
-                                                                             "status": "finished", "passes": True}), "utf-8")
+                                                                             "status": "finished", "passes": True,
+                                                                             "failing": 0}), "utf-8")     # as loop.one keeps it
         runs[arm] = run
     k3, k2, baseline = runs["K3"].path, runs["K2"].path, we.baseline_of(runs["K3"].path)
     got = {(path, ok) for _, path, ok in ex.labelled(tmp_path, task)}         # K3's baseline as the bytes checked by its digest
@@ -1478,7 +1479,7 @@ def test_repair_4_the_export_labels_the_baseline_bytes_it_checked_and_never_read
     ``distinct`` (the case's id and label) and ``main`` (the case's diff, ``diff_of``) use those bytes, never the path again."""
     import export_reviewer_cases as ex
     archive, task = we.c.Archive(tmp_path), "black-5634"
-    run = archive.start("run", task, arm="K3")
+    run = archive.start("run", task, arm="K3", repeat=1)      # study review 1, finding 6: a row's repeat is its start's
     _keep_baseline(archive, run, b"checked first-session patch\r\n")
     baseline = we.baseline_of(run.path)
     run.write("final.patch", b"final patch")

@@ -310,7 +310,7 @@ def reproduce_review(ctx: we.Context, task: we.Task, patch: Path, title: str, te
 def _kept(root: Path, row: Mapping[str, Any], folder: str = FOLDER) -> Path | None:
     """Where the review of this run's patch is saved, by the patch's digest, so that identical patches share one."""
     patch = root / str(row.get("run")) / "final.patch"
-    return root / "loop" / folder / f"{c.sha256_file(patch)}.json" if patch.is_file() else None
+    return c.beside(root, folder) / f"{c.sha256_file(patch)}.json" if patch.is_file() else None
 
 
 def saved(root: Path, row: Mapping[str, Any], folder: str = FOLDER) -> dict[str, Any] | None:
@@ -353,7 +353,7 @@ def keep(root: Path, row: Mapping[str, Any], found: Mapping[str, Any], folder: s
     """Save a review under the patch's digest, whole or not at all: it is written beside its place and moved there, so a run cut
     short leaves no half record. ``sha``, where given, is the digest of the bytes the review read, so a patch file changed since
     is not given this review."""
-    path = root / "loop" / folder / f"{sha}.json" if sha else _kept(root, row, folder)
+    path = c.beside(root, folder) / f"{sha}.json" if sha else _kept(root, row, folder)
     path.parent.mkdir(exist_ok=True)
     write_whole(path, json.dumps({"task": row["task"], "first_seen_in": row.get("run"), **found}, indent=1))
 
@@ -367,14 +367,16 @@ def write_whole(path: Path, text: str) -> None:
 
 
 def waiting(root: Path, tasks: Sequence[str], folder: str = FOLDER) -> list[dict[str, Any]]:
-    """The finished runs of these bugs with a patch no review has spoken on, one run for each distinct patch, in digest order."""
+    """The finished runs of these bugs with a patch no review has spoken on, one run for each distinct patch, in digest order. Each
+    run, its bug and how it ended are its own facts, found by the saved rows' one reader (``wecommon.shelf``), never what a saved
+    row says, so a row that is no run's own schedules nothing (study review 1, finding 7); each comes as the row ``loop.one`` keeps,
+    made from those facts and the run's verdict (``Saved.record``)."""
     found: dict[str, dict[str, Any]] = {}
-    for path in sorted((root / "loop").glob("*-*.json")):
-        row = json.loads(path.read_text("utf-8"))
-        patch = root / str(row.get("run")) / "final.patch"
-        if row.get("task") in tasks and row.get("status") == "finished" and patch.is_file() and patch.stat().st_size \
-                and said_of(root, row, folder) is None:
-            found.setdefault(c.sha256_file(patch), row)
+    for one in c.saved_rows(root, we.amendment):
+        patch = one.facts.folder / "final.patch"
+        if one.facts.task in tasks and (one.facts.ending or {}).get("status") == "finished" and patch.is_file() \
+                and patch.stat().st_size and said_of(root, one.record(), folder) is None:
+            found.setdefault(c.sha256_file(patch), one.record())
     return [found[sha] for sha in sorted(found)]
 
 

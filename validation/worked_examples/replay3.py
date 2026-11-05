@@ -153,7 +153,7 @@ def verdict(found: Mapping[str, Any], base: we.ProbeRun | None, now: we.ProbeRun
 def bug_record(root: Path, task: str, ins: Instruction | None = None) -> Path:
     """Where a bug's test of the rule is saved: one a bug and instruction."""
     ins = ins or rule()
-    return root / "loop" / ins.folder / "bugs" / f"{task}-{ins.digest}.json"
+    return c.beside(root, ins.folder) / "bugs" / f"{task}-{ins.digest}.json"
 
 
 class Checked:
@@ -253,7 +253,7 @@ def main(argv: Sequence[str] | None = None, ins: Instruction | None = None) -> N
 
     replay_compare.patches(root, args.tasks)          # refuses a patch on two bugs, which this replay names by its bytes alone
     print(json.dumps({"instruction": ins.digest}), flush=True)
-    with one_runner(root / "loop" / ins.folder):
+    with one_runner(c.beside(root, ins.folder)):
         _run(ctx, root, args.tasks, ins)
 
 

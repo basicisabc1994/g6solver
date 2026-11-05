@@ -42,11 +42,13 @@ def verdict(cell: dict[str, Any]) -> str:
 
 
 def runs_of(root: Path, task: str) -> list[dict[str, Any]]:
+    """The saved runs of ``task`` with a final patch, each as the row ``loop.one`` keeps (``Saved.record``): its arm, bug, repeat and
+    verdict are its run's own, found by the saved rows' one reader (``wecommon.shelf``), never what a saved row says (study review
+    1, finding 1)."""
     rows = []
-    for saved in sorted((root / "loop").glob(f"*-{task}-*.json")):
-        row = json.loads(saved.read_text("utf-8"))
-        folder = root / str(row.get("run"))
-        if (folder / "final.patch").is_file():
+    for one in c.saved_rows(root, we.amendment):
+        row, folder = one.record(), one.facts.folder
+        if one.facts.task == task and (folder / "final.patch").is_file():
             rows.append({**row, "label": f"{row['arm']}-{row['repeat']}", "folder": folder})
     return rows
 
@@ -90,17 +92,18 @@ def replay_task(docker: Any, root: Path, task: we.Task, g6: str) -> dict[str, An
         finally:
             docker("rm", "-f", name, timeout=300)
     return {"task": task.id, "sets": [r["label"] for r in sets],
-            "patches": {r["label"]: bool(r["passes"]) for r in rows}, "matrix": matrix}
+            "patches": {r["label"]: r["passes"] for r in rows}, "matrix": matrix}
 
 
 def table(got: dict[str, Any]) -> str:
-    """Rows are the code, columns the probe sets: patches the maintainers' tests accept are marked ``+``."""
+    """Rows are the code, columns the probe sets: patches the maintainers' tests accept are marked ``+``, those they reject ``-``,
+    and those with no verdict ``?``: an unknown verdict is no rejection."""
     sets = got["sets"]
     lines = [f"== {got['task']}", " " * 12 + " ".join(f"{s:>6}" for s in sets)]
     for code, cells in got["matrix"].items():
         if cells.get("unapplied"):
             continue
-        mark = {"base": "B", "fix": "F"}.get(code) or ("+" if got["patches"].get(code) else "-")
+        mark = {"base": "B", "fix": "F"}.get(code) or {True: "+", False: "-"}.get(got["patches"].get(code), "?")
         lines.append(f"{mark} {code:<10}" + " ".join(f"{verdict(cells[s]):>6}" for s in sets))
     return "\n".join(lines)
 

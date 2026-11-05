@@ -99,7 +99,8 @@ def test_the_within_run_comparison_decides_by_bug_on_each_runs_final_patch_again
     rows[("K3", "e", 2)] = {"maintainers": True}                           # no first verdict (no baseline): no pair, and counted
     rows[("K3", "d", 1)] = {"first": True, "maintainers": False}           # a right first patch made wrong
     got = compare.within(rows, "K3", "abcde", (1, 2))
-    assert (got["better"], got["same"], got["missing"], got["pairs"], got["broken"]) == (3, 1, 1, 8, 1)
+    # bug e counts neither way, and keeps the one pair it has (study review 1, finding 5): a to d's 8 pairs, and e's 1
+    assert (got["better"], got["same"], got["missing"], got["pairs"], got["broken"]) == (3, 1, 1, 9, 1)
     assert not compare.within_judged(got)
 
 
@@ -515,8 +516,8 @@ def _archive(root, monkeypatch, *rows):
         made.mkdir(parents=True, exist_ok=True)
         if not (made / "run.json").exists():
             (made / "run.json").write_text(json.dumps({"status": row["status"], "agent_started": True}), "utf-8")
-            compare.c.Archive(root).append({"event": "started", "run": row["run"], "kind": "run", "arm": row["arm"],  # its start
-                                            "task": row["task"]})
+            compare.c.Archive(root).append({"event": "started", "run": row["run"], "kind": "run", "arm": row["arm"],  # its start,
+                                            "task": row["task"], "repeat": row["repeat"]})    # which names its repeat (finding 6)
     (root / "loop" / "cegis.json").write_text('{"status": "inconclusive"}', "utf-8")
     return compare.c.sha256_file(diff)
 

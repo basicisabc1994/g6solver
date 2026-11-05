@@ -19,9 +19,9 @@ import tokenize
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
-import compare
 import product_review as pr
 import replay_compare as rc
+import run as we
 import wecommon as c
 from g6.core.binomial import lower_bound, upper_bound
 
@@ -134,13 +134,15 @@ def overlap(kinds: Mapping[str, str], said: Said, a: str, b: str) -> dict[str, o
 
 def runs_of(root: Path, tasks: Iterable[str], score: str) -> dict[str, list[tuple[str, object, bool]]]:
     """Each bug's finished runs with a non-empty final patch and a truth on ``score``, as (digest, normalised change, right). Each
-    run, its bug and how it ended are its own facts (``wecommon.saved_rows``), never what its saved row says."""
-    wanted, verdicts, cache = set(tasks), compare.saved(root), {}
+    run, its bug and how it ended are its own facts, and its truth is that run's verdict, both from one read by the saved rows' one
+    reader (``wecommon.shelf``): never what its saved row says, and never a score read apart from its run (study review 1, finding
+    22)."""
+    wanted, cache = set(tasks), {}
     out: dict[str, list[tuple[str, object, bool]]] = collections.defaultdict(list)
-    for saved in c.saved_rows(root):
+    for saved in c.saved_rows(root, we.amendment):
         facts = saved.facts
         patch = facts.folder / "final.patch"
-        truth = verdicts.get(saved.key, {}).get(score)
+        truth = saved.scores.get(score)
         if facts.task not in wanted or (facts.ending or {}).get("status") != "finished" or truth is None or not patch.is_file() \
                 or not patch.stat().st_size:
             continue

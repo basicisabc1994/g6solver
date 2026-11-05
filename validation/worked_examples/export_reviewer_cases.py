@@ -153,9 +153,10 @@ def distinct(rows: Iterable[tuple[str, Path | bytes, Any]]) -> dict[tuple[str, s
 
 
 def diff_of(data: bytes) -> str:
-    """A case's patch as text, from the bytes its id was made from: UTF-8 with what cannot be read replaced, and its line ends made "\\n", as
-    ``Path.read_text`` read a patch before."""
-    return data.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+    """A case's patch as text, from the bytes its id was made from: UTF-8 with a byte that is not held as it is (``surrogateescape``,
+    never a replacement character, so the file names ``changed`` reads from it are git's own, and two names git keeps apart stay
+    apart all the way through: study review 1, finding 14), and its line ends made "\\n", as ``Path.read_text`` read a patch before."""
+    return data.decode("utf-8", errors="surrogateescape").replace("\r\n", "\n").replace("\r", "\n")
 
 
 def row(task: str, sha: str, text: str, ok: bool) -> dict[str, str]:
@@ -182,23 +183,23 @@ def labelled(root: Path, task: str) -> list[tuple[str, Path | bytes, Any]]:
     admission rule admits (``run.scored_run``) and that finished gives cases, and its folder is opened by its exact name only. Arm
     K3 keeps its first patch, "round-1", in its baseline folder (``run.baseline_of``), not in ``rounds``; it is a case only while
     its bytes have the digest kept at its capture (``run.baseline_bytes``), and it is handed on as those bytes, never as its path,
-    so the case is what was checked. Every row, and the bug it is of, is found by ``wecommon.saved_rows`` (its run's start's, never
-    its file's name or what it says), so a row that is no run's own gives no case. A verdict a row holds is read by the one rule,
-    ``wecommon.verdict``: an amended one only when it was saved for this run, under its ending, on the diff as it stands (review 4,
-    finding 2), and a final patch's maintainers' verdict, where its check gives none, the same way."""
+    so the case is what was checked. Every row, the bug it is of and its verdicts come from one read by the saved rows' one reader
+    (``wecommon.shelf``: its run's start's, never its file's name or what it says), so a row that is no run's own gives no case. A
+    final patch's label is the run's verdict as that read gives it, by the one rule every entry point reads (``wecommon.judge``),
+    never a check's newer word (study review 1, finding 4): an amended one only when it was saved for this run, under its ending, on
+    the diff as it stands (review 4, finding 2). A patch before the final one is labelled by the newest check of the run, and one
+    whose verdict there is not true or false has no label."""
     checks, rows, archive = _checks(root, task), [], c.Archive(root)
-    for one in c.saved_rows(archive):
+    for one in c.saved_rows(archive, we.amendment):
         facts = one.facts
-        if facts.task != task or not we.scored_run(archive, facts.name) or (facts.ending or {}).get("status") != "finished":
+        if facts.task != task or not one.admitted or (facts.ending or {}).get("status") != "finished":     # as the one read found it
             continue
         run, folder = facts.name, facts.folder
         if task in AMENDED:
-            again, diff = root / c.SAVED / c.AMENDED / one.name, we.amendment(task)
-            if again.is_file() and diff is not None:
-                kept = json.loads(again.read_text("utf-8"))
-                rows.append((task, folder / "final.patch", c.verdict(archive, run, kept, amendment=c.sha256_file(diff))))
+            if one.amendment_sha256 is not None and one.amended_file is not None:      # a diff, and a verdict kept on one
+                rows.append((task, folder / "final.patch", one.amended))
             continue
-        by = {check.get("patch"): bool(check.get("passes")) for check in checks.get(run, [])}
+        by = {check.get("patch"): check.get("passes") for check in checks.get(run, [])}
         first = Path(we.FIRST_PATCH).stem if we.rule_led(facts.arm) else None
         for name, ok in by.items():
             if name == "final":
@@ -207,7 +208,7 @@ def labelled(root: Path, task: str) -> list[tuple[str, Path | bytes, Any]]:
                 rows.append((task, folder / "rounds" / f"{name}.patch", ok))
             elif (checked := we.baseline_bytes(archive, run)) is not None:    # K3's baseline: the bytes checked by the kept digest
                 rows.append((task, checked, ok))
-        rows.append((task, folder / "final.patch", by["final"] if "final" in by else c.verdict(archive, run, one.row)))
+        rows.append((task, folder / "final.patch", one.passes))
     return rows
 
 
@@ -238,7 +239,7 @@ def parent_files(task: str, paths: Iterable[str], cache: Path) -> dict[str, str]
 
 
 def issue_for(root: Path, task: str) -> str:
-    one = c.saved_row(root, "K1", task, 1)       # the saved row of the run whose start names K1, this bug and repeat 1
+    one = c.saved_row(root, "K1", task, 1, we.amendment)       # the saved row of the run whose start names K1, this bug and repeat 1
     if one is None:
         raise SystemExit(f"no saved row of K1 {task} 1 is its run's own")
     return issue_of((one.facts.folder / "prompt.txt").read_text("utf-8", errors="replace"))

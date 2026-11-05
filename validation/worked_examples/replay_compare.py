@@ -59,10 +59,11 @@ def patches(root: Path, tasks: Iterable[str]) -> dict[str, dict[str, Any]]:
     """Each distinct final patch of these bugs' finished runs, by digest and in digest order: its bug, its truth on each score
     (None where its runs' verdicts differ or none was scored), the scores it is split on, and each reviewer's ``said`` and
     ``verdict`` from its saved review (None where there is no saved review). Each run, its bug and how it ended are its own facts,
-    found by ``wecommon.saved_rows``, never what its saved row says."""
-    wanted, verdicts = set(tasks), compare.saved(root)
+    and its verdicts that run's own, both from one read by the saved rows' one reader (``wecommon.shelf``): never what its saved
+    row says, and never a score read apart from its run (study review 1, finding 22)."""
+    wanted = set(tasks)
     found: dict[str, dict[str, Any]] = {}
-    for saved in c.saved_rows(root):
+    for saved in c.saved_rows(root, we.amendment):
         facts = saved.facts
         patch = facts.folder / "final.patch"
         if facts.task not in wanted or (facts.ending or {}).get("status") != "finished" or not patch.is_file() \
@@ -74,7 +75,7 @@ def patches(root: Path, tasks: Iterable[str]) -> dict[str, dict[str, Any]]:
             raise ValueError(f"the patch {sha[:12]} is on two bugs, {one['task']} and {facts.task}, and a review is saved by "
                              "its digest alone")
         for score in SCORES:
-            value = verdicts.get(saved.key, {}).get(score)
+            value = saved.scores.get(score)
             if value is not None:
                 one["seen"][score].add(bool(value))
     for sha, one in found.items():
@@ -82,7 +83,7 @@ def patches(root: Path, tasks: Iterable[str]) -> dict[str, dict[str, Any]]:
         one.update({score: next(iter(seen[score])) if len(seen[score]) == 1 else None for score in SCORES})
         one["split"] = [score for score in SCORES if len(seen[score]) > 1]
         for name, folder in REVIEWERS:
-            kept = fr.read(root / "loop" / folder / f"{sha}.json")     # one that cannot be read is no review, as the replays read it
+            kept = fr.read(c.beside(root, folder) / f"{sha}.json")     # one that cannot be read is no review, as the replays read it
             if not (fr.counts(kept) or (kept or {}).get("said") == "failed"):
                 kept = None          # neither a review nor a failed one, so no record at all: it completes no block, as none does
             one[name] = {"said": kept["said"], "verdict": kept.get("verdict")} if kept else None

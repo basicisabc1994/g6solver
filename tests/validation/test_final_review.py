@@ -150,15 +150,16 @@ def test_a_reviewer_that_fails_is_recorded_and_everything_it_used_goes(tmp_path)
 
 
 def _row(root, arm, task="x-1", repeat=1, body="one patch", status="finished"):
-    run = root / "run" / f"{arm}{repeat}"
+    run = root / "run" / task / f"{arm}{repeat}"         # a run of one bug: its start names it (study review 1, finding 7)
     run.mkdir(parents=True, exist_ok=True)
     (run / "final.patch").write_text(body, "utf-8")
-    row = {"arm": arm, "task": task, "repeat": repeat, "run": f"run/{arm}{repeat}", "status": status, "passes": True, "failing": 0}
+    row = {"arm": arm, "task": task, "repeat": repeat, "run": f"run/{task}/{arm}{repeat}", "status": status, "passes": True,
+           "failing": 0}
     (root / "loop").mkdir(exist_ok=True)
     (root / "loop" / f"{arm}-{task}-{repeat}.json").write_text(json.dumps(row), "utf-8")
     (run / "run.json").write_text(json.dumps({"status": status, "agent_started": True}), "utf-8")    # the run as the archive
-    compare.c.Archive(root).append({"event": "started", "run": row["run"], "kind": "run", "arm": arm, "task": task})  # holds it:
-                                                                                                                       # its start
+    compare.c.Archive(root).append({"event": "started", "run": row["run"], "kind": "run", "arm": arm, "task": task,  # holds it:
+                                    "repeat": repeat})                     # its start, which names its repeat (study review 1, 6)
     return row
 
 

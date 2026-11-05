@@ -731,11 +731,15 @@ def convert_cases() -> list[dict[str, Any]]:
 
 
 def convert_start(root: Path, task: str, repeat: int) -> tuple[Path, dict[str, str]]:
-    """The saved patch a conversion run starts from, and the rule, reasons and test of the saved review of it."""
+    """The saved patch a conversion run starts from, and the rule, reasons and test of the saved review of it. The run is the one
+    whose start names the case's arm, bug and repeat, found by the saved rows' one reader (``wecommon.shelf``), never by what a
+    saved row says."""
     case = next(x for x in convert_cases() if (x["task"], x["repeat"]) == (task, repeat))
-    row = json.loads((root / "loop" / f"{case['arm']}-{task}-{case['of']}.json").read_text("utf-8"))
-    patch = root / row["run"] / "final.patch"
-    found = json.loads((root / "loop" / "final_review" / f"{c.sha256_file(patch)}.json").read_text("utf-8"))
+    held = c.saved_row(root, case["arm"], task, case["of"], amendment)
+    if held is None:
+        raise ValueError(f"{case['arm']}-{case['of']} of {task} has no saved row that is its run's own")
+    patch = held.facts.folder / "final.patch"
+    found = json.loads((c.beside(root, "final_review") / f"{c.sha256_file(patch)}.json").read_text("utf-8"))
     if found.get("said") != "reproduced":
         raise ValueError(f"{case['arm']}-{case['of']} of {task} has no reproduced finding")
     return patch, {k: str(found.get(k) or "") for k in ("rule", "why", "test")}

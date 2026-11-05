@@ -233,8 +233,8 @@ def _row(root, arm, task, repeat, *, passes, amended=None, repairs=None, reply=N
     (run / "final.patch").write_text(f"diff --git a/src/{task}.py b/src/{task}.py\n+x\n", "utf-8")
     (run / "final_report.txt").write_text("done", "utf-8")
     (run / "run.json").write_text(json.dumps({"status": "finished", "agent_started": True}), "utf-8")   # its own record
-    c.Archive(root).append({"event": "started", "run": f"run/{task}/{arm}{repeat}", "kind": "run", "arm": arm,      # and its start
-                            "task": task})
+    c.Archive(root).append({"event": "started", "run": f"run/{task}/{arm}{repeat}", "kind": "run", "arm": arm,      # and its start,
+                            "task": task, "repeat": repeat})          # which names its repeat (study review 1, finding 6)
     for label, results in (repairs or {}).items():
         (run / f"repair_check_1_{label}.json").write_text(json.dumps({"results": results}), "utf-8")
     if reply:

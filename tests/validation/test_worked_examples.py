@@ -1040,20 +1040,24 @@ def test_distillation_refuses_text_naming_a_project_a_test_or_a_file():
     assert distill.named("run test_blank_lines on module_y.py", tests, files) == ["module_y.py", "test_blank_lines"]
 
 
-def _made(root, rel, status):
+def _made(root, rel, status, *, repeat=1, cost=None):
     """A run as the archive holds it once made: its folder and its own record, which the admission rule reads
-    (``run.unscored_why``); a row or a runner's output only names it."""
+    (``run.unscored_why``); a row or a runner's output only names it. Its start names its repeat, as every round 3 run's does, and
+    with ``cost`` its end in the index says what it cost, as ``RunFolder.finish`` writes it (study review 1: every attribution and
+    a run's cost are its own facts, never a row's)."""
     (root / rel).mkdir(parents=True, exist_ok=True)
     (root / rel / "run.json").write_text(json.dumps({"status": status, "agent_started": True}), "utf-8")
     c.Archive(root).append({"event": "started", "run": rel, "kind": "run", "arm": "A",    # and its start in the index, by its
-                            "task": rel.split("/")[1]})                                  # name: run/<task>/<n>, arm A's
+                            "task": rel.split("/")[1], "repeat": repeat})                # name: run/<task>/<n>, arm A's
+    if cost is not None:
+        c.Archive(root).append({"event": "ended", "run": rel, "status": status, "cost_usd": cost})
 
 
 def test_the_loop_reads_the_runners_output_and_stops_on_a_refusal(tmp_path, monkeypatch):
     pytest.importorskip("distill")
     import loop
-    _made(tmp_path, "run/x/1", "finished")
-    _made(tmp_path, "run/z/1", "finished")
+    _made(tmp_path, "run/x/1", "finished", cost=0.2)
+    _made(tmp_path, "run/z/1", "finished", cost=0.3)
     assert loop.last_json('noise\n{\n "run": "r"\n}\n{\n "status": "finished"\n}\n') == {"run": "r", "status": "finished"}
     checked = json.dumps({"checks": [{"patch": "round-1", "passes": True, "failing": []},
                                      {"patch": "final", "passes": False, "failing": 2,
@@ -1088,13 +1092,13 @@ def test_the_loop_saves_nothing_for_a_run_with_no_verdict(tmp_path, monkeypatch)
 
 def _saved_runs(root, monkeypatch, loop):
     (root / "loop").mkdir()
-    rows = [{"arm": "A", "task": "x-1", "repeat": 1, "run": "run/x-1/1", "status": "finished", "passes": False},
-            {"arm": "A", "task": "x-1", "repeat": 2, "run": "run/x-1/2", "status": "error", "passes": False},
-            {"arm": "A", "task": "y-1", "repeat": 1, "run": "run/y-1/1", "status": "finished", "passes": True}]
-    for row in rows:
+    rows = [{"arm": "A", "task": "x-1", "repeat": 1, "run": "run/x-1/1", "status": "finished", "passes": False, "failing": 1},
+            {"arm": "A", "task": "x-1", "repeat": 2, "run": "run/x-1/2", "status": "error", "passes": False, "failing": None},
+            {"arm": "A", "task": "y-1", "repeat": 1, "run": "run/y-1/1", "status": "finished", "passes": True, "failing": 0}]
+    for row in rows:                 # as loop.one keeps them: a finished run's row with its count of failing tests
         name = f"{row['arm']}-{row['task']}-{row['repeat']}.json"
         (root / "loop" / name).write_text(json.dumps(row), "utf-8")
-        _made(root, row["run"], row["status"])
+        _made(root, row["run"], row["status"], repeat=row["repeat"])
     (root / "loop" / "cegis.json").write_text('{"status": "inconclusive"}', "utf-8")
     diff = root / "x-1.patch"
     diff.write_text("a diff", encoding="utf-8")
@@ -1149,6 +1153,12 @@ def test_rescoring_again_after_the_run_changes(tmp_path, monkeypatch):
     source.write_text(json.dumps({**json.loads(source.read_text("utf-8")), "run": "run/x-1/other"}), "utf-8")
     _made(tmp_path, "run/x-1/other", "finished")
     calls.clear()
+    kept = tmp_path / "loop" / "amended" / "A-x-1-1.json"         # the amended verdict of the run the row named before
+    before = kept.read_bytes()
+    with pytest.raises(SystemExit, match="refused"):              # another run's row: never written over (study review 1, 12)
+        loop.rescore(tmp_path, "g")
+    assert calls == [] and kept.read_bytes() == before
+    kept.unlink()                                                 # once a person has moved it aside, the run is scored again
     loop.rescore(tmp_path, "g")
     assert len(calls) == 1 and "run/x-1/other" in calls[0]
 

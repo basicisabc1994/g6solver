@@ -114,6 +114,9 @@ def _row(root, arm, task=TASK, repeat=1, body="one patch", status="finished", pa
     row = {"arm": arm, "task": task, "repeat": repeat, "run": f"run/{arm}{repeat}", "status": status, "passes": passes, "failing": 0}
     (root / "loop").mkdir(exist_ok=True)
     (root / "loop" / f"{arm}-{task}-{repeat}.json").write_text(json.dumps(row), "utf-8")
+    (run / "run.json").write_text(json.dumps({"status": status, "agent_started": True}), "utf-8")   # the run as the archive holds it:
+    c.Archive(root).append({"event": "started", "run": row["run"], "kind": "run", "arm": arm, "task": task,   # its record and start,
+                            "repeat": repeat})          # whose facts alone the scheduler reads (study review 1, finding 7)
     return row
 
 
