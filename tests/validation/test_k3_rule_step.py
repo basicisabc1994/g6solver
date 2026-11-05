@@ -604,7 +604,7 @@ def test_a_resumed_session_reads_the_runs_deadline_and_gets_no_prompt_once_it_ha
     ctx = SimpleNamespace(docker=SimpleNamespace(popen=popen), client_env=lambda key: {}, archive=run.archive)
     ended = we.run_session(ctx, run, "agent", ["claude"], "key", we.c.Tally(), "text", "rule_stream.jsonl", seconds=20.0,
                            stop_usd=1.0, deadline=1020.0)
-    assert [w for w in written if w] == sent and ended == ""      # its exit of 0, read by run_session itself
+    assert [w for w in written if w] == sent and (ended == "" or not sent)      # its exit of 0, read by run_session itself
     assert (ended, deadlines) == (("timeout", []) if not sent else ("", [1020.0]))
 
 
