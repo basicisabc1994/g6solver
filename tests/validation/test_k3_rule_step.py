@@ -410,6 +410,8 @@ def _gated_loop(monkeypatch, after_step):
     def session(*a, **kw):
         sessions.append(a[6])
         Docker.tree += 1
+        a[5].feed(dict(SUCCESS))                 # a repair that ends cleanly: its own success and a clean exit
+        kw["codes"].append(0)
 
     monkeypatch.setattr(we, "run_set", lambda ctx, task, agent, where: on_tree.pop(0))
     monkeypatch.setattr(we, "run_session", session)
@@ -417,7 +419,7 @@ def _gated_loop(monkeypatch, after_step):
     monkeypatch.setattr(we, "keep_first_patch", lambda ctx, task, agent, base, n=1: kept.append(n))
     monkeypatch.setattr(we, "parent_check", lambda *a: we.ProbeRun(1, {"test_critic.py::test_owed": "failed"}, {}, ""))
     got = we.reviews_until_clean(SimpleNamespace(docker=Docker(), arm="K3"), SimpleNamespace(repo="/w/r"),
-                                 SimpleNamespace(write_json=lambda *a: None), "agent", "base", [], "key", None, 1.0, 0.0,
+                                 SimpleNamespace(write_json=lambda *a: None), "agent", "base", [], "key", we.c.Tally(), 1.0, 0.0,
                                  lambda n: {"verdict": "defect", "rule": "r", "why": "w", "test": "t", "seconds": 1.0},
                                  finding="parent", **({"after_step": True} if after_step else {}))
     return got, kept, sessions
@@ -616,6 +618,8 @@ def _timed_loop(monkeypatch, *, deadline, review_takes=0.0, start=0.0):
     def session(*a, **kw):
         sessions.append(kw)
         Docker.tree += 1
+        a[5].feed(dict(SUCCESS))                 # a repair that ends cleanly: its own success and a clean exit
+        kw["codes"].append(0)
 
     def critique(n):
         critiques.append(n)
@@ -629,7 +633,7 @@ def _timed_loop(monkeypatch, *, deadline, review_takes=0.0, start=0.0):
     monkeypatch.setattr(we, "keep_first_patch", lambda *a: None)
     monkeypatch.setattr(we, "parent_check", lambda *a: we.ProbeRun(1, {"test_critic.py::test_owed": "failed"}, {}, ""))
     got = we.reviews_until_clean(SimpleNamespace(docker=Docker(), arm="K3"), SimpleNamespace(repo="/w/r"),
-                                 SimpleNamespace(write_json=lambda *a: None), "agent", "base", [], "key", None, 1.0, 0.0,
+                                 SimpleNamespace(write_json=lambda *a: None), "agent", "base", [], "key", we.c.Tally(), 1.0, 0.0,
                                  critique, finding="parent", after_step=True, deadline=deadline)
     return got, sessions, critiques
 
@@ -1030,6 +1034,103 @@ def test_review_2_every_entry_point_reads_a_runs_facts_through_one_function_and_
     except SystemExit:
         answers["loop.one"] = False
     assert answers == dict.fromkeys(answers, admitted)
+
+
+# --- review 2, repair 2: every session of the K loop ends by its own stop, result and exit, by one rule (step_ending) ------------
+def test_review_2_finding_2_a_container_repair_with_no_result_of_its_own_never_inherits_the_rule_steps_success(monkeypatch,
+                                                                                                                tmp_path):
+    task, events, sent = we.load_tasks()[0], [], []
+
+    class Docker(_Docker):
+        calls_to_agent = 0
+
+        def sh(self, ctr, script, *args, **kw):
+            if script.startswith("git status --porcelain"):
+                return self.done(stdout=self.tree)
+            return super().sh(ctr, script, *args, **kw)
+
+        def popen(self, *args, **kw):            # the first session, the rule step, then a repair that exits 1 with no result
+            self.calls_to_agent += 1
+            n = self.calls_to_agent
+            self.tree = [FIRST, AFTER_RULE, b"partial failed repair"][n - 1]
+            data, code = (json.dumps(SUCCESS).encode() + b"\n", 0) if n < 3 else (b"", 1)
+            return SimpleNamespace(stdin=_Stdin(sent), stdout=io.BytesIO(data), stderr=io.BytesIO(), poll=lambda: code,
+                                   wait=lambda **kw: code)
+
+    docker = Docker(task, events, sent)
+    ctx = we.Context(archive=we.c.Archive(tmp_path / "archive"), docker=docker, key_reader=lambda: "fake-key",
+                     issue_reader=lambda task: ("title", "issue"), tree_reader=lambda task: "tree", g6={"commit": "0" * 40},
+                     variant=we.ROUND3, arm="K3", environ={})
+    monkeypatch.setattr(we, "key_check", lambda *a, **kw: {"ok": True})
+    monkeypatch.setattr(we, "start_net", lambda *a: ("net", "proxy"))
+    monkeypatch.setattr(we, "read_thread", lambda *a: "")
+    reviews = []
+
+    def critic(*args, **kw):
+        reviews.append(1)
+        return {"verdict": "defect", "test": "def test_bug(): assert False", "rule": "r", "why": "w"} if len(reviews) == 1 \
+            else {"verdict": "none"}
+
+    probe = we.ProbeRun(1, {"test_bug.py::test_bug": "failed"}, {})
+    monkeypatch.setattr(we, "run_critic", critic)
+    monkeypatch.setattr(we, "run_set", lambda *a, **kw: probe)
+    monkeypatch.setattr(we, "parent_check", lambda *a, **kw: probe)
+    record = we._run_task(ctx, task, dry=False, cap=10.0, stop=10.5)
+    assert docker.calls_to_agent == 3 and we.has_baseline(ctx.archive, record["run"]) and len(reviews) == 1
+    assert record["status"] == "error" and record["repairs"]["ended"] == "error"
+    assert we.scored_run(ctx.archive, record["run"])                    # a stopped K3 run with its baseline is a row
+
+
+def _repairing(monkeypatch, *, result, code, stop):
+    """Arm K1's loop in the container: review 1 finds a defect whose test fails, so one repair runs; the tally holds an earlier
+    session's success, which the repair must never be read by. Returns the loop's result and how many reviews ran."""
+    reviews, tally = [], we.c.Tally()
+    tally.feed(dict(SUCCESS))
+
+    class Docker:
+        tree = 0
+
+        def sh(self, *a, **kw):
+            return SimpleNamespace(returncode=0, stdout=f"tree {Docker.tree}".encode(), stderr=b"")
+
+    def session(ctx, run, agent, command, key, tally_, text, name, *, seconds, stop_usd, codes=None, deadline=None):
+        Docker.tree += 1
+        if result is not None:
+            tally_.feed(dict(result))
+        if codes is not None:
+            codes.append(code)
+        return stop
+
+    def critique(n):
+        reviews.append(n)
+        return {"verdict": "defect", "rule": "r", "why": "w", "test": "t", "seconds": 1.0}
+
+    monkeypatch.setattr(we, "run_set", lambda *a: we.ProbeRun(1, {"test_critic.py::test_owed": "failed"}, {}, ""))
+    monkeypatch.setattr(we, "run_session", session)
+    monkeypatch.setattr(we, "scout_again", lambda args: args)
+    monkeypatch.setattr(we, "keep_first_patch", lambda *a: None)
+    got = we.reviews_until_clean(SimpleNamespace(docker=Docker(), arm="K1"), SimpleNamespace(repo="/w/r"),
+                                 SimpleNamespace(write_json=lambda *a: None), "agent", "base", [], "key", tally, 1.0, 0.0, critique)
+    return got, reviews
+
+
+@pytest.mark.parametrize(("result", "code", "stop", "ending"), [
+    (None, 0, "", "error"),                                                          # no result of its own
+    (SUCCESS, 1, "", "error"),                                                       # a success that exited 1
+    ({**SUCCESS, "subtype": "future_terminal_status"}, 0, "", "error"),             # an ending nobody knows
+    ({**SUCCESS, "subtype": "error_max_turns", "is_error": True}, 1, "", "cap_turns"),   # a cap its result names
+    (SUCCESS, 0, "cap_cost", "cap_cost"),                                            # the stream's own stop
+])
+def test_review_2_a_container_repair_that_does_not_end_cleanly_ends_the_loop_and_the_run_with_its_own_ending(monkeypatch, result,
+                                                                                                             code, stop, ending):
+    got, reviews = _repairing(monkeypatch, result=result, code=code, stop=stop)
+    assert got["ended"] == ending and got["status"] == "inconclusive" and reviews == [1]
+    assert got["reason"] == f"the repair's session ended {ending}"
+
+
+def test_review_2_a_container_repair_that_ends_cleanly_goes_on_to_the_next_review(monkeypatch):
+    got, reviews = _repairing(monkeypatch, result=SUCCESS, code=0, stop="")
+    assert "ended" not in got and reviews[:2] == [1, 2]
 
 
 # --- the reviewer cases' export reads K3's round-1 where K3 keeps it ----------------------------------------------------------

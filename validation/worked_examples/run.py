@@ -2351,8 +2351,9 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
     With ``finding`` "parent" (K2, PLAN.md, 2026-11-04, evening), each round's test is also run on the parent in a container of its
     own, and only the cases that failed there and still fail go back; a parent run with no result sends nothing back. ``session``:
     a repair as ``session(note, stream name)``, the host executor's (PLAN.md, 2026-11-04), which returns how it ended ("" when
-    cleanly); by default the same session continued in the container (``run_session``). A host repair that does not end cleanly
-    ends the loop, and how it ended is returned as ``ended``. ``tree``: what says whether a repair changed anything, compared
+    cleanly); by default the same session continued in the container (``run_session``), ended by its own stop, result and exit
+    (``step_ending``), never by an earlier session's result. A repair that does not end cleanly, on either executor, ends the
+    loop, and how it ended is returned as ``ended``. ``tree``: what says whether a repair changed anything, compared
     before and after it; by default git's display of the container's tree.
     ``after_step``: K3's rule step ran before the loop, and the patch review 1 reads is saved already as ``rule.patch``, so round 1
     saves none and ``round-1.patch`` stays the first session's. ``deadline``: K3's, the run's watchdog (``Watchdog``, or its
@@ -2422,10 +2423,15 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
             break
         before = tree()
         note = CRITIC_NOTE.format(**{k: critic.get(k, "") for k in ("rule", "why", "test")}) + REVIEW_ASK
-        if session is None:
-            run_session(ctx, run, agent, scout_again(docker_args), key, tally, note, c.NDJSON["numbered_stream"].format(tag="repair", n=n),
-                        seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)) if dog is None else dog.left(),
-                        stop_usd=stop, **({"deadline": dog} if dog is not None else {}))
+        if session is None:       # the container's repair, ended by its own stop, result and exit (``step_ending``), no other's
+            codes, earlier = [], tally.result
+            stopped = run_session(ctx, run, agent, scout_again(docker_args), key, tally, note,
+                                  c.NDJSON["numbered_stream"].format(tag="repair", n=n),
+                                  seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)) if dog is None else dog.left(),
+                                  stop_usd=stop, codes=codes, **({"deadline": dog} if dog is not None else {}))
+            own = tally.result if tally.result is not earlier else None     # ``Tally.feed`` keeps each result as a new dict
+            ended = step_ending(stopped, own, codes[-1] if codes else None)
+            ended = "" if ended == "finished" else ended
         else:
             ended = session(note, c.NDJSON["numbered_stream"].format(tag="repair", n=n))
         ends(f"repair {n}")
@@ -3175,16 +3181,18 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
 
         def resume(note: str, name: str) -> str:
             """The first host session resumed, for K3's rule step and arm K's repairs alike, by ``first_session`` and never by the
-            tally's latest id, which any session's stream sets. A resumed session that ended cleanly but whose own result names
-            another session (or none) ends its run "error", written at once, as a session that did not end cleanly does."""
+            tally's latest id, which any session's stream sets. Its ending is decided by the one rule every session of the loop ends
+            by (``step_ending``), from its own stop (``host_ending``'s, which read its exit), its own result and the first session's
+            id; a session that ended cleanly but whose own result is not the first session's success ends its run with that ending,
+            written at once, as a session that did not end cleanly does. "" when it ended cleanly."""
             before = tally.result
             ended = turn(note, name, first_session, dog)
             own = tally.result if tally.result is not before else None      # ``Tally.feed`` keeps each result as a new dict
-            if not ended and str((own or {}).get("session_id") or "") != first_session:
-                run.end("error", why=f"the resumed session's result names session {(own or {}).get('session_id')!r}, not the "
-                                     f"first session's {first_session!r}")
-                ended = "error"
-            return ended
+            got = step_ending(ended, own, None if ended else 0, session=first_session)
+            if got != "finished" and not ended:
+                run.end(got, why=f"the resumed session's own result was not a success of the first session {first_session!r}: "
+                                 f"it names session {(own or {}).get('session_id')!r}")
+            return "" if got == "finished" else got
 
         # the host session resumed, for K3's rule step and arm K's repairs alike; in the container they continue it there
         resumed = resume if host else None
@@ -3219,6 +3227,9 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                 dog.end("first session")
             drain.join(timeout=30)
             run.write("stderr.txt", b"".join(errors).decode("utf-8", errors="replace"))
+            if critic_led and not dry:   # a K arm's first session ends by the one rule each session of its loop ends by
+                got = step_ending(ended, tally.result, first_code)
+                ended = "" if got == "finished" else got
         if looped and holds_loop(ctx.arm) and not dry and not ended:
             record["repairs"] = repair_loop(ctx, task, run, agent, docker_args, key, tally, stop, started, at_base,
                                             lambda: run_critic(ctx, task, run, agent, base, title, text))
@@ -3241,8 +3252,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                                                     session=resumed,
                                                     tree=(lambda: hashlib.sha256(box_mcp.pack(workspace)).hexdigest()) if host else None,
                                                     after_step=stepped, **({"deadline": dog} if stepped else {}))
-            if host:     # a host repair that did not end cleanly: the run ends as it did; a container K3 loop's end is read at finish
-                ended = record["repairs"].get("ended") or ended
+            ended = record["repairs"].get("ended") or ended      # a repair that did not end cleanly, on either executor: the run
+                                                                 # ends as it did
         if dog is not None:
             dog.stop()                       # the steps are over: what the run does after them is no step
         if test_led and not dry and not ended:

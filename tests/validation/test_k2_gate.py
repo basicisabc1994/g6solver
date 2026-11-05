@@ -38,6 +38,8 @@ def _loop(monkeypatch, arm, on_tree, at_parent, *, parent_raises=False):
     def session(*a, **kw):
         sessions.append(a[6] if len(a) > 6 else kw)
         Docker.tree += 1
+        a[5].feed({"type": "result", "subtype": "success", "is_error": False})     # a repair that ends cleanly: its own success
+        kw["codes"].append(0)                                                       # and a clean exit
 
     def parent_check(ctx, task, found, ins):
         parents.append((found["test"], ins.at, ins.file))
@@ -55,7 +57,7 @@ def _loop(monkeypatch, arm, on_tree, at_parent, *, parent_raises=False):
 
     def critic(n):
         return {"verdict": "defect", "rule": "r", "why": "w", "test": TEST, "seconds": 1.0}
-    got = we.reviews_until_clean(ctx, SimpleNamespace(repo="/w/r"), run, "agent", "base", [], "key", None, 1.0, 0.0, critic,
+    got = we.reviews_until_clean(ctx, SimpleNamespace(repo="/w/r"), run, "agent", "base", [], "key", we.c.Tally(), 1.0, 0.0, critic,
                                  finding=we.finding_rule(arm))
     return got, sessions, parents, writes
 
@@ -138,7 +140,8 @@ def test_the_run_hands_the_loop_its_arms_finding_rule(monkeypatch, tmp_path, arm
     monkeypatch.setattr(we, "key_check", lambda *a, **kw: {"ok": True})
     monkeypatch.setattr(we, "start_net", lambda *a: ("net", "proxy"))
     monkeypatch.setattr(we, "read_thread", lambda *a: "")
-    monkeypatch.setattr(we, "read_stream", lambda *a, **kw: None)
+    monkeypatch.setattr(we, "read_stream", lambda lines, tally, **kw: (tally.feed(     # a first session that ends cleanly, by
+        {"type": "result", "subtype": "success", "is_error": False, "session_id": "s1"}), "")[1])   # its own result
     monkeypatch.setattr(we, "reviews_until_clean", loop)
     ctx = we.Context(archive=we.c.Archive(tmp_path / "archive"), docker=Docker(), key_reader=lambda: "dummy",
                      issue_reader=lambda task: ("title", "issue"), tree_reader=lambda task: "tree", g6={"commit": "0" * 40},

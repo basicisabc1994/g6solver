@@ -55,12 +55,14 @@ def _loop(monkeypatch, reviews, sets, *, moves=True):
     def session(ctx_, run, agent, args, key, tally, text, name, **kw):
         asked.append((text, name))
         docker.tree += 1 if moves else 0
+        tally.feed({"type": "result", "subtype": "success", "is_error": False})     # a repair that ends cleanly: its own success
+        kw["codes"].append(0)                                                          # and a clean exit
 
     monkeypatch.setattr(we, "run_set", lambda ctx_, task, agent, where: left.pop(0))
     monkeypatch.setattr(we, "run_session", session)
     monkeypatch.setattr(we, "scout_again", lambda args: args)
     task = type("T", (), {"repo": "/w/r"})()
-    got = we.reviews_until_clean(ctx, task, _Run(), "agent", "base1", [], "key", None, 1.0, 0.0, critique)
+    got = we.reviews_until_clean(ctx, task, _Run(), "agent", "base1", [], "key", we.c.Tally(), 1.0, 0.0, critique)
     return got, asked, seen, docker
 
 
