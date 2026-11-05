@@ -113,15 +113,15 @@
 
             <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Intelligence That Appreciates</h2>
 
-            <p class="gsap-reveal">There is an alternative model, and it starts with a simple observation: every time an AI system solves a problem, the solution could be captured, verified, and stored as a reusable algorithm. Not the raw output &mdash; the underlying pattern. Not the text of the answer &mdash; the method by which the answer was derived. If you do this systematically, something remarkable happens: the cost of intelligence starts declining with usage instead of staying flat.</p>
+            <p class="gsap-reveal">There is an alternative model, and it starts with a simple observation: every time an AI system solves a problem, the solution could be captured, checked, and stored as a reusable algorithm. Not the raw output &mdash; the underlying pattern. Not the text of the answer &mdash; the method by which the answer was derived. If you do this systematically, something remarkable happens: the cost of intelligence starts declining with usage instead of staying flat.</p>
 
             <p class="gsap-reveal">This is not a theoretical abstraction. It is how human expertise actually works. A senior engineer does not re-derive sorting algorithms from first principles every time they need to sort a list. They draw on a library of known solutions, accumulated over years of practice and study. The first time they encountered a problem, it was expensive &mdash; hours of thought, false starts, debugging. The hundredth time they encounter a similar problem, the cost is nearly zero because the solution pattern is already in their repertoire.</p>
 
             <p class="gsap-reveal">The economic principle at work is what W. Brian Arthur calls increasing returns &mdash; the idea that in knowledge-intensive industries, the more you use something, the more valuable it becomes.<sup><a href="#ref-9" class="text-g6-green hover:text-white transition-colors no-underline">[9]</a></sup> This is the opposite of the diminishing returns that govern physical goods. A car depreciates with use. A knowledge base appreciates with use. The question is whether AI systems can be designed to operate on the appreciating side of this divide.</p>
 
-            <p class="gsap-reveal">The answer requires a different architecture. Instead of treating each inference as an isolated transaction, the system must treat each inference as a potential contribution to a growing library of verified solutions. When the system encounters a problem it has seen before &mdash; or a problem structurally similar to one it has solved &mdash; it retrieves the existing solution rather than regenerating it from scratch. The LLM becomes the discovery engine, not the production engine. It finds solutions; the system remembers them.</p>
+            <p class="gsap-reveal">The answer requires a different architecture. Instead of treating each inference as an isolated transaction, the system must treat each inference as a potential contribution to a growing library of checked solutions. When the system encounters a problem it has seen before &mdash; or a problem structurally similar to one it has solved &mdash; it retrieves the existing solution rather than regenerating it from scratch. The LLM becomes the discovery engine, not the production engine. It finds solutions; the system remembers them.</p>
 
-            <p class="gsap-reveal">Consider the economic implications. On day one, the system is expensive &mdash; it must use inference for everything because its solution library is empty. By month three, a significant fraction of incoming problems match patterns already in the library. By year one, the majority of work is handled by cached, verified algorithms that cost nothing to execute. The marginal cost of intelligence converges toward zero, not because hardware got cheaper, but because the system got smarter about what it already knows.</p>
+            <p class="gsap-reveal">Consider the economic implications. On day one, the system is expensive &mdash; it must use inference for everything because its solution library is empty. By month three, a significant fraction of incoming problems match patterns already in the library. By year one, the majority of work is handled by cached, checked algorithms that cost nothing to execute. The marginal cost of intelligence converges toward zero, not because hardware got cheaper, but because the system got smarter about what it already knows.</p>
 
             <!-- ── Diagram 2: Inference to Algorithm Architecture ── -->
             <div class="gsap-reveal my-12">
@@ -153,7 +153,7 @@
 
                     <rect x="300" y="130" width="180" height="60" rx="10" fill="rgba(34,197,94,0.06)" stroke="#22c55e" stroke-width="1.5"/>
                     <text x="390" y="155" text-anchor="middle" fill="#22c55e" font-size="12" font-weight="600">Cache Hit: $0</text>
-                    <text x="390" y="172" text-anchor="middle" fill="#86efac" font-size="10">Return verified solution</text>
+                    <text x="390" y="172" text-anchor="middle" fill="#86efac" font-size="10">Return checked solution</text>
 
                     <!-- Branch: Cache Miss (down) -->
                     <line x1="130" y1="195" x2="130" y2="220" stroke="#ef4444" stroke-width="1.5"/>
@@ -171,7 +171,7 @@
 
                     <!-- Layer 4: Verification -->
                     <rect x="300" y="230" width="180" height="70" rx="10" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="2"/>
-                    <text x="390" y="258" text-anchor="middle" fill="#d1d5db" font-size="13" font-weight="600">Verify &amp; Extract</text>
+                    <text x="390" y="258" text-anchor="middle" fill="#d1d5db" font-size="13" font-weight="600">Check &amp; Extract</text>
                     <text x="390" y="278" text-anchor="middle" fill="#a5b4fc" font-size="10">Test, validate, formalise</text>
 
                     <!-- Arrow right to library -->
@@ -181,7 +181,7 @@
                     <!-- Layer 5: Reusable Library -->
                     <rect x="560" y="210" width="200" height="110" rx="12" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="2" filter="url(#glow-15b)"/>
                     <text x="660" y="240" text-anchor="middle" fill="#6366f1" font-size="14" font-weight="700">Solution Library</text>
-                    <text x="660" y="260" text-anchor="middle" fill="#a5b4fc" font-size="10">Verified algorithms</text>
+                    <text x="660" y="260" text-anchor="middle" fill="#a5b4fc" font-size="10">Checked algorithms</text>
                     <text x="660" y="276" text-anchor="middle" fill="#a5b4fc" font-size="10">Proven patterns</text>
                     <text x="660" y="292" text-anchor="middle" fill="#a5b4fc" font-size="10">Reusable at $0 marginal cost</text>
 
@@ -197,35 +197,35 @@
                     <!-- Output box -->
                     <rect x="570" y="120" width="180" height="80" rx="10" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
                     <text x="660" y="150" text-anchor="middle" fill="#d1d5db" font-size="13" font-weight="600">Reliable Output</text>
-                    <text x="660" y="170" text-anchor="middle" fill="#9ca3af" font-size="10">Verified, deterministic</text>
+                    <text x="660" y="170" text-anchor="middle" fill="#9ca3af" font-size="10">Checked, deterministic</text>
                     <text x="660" y="186" text-anchor="middle" fill="#22c55e" font-size="10">Cost trends toward zero</text>
                 </svg>
-                <p class="text-center text-xs text-gray-600 mt-2">Fig. 2 &mdash; Architecture: expensive LLM inference feeds a growing library of verified, reusable solutions &mdash; each solved problem reduces future costs</p>
+                <p class="text-center text-xs text-gray-600 mt-2">Fig. 2 &mdash; Architecture: expensive LLM inference feeds a growing library of checked, reusable solutions &mdash; each solved problem reduces future costs</p>
             </div>
 
             <p class="gsap-reveal">This architectural shift changes the fundamental economics in several ways. First, it transforms AI from a consumption good into a capital good. In economic terms, a consumption good is used up when consumed &mdash; food, fuel, per-token API calls. A capital good is something that produces other things &mdash; a factory, a tool, a knowledge base. When intelligence accumulates rather than evaporates, it becomes capital.<sup><a href="#ref-10" class="text-g6-green hover:text-white transition-colors no-underline">[10]</a></sup></p>
 
             <p class="gsap-reveal">Second, it aligns the incentives of the system with the interests of its users. In the current model, the provider profits from repeated inference &mdash; they want you to keep calling the API. In the accumulation model, the system's goal is to make itself unnecessary for previously solved problems. Every successful caching of a solution pattern is a permanent reduction in cost. This is the economic equivalent of a tool that sharpens itself with use.</p>
 
-            <p class="gsap-reveal">Third, it introduces genuine network effects on the demand side. If solutions verified by one user can be shared with others &mdash; appropriately anonymised and generalised &mdash; then the library grows faster than any single user could fill it. The economic literature on network effects, pioneered by Katz and Shapiro, shows that products with demand-side economies of scale tend to become dramatically more valuable over time.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup> A shared intelligence library has exactly this property.</p>
+            <p class="gsap-reveal">Third, it introduces genuine network effects on the demand side. If solutions checked by one user can be shared with others &mdash; appropriately anonymised and generalised &mdash; then the library grows faster than any single user could fill it. The economic literature on network effects, pioneered by Katz and Shapiro, shows that products with demand-side economies of scale tend to become dramatically more valuable over time.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup> A shared intelligence library has exactly this property.</p>
 
             <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Depreciation Inversion</h2>
 
             <p class="gsap-reveal">Physical assets depreciate. A car loses value the moment you drive it off the lot. A computer is obsolete in three years. A building requires constant maintenance just to avoid decay. This is the default behaviour of things in the physical world: they wear out.</p>
 
-            <p class="gsap-reveal">Knowledge assets, when properly maintained, do the opposite. A mathematical proof is as valid today as when Euclid first wrote it. A well-tested algorithm works as reliably on its millionth execution as on its first. A verified solution to a recurring problem becomes more valuable over time, not less, because it saves more cumulative cost the longer it operates.</p>
+            <p class="gsap-reveal">Knowledge assets, when properly maintained, do the opposite. A mathematical proof is as valid today as when Euclid first wrote it. A well-tested algorithm works as reliably on its millionth execution as on its first. A checked solution to a recurring problem becomes more valuable over time, not less, because it saves more cumulative cost the longer it operates.</p>
 
-            <p class="gsap-reveal">The implication for AI economics is profound. If a system converts expensive inference into verified, reusable solutions, then intelligence appreciates for the user. Each problem solved adds to the library. Each addition reduces future costs. The system becomes more valuable the more it is used &mdash; not because the underlying model improved, but because the accumulated solutions expanded.</p>
+            <p class="gsap-reveal">The implication for AI economics is profound. If a system converts expensive inference into checked, reusable solutions, then intelligence appreciates for the user. Each problem solved adds to the library. Each addition reduces future costs. The system becomes more valuable the more it is used &mdash; not because the underlying model improved, but because the accumulated solutions expanded.</p>
 
             <p class="gsap-reveal">Simultaneously, intelligence depreciates for the provider, in the sense that the user needs less inference over time. This is the correct economic relationship. A good tool makes its users more capable and more independent, not more dependent. The provider's business model must therefore be built around delivering increasing capability, not extracting increasing rent. Romer's endogenous growth theory describes exactly this dynamic: sustained growth comes from the accumulation of ideas and knowledge, not from the extraction of rents on scarce resources.<sup><a href="#ref-12" class="text-g6-green hover:text-white transition-colors no-underline">[12]</a></sup></p>
 
             <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">From Renting Intelligence to Owning It</h2>
 
-            <p class="gsap-reveal">The shift from per-token pricing to accumulated cognitive capital is not merely an efficiency improvement. It is a change in the ownership structure of intelligence itself. In the current model, intelligence is rented. You pay for access to a model you do not own, generating outputs you cannot systematically build upon. In the accumulation model, intelligence is owned. Every interaction produces a durable asset &mdash; a verified solution, a tested pattern, a reliable algorithm &mdash; that belongs to the user and compounds over time.</p>
+            <p class="gsap-reveal">The shift from per-token pricing to accumulated cognitive capital is not merely an efficiency improvement. It is a change in the ownership structure of intelligence itself. In the current model, intelligence is rented. You pay for access to a model you do not own, generating outputs you cannot systematically build upon. In the accumulation model, intelligence is owned. Every interaction produces a durable asset &mdash; a checked solution, a tested pattern, a reliable algorithm &mdash; that belongs to the user and compounds over time.</p>
 
             <p class="gsap-reveal">This distinction matters enormously for organisations making long-term strategic decisions about AI adoption. An organisation renting intelligence faces perpetually rising costs as it deepens its AI integration. An organisation building its own cognitive capital faces declining costs &mdash; and rising capability &mdash; over the same timeline. The difference between these two trajectories is the difference between a cost centre and a strategic asset.</p>
 
-            <p class="gsap-reveal">The practical requirements for this shift are demanding but achievable. The system needs a verification layer that can distinguish correct solutions from plausible ones. It needs a formalisation engine that can extract reusable patterns from specific instances. It needs a retrieval system sophisticated enough to match incoming problems against stored solutions even when the surface-level framing differs. And it needs rigorous testing infrastructure that ensures cached solutions remain valid as conditions change.</p>
+            <p class="gsap-reveal">The practical requirements for this shift are demanding but achievable. The system needs a checking layer that can distinguish correct solutions from plausible ones. It needs a formalisation engine that can extract reusable patterns from specific instances. It needs a retrieval system sophisticated enough to match incoming problems against stored solutions even when the surface-level framing differs. And it needs rigorous testing infrastructure that ensures cached solutions remain valid as conditions change.</p>
 
             <p class="gsap-reveal">None of these requirements are exotic. Formal verification, pattern matching, and test-driven validation are well-understood engineering disciplines. What is new is applying them systematically to the outputs of AI inference, treating the LLM not as the product but as a discovery mechanism feeding a growing library of proven solutions.</p>
 

@@ -3,7 +3,7 @@
 Most people who could use AI to check their work cannot build the software that does the checking. A worked example
 is that software for one real-world problem. It is not G6 packaged whole: each one is a restricted subset of G6's
 components, set up for that one problem and nothing else, so you can see what G6 does on a task you know.
-
+{: .why }
 
 Download one, double-click it, and it opens a private page in your web browser. Nothing is sent anywhere except to the
 AI model you choose: a free model that runs on your own computer, or your own Anthropic, OpenAI or OpenRouter key.

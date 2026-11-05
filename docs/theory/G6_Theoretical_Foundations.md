@@ -13,7 +13,7 @@ G6 argues that this was a false dichotomy. The correct synthesis is:
 - **LLMs as perception**: Transformers excel at mapping unstructured language into structured intermediate representations — code, schemas, plans, constraints. This is a perceptual capability, not a reasoning one.
 - **Symbolic search as reasoning**: Once the problem is represented symbolically, intelligence is *search over a combinatorial space of solutions* — exactly what Newell and Simon described, and exactly what G6 implements.
 
-The key analogy: conventional AI maps language → tokens → language. G6 maps language → intermediate representations → *symbolic abstractions that are searched, verified, and composed* — not mapped back to language. This is the paradigm shift.
+The key analogy: conventional AI maps language → tokens → language. G6 maps language → intermediate representations → *symbolic abstractions that are searched, checked, and composed* — not mapped back to language. This is the paradigm shift.
 
 G6 solves problems by searching over combinatorial spaces of resource-bounded tool calls, not by predicting the next token. Every `AIBlock` in the system is a node in this search space. Every pipeline is a path through it. Every goal decomposition is a branch-and-bound operation over it.
 
@@ -59,7 +59,7 @@ between the set of natural transformations from the representable presheaf **C**
 
 The Curry-Howard isomorphism establishes a precise correspondence between logical propositions and types, and between proofs and programs: every well-typed program is simultaneously a proof of its type signature viewed as a logical proposition.[^6]
 
-G6's formal verification components — CEGIS (counterexample-guided inductive synthesis), Z3, DPLL (the Davis–Putnam–Logemann–Loveland procedure for satisfiability) — exploit this correspondence directly. When CEGIS synthesises a program that satisfies a specification, it has simultaneously constructed a proof that the specification is satisfiable. When Z3 checks a safety constraint, it is checking that a logical proposition (the constraint) has a proof (a satisfying assignment). This is not a metaphor — it is the Curry-Howard isomorphism at work.
+G6's formal-methods components — CEGIS (counterexample-guided inductive synthesis), Z3, DPLL (the Davis–Putnam–Logemann–Loveland procedure for satisfiability) — exploit this correspondence directly. When CEGIS synthesises a program that satisfies a specification, it has simultaneously constructed a proof that the specification is satisfiable. When Z3 checks a safety constraint, it is checking that a logical proposition (the constraint) has a proof (a satisfying assignment). This is not a metaphor — it is the Curry-Howard isomorphism at work.
 
 This is also why G6 is a *solver*, not a predictor. A solver searches for a proof (a program that satisfies a specification). A predictor estimates the probability of the next token. These are fundamentally different computational operations.
 
@@ -69,7 +69,7 @@ This is also why G6 is a *solver*, not a predictor. A solver searches for a proo
 | Logic | Type Theory | G6 Component |
 |-------|-------------|--------------|
 | Proposition | Type | `AIBlock` type signature |
-| Proof | Program (term) | Verified pipeline |
+| Proof | Program (term) | Checked pipeline |
 | Implication *A* ⇒ *B* | Function type *A* → *B* | Pipeline step |
 | Conjunction *A* ∧ *B* | Product type (*A*, *B*) | Parallel composition |
 | Disjunction *A* ∨ *B* | Sum type *A* \| *B* | Branch / fallback |
@@ -140,7 +140,7 @@ G6 has a property that is rare among AI systems: genuine reflexivity. The system
 - The **`cegis` component** can synthesise new components from specifications — a program that satisfies a formal spec, produced by counterexample-guided search.
 - A **component-scaffolding extension** can scaffold entirely new components from descriptions.
 
-This creates a genuine self-referential loop: the system can inspect itself, reason about its own structure, and modify itself using the same formal methods it applies to external problems. This is not self-modification in the dangerous, unbounded sense — every modification is subject to CSF safety gates, formal verification, and human approval. But it is reflexivity in the precise mathematical sense.
+This creates a genuine self-referential loop: the system can inspect itself, reason about its own structure, and modify itself using the same formal methods it applies to external problems. This is not self-modification in the dangerous, unbounded sense — every modification is subject to CSF safety gates, formal checks, and human approval. But it is reflexivity in the precise mathematical sense.
 
 <details>
 <summary>Formal: Second-Order Cybernetics and Self-Reference</summary>
@@ -159,10 +159,10 @@ Neural scaling laws demonstrate that LLM performance follows power-law relations
 
 G6's response to the scaling ceiling is not "scale harder" but "compress smarter." The system implements two types of algorithmic compression:
 
-- **Type I compression**: recognise a previously solved problem and retrieve the deterministic algorithm, bypassing the LLM entirely. Cost: near-zero. Correctness: inherited from the original synthesis check (the algorithm was verified when first synthesised; retrieval does not re-verify it).
+- **Type I compression**: recognise a previously solved problem and retrieve the deterministic algorithm, bypassing the LLM entirely. Cost: near-zero. Correctness: inherited from the original synthesis check (the algorithm was checked when first synthesised; retrieval does not check it again).
 - **Type II compression**: decompose a novel problem into sub-problems, some of which have cached solutions. Only the genuinely novel sub-problems require fresh LLM calls.
 
-This is the *compression conjecture*: intelligence density (useful reasoning per unit of resource) increases not by scaling compute but by *converting statistical inference into deterministic algorithms*. Every time G6 solves a problem and caches the verified algorithm, it permanently reduces the cost of that class of problem from O(LLM-call) to O(lookup).
+This is the *compression conjecture*: intelligence density (useful reasoning per unit of resource) increases not by scaling compute but by *converting statistical inference into deterministic algorithms*. Every time G6 solves a problem and caches the checked algorithm, it permanently reduces the cost of that class of problem from O(LLM-call) to O(lookup).
 
 The self-optimisation cluster (MAB + Pareto) optimises tool-call sequences against three measured objectives: latency, cost, and quality. It does not compute or optimise a compression ratio — compression is a property of the hyperdistillation design, not a quantity the optimiser targets.
 
@@ -188,7 +188,7 @@ LLMs learn statistical co-occurrence, not grounded meaning. Harnad's symbol grou
 G6 addresses grounding through three mechanisms:
 
 1. **Symbolic knowledge base**: curated corpora spanning epistemology, cognition, category theory, formal methods, cybernetics, and domain-specific knowledge. This is not web scraping — it is curated, domain-specific factual grounding that the system can query via semantic search.
-2. **Formal verification**: claims that can be formalised are routed to SAT solvers, SMT checkers, CEGIS, or domain-specific validators where a backend is available. Such an output is grounded by construction in the property that was actually checked — not in the authenticity of any retrieved source.
+2. **Formal checks**: claims that can be formalised are routed to SAT solvers, SMT checkers, CEGIS, or domain-specific validators where a backend is available. Such an output is grounded by construction in the property that was actually checked — not in the authenticity of any retrieved source.
 3. **Cybernetic failure loops**: a self-healing extension implements a detect → diagnose → heal → learn loop with persistent healing history. When a component fails, the system captures context, generates a diagnosis, applies a patch, and learns from the failure — closing the loop between error and correction.
 
 This is grounding in the epistemological sense: G6's outputs are justified not by statistical confidence but by evidential support — retrieval from curated corpora, formal proofs, or empirical feedback from execution.[^15]
@@ -198,7 +198,7 @@ This is grounding in the epistemological sense: G6's outputs are justified not b
 
 The epistemological distinction is between **internalism** (justification depends on the agent's internal states) and **externalism** (justification depends on the reliability of the process that produced the belief).[^15]
 
-LLMs are internalist in the worst way: their "justification" is the internal activation pattern that produced the output, which may or may not correspond to reality. G6 adopts a *reliabilist externalist* stance: an output is justified if and only if the process that produced it is reliable — and reliability is established by formal verification or by empirical feedback from execution, with corpus retrieval supplying evidential support whose source authenticity G6 does not itself prove.
+LLMs are internalist in the worst way: their "justification" is the internal activation pattern that produced the output, which may or may not correspond to reality. G6 adopts a *reliabilist externalist* stance: an output is justified if and only if the process that produced it is reliable — and reliability is established by formal checks or by empirical feedback from execution, with corpus retrieval supplying evidential support whose source authenticity G6 does not itself prove.
 
 This connects to the broader programme of **safety engineering**. The CSF (Computational Safety Framework) enforces safety bounds on every tool call, with hazard priors configured per operation type (LLM call: 0.05, file write: 0.01, code execute: 0.10, external API: 0.08). These hazard probabilities are hardcoded heuristic inputs, not yet calibrated, so the epsilon bound is only as strong as the configured hazard model, correlation assumption, and enforcement path. Safety is not a bolt-on — it is a constraint in the optimisation problem that G6 solves.[^16]
 
@@ -280,7 +280,7 @@ This connects autopoiesis (Section 8) to a testable hierarchy: the number of nes
 
 The theoretical foundations above are supported by a longer mathematical treatment:
 
-- [G6 Unified Mathematical Theory of Agentic Intelligence](G6_Unified_Theory_of_Agentic_Intelligence.md) formalises G6 through self-correction loops, theory compression, verification, and empirical calibration from March-May 2026 benchmark runs.
+- [G6 Unified Mathematical Theory of Agentic Intelligence](G6_Unified_Theory_of_Agentic_Intelligence.md) formalises G6 through self-correction loops, theory compression, checks, and empirical calibration from March-May 2026 benchmark runs.
 
 ## Conclusion
 
@@ -291,7 +291,7 @@ This page argues that G6 can address open problems in AI by returning to first p
 - **Combinatorial optimisation**: the core problem is optimising resource-bounded tool calls for learning, reasoning, and memory under multi-objective, non-stationary conditions — a solver problem, not a prediction problem
 - **Cybernetic self-regulation**: reflexivity, experiential learning, and autopoietic self-maintenance create a system that improves continuously under formal safety constraints
 - **Practopoiesis**: the T0–T3 hierarchy provides a testable classification of adaptive capability, grounding G6's self-training in biological principles of nested adaptation
-- **Grounded knowledge**: symbolic knowledge bases, formal verification, and failure engineering reduce hallucination by grounding outputs in retrieved evidence rather than statistical confidence
+- **Grounded knowledge**: symbolic knowledge bases, formal checks, and failure engineering reduce hallucination by grounding outputs in retrieved evidence rather than statistical confidence
 - **Human-AI teaming**: the primary optimisation target is the value of the human-AI team, not autonomous performance
 
 It also argues that this is more than an incremental improvement on the LLM paradigm: an approach grounded in combinatorial optimisation, symbolic reasoning, and cybernetic feedback, using LLMs as a powerful but bounded component within a larger mathematical architecture.

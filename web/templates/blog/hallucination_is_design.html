@@ -1,10 +1,10 @@
 {% extends "blog/base_post.html" %}
 
 {% block title %}The Hallucination Problem Is a Design Problem{% endblock %}
-{% block meta_description %}LLM hallucinations are not bugs to be patched but architectural consequences of optimising for token probability over truth. The solution is structural: separate generation from verification.{% endblock %}
+{% block meta_description %}LLM hallucinations are not bugs to be patched but architectural consequences of optimising for token probability over truth. The solution is structural: separate generation from checking.{% endblock %}
 {% block post_headline %}The Hallucination Problem Is a Design Problem{% endblock %}
 {% block post_date %}2025-03-22{% endblock %}
-{% block post_description %}LLM hallucinations are not bugs to be patched but architectural consequences of optimising for token probability over truth. The solution is structural: separate generation from verification.{% endblock %}
+{% block post_description %}LLM hallucinations are not bugs to be patched but architectural consequences of optimising for token probability over truth. The solution is structural: separate generation from checking.{% endblock %}
 
 {% block content %}
 <article class="py-24">
@@ -121,15 +121,15 @@
                  SYNTHESIS: Architecture as the answer
                  ═══════════════════════════════════════════ -->
 
-            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Separating Generation from Verification</h2>
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Separating Generation from Checking</h2>
 
-            <p class="gsap-reveal">If the hallucination problem is architectural rather than parametric, then the solution must also be architectural. And there is a design pattern &mdash; well-established in other engineering disciplines &mdash; that applies directly: <em>separate the component that generates proposals from the component that verifies them</em>.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup></p>
+            <p class="gsap-reveal">If the hallucination problem is architectural rather than parametric, then the solution must also be architectural. And there is a design pattern &mdash; well-established in other engineering disciplines &mdash; that applies directly: <em>separate the component that generates proposals from the component that checks them</em>.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup></p>
 
             <p class="gsap-reveal">In formal verification, this principle is foundational. A program synthesiser generates candidate programs; a verifier checks them against a specification. The synthesiser is allowed to be creative, heuristic, even probabilistic. The verifier is not. The verifier operates against formal constraints and rejects anything that does not satisfy them. The power of the approach comes from the asymmetry: generation is cheap and can tolerate error; verification is rigorous and eliminates it.<sup><a href="#ref-12" class="text-g6-green hover:text-white transition-colors no-underline">[12]</a></sup></p>
 
             <p class="gsap-reveal">This is not a new idea. It is how compilers work &mdash; the parser generates an abstract syntax tree, the type checker verifies it. It is how scientific publishing works &mdash; researchers propose findings, peer reviewers scrutinise them. It is how the legal system works &mdash; prosecutors make claims, defence attorneys challenge them. In every domain where correctness matters, we separate the proposer from the checker.</p>
 
-            <p class="gsap-reveal">Applied to language models, this means treating the LLM as what it actually is: a powerful, creative, unreliable proposal generator. The model's job is to produce candidate responses &mdash; hypotheses, if you will. A separate verification layer, operating on different principles, then evaluates those candidates against external grounding sources, logical consistency constraints, and domain-specific rules before anything reaches the user.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup></p>
+            <p class="gsap-reveal">Applied to language models, this means treating the LLM as what it actually is: a powerful, creative, unreliable proposal generator. The model's job is to produce candidate responses &mdash; hypotheses, if you will. A separate checking layer, operating on different principles, then evaluates those candidates against external grounding sources, logical consistency constraints, and domain-specific rules before anything reaches the user.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup></p>
 
             <!-- ── Diagram 2: Architecture Stack ── -->
             <div class="gsap-reveal my-12 max-w-md mx-auto">
@@ -137,15 +137,15 @@
                     <!-- Top layer: Output -->
                     <div class="rounded-t-xl border border-white/10 bg-white/[0.03] p-5 text-center">
                         <p class="text-xs font-mono text-gray-500 uppercase tracking-wider mb-1">Output</p>
-                        <p class="text-white font-semibold">Verified Response</p>
+                        <p class="text-white font-semibold">Checked Response</p>
                         <p class="text-xs text-gray-500 mt-1">Grounded, checked, traceable</p>
                     </div>
                     <!-- Middle layer: Verification (highlighted) -->
                     <div class="border-2 border-g6-indigo bg-[rgba(99,102,241,0.06)] p-5 text-center relative overflow-hidden">
                         <div class="absolute inset-0 bg-gradient-to-r from-transparent via-[rgba(99,102,241,0.08)] to-transparent"></div>
-                        <p class="text-xs font-mono text-g6-indigo uppercase tracking-wider mb-1 relative">Verification Layer</p>
+                        <p class="text-xs font-mono text-g6-indigo uppercase tracking-wider mb-1 relative">Checking Layer</p>
                         <p class="text-white font-bold text-lg relative">Formal Grounding</p>
-                        <p class="text-xs text-indigo-300 mt-1 relative">Logical checks &bull; Source verification &bull; Constraint satisfaction</p>
+                        <p class="text-xs text-indigo-300 mt-1 relative">Logical checks &bull; Source checks &bull; Constraint satisfaction</p>
                     </div>
                     <!-- Bottom layer: Generator -->
                     <div class="rounded-b-xl border border-white/10 bg-white/[0.03] p-5 text-center">
@@ -154,34 +154,34 @@
                         <p class="text-xs text-gray-500 mt-1">Creative, probabilistic, fast</p>
                     </div>
                 </div>
-                <p class="text-center text-xs text-gray-600 mt-3">Fig. 2 &mdash; Separating generation from verification: the generator proposes, the verifier disposes</p>
+                <p class="text-center text-xs text-gray-600 mt-3">Fig. 2 &mdash; Separating generation from checking: the generator proposes, the checker disposes</p>
             </div>
 
-            <p class="gsap-reveal">The verification layer does not need to be a single component. It can be a pipeline of checks, each operating at a different level of rigour. At the simplest level, syntactic checks catch formatting errors and structural inconsistencies. At the next level, retrieval-based verification cross-references claims against a curated knowledge base &mdash; not to augment generation, but to independently check its outputs. At the highest level, formal methods can verify logical consistency, mathematical correctness, and compliance with domain-specific constraints.<sup><a href="#ref-12" class="text-g6-green hover:text-white transition-colors no-underline">[12]</a></sup></p>
+            <p class="gsap-reveal">The checking layer does not need to be a single component. It can be a pipeline of checks, each operating at a different level of rigour. At the simplest level, syntactic checks catch formatting errors and structural inconsistencies. At the next level, retrieval-based checking cross-references claims against a curated knowledge base &mdash; not to augment generation, but to independently check its outputs. At the highest level, formal methods can check logical consistency, mathematical correctness, and compliance with domain-specific constraints.<sup><a href="#ref-12" class="text-g6-green hover:text-white transition-colors no-underline">[12]</a></sup></p>
 
-            <p class="gsap-reveal">This architecture has a crucial property: the generator and the verifier can improve independently. Advances in language models make the generator more creative and capable. Advances in formal methods, knowledge bases, and verification techniques make the checker more rigorous. Neither is a bottleneck for the other. And because the verifier operates on the <em>output</em> of the generator rather than trying to modify its <em>internal</em> representations, it does not require access to model weights or training data. It works with any generator, including proprietary models whose internals are opaque.</p>
+            <p class="gsap-reveal">This architecture has a crucial property: the generator and the checker can improve independently. Advances in language models make the generator more creative and capable. Advances in formal methods, knowledge bases, and checking techniques make the checker more rigorous. Neither is a bottleneck for the other. And because the checker operates on the <em>output</em> of the generator rather than trying to modify its <em>internal</em> representations, it does not require access to model weights or training data. It works with any generator, including proprietary models whose internals are opaque.</p>
 
             <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">From Probability to Proof</h2>
 
             <p class="gsap-reveal">The philosophical shift here is significant. The current paradigm asks: &ldquo;How do we make the model hallucinate less?&rdquo; The architectural paradigm asks: &ldquo;How do we build a system that detects and corrects hallucination before it matters?&rdquo; The first question accepts the model's output as the primary artifact and tries to improve its quality. The second treats the model's output as a draft and builds the editorial process around it.</p>
 
-            <p class="gsap-reveal">This is not merely an academic distinction. It changes the failure mode of the system. In the current paradigm, failure is invisible &mdash; a hallucinated response looks exactly like a correct one, and the user may have no way to tell the difference. In the verification paradigm, failure is explicit. When the verifier cannot confirm a claim, it can flag it, request additional evidence, or withhold the response entirely. The system fails safely rather than silently.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup></p>
+            <p class="gsap-reveal">This is not merely an academic distinction. It changes the failure mode of the system. In the current paradigm, failure is invisible &mdash; a hallucinated response looks exactly like a correct one, and the user may have no way to tell the difference. In the checking paradigm, failure is explicit. When the checker cannot confirm a claim, it can flag it, request additional evidence, or withhold the response entirely. The system fails safely rather than silently.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup></p>
 
-            <p class="gsap-reveal">There are legitimate objections to this approach. Verification adds latency. Formal methods do not scale to all domains. Some claims are inherently unverifiable. These are real constraints, and any practical system must navigate them. But they are engineering challenges, not fundamental barriers. The question is not whether verification is always possible &mdash; it is whether a system that verifies when it can, and honestly signals uncertainty when it cannot, is better than a system that always projects confidence regardless of its epistemic state.</p>
+            <p class="gsap-reveal">There are legitimate objections to this approach. Checking adds latency. Formal methods do not scale to all domains. Some claims are inherently unverifiable. These are real constraints, and any practical system must navigate them. But they are engineering challenges, not fundamental barriers. The question is not whether checking is always possible &mdash; it is whether a system that checks when it can, and honestly signals uncertainty when it cannot, is better than a system that always projects confidence regardless of its epistemic state.</p>
 
             <p class="gsap-reveal">The answer seems clear. In domains where correctness matters &mdash; medicine, law, finance, engineering, scientific research &mdash; the cost of hallucination is not measured in user dissatisfaction. It is measured in misdiagnoses, invalid contracts, financial losses, and structural failures. These are domains where &ldquo;usually right&rdquo; is not good enough, and where the difference between a 95% accuracy rate and a 99.9% accuracy rate is the difference between an interesting demo and a deployable system.<sup><a href="#ref-13" class="text-g6-green hover:text-white transition-colors no-underline">[13]</a></sup></p>
 
-            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Generator Proposes; the Verifier Disposes</h2>
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Generator Proposes; the Checker Disposes</h2>
 
             <p class="gsap-reveal">There is an irony in the current discourse around hallucination. The AI industry spends enormous resources trying to make language models do something they were not designed to do &mdash; be reliably truthful &mdash; while neglecting the architectural pattern that could actually deliver reliability. The model does not need to be truthful. It needs to be <em>useful as a generator of hypotheses</em> within a system that has other components responsible for truth.</p>
 
-            <p class="gsap-reveal">This reframing also clarifies the role of techniques like RAG, RLHF, and constitutional AI. These are not solutions to the hallucination problem; they are <em>improvements to the generator</em>. A better generator produces better hypotheses, which means the verifier has less work to do. But they do not eliminate the need for verification. They make the system more efficient, not more reliable. Reliability comes from the architecture, not the components.</p>
+            <p class="gsap-reveal">This reframing also clarifies the role of techniques like RAG, RLHF, and constitutional AI. These are not solutions to the hallucination problem; they are <em>improvements to the generator</em>. A better generator produces better hypotheses, which means the checker has less work to do. But they do not eliminate the need for checks. They make the system more efficient, not more reliable. Reliability comes from the architecture, not the components.</p>
 
             <p class="gsap-reveal">The history of software engineering teaches this lesson repeatedly. Reliability does not come from writing perfect code. It comes from building systems that detect and handle failure &mdash; type systems, unit tests, integration tests, monitoring, circuit breakers, graceful degradation. The most reliable software in the world is not bug-free; it is bug-tolerant. It assumes failure and architects around it.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup></p>
 
-            <p class="gsap-reveal">AI systems need the same design philosophy. Not models that never hallucinate, but architectures where hallucination is caught, flagged, and corrected before it causes harm. The generator proposes. The verifier disposes. And the user receives only what survives the gauntlet.</p>
+            <p class="gsap-reveal">AI systems need the same design philosophy. Not models that never hallucinate, but architectures where hallucination is caught, flagged, and corrected before it causes harm. The generator proposes. The checker disposes. And the user receives only what survives the gauntlet.</p>
 
-            <p class="gsap-reveal">This is not a call for conservatism or a retreat from the remarkable capabilities of large language models. It is the opposite. By freeing the generator from the impossible burden of being always right, we allow it to be more creative, more exploratory, more useful. And by placing the burden of correctness on a verification layer designed for that purpose, we get a system that is both more capable and more trustworthy than either component alone.</p>
+            <p class="gsap-reveal">This is not a call for conservatism or a retreat from the remarkable capabilities of large language models. It is the opposite. By freeing the generator from the impossible burden of being always right, we allow it to be more creative, more exploratory, more useful. And by placing the burden of correctness on a checking layer designed for that purpose, we get a system that is both more capable and more trustworthy than either component alone.</p>
 
             <p class="gsap-reveal font-semibold text-white">The hallucination problem is not a training problem. It is not a data problem. It is not a scale problem. It is a design problem. And like all design problems, it has a design solution &mdash; one that the engineering discipline has understood for decades, and that AI is only now beginning to apply.</p>
         </div>
