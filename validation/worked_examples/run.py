@@ -1905,7 +1905,7 @@ def workspace_from(ctx: Context, task: Task, agent: str, dest: Path) -> int:
             parts = PurePosixPath(member.name).parts
             key = "/".join(parts).casefold()
             if (member.name.startswith(("/", "\\")) or ".." in parts or not (member.isfile() or member.isdir())
-                    or any(HOST_UNSAFE.search(part) for part in parts) or (key in seen and key)):
+                    or box_mcp.unsafe_part(parts) is not None or (key in seen and key)):
                 raise RuntimeError(f"the workspace's export holds {member.name!r}, which the host cannot hold as a plain file or "
                                    "folder inside the workspace")
             seen.add(key)

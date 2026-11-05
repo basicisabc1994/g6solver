@@ -21,7 +21,7 @@ import stat
 import subprocess
 import sys
 import tarfile
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any, BinaryIO
 
@@ -250,15 +250,26 @@ def _same_folder(path: Path, checked: os.stat_result, rel: str) -> None:
         raise Refused(f"{rel} is not the folder that was checked: it was changed while the workspace was packed")
 
 
+def unsafe_part(parts: Iterable[str]) -> str | None:
+    """The first of ``parts`` that Windows would refuse or change (``HOST_UNSAFE``), else None: the one rule for a name the host
+    holds as it is named, which the export to the host (``run.workspace_from``) and every path part the box reads, packs or sends
+    (``_root``, ``_holdable``) pass. A part Windows changes names another file or folder: ``name.`` and ``name `` are read as
+    ``name``."""
+    return next((part for part in parts if HOST_UNSAFE.search(part)), None)
+
+
+def _unsafe(what: str, part: str) -> Refused:
+    return Refused(f"{what} cannot be read by its name: its part {part!r} is one Windows would refuse or change (a device name, a "
+                   "reserved character, a trailing dot or space)")
+
+
 def _holdable(rel: str, repo: str) -> None:
     """A name the host holds as named and the container can hold, else ``Refused``: no part of it is one Windows would refuse or
-    change (``HOST_UNSAFE``), since one it changes names another file (``name.`` and ``name `` are read as ``name``); each part
-    encodes as UTF-8 strictly, in at most ``NAME_MAX`` bytes; and the path the mirror opens, ``repo`` and the name (the name alone
-    when no ``repo`` is given), is shorter than ``PATH_MAX``, so with its NUL it fits."""
+    change (``unsafe_part``); each part encodes as UTF-8 strictly, in at most ``NAME_MAX`` bytes; and the path the mirror opens,
+    ``repo`` and the name (the name alone when no ``repo`` is given), is shorter than ``PATH_MAX``, so with its NUL it fits."""
+    if (bad := unsafe_part(rel.split("/"))) is not None:
+        raise _unsafe(repr(rel), bad)
     for part in rel.split("/"):
-        if HOST_UNSAFE.search(part):
-            raise Refused(f"{rel!r} cannot be read by its name: its part {part!r} is one Windows would refuse or change (a device "
-                          "name, a reserved character, a trailing dot or space)")
         try:
             size = len(part.encode("utf-8"))
         except UnicodeEncodeError as exc:
@@ -273,8 +284,12 @@ def _holdable(rel: str, repo: str) -> None:
 
 
 def _root(path: Path) -> os.stat_result:
-    """The workspace's own folder, as a walk of it starts: a folder of its own, not a link, a junction or another reparse point,
-    else ``Refused``."""
+    """The workspace's own folder, as a walk of it starts: every part of its path after the drive or root (``..`` apart) one the
+    host holds as named (``unsafe_part``), checked before anything is read through it, so ``workspace.`` is never read as
+    ``workspace``; then a folder of its own, not a link, a junction or another reparse point. Else ``Refused``."""
+    path = Path(path)
+    if (bad := unsafe_part(part for part in path.parts[1 if path.anchor else 0:] if part != "..")) is not None:
+        raise _unsafe(f"the workspace {path}", bad)
     try:
         st = os.lstat(path)
     except OSError as exc:

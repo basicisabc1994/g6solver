@@ -236,6 +236,25 @@ def _docstrings(tree: ast.AST) -> set[int]:
             and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant)}
 
 
+def _bound_to_ndjson(tree: ast.AST) -> set[str]:
+    """Every name a module binds to ``wecommon.NDJSON`` (fix review 2, finding 1): the name itself, an import alias
+    (``from wecommon import NDJSON as names``), and a plain assignment to a name of the constant or of a name bound to it
+    (``names = NDJSON``, ``names = c.NDJSON``). An attribute named NDJSON (``w.NDJSON`` after ``import wecommon as w``) is the
+    constant whatever holds it."""
+    bound = {"NDJSON"} | {alias.asname or alias.name for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+                          and node.module == "wecommon" for alias in node.names if alias.name == "NDJSON"}
+    assigned = [(targets, node.value) for node in ast.walk(tree) if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
+                and node.value is not None
+                for targets in [node.targets if isinstance(node, ast.Assign) else [node.target]]]
+    while True:
+        more = {target.id for targets, value in assigned if (isinstance(value, ast.Name) and value.id in bound)
+                or (isinstance(value, ast.Attribute) and value.attr == "NDJSON")
+                for target in targets if isinstance(target, ast.Name)} - bound
+        if not more:
+            return bound
+        bound |= more
+
+
 def _names_and_uses(folder: Path) -> tuple[Counter, dict[tuple[str, str, str], list[list[str]]]]:
     """In every module under ``folder``: each literal that holds one of ``TAILS`` (its docstrings and the constant's own
     definition left out), by (module, function); and each use of ``NDJSON``, by (module, function, kind), with the names of the
@@ -245,10 +264,11 @@ def _names_and_uses(folder: Path) -> tuple[Counter, dict[tuple[str, str, str], l
     for path in sorted(folder.rglob("*.py")):
         module = path.relative_to(folder).as_posix()
         tree = ast.parse(path.read_text("utf-8"))
-        skip = _docstrings(tree)
+        skip, bound = _docstrings(tree), _bound_to_ndjson(tree)
 
         def constant(node: ast.AST) -> bool:
-            return (isinstance(node, ast.Name) and node.id == "NDJSON") or (isinstance(node, ast.Attribute) and node.attr == "NDJSON")
+            return (isinstance(node, ast.Name) and node.id in bound and isinstance(node.ctx, ast.Load)) or (
+                isinstance(node, ast.Attribute) and node.attr == "NDJSON")
 
         def visit(node: ast.AST, where: str, calls: list[str]) -> None:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -295,11 +315,13 @@ def test_every_newline_delimited_json_file_is_named_from_its_writers_constant_an
     """Fix review 1, the design replaced: the guard is built from the producers' own list (``wecommon.NDJSON``), not from a scan
     of every way code can split text. Every name of those files in the worked examples comes from the constant (a literal that
     holds one is refused); every use of the constant is listed with the call it is passed into, and one listed as read must be
-    passed into ``read_stream`` or ``stream_lines``; each reader those uses reach has a behavioural case (``READERS``).
+    passed into ``read_stream`` or ``stream_lines``; each reader those uses reach has a behavioural case (``READERS``). A use is
+    found under any name the module binds the constant to (``_bound_to_ndjson``).
 
-    Its limits, stated: a reader that builds a name some other way (from parts that hold no name's end, from data, or through
-    getattr), a reader outside this folder (``CodingReplay`` in g6.metaharness, which reads the exported cases), and the egress
-    proxy, which writes its log where it is told, are out of its scope."""
+    The guarantee rests on the behavioural reader tests; this guard is a lint over them, which makes a new reader of those files
+    visible so it gets a case of its own. Its limits, stated: the constant reached through getattr, a name built some other way
+    (from parts that hold no name's end, or from data), a reader outside this folder (``CodingReplay`` in g6.metaharness, which
+    reads the exported cases), and the egress proxy, which writes its log where it is told, are out of its scope."""
     _guard(WE_DIR)
     read = {(m, f) for (m, f, _), listed in NDJSON_USES.items() if any(callee in FRAMED for callee, _ in listed)}
     assert read <= set(READERS), f"a reader with no behavioural case: {sorted(read - set(READERS))}"
@@ -326,6 +348,20 @@ def test_a_new_reader_of_one_of_those_files_fails_the_guard_until_it_is_listed(t
     (shadow / name).parent.mkdir(parents=True, exist_ok=True)
     (shadow / name).write_text(source, encoding="utf-8")
     with pytest.raises(AssertionError, match=said):
+        _guard(shadow)
+
+
+@pytest.mark.parametrize("source", [
+    # fix review 2, finding 1: an import alias
+    "from wecommon import NDJSON as filenames\ndef read(folder):\n    return (folder / filenames['stream']).read_text('utf-8').splitlines()\n",
+    "from wecommon import NDJSON as a\nb = a\ndef read(folder):\n    return (folder / b['stream']).read_bytes()\n",
+    "import wecommon as w\ndef read(folder):\n    return (folder / w.NDJSON['stream']).read_bytes()\n",
+    "import wecommon\ndef read(folder):\n    names = wecommon.NDJSON\n    return (folder / names['ledger']).read_bytes()\n",
+    "from wecommon import NDJSON\nnames: dict = NDJSON\ndef read(folder):\n    return (folder / names['index']).read_bytes()\n"])
+def test_fix_review_2_finding_1_a_reader_that_binds_the_constant_to_another_name_fails_the_guard(tmp_path, source):
+    shadow = _shadow(tmp_path)
+    (shadow / "aliased_reader.py").write_text(source, encoding="utf-8")
+    with pytest.raises(AssertionError, match="no entry says"):
         _guard(shadow)
 
 
@@ -694,6 +730,55 @@ def test_a_name_part_the_host_cannot_hold_as_named_is_refused_by_the_one_rule_bo
 @pytest.mark.parametrize("rel", ["a.py", ".hidden", "a.b.c", "pkg/x y.py", "console.py", "com.py", "nul_x", "界.txt"])
 def test_a_name_part_the_host_holds_as_named_is_sent(rel):
     box._holdable(rel, "/w/r")
+
+
+def _call_on(ws: Path) -> tuple[dict, list]:
+    sent = []
+    opts = SimpleNamespace(container="ctr", repo="/w/r", workspace=str(ws), user="tester", timeout=30.0)
+    got = box.call(opts, {"name": "run", "arguments": {"command": "true"}},
+                   lambda *a, **kw: (sent.append(a), helpers.ok(a[-2].encode() + b"\nran\n"))[1])
+    return got, sent
+
+
+def test_fix_review_2_finding_2_a_root_windows_reads_as_another_folder_is_refused_with_no_docker_call(tmp_path):
+    ordinary, named = tmp_path / "workspace", tmp_path / "workspace."
+    helpers.write(ordinary, {"payload.py": "wrong tree\n"})
+    os.mkdir(_exact(named))
+    try:
+        with open(_exact(named / "payload.py"), "wb") as f:
+            f.write(b"named tree\n")
+        assert {"workspace", "workspace."} <= set(os.listdir(tmp_path))
+        got, sent = _call_on(named)
+        assert got["isError"] is True and sent == [], "a root whose name Windows rewrites was packed as another folder"
+        assert "Windows would refuse or change" in got["content"][0]["text"]
+    finally:
+        if os.path.lexists(_exact(named / "payload.py")):
+            os.unlink(_exact(named / "payload.py"))
+        os.rmdir(_exact(named))
+
+
+@pytest.mark.parametrize("parts", [("ws.",), ("ws ",), ("con", "ws")])
+def test_a_root_with_a_part_the_host_cannot_hold_as_named_is_refused_before_anything_is_read(tmp_path, parts):
+    made = [tmp_path.joinpath(*parts[:i + 1]) for i in range(len(parts))]
+    for folder in made:
+        os.mkdir(_exact(folder))
+    try:
+        got, sent = _call_on(made[-1])
+        assert got["isError"] is True and sent == []
+        assert "Windows would refuse or change" in got["content"][0]["text"] and repr(parts[0]) in got["content"][0]["text"]
+        with pytest.raises(box.Refused, match="Windows would refuse or change"):
+            box.pack(made[-1])
+    finally:
+        for folder in reversed(made):
+            os.rmdir(_exact(folder))
+
+
+def test_a_root_with_ordinary_parts_a_leading_dot_and_a_space_inside_packs_as_before(tmp_path):
+    ws = tmp_path / ".box" / "a b" / "ws"
+    helpers.write(ws, {"a.py": "x\n"})
+    got, sent = _call_on(ws)
+    assert got["isError"] is False and len(sent) == 2
+    assert tarfile.open(fileobj=io.BytesIO(box.pack(ws))).getnames() == ["a.py"]
 
 
 def test_an_unchanged_tree_with_ordinary_names_packs_and_mirrors_as_before(tmp_path):
