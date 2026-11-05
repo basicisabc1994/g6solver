@@ -176,7 +176,7 @@ A proposed guard affecting a protected path (tests, frozen validators, verificat
 | Good-looking but fake results | Actual artifact bytes submitted to distinct checker, negative controls required | Independent custody and deployment of the executable oracle |
 | Replacing an artifact | SHA-256 content digest | Authenticated publication and secure artifact store |
 | Forged certificate | Candidate label only; never emits `verified` | G6 door replay, source-bound promotion witness, checked signatures |
-| Weakening tests in an adaptation | Protected path denylist, controls, frozen suite | G6 adaptation gate and code/isolation review outside candidate scope |
+| Weakening tests in an adaptation | Allow-list of adaptable files by file identity, G6's protected paths, controls, frozen suite | G6 adaptation gate and code/isolation review outside candidate scope |
 | Selection biased toward easy cases | Mandatory obligations retained, trial matching, holdout admission, disclosed proxy score | Randomised paired evaluations, stratification, confidence calibration |
 | Repeated experiments / p-hacking | Bonferroni max evaluations, external samples and split tracking | Preregistration, experiment tracking and prevention of repeated holdout peeking |
 | A formal result about the wrong task | All model translations candidate and incomplete by default | Independent semantic-specification review / user intent binding |

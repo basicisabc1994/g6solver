@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.3 — 2026-11-06: review 2 repairs
+
+- The adaptation gate admits a changed path only when it is one of the files the bridge declares adaptable (`adaptation.ADAPTABLE`), compared by file identity; every other path is refused, and any error resolving a path refuses it. The deny-list it replaces missed members in both reviews.
+- `codes.refusal` and `codes.settled` write `completion_state`, `code` and `warning_card` themselves and refuse a caller's value for any of them or for `verified`; a supplied card must carry a registered code, so a step G6's door refused is `G6_E_COGNITIVE_STEP_FAILED` with the door's card under `door`.
+- Freeze, then check, then act: the executor and the orchestrator copy the plan whole before checking it and run that copy; an artifact's content is immutable bytes from the moment it is made; the review scope and the criterion checks read one frozen set of artifacts.
+- Credit binds what was evaluated: a paired trial names the candidate's and the baseline's digests, a control the frozen suite it ran on, and a run record the claim it executed; the gate counts the pairs it admitted, from one frozen copy.
+- The conflict gate reads `adjudicate_claim`'s whole answer: a BLOCK or ASK disposition, or a triggered failure, refuses whatever the status says.
+- A risk is an exact tier: an `int` from 0 to 3, never a `bool` or a float, wherever a standard or a context is made, and at the block's input.
+
 ## v0.2.2 — 2026-11-05: review 1 repairs
 
 - One maker of refusals: every `blocked-escalated` result is made by `codes.refusal`, with a registered `G6_E_COGNITIVE_*` code (twenty in all) and a `warning_card`; `tests/cognitive_bridge/test_refusal_inventory.py` parses the package and fails on any other place that writes a state.
