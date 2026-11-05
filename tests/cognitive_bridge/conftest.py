@@ -54,6 +54,37 @@ def executed_case():
 
 
 @pytest.fixture
+def case3():
+    """Review 3's case: as review 2's, with the checker owned by the evaluator ``outside``."""
+    from returns.result import Success
+
+    from g6.cognitive_bridge import (
+        DOCUMENT_FIELDS, ClaimIR, CognitiveAssuranceOrchestrator, Criterion, DomainStandard, EvidenceArtifact,
+        FrozenVerifier, InProcessAssuranceEvaluator, MetacognitiveMethodSelector, MethodVariant, ProblemSignature,
+    )
+
+    class Registry:
+        def invoke(self, name, op, params=None, **kwargs):
+            return Success({"completion_state": "qualified-draft", "answer": {"valid": True}})
+
+    criterion = Criterion("c", "formal obligation", "checker", "1:1", required_methods=("formal",))
+    standard = DomainStandard("review", "1", "AU", "rubric", "a" * 64, (criterion,))
+    orch = CognitiveAssuranceOrchestrator(MetacognitiveMethodSelector(), registry=Registry())
+    compiled = orch.compile(
+        claim=ClaimIR("claim", "A entails A", ("formal",), {}),
+        context=ProblemSignature("review", "logic", "validity", 1, 2), standard=standard,
+        variants=[MethodVariant("v", "formal", "SMT", "formal", "check_validity", 1)],
+        variant_models={"v": {"formula": "A", "premises": ["A"]}})
+    return dict(standard=standard, orchestrator=orch, compiled=compiled,
+                evaluator=InProcessAssuranceEvaluator(evaluator_id="outside"),
+                artifacts={"c": EvidenceArtifact("e", b"GOOD", "report", "candidate", "store:e", "claim")},
+                verifiers={"checker": FrozenVerifier("checker", "outside", "b" * 64,
+                                                     lambda b: b == b"GOOD", (b"GOOD",), (b"BAD",))},
+                documentation={name: "Explicit limits for " + name for name in DOCUMENT_FIELDS},
+                candidate_actor="candidate")
+
+
+@pytest.fixture
 def passing_adaptation():
     """Review 2's guard change, with six held-out pairs measured on it (its candidate and baseline digests, where a
     pair can carry them) and both controls, all authenticated by the evaluator's own admission."""

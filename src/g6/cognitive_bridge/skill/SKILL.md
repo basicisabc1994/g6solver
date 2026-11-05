@@ -39,7 +39,9 @@ held-out trials. Every result is `qualified-draft` or `blocked-escalated`: it ne
 ## Reading the result
 
 Every refusal is `blocked-escalated` with its code in `code` and in its `warning_card`, made in one place
-(`codes.refusal`), which writes those fields itself and refuses a caller's value for them or for `verified`. A
+(`codes.refusal`), which writes those fields itself and refuses a caller's value for them, for `verified`, and for
+every field G6's door reads as a state (`codes.STATE_FIELDS`, taken from the door, `reliability_label` among
+them). A
 parameter an op does not take is `G6_E_INPUT_VALIDATION`; input the op cannot use (priors that
 do not sum to one, a probe that does not predict every hypothesis, a plan with no claim) is
 `G6_E_COGNITIVE_BRIDGE_INPUT`. A need with no typed model is `G6_E_COGNITIVE_MODEL_MISSING`; a mandatory method with no
@@ -55,7 +57,8 @@ specified or has no registry `G6_E_COGNITIVE_EXECUTION_NOT_APPROVED`, and an inc
 `G6_E_COGNITIVE_EXECUTION_INCOMPLETE`. A dossier with a blocker is
 `G6_E_COGNITIVE_DOSSIER_BLOCKED`; a refused guard change `G6_E_COGNITIVE_ADAPTATION_REFUSED`; a proposition
 `G6_E_COGNITIVE_EVIDENCE_CONTESTED`, `G6_E_COGNITIVE_EVIDENCE_REFUTED` or `G6_E_COGNITIVE_EVIDENCE_UNDETERMINED`, and the
-reconciliation `G6_E_COGNITIVE_EVIDENCE_NOT_RECONCILED`; an agent with no executable probe `G6_E_COGNITIVE_NO_PROBE`.
+reconciliation `G6_E_COGNITIVE_EVIDENCE_NOT_RECONCILED`; an agent with no executable probe `G6_E_COGNITIVE_NO_PROBE`, and one whose
+tool step G6's door did not pass `G6_E_COGNITIVE_STEP_FAILED`.
 An assessment carries `warning_card`, `evidence`, `request_id` and `run_id`: `G6_E_COGNITIVE_ASSURANCE_BLOCKED`
 names what failed, and `G6_E_COGNITIVE_NOT_PROMOTED` says the checks passed in this process and nothing more. It
 credits only a run this orchestrator executed, from its own record, for the claim that run executed, step by step.
@@ -69,9 +72,15 @@ Composed (Python only):
 
 - `MixedMethodExecutor` runs an approved plan's steps through G6's checked door (`g6.core.door.invoke_checked`, the
   call `g6.invoke` makes): a sensitive op runs only when the person allowed it (`allow=` or `G6_MCP_SENSITIVE`), and
-  a component's own `verified` is held at `qualified-draft` with the door's card. It copies the plan whole first,
-  checks the copy against the canonical routing, refuses an edited one (`G6_E_COGNITIVE_PLAN_TAMPERED`) and runs
-  only that copy; it runs nothing without approval (`G6_E_COGNITIVE_APPROVAL_REQUIRED`).
+  a component's own `verified` is held at `qualified-draft` with the door's card. It checks the plan against the
+  canonical routing, refuses an edited one (`G6_E_COGNITIVE_PLAN_TAMPERED`) and runs nothing without approval
+  (`G6_E_COGNITIVE_APPROVAL_REQUIRED`).
+- `CognitiveAgent` makes each observation a tool step through the same door, credited only when the door's reply
+  says `ok`; `allow=` is the person's allow, as the executor takes it.
+- What the bridge checks and then uses is a snapshot taken when it is accepted (`g6.cognitive_bridge.snapshot`):
+  every record is immutable all the way down, a plan, a model, a checker's controls and a probe's predictions
+  among them, so a caller who keeps the list or dict it passed in changes nothing here; what it hands back is
+  never a live view. An assessment reads the standard's digest again after the evaluator used it.
 - `CognitiveAssuranceOrchestrator` joins the selector, the router, the executor and `InProcessAssuranceEvaluator`:
   compile, execute with approval, then assess the produced bytes against the standard's criteria.
 - The cross-method conflict gate reads stance and lineage by `epistemic_integrity`'s rules: one source repeated is

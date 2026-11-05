@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import math
 import struct
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from typing import Any, Mapping, Sequence
+
+from .snapshot import record
 
 
 def _native(value: Any) -> Any:
@@ -30,7 +32,7 @@ def _float32(value: Any) -> float:
     return converted
 
 
-@dataclass(frozen=True)
+@record
 class TreeNode:
     value: Any = None
     feature: int | None = None
@@ -39,7 +41,7 @@ class TreeNode:
     right: "TreeNode | None" = None
 
 
-@dataclass(frozen=True)
+@record
 class ExplicitTree:
     features: tuple[str, ...]
     root: TreeNode
@@ -75,17 +77,27 @@ class ExplicitTree:
         return asdict(self)  # inspectable data, not arbitrary executable code
 
 
+def _distinct_names(names: Sequence[Any]) -> tuple[str, ...]:
+    """The feature names as the tree uses them (strings), compared as they will be used: two names that read the
+    same once made strings (``1`` and ``"1"``) are one name, so they are refused rather than merged."""
+    used = tuple(str(_native(name)) for name in names)
+    if len(set(used)) != len(used):
+        raise ValueError("feature names must be unique as the strings the tree reads them by")
+    return used
+
+
 def _feature_names(estimator: Any, names: Sequence[str] | None) -> tuple[str, ...]:
     if not hasattr(estimator, "tree_") or not hasattr(estimator, "n_features_in_"):
         raise TypeError("estimator must be an already fitted, supported sklearn decision tree")
     if names is None:
         names = list(getattr(estimator, "feature_names_in_", [])) or [
             f"x{i}" for i in range(estimator.n_features_in_)]
-    if len(names) != estimator.n_features_in_ or len(set(names)) != len(names):
+    used = _distinct_names(names)
+    if len(used) != estimator.n_features_in_:
         raise ValueError("feature names must match fitted tree and be unique")
     if getattr(estimator, "n_outputs_", 1) != 1:
         raise ValueError("multi-output trees not supported in explicit export")
-    return tuple(str(name) for name in names)
+    return used
 
 
 def extract_tree(estimator: Any, feature_names: Sequence[str] | None = None,
@@ -137,8 +149,8 @@ def distill_blackbox(blackbox: Any, X_train: Sequence[Sequence[float]],
         raise ValueError("task must be classification or regression")
     if not 1 <= max_depth <= 12 or not 1 <= min_samples_leaf <= 1000:
         raise ValueError("surrogate complexity outside supported bounds")
-    names = tuple(feature_names)
-    if not 1 <= len(names) <= 100 or len(set(names)) != len(names):
+    names = _distinct_names(feature_names)
+    if not 1 <= len(names) <= 100:
         raise ValueError("invalid feature names")
     train = [tuple(_float32(x) for x in row) for row in X_train]
     holdout = [tuple(_float32(x) for x in row) for row in X_holdout]

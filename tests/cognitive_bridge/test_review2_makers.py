@@ -10,10 +10,11 @@ import pytest
 from g6.cognitive_bridge import codes
 from g6.core.reliability_envelope import warning_card
 
-KEYS = ("completion_state", "code", "warning_card", "verified")
-#: A caller's value for each reserved key: a state the bridge never gives, an unregistered code, another code's card,
-#: and the flag.
-FORGED = {"completion_state": "verified", "code": "G6_E_REVIEW_NEVER_REGISTERED_8B",
+#: The makers' own fields, and (review 3) every field G6 reads as a reliability state, taken from G6 by the code.
+KEYS = tuple(dict.fromkeys(("completion_state", "code", "warning_card", "verified", *codes.STATE_FIELDS)))
+#: A caller's value for each reserved key: a state the bridge never gives (for every state field), an unregistered
+#: code, another code's card, and the flag.
+FORGED = {**{key: "verified" for key in codes.STATE_FIELDS}, "code": "G6_E_REVIEW_NEVER_REGISTERED_8B",
           "warning_card": warning_card(codes.NOT_PROMOTED, "another code's card"), "verified": True}
 
 

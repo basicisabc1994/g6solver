@@ -3,6 +3,9 @@
 pin execution rechecks, and the executor runs the step copies it validated, never the caller's mutable dictionaries."""
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
 from returns.result import Success
 
 from g6.cognitive_bridge import ClaimIR, MethodRouter, MixedMethodExecutor
@@ -33,8 +36,15 @@ def test_finding_2_a_compiled_model_edited_after_its_pin_is_refused_before_anyth
     c = assurance_case
     registry = _Recorder()
     c["orchestrator"].registry = registry
-    c["compiled"].executable_plan.claims[0].models["formal"]["premises"].append("False")
-    result = c["orchestrator"].execute(c["compiled"], approved=True)
+    compiled = c["compiled"]
+    model = compiled.executable_plan.claims[0].models["formal"]
+    with pytest.raises((AttributeError, TypeError)):  # review 3: a compiled model is a snapshot, not editable in place
+        model["premises"].append("False")
+    # so the edit can only be a copy of the plan kept under the old pins, which execute refuses
+    claim = compiled.executable_plan.claims[0]
+    edited = replace(claim, models={"formal": {**model, "premises": [*model["premises"], "False"]}})
+    compiled = replace(compiled, executable_plan=replace(compiled.executable_plan, claims=(edited,)))
+    result = c["orchestrator"].execute(compiled, approved=True)
     assert registry.calls == [], f"edited compiled model executed: {registry.calls}"
     assert result["completion_state"] == "blocked-escalated" and result["code"] == "G6_E_COGNITIVE_PLAN_TAMPERED"
 

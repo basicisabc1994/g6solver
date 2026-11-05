@@ -15,7 +15,6 @@ evidence. No score averaging.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
 from g6.core.evidence import EvidenceRecord
@@ -24,6 +23,7 @@ from g6.invariants import ERROR_CODE_PATTERN
 
 from .codes import (EVIDENCE_CONTESTED, EVIDENCE_NOT_RECONCILED, EVIDENCE_REFUTED, EVIDENCE_UNDETERMINED, refusal,
                     settled)
+from .snapshot import record, snapshot
 
 HEX64 = re.compile("[0-9a-f]{64}\\Z")
 #: An assertion's stance as an evidence record states it (``g6.core.evidence.EvidenceStance``).
@@ -36,7 +36,7 @@ _STATUS = {"ASSERTED": ("consistent_with_admitted_evidence", None), "CONTESTED":
 _PASSING = ("ALLOW", "ALLOW_WITH_LABEL")
 
 
-@dataclass(frozen=True)
+@record
 class ScopedAssertion:
     claim_id: str
     proposition_id: str
@@ -67,6 +67,7 @@ class CrossMethodConflictGate:
         self.admit_assertion = admit_assertion
 
     def reconcile(self, assertions: Sequence[ScopedAssertion]) -> dict[str, Any]:
+        assertions = snapshot(assertions)
         groups: dict[tuple[str, str, str], list[ScopedAssertion]] = {}
         refused: list[str] = []
         duplicate_sources: list[str] = []

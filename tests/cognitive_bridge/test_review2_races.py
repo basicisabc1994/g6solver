@@ -49,18 +49,21 @@ def test_the_orchestrator_runs_the_copy_it_checked_against_the_pins(executed_cas
     c = executed_case
     model = c["compiled"].executable_plan.claims[0].models["formal"]
     real = orchestration.canonical_json
-    calls = []
+    calls, refused = [], []
 
     def interleave(value):
         data = real(value)
         calls.append(value)
         if len(calls) == 2:  # the pin check rendered the model and then the steps; the caller edits right after
-            model["premises"][:] = ["False"]
+            try:
+                model["premises"][:] = ["False"]
+            except TypeError:  # review 3: the compiled model is a snapshot, so the edit itself is refused
+                refused.append(True)
         return data
 
     monkeypatch.setattr(orchestration, "canonical_json", interleave)
     run = c["orchestrator"].execute(c["compiled"], approved=True)
-    assert model["premises"] == ["False"]
+    assert refused or model["premises"] == ["False"]
     sent = [params for _, _, params in c["registry"].calls]
     assert sent and all(params["premises"] == ["A"] for params in sent), f"an edit after the pin check ran: {sent}"
     assert run["completion_state"] == "qualified-draft"

@@ -14,8 +14,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import asdict, dataclass
-from types import MappingProxyType
+from dataclasses import asdict
 from typing import Any, Iterable, Mapping, Sequence
 
 from .adaptation import detect_failure_modes
@@ -27,8 +26,8 @@ from .codes import (ASSURANCE_BLOCKED, COMPILE_BLOCKED, EXECUTION_NOT_APPROVED, 
 from .epistemic import CrossMethodConflictGate, ScopedAssertion
 from .metacognition import (MethodVariant, MetacognitiveMethodSelector,
                             ProblemSignature, SelectionDecision)
-from .mixed_methods import (ENGINE_SPECS, ClaimIR, MethodPlan, MethodRouter, MixedMethodExecutor, frozen_plan,
-                            step_digest)
+from .mixed_methods import (ENGINE_SPECS, ClaimIR, MethodPlan, MethodRouter, MixedMethodExecutor, step_digest)
+from .snapshot import record, snapshot
 
 
 def _plan_digest(plan: MethodPlan) -> str:
@@ -41,7 +40,7 @@ def _claims_digest(claims: Sequence[ClaimIR]) -> str:
                                    "source_refs": list(c.source_refs), "origin": c.origin} for c in claims]))
 
 
-@dataclass(frozen=True)
+@record
 class CompiledResearch:
     original_claim: ClaimIR
     executable_plan: MethodPlan
@@ -99,6 +98,7 @@ class CognitiveAssuranceOrchestrator:
                 standard: DomainStandard, variants: Sequence[MethodVariant],
                 variant_models: Mapping[str, Mapping[str, Any]],
                 max_supplemental: int = 0) -> CompiledResearch:
+        claim, context, standard, variants = snapshot((claim, context, standard, variants))
         if context.risk < standard.risk or context.domain != standard.id:
             raise ValueError("the problem context cannot weaken its standard's risk tier or domain")
         mandatory = {m for criterion in standard.criteria for m in criterion.required_methods}
@@ -148,7 +148,7 @@ class CognitiveAssuranceOrchestrator:
         plan = MethodRouter().plan([new_claim])
         gaps = ([f"no selected variant for {', '.join(selection.missing)}"] if selection.missing else []) + (
             [f"no typed model for {', '.join(m['method'] for m in plan.missing)}"] if plan.missing else [])
-        return CompiledResearch(claim, plan, selection, standard.digest, context, MappingProxyType(model_hashes),
+        return CompiledResearch(claim, plan, selection, standard.digest, context, model_hashes,
                                 refusal(COMPILE_BLOCKED, "; ".join(gaps)) if gaps else None, _plan_digest(plan))
 
     def execute(self, compiled: CompiledResearch, *, approved: bool = False,
@@ -156,10 +156,12 @@ class CognitiveAssuranceOrchestrator:
         """Run the approved plan through G6's checked door; ``allow`` is the person's allow for a sensitive op."""
         if not approved or self.registry is None or compiled.completion_state != "qualified-draft":
             return refusal(EXECUTION_NOT_APPROVED, "approved, fully specified plan and connected G6 registry required")
-        # Freeze, then check, then run: the plan is copied whole, the copy is checked against the pins, and the copy
-        # runs (the executor freezes and checks it again against the canonical routing).
+        # Snapshot, then check, then run: the plan is a record (immutable all the way down), checked against the pins,
+        # and that same plan runs (the executor checks it again against the canonical routing).
         try:
-            plan = frozen_plan(compiled.executable_plan)
+            plan = snapshot(compiled.executable_plan)
+            if not isinstance(plan, MethodPlan):
+                raise TypeError("a compiled plan is a MethodPlan record")
         except (TypeError, ValueError) as exc:
             return refusal(PLAN_TAMPERED, str(exc), steps=[], method_execution_coverage=0.0)
         changed = compiled.changed_since_compiled(plan)
@@ -213,12 +215,14 @@ class CognitiveAssuranceOrchestrator:
                attestation: ProfessionalAttestation | None = None,
                scoped_assertions: Sequence[ScopedAssertion] = (),
                epistemic_gate: CrossMethodConflictGate | None = None) -> dict[str, Any]:
+        # One snapshot of everything the assessment checks and then uses, taken before any check.
+        compiled, standard, run_result, verifiers, artifacts, documentation, scoped_assertions = snapshot(
+            (compiled, standard, run_result, verifiers, artifacts, documentation, scoped_assertions))
         if standard.digest != compiled.standard_digest:
             raise ValueError("standard changed since the plan was compiled")
         # The compiled plan is the caller's object: what it covers is read again here, not taken from compile().
         uncovered = sorted({m for criterion in standard.criteria for m in criterion.required_methods}
                            - {step.method for step in compiled.executable_plan.steps})
-        artifacts = dict(artifacts)  # one frozen set: what is checked here is what the evaluator checks and scopes
         for item in artifacts.values():
             if item.claim_id != compiled.original_claim.id:
                 raise ValueError("evidence belongs to a different claim")
@@ -236,12 +240,17 @@ class CognitiveAssuranceOrchestrator:
             conflict_report = (epistemic_gate or CrossMethodConflictGate()).reconcile(scoped_assertions)
         epistemic_ok = conflict_report is None or conflict_report["completion_state"] == "qualified-draft"
         faults = detect_failure_modes(dossier)
-        passed = (backend_ok and not uncovered and epistemic_ok
+        # The decision rests on the standard's digest, so it is read again after use: the standard the evaluator
+        # evaluated, and the standard now, are the one compiled.
+        same_standard = (dossier.payload.get("standard_digest") == compiled.standard_digest
+                         and standard.digest == compiled.standard_digest)
+        passed = (backend_ok and not uncovered and epistemic_ok and same_standard
                   and dossier.payload["completion_state"] == "qualified-draft")
         warning = "Independent external custody and G6 door replay are NOT established here."
         # The state is completion_state alone (never a second state field); the card says why, with a stable code.
         why =(([f"the compiled plan has no step for the standard's mandatory {', '.join(uncovered)}"] if uncovered
                 else [])
+               + ([] if same_standard else ["the standard evaluated is not the standard compiled"])
                + (["no run of this compiled plan by this orchestrator matches the run result"] if executed is None
                   else ["a compiled step did not run through G6's door as compiled"] if not backend_ok else [])
                + (["the cross-method assertions were not reconciled"] if not epistemic_ok else [])
@@ -255,7 +264,7 @@ class CognitiveAssuranceOrchestrator:
             "method_results": executed or {},
             "metacognitive_selection": compiled.decision.to_dict(),
             "dossier": dossier.to_dict(),
-            "failure_mode_findings": [vars(x) for x in faults],
+            "failure_mode_findings": [asdict(x) for x in faults],
             "epistemic_reconciliation": conflict_report,
             "next_action": ("submit frozen artifact/check bundle to independent G6 promotion door"
                             if passed else "address failed method/acceptance checks; do not promote"),

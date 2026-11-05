@@ -8,13 +8,14 @@ execute a tool. All proposals are tentative and require external testing.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import asdict
 from typing import Any, Mapping, Sequence
 
 from .mixed_methods import ENGINE_SPECS
+from .snapshot import record, snapshot
 
 
-@dataclass(frozen=True)
+@record
 class CritiqueCandidate:
     failure_mode: str
     assumption_at_risk: str
@@ -26,7 +27,7 @@ class CritiqueCandidate:
     def __post_init__(self):
         if self.suggested_method not in ENGINE_SPECS:
             raise ValueError("critique suggested unsupported method")
-        for key, value in vars(self).items():
+        for key, value in asdict(self).items():
             if not isinstance(value, str) or len(value) > 1200:
                 raise ValueError(f"critique field {key} invalid")
         if not all((self.failure_mode, self.assumption_at_risk,
@@ -34,7 +35,7 @@ class CritiqueCandidate:
             raise ValueError("critique requires falsifiable mechanisms and evidence gaps")
 
 
-@dataclass(frozen=True)
+@record
 class CritiqueReport:
     candidates: tuple[CritiqueCandidate, ...]
     objective: str
@@ -48,7 +49,7 @@ class CritiqueReport:
 
     def to_dict(self) -> dict[str, Any]:
         return {"objective": self.objective, "completion_state": "qualified-draft",
-                "warning": self.warning, "candidates": [vars(x) for x in self.candidates]}
+                "warning": self.warning, "candidates": [asdict(x) for x in self.candidates]}
 
 
 class LLMMetacognitiveCritic:
@@ -56,7 +57,7 @@ class LLMMetacognitiveCritic:
     def __init__(self, llm: Any, *, max_items: int = 6) -> None:
         if not 1 <= max_items <= 12:
             raise ValueError("max items must be 1..12")
-        self.llm, self.max_items = llm, max_items
+        self.llm, self.max_items = llm, snapshot(max_items)
 
     def propose(self, objective: str, model_summary: str,
                 evidence_summary: Sequence[Mapping[str, Any]] = ()) -> CritiqueReport:

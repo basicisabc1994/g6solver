@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from typing import Any, Iterable, Mapping, Protocol, Sequence
 
 from g6.core.door import SENSITIVE_ENV, allowed_sensitive, invoke_checked
@@ -18,6 +18,7 @@ from g6.core.door import SENSITIVE_ENV, allowed_sensitive, invoke_checked
 from .assurance import canonical_json, sha256
 from .codes import (APPROVAL_REQUIRED, EXECUTION_INCOMPLETE, MODEL_MISSING, PLAN_TAMPERED, PREREQUISITE_UNMET,
                     STEP_FAILED, VERIFIED_FLAG, refusal, settled)
+from .snapshot import record, snapshot
 
 # Every name resolves to an existing G6 component and a fixed, documented op.
 # Models are declarative data, never arbitrary modules, code or pickle paths.
@@ -69,7 +70,7 @@ ENGINE_OP_VARIANTS: dict[str, tuple[str, ...]] = {
 }
 
 
-@dataclass(frozen=True)
+@record
 class ClaimIR:
     """Reviewable problem statement, *not* a checked translation or fact."""
     id: str
@@ -80,7 +81,7 @@ class ClaimIR:
     origin: str = "caller"  # caller | llm_candidate; no change to verification status
 
 
-@dataclass(frozen=True)
+@record
 class MethodStep:
     id: str
     claim_id: str
@@ -92,7 +93,7 @@ class MethodStep:
     depends_on: tuple[str, ...] = ()
 
 
-@dataclass(frozen=True)
+@record
 class MethodPlan:
     claims: tuple[ClaimIR, ...]
     steps: tuple[MethodStep, ...]
@@ -126,19 +127,6 @@ def step_digest(step: MethodStep) -> str:
     return sha256(canonical_json(asdict(step)))
 
 
-def frozen_plan(plan: MethodPlan) -> MethodPlan:
-    """A copy of ``plan`` made from one canonical rendering of all of it (claims, steps, missing), taken before
-    anything about the plan is checked: nothing in the copy aliases the caller's data, so what is checked next is
-    what runs. Raises TypeError or ValueError when the plan is not declarative JSON data."""
-    data = json.loads(canonical_json({"claims": [asdict(c) for c in plan.claims],
-                                      "steps": [asdict(s) for s in plan.steps], "missing": list(plan.missing)}))
-    claims = tuple(ClaimIR(c["id"], c["statement"], tuple(c["evidence_needs"]), c["models"], tuple(c["source_refs"]),
-                           c["origin"]) for c in data["claims"])
-    steps = tuple(MethodStep(s["id"], s["claim_id"], s["method"], s["component"], s["op"], s["params"], s["metric"],
-                             tuple(s["depends_on"])) for s in data["steps"])
-    return MethodPlan(claims, steps, tuple(data["missing"]), plan.translation_status)
-
-
 def _no_bare_verified(value: Any, under_card: bool = False) -> Any:
     """A copy with no ``verified`` field anywhere except in G6's own warning cards (INV-ENV-2): the door already
     corrected the state, so a component's own flag says nothing the state does not."""
@@ -157,6 +145,7 @@ class MethodRouter:
     Missing declarative models are listed, never filled with guessed data.
     """
     def plan(self, claims: Sequence[ClaimIR]) -> MethodPlan:
+        claims = snapshot(claims)
         if not claims or len(claims) > 20:
             raise ValueError("supply 1–20 typed claims")
         seen: set[str] = set()
@@ -236,7 +225,7 @@ class MixedMethodExecutor:
     """
     def __init__(self, registry: RegistryLike, *, allow: Iterable[str] = ()) -> None:
         self.registry = registry
-        self.allow = frozenset(allow)
+        self.allow = snapshot(frozenset(allow))
 
     def _invoke(self, step: MethodStep, params: dict[str, Any]) -> dict[str, Any]:
         how = (f"Allow it in your own code with MixedMethodExecutor(registry, allow=('{step.component}.{step.op}',)), "
@@ -271,9 +260,11 @@ class MixedMethodExecutor:
             return refusal(APPROVAL_REQUIRED, "execution requires caller approval; planning alone does no work",
                            steps=[], method_execution_coverage=0.0)
         try:
-            # Freeze, then check, then run the frozen copy: the plan is copied whole first, the copy is checked against
-            # the canonical routing of its own claims, and only the copy's steps run, from their own bytes.
-            plan = frozen_plan(plan)
+            # Snapshot, then check, then run: the plan is a record (immutable all the way down, so nothing here aliases
+            # the caller's data), checked against the canonical routing of its own claims; its steps run from bytes.
+            plan = snapshot(plan)
+            if not isinstance(plan, MethodPlan):
+                raise TypeError("an executed plan is a MethodPlan record")
             canonical = MethodRouter().plan(plan.claims)
             if canonical.steps != plan.steps or canonical.missing != plan.missing:
                 raise ValueError("method steps differ from canonical allowlisted routing")
@@ -323,7 +314,7 @@ class LLMClaimCompiler:
     def __init__(self, llm: Any, *, max_claims: int = 5) -> None:
         if not 1 <= max_claims <= 10:
             raise ValueError("max_claims must be 1–10")
-        self.llm, self.max_claims = llm, max_claims
+        self.llm, self.max_claims = llm, snapshot(max_claims)
 
     def draft(self, question: str, context: Sequence[Mapping[str, Any]] = ()) -> MethodPlan:
         if not 1 <= len(question) <= 3000:

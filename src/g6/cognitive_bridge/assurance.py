@@ -11,10 +11,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import field, fields
 from typing import Any, Mapping, Protocol
 
 from .codes import DOSSIER_BLOCKED, refusal, settled
+from .snapshot import record, snapshot
 
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 FORMAT = "g6.cognitive_assurance.dossier/1"
@@ -41,7 +42,7 @@ def is_risk(value: Any) -> bool:
     return type(value) is int and 0 <= value <= 3
 
 
-@dataclass(frozen=True)
+@record
 class Criterion:
     id: str
     description: str
@@ -64,7 +65,7 @@ class Criterion:
             raise ValueError("criterion contains an unsupported mandatory reasoning method")
 
 
-@dataclass(frozen=True)
+@record
 class DomainStandard:
     id: str
     edition: str
@@ -90,16 +91,19 @@ class DomainStandard:
         return f"R{self.risk}"
 
     def manifest(self) -> dict[str, Any]:
+        """A new copy each call, never a view of what the standard holds (each criterion's fields, not its own
+        ``__dict__``)."""
         return {"id": self.id, "edition": self.edition, "jurisdiction": self.jurisdiction,
                 "authority": self.authority, "source_sha256": self.source_sha256,
-                "criteria": [vars(c) for c in self.criteria], "risk": self.risk}
+                "criteria": [{f.name: getattr(c, f.name) for f in fields(c)} for c in self.criteria],
+                "risk": self.risk}
 
     @property
     def digest(self) -> str:
         return sha256(canonical_json(self.manifest()))
 
 
-@dataclass(frozen=True)
+@record
 class EvidenceArtifact:
     id: str
     content: bytes
@@ -109,11 +113,10 @@ class EvidenceArtifact:
     claim_id: str
 
     def __post_init__(self) -> None:
-        # The content is immutable bytes from the moment the artifact is made: a bytes-like buffer is copied now, so a
-        # later change to the caller's buffer cannot change what is checked after its manifest was recorded.
-        if not isinstance(self.content, (bytes, bytearray, memoryview)):
+        # The content is immutable bytes from the moment the artifact is made (the record's snapshot copied a bytes-like
+        # buffer), so a later change to the caller's buffer cannot change what is checked after its manifest.
+        if not isinstance(self.content, bytes):
             raise TypeError("evidence content must be bytes")
-        object.__setattr__(self, "content", bytes(self.content))
         if not all((self.id, self.content, self.kind, self.claimed_by, self.source_ref, self.claim_id)):
             raise ValueError("evidence needs bytes, claim, origin, kind and source reference")
         if len(self.content) > 2_000_000:
@@ -133,7 +136,7 @@ class Check(Protocol):
     def __call__(self, content: bytes) -> bool: ...
 
 
-@dataclass(frozen=True)
+@record
 class FrozenVerifier:
     """Evaluator-owned checker plus frozen controls, passed as trusted Python objects.
 
@@ -163,7 +166,7 @@ class FrozenVerifier:
                 "negative_control_hashes": [sha256(x) for x in self.negative_controls]}
 
 
-@dataclass(frozen=True)
+@record
 class ProfessionalAttestation:
     reviewer_id: str
     role: str
@@ -177,7 +180,7 @@ class ReviewAuthenticator(Protocol):
     def __call__(self, attestation: ProfessionalAttestation) -> bool: ...
 
 
-@dataclass(frozen=True)
+@record
 class CandidateDossier:
     payload: dict[str, Any]
     content_sha256: str
@@ -214,7 +217,7 @@ class InProcessAssuranceEvaluator:
     def __init__(self, *, evaluator_id: str, reviewer_authenticator: ReviewAuthenticator | None = None):
         if not evaluator_id:
             raise ValueError("named evaluator required")
-        self.evaluator_id = evaluator_id
+        self.evaluator_id = snapshot(evaluator_id)
         self.reviewer_authenticator = reviewer_authenticator
 
     def review_scope(self, *, standard: DomainStandard, artifacts: Mapping[str, EvidenceArtifact],
@@ -240,9 +243,10 @@ class InProcessAssuranceEvaluator:
                  attestation: ProfessionalAttestation | None = None) -> CandidateDossier:
         if not candidate_actor or candidate_actor == self.evaluator_id:
             raise ValueError("producer and evaluator must have distinct identities")
-        # One frozen set, taken before anything is checked: the checks, the dossier and the review scope all read these
-        # copies, never the caller's mappings (an artifact is frozen, its content immutable bytes).
-        artifacts, verifiers, documentation = dict(artifacts), dict(verifiers), dict(documentation)
+        # One snapshot, taken before anything is checked: the checks, the dossier and the review scope all read it,
+        # never the caller's mappings; the standard's digest is read again after use (a change would block).
+        standard, artifacts, verifiers, documentation = snapshot((standard, artifacts, verifiers, documentation))
+        pinned = standard.digest
         if set(artifacts) - {c.id for c in standard.criteria}:
             raise ValueError("artifact supplied for undeclared criterion")
         if set(verifiers) - {c.verifier_id for c in standard.criteria}:
@@ -281,7 +285,8 @@ class InProcessAssuranceEvaluator:
                 negatives = [_test(verifier, a) for a in verifier.negative_controls]
                 # A planted incorrect artefact must be DETECTED, not merely
                 # cause an exception or an execution refusal.
-                controls_ok = (all(x == (True, "boolean result") for x in positives)
+                controls_ok = (bool(positives) and bool(negatives)  # an empty replay detects nothing
+                               and all(x == (True, "boolean result") for x in positives)
                                and all(x == (False, "boolean result") for x in negatives))
                 row["controls"] = "detected" if controls_ok else "failed_or_inconclusive"
                 row["control_tests"] = {"positive_count": len(positives),
@@ -330,6 +335,8 @@ class InProcessAssuranceEvaluator:
             blockers.append("no critical acceptance obligation exists")
         if advisory_failed:
             blockers.append("advisory exceptions require explicit professional disposition: " + ", ".join(advisory_failed))
+        if standard.digest != pinned:  # read again after use
+            blockers.append("the standard changed while it was evaluated")
         payload = settled(
             refusal(DOSSIER_BLOCKED, "; ".join(blockers)) if blockers else None,
             schema=FORMAT,

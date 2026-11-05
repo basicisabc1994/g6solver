@@ -17,8 +17,8 @@ import inspect
 import os
 import re
 import stat
-from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
+from dataclasses import asdict
 from typing import Any, Callable, Sequence
 
 from g6.core.adaptation_gate import protected_hits
@@ -26,11 +26,12 @@ from g6.reasoning import sign_test_p
 
 from .assurance import CandidateDossier
 from .codes import ADAPTATION_REFUSED, refusal, settled
+from .snapshot import record, snapshot
 
 HEX = re.compile(r"^[0-9a-f]{64}$")
 
 
-@dataclass(frozen=True)
+@record
 class FailureModeFinding:
     code: str
     criterion_id: str
@@ -59,7 +60,7 @@ def detect_failure_modes(dossier: CandidateDossier) -> tuple[FailureModeFinding,
     return tuple(out)
 
 
-@dataclass(frozen=True)
+@record
 class MitigationHypothesis:
     id: str
     failure_code: str
@@ -85,14 +86,14 @@ class CompositionalFailureModel:
             edges.append({"from": proposed.failure_code, "to": proposed.id,
                           "edge": "proposed_mitigation_not_established",
                           "test_to_falsify": proposed.falsifying_case})
-        return {"observed": [vars(f) for f in findings],
-                "candidate_guards": [vars(p) for p in proposals],
+        return {"observed": [asdict(f) for f in findings],
+                "candidate_guards": [asdict(p) for p in proposals],
                 "edges": edges, "unmatched_proposals": unresolved,
                 "completion_state": "qualified-draft",
                 "warning": "A failure signature is not a confirmed root cause; an LLM's guard is not an established mitigation."}
 
 
-@dataclass(frozen=True)
+@record
 class GuardChange:
     id: str
     code_digest: str
@@ -114,7 +115,7 @@ class GuardChange:
             raise ValueError("change must name the observed failure modes and modified paths")
 
 
-@dataclass(frozen=True)
+@record
 class PairedTrial:
     case_id: str
     suite_digest: str
@@ -139,7 +140,7 @@ class PairedTrial:
             raise ValueError("paired outcomes must be booleans")
 
 
-@dataclass(frozen=True)
+@record
 class ControlTrial:
     case_id: str
     correct_detection: bool
@@ -203,11 +204,14 @@ def _identity(path: Path) -> tuple[Any, ...]:
     """What ``path`` names, however it is spelled or linked: an existing file's (device, inode), or, for a file not
     made yet, the location the file system resolves it to (links followed, case folded where the file system folds
     it). Raises for anything a change may not write by name: not a regular file, or a file with another name too (a
-    hard link)."""
+    hard link). The lookup itself decides: only "no such file" in a folder that can be listed is a file not made yet;
+    any other lookup error raises, and so refuses the path."""
     resolved = os.path.normcase(os.path.realpath(path))
-    if not os.path.lexists(resolved):
+    try:
+        found = os.lstat(resolved)
+    except FileNotFoundError:
+        os.listdir(os.path.dirname(resolved))  # the folder it would be made in must be there and listable
         return ("new", resolved)
-    found = os.stat(resolved)
     if not stat.S_ISREG(found.st_mode) or found.st_nlink != 1:
         raise ValueError(f"{path} is not a regular file with one name")
     return ("file", found.st_dev, found.st_ino)
@@ -261,13 +265,13 @@ class AdaptationPromotionGate:
         if not 0 < alpha < 1 or not 1 <= max_evaluations <= 100:
             raise ValueError("invalid multiplicity policy")
         self.admit_pair, self.admit_control = admit_pair, admit_control
-        self.min_cases, self.min_discordant = min_cases, min_discordant
-        self.alpha, self.max_evaluations = alpha, max_evaluations
+        self.min_cases, self.min_discordant = snapshot(min_cases), snapshot(min_discordant)
+        self.alpha, self.max_evaluations = snapshot(alpha), snapshot(max_evaluations)
 
     def assess(self, change: GuardChange, pairs: Sequence[PairedTrial],
                controls: Sequence[ControlTrial], *, detected_failures: Sequence[str]) -> dict[str, Any]:
-        # One frozen copy, taken before anything is checked: what is admitted is what is counted.
-        pairs, controls, detected_failures = tuple(pairs), tuple(controls), tuple(detected_failures)
+        # One snapshot, taken before anything is checked: what is admitted is what is counted.
+        change, pairs, controls, detected_failures = snapshot((change, pairs, controls, detected_failures))
         violations: list[str] = []
         if change.candidate_actor == change.evaluator_actor:
             violations.append("candidate and evaluator are not independent")

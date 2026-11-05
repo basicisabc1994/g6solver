@@ -4,25 +4,34 @@
 Hypotheses are mutually exclusive *within this experiment*, and collectively
 exhaustive is an assumption of the caller. The proposed likelihood model is
 not independently established. Every result is at most qualified-draft.
+
+Every tool step goes through G6's checked door (``g6.core.door.invoke_checked``) and is credited only when the door's
+reply says ``ok``; ``tests/cognitive_bridge/test_step_inventory.py`` lists every call of a tool or step in the package
+and allows only the door.
 """
 from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass, field, replace
-from typing import Any, Callable, Mapping, Protocol, Sequence
+from dataclasses import asdict, field, replace
+from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 
-from .codes import NO_PROBE, refusal, settled
+from returns.result import Failure, Success
+
+from g6.core import door
+
+from .codes import NO_PROBE, STEP_FAILED, refusal, settled
+from .snapshot import record, snapshot
 
 
-@dataclass(frozen=True)
+@record
 class Hypothesis:
     id: str
     statement: str
     prior: float
 
 
-@dataclass(frozen=True)
+@record
 class Probe:
     id: str
     question: str
@@ -34,7 +43,7 @@ class Probe:
     arguments: Mapping[str, Any] = field(default_factory=dict)
 
 
-@dataclass(frozen=True)
+@record
 class Observation:
     positive: bool
     source_ref: str
@@ -43,7 +52,7 @@ class Observation:
     evaluator_ref: str = ""
 
 
-@dataclass(frozen=True)
+@record
 class ToolSpec:
     name: str
     call: Callable[[str, Mapping[str, Any]], Observation]
@@ -118,8 +127,8 @@ class InformationGainSelector:
     """Explicit, deterministic selection; novelty only breaks near-ties by default."""
 
     def __init__(self, *, novelty_weight: float = 1e-6, min_gain: float = 1e-9) -> None:
-        self.novelty_weight = novelty_weight
-        self.min_gain = min_gain
+        self.novelty_weight = snapshot(novelty_weight)
+        self.min_gain = snapshot(min_gain)
         if not 0 <= novelty_weight <= 1 or not 0 <= min_gain:
             raise ValueError("invalid selector configuration")
 
@@ -151,7 +160,7 @@ class BayesianUpdater:
 
 class StaticProposer:
     def __init__(self, probes: Sequence[Probe]) -> None:
-        self.probes = tuple(probes)
+        self.probes = snapshot(probes)
 
     def propose(self, objective: str, hypotheses: Sequence[Hypothesis], history: Sequence[dict]) -> list[Probe]:
         return list(self.probes)
@@ -167,7 +176,7 @@ class LLMProposer:
     def __init__(self, llm: Any, tools: Mapping[str, ToolSpec], *, max_probes: int = 8) -> None:
         if not 1 <= max_probes <= 12:
             raise ValueError("max_probes must be 1–12")
-        self.llm, self.tools, self.max_probes = llm, dict(tools), max_probes
+        self.llm, self.tools, self.max_probes = llm, snapshot(tools), snapshot(max_probes)
 
     def propose(self, objective: str, hypotheses: Sequence[Hypothesis], history: Sequence[dict]) -> list[Probe]:
         if not self.tools:
@@ -229,7 +238,7 @@ class MLAcquisitionSelector:
 
     def __init__(self, predictor: Any, *, min_gain: float = 1e-9):
         self.predictor = predictor
-        self.min_gain = min_gain
+        self.min_gain = snapshot(min_gain)
 
     def rank(self, beliefs: Mapping[str, float], probes: Sequence[Probe], budget: float) -> list[dict]:
         if not math.isfinite(budget) or budget < 0:
@@ -253,27 +262,70 @@ class MLAcquisitionSelector:
         return sorted(result, key=lambda row: (-row["score"], row["id"]))
 
 
+class _ToolDoor:
+    """What G6's door calls for one tool step, as it calls a registry: it runs the caller's tool and hands its
+    observation back as an answer the door can read. Only the door calls it (``tests/cognitive_bridge/
+    test_step_inventory.py``); a tool declares no sensitivity, so the person's allow does not gate it."""
+
+    def __init__(self, tool: ToolSpec) -> None:
+        self.tool = snapshot(tool)
+
+    def invoke(self, name: str, op: str, params: Mapping[str, Any] | None = None, *, block_sensitive: bool = False,
+               llm: Any = None) -> Any:
+        try:
+            observation = self.tool.call(params["question"], dict(params["arguments"]))
+        except Exception as exc:  # the tool is the caller's code: anything it raises is a failed step
+            return Failure(f"[{STEP_FAILED}] {self.tool.name}: {type(exc).__name__}: {exc}")
+        if not isinstance(observation, Observation):
+            return Failure(f"[{STEP_FAILED}] {self.tool.name}: tool must return an Observation")
+        return Success({"completion_state": "qualified-draft", "observation": asdict(observation)})
+
+
 class CognitiveAgent:
-    """Bounded propose -> select -> observe -> Bayes-update agent, no implicit network or action."""
+    """Bounded propose -> select -> observe -> Bayes-update agent, no implicit network or action.
+
+    Each observation is a tool step through G6's checked door (``allow`` is the person's allow, as
+    ``MixedMethodExecutor`` takes it); a step the door does not pass stops the run with ``G6_E_COGNITIVE_STEP_FAILED``
+    and the door's own card under ``door``.
+    """
 
     def __init__(self, proposer: Proposer, tools: Mapping[str, ToolSpec],
-                 selector: Selector | None = None, updater: Updater | None = None) -> None:
-        self.proposer, self.tools = proposer, dict(tools)
+                 selector: Selector | None = None, updater: Updater | None = None, *,
+                 allow: Iterable[str] = ()) -> None:
+        self.proposer, self.tools = proposer, snapshot(tools)
         self.selector = selector or InformationGainSelector()
         self.updater = updater or BayesianUpdater()
+        self.allow = snapshot(frozenset(allow))
+
+    def _observe(self, tool: ToolSpec, probe: Probe) -> tuple[Observation | None, dict[str, Any]]:
+        """One tool step through G6's door: the observation, when the door's reply says ``ok``, and the reply."""
+        reply = door.invoke_checked(
+            f"tool:{tool.name}", "observe", {"question": probe.question, "arguments": dict(probe.arguments)},
+            allow=door.allowed_sensitive() | self.allow, registry=_ToolDoor(tool),
+            how_to_allow=f"Allow it in your own code with CognitiveAgent(..., allow=('tool:{tool.name}',)).")
+        if reply.get("ok") is not True:
+            return None, reply
+        answer = reply.get("result", {}).get("observation")
+        if not isinstance(answer, Mapping):
+            return None, reply
+        return Observation(**answer), reply
 
     def run(self, objective: str, hypotheses: Sequence[Hypothesis], *, budget: float, max_steps: int = 3) -> dict:
         if not 1 <= max_steps <= 20 or not math.isfinite(budget) or budget < 0:
             raise ValueError("invalid step or budget limit")
+        hypotheses = snapshot(hypotheses)
         beliefs = check_beliefs(hypotheses)
         initial = dict(beliefs)
         seen: set[str] = set()
         history: list[dict] = []
         remaining = float(budget)
+        refused: dict[str, Any] | None = None
         for step in range(max_steps):
             # Proposer is advisory; calls to actual tools occur only here.
             current_hypotheses = [replace(h, prior=beliefs[h.id]) for h in hypotheses]
-            proposals = self.proposer.propose(objective, current_hypotheses, history)
+            proposals = snapshot(self.proposer.propose(objective, current_hypotheses, history))
+            if any(not isinstance(p, Probe) for p in proposals):
+                raise ValueError("a proposer proposes Probe records")
             if len({p.id for p in proposals}) != len(proposals):
                 # the ranking names a probe by its id: two probes under one id could rank one and run the other
                 raise ValueError("duplicate probe ids in one proposal")
@@ -290,8 +342,14 @@ class CognitiveAgent:
                 raise ValueError("probe cost/likelihood must match the caller-owned tool registry")
             if chosen.cost > remaining + 1e-12:  # checked again where it runs, against what is left now
                 raise ValueError("the chosen probe costs more than the remaining budget")
-            observation = tool.call(chosen.question, dict(chosen.arguments))
-            if not isinstance(observation, Observation) or type(observation.positive) is not bool:
+            observation, reply = self._observe(tool, chosen)
+            if observation is None:  # the door did not pass the step: it is not credited, and the run stops here
+                refused = refusal(STEP_FAILED, str(reply.get("error") or f"{chosen.tool}: G6's door did not pass the "
+                                                                           "tool step"),
+                                  door={"warning_card": dict(reply.get("warning_card") or {}),
+                                        "request_id": reply.get("request_id", "")}, probe_id=chosen.id)
+                break
+            if type(observation.positive) is not bool:
                 raise ValueError("tool must return an Observation with a boolean outcome")
             if not observation.source_ref:
                 raise ValueError("tool observation must include a source reference")
@@ -311,9 +369,13 @@ class CognitiveAgent:
                             "evaluator_ref": observation.evaluator_ref,
                             "expected_information_bits": ranked[0]["expected_information_bits"],
                             "prior": before, "posterior": dict(beliefs)})
+        if refused is None and not history:
+            refused = refusal(NO_PROBE, "no executable discriminating probe")
         return settled(
-            None if history else refusal(NO_PROBE, "no executable discriminating probe"),
-            stop_reason="no further affordable discriminating probe" if history else "no executable discriminating probe",
+            refused,
+            stop_reason=("G6's door did not pass a tool step" if refused and refused["code"] == STEP_FAILED
+                         else "no further affordable discriminating probe" if history
+                         else "no executable discriminating probe"),
             objective=objective,
             initial_beliefs=initial, posterior=beliefs, history=history,
             remaining_budget=remaining, limitations=[
@@ -323,7 +385,7 @@ class CognitiveAgent:
                 "An LLM proposal or high posterior probability is not a discovery certificate."])
 
 
-@dataclass(frozen=True)
+@record
 class IdeaHypothesis:
     """Creative LLM suggestion, deliberately lacking a probability or evidence status."""
     id: str
@@ -338,7 +400,7 @@ class LLMIdeaGenerator:
     def __init__(self, llm: Any, *, max_ideas: int = 5):
         if not 1 <= max_ideas <= 10:
             raise ValueError("max_ideas must be 1–10")
-        self.llm, self.max_ideas = llm, max_ideas
+        self.llm, self.max_ideas = llm, snapshot(max_ideas)
 
     def generate(self, objective: str, observations: Sequence[dict]) -> list[IdeaHypothesis]:
         system = (

@@ -112,7 +112,10 @@ def test_same_producer_and_verifier_blocks():
 
 def test_dossier_digest_is_integrity_check_not_authenticity():
     original = audit()
-    original.payload["checks"][0]["result"] = "failed"
+    # A dossier's payload is a snapshot (it cannot be edited in place), so the edit is a copy kept under the old digest.
+    edited = json.loads(json.dumps(original.payload))
+    edited["checks"][0]["result"] = "failed"
+    original = CandidateDossier(edited, original.content_sha256)
     assert not original.intact()
     with pytest.raises(ValueError, match="digest mismatch"):
         detect_failure_modes(original)

@@ -12,19 +12,20 @@ NOT a calibrated probability of research success.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import asdict
 from typing import Any, Callable, Mapping, Sequence
 
 from .assurance import canonical_json, is_risk, sha256
 from .codes import MODEL_MISSING, OBLIGATION_NOT_PLANNED, SELECTION_INCOMPLETE, refusal, settled
 from .mixed_methods import ENGINE_SPECS, ENGINE_OP_VARIANTS, ClaimIR, MethodRouter, MethodPlan
+from .snapshot import record, snapshot
 
 CAPABILITIES = frozenset(ENGINE_SPECS)
 #: The splits a trial can come from (``EvaluatedTrial.split``); a selector learns from the ones its ``learn_from`` names.
 SPLITS = ("training", "heldout", "shadow")
 
 
-@dataclass(frozen=True)
+@record
 class ProblemSignature:
     """The features of a task the selector matches trials on. ``risk`` is the number of G6's ``risk_tier``: 0 to 3
     for R0 to R3."""
@@ -49,7 +50,7 @@ class ProblemSignature:
         return f"R{self.risk}"
 
 
-@dataclass(frozen=True)
+@record
 class MethodVariant:
     """A trusted, typed way to meet one evidence obligation: any named method.
 
@@ -95,7 +96,7 @@ class MethodVariant:
                                       "engine": self.engine, "op": self.op}))
 
 
-@dataclass(frozen=True)
+@record
 class EvaluatedTrial:
     """Held-out evaluation outcome; provenance must be independently authenticated.
 
@@ -140,7 +141,7 @@ class EvaluatedTrial:
             raise ValueError("a variant digest is a 64-digit SHA-256 of the variant's definition")
 
 
-@dataclass(frozen=True)
+@record
 class SelectionDecision:
     ordered_variants: tuple[dict[str, Any], ...]
     requirements: tuple[str, ...]
@@ -192,13 +193,13 @@ class MetacognitiveMethodSelector:
             raise ValueError(f"learn_from names the splits to learn from, among {', '.join(SPLITS)}")
         self.trials: tuple[EvaluatedTrial, ...] = ()
         self.rejected_trials = 0
-        self.exploration_weight = exploration_weight
-        self.seed = seed
+        self.exploration_weight = snapshot(exploration_weight)
+        self.seed = snapshot(seed)
         self.admit_trial = admit_trial
-        self.learn_from = learn
+        self.learn_from = snapshot(learn)
         clean: list[EvaluatedTrial] = []
         seen: set[str] = set()
-        for t in trials:
+        for t in snapshot(trials):
             # A replayed record must be in a split it learns from, and cannot
             # duplicate a previous trial id. The trusted admission hook
             # MUST check signature, frozen suite, evaluator and data access.
@@ -214,7 +215,7 @@ class MetacognitiveMethodSelector:
                 continue
             clean.append(t)
             seen.add(t.trial_id)
-        self.trials = tuple(clean)
+        self.trials = snapshot(clean)
         #: How many (case, variant) groups were admitted: the evidence count, whatever the repeats or oracle revisions.
         self._groups = len({(t.cohort_id, t.case_id, t.variant_id, t.variant_digest) for t in self.trials})
 
@@ -253,6 +254,7 @@ class MetacognitiveMethodSelector:
     def select(self, context: ProblemSignature, variants: Sequence[MethodVariant],
                *, required_methods: Sequence[str],
                max_optional: int = 0) -> SelectionDecision:
+        context, variants, required_methods = snapshot((context, variants, required_methods))
         if max_optional < 0 or max_optional > 10:
             raise ValueError("max optional methods invalid")
         required = tuple(dict.fromkeys(required_methods))
@@ -328,7 +330,7 @@ class MetacognitiveMethodSelector:
         policy = {"version": "meta-selector/0.2", "seed": self.seed,
                   "exploration_weight": self.exploration_weight, "learn_from": list(self.learn_from),
                   "trials": sorted(t.trial_id for t in self.trials),
-                  "required": list(required), "context": vars(context),
+                  "required": list(required), "context": asdict(context),
                   "candidate_ids": sorted(v.id for v in variants)}
         refused = (refusal(SELECTION_INCOMPLETE, "no affordable variant covers: " + ", ".join(missing))
                    if missing else None)
@@ -350,6 +352,7 @@ class MetacognitivePlanner:
     def plan(self, claims: Sequence[ClaimIR], context: ProblemSignature,
              variants: Sequence[MethodVariant], *,
              required_methods: Sequence[str]) -> dict[str, Any]:
+        claims, context, variants, required_methods = snapshot((claims, context, variants, required_methods))
         planned: MethodPlan = MethodRouter().plan(claims)
         required = set(required_methods)
         requested = {need for claim in claims for need in claim.evidence_needs}

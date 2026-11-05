@@ -12,7 +12,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from g6.core.reliability_envelope import WarningCard, warning_card
+from g6.core.door import said_state
+from g6.core.reliability_envelope import ReliabilityEnvelope, ReliabilityLabel, WarningCard, warning_card
 from g6.invariants import ERROR_CODE_PATTERN
 
 #: The block refused its input: a field it does not take is ``G6_E_INPUT_VALIDATION`` at the door; this is the rest
@@ -69,8 +70,32 @@ CODES: tuple[str, ...] = (INPUT, APPROVAL_REQUIRED, PLAN_TAMPERED, EXECUTION_NOT
 STATES: tuple[str, ...] = ("qualified-draft", "blocked-escalated")
 #: The name of G6's own flag, which only G6's warning card carries (INV-ENV-2); the one place the package names it.
 VERIFIED_FLAG = "verified"
-#: The fields only :func:`refusal` and :func:`settled` write. A caller's value for any of them is refused, never taken.
-RESERVED: tuple[str, ...] = ("completion_state", "code", "warning_card", VERIFIED_FLAG)
+
+
+def _state_fields() -> tuple[str, ...]:
+    """The fields G6 reads as a result's reliability state, taken from G6's own definitions, never a copied list: the
+    fields the door's reader asks a result for (``g6.core.door.said_state``, asked here which ones it reads) and the
+    envelope's fields typed as a reliability label (``ReliabilityEnvelope`` fields of type ``ReliabilityLabel``)."""
+    asked: list[str] = []
+
+    class _Asked(dict):
+        def get(self, key: Any, default: Any = None) -> Any:
+            asked.append(key)
+            return default
+
+    said_state(_Asked())
+    labelled = [name for name, field in ReliabilityEnvelope.model_fields.items() if field.annotation == ReliabilityLabel]
+    return tuple(dict.fromkeys([*asked, *labelled]))
+
+
+#: Every field G6's door or envelope reads as a reliability state (``completion_state``, ``reliability_label``, ...).
+STATE_FIELDS: tuple[str, ...] = _state_fields()
+#: The fields only :func:`refusal` and :func:`settled` write: their own state, code and card, every field G6 reads as a
+#: state, and G6's flag. A caller's value for any of them is refused, never taken.
+RESERVED: tuple[str, ...] = tuple(dict.fromkeys(("completion_state", "code", "warning_card", *STATE_FIELDS,
+                                                 VERIFIED_FLAG)))
+#: What :func:`refusal` itself writes; any other reserved field in a refusal handed back is a forgery.
+_MADE = ("completion_state", "code", "warning_card")
 
 
 def _no_reserved(values: Mapping[str, Any], where: str) -> None:
@@ -81,12 +106,12 @@ def _no_reserved(values: Mapping[str, Any], where: str) -> None:
 
 def _card(code: str, reason: str, card: Mapping[str, Any] | None) -> dict[str, Any]:
     """The warning card for a registered ``code``: a new one, or a supplied card for that same code that claims
-    nothing (no state of its own, ``verified`` false)."""
+    nothing (no field G6 reads as a state, ``verified`` false)."""
     if code not in CODES or not ERROR_CODE_PATTERN.match(str(code)):
         raise ValueError(f"{code!r} is not a code g6.cognitive_bridge registered")
     if card is None:
         return warning_card(code, reason)
-    if (not isinstance(card, Mapping) or card.get("code") != code or "completion_state" in card
+    if (not isinstance(card, Mapping) or card.get("code") != code or set(card) & set(STATE_FIELDS)
             or card.get(VERIFIED_FLAG, False) is not False):
         raise ValueError(f"a supplied card must be a warning card for the registered code {code!r} that claims "
                          "nothing of its own")
@@ -116,7 +141,7 @@ def settled(refused: Mapping[str, Any] | None, *, draft_card: tuple[str, str] | 
             out["warning_card"] = _card(draft_card[0], draft_card[1], None)
         return out
     if (draft_card is not None or not isinstance(refused, Mapping) or refused.get("completion_state") != STATES[1]
-            or VERIFIED_FLAG in refused):
+            or set(refused) & (set(RESERVED) - set(_MADE))):
         raise ValueError("settled takes a refusal codes.refusal made, unchanged, or None")
     rest = {k: v for k, v in refused.items() if k not in RESERVED and k != "reason"}
     return {**refusal(refused.get("code", ""), str(refused.get("reason", "")), card=refused.get("warning_card"),
@@ -127,4 +152,5 @@ __all__ = ["ADAPTATION_REFUSED", "APPROVAL_REQUIRED", "ASSURANCE_BLOCKED", "CODE
            "DOSSIER_BLOCKED", "EVIDENCE_CONTESTED", "EVIDENCE_NOT_RECONCILED", "EVIDENCE_REFUTED",
            "EVIDENCE_UNDETERMINED", "EXECUTION_INCOMPLETE", "EXECUTION_NOT_APPROVED", "INPUT", "MODEL_MISSING",
            "NOT_PROMOTED", "NO_PROBE", "OBLIGATION_NOT_PLANNED", "PLAN_TAMPERED", "PREREQUISITE_UNMET",
-           "RESERVED", "SELECTION_INCOMPLETE", "STATES", "STEP_FAILED", "VERIFIED_FLAG", "refusal", "settled"]
+           "RESERVED", "SELECTION_INCOMPLETE", "STATES", "STATE_FIELDS", "STEP_FAILED", "VERIFIED_FLAG", "refusal",
+           "settled"]
