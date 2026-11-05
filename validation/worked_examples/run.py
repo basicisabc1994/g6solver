@@ -1893,7 +1893,9 @@ def workspace_from(ctx: Context, task: Task, agent: str, dest: Path) -> int:
     refuses the whole tree before anything is written. Then, in the empty ``dest``, each member is checked against what was
     written: it is there under its exact name, and no two files are one file (the same device and inode, which NTFS gives too),
     so a short-name alias or any other collision refuses the whole tree, and ``dest`` is left empty, before the agent starts.
-    Returns how many files came out."""
+    First of all, ``dest`` itself must be a path the host holds as named, by the box's one check (``box_mcp.root_named``), so
+    nothing is exported into ``workspace`` for ``workspace.``. Returns how many files came out."""
+    box_mcp.root_named(dest)
     done = ctx.docker("exec", "-u", USER, "-w", task.repo, agent, "tar", "-c", "--exclude=.git", "--exclude=.venv", ".",
                       timeout=900)
     if done.returncode != 0:

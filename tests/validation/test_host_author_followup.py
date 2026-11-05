@@ -320,8 +320,10 @@ def test_every_newline_delimited_json_file_is_named_from_its_writers_constant_an
 
     The guarantee rests on the behavioural reader tests; this guard is a lint over them, which makes a new reader of those files
     visible so it gets a case of its own. Its limits, stated: the constant reached through getattr, a name built some other way
-    (from parts that hold no name's end, or from data), a reader outside this folder (``CodingReplay`` in g6.metaharness, which
-    reads the exported cases), and the egress proxy, which writes its log where it is told, are out of its scope."""
+    (from parts that hold no name's end, or from data), a reader whose name comes from the constant indirectly, through a function
+    or a property that returns a path built from it (a new reader of ``Archive(root).index``: fix review 3, finding 2, rejected by
+    ruling), a reader outside this folder (``CodingReplay`` in g6.metaharness, which reads the exported cases), and the egress
+    proxy, which writes its log where it is told, are out of its scope."""
     _guard(WE_DIR)
     read = {(m, f) for (m, f, _), listed in NDJSON_USES.items() if any(callee in FRAMED for callee, _ in listed)}
     assert read <= set(READERS), f"a reader with no behavioural case: {sorted(read - set(READERS))}"
@@ -770,6 +772,49 @@ def test_a_root_with_a_part_the_host_cannot_hold_as_named_is_refused_before_anyt
             box.pack(made[-1])
     finally:
         for folder in reversed(made):
+            os.rmdir(_exact(folder))
+
+
+def _export_into(dest: Path) -> list:
+    """``run.workspace_from`` into ``dest``, from a fake container whose export holds one file: the docker calls it made."""
+    calls = []
+    tar = helpers.tar_of([("./payload.py", "file", b"exported bytes")])
+    ctx = SimpleNamespace(docker=lambda *a, **kw: (calls.append(a), helpers.ok(tar))[1])
+    with pytest.raises(RuntimeError, match="Windows would refuse or change"):
+        we.workspace_from(ctx, SimpleNamespace(repo="/w/repo"), "agent", dest)
+    return calls
+
+
+def test_fix_review_3_finding_1_the_export_refuses_the_root_the_pack_refuses_and_writes_nothing(tmp_path):
+    ordinary, named = tmp_path / "workspace", tmp_path / "workspace."
+    ordinary.mkdir()
+    os.mkdir(_exact(named))
+    try:
+        assert {"workspace", "workspace."} <= set(os.listdir(tmp_path))
+        with pytest.raises(box.Refused, match="Windows would refuse or change"):
+            box.pack(named)
+        assert _export_into(named) == [], "the export ran though its root is one Windows rewrites"
+        assert os.listdir(ordinary) == [] and os.listdir(_exact(named)) == [], "the export wrote through a rewritten root"
+    finally:
+        for folder in (ordinary, named):
+            for name in os.listdir(_exact(folder)):
+                os.unlink(_exact(folder / name))
+        os.rmdir(_exact(named))
+
+
+@pytest.mark.parametrize("parts", [("ws.",), ("ws ",), ("con", "ws")])
+def test_the_export_refuses_a_root_with_a_part_the_host_cannot_hold_as_named_and_writes_nothing(tmp_path, parts):
+    made = [tmp_path.joinpath(*parts[:i + 1]) for i in range(len(parts))]
+    for folder in made:
+        os.mkdir(_exact(folder))
+    try:
+        assert _export_into(made[-1]) == []
+        assert os.listdir(_exact(made[-1])) == [] and sorted(os.listdir(tmp_path)) == sorted({parts[0]})
+    finally:
+        for folder in reversed(made):
+            for name in os.listdir(_exact(folder)):
+                if not os.path.isdir(_exact(folder / name)):
+                    os.unlink(_exact(folder / name))
             os.rmdir(_exact(folder))
 
 

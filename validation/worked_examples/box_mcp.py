@@ -283,13 +283,20 @@ def _holdable(rel: str, repo: str) -> None:
                       f"{PATH_MAX - 1} at most")
 
 
-def _root(path: Path) -> os.stat_result:
-    """The workspace's own folder, as a walk of it starts: every part of its path after the drive or root (``..`` apart) one the
-    host holds as named (``unsafe_part``), checked before anything is read through it, so ``workspace.`` is never read as
-    ``workspace``; then a folder of its own, not a link, a junction or another reparse point. Else ``Refused``."""
+def root_named(path: Path) -> Path:
+    """``path``, when every part of it after the drive or root (``..`` apart) is one the host holds as named (``unsafe_part``),
+    else ``Refused``: the one check of a workspace's own path, made before anything is read through it (``_root``) or written
+    into it (``run.workspace_from``), so ``workspace.`` is never read or written as ``workspace``."""
     path = Path(path)
     if (bad := unsafe_part(part for part in path.parts[1 if path.anchor else 0:] if part != "..")) is not None:
         raise _unsafe(f"the workspace {path}", bad)
+    return path
+
+
+def _root(path: Path) -> os.stat_result:
+    """The workspace's own folder, as a walk of it starts: its path one the host holds as named (``root_named``), then a folder
+    of its own, not a link, a junction or another reparse point. Else ``Refused``."""
+    path = root_named(path)
     try:
         st = os.lstat(path)
     except OSError as exc:
