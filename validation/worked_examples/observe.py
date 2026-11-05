@@ -161,10 +161,10 @@ def observe_run(folder: Any) -> dict[str, Any]:
     from the run's ``claude_projects`` copy."""
     from pathlib import Path
 
-    from wecommon import read_stream
+    from wecommon import NDJSON, read_stream
 
     folder = Path(folder)
-    lines = read_stream(folder / "stream.jsonl")
+    lines = read_stream(folder / NDJSON["stream"])
     objects = [json.loads(line) for line in lines if line.strip().startswith("{")]
     saved = {}
     for line in lines:

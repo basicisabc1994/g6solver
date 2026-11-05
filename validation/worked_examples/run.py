@@ -1095,7 +1095,7 @@ def r3_ledger(archive: c.Archive, record: Mapping[str, Any]) -> dict[str, Any]:
            "cost_usd": float(record.get("cost_usd") or 0.0), "reported_usd": record.get("reported_usd"),
            "cap_usd": record.get("cap_usd"), "spent_after": c.spent(archive.rows()), "stop_usd": R3_CAP_USD}
     archive.root.mkdir(parents=True, exist_ok=True)
-    with open(archive.root / "ledger.jsonl", "a", encoding="utf-8", newline="\n") as stream:
+    with open(archive.root / c.NDJSON["ledger"], "a", encoding="utf-8", newline="\n") as stream:
         stream.write(json.dumps(row, ensure_ascii=False) + "\n")
     return row
 
@@ -1767,12 +1767,12 @@ def start_net(ctx: Context, tag: str) -> tuple[str, str]:
     checked(ctx.docker("network", "connect", net, px), "network connect")
     allow = [a for h in MODEL_HOSTS for a in ("--allow", h)]
     checked(ctx.docker("exec", "-d", px, "python3", "-I", "/opt/egress_proxy.py", "--port", str(PROXY_PORT), *allow,
-                       "--log", "/opt/egress.jsonl"), "proxy start")
+                       "--log", f"/opt/{c.NDJSON['egress']}"), "proxy start")
     return net, px
 
 
 def egress(ctx: Context, px: str, dest: Path) -> dict[str, Any]:
-    ctx.docker("cp", f"{px}:/opt/egress.jsonl", str(dest), timeout=120)
+    ctx.docker("cp", f"{px}:/opt/{c.NDJSON['egress']}", str(dest), timeout=120)
     entries = []
     if dest.is_file():
         entries = [json.loads(line) for line in c.read_stream(dest) if line.strip()]
@@ -2019,7 +2019,7 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
             writer.join(timeout=30)
     drain.join(timeout=30)
     stem, said = Path(name).stem, b"".join(errors).decode("utf-8", errors="replace")
-    run.write(f"{stem}_stderr.txt", said)
+    run.write(c.NDJSON["stderr"].format(stem=stem), said)
     run.write_json(f"{stem}_exit.json", {"exit_code": code, "ended_by_g6": by_g6, "not_ended": left})
     facts = host_facts(run.path / name, ctx.model)
     limit = facts["limit"] if facts["limit"] is not None else next((x for x in map(limit_of, c.stream_lines(said)) if x is not None),
@@ -2147,18 +2147,18 @@ def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
                 "restore the repository")
 
     visible = (f"{WE}/probes", f"{WE}/tree.json")
-    ended = session(args, asked, "scout_stream.jsonl")
+    ended = session(args, asked, c.NDJSON["tagged_stream"].format(tag="scout"))
     wrong = probe_gate(ctx, task, agent, *visible) if int(ctx.arm[1:]) >= 3 else []
     refused = list(wrong)
     if wrong:
-        ended, wrong = checked_again(wrong, "scout_stream_2.jsonl", *visible)
+        ended, wrong = checked_again(wrong, c.NDJSON["numbered_stream"].format(tag="scout", n=2), *visible)
     if has_critic(ctx.arm):   # a fresh session: it has read neither the scout's reasoning nor any patch
         restore()
-        ended = session(args, critic_prompt(task.issue, title, text), "critic_stream.jsonl")
+        ended = session(args, critic_prompt(task.issue, title, text), c.NDJSON["tagged_stream"].format(tag="critic"))
         wrong = probe_gate(ctx, task, agent, *visible)
         if wrong:
             refused += wrong
-            ended, wrong = checked_again(wrong, "critic_stream_2.jsonl", *visible)
+            ended, wrong = checked_again(wrong, c.NDJSON["numbered_stream"].format(tag="critic", n=2), *visible)
     hidden: dict[str, Any] = {}
     if holds_loop(ctx.arm):
         restore()
@@ -2172,11 +2172,11 @@ def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
             tag = f"hidden{i + 1}" if i else "hidden"
             second = scout_prompt(ctx.arm, hidden=True, at=i).format(**filled)
             run.write(f"{tag}_prompt.txt", second)
-            session(args, second, f"{tag}_stream.jsonl")
+            session(args, second, c.NDJSON["tagged_stream"].format(tag=tag))
             left = probe_gate(ctx, task, agent, where, tree_at)
             refused += left
             if left:
-                _, left = checked_again(left, f"{tag}_stream_2.jsonl", where, tree_at)
+                _, left = checked_again(left, c.NDJSON["numbered_stream"].format(tag=tag, n=2), where, tree_at)
             run.write(f"{tag}_at_base.txt", out(ctx.docker.sh(agent, f"{probes_at(where)} 2>&1 | tail -c 8000",
                                                               workdir=task.repo, timeout=300)))
             copy_out(ctx.docker, agent, where, run.path / f"{tag}_probes")
@@ -2259,7 +2259,7 @@ def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
         return failing, "\n\n".join(said)
 
     def ask(text: str, n: int) -> None:
-        run_session(ctx, run, agent, scout_again(docker_args), key, tally, text, f"repair_stream_{n}.jsonl",
+        run_session(ctx, run, agent, scout_again(docker_args), key, tally, text, c.NDJSON["numbered_stream"].format(tag="repair", n=n),
                     seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
 
     def state() -> str:
@@ -2338,9 +2338,9 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
         before = tree()
         note = CRITIC_NOTE.format(**{k: critic.get(k, "") for k in ("rule", "why", "test")}) + REVIEW_ASK
         if session is None:
-            run_session(ctx, run, agent, scout_again(docker_args), key, tally, note, f"repair_stream_{n}.jsonl",
+            run_session(ctx, run, agent, scout_again(docker_args), key, tally, note, c.NDJSON["numbered_stream"].format(tag="repair", n=n),
                         seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
-        elif ended := session(note, f"repair_stream_{n}.jsonl"):
+        elif ended := session(note, c.NDJSON["numbered_stream"].format(tag="repair", n=n)):
             reason = {"limited": "the repair met the subscription's usage limit",
                       "refused": "the repair's session was refused: its init was not exactly the five file tools and the box",
                       "model_refused": "the model refused a request in the repair; nothing is resent"
@@ -2373,7 +2373,7 @@ def review_once(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
     if failing:
         rounds = 2
         run_session(ctx, run, agent, scout_again(docker_args), key, tally,
-                    CRITIC_NOTE.format(**{k: critic.get(k, "") for k in ("rule", "why", "test")}) + REVIEW_ASK, "repair_stream_1.jsonl",
+                    CRITIC_NOTE.format(**{k: critic.get(k, "") for k in ("rule", "why", "test")}) + REVIEW_ASK, c.NDJSON["numbered_stream"].format(tag="repair", n=1),
                     seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
         failing = check()
     return {"status": "inconclusive" if failing else "no_counterexample_in_domain", "rounds": rounds, "reason": "",
@@ -2514,7 +2514,7 @@ def reviews_with_bug_test(ctx: Context, task: Task, run: Any, agent: str, base: 
         before = tree()
         note = BUG_NOTE.format(rule=bug.get("rule", ""), why=bug.get("why", ""), test=bug["test"],
                                failing=", ".join(failing[:MAX_SHOWN]))
-        run_session(ctx, run, agent, scout_again(docker_args), key, tally, note + REVIEW_ASK, f"repair_stream_{n}.jsonl",
+        run_session(ctx, run, agent, scout_again(docker_args), key, tally, note + REVIEW_ASK, c.NDJSON["numbered_stream"].format(tag="repair", n=n),
                     seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
         if tree() == before:
             reason = "the agent left the code as it was"
@@ -2685,7 +2685,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
 
         if host:
             record["agent_started"] = True
-            ended = turn(text_in, "stream.jsonl")
+            ended = turn(text_in, c.NDJSON["stream"])
         else:
             proc = ctx.docker.popen(*docker_args, env=ctx.client_env(key))
             record["agent_started"] = True
@@ -2693,7 +2693,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             drain = threading.Thread(target=lambda: errors.append(proc.stderr.read() or b"") if proc.stderr else None,
                                      daemon=True)
             drain.start()
-            stream = open(run.fresh_path("stream.jsonl"), "w", encoding="utf-8", newline="\n")
+            stream = open(run.fresh_path(c.NDJSON["stream"]), "w", encoding="utf-8", newline="\n")
             try:
                 proc.stdin.write(text_in.encode("utf-8"))
                 proc.stdin.close()
@@ -2762,7 +2762,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             record["g6_model"] = {**g6_model_cost(saved.values()), "reviews_saved": len(saved)}
             record["cost_usd"] = round(record["cost_usd"] + record["g6_model"]["usd"], 6)
         objects = []
-        for line in c.read_stream(run.path / "stream.jsonl"):
+        for line in c.read_stream(run.path / c.NDJSON["stream"]):
             try:
                 objects.append(json.loads(line))
             except ValueError:
@@ -2782,7 +2782,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             record["observed"] = observe.observe_run(run.path)     # what the run shows about W1 to W5
         except (OSError, ValueError) as exc:
             record["observed"] = {"error": f"{type(exc).__name__}: {exc}"[:300]}
-        record["egress"] = {"network": "none"} if host else egress(ctx, px, run.fresh_path("egress.jsonl"))
+        record["egress"] = {"network": "none"} if host else egress(ctx, px, run.fresh_path(c.NDJSON["egress"]))
         status = record["status_detail"]
     except Exception as exc:  # noqa: BLE001 - every failure is recorded and the containers are removed
         record["error"] = ctx.archive.redact(f"{type(exc).__name__}: {exc}")[:2000]
@@ -3033,7 +3033,7 @@ def modelcheck(ctx: Context, task: Task) -> dict[str, Any]:
             body = json.loads(out(done).splitlines()[-1])
         except (ValueError, IndexError):
             body = {"error": f"no readable reply (exit {done.returncode}): {err(done)[-300:]}"}
-        body["egress"] = egress(ctx, px, folder.fresh_path("egress.jsonl"))
+        body["egress"] = egress(ctx, px, folder.fresh_path(c.NDJSON["egress"]))
     finally:
         for one in (name, px):
             if one:
@@ -3195,7 +3195,7 @@ def progress(archive: c.Archive, task: str) -> dict[str, Any]:
         return {"run": None}
     folder = runs[-1]
     tally, objects, last_tool = c.Tally(), [], ""
-    stream = folder / "stream.jsonl"
+    stream = folder / c.NDJSON["stream"]
     for line in (c.read_stream(stream) if stream.is_file() else []):
         try:
             obj = json.loads(line)
@@ -3260,7 +3260,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "rounds":
         # the rounds read again from a finished run's stream and its saved replies, into a new file of the run
         folder = archive.root / args.run_rel
-        objects = [json.loads(line) for line in c.read_stream(folder / "stream.jsonl") if line.strip().startswith("{")]
+        objects = [json.loads(line) for line in c.read_stream(folder / c.NDJSON["stream"]) if line.strip().startswith("{")]
         rounds = extract_rounds(objects, archived_resolver(folder))
         c.RunFolder(archive, folder, args.run_rel).write_json("rounds_resolved.json", rounds)
         print(json.dumps([{k: r.get(k) for k in ("round", "outcome", "error", "saved_to_file", "polls")}

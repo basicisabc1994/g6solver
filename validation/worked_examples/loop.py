@@ -61,7 +61,7 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
         if not rec:          # the runner printed no record: nothing is known of the run, so nothing is saved
             raise SystemExit(f"no record: {arm} {task} {repeat}: the runner printed none")
         if rec.get("status") == "refused" and "already made" in str(rec.get("why")):   # made before a crash: check it
-            rec = [r for r in distill.main_row(root / "ledger.jsonl")
+            rec = [r for r in distill.main_row(root / c.NDJSON["ledger"])
                    if (r.get("task"), r.get("arm"), r.get("repeat")) == (task, arm, repeat)][-1]
     end, made = c.ending(root, rec), c.ending_sha256(root, rec)     # how the run ended, from its own folder (``wecommon.ending``)
     if not c.scoreable(end):   # refused, never counted as a failed run; limited: made again after the reset; or no ending at all

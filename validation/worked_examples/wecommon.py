@@ -126,12 +126,26 @@ class Redactor:
 
 
 # --- Claude Code's stream ----------------------------------------------------------------------------------------------
+#: Every newline-delimited JSON file the runs write, by its kind, named as its writer names it (``{tag}``, ``{n}`` and ``{stem}``
+#: filled in by the writer). Every writer and reader in the worked examples takes the name from here, and reads the file only
+#: through ``read_stream`` or ``stream_lines`` (tests/validation/test_host_author_followup.py holds both).
+NDJSON = {
+    "index": "runs.jsonl",                          # every run started and ended (``Archive.append``)
+    "ledger": "ledger.jsonl",                       # round 3's spending, a line a run (``run.r3_ledger``)
+    "egress": "egress.jsonl",                       # the egress proxy's log, copied out of its container (``run.egress``)
+    "stream": "stream.jsonl",                       # a run's Claude Code session, in its container or on the host
+    "tagged_stream": "{tag}_stream.jsonl",          # a scout's or a critic's session (``run.run_scout``)
+    "numbered_stream": "{tag}_stream_{n}.jsonl",    # a repair's session, or a scout's or a critic's second
+    "stderr": "{stem}_stderr.txt",                  # a host session's standard error, beside its stream (``run.host_session``)
+    "cases": "cases.jsonl",                         # the reviewer cases ``export_reviewer_cases`` writes
+}
+
+
 def stream_lines(text: str) -> list[str]:
-    """Newline-delimited JSON as its lines: Claude Code's stream and a host session's stderr, ``runs.jsonl``, the ledger and the
-    egress log, every one the worked examples read. It is split at "\\n" alone, never where ``str.splitlines`` splits too (U+2028,
-    U+2029, U+0085 and the like, which a JSON string holds as they are): no part of a record is ever read as a line of its own.
-    The one framing: a test fails on any other line split in the worked examples that is not named with why it reads no such
-    text."""
+    """Newline-delimited JSON as its lines: every file ``NDJSON`` names, Claude Code's stream and a host session's stderr,
+    ``runs.jsonl``, the ledger and the egress log among them. It is split at "\\n" alone, never where ``str.splitlines`` splits too
+    (U+2028, U+2029, U+0085 and the like, which a JSON string holds as they are): no part of a record is ever read as a line of
+    its own."""
     return text.split("\n")
 
 
@@ -266,7 +280,7 @@ class Archive:
 
     @property
     def index(self) -> Path:
-        return self.root / "runs.jsonl"
+        return self.root / NDJSON["index"]
 
     def append(self, row: Mapping[str, Any]) -> None:
         self.root.mkdir(parents=True, exist_ok=True)

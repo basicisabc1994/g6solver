@@ -122,7 +122,7 @@ def row(task: str, sha: str, text: str, ok: bool) -> dict[str, str]:
 def _checks(root: Path, task: str) -> dict[str, list[dict[str, Any]]]:
     """Run path to the newest independent check of it, with a row for each round."""
     found = {}
-    for line in c.read_stream(root / "runs.jsonl"):
+    for line in c.read_stream(root / c.NDJSON["index"]):
         if f'"check/{task}/' not in line or '"checked_run"' not in line:
             continue
         rec = json.loads(line)
@@ -196,7 +196,7 @@ def main() -> None:
         for key, (_, ok) in patches.items():
             rows[side].append(row(task, key[1], case_text(issue, diffs[key], files), ok))
             count[side, task, "right" if ok else "wrong"] += 1
-    for side, name in (("dev", out / "cases.jsonl"), ("sealed", out / "sealed" / "cases.jsonl")):
+    for side, name in (("dev", out / c.NDJSON["cases"]), ("sealed", out / "sealed" / c.NDJSON["cases"])):
         name.write_text("".join(json.dumps(item) + "\n" for item in rows[side]), "utf-8")
         sizes = sorted(len(item["input"]) for item in rows[side])
         print(side, "cases", len(rows[side]), "right", sum(i["label"] == "right" for i in rows[side]), "bugs", len({i["bug"] for i in rows[side]}),

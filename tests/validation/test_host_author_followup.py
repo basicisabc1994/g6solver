@@ -10,14 +10,13 @@ import importlib.util
 import io
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
 import tarfile
 from collections import Counter
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 import pytest
@@ -38,7 +37,7 @@ SONNET = helpers.SONNET
 SEPARATORS = "a\u2028b\u2029c\x85d"
 
 
-# --- 1. one framing of newline-delimited JSON (review 4, finding 5: a class met before) ---------------------------------------
+# --- 1. one framing of newline-delimited JSON (review 4, finding 5: a class met before), each reader held to it by behaviour ---
 def test_review_4_finding_5_a_line_separator_in_model_text_does_not_change_a_finished_run_to_error(monkeypatch, tmp_path):
     lines = helpers.stream("s1")
     lines.insert(2, json.dumps({"type": "assistant", "session_id": "s1", "message": {
@@ -49,452 +48,297 @@ def test_review_4_finding_5_a_line_separator_in_model_text_does_not_change_a_fin
     assert record["observed"].get("error") is None, record["observed"]
 
 
-def _assistant(text: str, tool: str = "") -> dict:
-    content = [{"type": "text", "text": text}] + ([{"type": "tool_use", "id": "u1", "name": tool, "input": {}}] if tool else [])
-    return {"type": "assistant", "session_id": "s1", "message": {"id": "m1", "model": SONNET, "content": content,
+#: What a JSON string can hold that a split other than at "\n" would cut: U+2028, U+2029 and U+0085, which json.dumps writes as
+#: they are, and a lone "\r" and "\r\n", which it escapes.
+HOSTILE = "a\u2028b\u2029c\x85d\re\r\nf"
+
+
+def _assistant(text: str, tool: str = "", mid: str = "m1") -> dict:
+    content = [{"type": "text", "text": text}] + ([{"type": "tool_use", "id": f"u-{mid}", "name": tool, "input": {}}] if tool else [])
+    return {"type": "assistant", "session_id": "s1", "message": {"id": mid, "model": SONNET, "content": content,
                                                                  "usage": {"input_tokens": 1, "output_tokens": 1}}}
 
 
-def _jsonl(path: Path, rows: list[dict]) -> None:
+def _ndjson(path: Path, rows: list[dict]) -> Path:
+    """``rows`` as a newline-delimited JSON file at its hardest to frame: each row's strings hold ``HOSTILE`` as json.dumps writes
+    them with ensure_ascii off, and every second row also holds a raw "\\r" between its tokens and ends "\\r\\n", as a file
+    written with Windows line endings does."""
+    text = "".join("{\r" + json.dumps(row, ensure_ascii=False)[1:] + "\r\n" if i % 2 else json.dumps(row, ensure_ascii=False) + "\n"
+                   for i, row in enumerate(rows))
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8", newline="\n")
+    path.write_bytes(text.encode("utf-8"))
+    data = path.read_bytes()
+    assert len(rows) >= 2 and b"{\r" in data and b"\r\n" in data and all(ch.encode() in data for ch in "\u2028\u2029\x85")
+    return path
 
 
-def _archive_rows(tmp_path):
+# Each reader of a file ``wecommon.NDJSON`` names, as the names' uses and the writers' call sites reach it (``READERS``): fed the
+# file at its hardest to frame, it reads every record whole and in order. Each returns (what it read, what was written).
+def _index_rows(tmp_path, capsys, monkeypatch):
     archive = c.Archive(tmp_path / "a")
-    archive.append({"event": "started", "run": "run/t/1", "note": SEPARATORS})
-    return archive.rows(), [{"event": "started", "run": "run/t/1", "note": SEPARATORS}]
+    assert archive.index == archive.root / c.NDJSON["index"]
+    rows = [{"event": "started", "run": "run/t/1", "note": HOSTILE}, {"event": "ended", "run": "run/t/1", "note": HOSTILE}]
+    _ndjson(archive.index, rows)
+    archive.append({"event": "started", "run": "run/t/2", "note": HOSTILE})            # and a row as its writer writes it
+    return archive.rows(), [*rows, {"event": "started", "run": "run/t/2", "note": HOSTILE}]
 
 
-def _ledger(tmp_path):
-    import distill
-    row = {"run": "run/t/1", "status": "finished", "note": SEPARATORS}
-    _jsonl(tmp_path / "ledger.jsonl", [row])
-    return distill.main_row(tmp_path / "ledger.jsonl"), [row]
+def _index_checks(tmp_path, capsys, monkeypatch):
+    import export_reviewer_cases as ex
+    _ndjson(tmp_path / c.NDJSON["index"],
+            [{"event": "started", "run": f"check/t/{i}", "checked_run": f"run/t/{i}", "note": HOSTILE} for i in (1, 2, 3)])
+    for i in (1, 2, 3):
+        (tmp_path / "check" / "t" / str(i)).mkdir(parents=True)
+        (tmp_path / "check" / "t" / str(i) / "run.json").write_text(json.dumps({"checks": [{"patch": f"p{i}"}]}), encoding="utf-8")
+    return list(ex._checks(tmp_path, "t").items()), [(f"run/t/{i}", [{"patch": f"p{i}"}]) for i in (1, 2, 3)]
 
 
-def _observed(tmp_path):
-    import observe
-    _jsonl(tmp_path / "stream.jsonl", [_assistant(SEPARATORS, "ToolSearch")])
-    return observe.observe_run(tmp_path)["tool_use"]["tool_search"], 1
-
-
-def _progress(tmp_path):
+def _ledger(tmp_path, capsys, monkeypatch):
+    import distill                    # the ledger's reader, which loop.one reads it with
     archive = c.Archive(tmp_path / "a")
-    _jsonl(archive.root / "run" / "t" / "1" / "stream.jsonl", [_assistant("x\u2028null\u2028y", "Grep")])
+    rows = [{"run": f"run/t/{i}", "status": "finished", "note": HOSTILE} for i in (1, 2)]
+    _ndjson(archive.root / c.NDJSON["ledger"], rows)
+    wrote = we.r3_ledger(archive, {"run": "run/t/3", "task": HOSTILE, "status": "finished"})     # a row as its writer writes it
+    return distill.main_row(archive.root / c.NDJSON["ledger"]), [*rows, wrote]
+
+
+def _egress(tmp_path, capsys, monkeypatch):
+    rows = [{"host": "api.anthropic.com", "port": 443, "allowed": True, "note": HOSTILE},
+            {"host": "x.invalid", "port": 80, "allowed": False, "note": HOSTILE},
+            {"host": "y.invalid", "port": 80, "allowed": False, "note": HOSTILE}]
+    dest, copied = _ndjson(tmp_path / c.NDJSON["egress"], rows), []
+    got = we.egress(SimpleNamespace(docker=lambda *a, **kw: copied.append(a)), "px", dest)
+    assert copied == [("cp", f"px:/opt/{c.NDJSON['egress']}", str(dest))], "the log is copied out from where the proxy writes it"
+    return got, {"requests": 3, "allowed": ["api.anthropic.com:443"], "refused": ["x.invalid:80", "y.invalid:80"]}
+
+
+def _host_facts(tmp_path, capsys, monkeypatch):
+    limit = {"type": "result", "subtype": "error_during_execution", "is_error": True,
+             "result": "You've hit your limit\u2029\r resets 5pm"}       # its reset after a separator: a split there loses it
+    rows = [json.loads(line) for line in helpers.stream("s1", extra=(_assistant(HOSTILE, mid="m2"), limit))]
+    facts = we.host_facts(_ndjson(tmp_path / c.NDJSON["stream"], rows), SONNET)
+    return ({k: facts[k] for k in ("init", "result", "limit", "models", "refusals")},
+            {"init": we.host_init(rows[0]), "result": rows[-1], "limit": "resets 5pm", "models": {SONNET}, "refusals": []})
+
+
+def _host_stream(tmp_path, capsys, monkeypatch):
+    """A host session's stream, from its pipe (``host_session``) into its file, and read back by ``_run_task``: a record with a
+    raw "\\r" between its tokens and a line ending "\\r\\n" among them."""
+    records = [json.loads(line) for line in helpers.stream("s1", extra=(_assistant(HOSTILE, "Grep", "m2"), _assistant(HOSTILE, mid="m3")))]
+    lines = [json.dumps(r, ensure_ascii=False) for r in records]
+    lines[2] = "{\r" + lines[2][1:] + "\r"
+    record, _, _, ctx, *_ = helpers.host_run(monkeypatch, tmp_path, "A", [("s1", "", lines)])
+    saved = c.read_stream(ctx.archive.root / record["run"] / c.NDJSON["stream"])
+    return ((record["status"], record["claude_version"], record["model_calls"], [json.loads(line) for line in saved if line.strip()]),
+            ("finished", "2.1.318", 3, records))
+
+
+def _host_stderr(tmp_path, capsys, monkeypatch):
+    """A host session's stderr, saved beside its stream and read as it is written (``host_session``): a limit whose reset follows
+    a line separator and a lone "\\r" keeps its reset, which a split at either would cut off."""
+    said = json.dumps({"note": HOSTILE}, ensure_ascii=False) + "\n" + "You've hit your limit\u2028\r resets 5pm\r\n"
+    plain = helpers.starter
+
+    def starter(sessions):
+        start, starts = plain(sessions)
+
+        def with_stderr(*args, **kw):
+            proc = start(*args, **kw)
+            proc.stderr = io.BytesIO(said.encode("utf-8"))
+            return proc
+        return with_stderr, starts
+
+    monkeypatch.setattr(helpers, "starter", starter)
+    record, _, _, ctx, *_ = helpers.host_run(monkeypatch, tmp_path, "A", [("s1", "", None)])
+    saved = ctx.archive.root / record["run"] / c.NDJSON["stderr"].format(stem=Path(c.NDJSON["stream"]).stem)
+    return ((record["status"], record["limit"], saved.read_bytes()),
+            ("limited", {"stream": c.NDJSON["stream"], "resets": "resets 5pm"}, said.encode("utf-8")))
+
+
+def _progress(tmp_path, capsys, monkeypatch):
+    archive = c.Archive(tmp_path / "a")
+    _ndjson(archive.root / "run" / "t" / "1" / c.NDJSON["stream"], [_assistant(HOSTILE, "Grep", "m1"), _assistant(HOSTILE, "Read", "m2")])
     got = we.progress(archive, "t")
-    return (got["model_calls"], got["last_tool"]), (1, "Grep")
+    return (got["model_calls"], got["last_tool"]), (2, "Read")
 
 
-def _rounds_command(tmp_path, capsys):
-    _jsonl(tmp_path / "a" / "run" / "t" / "1" / "stream.jsonl", [_assistant(SEPARATORS)])
+def _rounds_command(tmp_path, capsys, monkeypatch):
+    _ndjson(tmp_path / "a" / "run" / "t" / "1" / c.NDJSON["stream"], [_assistant(HOSTILE, mid="m1"), _assistant(HOSTILE, mid="m2")])
     assert we.main(["rounds", "--archive", str(tmp_path / "a"), "--run", "run/t/1"]) == 0
     return json.loads(capsys.readouterr().out), []
 
 
-def _egress(tmp_path):
-    dest = tmp_path / "egress.jsonl"
-    _jsonl(dest, [{"host": "api.anthropic.com", "port": 443, "allowed": True, "note": SEPARATORS}])
-    got = we.egress(SimpleNamespace(docker=lambda *a, **kw: None), "px", dest)
-    return got, {"requests": 1, "allowed": ["api.anthropic.com:443"], "refused": []}
+def _observed(tmp_path, capsys, monkeypatch):
+    import observe
+    _ndjson(tmp_path / c.NDJSON["stream"], [_assistant(HOSTILE, "ToolSearch", "m1"), _assistant(HOSTILE, "ToolSearch", "m2")])
+    return observe.observe_run(tmp_path)["tool_use"]["tool_search"], 2
 
 
-def _checks(tmp_path):
-    import export_reviewer_cases as ex
-    _jsonl(tmp_path / "runs.jsonl", [{"event": "started", "run": "check/t/1", "checked_run": "run/t/1", "note": SEPARATORS}])
-    (tmp_path / "check" / "t" / "1").mkdir(parents=True)
-    (tmp_path / "check" / "t" / "1" / "run.json").write_text(json.dumps({"checks": [{"patch": "final"}]}), encoding="utf-8")
-    return ex._checks(tmp_path, "t"), {"run/t/1": [{"patch": "final"}]}
+#: Each reader of a file ``wecommon.NDJSON`` names, by (module, function), with its case above.
+READERS = {("wecommon.py", "Archive.rows"): _index_rows, ("export_reviewer_cases.py", "_checks"): _index_checks,
+           ("distill.py", "main_row"): _ledger, ("run.py", "egress"): _egress, ("run.py", "host_facts"): _host_facts,
+           ("run.py", "_run_task"): _host_stream, ("run.py", "host_session"): _host_stderr, ("run.py", "progress"): _progress,
+           ("run.py", "main"): _rounds_command, ("observe.py", "observe_run"): _observed}
 
 
-@pytest.mark.parametrize("reader", [_archive_rows, _ledger, _observed, _progress, _rounds_command, _egress, _checks])
-def test_every_reader_of_newline_delimited_json_reads_a_record_whole_whatever_its_strings_hold(tmp_path, capsys, reader):
-    got, expected = reader(tmp_path, capsys) if reader is _rounds_command else reader(tmp_path)
-    assert got == expected
+@pytest.mark.parametrize("reader", sorted(READERS), ids=lambda r: f"{r[0]}:{r[1]}")
+def test_every_reader_of_a_newline_delimited_json_file_reads_each_record_whole_and_in_order(tmp_path, capsys, monkeypatch, reader):
+    got, written = READERS[reader](tmp_path, capsys, monkeypatch)
+    assert got == written
 
 
-#: What the inventory lists (``line_splits``): every use named in ``NAMES``, everything reached through what an import binds to
-#: ``re``, and a for over an open file or a standard stream.
-STREAMS = {"stdin", "stdout", "stderr"}
-#: The one framing of newline-delimited JSON (``wecommon.stream_lines``, and ``read_stream`` for a file): Claude Code's stream
-#: and a host session's stderr, ``runs.jsonl``, the ledger and the egress log are all split by it, at "\n" alone.
-FRAMING = ("wecommon.py", "stream_lines", "text.split('\\n')")
-PIPE = "a pipe of bytes: readline and iteration split at b'\\n' alone, as stream_lines splits text"
-ASCII_JSON = ("the last line a script of the worked examples printed with json.dumps and its default ensure_ascii, so no line "
-              "separator can be inside it")
-#: Reasons the inventory gives more than once (follow-up review 4).
-RE_M = "found with re.M, whose ^ and $ hold at '\\n' alone, where the framing splits"
-PARTS = "a path, cut into its parts at '/'"
-TEST_ID = "a pytest id, cut at its '::'"
-TEST_NAME = "a test's name, cut before its parameters"
-OWNER = "a project's 'owner/name', cut once at '/'"
-WORDS = "the words of a text, found"
-PATCH_NAME = "a patch's --- or +++ line, its name before the tab git writes after a name that holds a space"
-SAVED_NOTE = "Claude Code's note that a tool's output was saved, searched in a tool result or in a line the framing gave"
-ARM = "an arm's name, matched whole"
-OWN_LINE = "the output of G6's own script in the container: one 'name=number' line, " + RE_M
-CRITIC = "Codex's own report: one field, by its heading, " + RE_M
-LABELLED = "a failed case's 'label:id', cut once at ':' for its id"
-#: Everything else the inventory lists in the worked examples, by (module, the function it is in, its source), with why it reads
-#: no newline-delimited JSON, or reads it as the framing does. A person names each; the scan judges none.
-NOT_A_STREAM = {
-    ("box_mcp.py", "serve", "for ... in stdin"): "the box's JSON-RPC requests on standard input: " + PIPE,
-    ("box_mcp.py", "main", "__doc__.splitlines()"): "the module's own docstring",
-    ("export_reviewer_cases.py", "context", "text.splitlines()"): "a source file of the bug's repository, shown by its lines",
-    ("final_review.py", "reproduction", "mask_paths(scrub(now.texts.get(case, ''))).splitlines()"):
-        "a failing test's report, as pytest wrote it",
-    ("headroom.py", "main", "__doc__.splitlines()"): "the module's own docstring",
-    ("layers.py", "_tokens", "io.StringIO(body).readline"): "one line of Python source, given to Python's tokenizer",
-    ("layers.py", "change", "text.split('\\n')"): "a patch, read as git apply reads it",
-    ("library.py", "chunks", "re.split('\\\\n\\\\s*\\\\n', path.read_text('utf-8', errors='replace'))"):
-        "Markdown, split into paragraphs",
-    ("probe_replay.py", "summary", "output.strip().splitlines()"): "pytest's own output",
-    ("product_review.py", "touched", "patch.split('\\n')"): "a patch, read as git apply reads it",
-    ("round2_g6.py", "patch", "old.splitlines()"): "an edit's anchor, Python source, named in an error",
-    ("run.py", "crashes", "output.splitlines()"): "pytest's own output",
-    ("run.py", "critic_report", "said[said.rfind('[codex]'):].split('\\n', 1)"): "Codex's own report, its first line dropped",
-    ("run.py", "test_changes", "name_status.splitlines()"): "git's --name-status output",
-    ("run.py", "key_check", "out(done).splitlines()"): ASCII_JSON,
-    ("run.py", "hook_selftest", "out(ctx.docker.sh(agent, script, workdir=task.repo)).splitlines()"):
-        "the hook self-test's echo of numbers",
-    ("run.py", "run_session", "proc.stdout.readline"): "a container session's stream: " + PIPE,
-    ("run.py", "host_session.lines", "proc.stdout.readline"): "a host session's stream: " + PIPE,
-    ("run.py", "_run_task", "out(ctx.docker.sh(agent, TREE_STATE, workdir=task.repo)).splitlines()"):
-        "TREE_STATE's printf of git's hashes and counts",
-    ("run.py", "_run_task", "out(ctx.docker.sh(agent, ARM_STATE)).splitlines()"): ASCII_JSON,
-    ("run.py", "_run_task", "proc.stdout.readline"): "a container run's stream: " + PIPE,
-    ("run.py", "g6replay", "out(done).splitlines()"): ASCII_JSON,
-    ("run.py", "modelcheck", "out(done).splitlines()"): ASCII_JSON,
-    ("run.py", "main", "__doc__.splitlines()"): "the module's own docstring",
-    ("selection.py", "main", "__doc__.splitlines()"): "the module's own docstring",
-    # Seen once a line break is what Python reads as one (follow-up review 2, finding 2); none reads a record stream.
-    ("box_mcp.py", "run_command", "said.partition(start + '\\n')"):
-        "a command's combined output, cut once at the start line the box's shell printed with this call's own nonce",
-    ("evolve.py", "main", "os.environ.get('G6_LIBRARY', '').split(os.pathsep)"): "a list of folders, as PATH holds one",
-    ("export_reviewer_cases.py", "_image",
-     "subprocess.run(['docker', 'images', '--format', '{{.Repository}}:{{.Tag}}', 'g6we-task'], capture_output=True, text=True, "
-     "timeout=60).stdout.split()"): "docker's image names, which hold no whitespace",
-    ("final_review.py", "_step", "proof.split()"): "G6's own proof text, 'review' and a hex id, cut at its one space",
-    ("final_review.py", "review", "proof.split()"): "G6's own proof text, 'review' and a hex id, cut at its one space",
-    ("run.py", "run_critic", "proof.split()"): "G6's own proof text, 'review' and a hex id, cut at its one space",
-    ("run.py", "archived_resolver.resolve", "path.split(marker, 1)"): "a path in the container, cut once at /.claude/projects/",
-    ("run.py", "read_probes", "said.partition(JUNIT_MARK)"):
-        "the probe script's output, cut once at G6's own mark, before pytest's JUnit XML",
-    # Listed once the inventory lists every use by its name and of what re binds (follow-up review 4); none reads a record stream.
-    ("box_mcp.py", "<module>", 're.compile(\'[<>:"|?*\\\\\\\\\\\\x00-\\\\x1f]|[. ]$|^(?:con|prn|aux|nul|com\\\\d|lpt\\\\d)(?:\\\\..*)?$\', re.I)'):
-        "HOST_UNSAFE, searched in one part of a name",
-    ("box_mcp.py", "_holdable", "rel.split('/')"): PARTS,
-    ("compare.py", "end_of", "case.split('::')[0].split('.')"): "a test file's name, cut at its dot",
-    ("compare.py", "end_of", "case.split('::')"): TEST_ID,
-    ("distill.py", "named", "re.search(f'\\\\b{word}\\\\b', text, re.I)"): "a project's name, searched for in a distilled text",
-    ("distill.py", "named", "re.findall('#?\\\\b\\\\d{4,5}\\\\b', text)"): "issue numbers, found in a distilled text",
-    ("distill.py", "named", "re.findall('(?<![A-Za-z])[A-Za-z]:\\\\\\\\|/(?:home|Users)/', text)"):
-        "the start of a local path, found in a distilled text",
-    ("distill.py", "named", "test.rpartition('::')[2].partition('[')"): TEST_NAME,
-    ("distill.py", "named", "test.rpartition('::')"): TEST_ID,
-    ("distill.py", "distill", "re.findall('^diff --git a/(\\\\S+)', '\\n'.join((f.output for f in found)), re.M)"):
-        "the file names in diffs' header lines: " + RE_M,
-    ("evolve.py", "near_miss", "path.stem.split('_', 3)"):
-        "a saved check's file name, G6's own 'repair_check_<n>_<label>', cut at '_'",
-    ("evolve.py", "similar", "re.findall('\\\\w+', text.lower())"): WORDS,
-    ("evolve.py", "projects", "t.project.split('/', 1)"): OWNER,
-    ("export_reviewer_cases.py", "<module>", "re.compile('^@@ -(\\\\d+)(?:,(\\\\d+))? \\\\+\\\\d+(?:,\\\\d+)? @@', re.M)"):
-        "a diff's hunk header: " + RE_M,
-    ("export_reviewer_cases.py", "is_source", "path.rsplit('/', 1)"): "a path, its last part",
-    ("export_reviewer_cases.py", "changed", "re.split('^diff --git ', diff, flags=re.M)"):
-        "a diff, cut into its files at each header line: " + RE_M,
-    ("export_reviewer_cases.py", "changed", "re.search('^\\\\+\\\\+\\\\+ b/(.+)$', section, re.M)"):
-        "a diff section's new name, from its +++ line: " + RE_M,
-    ("layers.py", "<module>", "re.compile('(^|/)(tests?|testing)/|(^|/)test_[^/]*\\\\.py$|_test\\\\.py$|(^|/)conftest\\\\.py$')"):
-        "a path, searched for a test folder or a test's file name",
-    ("layers.py", "change", "line[4:].split('\\t', 1)"): PATCH_NAME,
-    ("library.py", "words", 're.findall("[a-z0-9\']+", text.lower())'): WORDS,
-    ("observe.py", "<module>", "re.compile('Output has been saved to (/\\\\S+?\\\\.txt)')"): SAVED_NOTE,
-    ("observe.py", "<module>", "re.compile('template_instances\\\\.\\\\d+.*bindings')"): "a tool error's text, searched",
-    ("observe.py", "_norm", "re.sub('\\\\s+', ' ', re.sub('(?m)^[ \\\\t]*>[ \\\\t]?', '', text))"):
-        "a report's text, its whitespace collapsed for comparison",
-    ("observe.py", "_norm", "re.sub('(?m)^[ \\\\t]*>[ \\\\t]?', '', text)"):
-        "a report's text, a Markdown quote's markers taken off: " + RE_M,
-    ("observe.py", "observe_run", "path.split('/.claude/projects/', 1)"):
-        "a path in the container, cut once at /.claude/projects/",
-    ("probe_replay.py", "<module>", "re.compile('(\\\\d+) (passed|failed|error|errors|skipped|deselected)\\\\b')"):
-        "pytest's summary counts, searched in one line",
-    ("product_review.py", "_applied", "name.split('/', 1)"):
-        "a header's path, its first part taken off as git apply -p1 takes it",
-    ("product_review.py", "touched", "line[4:].split('\\t', 1)"): PATCH_NAME,
-    ("product_review.py", "touched", "line.split(' ', 2)"): "a patch's rename or copy line: its verb, its side and its name",
-    ("run.py", "<module>", "re.compile('^(?:FAILED|ERROR) \\\\S*?([^/\\\\s]+\\\\.py(?:::\\\\S+)?)', re.M)"):
-        "pytest's FAILED and ERROR summary lines: " + RE_M,
-    ("run.py", "Task.name", "self.full_name.split('/', 1)"): "a bug's full name, cut once at '/'",
-    ("run.py", "trained", "re.fullmatch('K\\\\d+', arm)"): ARM,
-    ("run.py", "trained", "re.fullmatch('[LM]\\\\d+', arm)"): ARM,
-    ("run.py", "probe_failures", "re.search('^exit=(\\\\d+)$', said, re.M)"): OWN_LINE,
-    ("run.py", "crashes", "re.search(' - (?:assert|AssertionError|Failed)', line)"):
-        "one summary line of pytest's output, searched",
-    ("run.py", "random_cases", "re.search('^random=(\\\\d+)$', said, re.M)"): OWN_LINE,
-    ("run.py", "gate_numbers", "re.search('^exit=(\\\\d+)$', said, re.M)"): OWN_LINE,
-    ("run.py", "gate_numbers", "re.search('^cross=(\\\\d+)$', said, re.M)"): OWN_LINE,
-    ("run.py", "read_probes", "re.search('^exit=(\\\\d+)$', head, re.M)"): OWN_LINE,
-    ("run.py", "critic_report", "re.search(f'^READ:\\\\s*{re.escape(proof)}\\\\s*$', body, re.M)"): CRITIC,
-    ("run.py", "critic_report", 're.escape(proof)'): "G6's own 'review <hex id>' text, escaped to be searched for",
-    ("run.py", "critic_report", "re.search('^VERDICT:\\\\s*(\\\\w+)', body, re.M)"): CRITIC,
-    ("run.py", "critic_report", "re.search('^RULE:\\\\s*(.*?)(?=^VERDICT:)', body, re.M | re.S)"): CRITIC,
-    ("run.py", "critic_report", "re.search('^WHY:\\\\s*(.*?)(?=^```|\\\\Z)', body, re.M | re.S)"): CRITIC,
-    ("run.py", "critic_report", "re.search('^```python\\\\n(.*?)^```', body, re.M | re.S)"): CRITIC,
-    ("run.py", "gets_thread", "re.fullmatch('T|R|K(?!0$)\\\\d+|V\\\\d+|X\\\\d+|[LM]\\\\d+', arm)"): ARM,
-    ("run.py", "prompt", "re.fullmatch('[KV]\\\\d+', arm)"): ARM,
-    ("run.py", "prompt", "re.fullmatch('[GH]\\\\d+', arm)"): ARM,
-    ("run.py", "prompt", "re.fullmatch('[LM]\\\\d+', arm)"): ARM,
-    ("run.py", "prompt", "task.project.split('/', 1)"): OWNER,
-    ("run.py", "r3_loop_key", "re.fullmatch('[KMV]\\\\d+', arm)"): ARM,
-    ("run.py", "r3_loop_key", "re.fullmatch('[KV]\\\\d+', arm)"): ARM,
-    ("run.py", "r3_loop_key", "re.fullmatch('[GHLM]\\\\d+', arm)"): ARM,
-    ("run.py", "test_changes", "line.partition('\\t')"): "a line of git's --name-status output, cut once at its tab",
-    ("run.py", "<module>", "re.compile('Output has been saved to (/\\\\S+?\\\\.txt)')"): SAVED_NOTE,
-    ("run.py", "<module>", "re.compile('TOKEN|KEY|SECRET|PASS|AUTH|CREDENTIAL', re.I)"):
-        "an environment variable's name, searched",
-    ("run.py", "<module>", 're.compile("You(?:\'|\u2019)ve hit your (?:[\\\\w-]+ ){0,3}limit\\\\b\\\\W{0,4}(resets\\\\b[^\\\\n|]*)?", re.I)'):
-        "Claude Code's words that a usage limit is reached, searched in a session's text",
-    ("run.py", "host_value_holds_userinfo", "re.finditer('://', value)"): "an environment value, each '://' in it found",
-    ("run.py", "host_facts", "re.compile(re.escape(model) + '(?:-\\\\d{8})?')"):
-        "the model asked for, matched whole against each model the transcript names",
-    ("run.py", "host_facts", 're.escape(model)'): "the model's name, escaped to be matched",
-    ("run.py", "run_task", "re.fullmatch('[A-ERST]|[GHKLMVX]\\\\d+', str(ctx.arm))"): ARM,
-    ("run.py", "host_refusal", "re.fullmatch('K\\\\d+', ctx.arm)"): ARM,
-    ("run.py", "probe_gate.cases", "k.rsplit('::', 1)[-1].split('[')"): TEST_NAME,
-    ("run.py", "probe_gate.cases", "k.rsplit('::', 1)"): TEST_ID,
-    ("run.py", "probe_gate", "re.match('assert|AssertionError|Failed', got.texts.get(k, ''))"):
-        "a failing test's report, matched at its start",
-    ("run.py", "run_scout", "task.project.split('/', 1)"): OWNER,
-    ("run.py", "reviews_until_clean", "case.split(':', 1)"): LABELLED,
-    ("run.py", "reviews_with_bug_test", "case.split(':', 1)"): LABELLED,
-    ("run.py", "_run_task", "re.fullmatch('[LM]\\\\d+', ctx.arm)"): ARM,
-    ("run.py", "_run_task", "re.fullmatch('K\\\\d+', ctx.arm)"): ARM,
-    ("run.py", "_oracle_run", "out(ran).rsplit('exit=', 1)"): "the pytest script's output, cut once at its last 'exit='",
-    ("run.py", "check", "p.stem.split('-')"): "a saved round's file name, G6's own 'round-<n>', cut at '-'",
-    ("selection.py", "is_test", "path.replace('\\\\', '/').split('/')"): PARTS,
-    ("wecommon.py", "Redactor", "re.compile('sk-ant-[A-Za-z0-9_\\\\-]{8,}')"):
-        "an API key's form, searched and replaced in text bound for a file or a terminal",
+# --- 1b. the files are named once, from their writers, and read only through the one framing (fix review 1) -------------------
+#: The calls that read a newline-delimited JSON file through the one framing.
+FRAMED = frozenset({"read_stream", "stream_lines"})
+#: The end of each name ``wecommon.NDJSON`` holds, after its last field: a literal that holds one names one of those files.
+TAILS = frozenset(name.rsplit("}", 1)[-1] for name in c.NDJSON.values())
+#: A function that names one of those files by a literal, with why it does not take the name from ``NDJSON``.
+LITERAL_NAMES = {
+    ("stage3_domain.py", "domain"): "a domain file g6.metaharness.runner loads by its path, so it imports nothing of the worked "
+                                    "examples; it hands the export's two cases.jsonl to CodingReplay, which is not in this checkout",
+}
+HANDED = "a reader with its own case in READERS"
+SESSION = "a Claude Code session's stream, which run_session writes from its pipe; nothing reads it back"
+#: Every use of ``wecommon.NDJSON`` in the worked examples, by (module, the function it is in, the kind it names): for each use in
+#: order, the call it is passed into (None: no call) and what that does with the file. One passed into ``read_stream`` or
+#: ``stream_lines`` reads it through the one framing.
+NDJSON_USES = {
+    ("wecommon.py", "Archive.index", "index"):
+        [(None, "the index's one path: Archive.append writes it and Archive.rows reads it with read_stream, " + HANDED)],
+    ("export_reviewer_cases.py", "_checks", "index"): [("read_stream", "read")],
+    ("export_reviewer_cases.py", "main", "cases"): [(None, "the cases written below, a json.dumps line a case")] * 2,
+    ("loop.py", "one", "ledger"): [("main_row", "distill.main_row, " + HANDED)],
+    ("observe.py", "observe_run", "stream"): [("read_stream", "read")],
+    ("run.py", "r3_ledger", "ledger"): [("open", "written: a json.dumps line a run")],
+    ("run.py", "start_net", "egress"): [("docker", "where the egress proxy writes its log, in its own container")],
+    ("run.py", "egress", "egress"): [("docker", "copied out of the proxy's container to the file egress then reads")],
+    ("run.py", "host_session", "stderr"): [("write", "written as it is read: by stream_lines, " + HANDED)],
+    ("run.py", "run_scout", "tagged_stream"): [("session", SESSION)] * 3,
+    ("run.py", "run_scout", "numbered_stream"): [("checked_again", SESSION)] * 3,
+    ("run.py", "repair_loop.ask", "numbered_stream"): [("run_session", SESSION)],
+    ("run.py", "reviews_until_clean", "numbered_stream"):
+        [("run_session", SESSION), ("session", "a host repair's stream: host_session writes it and host_facts reads it, " + HANDED)],
+    ("run.py", "review_once", "numbered_stream"): [("run_session", SESSION)],
+    ("run.py", "reviews_with_bug_test", "numbered_stream"): [("run_session", SESSION)],
+    ("run.py", "_run_task", "stream"):
+        [("turn", "the host session's stream: host_session writes it and host_facts reads it, " + HANDED),
+         ("open", "the container session's stream, written from its pipe"), ("read_stream", "read")],
+    ("run.py", "_run_task", "egress"): [("egress", HANDED)],
+    ("run.py", "modelcheck", "egress"): [("egress", HANDED)],
+    ("run.py", "progress", "stream"): [(None, "the run's stream, read with read_stream when it is a file, " + HANDED)],
+    ("run.py", "main", "stream"): [("read_stream", "read")],
 }
 
 
-#: What the inventory lists by its name alone, called or not, with any arguments (follow-up review 4: a scan that judged whether a
-#: call can cut a line missed a form in reviews 2, 3 and 4, a back reference, a flag, ** arguments and a star import, so it
-#: judges nothing now; a person names each entry).
-NAMES = frozenset({"split", "rsplit", "partition", "rpartition", "splitlines", "readline", "readlines"})
+def _docstrings(tree: ast.AST) -> set[int]:
+    return {id(node.body[0].value) for node in ast.walk(tree)
+            if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.body
+            and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant)}
 
 
-def _module(name: str) -> ModuleType | None:
-    try:
-        return importlib.import_module(name)
-    except ImportError:
-        return None
+def _names_and_uses(folder: Path) -> tuple[Counter, dict[tuple[str, str, str], list[list[str]]]]:
+    """In every module under ``folder``: each literal that holds one of ``TAILS`` (its docstrings and the constant's own
+    definition left out), by (module, function); and each use of ``NDJSON``, by (module, function, kind), with the names of the
+    calls it is passed into, in order. A use whose kind is not a literal is kind "?"; the constant itself, not indexed, "*"."""
+    literals: Counter = Counter()
+    uses: dict[tuple[str, str, str], list[list[str]]] = {}
+    for path in sorted(folder.rglob("*.py")):
+        module = path.relative_to(folder).as_posix()
+        tree = ast.parse(path.read_text("utf-8"))
+        skip = _docstrings(tree)
+
+        def constant(node: ast.AST) -> bool:
+            return (isinstance(node, ast.Name) and node.id == "NDJSON") or (isinstance(node, ast.Attribute) and node.attr == "NDJSON")
+
+        def visit(node: ast.AST, where: str, calls: list[str]) -> None:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                where = node.name if where == "<module>" else f"{where}.{node.name}"
+            if module == "wecommon.py" and isinstance(node, (ast.Assign, ast.AnnAssign)) and any(
+                    isinstance(t, ast.Name) and t.id == "NDJSON" for t in (node.targets if isinstance(node, ast.Assign) else [node.target])):
+                return
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in skip \
+                    and any(tail in node.value for tail in TAILS):
+                literals[(module, where)] += 1
+            if isinstance(node, ast.Subscript) and constant(node.value):
+                kind = node.slice.value if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str) else "?"
+                uses.setdefault((module, where, kind), []).append(list(calls))
+                return
+            if constant(node):
+                uses.setdefault((module, where, "*"), []).append(list(calls))
+            if isinstance(node, ast.Call):
+                func = node.func
+                calls = [*calls, func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else "?"]
+            for child in ast.iter_child_nodes(node):
+                visit(child, where, calls)
+
+        visit(tree, "<module>", [])
+    return literals, uses
 
 
-def _bound_to_re(tree: ast.AST) -> dict[str, object]:
-    """Each name a module's imports bind to ``re``, to a module inside it, or to anything either holds, with what Python binds to
-    it: ``import re`` (``re`` is taken as bound in any case), ``import re as rx``, ``import re._parser as p``,
-    ``from re import split as cut``, and ``from re import *``, read as Python reads a star import (the module's ``__all__``, else
-    its names with no leading underscore). A relative import is the module's own and binds nothing of ``re``; a name that
-    cannot be imported is bound to None, which is read as anything."""
-    bound: dict[str, object] = {"re": re}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name == "re" or alias.name.startswith("re."):
-                    bound[alias.asname or "re"] = _module(alias.name) if alias.asname else re
-        elif isinstance(node, ast.ImportFrom) and not node.level and node.module \
-                and (node.module == "re" or node.module.startswith("re.")):
-            module = _module(node.module)
-            for alias in node.names:
-                if alias.name == "*" and module is not None:
-                    names = getattr(module, "__all__", None) or [n for n in vars(module) if not n.startswith("_")]
-                    bound.update({n: getattr(module, n, None) for n in names})
-                elif alias.name != "*":
-                    held = getattr(module, alias.name, None)
-                    bound[alias.asname or alias.name] = held if held is not None else _module(f"{node.module}.{alias.name}")
-    return bound
+def _guard(folder: Path) -> None:
+    literals, uses = _names_and_uses(folder)
+    named = sorted(key for key in literals if key not in LITERAL_NAMES)
+    assert not named, f"a newline-delimited JSON file named by a literal, not from wecommon.NDJSON: {named}"
+    assert set(LITERAL_NAMES) <= set(literals), f"named but no longer there: {sorted(set(LITERAL_NAMES) - set(literals))}"
+    new, gone = sorted(set(uses) - set(NDJSON_USES)), sorted(set(NDJSON_USES) - set(uses))
+    assert not new, f"a newline-delimited JSON file's name used where no entry says what is done with the file: {new}"
+    assert not gone, f"a newline-delimited JSON file's name listed where it is no longer used: {gone}"
+    for key, found in uses.items():
+        listed = NDJSON_USES[key]
+        assert len(found) == len(listed), f"a newline-delimited JSON file's name used {len(found)} times in {key}, listed {len(listed)}"
+        for calls, (callee, why) in zip(found, listed):
+            held = not calls if callee is None else callee in calls
+            assert held, f"a newline-delimited JSON file's path in {key} is passed into {calls or 'no call'}, not {callee}: {why}"
 
 
-def line_splits(source: str) -> list[tuple[str, str]]:
-    """Every site in a module's source the inventory lists, as (the function it is in, its source), by nothing but a name and
-    what an import binds:
-    - every use of an attribute named in ``NAMES``, called or not, and every call of a bare name in ``NAMES``;
-    - every call of anything an import binds to ``re`` (``_bound_to_re``), and every other use of it that can be called (a
-      function, a class, a module), so a name it is given, to be called through elsewhere, is listed where it is given;
-    - a for over an open file or a standard stream (``STREAMS``).
-    A call is listed by its whole source, its arguments included, so a call whose arguments change is a new one. Its limits,
-    stated: a name reached through getattr on anything but ``re``, a module imported at run time (importlib, ``__import__``),
-    code run by exec or eval, and a compiled pattern's methods not in ``NAMES`` (its compile is listed where it is made)."""
-    found: list[tuple[str, str]] = []
-    tree = ast.parse(source)
-    bound = _bound_to_re(tree)
-    calls = {id(node.func): node for node in ast.walk(tree) if isinstance(node, ast.Call)}
-    attribute_of = {id(node.value) for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
-    listed: set[int] = set()
+def test_every_newline_delimited_json_file_is_named_from_its_writers_constant_and_read_only_through_the_one_framing():
+    """Fix review 1, the design replaced: the guard is built from the producers' own list (``wecommon.NDJSON``), not from a scan
+    of every way code can split text. Every name of those files in the worked examples comes from the constant (a literal that
+    holds one is refused); every use of the constant is listed with the call it is passed into, and one listed as read must be
+    passed into ``read_stream`` or ``stream_lines``; each reader those uses reach has a behavioural case (``READERS``).
 
-    def callable_or_unknown(held: object) -> bool:
-        return held is None or callable(held) or isinstance(held, ModuleType)
-
-    def lists(node: ast.AST) -> bool:
-        if isinstance(node, ast.Attribute) and node.attr in NAMES:
-            return True
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-            if node.id in NAMES and id(node) in calls:
-                return True
-            if node.id in bound:
-                held = bound[node.id]
-                if isinstance(held, ModuleType) and id(node) in attribute_of:
-                    return False                  # read where its attribute is (below)
-                return id(node) in calls or callable_or_unknown(held)
-        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) \
-                and isinstance(bound.get(node.value.id), ModuleType):
-            return id(node) in calls or callable_or_unknown(getattr(bound[node.value.id], node.attr, None))
-        return False
-
-    def visit(node: ast.AST, where: str, opened: set[str]) -> None:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            where, opened = (node.name if where == "<module>" else f"{where}.{node.name}"), set()
-        if isinstance(node, (ast.With, ast.AsyncWith)):
-            opened |= {item.optional_vars.id for item in node.items if isinstance(item.optional_vars, ast.Name)
-                       and isinstance(item.context_expr, ast.Call) and isinstance(item.context_expr.func, ast.Name)
-                       and item.context_expr.func.id == "open"}
-        if lists(node):
-            site = calls.get(id(node), node)
-            if id(site) not in listed:
-                listed.add(id(site))
-                found.append((where, ast.unparse(site)))
-        if isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
-            it = node.iter
-            last = it.attr if isinstance(it, ast.Attribute) else it.id if isinstance(it, ast.Name) else None
-            if (isinstance(it, ast.Call) and isinstance(it.func, ast.Name) and it.func.id == "open") or last in STREAMS \
-                    or (isinstance(it, ast.Name) and it.id in opened):
-                found.append((where, "for ... in " + ast.unparse(it)))
-        for child in ast.iter_child_nodes(node):
-            visit(child, where, opened)
-
-    visit(tree, "<module>", set())
-    return found
-
-def test_the_scan_sees_each_kind_of_line_split():
-    source = ("def f(t, p, s):\n    t.splitlines()\n    p.readlines()\n    t.split('\\n')\n    t.rsplit(b'\\r\\n')\n"
-              "    import re\n    re.split(r'\\n+', t)\n    [x for x in open(p)]\n    for x in s.stdin:\n        pass\n"
-              "    with open(p) as h:\n        for x in h:\n            pass\n    t.split(',')\n")
-    assert [src for _, src in line_splits(source)] == [
-        "t.splitlines()", "p.readlines()", "t.split('\\n')", "t.rsplit(b'\\r\\n')", "re.split('\\\\n+', t)", "for ... in open(p)",
-        "for ... in s.stdin", "for ... in h", "t.split(',')"]
+    Its limits, stated: a reader that builds a name some other way (from parts that hold no name's end, from data, or through
+    getattr), a reader outside this folder (``CodingReplay`` in g6.metaharness, which reads the exported cases), and the egress
+    proxy, which writes its log where it is told, are out of its scope."""
+    _guard(WE_DIR)
+    read = {(m, f) for (m, f, _), listed in NDJSON_USES.items() if any(callee in FRAMED for callee, _ in listed)}
+    assert read <= set(READERS), f"a reader with no behavioural case: {sorted(read - set(READERS))}"
+    assert all(why.strip() for listed in NDJSON_USES.values() for _, why in listed)
 
 
-# Pins changed on purpose (follow-up review 4): the cases below once pinned a split the scan judged unable to cut a line
-# ("t.split(',')", a lookahead, a module's own split) as not found. The scan judges nothing now, so every one is listed.
-@pytest.mark.parametrize("call", [
-    "t.split('\\r')", "t.split('\\x0b')", "t.split('\\u2028')", "t.split('\\x85')", "t.partition('\\n')", "t.rpartition(b'\\r')",
-    "t.split()", "t.rsplit(None, 1)", "t.split(sep=None)", "t.split(sep)", "re.split('\\\\s+', t)", "re.split('\\\\n\\\\s*\\\\n', t)",
-    "re.split(PATTERN, t)", "t.split(',')", "t.split('\\\\n')", "t.split(b'\\x0b')", "re.split(',', t)", "t.partition('=')"])
-def test_follow_up_review_2_finding_2_a_split_at_any_line_break_python_reads_is_seen(call):
-    """A split at a line break Python reads is listed, and so is every other split: the inventory lists a call by its name and
-    judges no separator (follow-up review 4)."""
-    assert [src for _, src in line_splits(f"def f(t, sep):\n    {call}\n")] == [ast.unparse(ast.parse(call))]
-
-
-@pytest.mark.parametrize("source", [
-    "def f(t):\n    import re\n    re.split('\\\\r(?=\\\\{)', t)\n",           # follow-up review 3, finding 1
-    "def f(t):\n    import re\n    re.compile('\\\\r(?=\\\\{)').split(t)\n",
-    "def f(t):\n    import re\n    re.split('[^x]', t)\n",
-    "def f(t):\n    import re\n    re.split('(?=\\\\r),', t)\n",
-    "def f(t):\n    import re\n    re.split('[,;]', t)\n",
-    "from re import split\ndef f(t):\n    split('\\\\r', t)\n",                  # follow-up review 3, finding 3
-    "from re import split as cut\ndef f(t):\n    cut('\\\\r', t)\n",
-    "import re as rx\ndef f(t):\n    rx.split('\\\\r', t)\n",
-    "def split(a, b):\n    return a\ndef f(t):\n    split('\\\\r', t)\n"])          # a function of the module's own, by its name
-def test_follow_up_review_3_a_regex_split_is_read_by_re_s_own_parser_and_by_any_name_bound_to_it(source):
-    """A split reached through ``re`` under any name an import binds is listed, whatever its pattern, and so is any call named
-    ``split`` (follow-up review 4: the scan no longer reads the pattern)."""
-    assert line_splits(source)
-
-
-#: Each form a scan that judged a call let pass (follow-up review 4, findings 1 to 4), and others of the same kinds, as (the
-#: imports, the line, what is listed when it is not the line itself). The inventory lists by name and by what an import binds.
-LISTED = [
-    ("import re", r"re.split(r'(?=(\r))\1', text)", None),                   # finding 1: a back reference to a captured break
-    ("import re", r"re.split(r'(?a)\S', text)", None),                       # finding 2: a category under an inline flag
-    ("import re", r"re.split(**{'pattern': r'\r', 'string': text})", None),  # finding 3: the pattern in ** keyword arguments
-    ("from re import *", r"split(r'\r', text)", None),                       # finding 4: a star import
-    ("from re import *", r"findall(r'[^\r]+', text)", None),
-    ("from re import compile as c", "c('x').finditer(text)", "c('x')"),
-    ("import re as rx", r"rx.sub(r'\r', '', text)", None),
-    ("import re._parser as p", "p.parse('x')", None),
-    ("from re import _parser", "_parser.parse('x')", None),
-    ("import re", "re.search('x', text)", None),
-    ("import re", "cut = re.split", "re.split"),                             # a reference, to be called through another name
-    ("from re import split as cut", "f = cut", "cut"),
-    ("import re", "getattr(re, 'split')(',', text)", "re"),                  # re itself, reached through getattr
-    ("", "text.split(',')", None),                                           # with any arguments
-    ("", "text.partition('=')", None),
-    ("", "split(text)", None),                                               # a bare name, whatever binds it
-]
-
-
-@pytest.mark.parametrize(("imports", "line", "listed"), LISTED)
-def test_follow_up_review_4_findings_1_to_4_every_use_by_name_and_of_what_re_binds_is_listed(imports, line, listed):
-    assert [src for _, src in line_splits(f"{imports}\ndef f(text):\n    {line}\n")] == [ast.unparse(ast.parse(listed or line))]
-
-
-@pytest.mark.parametrize("line", ["text.strip()", "re.M", "x = 're.split'", "[a for a in text]"])
-def test_what_is_not_named_and_not_reached_through_re_is_not_listed(line):
-    assert line_splits(f"import re\ndef f(text):\n    {line}\n") == []
-
-
-def test_follow_up_review_3_finding_2_a_reader_in_a_subfolder_fails_the_guard(tmp_path, monkeypatch):
+def _shadow(tmp_path: Path) -> Path:
     shadow = tmp_path / "worked_examples"
     shadow.mkdir()
     for source in WE_DIR.glob("*.py"):
         (shadow / source.name).write_bytes(source.read_bytes())
-    (shadow / "readers").mkdir()
-    (shadow / "readers" / "transcript.py").write_text("def read(text):\n    return text.splitlines()\n", encoding="utf-8")
-    monkeypatch.setattr(sys.modules[__name__], "WE_DIR", shadow)
-    with pytest.raises(AssertionError, match="line split"):
-        test_every_line_split_in_the_worked_examples_is_the_one_framing_or_named_with_why_it_reads_no_stream()
+    return shadow
 
 
-def test_follow_up_review_2_finding_2_a_new_split_at_a_lone_carriage_return_fails_the_guard(tmp_path, monkeypatch):
-    shadow = tmp_path / "worked_examples"
-    shadow.mkdir()
-    for source in WE_DIR.glob("*.py"):
-        (shadow / source.name).write_bytes(source.read_bytes())
-    (shadow / "new_reader.py").write_text("def read_records(text):\n    return text.split('\\r')\n", encoding="utf-8")
-    monkeypatch.setattr(sys.modules[__name__], "WE_DIR", shadow)
-    with pytest.raises(AssertionError, match="line split"):
-        test_every_line_split_in_the_worked_examples_is_the_one_framing_or_named_with_why_it_reads_no_stream()
+@pytest.mark.parametrize(("name", "source", "said"), [
+    ("readers/transcript.py", "def read(folder):\n    return (folder / 'stream.jsonl').read_text('utf-8').splitlines()\n",
+     "named by a literal"),
+    ("ledger_reader.py", "import wecommon as c\ndef read(root):\n    return open(root / c.NDJSON['ledger']).read().split('\\r')\n",
+     "no entry says"),
+    ("index_reader.py", "import wecommon as c\ndef read(root, kind):\n    return (root / c.NDJSON[kind]).read_bytes()\n",
+     "no entry says")])
+def test_a_new_reader_of_one_of_those_files_fails_the_guard_until_it_is_listed(tmp_path, name, source, said):
+    shadow = _shadow(tmp_path)
+    (shadow / name).parent.mkdir(parents=True, exist_ok=True)
+    (shadow / name).write_text(source, encoding="utf-8")
+    with pytest.raises(AssertionError, match=said):
+        _guard(shadow)
 
 
-@pytest.mark.parametrize(("edit", "said"), [
-    ('    for part in rel.split("\\r"):\n', "not the one framing"),                         # a named call, its argument changed
-    ('    rel.split("/")\n    for part in rel.split("/"):\n', "more than once")])             # a named call, made twice
-def test_follow_up_review_4_a_named_call_changed_or_made_again_fails_the_guard(tmp_path, monkeypatch, edit, said):
-    shadow = tmp_path / "worked_examples"
-    shadow.mkdir()
-    for source in WE_DIR.glob("*.py"):
-        (shadow / source.name).write_bytes(source.read_bytes())
-    named = '    for part in rel.split("/"):\n'
-    text = (shadow / "box_mcp.py").read_text("utf-8")
-    assert text.count(named) == 1
-    (shadow / "box_mcp.py").write_text(text.replace(named, edit), encoding="utf-8")
-    monkeypatch.setattr(sys.modules[__name__], "WE_DIR", shadow)
-    with pytest.raises(AssertionError, match=f"line split .*{said}"):
-        test_every_line_split_in_the_worked_examples_is_the_one_framing_or_named_with_why_it_reads_no_stream()
-
-
-def test_every_line_split_in_the_worked_examples_is_the_one_framing_or_named_with_why_it_reads_no_stream():
-    found = Counter((path.relative_to(WE_DIR).as_posix(), where, src) for path in sorted(WE_DIR.rglob("*.py"))
-                    for where, src in line_splits(path.read_text("utf-8")))
-    assert found[FRAMING] == 1, "the one framing, wecommon.stream_lines, splits at '\\n' alone"
-    other = set(found) - {FRAMING}
-    assert not other - set(NOT_A_STREAM), f"a line split that is not the one framing: {sorted(other - set(NOT_A_STREAM))}"
-    assert not set(NOT_A_STREAM) - other, f"named but no longer there: {sorted(set(NOT_A_STREAM) - other)}"
-    again = {key: n for key, n in found.items() if n != 1}
-    assert not again, f"a line split listed more than once in its function, so a new one would pass as the old: {again}"
-    assert all(why.strip() for why in NOT_A_STREAM.values())
+@pytest.mark.parametrize(("old", "new", "said"), [
+    ('read_stream(folder / NDJSON["stream"])', 'open(folder / NDJSON["stream"], encoding="utf-8").read().splitlines()', "not read_stream"),
+    ('lines = read_stream(folder / NDJSON["stream"])', 'lines = read_stream(folder / NDJSON["stream"]) + [NDJSON["stream"]]', "used 2 times")])
+def test_a_listed_read_moved_off_the_one_framing_or_made_twice_fails_the_guard(tmp_path, old, new, said):
+    shadow = _shadow(tmp_path)
+    text = (shadow / "observe.py").read_text("utf-8")
+    assert text.count(old) == 1
+    (shadow / "observe.py").write_text(text.replace(old, new), encoding="utf-8")
+    with pytest.raises(AssertionError, match=said):
+        _guard(shadow)
 
 
 def test_the_one_framing_splits_at_a_newline_alone_and_a_file_is_read_with_no_newline_translation(tmp_path):
