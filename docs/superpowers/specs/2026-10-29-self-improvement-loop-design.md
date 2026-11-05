@@ -702,12 +702,21 @@ a person took back from coming back through the gate.
 **Only a person's start lets it run.** `run` carries on a start that stands: of the starts and stops on record, the last is
 a start a person agreed to in the client's dialog. With none it is refused, with `G6_E_LOOP_NOT_STARTED`, before any of the
 folder's code runs, so a shell is no way round the dialog. A stop ends the start for good: every stop through the tool is
-counted in `stops.log`, a file no lock stands in front of, before its `STOP` file is written, and a start records the count
-it saw, so a restart or removing the `STOP` file by hand brings nothing back until a person agrees again.
+first a line in `stops.log`, the journal of stops, a file no lock stands in front of, flushed to disk before its `STOP` file
+is written, and a start records the journal it saw, by count and digest, so a restart or removing the `STOP` file by hand
+brings nothing back until a person agrees again.
 
-An agreement binds what the dialog showed: the settings, the Python file, who enrolled it, any `STOP` file as it stands, the
-count of stops, and any pause. If any of that moves while the dialog is open, nothing starts and the person is asked again. A
-stop that dies between its two writes leaves only the count, so the count is bound too, and the next dialog says a stop stands
+**One answer on whether a stop is in force.** `stop_in_force` gives it, and a start, the runner, a tick, status and the digest
+all act on it; nothing else decides. It reads the `STOP` file and the journal in one reading. A stop stands when the `STOP`
+file is not the one the last start lifted, or the journal is not the one it bound, so a journal rewritten to as many lines is
+no unchanged record; with no start on record, every stop in the journal stands. Anything it cannot read, the `STOP` file, the
+journal or the records that say what was lifted, is a stop in force with its own code, `G6_E_LOOP_STOP_UNREADABLE`, never a
+value such as a count of -1 or nothing to lift: a tick ends at its next request, the runner refuses to run, status says which
+file, and a start starts nothing.
+
+An agreement binds what the dialog showed: the settings, the Python file, who enrolled it, the stop state as that one reading
+saw it, and any pause. If any of that moves while the dialog is open, nothing starts and the person is asked again. A stop that
+dies between its two writes leaves only its journal line, which every reader honours, and the next dialog says a stop stands
 in `stops.log` with no file for it, rather than a start taking in a stop nobody read. A start never moves
 or deletes `STOP`. It records the digest, the length and the modification time of the file the person agreed to lift, the time
 first, and `STOP` stands unless all three still match, since bytes alone cannot say a person wrote again. So a stop has no
@@ -725,8 +734,8 @@ All of this is a check and not a boundary. A process with the owner's rights can
 are hash-chained and not signed.
 
 **A stop lands at the next model call, not the next tick (the owner's ruling, 2026-11-01).** A stop reaching the next call
-matters more than the one evaluation it may cost. Each request of a tick looks at the `STOP` file, the count of stops and G6's own
-stop before it goes out, so a stop that died before its file was written lands too, and a request already sent comes back first, and that can take as long as its caller allows. Nothing here ends one.
+matters more than the one evaluation it may cost. Each request of a tick asks `stop_in_force` and G6's own stop before it
+goes out, so a stop that died before its file was written lands too, and a request already sent comes back first, and that can take as long as its caller allows. Nothing here ends one.
 The tick then ends with no cycle: what ran is charged, nothing is scored or adopted, and the runner ends a second later. The
 candidates it was working on race again after the next start, as after a limit. The reply and the day's digest say how many
 requests it had sent, and a `STOP` file's note in the log carries the same under `cut_off`.
@@ -982,7 +991,7 @@ boundary, which is P3's mission container, and P5's reports state the limit unde
 | A person enrols and lifts a pause at a terminal, by typing the domain's name back, as in `g6.workforce.decide`. It is a convenience check, not proof, and there is no MCP tool for either | An agent with a console can type. The same is true of `decide`, and of a Python call |
 | Start lifts a `STOP` file by recording its digest, length and modification time, once the person has agreed and been shown its reason, and never moves or deletes it. A reboot lifts nothing | A stop someone else set is lifted by whoever agrees in the dialog, and the log keeps who. A lifted file stays on disk, so each look at it reads the records, and records that do not read leave it standing. Restoring a backup that changes the file's time stands as a stop. A rewrite of the same bytes on a file system too coarse to give it a new time, and a writer that restores the old time on purpose, are not seen |
 | A tick compares the log with the chain of adoptions, and refuses with the records code when the log saw a generation the chain does not hold. Only adoptions and rollbacks count, and a chain ahead of the log is the crash between the two writes | Both files cut together leave nothing to compare. The check keeps a number from being used twice; it does not bring a lost generation back, and a person must inspect the folder |
-| A stop through the tool is counted in `stops.log`, with no lock, before its file is written, and a start records the count it saw. The `STOP` file holds a stop by itself, so the count has two uses: a restart after a person has removed that file with no note of the stop in the records, and a stop that died between its two writes, which leaves only the count. A tick in flight and a waiting runner read that as the stop it is, at the next model call or the next pass, and status says so. A start never reads the count to decide about `STOP`. It refuses a folder whose count cannot be read (`G6_E_LOOP_RECORDS_UNREADABLE`), for that restart. A stop is also noted in the records, best effort | A count that cannot be written leaves only the `STOP` file, so a restart misses that stop if the file is then removed by hand. A stop that cannot change the `STOP` file reports `G6_E_LOOP_STOP_FAILED`, since the file it could not change may be lifted. A `STOP` file written by hand is not counted: it stops while it is there, and is noted when a runner or a restart sees it, so one written and removed with nothing running leaves no trace. Deleting `stops.log` closes the start rather than opening it |
+| A stop through the tool is a line in `stops.log`, with no lock, flushed to disk before its file is written, and a start records that journal by count and digest. The `STOP` file holds a stop by itself, so the journal has two uses: a restart after a person has removed that file with no note of the stop in the records, and a stop that died between its two writes, which leaves only its line. Every reader takes that as the stop it is through `stop_in_force`: a tick in flight and a waiting runner at the next model call or the next pass, status, and the next dialog. A journal or `STOP` file that cannot be read is a stop in force (`G6_E_LOOP_STOP_UNREADABLE`), and a start refuses it. A stop is also noted in the records, best effort | A line that cannot be written leaves only the `STOP` file, so a restart misses that stop if the file is then removed by hand. A stop that cannot change the `STOP` file reports `G6_E_LOOP_STOP_FAILED`, since the file it could not change may be lifted. A `STOP` file written by hand is not counted: it stops while it is there, and is noted when a runner or a restart sees it, so one written and removed with nothing running leaves no trace. Deleting `stops.log` closes the start rather than opening it |
 | Refusals do not rest the runner, since a refusal tried something. No winner, no constraint and idle do | A run of refusals is bounded only by the split's five evaluations |
 | Status shows use from the runner's last heartbeat, with its time, because opening the ledger would write to it | With no runner alive the figures are as old as that heartbeat, and with none ever there are none |
 | Each provider's day is its own, and the runner wakes for the next rise of any ceiling, or the end of a reported limit. It wakes even if the rise is too small for a tick | One refused tick a day, which spends nothing |
