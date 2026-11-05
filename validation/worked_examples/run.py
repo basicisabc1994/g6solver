@@ -2722,6 +2722,8 @@ def rule_step(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
         return "timeout"
     before, codes = tally.result, []
     first = str((before or {}).get("session_id") or "")                # the session the step continues
+    if not first:                    # a first session whose own result names none: there is no session to continue, so no
+        return "error"               # prompt goes to any, resumed or fresh, and the run ends "error" with its baseline kept
     if session is None:
         stopped = run_session(ctx, run, agent, scout_again(docker_args), key, tally, RULE_STEP,
                               c.NDJSON["tagged_stream"].format(tag="rule"), seconds=dog.left(), stop_usd=stop, codes=codes, deadline=dog)
@@ -3185,6 +3187,9 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             by (``step_ending``), from its own stop (``host_ending``'s, which read its exit), its own result and the first session's
             id; a session that ended cleanly but whose own result is not the first session's success ends its run with that ending,
             written at once, as a session that did not end cleanly does. "" when it ended cleanly."""
+            if not first_session:        # the first session's own result named no session: none is resumed, and no prompt
+                run.end("error", why="the first session's own result named no session, so there is none to resume")
+                return "error"           # goes to a fresh one in its place
             before = tally.result
             ended = turn(note, name, first_session, dog)
             own = tally.result if tally.result is not before else None      # ``Tally.feed`` keeps each result as a new dict

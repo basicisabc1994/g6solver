@@ -250,6 +250,30 @@ def test_repair_6_every_arm_and_executor_reads_a_sessions_result_by_one_rule(res
     assert we.host_ending("", facts, code=0, limit=None, by_g6=False)[0] == ("" if status == "finished" else status)
 
 
+def _no_session_id() -> list[str]:
+    lines = helpers.stream("s1")
+    result = json.loads(lines[-1])
+    result.pop("session_id")
+    lines[-1] = json.dumps(result)
+    return lines
+
+
+def test_review_2_finding_1_a_first_session_whose_result_names_no_session_starts_no_rule_step_and_is_an_error_row(monkeypatch,
+                                                                                                                tmp_path):
+    record, _, starts, ctx, *_ = k3_host_run(monkeypatch, tmp_path, [("s1", FIRST_TREE, _no_session_id()), ("s2", RULE_TREE, None)])
+    assert len(starts) == 1                                              # no prompt to any session, resumed or fresh
+    assert record["status"] == "error" and _ending(ctx, record) == "error" and record["rule_step"]["at"] == "rule step"
+    assert we.has_baseline(ctx.archive, record["run"]) and we.scored_run(ctx.archive, record["run"])   # a row, as every stopped K3
+
+
+def test_review_2_a_host_k2_first_session_whose_result_names_no_session_starts_no_repair(monkeypatch, tmp_path):
+    _gated(monkeypatch)
+    monkeypatch.setattr(we, "run_critic", lambda *a, **kw: DEFECT)
+    record, _, starts, ctx, *_ = helpers.host_run(monkeypatch, tmp_path, "K2", [("s1", FIRST_TREE, _no_session_id()),
+                                                                                ("s2", RULE_TREE, None)])
+    assert len(starts) == 1 and record["status"] == "error" and _ending(ctx, record) == "error"
+
+
 # --- item 3: the run's watchdog ends a host session's processes, as it ends a container session's ----------------------------
 def test_a_resumed_host_session_is_registered_with_the_runs_watchdog_which_ends_its_processes_once_when_it_fires(monkeypatch,
                                                                                                                  tmp_path):
