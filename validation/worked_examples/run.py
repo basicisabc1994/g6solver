@@ -1450,17 +1450,24 @@ def read_stream(lines: Iterable[bytes], tally: c.Tally, *, deadline: float, writ
             return "cap_cost"
 
 
-def status_of(stop: str, tally: c.Tally) -> str:
-    if stop:
-        return stop
-    if tally.result is None:
+def status_of(stop: str, tally: Any) -> str:
+    """How a session ended: its stream's own stop when it has one, else what its result says (``result_status``)."""
+    return stop or result_status(tally.result)
+
+
+def result_status(result: Mapping[str, Any] | None) -> str:
+    """The one reader of a session's result, for every arm and executor (``status_of``, so ``host_ending`` too, and K3's
+    ``step_ending``): "finished" only for a result Claude Code marks as a success, its subtype "success" and its ``is_error``
+    False; "cap_turns" or "cap_cost" for the error subtypes that name a cap (max_turns, a budget), as before; anything else
+    "error": no result, an error, a success with no word on error, and a subtype nobody knows."""
+    if not isinstance(result, Mapping):
         return "error"
-    sub = str(tally.result.get("subtype") or "")
+    sub = str(result.get("subtype") or "")
     if "max_turns" in sub:
         return "cap_turns"
     if "budget" in sub:
         return "cap_cost"
-    return "error" if tally.result.get("is_error") else "finished"
+    return "finished" if sub == "success" and result.get("is_error") is False else "error"
 
 
 KILL_AGENT = (f'for p in /proc/[0-9]*; do [ "$(readlink $p/exe 2>/dev/null)" = {CLAUDE} ] && '
@@ -2640,19 +2647,16 @@ def unbounded(docker: Any) -> Any:
 
 def step_ending(stop: str | None, result: Mapping[str, Any] | None, code: int | None, *, session: str | None = None) -> str:
     """How one of K3's steps ended (``K3_STEPS``), by the one rule every step's caller uses. "finished" only for a success it
-    recognises: no stop, a result of the step's own whose subtype is "success" and whose ``is_error`` is False, an exit of 0,
-    and, with ``session``, the result of that session (the first session's, which the rule step continues). Anything else is
-    the status the run ends with: the stop; "error" for a result of another session, or none to continue; the cap a result
-    names ("cap_turns", "cap_cost"), as ``status_of`` reads one; else "error", which takes in no result, a non-zero or unread
-    exit, and any result it does not know."""
+    recognises: no stop, a result of the step's own that the one reader of a result calls a success (``result_status``), an
+    exit of 0, and, with ``session``, the result of that session (the first session's, which the rule step continues).
+    Anything else is the status the run ends with: the stop; "error" for a result of another session, or none to continue;
+    else what ``result_status`` says (a cap it names, or "error"), and "error" for a success with a non-zero or unread exit."""
     if stop:
         return stop
     if session is not None and (not session or (result or {}).get("session_id") != session):
         return "error"
-    sub = str((result or {}).get("subtype") or "")
-    if result is not None and sub == "success" and result.get("is_error") is False and code == 0:
-        return "finished"
-    return "cap_turns" if "max_turns" in sub else "cap_cost" if "budget" in sub else "error"
+    got = result_status(result)
+    return "error" if got == "finished" and code != 0 else got
 
 
 def linked(st: os.stat_result) -> bool:

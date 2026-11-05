@@ -386,8 +386,8 @@ class FakeDocker:
         self.envs.append(env)
         return FakeProc([{"type": "assistant", "message": {"id": "m1", "model": c.MODEL,
                                                            "usage": {"output_tokens": 1000}}},
-                         {"type": "result", "subtype": "success", "result": "done", "num_turns": 1,
-                          "modelUsage": {c.MODEL: {"outputTokens": 1000}}}])
+                         {"type": "result", "subtype": "success", "is_error": False, "result": "done", "num_turns": 1,
+                          "modelUsage": {c.MODEL: {"outputTokens": 1000}}}])   # as Claude Code writes it
 
 
 def _ctx(tmp_path, docker, *, validated=True, g6_commit_ok=True, oracle_id="sha256:img"):
@@ -896,8 +896,8 @@ class ArmDocker(FakeDocker):
         self.calls.append(list(args))
         self.envs.append(env)
         return FakeProc([{"type": "assistant", "message": {"id": "m1", "model": HAIKU, "usage": {"output_tokens": 10}}},
-                         {"type": "result", "subtype": "success", "result": "done", "num_turns": 1,
-                          "total_cost_usd": 0.25}])
+                         {"type": "result", "subtype": "success", "is_error": False, "result": "done", "num_turns": 1,
+                          "total_cost_usd": 0.25}])   # as Claude Code writes it
 
 
 def _r3(tmp_path, arm, *, model=HAIKU, repeat=1, docker=None):

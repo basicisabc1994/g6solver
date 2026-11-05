@@ -216,6 +216,40 @@ def test_repair_5_a_host_k2_repair_naming_another_session_ends_the_run_error_too
     assert record["status"] == "error" and _ending(ctx, record) == "error" and record["repairs"]["ended"] == "error"
 
 
+def _with_subtype(subtype: str, is_error=False) -> list[str]:
+    lines = helpers.stream("s1")
+    lines[-1] = json.dumps({**json.loads(lines[-1]), "subtype": subtype, "is_error": is_error})
+    return lines
+
+
+def test_repair_6_a_host_k3_repair_with_a_result_claude_code_does_not_mark_a_success_ends_the_run_error(monkeypatch, tmp_path):
+    """Review 1, finding 7: one strict reader of a session's result. A subtype nobody knows is no success, in a repair too."""
+    _gated(monkeypatch)
+    record, _, starts, ctx, *_ = k3_host_run(monkeypatch, tmp_path, [
+        ("s1", FIRST_TREE, None), ("s1", RULE_TREE, None), ("s1", "def f():\n    return 3\n", _with_subtype("future_terminal_status"))],
+        review=lambda n: DEFECT if n == 1 else CLEAN)
+    assert len(starts) == 3 and record["status"] == "error" and _ending(ctx, record) == "error"
+
+
+@pytest.mark.parametrize(("result", "status"), [
+    ({"subtype": "success", "is_error": False}, "finished"),
+    ({"subtype": "success", "is_error": True}, "error"),
+    ({"subtype": "success"}, "error"),                                   # no word on error is no success
+    ({"subtype": "future_terminal_status", "is_error": False}, "error"),  # an ending nobody knows
+    ({"subtype": "error_max_turns", "is_error": True}, "cap_turns"),
+    ({"subtype": "error_max_budget_usd", "is_error": True}, "cap_cost"),
+    ({"subtype": "error_during_execution", "is_error": True}, "error"),
+    (None, "error")])
+def test_repair_6_every_arm_and_executor_reads_a_sessions_result_by_one_rule(result, status):
+    assert we.status_of("", SimpleNamespace(result=result)) == status
+    assert we.step_ending("", result, 0) == status                       # K3's steps, by the same reader
+    assert we.status_of("timeout", SimpleNamespace(result=result)) == we.step_ending("timeout", result, 0) == "timeout"
+    if status == "finished":
+        assert we.step_ending("", result, 1) == "error"                  # and a success that did not exit 0 is no success
+    facts = {"init": {"why": ""}, "result": result, "refusals": []}
+    assert we.host_ending("", facts, code=0, limit=None, by_g6=False)[0] == ("" if status == "finished" else status)
+
+
 # --- item 3: the run's watchdog ends a host session's processes, as it ends a container session's ----------------------------
 def test_a_resumed_host_session_is_registered_with_the_runs_watchdog_which_ends_its_processes_once_when_it_fires(monkeypatch,
                                                                                                                  tmp_path):
