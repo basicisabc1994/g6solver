@@ -291,15 +291,19 @@ def ask_to_stop(root: str | Path, reason: str = "") -> str:
     return stop_reason(root)
 
 
-def note_refusal(root: str | Path, request: str, said: str) -> None:
+def note_refusal(root: str | Path, request: str, said: str) -> bool:
     """Keep what a classifier or a permission refused, first and in a file no lock stands in front of, because a refused
-    request is never sent again whether or not its cycle reaches the log. ``request``: a digest, never its text. One that
-    cannot be written is left: this process still holds it, and the cycle may yet be written."""
+    request is never sent again whether or not its cycle reaches the log, or a tick is open at all. ``request``: a digest, never
+    its text. It is on the disk before this returns ``True``. One that cannot be written raises nothing and returns ``False``:
+    the caller decides what this process does, since only it still holds the refusal."""
     try:
         with open(Path(root) / REFUSED_FILE, "a", encoding="utf-8") as kept:
             kept.write(f"{request} {' '.join(said.split())}\n")
+            kept.flush()
+            os.fsync(kept.fileno())
     except OSError:
-        pass
+        return False
+    return True
 
 
 def refused_requests(root: str | Path) -> set[str]:

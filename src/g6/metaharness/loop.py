@@ -80,6 +80,7 @@ from g6.self_maintenance.envelope import (
     ENDS_A_STREAK,
     FINDINGS,
     MAX_FAILED_CYCLES,
+    REFUSED_FILE,
     TICK_BUDGET_SPENT,
     CycleLog,
     ask_to_stop,
@@ -243,8 +244,8 @@ class _Requests:
     running at once can never pass the limit between them. During a tick each request looks at ``halted`` first, so a stop
     lands at the next model call: a request already sent comes back first, since nothing here can end one. ``barring`` is what
     a request's real sender is held to. After a refusal nothing more goes out that tick, and ``refused`` holds each request ever
-    refused here, which never goes out again. It only grows, and ``keeping`` is told of each as it happens, before any record
-    of the tick is written, so no failure of those records can send one twice."""
+    refused here, which never goes out again. It only grows, and ``keeping`` is told of each as it happens, whether or not a
+    tick is open, before any record of the tick is written, so no failure of those records can send one twice."""
 
     def __init__(self, now: Callable[[], datetime] = lambda: datetime.now(UTC),
                  halted: Callable[[], _Halted | None] = lambda: None,
@@ -340,19 +341,25 @@ class _Requests:
             raise LLMError(f"{CLASSIFIER_STOP}: this request was refused once, and nothing sends it again")
 
     def at_a_refusal(self, failed: Any, request: str, sent: str = "", generation: int | None = None) -> None:
-        """End the tick when a classifier or a permission stopped a request, and let nothing more go out of it. ``failed``: what
-        the request raised, or what ``WatchedClaude`` read before it raised anything. ``request``: the digest of what the tick
-        asked for, and ``sent``: of what went out, where a wrapper made that another request. Neither is sent again.
-        ``generation``: the tick the request began in; a refusal that comes once that tick has closed ends nothing of the
-        next, though what it refused is still never sent again."""
+        """Keep what a classifier or a permission refused, whether or not a tick is open, and end the tick it stopped.
+        ``failed``: what the request raised, or what a watched caller read before it raised anything. ``request``: the digest
+        of what the tick asked for, and ``sent``: of what went out, where a wrapper made that another request. Neither is
+        ever sent again. ``generation``: the tick the request began in; a refusal that comes once that tick has closed ends
+        nothing of the next, though what it refused is still never sent again. In order: nothing more of the tick goes out,
+        then what was refused is in ``refused`` and with ``keeping``, then the refusal leaves for the tick, so nothing is
+        scored and no record of the tick is written before it is kept."""
         said = refused_by(str(failed))
-        if said and self.limit != math.inf:
-            with self._lock:
-                if generation is None or generation == self.generation:
-                    self.refusal = {"said": said, "request": sent or request, "asked": request}
-            for known in {request, sent or request}:
-                self.refused.add(known)
-                self.keeping(known, said)
+        if not said:
+            return
+        known = {request, sent or request}
+        with self._lock:
+            if self.limit != math.inf and (generation is None or generation == self.generation):
+                self.refusal = {"said": said, "request": sent or request, "asked": request}
+            new = known - self.refused
+            self.refused |= known
+        for each in sorted(new):
+            self.keeping(each, said)
+        if self.limit != math.inf:
             raise _Refused(said)
 
 
@@ -592,8 +599,7 @@ class ShadowLoop:
         self.evaluating = False                   # this tick has begun its held-out evaluation
         self.waited = 0                           # ticks a budget wait turned away since the last cycle: a wait leaves no row
         self.tuned: list[dict[str, Any]] = []     # this tick's tuning cycles as they happen, for a row that a raise cut short
-        self.requests = _Requests(lambda: self._now(), self._halted, self._barred,
-                                  lambda request, said: note_refusal(self.root, request, said))
+        self.requests = _Requests(lambda: self._now(), self._halted, self._barred, self._keep_refusal)
         self._proposer = _Counted(proposer, self.requests)
         self.root = Path(root).resolve()
         reach = _in_reach(self.root, domain)
@@ -649,6 +655,20 @@ class ShadowLoop:
                 raise _AtLimit(seen.wait_until, seen.reason)
             self.requests.ends_by(seen.ends)
         self.evaluating = True
+
+    def _keep_refusal(self, request: str, said: str) -> None:
+        """Keep a refused request's digest on the disk before anything else happens (``note_refusal``). One no file would take
+        is held by this process alone, and a restart could send it again: so this process sends nothing more, and asks for a
+        stop a person must lift."""
+        if note_refusal(self.root, request, said):
+            return
+        why = (f"a request was refused ({' '.join(said.split())[:160]}) and {REFUSED_FILE} would not keep it, so a restart "
+               "could send it again")[:400]
+        self.cannot_record = why
+        try:
+            ask_to_stop(self.root, why)
+        except OSError:
+            pass                      # this process still sends nothing more
 
     def stopped_by(self) -> str:
         """Why this folder is stopped, which a tick and the runner read alike: if the runner read less, a tick refused for a
