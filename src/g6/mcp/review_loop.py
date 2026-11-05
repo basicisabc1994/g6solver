@@ -29,6 +29,8 @@ ENDED = ("The loop has ended. A review that reproduces nothing is not evidence t
          "found no failure it could show.", "Show the report as it is. Merging is the person's own decision.")
 NOTHING = ("No Python changed against the base commit, so nothing was tested and nothing was spent. Call again once the "
            "session has changed Python.")
+CHANGED = ("The code has changed since this session's loop ended, so the report below is of an earlier patch and nothing in "
+           "this call tested the code as it stands. Name a new session to review it.")
 
 
 def _asked(repo: str, task: str, base: str, session: Path) -> dict:
@@ -88,10 +90,16 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
     state = loop._load(folder)
     evidence, saved = _evidence(state, asked["base"]), folder / "report.md"
     text = done.text or (saved.read_text(encoding="utf-8") if saved.is_file() else "")
+    code, ending, why, note = done.code, done.ending, state.get("stop") or text or NOTHING, done.note
+    if note == loop.ALREADY_ENDED:     # a repeat ran nothing: its report is of the patch as the session's loop ended
+        reviews = state.get("reviews") or []    # a stop with a code keeps it, as it says why the session's loop ended
+        ended = state.get("ended_patch") or (reviews[-1]["patch"] if reviews else "")    # a session ended before it was kept
+        if ended and loop._patch_now(Path(asked["repo"]), asked["base"]) != ended:
+            text, code, ending, why, note = f"{CHANGED}\n\n{text}", code or loop.NO_CLEAN_REVIEW, "untested", CHANGED, CHANGED
     said = {"action": done.action, "text": text} if done.action == loop.CONTINUE else {
-        "action": done.action, "report": text, "ending": done.ending}
-    if done.code:
-        refused = blocked_reply(f"[{done.code}] {state.get('stop') or text or NOTHING}"[:600], request_id=request_id)
+        "action": done.action, "report": text, "ending": ending, **({"note": note} if note else {})}
+    if code:
+        refused = blocked_reply(f"[{code}] {why}"[:600], request_id=request_id)
         return {**refused, "run_id": folder.name, "evidence": evidence, **said}
     card = SENDS_BACK if done.action == loop.CONTINUE else ENDED
     return {"ok": True, **said, **envelope_fields(

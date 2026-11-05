@@ -72,6 +72,22 @@ def scrub(text: str) -> str:
     return text
 
 
+def secret_spans(text: str) -> list[tuple[int, int]]:
+    """Where in ``text`` each value ``scrub`` masks lies, as ``(start, end)`` in order, each rule read on ``text`` as given.
+    A caller that shows ``text`` in another form, as a diff shows a file with a mark before each line, can mask the same
+    values where they stand there, which ``scrub`` of that form can miss."""
+    found = []
+    for pattern, replacement in _RULES:
+        before, masked, after = replacement.partition(MASK)
+        for match in pattern.finditer(text or ""):
+            if not masked:
+                found.append(match.span())
+                continue
+            kept, tail = match.expand(before) if before else "", match.expand(after) if after else ""
+            found.append((match.start() + len(kept), match.end() - len(tail)))
+    return sorted(found)
+
+
 # A real top-level domain (two letters or more), or localhost, is required, so ``pkg@1.2.3``, ``@scope/pkg`` and
 # ``HEAD@{0}`` stay; ``%40`` is an at sign written into a URL.
 _EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+(?:@|%40)(?:[A-Za-z0-9.\-]+\.[A-Za-z]{2,}|localhost\b)")
@@ -152,4 +168,4 @@ def sanitize_stack_trace(text: str) -> list[dict[str, object]]:
 
 
 __all__ = ["EMAIL_MASK", "HOME_MASK", "HOST_MASK", "IP_MASK", "KEPT_TEXT_MASKS", "MASK", "MAX_FRAME_FIELD", "TEMP_MASK",
-           "mask_emails", "mask_hosts", "mask_paths", "sanitize_stack_trace", "scrub"]
+           "mask_emails", "mask_hosts", "mask_paths", "sanitize_stack_trace", "scrub", "secret_spans"]

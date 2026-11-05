@@ -60,7 +60,7 @@ from pathlib import Path
 from typing import Any
 
 from g6.cegis import InputDomain, SearchResult, cegis
-from g6.context.redact import mask_paths, scrub
+from g6.context.redact import MASK, mask_paths, scrub, secret_spans
 from g6.core import host_models, keys
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
@@ -112,6 +112,10 @@ MOVED = "the patch changed after the review that read it"
 #: such a test, so its review stands as clean. A named defect that nothing could show is not clean, and it is not a finding.
 UNREPRODUCED = "a defect was claimed and could not be reproduced"
 #: What goes back to that reviewer, once, after the pack: the pack's own limit is for what a reviewer must read whole.
+#: What follows a pack in which G6 masked what looks like a secret (``context.redact.scrub``), so the reviewer, another
+#: vendor's model, never reads one, and knows the mask for what it is.
+MASKED_NOTE = (f"G6 put {MASK} in place of each value above that looks like a secret, so none of them left this machine. {MASK} "
+               "is never the code's own value: write no test that reads it or compares with it.")
 WOULD_NOT_RUN = ("\n\nThe test in your last reply would not run, so it showed nothing. G6 ran it and got:\n{error}\n\nAnswer again "
                  "in the same form: a test that runs, or VERDICT: none if you no longer find a defect.")
 #: What a file of a reviewer's test says when it showed nothing.
@@ -138,9 +142,9 @@ _QUOTED = re.compile(r"```.*?```|`[^`\n]*`", re.S)
 OPEN, FIXED, CONTESTED = "review_finding_open", "review_finding_fixed", "review_finding_contested"
 FOUND_NOTHING, UNREACHABLE, UNREADABLE, OVERSIZE = ("review_found_nothing", "reviewer_unreachable", "reviewer_unreadable",
                                                     "review_too_long")
-UNCONFINED, UNASKED, UNAPPROVED = "no_boundary", "no_task", "no_reviewer_approved"
+UNCONFINED, UNASKED, UNAPPROVED, MASKED_LINES = "no_boundary", "no_task", "no_reviewer_approved", "review_masked_lines"
 #: The causes a profile cannot change: nothing failed, or only a person can put it right.
-NOT_CHANGEABLE = frozenset({FOUND_NOTHING, UNREACHABLE, UNCONFINED, UNASKED, UNAPPROVED})
+NOT_CHANGEABLE = frozenset({FOUND_NOTHING, UNREACHABLE, UNCONFINED, UNASKED, UNAPPROVED, MASKED_LINES})
 #: Where those rows go, beside the sessions' folders: local, and never pushed.
 FAILURES = ("completion_loop", "failures.jsonl")
 #: An empty file named for each run that owes a row, as what a run owes must outlive that run's own calls (``settle``).
@@ -167,6 +171,10 @@ ALREADY_ENDED = ("G6's completion loop did not run: it has already ended for thi
                  "prompt starts a new loop.")
 TOO_LONG = (f"the task and the patch are past the {MAX_PACK_CHARS:,} characters a review can read whole, so no reviewer was "
             "asked")
+#: A clean reply from a reviewer that was not sent every line of the task and the patch: no clean review. Under the 200
+#: characters the report shows of a review's error.
+HIDDEN = ("what looks like a private key runs over lines of the task or the patch, and G6 masked it, so the reviewer did not "
+          "read those lines and its clean reply is no clean review")
 STOPPED = {"no_counterexample_in_domain": "no probe failed", "timeout": "the loop's time ran out",
            "counterexample_budget_exhausted": "the stop rule: every repair the loop allows has been sent"}
 #: The stops that are themselves a run's cause.
@@ -512,20 +520,143 @@ def _scout(change: repo_tests.Change, task: str, text: str, where: Path, host: H
             "left_out": "" if usable else failed or "it exercised nothing on the base commit"}
 
 
+def _issue(task: str, proof: str) -> str:
+    """The pack's first part: the token a reply must quote, then the task."""
+    return f"issue.txt:\n{proof}\n\n{task}"
+
+
 def _head(patch: str, task: str, proof: str) -> str:
     """The start of the pack, what a review must read whole: the issue, then the patch."""
-    return f"issue.txt:\n{proof}\n\n{task}\n\ncandidate.patch:\n{patch}"
+    return f"{_issue(task, proof)}\n\ncandidate.patch:\n{patch}"
+
+
+def _parents(change: repo_tests.Change) -> list[str]:
+    """Of the base commit, each file the patch touches that it holds, as the pack shows it."""
+    return [f"parent/{rel}:\n{text}" for rel in change.files
+            if (text := repo_tests.read_at(change.repo, change.base_commit, rel)) is not None]
+
+
+def _cut(head: str, parents: list[str], fits: bool, mask: Callable[[str], str] = lambda text: text) -> str:
+    """The pack from its parts, cut to what a review reads. The cut falls on the parent files only, so a head that fits stays
+    whole as ``_read_whole`` measured it; ``mask`` is applied again to the part the cut falls in, and to no other."""
+    room, pack = max(MAX_PACK_CHARS, len(head)) if fits else MAX_PACK_CHARS, head
+    for part in parents:
+        left = room - len(pack) - 2
+        if left <= 0:
+            break
+        pack += "\n\n" + (part if len(part) <= left else mask(part[:left]))
+    return pack[:room]
 
 
 def _pack(change: repo_tests.Change, patch: str, task: str, proof: str) -> str:
     """What L9's critic reads in its folder, as text, since it has no tools: the issue, the patch, and of the base commit
-    the files the patch touches. ``patch`` is the caller's read: reading it here would make a second patch."""
-    parts = [_head(patch, task, proof)]
-    for rel in change.files:
-        text = repo_tests.read_at(change.repo, change.base_commit, rel)
-        if text is not None:
-            parts.append(f"parent/{rel}:\n{text}")
-    return "\n\n".join(parts)[:MAX_PACK_CHARS]
+    the files the patch touches. ``patch`` is the caller's read: reading it here would make a second patch. This is the
+    pack before anything is masked; ``_masked_pack`` is what is sent."""
+    head = _head(patch, task, proof)
+    return _cut(head, _parents(change), len(head) <= MAX_PACK_CHARS)
+
+
+#: A hunk's head, with how many lines of the old side and of the new side follow it (one where git leaves a count out).
+_HUNK_AT = re.compile(r"@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+
+
+def _sides(lines: list[str]) -> list[tuple[list[int], list[int]]]:
+    """For each file of a patch's ``lines``, the lines of its old side and of its new side, as indices, read by each hunk's
+    counts: a context line is of both, a removed line of the old, an added line of the new. A line no count allows ends its
+    hunk, so a file's head is never read as a line of it, and a line that starts ``\\`` (git's note of a missing last newline,
+    or G6's naming of bytes) is of neither."""
+    files, old, new, joined = [], 0, 0, False
+    for i, line in enumerate(lines):
+        mark = line[:1]
+        if old or new:
+            if mark == "\\":
+                continue
+            took_old, took_new = (mark == "-" and old > 0) or (mark == " " and old > 0 and new > 0), \
+                (mark == "+" and new > 0) or (mark == " " and old > 0 and new > 0)
+            if took_old or took_new:
+                if took_old:
+                    files[-1][0].append(i)
+                    old -= 1
+                if took_new:
+                    files[-1][1].append(i)
+                    new -= 1
+                continue
+            old = new = 0
+        head = _HUNK_AT.match(line)
+        if head:
+            if not joined:
+                files.append(([], []))
+            joined = True
+            old, new = (int(head[n]) if head[n] is not None else 1 for n in (1, 2))
+        elif mark != "\\":
+            joined = False
+    return files
+
+
+def _masked_patch(patch: str, parents: list[str]) -> tuple[str, bool]:
+    """``patch`` with each value G6's scrubber finds masked where it stands, and whether a mask ran over a line of it, so a
+    review of it did not read it whole. The values are found in each side of each file as the patch shows it, its lines
+    without their marks, and in each parent file whole: not in the diff's text, where a mark parts a name from its value on
+    the next line, and where a rule that reads on to the end would read from one file into the next. A line of a side the
+    parent holds whole, a value in it found there, is masked where it stands too, so a value whose name the hunk leaves out
+    is still found. The patch's other lines, its heads and G6's own, are scrubbed one by one."""
+    lines, cuts, hidden = patch.split("\n"), {}, False
+    files = _sides(lines)
+    owned = {i for old, new in files for i in (*old, *new)}
+
+    def place(text: str, rows: list[str]):
+        """Each span the scrubber finds in ``text``, cut by row: (row, start, end, whether the span runs over a line)."""
+        starts = [0]
+        for row in rows[:-1]:
+            starts.append(starts[-1] + len(row) + 1)
+        for begin, end in secret_spans(text):
+            over = "\n" in text[begin:end]
+            for row, start in enumerate(starts):
+                a, b = max(begin, start), min(end, start + len(rows[row]))
+                if a < b:
+                    yield row, a - start, b - start, over
+
+    for side in (side for both in files for side in both):
+        rows = [lines[i][1:] for i in side]
+        for row, a, b, over in place("\n".join(rows), rows):
+            cuts.setdefault(side[row], []).append((a, b))
+            hidden = hidden or over
+    seen: dict[str, list[tuple[int, int, bool]]] = {}
+    for text in parents:
+        rows = text.split("\n")
+        for row, a, b, over in place(text, rows):
+            seen.setdefault(rows[row].rstrip("\r"), []).append((a, b, over))
+    for i in owned:
+        for a, b, over in seen.get(lines[i][1:].rstrip("\r"), ()):
+            cuts.setdefault(i, []).append((a, b))
+            hidden = hidden or over
+    for i, line in enumerate(lines):
+        if i not in owned:
+            lines[i] = scrub(line)
+        elif i in cuts:
+            merged: list[list[int]] = []
+            for a, b in sorted(cuts[i]):
+                if merged and a <= merged[-1][1]:   # overlapping or touching values are masked as one
+                    merged[-1][1] = max(merged[-1][1], b)
+                else:
+                    merged.append([a, b])
+            body, kept, at = line[1:], [], 0
+            for a, b in merged:
+                kept += [body[at:a], MASK]
+                at = b
+            lines[i] = line[0] + "".join(kept) + body[at:]
+    return "\n".join(lines), hidden
+
+
+def _masked_pack(change: repo_tests.Change, patch: str, task: str, proof: str) -> tuple[str, bool]:
+    """The pack as it is sent, and whether a mask ran over a line of the task or the patch, the parts a review must read
+    whole. What looks like a secret is masked in each part alone (the issue, the patch, each parent file), so a rule that
+    reads on to the end never reads from one part into the next, and in the patch where it stands (``_masked_patch``)."""
+    issue, parents = _issue(task, proof), _parents(change)
+    shown, hidden = _masked_patch(patch, [part.partition("\n")[2] for part in parents])
+    hidden = hidden or any("\n" in issue[begin:end] for begin, end in secret_spans(issue))
+    head = f"{scrub(issue)}\n\ncandidate.patch:\n{shown}"
+    return _cut(head, [scrub(part) for part in parents], len(_head(patch, task, proof)) <= MAX_PACK_CHARS, scrub), hidden
 
 
 def critic_file(n: int) -> str:
@@ -538,17 +669,25 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
     """L9's critic: another model family reads the finished patch once, and K's, ``n`` the review it is. One that fails is
     recorded and L9 goes on. Its test, if it has one, waits in ``where`` to run with the probes. ``told``: what follows the
     pack, for a reviewer sent back. ``patch``: what it reads, as the caller read it. What it gives names the model called,
-    here where the call is made: who is approved may change, and a later step calls no one."""
+    here where the call is made: who is approved may change, and a later step calls no one. What looks like a secret is
+    masked before it is sent (``_masked_pack``), while the head the review must read whole stays whole; ``masked`` counts
+    the values, for the report. A mask that ran over a line of the task or the patch left the reviewer short of reading
+    them whole, so a clean reply from it is a failed review (``HIDDEN``); a defect it names stands as any other."""
     found = {"verdict": "failed", "rule": "", "why": "", "test": "", "error": ""}
     proof = f"review {uuid.uuid4().hex}"
+    pack = _pack(change, patch, task, proof)
+    sent, hidden = _masked_pack(change, patch, task, proof)
+    masked = max(sent.count(MASK) - pack.count(MASK), 1) if sent != pack else 0
     try:
-        found = critic_report(caller.complete(system, _pack(change, patch, task, proof) + told), proof=proof)
+        found = critic_report(caller.complete(system, sent + (f"\n\n{MASKED_NOTE}" if masked else "") + told), proof=proof)
     except (LLMError, OSError) as exc:
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
+    if hidden and found["verdict"] == "none":
+        found = {**found, "verdict": "failed", "error": HIDDEN}
     if found["test"]:
         where.mkdir(parents=True, exist_ok=True)
         (where / critic_file(n)).write_text(found["test"] + "\n", encoding="utf-8")
-    return {**found, "reviewer": _named(caller)}
+    return {**found, "reviewer": _named(caller), **({"masked": masked} if masked else {})}
 
 
 def _read_whole(patch: str, task: str) -> bool:
@@ -696,13 +835,13 @@ def _save(session: Path, state: dict) -> None:
     os.replace(session / "state.json.new", session / "state.json")
 
 
-def _finish(session: Path, state: dict, report: str, code: str = "", ending: str = "") -> Step:
+def _finish(session: Path, state: dict, report: str, code: str = "", ending: str = "", *, patch: str = "") -> Step:
     """The end of the loop for this session: the report, which is kept beside the state, then the state that says so, with
-    the code and the ending a later call repeats. A hook cut short between them ends the loop again, so no session ends with
-    no report."""
+    the code and the ending a later call repeats, and ``patch``, the digest of the patch as the loop ended, which a repeat
+    compares with whatever ended it. A hook cut short between them ends the loop again, so no session ends with no report."""
     session.mkdir(parents=True, exist_ok=True, mode=0o700)
     (session / "report.md").write_text(report, encoding="utf-8")
-    state.update(done=True, code=code, ending=ending)
+    state.update(done=True, code=code, ending=ending, ended_patch=patch)
     _save(session, state)
     if state.get("visible"):
         shutil.rmtree(state["visible"], ignore_errors=True)
@@ -744,7 +883,8 @@ def _cause(state: dict, fixed: list[dict], still: list[dict]) -> str:
     only where nothing else ended the loop."""
     stop, last = state["stop"], (state.get("reviews") or [{}])[-1]
     if stop == NO_REVIEW:
-        return OVERSIZE if last.get("error") == TOO_LONG else UNREACHABLE if last.get("verdict") == "failed" else UNREADABLE
+        return (OVERSIZE if last.get("error") == TOO_LONG else MASKED_LINES if last.get("error") == HIDDEN else
+                UNREACHABLE if last.get("verdict") == "failed" else UNREADABLE)
     return CAUSES.get(stop) or (OPEN if still else FIXED if fixed else FOUND_NOTHING)
 
 
@@ -886,17 +1026,23 @@ def _review_end(root: Path, task: str, base: str, session: Path, state: dict, re
     # log's lock are behind it. It promises only that the patch at this read is the one the last review read. It does not hold
     # the tree still: an edit a moment later is in no report, and no check can rule that out. The session's next loop reads such
     # an edit, as it is another patch.
-    if reason == CLEAN and (now := _patch_now(root, base)) != reviews[-1]["patch"]:
+    now = _patch_now(root, base)
+    if reason == CLEAN and now != reviews[-1]["patch"]:
         reason = state["stop"] = MOVED
         _owe_row(task, base, session, state, now)
         _write_row(session, state)      # this wait protects no clean stop: there is none left to protect
     code = "" if reason in (CLEAN, RAN_OUT, LEFT) else NOT_REPRODUCED if reason == UNREPRODUCED else NO_CLEAN_REVIEW
     ending = _ending(reason, reviews)
-    report = patch_report.completion_report({
+    return _finish(session, state, _reviews_report(state, reason, code, ending, review), code, ending, patch=now)
+
+
+def _reviews_report(state: dict, reason: str, code: str, ending: str, review: str) -> str:
+    """The report of a loop that reviewed: what its reviews found, why it stopped, then ``review``, the patch review's."""
+    reviews = state["reviews"]
+    return patch_report.completion_report({
         "reason": reason, "reviews": reviews, "repairs": sum(one["tree"] is not None for one in state["rounds"]),
         "max_repairs": MAX_REPAIRS, "left": state.get("left", ""), "no_clean": bool(code), "ending": ending,
         "boundary": next((one["boundary"] for one in reversed(reviews) if one.get("boundary")), "")}, review)
-    return _finish(session, state, report, code, ending)
 
 
 def _scouts(change: repo_tests.Change, task: str, session: Path, state: dict, shipped: Harness, host: Host,
@@ -1029,9 +1175,14 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
 
     def refused(text: str, code: str, cause: str) -> Step:
         state["stop"] = text
-        _owe_row(task, base, session, state, _patch_now(root, base), cause)
+        now = _patch_now(root, base)
+        _owe_row(task, base, session, state, now, cause)
         _write_row(session, state)
-        return _finish(session, state, text, code, "untested")
+        reviews = state.get("reviews") or []
+        if not reviews:
+            return _finish(session, state, text, code, "untested", patch=now)
+        ending = _ending(text, reviews)      # what earlier rounds found stands: the refusal is why the loop stopped
+        return _finish(session, state, _reviews_report(state, text, code, ending, ""), code, ending, patch=now)
 
     if not change.sources:
         return (_review_end(root, task, base, session, state, WITHDRAWN) if state.get("reviews") else
@@ -1085,7 +1236,8 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
         if not reviewing:
             _scouts(change, task, session, state, shipped, scout, AT_STOP)
             if all(one["left_out"] for one in state["sets"].values()):
-                return _finish(session, state, _report(root, task, base, state, "no probe set could run"))
+                return _finish(session, state, _report(root, task, base, state, "no probe set could run"),
+                               patch=_patch_now(root, base))
         loop = Repairs(rounds, reviewed if reviewing else check, tree, answered, asks(said))
         got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
                     max_iterations=MAX_REPAIRS + 1, timeout_s=LOOP_S - (time.time() - state["started"]))
@@ -1105,7 +1257,7 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
         return Step(CONTINUE, f"{first}\n\n{told}" if first else told)
     reason = loop.why or STOPPED.get(got.status, got.reason)
     if not reviewing:
-        return _finish(session, state, _report(root, task, base, state, reason))
+        return _finish(session, state, _report(root, task, base, state, reason), patch=_patch_now(root, base))
     if got.status == "no_counterexample_in_domain":
         reason = (NO_REVIEW if reviews[-1]["verdict"] not in READ_VERDICTS else UNREPRODUCED if _unreproduced(reviews) else CLEAN)
     elif got.status == "counterexample_budget_exhausted":

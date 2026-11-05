@@ -13,6 +13,7 @@ path that leaves the repository are refused. Real git in temp folders; offline.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 from pathlib import Path
@@ -411,8 +412,11 @@ def test_on_ordinary_text_a_new_file_reads_to_the_byte_as_it_did(tmp_path, text)
     repo = make_repo(tmp_path)
     (repo / "new.py").write_bytes(text.encode("utf-8"))
     lines = text.replace("\r\n", "\n").replace("\r", "\n").splitlines()      # as the file is read, then as it was cut
+    shown = "".join(f"{line}\n" for line in lines)
+    named = ("" if shown == text else       # where the text is not the bytes, a line names them, so two files are two patches
+             f"\\ G6: new.py shows here only in part; its bytes have SHA-256 {hashlib.sha256(text.encode('utf-8')).hexdigest()}\n")
     assert rt.diff_text(rt.change(repo)) == (f"--- /dev/null\n+++ b/new.py\n@@ -0,0 +1,{len(lines)} @@\n"
-                                             + "".join(f"+{line}\n" for line in lines))
+                                             + "".join(f"+{line}\n" for line in lines) + named)
 
 @pytest.mark.parametrize("mark", NOT_NEWLINES, ids=repr)
 def test_a_new_file_reads_as_git_reads_a_tracked_one(tmp_path, mark):

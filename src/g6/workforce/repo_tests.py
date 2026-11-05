@@ -732,20 +732,51 @@ def _at_newlines(text: str) -> list[str]:
     return lines[:-1] if not lines[-1] else lines
 
 
+def _tracked_bytes(change: Change, new: set[str]) -> str:
+    """A line for each tracked file ``change`` holds, as it stands in the working tree, naming the digest of its bytes. Git's
+    diff shows a file after its filters (line endings by ``core.autocrlf`` or ``.gitattributes``, a ``clean`` driver), so
+    two working files that run differently can give one diff; with these lines they cannot. A removed file has no bytes,
+    and a link's text is what git shows, so neither has a line; nor has a file outside the tree (``outside_links``)."""
+    root, lines = change.repo.resolve(), []
+    for rel in sorted(set(change.files) - new - set(change.outside_links)):
+        path = change.repo / rel
+        if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(root):
+            continue
+        lines.append(f"\\ G6: the bytes of {rel} as they stand have SHA-256 {hashlib.sha256(path.read_bytes()).hexdigest()}\n")
+    return "".join(lines)
+
+
+def _bytes_line(raw: bytes, shown: str, what: str) -> str:
+    """A line for the reader where ``shown``, the text the patch gives of ``raw``, is not ``raw`` byte for byte, naming the
+    digest of its bytes, else ``""``. The text leaves out bytes that are not UTF-8 (all read as one mark), line endings and a
+    last newline (as ``_text`` reads them) and anything past ``DIFF_FILE_CHARS``, so without this line two files that run
+    differently would read as one patch, and the patch's text is what a review of it is held to. With it, two patches with one
+    text hold the same bytes. The line starts as git's "\\ No newline at end of file" does, so no reader takes it for code."""
+    if shown.encode("utf-8") == raw:
+        return ""
+    return f"\\ G6: {what} shows here only in part; its bytes have SHA-256 {hashlib.sha256(raw).hexdigest()}\n"
+
+
 def diff_text(change: Change) -> str:
     """The change as one unified diff: git's own for tracked files (each file's text, never a ``textconv`` filter's),
     then each untracked file the change holds as added lines (at most ``DIFF_FILE_CHARS`` of it), so a scan of the
-    diff sees a new test file too."""
+    diff sees a new test file too. Text that is not its file's bytes exactly is followed by a line naming them
+    (``_bytes_line``), and so is each tracked file the change holds (``_tracked_bytes``): git shows a file after its
+    filters, so its text alone does not fix the bytes."""
     # a private index built from the base tree (the review of VS-4, finding 1): git's flags, its stat cache and an
     # entry written into the repository's own index hide nothing (review C2 too)
     diffed, others = _private(change.repo, change.base_commit,   # --text: an attribute never hides a file's lines
                               ("diff", "--no-color", "--no-ext-diff", "--no-textconv", "--text"),
                               ("ls-files", "--others", "--exclude-standard", "-z"))
-    text = diffed.decode("utf-8", "replace")
+    shown = diffed.decode("utf-8", "replace")
     new = set(_paths(others)) | _tracked_new(change.repo, change.base_commit)   # a force-added file too (F4)
+    text = shown + _bytes_line(diffed, shown, "the diff of the tracked files") + _tracked_bytes(change, new)
     for rel in sorted(new & set(change.files) - set(change.outside_links)):   # never read (M1)
-        lines = _at_newlines((change.repo / rel).read_text(encoding="utf-8", errors="replace")[:DIFF_FILE_CHARS])
-        text += f"--- /dev/null\n+++ b/{rel}\n@@ -0,0 +1,{len(lines)} @@\n" + "".join(f"+{line}\n" for line in lines)
+        raw = (change.repo / rel).read_bytes()
+        lines = _at_newlines(_text(raw)[:DIFF_FILE_CHARS])
+        shown = "".join(f"{line}\n" for line in lines)
+        text += (f"--- /dev/null\n+++ b/{rel}\n@@ -0,0 +1,{len(lines)} @@\n" + "".join(f"+{line}\n" for line in lines)
+                 + _bytes_line(raw, shown, rel))
     return text
 
 
