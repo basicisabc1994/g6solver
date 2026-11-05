@@ -205,7 +205,6 @@ SESSION = "a Claude Code session's stream, which run_session writes from its pip
 NDJSON_USES = {
     ("wecommon.py", "Archive.index", "index"):
         [(None, "the index's one path: Archive.append writes it and Archive.rows reads it with read_stream, " + HANDED)],
-    ("export_reviewer_cases.py", "_checks", "index"): [("read_stream", "read")],
     ("export_reviewer_cases.py", "main", "cases"): [(None, "the cases written below, a json.dumps line a case")] * 2,
     ("loop.py", "one", "ledger"): [("main_row", "distill.main_row, " + HANDED)],
     ("observe.py", "observe_run", "stream"): [("read_stream", "read")],
@@ -305,6 +304,9 @@ def _guard(folder: Path) -> None:
     new, gone = sorted(set(uses) - set(NDJSON_USES)), sorted(set(NDJSON_USES) - set(uses))
     assert not new, f"a newline-delimited JSON file's name used where no entry says what is done with the file: {new}"
     assert not gone, f"a newline-delimited JSON file's name listed where it is no longer used: {gone}"
+    stray = sorted(key for key in uses if key[2] == "index" and key[:2] != ("wecommon.py", "Archive.index"))
+    assert not stray, (f"the index is read only through Archive.rows (its torn-tail rule included), and its name is used only by "
+                       f"Archive.index, even where a listed entry says it is read: {stray}")
     for key, found in uses.items():
         listed = NDJSON_USES[key]
         assert len(found) == len(listed), f"a newline-delimited JSON file's name used {len(found)} times in {key}, listed {len(listed)}"
@@ -366,6 +368,22 @@ def test_fix_review_2_finding_1_a_reader_that_binds_the_constant_to_another_name
     shadow = _shadow(tmp_path)
     (shadow / "aliased_reader.py").write_text(source, encoding="utf-8")
     with pytest.raises(AssertionError, match="no entry says"):
+        _guard(shadow)
+
+
+@pytest.mark.parametrize("source", [
+    "import wecommon as c\ndef read(root):\n    return c.read_stream(root / c.NDJSON['index'])\n",
+    "import wecommon as c\ndef read(root):\n    return [line for line in c.stream_lines((root / c.NDJSON['index']).read_text('utf-8'))]\n"])
+def test_review_3_finding_6_the_index_is_read_only_through_archive_rows_and_a_direct_read_fails_the_guard(monkeypatch, tmp_path,
+                                                                                                          source):
+    """Review 3, finding 6: the export read the index itself, through ``read_stream`` and listed as a read, and failed on a torn
+    tail that ``Archive.rows`` skips. The index has one reader, ``Archive.rows`` (its torn-tail rule included), so any other use of
+    its name fails the guard, even one listed as a read and passed to ``read_stream``, as the export's was."""
+    shadow = _shadow(tmp_path)
+    (shadow / "index_reader.py").write_text(source, encoding="utf-8")
+    callee = "read_stream" if "read_stream" in source else "stream_lines"
+    monkeypatch.setitem(NDJSON_USES, ("index_reader.py", "read", "index"), [(callee, "read")])
+    with pytest.raises(AssertionError, match="read only through Archive.rows"):
         _guard(shadow)
 
 

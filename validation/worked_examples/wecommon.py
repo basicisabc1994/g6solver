@@ -433,6 +433,7 @@ class RunFacts:
     """What the archive knows of one run, as ``run_facts`` read it in one place."""
     name: str                            # exactly as its start in the index names it; its folder is opened by this name only
     arm: str
+    task: str
     executor: str                        # "host" or "container", as its start says
     ending: Mapping[str, Any] | None     # how it ended (``run_facts``); None: no ending on record
     ending_sha256: str | None            # the digest of its ending's files (``ENDING``, ``AFTER``); None when it has neither
@@ -472,7 +473,7 @@ def run_facts(archive: Archive | Path, name: str, rows: Iterable[Mapping[str, An
     for r in rows:
         if r.get("event") == "kept" and r.get("run") == name and r.get("patch") and r.get("sha256"):
             kept.setdefault(str(r["patch"]), str(r["sha256"]))
-    return RunFacts(name=name, arm=str(started.get("arm") or ""), executor=executor,
+    return RunFacts(name=name, arm=str(started.get("arm") or ""), task=str(started.get("task") or ""), executor=executor,
                     ending=_ending_from(files, executor, folder, rows, name),
                     ending_sha256=digest.hexdigest() if files else None, kept=MappingProxyType(kept), folder=folder)
 
@@ -578,6 +579,16 @@ def scored_run(archive: Archive, name: str) -> bool:
     return not unscored_why(archive, name)
 
 
+def disagrees(facts: RunFacts, row: Mapping[str, Any]) -> str:
+    """"" when every attribution a saved row (or a caller) makes of its run, its arm and its task where it names them, is the
+    run's own (``run_facts``), else why not. A row that disagrees is refused, never re-labelled: what it says of the run is never
+    a fact, and a score is attributed to the arm and task the run's start names, or to none."""
+    for key in ("arm", "task"):
+        if key in row and str(row.get(key) or "") != getattr(facts, key):
+            return f"it says {key} {row.get(key)!r} of a run whose start names {key} {getattr(facts, key)!r}"
+    return ""
+
+
 def verdict(root: Path | Archive, name: str, kept: Mapping[str, Any] | None, *, amendment: str | None = None) -> bool | None:
     """Run ``name``'s verdict on one score: the one rule ``loop.one``, ``loop.rescore`` and ``compare.saved`` read a saved verdict
     by. Every fact about the run comes from ``run_facts``; ``kept`` is only the verdict being judged: the run's saved row for the
@@ -585,9 +596,10 @@ def verdict(root: Path | Archive, name: str, kept: Mapping[str, Any] | None, *, 
     admit now (``unscored_why``), and for a verdict that is missing (none, or one saved for another run or diff). A verdict saved
     under an ending the run no longer has (``MADE_UNDER``) is void, never given: a made run that did not end on its patch
     (``on_patch``) failed, which needs no check; any other is None until it is checked again. Else the verdict as saved, and for
-    the maintainers' tests none for a run on its patch with no count of failing tests."""
+    the maintainers' tests none for a run on its patch with no count of failing tests. A saved verdict whose arm or task is not
+    the run's own (``disagrees``) is refused."""
     facts = run_facts(root, name)
-    if (_why_not(facts, str(name or "")) or kept is None or kept.get("run") != facts.name
+    if (_why_not(facts, str(name or "")) or kept is None or kept.get("run") != facts.name or disagrees(facts, kept)
             or (amendment is not None and kept.get("amendment_sha256") != amendment)):
         return None
     if kept.get(MADE_UNDER) != facts.ending_sha256:
@@ -600,10 +612,10 @@ def verdict(root: Path | Archive, name: str, kept: Mapping[str, Any] | None, *, 
 def holds(root: Path | Archive, name: str, kept: Mapping[str, Any] | None, *, amendment: str | None = None) -> bool:
     """Whether a saved verdict (``verdict``'s ``kept``) is run ``name``'s own and stands: the admission rule admits the run now,
     and the verdict was saved for this run (and diff) under the ending the run has now. One that does not hold is made again, or
-    not given."""
+    not given. One whose arm or task is not the run's own (``disagrees``) never holds."""
     facts = run_facts(root, name)
     return (kept is not None and not _why_not(facts, str(name or "")) and kept.get("run") == facts.name
-            and (amendment is None or kept.get("amendment_sha256") == amendment)
+            and not disagrees(facts, kept) and (amendment is None or kept.get("amendment_sha256") == amendment)
             and kept.get(MADE_UNDER) == facts.ending_sha256)
 
 

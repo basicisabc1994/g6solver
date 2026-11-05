@@ -451,7 +451,8 @@ def _archive(root, monkeypatch, *rows):
         made.mkdir(parents=True, exist_ok=True)
         if not (made / "run.json").exists():
             (made / "run.json").write_text(json.dumps({"status": row["status"], "agent_started": True}), "utf-8")
-            compare.c.Archive(root).append({"event": "started", "run": row["run"], "kind": "run", "arm": row["arm"]})  # its start
+            compare.c.Archive(root).append({"event": "started", "run": row["run"], "kind": "run", "arm": row["arm"],  # its start
+                                            "task": row["task"]})
     (root / "loop" / "cegis.json").write_text('{"status": "inconclusive"}', "utf-8")
     return compare.c.sha256_file(diff)
 

@@ -131,15 +131,16 @@ def row(task: str, sha: str, text: str, ok: bool) -> dict[str, str]:
 
 
 def _checks(root: Path, task: str) -> dict[str, list[dict[str, Any]]]:
-    """Run path to the newest independent check of it, with a row for each round."""
+    """Each checked run's name, exactly as its check names it, with the newest independent check of it: a row for each round. The
+    index is read only through ``Archive.rows``, so its torn tail is skipped as every reader of it skips it."""
     found = {}
-    for line in c.read_stream(root / c.NDJSON["index"]):
-        if f'"check/{task}/' not in line or '"checked_run"' not in line:
+    for rec in c.Archive(root).rows():
+        name = str(rec.get("run") or "")
+        if rec.get("event") != "started" or not name.startswith(f"check/{task}/") or "checked_run" not in rec:
             continue
-        rec = json.loads(line)
-        got = json.loads((root / rec["run"] / "run.json").read_text("utf-8")) if (root / rec["run"] / "run.json").is_file() else {}
+        got = json.loads((root / name / "run.json").read_text("utf-8")) if (root / name / "run.json").is_file() else {}
         if "checks" in got:
-            found[str(rec["checked_run"]).replace("\\", "/")] = got["checks"]
+            found[str(rec["checked_run"])] = got["checks"]
     return found
 
 
@@ -149,12 +150,14 @@ def labelled(root: Path, task: str) -> list[tuple[str, Path | bytes, Any]]:
     admission rule admits (``run.scored_run``) and that finished gives cases, and its folder is opened by its exact name only. Arm
     K3 keeps its first patch, "round-1", in its baseline folder (``run.baseline_of``), not in ``rounds``; it is a case only while
     its bytes have the digest kept at its capture (``run.baseline_bytes``), and it is handed on as those bytes, never as its path,
-    so the case is what was checked."""
+    so the case is what was checked. The row's name is taken exactly as it holds it, and a row whose arm or task is not its run's
+    (``wecommon.disagrees``), or whose run is not of ``task``, gives no case."""
     checks, rows, archive = _checks(root, task), [], c.Archive(root)
     for path in sorted((root / "loop").glob(f"*-{task}-*.json")):
         rec = json.loads(path.read_text("utf-8"))
-        facts = c.run_facts(archive, str(rec.get("run", "")).replace("\\", "/"))
-        if facts is None or not we.scored_run(archive, facts.name) or (facts.ending or {}).get("status") != "finished":
+        facts = c.run_facts(archive, str(rec.get("run") or ""))
+        if (facts is None or facts.task != task or c.disagrees(facts, rec) or not we.scored_run(archive, facts.name)
+                or (facts.ending or {}).get("status") != "finished"):
             continue
         run, folder = facts.name, facts.folder
         if task in AMENDED:
@@ -203,7 +206,7 @@ def parent_files(task: str, paths: Iterable[str], cache: Path) -> dict[str, str]
 
 def issue_for(root: Path, task: str) -> str:
     rec = json.loads((root / "loop" / f"K1-{task}-1.json").read_text("utf-8"))
-    facts = c.run_facts(c.Archive(root), str(rec["run"]).replace("\\", "/"))      # its folder, by the run's exact name only
+    facts = c.run_facts(c.Archive(root), str(rec["run"]))      # its folder, by the run's exact name only, as the row holds it
     if facts is None:
         raise SystemExit(f"{rec['run']!r} is no run the archive started")
     return issue_of((facts.folder / "prompt.txt").read_text("utf-8", errors="replace"))

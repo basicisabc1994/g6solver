@@ -3470,14 +3470,16 @@ def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool
     v = amend_control(ctx.archive, task.id) if amended else latest(ctx.archive, "validate", task.id)
     if v is None:
         raise SystemExit("this diff has no passing control: run amend" if amended else "validate the task first")
-    named = ctx.archive.root / run_rel if run_rel else (latest(ctx.archive, "run", task.id) or {}).get("path")
-    if named is None:
+    # the run's name exactly as the command line gives it, or as the index names the bug's latest run: never a path made of it
+    rel = str(run_rel) if run_rel else str((latest(ctx.archive, "run", task.id) or {}).get("run") or "")
+    if not rel:
         raise SystemExit("no run to check")
-    rel = str(Path(named).relative_to(ctx.archive.root)).replace("\\", "/")
     facts = c.run_facts(ctx.archive, rel)    # every fact of the run, by its exact name; its folder is opened by that name only
     why = unscored_why(ctx.archive, rel)     # the one admission rule, as loop.one asks it, from the archive alone
+    if not why and facts is not None and facts.task != task.id:
+        why = f"its start names task {facts.task!r}, not {task.id!r}"
     if why or facts is None:
-        raise SystemExit(f"{run_rel or Path(named).name}: {why}")
+        raise SystemExit(f"{rel}: {why}")
     src, arm, rel = facts.folder, facts.arm, facts.name
     first = None
     if rule_led(arm):                # K3: its baseline read once and its bytes checked; only those bytes are scored

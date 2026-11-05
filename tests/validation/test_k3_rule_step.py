@@ -965,75 +965,157 @@ def test_review_2_finding_4_a_name_that_is_not_the_runs_own_reaches_no_run(monke
     assert we.c.run_facts(archive, alias) is None and we.c.ending(archive.root, alias) is None
 
 
+#: The table's cases (review 2's, extended by review 3's): case -> (the name is the run's own, the run is admitted by its name, the
+#: saved row is admitted). A row whose arm or task disagrees with its run's facts is refused, whatever its run.
+FACTS_CASES = {
+    "admitted K3": (True, True, True),
+    "forged status": (True, True, True),        # a row saying "refused" for a run that finished: the row's status is no fact
+    "torn index tail": (True, True, True),      # a write cut short after the run's rows: every reader skips it, as Archive.rows does
+    "forged arm": (True, True, False),          # a K2 run's row says K3
+    "forged task": (True, True, False),         # a row for another bug names the run
+    "changed K3 baseline": (True, False, False),
+    "alias name": (False, False, False),        # x/../x
+    "dot segment": (False, False, False),       # run/./x
+    "backslash form": (False, False, False),
+    "trailing slash": (False, False, False),
+    "other case": (False, False, False),        # the same folder on Windows, another name
+    "unknown name": (False, False, False),
+}
+
+
 def _facts_case(monkeypatch, root, case):
-    """One archive for one case of the table below: the run, its saved row, and the name every entry point is asked by."""
+    """One archive for one case of the table below: the run, its saved row, and the name every entry point is asked by, exactly as
+    the row holds it."""
     import export_reviewer_cases as ex
-    task = "black-5634"
+    task, other = "black-5634", "pydantic-14052"
     archive = we.c.Archive(root)
-    archive.start("validate", task).finish({"fail_to_pass": ["t"], "pass_to_pass": []}, "finished")
-    arm = "K2" if case in ("forged status", "unknown name") else "K3"
+    for bug in (task, other):
+        archive.start("validate", bug).finish({"fail_to_pass": ["t"], "pass_to_pass": []}, "finished")
+    arm = "K3" if case in ("admitted K3", "changed K3 baseline", "alias name") else "K2"
     run = archive.start("run", task, arm=arm, executor="host")
     if arm == "K3":
         _keep_baseline(archive, run, b"the first session's tree")
     run.write("final.patch", b"final " + case.encode())
     run.finish({"arm": arm, "executor": "host", "agent_started": True}, "finished")
-    if case in ("forged arm", "alias name", "changed K3 baseline"):
+    if case in ("alias name", "changed K3 baseline"):
         we.baseline_of(run.path).write_bytes(b"changed after capture")
-    name = {"alias name": run.rel.replace(f"/{task}/", f"/{task}/../{task}/", 1),
+    name = {"alias name": run.rel.replace(f"/{task}/", f"/{task}/../{task}/", 1), "dot segment": run.rel.replace("run/", "run/./", 1),
+            "backslash form": run.rel.replace("/", "\\"), "trailing slash": run.rel + "/", "other case": run.rel.upper(),
             "unknown name": f"run/{task}/not-started"}.get(case, run.rel)
     if case == "unknown name":                      # a folder that holds a run's files, but no start in the index names it
         (root / name).mkdir(parents=True)
         for file in ("run.json", "final.patch", we.c.ENDING):
             (root / name / file).write_bytes((run.path / file).read_bytes())
-    row = {"arm": "K2" if case == "forged arm" else arm, "task": task, "repeat": 1, "run": name, "passes": True, "failing": 0,
-           "status": "refused" if case == "forged status" else "finished",
-           we.c.MADE_UNDER: we.c.ending_sha256(root, run.rel)}
+    row_arm, row_task = ("K3" if case == "forged arm" else arm), (other if case == "forged task" else task)
+    row = {"arm": row_arm, "task": row_task, "repeat": 1, "run": name, "passes": True, "failing": 0,
+           "status": "refused" if case == "forged status" else "finished", we.c.MADE_UNDER: we.c.ending_sha256(root, run.rel)}
     (root / "loop" / "amended").mkdir(parents=True)
-    (root / "loop" / f"{row['arm']}-{task}-1.json").write_text(json.dumps(row), "utf-8")
-    archive.start("check", task, checked_run=name).finish({"checks": [{"patch": "final", "passes": True}]}, "finished")
+    (root / "loop" / f"{row_arm}-{row_task}-1.json").write_text(json.dumps(row), "utf-8")
+    archive.start("check", row_task, checked_run=name).finish({"checks": [{"patch": "final", "passes": True}]}, "finished")
+    if case == "torn index tail":
+        with open(archive.index, "ab") as index:
+            index.write(b'{"event": "started", "run": "check/' + row_task.encode() + b'/torn", "checked_run": "run/')
     diff = root / "amendment.patch"
     diff.write_text("a diff", encoding="utf-8")
     monkeypatch.setattr(we, "amendment", lambda name_: diff)
     monkeypatch.setattr(we, "_oracle_run", lambda *a, **kw: {"results": {"t": "passed"}})
     monkeypatch.setattr(loop, "tool", lambda command, *a, **kw: json.dumps({"run": name, "status": "finished"}) if command == "run"
                         else json.dumps({"checks": [{"patch": "final", "passes": True, "failing": 0, "fail_to_pass_failing": []}]}))
-    return archive, task, name, row, ex
+    return archive, row_task, name, row, ex
 
 
-@pytest.mark.parametrize(("case", "admitted"), [("admitted K3", True), ("forged status", True), ("forged arm", False),
-                                                ("alias name", False), ("unknown name", False), ("changed K3 baseline", False)])
-def test_review_2_every_entry_point_reads_a_runs_facts_through_one_function_and_gives_one_answer(monkeypatch, tmp_path, case,
-                                                                                                  admitted):
-    """A forged arm, a forged status, an alias name, an unknown name and a changed K3 baseline, each asked of every entry point
-    (``wecommon.ending``, ``ending_sha256``, ``verdict``, ``holds``, ``run.unscored_why``, ``scored_run``, ``ending_of``,
-    ``check``, ``compare.saved``, ``loop.one``, ``loop.rescore`` and the export): one answer, admitted or not, from the archive."""
+@pytest.mark.parametrize("case", sorted(FACTS_CASES))
+def test_review_2_every_entry_point_reads_a_runs_facts_through_one_function_and_gives_one_answer(monkeypatch, tmp_path, case):
+    """Review 2's table, extended by review 3's cases. Each case is asked of every entry point, by the exact string the row holds:
+    ``wecommon.run_facts``, ``ending``, ``ending_sha256``, ``verdict``, ``holds``, ``run.unscored_why``, ``scored_run``,
+    ``ending_of``, ``check``, ``compare.saved``, ``loop.one``, ``loop.rescore`` and the export. Those that take only the name give
+    the run's own answer; those that judge a saved row refuse one whose arm or task disagrees with the run's facts; ``check``,
+    which takes a name and a task, refuses a task that is not the run's. The export is asked first, before anything appends to
+    the index past its torn tail."""
+    known, by_name, by_row = FACTS_CASES[case]
     archive, task, name, row, ex = _facts_case(monkeypatch, tmp_path, case)
-    root, known = archive.root, case not in ("alias name", "unknown name")
-    facts = {      # how the run ended, as the archive holds it: known by the run's own name only, whatever the row says
+    root = archive.root
+    rows = {"export": any(not isinstance(patch, Path) or patch.name == "final.patch" for _, patch, _ in ex.labelled(root, task))}
+    facts = {      # how the run ended, as the archive holds it: known by the run's own name only
         "wecommon.run_facts": we.c.run_facts(archive, name) is not None,
         "wecommon.ending": we.c.scoreable(we.c.ending(root, name)),
         "wecommon.ending_sha256": we.c.ending_sha256(root, name) is not None,
         "run.ending_of": we.c.scoreable(we.ending_of(archive, name)),
     }
-    assert facts == dict.fromkeys(facts, known)
-    answers = {    # whether the run is admitted: one answer from every entry point
-        "run.unscored_why": we.unscored_why(archive, name) == "",
-        "run.scored_run": we.scored_run(archive, name),
+    names = {"run.unscored_why": we.unscored_why(archive, name) == "", "run.scored_run": we.scored_run(archive, name)}
+    rows.update({
         "wecommon.verdict": we.c.verdict(root, name, row) is not None,
         "wecommon.holds": we.c.holds(root, name, row),
         "compare.saved": compare.saved(root)[(row["arm"], task, 1)]["maintainers"] is not None,
         "loop.rescore": bool(loop.rescore(root, "g6")),
-        "export": any(not isinstance(patch, Path) or patch.name == "final.patch" for _, patch, _ in ex.labelled(root, task)),
-    }
+    })
     try:
-        answers["run.check"] = bool(we.check(SimpleNamespace(archive=archive), SimpleNamespace(id=task), name)["checks"])
+        rows["loop.one"] = loop.one(root, "g6", row["arm"], task, 1)["passes"] is True
     except SystemExit:
-        answers["run.check"] = False
+        rows["loop.one"] = False
     try:
-        answers["loop.one"] = loop.one(root, "g6", row["arm"], task, 1)["passes"] is True
+        checked = bool(we.check(SimpleNamespace(archive=archive), SimpleNamespace(id=task), name)["checks"])
     except SystemExit:
-        answers["loop.one"] = False
-    assert answers == dict.fromkeys(answers, admitted)
+        checked = False
+    assert facts == dict.fromkeys(facts, known)
+    assert names == dict.fromkeys(names, by_name)
+    assert rows == dict.fromkeys(rows, by_row)
+    assert checked is (by_name and case != "forged task")
+
+
+def test_review_3_finding_2_check_takes_the_name_exactly_and_never_one_made_from_a_path(monkeypatch, tmp_path):
+    archive = we.c.Archive(tmp_path)
+    archive.start("validate", "bug").finish({"fail_to_pass": ["test"], "pass_to_pass": []}, "finished")
+    run = archive.start("run", "bug", arm="K2", executor="host")
+    run.finish({"executor": "host"}, "finished")
+    run.write("final.patch", b"patch")
+    alias = run.rel.replace("run/", "run/./", 1)
+    assert we.c.run_facts(archive, alias) is None and not we.scored_run(archive, alias)
+    monkeypatch.setattr(we, "_oracle_run", lambda *a, **kw: {"results": {"test": "passed"}})
+    with pytest.raises(SystemExit, match="no run the archive started"):
+        we.check(SimpleNamespace(archive=archive), SimpleNamespace(id="bug"), alias)
+
+
+def test_review_3_finding_3_the_export_takes_the_rows_name_exactly(tmp_path):
+    import export_reviewer_cases as ex
+    archive = we.c.Archive(tmp_path)
+    run = archive.start("run", "bug", arm="K2", executor="host")
+    run.finish({"executor": "host"}, "finished")
+    run.write("final.patch", b"patch")
+    alias = run.rel.replace("/", "\\")
+    assert we.c.run_facts(archive, alias) is None and not we.scored_run(archive, alias)
+    (tmp_path / "loop").mkdir()
+    (tmp_path / "loop" / "K2-bug-1.json").write_text(json.dumps({"run": alias, "status": "finished", "passes": True}), "utf-8")
+    assert ex.labelled(tmp_path, "bug") == []
+
+
+def test_review_3_finding_5_compare_never_scores_a_run_under_the_arm_a_saved_row_claims(monkeypatch, tmp_path):
+    archive = we.c.Archive(tmp_path)
+    run = archive.start("run", "bug", arm="K3", executor="host")
+    _keep_baseline(archive, run, b"first patch")
+    run.finish({"executor": "host"}, "finished")
+    row = {"run": run.rel, "arm": "A", "task": "bug", "repeat": 1, "passes": True, "failing": 0,
+           we.c.MADE_UNDER: we.c.ending_sha256(archive, run.rel)}
+    (tmp_path / "loop").mkdir()
+    (tmp_path / "loop" / "A-bug-1.json").write_text(json.dumps(row), "utf-8")
+    monkeypatch.setattr(compare.we, "amendment", lambda task: None)
+    assert we.scored_run(archive, run.rel)                              # the run is admitted; the row that claims it is not
+    assert compare.saved(tmp_path).get(("A", "bug", 1), {}).get("maintainers") is None
+    assert we.c.verdict(archive, run.rel, row) is None and not we.c.holds(archive, run.rel, row)
+
+
+def test_review_3_finding_6_the_export_reads_the_index_by_its_torn_tail_rule(tmp_path):
+    import export_reviewer_cases as ex
+    archive = we.c.Archive(tmp_path)
+    run = archive.start("run", "bug", arm="K2", executor="host")
+    run.finish({"executor": "host"}, "finished")
+    run.write("final.patch", b"patch")
+    (tmp_path / "loop").mkdir()
+    (tmp_path / "loop" / "K2-bug-1.json").write_text(json.dumps({"run": run.rel, "passes": True}), "utf-8")
+    archive.index.write_bytes(archive.index.read_bytes()       # an interrupted append of the next check's start
+                              + b'{"event": "started", "run": "check/bug/torn", "checked_run": "run/bug/')
+    assert archive.rows() and we.c.scored_run(archive, run.rel)
+    assert ex.labelled(tmp_path, "bug") == [("bug", run.path / "final.patch", True)]
 
 
 # --- review 2, repair 2: every session of the K loop ends by its own stop, result and exit, by one rule (step_ending) ------------

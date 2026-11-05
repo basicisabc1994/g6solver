@@ -1168,7 +1168,7 @@ def test_a_saved_verdict_holds_only_under_the_ending_it_was_made_under_on_either
     import compare
     import loop
     archive = we.c.Archive(tmp_path)
-    run = archive.start("run", "t", executor="host")
+    run = archive.start("run", "t", executor="host", arm="K1")         # the arm its rows are saved under, as its start says
     run.end("finished")
     diff = tmp_path / "amendment.patch"
     diff.write_text("a diff", encoding="utf-8")
@@ -1188,7 +1188,7 @@ def test_a_saved_verdict_holds_only_under_the_ending_it_was_made_under_on_either
     assert loop.rescore(tmp_path, "g6")[0]["amended_passes"] is False
     row = loop.one(tmp_path, "g6", "K1", "t", 1)                        # given again from the ending it has now
     assert (row["status"], row["passes"], row["ending_sha256"]) == ("error", False, we.c.ending_sha256(tmp_path, run.rel))
-    container = archive.start("run", "c")                               # a container run has no ending file: its row holds as before
+    container = archive.start("run", "c", arm="A")                      # a container run has no ending file: its row holds as before
     container.finish({"agent_started": True}, "finished")              # on its own record, which the admission rule reads
     kept = {"arm": "A", "task": "c", "repeat": 1, "run": container.rel, "status": "finished", "passes": True, "failing": 0}
     (tmp_path / "loop" / "A-c-1.json").write_text(json.dumps(kept), "utf-8")

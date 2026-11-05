@@ -67,6 +67,8 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
     facts = c.run_facts(archive, rel)    # every fact of the run, from the archive (wecommon.run_facts)
     end, made = (facts.ending, facts.ending_sha256) if facts is not None else (None, None)
     why = we.unscored_why(archive, rel)   # the one admission rule: refused, limited, no ending, no such run, or K3's baseline
+    if not why and facts is not None:     # and a run of the arm and task asked for, by its start: never re-labelled
+        why = c.disagrees(facts, {"arm": arm, "task": task})
     if why:              # refused, never counted as a failed run; limited: made again after the reset; a K3 run with no baseline
         status = (end or {}).get("status") or "no ending"
         said = (((rec.get("limit") or {}).get("resets") or "no reset given") if status == "limited"
@@ -101,6 +103,8 @@ def rescore(root: Path, g6: str) -> list[dict[str, Any]]:
         if not diff or not we.scored_run(archive, rel):                # the one admission rule (run.unscored_why): none is made
             continue
         facts = c.run_facts(archive, rel)                              # how it ended, as the archive holds it
+        if c.disagrees(facts, row):                                    # a row whose arm or task is not its run's is refused
+            continue
         end, made = facts.ending, facts.ending_sha256
         sha = c.sha256_file(diff)
         kept = json.loads(saved.read_text("utf-8")) if saved.is_file() else None

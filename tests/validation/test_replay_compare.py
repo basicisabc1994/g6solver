@@ -41,7 +41,7 @@ class _Archive:
         (self.root / rel).mkdir(parents=True)
         (self.root / rel / "final.patch").write_text(f"{SECRET} patch {body}", "utf-8")
         (self.root / rel / "run.json").write_text(json.dumps({"status": "finished", "agent_started": True}), "utf-8")  # its record
-        we.c.Archive(self.root).append({"event": "started", "run": rel, "kind": "run", "arm": arm})                   # its start
+        we.c.Archive(self.root).append({"event": "started", "run": rel, "kind": "run", "arm": arm, "task": task})     # its start
         row = {"arm": arm, "task": task, "repeat": 1, "run": rel, "status": "finished", "passes": maintainers, "failing": 0}
         (self.root / "loop" / f"{arm}-{task}-1.json").write_text(json.dumps(row), "utf-8")
         (self.root / "loop" / "amended" / f"{arm}-{task}-1.json").write_text(json.dumps(

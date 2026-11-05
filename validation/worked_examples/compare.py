@@ -45,21 +45,24 @@ def saved(root: Path) -> dict[tuple[str, str, int], dict[str, bool | None]]:
     archive = c.Archive(root)
     for path in (root / "loop").glob("*-*.json"):
         row, again = json.loads(path.read_text("utf-8")), root / "loop" / "amended" / path.name
-        name = str(row.get("run") or "")                 # the row names its run and holds the verdict judged; no fact of the run
-        passes = c.verdict(archive, name, row)          # none for a run the one admission rule does not admit, on either score
+        name = str(row.get("run") or "")                 # the row names its run, exactly, and holds the verdict judged; no fact
+        facts = c.run_facts(archive, name)               # every fact of the run, from the archive
+        own = facts is not None and not c.disagrees(facts, row)      # a row whose arm or task is not its run's is refused
+        passes = c.verdict(archive, name, row)          # none for a run the admission rule does not admit, or a refused row
         amended = passes
-        diff = we.amendment(row["task"]) if we.scored_run(archive, name) else None
+        diff = we.amendment(facts.task) if own and we.scored_run(archive, name) else None
         if diff:
             kept = json.loads(again.read_text("utf-8")) if again.is_file() else None
             amended = c.verdict(archive, name, kept, amendment=c.sha256_file(diff))
-        facts = c.run_facts(archive, name)               # the report's own readers open the run's folder by its exact name only
-        shown = {**row, "run": facts.name if facts is not None else ""}
-        rows[(row["arm"], row["task"], row["repeat"])] = {"maintainers": passes, "amended": amended, "said": said_of(root, shown)}
+        # a score is the run's arm's and task's, as its start names them; a refused row's key holds no score of any run
+        key = (facts.arm, facts.task, row["repeat"]) if own else (row["arm"], row["task"], row["repeat"])
+        shown = {**row, "arm": facts.arm, "run": facts.name} if own else {**row, "run": ""}   # the report's readers: the exact
+        rows[key] = {"maintainers": passes, "amended": amended, "said": said_of(root, shown)}     # name's folder, or none
         review, end = final_review.said_of(root, shown), end_of(root, shown)
         if review:
-            rows[(row["arm"], row["task"], row["repeat"])]["review"] = review
+            rows[key]["review"] = review
         if end:
-            rows[(row["arm"], row["task"], row["repeat"])]["end"] = end
+            rows[key]["end"] = end
     return rows
 
 
