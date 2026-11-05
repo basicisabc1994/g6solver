@@ -3090,3 +3090,24 @@ repaired on that branch (`158b1a9`), in its review loop.
 - **The pilot's count follows the same rule.** The pilot's counting script read a check's `passes` as a boolean even when it
   was absent, which is the same class. It now counts only a recorded `true` or `false`, and a run without both is reported
   under "no pair". The pilot has no run yet, so nothing it counts has changed.
+
+## 2026-11-05 (night, late): what the frozen rule requires, read once, before any stage 5 run
+
+The third Codex review of `claude/study-trust` (`53d31a8`, finding 2) read the correction of 2026-11-05 (night, later), "every
+decision in stage 5 is by bug" and "run-level counts are reported beside these, never decisive", as removing the rule's other
+condition. That condition is that the loop arm passes more runs than each other arm. Two sets of runs with the same bugs
+better and worse can then get different decisions, if the margins within bugs differ. This section says how the rule is read,
+so the reading is fixed before any count.
+
+- **The frozen rule keeps both of its conditions, as registered on 2026-11-01 and as `compare.judged` applies them:**
+  - the loop arm passes more runs than each other arm, with no pair missing;
+  - the exact one-sided sign test over bugs, against each other arm, at p < 0.05.
+- **What the correction changed:** only which p decides. It is the p over bugs, never the p over runs. "Never decisive" means the
+  run-level p.
+- **Why this reading:** dropping the more-passes condition would loosen a frozen rule after results were seen, which the
+  correction itself rules out ("nothing is loosened"). Keeping it can only make the rule harder to meet.
+- **What it costs:** a set of runs with significantly more bugs better than worse, but fewer passes in total, does not meet the
+  rule. That is the stricter side.
+- **The within-run comparison is unchanged:** it was registered on 2026-11-05 (midday) as the sign test over bugs alone, and it
+  stays so.
+- **What changes on the record:** nothing. No stage has met either condition, and no code changes.
