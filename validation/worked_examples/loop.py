@@ -154,18 +154,18 @@ def rescore(root: Path, g6: str) -> list[dict[str, Any]]:
         barred = barred or shelf.blocks(one.key, amended=True, run=facts.name, file=one.amended_file)
         if barred:
             raise SystemExit(f"refused: no amended verdict of {' '.join(map(str, one.key))}'s own run may be kept: {barred}")
-        passes = False      # a made run that did not end on its patch failed on either score, with no check
+        passes, said = False, {}      # a made run that did not end on its patch failed on either score, with no check
         if c.on_patch(facts.ending):
             said = last_json(tool("check", "--task", facts.task, "--g6", g6, "--run", facts.name, "--amended", timeout=1200))
             final = [x for x in said.get("checks", []) if x.get("patch") == "final"]
             passes = final[-1].get("passes") if final else None
             if not isinstance(passes, bool):       # no verdict is not a failed run
                 raise SystemExit(f"no amended verdict for {Path(one.name).stem}")
-            if said.get("amendment_sha256") != one.amendment_sha256:     # bound to the bytes the check applied (review 2, 9)
-                raise SystemExit(f"refused: {' '.join(map(str, one.key))}: the check ran the amendment "
-                                 f"{str(said.get('amendment_sha256'))[:12]}, not the one read, {one.amendment_sha256[:12]}")
         row = {**one.amended_record(), "amended_passes": passes}
-        now = _unchanged(archive, facts, " ".join(map(str, one.key)))
+        now = _unchanged(archive, facts, " ".join(map(str, one.key)))      # the ending first, then the amendment
+        if said and said.get("amendment_sha256") != one.amendment_sha256:     # bound to the bytes the check applied (review 2, 9)
+            raise SystemExit(f"refused: {' '.join(map(str, one.key))}: the check ran the amendment "
+                             f"{str(said.get('amendment_sha256'))[:12]}, not the one read, {one.amendment_sha256[:12]}")
         diff = we.amendment(facts.task)          # read again: a verdict on the amendment as it stands, or none (review 2, 9)
         if diff is None or c.sha256_file(diff) != one.amendment_sha256:
             raise SystemExit(f"refused: {' '.join(map(str, one.key))}: the amendment changed while it was checked; run again")
