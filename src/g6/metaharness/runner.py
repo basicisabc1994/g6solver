@@ -42,6 +42,7 @@ established.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import ctypes
 import hashlib
 import importlib.util
@@ -84,6 +85,7 @@ from g6.self_maintenance.envelope import (
 )
 from g6.self_maintenance.pacing import SETTINGS_FILE, read_settings, windows_from
 from g6.self_maintenance.usage import AccountReader
+from g6.workspace._envelope import BUSY as HELD_BY_ANOTHER
 from g6.workspace._envelope import WorkspaceRefused
 
 NAP = 60.0                              # the longest sleep, in seconds: a STOP is seen within this
@@ -195,7 +197,7 @@ class Runner:
         """The run's end on the reading that ended it, through the one ending every exit takes (``_ending``): the stop in
         the records, the last page and the heartbeat, all with that reading's code and reason, never a tick's before it."""
         _ending(self.loop.root, halted.code, halted.reason, now, status=0, state="stopped",
-                fields=lambda: self._fields(now), page=lambda: self._digest(now, halted.reason))
+                fields=lambda: self._fields(now), page=lambda: self._pages(now, halted.reason))
 
     def _fields(self, now: datetime) -> dict[str, Any]:
         """What a heartbeat of this run says beside its state and code."""
@@ -332,16 +334,20 @@ class Runner:
                              reflex=reflex.read(cycles) if any(c.get("reflex") for c in cycles) else None)
 
     def _digest(self, now: datetime, halted: str = "") -> None:
-        """Today's page, and the day just ended, whole, when the date has moved on. A pass closes a day before its tick,
-        and only a tick that began on that day can still add to it. A page that cannot be written is left for the next
-        pass: it never ends the run."""
-        day = now.date()
+        """A pass's pages (``_pages``). A page that cannot be written is left for the next pass: it never ends the run."""
         try:
-            if self.day is not None and self.day != day:
-                digest.write(self.loop.root, self.day, self._page(self.day, now, ""))
-            digest.write(self.loop.root, day, self._page(day, now, halted))
+            self._pages(now, halted)
         except OSError:
             return
+
+    def _pages(self, now: datetime, halted: str = "") -> None:
+        """Today's page, and the day just ended, whole, when the date has moved on. A pass closes a day before its tick,
+        and only a tick that began on that day can still add to it. What keeps a page from being made or written raises,
+        so an ending can write its plain page instead (``_ending``)."""
+        day = now.date()
+        if self.day is not None and self.day != day:
+            digest.write(self.loop.root, self.day, self._page(self.day, now, ""))
+        digest.write(self.loop.root, day, self._page(day, now, halted))
         self.day = day
 
 
@@ -385,7 +391,9 @@ def _ending(root: Path, code: str, why: str, at: datetime, *, status: int = 1, s
     """The one way a run ends, whatever ended it: a stop at the preflight, the gate, a stop a pass read, this process's own
     cannot-record stop, a folder that cannot be opened or held, or anything that raised before the hand-off to ``Runner``.
     A stop is noted in the records (``record_stop``, which never raises; what it could not note, the heartbeat says). Then
-    the day's page, a running loop's own (``page``) or else the one ``reading`` gives of the folder, and only then the
+    the day's page, a running loop's own (``page``) or else the one ``reading`` gives of the folder, or, when that cannot be
+    made or written, however it fails, a page that says only how the run ended and its code (``_plain_page``), never the
+    old page left standing; what cannot be written even so, the heartbeat says (``page_not_written``). Only then the
     terminal heartbeat with the code and the reason of the reading that ended the run, never a tick's before it. Nothing
     here raises, so nothing keeps a stop from ending the run. ``mine``: whether this process may write the folder's page
     and heartbeat at all, which a runner refused the lock another runner holds may not, nor one with no folder.
@@ -398,8 +406,11 @@ def _ending(root: Path, code: str, why: str, at: datetime, *, status: int = 1, s
     if mine:
         try:
             (page or (lambda: _folder_page(root, reading, at, why)))()
-        except Exception:  # noqa: BLE001 - a page that cannot be written never keeps a run from ending
-            pass
+        except Exception as exc:  # noqa: BLE001 - a page that cannot be made, however, is the plain page instead
+            try:
+                digest.write(root, at.date(), _plain_page(at.date(), code, why, exc))
+            except Exception as again:  # noqa: BLE001 - a page that cannot be written never keeps a run from ending
+                said["page_not_written"] = f"the day's page could not be written ({type(again).__name__})"
     if mine:
         try:
             told = {"pid": os.getpid(), "in_job": _in_job(), **fields()}
@@ -412,6 +423,14 @@ def _ending(root: Path, code: str, why: str, at: datetime, *, status: int = 1, s
     if status:
         print(why, file=sys.stderr)
     return status
+
+
+def _plain_page(day: date, code: str, why: str, failed: BaseException) -> str:
+    """The day's page of an ending whose full page cannot be made: how the run ended, its code, and why there is no more.
+    It reads nothing."""
+    return "\n".join([f"# G6 improvement loop: {day.isoformat()}", "", STATUS_LINE, "", "## Stops and pauses",
+                      f"- The runner ended ({code}): {' '.join(why.split())[:400]}.",
+                      f"- The rest of this page could not be made from the records ({type(failed).__name__}).", ""])
 
 
 def _folder_page(root: Path, reading: Stop | None, at: datetime, why: str) -> None:
@@ -451,7 +470,9 @@ def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable
     source (``_launch_risk``), which refuses it once the folder is open, so its records say why. A stop in force, of any
     kind, ends it first, before its settings or anything else is read. Every way out goes through ``_ending``, with the
     day's page, an exception at any step before the hand-off to ``Runner`` included; a run handed to ``Runner`` ends
-    through it too."""
+    through it too. Only the runner lock's own refusal for another holder is another runner, which owns the page and the
+    heartbeat: a lock that cannot be taken for what it is, and anything after it is held, the loop's opening included, is
+    this runner's own ending."""
     if not root.is_dir():                   # no folder: nothing to note and no page or heartbeat to write in it
         return _ending(root, NOT_A_FOLDER, f"{root} is not a folder", now(), mine=False)
     reading = stop_in_force(root)           # the preflight takes the one reading every reader takes, before anything else
@@ -465,7 +486,15 @@ def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable
     try:
         if not runner_alive(root):          # before the lock, so a run that dies at once still leaves word that it ran
             beat(root, state="starting", pid=os.getpid(), in_job=_in_job(), at=now().isoformat())
-        with runner_lock(root):
+        with contextlib.ExitStack() as held:
+            try:
+                held.enter_context(runner_lock(root))
+            except WorkspaceRefused as exc:  # only the lock's own refusal, and only for another holder, is another runner
+                if exc.code == HELD_BY_ANOTHER:  # the live runner owns the page and the heartbeat: this one writes neither
+                    return _ending(root, RUNNER_ALIVE, "A runner is already alive on this folder; this one did nothing.",
+                                   now(), mine=False)
+                return _ending(root, CANNOT_OPEN, f"The runner's lock could not be taken: {exc}"[:500], now(),
+                               reading=reading)
             settings = read_settings(root)
             code, why, reading = _gated(root, settings)
             if code:
@@ -474,9 +503,6 @@ def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable
             if unsafe:
                 return _ending(root, CACHED_BYTECODE, unsafe[:500], now(), reading=reading)
             return Runner(loop, now=now, sleep=sleep, reader=reader).run()
-    except WorkspaceRefused:                # the live runner owns the page and the heartbeat: this one writes neither
-        return _ending(root, RUNNER_ALIVE, "A runner is already alive on this folder; this one did nothing.", now(),
-                       mine=False)
     except DomainChanged as exc:
         return _ending(root, FROZEN_CHANGED, str(exc)[:500], now(), reading=reading)
     except Exception as exc:  # noqa: BLE001 - the folder or the person's own code: say why, and leave word

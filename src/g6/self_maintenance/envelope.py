@@ -17,7 +17,8 @@ until a person starts again) and the records themselves all come from those byte
 these files of its own. A file is absent only when its open fails with not-found and the folder above it can be listed.
 A stop through the tool is a line in
 ``stops.log``, written and flushed to disk before its ``STOP`` file, both under ``stop_lock``, which a start holds while
-it reads the stop state and writes its row, so no start binds a line the disk may yet lose and a stop that dies between
+it reads the stop state and writes its row, and a start flushes the journal itself before its row binds it, since a stop
+that waited out the lock writes without it, so no start binds a line the disk may yet lose and a stop that dies between
 the two writes still stands for every reader. A start binds the reading whole: the ``STOP`` file it lifts, and the bytes
 of ``stops.log`` by digest, so bytes decide, a line cut short included. Anything that cannot be read or used, a file, a
 records path that is not a file, a chain that does not check out, a start's lift fields of the wrong shape, is never a
@@ -550,6 +551,27 @@ def _durably(path: Path, text: str) -> None:
         os.fsync(kept.fileno())
 
 
+def flush_journal(root: str | Path, seen: StopSeen) -> None:
+    """Flush the journal of stops to disk through a handle of the caller's own, writing no byte, when ``seen``, a reading's,
+    holds any of it: a flush is the file's, whoever wrote it, so every line that reading saw is on disk once this returns.
+    A stop that waited ``STOP_WAIT`` for ``stop_lock`` writes its line without it, and that line can be read before its own
+    flush is done, so a start flushes the journal before its row binds it (``g6.mcp.improve.start``). Journal lines carry
+    no token of their own, so a line a crash took back could be written again, the same bytes, by a later stop, and a start
+    that bound it would not see that stop. A journal nothing may open to write, a read-only one among them, is skipped:
+    no stop can be writing a line to it now, since a stop opens it as this does, and a read-only journal refuses no start.
+    Any other failure raises, and nothing starts."""
+    if not seen.journal:
+        return
+    try:
+        handle = os.open(Path(root) / STOPS_FILE, os.O_WRONLY | getattr(os, "O_BINARY", 0))
+    except PermissionError:
+        return
+    try:
+        os.fsync(handle)
+    finally:
+        os.close(handle)
+
+
 def ask_to_stop(root: str | Path, reason: str = "") -> str:
     """Add this stop to the ``STOP`` file, making it if need be, so the first reason stands and repeating is safe. It kills
     nothing: the runner reads the file before each model call and ends itself. It returns why the ``STOP`` file stops it.
@@ -566,7 +588,9 @@ def ask_to_stop(root: str | Path, reason: str = "") -> str:
 
     Both writes are made holding ``stop_lock``, released only once both are on disk, so no start reads a line the disk
     may yet lose. A start holds that lock only while it reads the stop state and writes its row, so a stop waits for it
-    ``STOP_WAIT`` at most, and a stop that cannot have it writes all the same: a stop never fails for a lock."""
+    ``STOP_WAIT`` at most, and a stop that cannot have it writes all the same: a stop never fails for a lock. A line
+    written so can be read before it is on disk, so a start flushes the journal itself before its row binds it
+    (``flush_journal``)."""
     said = " ".join(reason.split()) or "stopped through g6_improve_stop"
     with contextlib.ExitStack() as held:
         try:
@@ -669,6 +693,7 @@ def heartbeat(root: str | Path) -> dict | None:
 
 __all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY",
            "REFUSED_FILE", "RUNNER_LOCK", "STOPPED", "STOPS_FILE", "STOP_FILE", "STOP_LOCK", "STOP_UNREADABLE", "Stop",
-           "StopSeen", "StopUnreadable", "TICK_BUDGET_SPENT", "ask_to_stop", "beat", "file_digest", "heartbeat",
+           "StopSeen", "StopUnreadable", "TICK_BUDGET_SPENT", "ask_to_stop", "beat", "file_digest", "flush_journal",
+           "heartbeat",
            "note_refusal", "record_stop", "refused_requests", "stop_in_force", "stop_lock", "stop_seen",
            "stop_standing", "runner_alive", "runner_lock", "stop_reason", "stop_to_lift", "stops_asked"]
