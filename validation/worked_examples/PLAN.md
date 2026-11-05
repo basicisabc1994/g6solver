@@ -2816,3 +2816,79 @@ brings forward the day stage 5's runs can start, by about 40 hours at the presen
 - A bug already prepared is not prepared again.
 - A bug part-way through starts again at its first step that has not passed.
 - The old process is stopped only between steps, never while a step runs.
+
+## 2026-11-05 (afternoon): K3's review loop ended, its open findings, and K3's development pilot set before it runs
+
+**K3's review loop ended at its limit on 426b44a.**
+- Four reviews and three repairs, with findings 15, 6, 7 and 6, all reproduced. Two were rejected: review 1's 12 and 15,
+  for one treatment of stops across arms. It never reached a clean review.
+- Review 4's 35 walkthrough probes pass, K2's behaviour and the stopped-run handling among them.
+
+**Open from review 4, for their own change.** Tests are in `review-k34`'s `tests/_review/`.
+1. The first prompt can be sent after the run's deadline.
+2. A resumed process can start after the watchdog fired, since `Bounded.popen` does not ask it.
+3. A step that ends within half a millisecond before the deadline is read as late, because the end time is rounded.
+4. A late copy can write into `baseline/` if its parent folder is swapped for a junction after the check.
+5. `copy_in` can follow a source folder swapped for a junction after it was listed.
+6. When the watchdog fires, it does not end the first session's live process.
+
+**Classes met before, so their design changes, not a fifth patch.**
+- **The deadline: findings 1, 2 and 6, met in every review.** Each repair added a guard that every way of starting a process
+  must register with, and each review found a way that did not.
+  - The change: one job object per run holds every process the run starts. At the deadline, one call ends them all and
+    stops the run's containers, and the ending is written once, as `timeout`.
+  - Nothing has to register, so no path can be missed.
+- **The copy race: findings 4 and 5, the same class as the host follow-up-2's open finding 1.** A path checked, then
+  used, can be swapped for a junction in between.
+  - The change: nothing is copied while any of the run's processes is alive, which the job object makes checkable. A
+    swap then has no actor.
+- **Finding 3** is repaired with them: the end time is compared unrounded.
+
+**None of the six blocks the pilot. This is an inference, not a test.**
+- **Findings 1, 2 and 6 cannot change a score.** A run whose watchdog fired ends `timeout` and is scored failed, whatever
+  its process did afterwards. The cost is subscription time spent past the deadline.
+- **Findings 4 and 5 need an actor that swaps folders on the host while a copy runs.**
+  - A host author has only the box's five file tools, which cannot make a junction.
+  - A container cannot reach the archive's host folders.
+- **Finding 3** moves an ending only in the last half-millisecond.
+
+**The host session gets K3: `claude/host-k3`.** It is cut from `claude/host-author-followup-2` c57f253, with `claude/k3`
+merged in.
+- On c57f253 the host executor already admits arm K3, but would skip the rule step without a word. The merge sends the step
+  through the host session (`turn`), as the review loops already do.
+- `export_reviewer_cases` reads K3's first patch from `baseline/`.
+- The merge has its own review loop, and no pilot run starts before that loop ends.
+
+**K3's development pilot, set before its first run.** The pre-spend rule of the morning's section, made concrete.
+- **Bugs: the seven determined scored bugs where a loop run's first patch was wrong.**
+  - Stage 1: black-5148, click-3404, fastapi-13920, starlette-3189.
+  - Stage 2: pygments-3158, s3transfer-423.
+  - Stage 4: pydantic-settings-1089.
+
+  In 29 K-arm runs they gave the 22 wrong first patches, and 6 were made right. Four of them (black-5148, click-3404,
+  starlette-3189 and pygments-3158) gave 16 wrong first patches, and none were made right. The other three gave 6, and all
+  were made right.
+- **Runs.**
+  - Arm K3, on the host executor and the subscription, with the study's author model (`loop.SONNET`).
+  - Four runs a bug, 28 in all, a whole bug at a time in the order above.
+  - A run the provider's limit stops is made again after the reset, as for every arm.
+  - The pilot's runs pause stage 5's preparation, since no timed run shares the machine.
+- **What is counted, on the maintainers' tests, with the amended tests beside.**
+  - Among K3's wrong first patches (`round-1`), how many the final patch makes right.
+  - Among its right first patches, how many the final patch makes wrong.
+  - By step:
+    - `rule` against `round-1`: what the rule step did;
+    - `final` against `rule`: what the review did.
+  - The same counts on the four bugs alone.
+  - Runs with no Claude Code baseline (a refused first prompt, or `no_first_patch`) give no pair. They are counted and
+    reported.
+- **The bar, as set this morning.**
+  - At least 45% of wrong first patches made right: 10 of 22 at the earlier count, and the same share of whatever count
+    the pilot gives.
+  - No more than 2 right first patches made wrong in 100. With fewer than 50 right first patches in the pilot, any one made
+    wrong fails the bar.
+- **What follows.**
+  - If the bar is met, stage 5's runs start: arms A, T and K3, two runs each, on stage 5's prepared bugs.
+  - If not, stage 5's runs wait, and the pilot's counts by step say where conversion still fails.
+- **What it cannot show.** These are the bugs the change was read from, so the pilot shows only whether the rule step can
+  convert at all. Stage 5 is the test.
