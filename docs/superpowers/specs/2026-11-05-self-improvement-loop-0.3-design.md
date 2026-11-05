@@ -49,7 +49,7 @@ For each task G6 builds a requirement set, each requirement with its source and 
   bugs are counted apart, as now.
 - **Evidence standard per domain**, declared as data on the `Domain`: what counts as a reproduced failure, which kinds of
   evidence it accepts and what each cannot show. Coding: an executed test on the code, or a model property only with a
-  replayed trace. Science, maths, law and engineering are declared later (empirical replication, a checked proof, cited
+  replayed trace. Science, maths, law and engineering are declared later (empirical replication, a machine-checked derivation, cited
   authority and argument, prototype and test), not built in 0.3.0.
 - **Level 3:** the selector learns which source and representation catch which class of miss, by context known before the
   choice. Its record is what G6 reports as its metacognitive contribution.
