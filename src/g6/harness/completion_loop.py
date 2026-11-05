@@ -1175,9 +1175,9 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
 
     def refused(text: str, code: str, cause: str) -> Step:
         state["stop"] = text
-        now = _patch_now(root, base)
-        _owe_row(task, base, session, state, now, cause)
+        _owe_row(task, base, session, state, _patch_now(root, base), cause)
         _write_row(session, state)
+        now = _patch_now(root, base)    # the patch as the loop ends: read after the row's wait, as ``_review_end`` reads it
         reviews = state.get("reviews") or []
         if not reviews:
             return _finish(session, state, text, code, "untested", patch=now)
