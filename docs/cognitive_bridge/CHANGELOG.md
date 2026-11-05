@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.2 — 2026-11-05: review 1 repairs
+
+- One maker of refusals: every `blocked-escalated` result is made by `codes.refusal`, with a registered `G6_E_COGNITIVE_*` code (twenty in all) and a `warning_card`; `tests/cognitive_bridge/test_refusal_inventory.py` parses the package and fails on any other place that writes a state.
+- Caller input decides nothing alone: an assessment credits only this orchestrator's own record of a run, step by step; a criterion only the checker its standard pins; a trial only the variant definition it names (`variant_digest`); a review only the evidence manifests it attested.
+- Check, then act on what was checked: compiled models are deep copies pinned by digest, and the executor runs the step copies it validated.
+- The adaptation gate protects the files of the code that judges a bridge result, listed from those functions, and compares a path as the file system resolves it.
+- Duplicate probe ids are refused and a probe's cost is checked again where it runs; no component result carries a bare `verified` field; refutation-only evidence is `g6.epistemic_integrity`'s REFUTED; one variant's trials on one case count once whatever the oracle's revision.
+
 ## v0.2.1 — 2026-11-05: joined to G6's core harness
 
 - Registered with every surface that lists components: a typed block with a `help` op, a skill, the site's
