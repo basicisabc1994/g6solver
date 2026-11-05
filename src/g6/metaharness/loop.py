@@ -24,13 +24,14 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import importlib.machinery
+import inspect
 import math
 import os
 import sys
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -51,6 +52,7 @@ from g6.metaharness.domain import (
     FALLBACK_MODEL,
     Cut,
     Domain,
+    Execution,
     FailureRecord,
     Judge,
     backends,
@@ -65,6 +67,7 @@ from g6.metaharness.domain import (
 from g6.metaharness import reflex
 from g6.metaharness.failure_strategy import FailureTraceStrategy
 from g6.metaharness.method import Method, tune
+from g6.metaharness.tick_rca import TickDiagnosis, TickRecord, scored, tick_rca
 from g6.metaharness.monitor import MIN_PAIRS
 from g6.metaharness.propose import DevRunner, ProposerView
 from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, SuiteCase, Workflow, default_objectives
@@ -514,6 +517,38 @@ def _importable_caches(root: Path) -> dict[str, str]:
     return found
 
 
+def _profile_space(name: str, run: Execution) -> str:
+    """The digest of what a profile may express in a domain: the values each field may take, as a set, and the checks and
+    steps it may switch on, each by what it does (a check's code, a step's op and the source of what it runs), so the same
+    edits in another order are the same domain and an action replaced under its own name is a new one."""
+    def does(fn: Callable[..., Any]) -> str:
+        fn = inspect.unwrap(fn)
+        try:
+            text = inspect.getsource(fn)
+        except (OSError, TypeError):      # no source to read (a built-in, a callable object): its name stands for it
+            text = ""
+        return f"{getattr(fn, '__module__', '')}.{getattr(fn, '__qualname__', type(fn).__qualname__)}\n{text}"
+
+    return digest({"domain": name, "models": sorted(run.models),
+                   "space": {k: sorted({repr(v) for v in values}) for k, values in sorted(run.space.space.items())},
+                   "optional_checks": {k: check.code_sha() for k, check in sorted(run.optional_checks.items())},
+                   "pipeline_steps": {k: [step.component, step.op, step.authority, step.effect, step.mandatory,
+                                          hashlib.sha256(does(step.run).encode("utf-8", "backslashreplace")).hexdigest()]
+                                      for k, step in sorted(run.pipeline_steps.items())}})
+
+
+def _writable(value: Any) -> Any:
+    """``value`` with every string, keys too, made writable as UTF-8: what cannot be (a lone surrogate) is spelled out with
+    a backslash, so a row that repeats a domain's labels or an error's words can always be written."""
+    if isinstance(value, str):
+        return value.encode("utf-8", "backslashreplace").decode("utf-8")
+    if isinstance(value, Mapping):
+        return {_writable(k): _writable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_writable(v) for v in value]
+    return value
+
+
 def _judge_digest(judge: Judge | None) -> str:
     source = judge_source(judge.verdict) if judge is not None else None
     return hashlib.sha256(source.read_bytes()).hexdigest() if source is not None else ""
@@ -676,9 +711,11 @@ class ShadowLoop:
     def _frozen(self) -> dict[str, str]:
         """What must not change, read fresh from the domain: the code that judges, every frozen case, and the sealed
         split, and the file that declares it all when a runner opened one. The judge's whole file is digested, since a
-        helper it calls judges too. No profile is in it."""
+        helper it calls judges too. No profile is in it. ``profile_space`` is what a profile may express, which a new version
+        of the domain changes and a change of method in the same file does not (``tick_rca``'s domain part)."""
         run, sealed, judge = self.domain.execution(), self.domain.sealed(), self.domain.judge()
         return {"envelope": envelope_sha256(), "domain_file": file_digest(self.domain_file),
+                "profile_space": _profile_space(str(getattr(self.domain, "name", "")), run),
                 "evaluator": digest({"judging": judging_sha256(), "judge": _judge_digest(judge),
                                      "independence": [judge.answers_by, judge.is_model] if judge is not None else [],
                                      "task": run.task, "checks": [c.code_sha() for c in (*run.checks,
@@ -868,6 +905,7 @@ class ShadowLoop:
         halted: _Halted | None = None
         self.evaluating = False
         self.tuned = []
+        self._rca: TickRecord | str | None = None     # what this tick's analysis reads once it has tuned, or why it could not
         self.requests.open(spend.amount, spend.ends)
         with sealed_closed(self.domain.sealed().vault) as breaches:
             try:                      # a sealed file already held open: no cycle starts over it
@@ -919,6 +957,10 @@ class ShadowLoop:
             row |= {"outcome": "blocked", "code": TICK_BUDGET_SPENT, "reason": f"{stopped}, so nothing is adopted"}
         elif recommended:
             row |= self._adopt(recommended[-1]["decision"], row)
+        if isinstance(self._rca, str):           # the read for it failed: the row says so
+            row["rca"] = _writable({"unreadable": self._rca})
+        elif self._rca is not None:               # read once the outcome is known: an adoption is part of what it reads
+            row |= self._analysis(dataclasses.replace(self._rca, outcome=str(row.get("outcome", ""))))
         seen = self.meter.reading(spend.provider, self._now())
         row["budget"] = {"provider": seen.provider, "day": seen.day, "charged": charged, "used": seen.used,
                          "target": seen.target, "ceiling": seen.ceiling, "estimated": seen.estimated, "waited": self.waited}
@@ -1037,6 +1079,7 @@ class ShadowLoop:
         if not view.failures:
             return {**row, "outcome": "idle", "code": IDLE, "reason": measured["message"]}
         records = self.domain.failures(view)
+        self._tuning_failed = tuple(record.case_id for record in records)
         constraint = name_constraint(records, len(view.dev))
         row |= {"constraint": constraint.name, "basis": constraint.basis,
                 "observations": [list(o) for o in constraint.observations],
@@ -1054,6 +1097,54 @@ class ShadowLoop:
         except Exception:  # noqa: BLE001 - see above: a failure that leaves no lesson row is allowed, and one that stops the work is not
             return []
 
+    def _read_for_analysis(self, run: Any, marks: Mapping[str, int]) -> TickRecord:
+        """What ``tick_rca`` reads of this tick: the rows tuning added to the ledger since ``marks``, the cases' labels where the
+        domain gives them (``label_of``), and the digest of what a person decides. It reads the held-out report, so what it
+        gives goes into the cycle's row and to no proposer, as the gate's verdicts do not."""
+        new = {kind: self.mh.ledger.rows(kind)[count:] for kind, count in marks.items()}
+        raced = {r.get("candidate_digest") for s in new["selection"] for r in s.get("ranking") or ()}
+        made = {p.get("candidate_digest") for p in new["proposal"]}
+        new["proposal"] += [p for p in self.mh.ledger.rows("proposal")[:marks["proposal"]]      # carried in from a tick before
+                            if p.get("candidate_digest") in raced - made]
+        report = next((r for r in reversed(new["report"]) if r.get("split") == "held_out"), None) if run.confirmation else None
+        label_of = getattr(self.domain, "label_of", None)
+        cases = (*self.cut.tune, *self.cut.selection, *self.cut.held_out)
+        enrolled = self.log.enrolled() or {}
+        return TickRecord(
+            outcome="", labels=({c.case_id: str(label) for c in cases if (label := label_of(c)) is not None}   # no label: none
+                                if callable(label_of) else {}),
+            tuning_failed=getattr(self, "_tuning_failed", ()),
+            held_out=tuple((c["case_id"], bool(c["base"]["success"]), bool(c["candidate"]["success"]))
+                           for c in (report or {}).get("cases") or ()),
+            races=tuple({"winner": s.get("winner"),
+                         "ranking": [{"candidate": r.get("candidate_digest"), "wins": r.get("wins", 0), "losses": r.get("losses", 0),
+                                      "n": r.get("n"), "dropped_at_block": r.get("dropped_at_block"),
+                                      "net_by_block": list(r.get("net_by_block") or ())} for r in s.get("ranking") or ()]}
+                        for s in new["selection"]),
+            candidates=tuple({"candidate": p.get("candidate_digest"), "fields": sorted(p.get("diff") or {})} for p in new["proposal"]),
+            power=dict((report or {}).get("power") or {}),
+            enrolment={"method": self.settings.method.digest(),
+                       "cut": digest({"held_out": enrolled.get("held_out_digest"),
+                                      **{k: (enrolled.get("frozen") or {}).get(k) for k in ("cases", "sealed")}}),
+                       "domain": str((enrolled.get("frozen") or {}).get("profile_space", ""))},
+            champion=str(run.champion or ""))
+
+    def _analysis(self, record: TickRecord) -> dict[str, Any]:
+        """The tick's own root cause analysis, and the last one's scored on what this tick saw (``g6.metaharness.tick_rca``).
+        This only records, so a fault in it costs the cycle nothing: the row says the analysis could not be read. What it
+        records is written as UTF-8, so text that cannot be (a label's or an error's) is spelled out (``_writable``)."""
+        try:
+            found: dict[str, Any] = {"rca": tick_rca(record).to_dict()}
+        except Exception as exc:  # noqa: BLE001 - see above
+            return _writable({"rca": {"unreadable": f"{type(exc).__name__}: {exc}"[:200]}})
+        try:
+            before = next((c["rca"] for c in reversed(self.log.cycles()) if isinstance(c.get("rca"), dict) and "causes" in c["rca"]), None)
+            if before is not None:
+                found["rca_scored"] = [list(pair) for pair in scored(TickDiagnosis.from_dict(before), record)]
+        except Exception:  # noqa: BLE001 - an unscored analysis is recorded as such
+            found["rca_scored"] = None
+        return _writable(found)
+
     def _exploit(self, constraint: Constraint, recommended: list[dict[str, Any]]) -> dict[str, Any]:
         """Propose and gate. A recommendation is only held here: it is adopted once the sealed split is known untouched."""
 
@@ -1062,9 +1153,14 @@ class ShadowLoop:
 
         # earlier findings only: which candidate the gate took or refused is the held-out split's, and stays out of it
         strategy = FailureTraceStrategy(self._proposer, earlier=tuple(self.log.findings()))
+        marks = {kind: len(self.mh.ledger.rows(kind)) for kind in ("proposal", "selection", "report")}
         run = tune(self.mh, self.settings.method, approve=nobody, reflector=self._proposer,
                    space=self.domain.execution().space, extra=(_OnConstraint(strategy, constraint.case_ids),),
                    carried=self.mh.unfinished(), cycles=self.tuned)
+        try:                                      # only records: a fault reading for it costs the cycle nothing
+            self._rca = self._read_for_analysis(run, marks)
+        except Exception as exc:  # noqa: BLE001 - see above
+            self._rca = f"{type(exc).__name__}: {exc}"[:200]
         reasons = (run.decision or {}).get("reasons") or run.notes or ["no candidate beat the head"]
         if (run.confirmation or {}).get("partial"):   # first, so the digest's one line for a tick keeps it
             reasons = ["the evaluation stopped part way and still spent one of the split's five", *reasons]

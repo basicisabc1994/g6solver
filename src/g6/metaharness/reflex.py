@@ -30,6 +30,7 @@ from typing import Any
 from g6.metaharness.lessons import ROOT_CAUSES, Lesson, repeats
 from g6.metaharness.lessons import stuck as recurring
 from g6.metaharness.schema import HOLDOUT_REUSED, INSUFFICIENT_EVIDENCE, NO_GAIN, OBJECTIVE_REGRESSED, SUITE_CANNOT_DISCRIMINATE
+from g6.metaharness.tick_rca import analysis_is_the_constraint
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
 from g6.self_maintenance.envelope import TICK_BUDGET_SPENT
 
@@ -40,6 +41,9 @@ BUDGET, REFUSED, PROPOSED, DISTINCT, TUNING, SELECTION, GATE, MONITOR = STAGES =
 #: How many of the latest cycles count as recent.
 RECENT = 12
 WORK, LOOP, OWNER = "work", "loop", "owner"
+#: The loop's own diagnosis, named as the constraint once two ticks in a row scored a remedy it gave that did not remove its cause
+#: (``g6.metaharness.tick_rca``): what is wrong then is how the loop reads its failures, which is the loop's to change.
+ANALYSIS = "analysis"
 #: Cycles of one constraint with no adoption that make the loop stuck.
 STUCK = 3
 #: What must differ once it is stuck, each after ``STUCK`` more cycles of the same.
@@ -242,6 +246,7 @@ class Diagnosis:
 def diagnose(rows: Iterable[Mapping[str, Any]], lessons: Iterable[Lesson] = (), seen: Iterable[tuple[int, str, str]] = ()) -> Diagnosis:
     """What the recent cycles say limits progress. A cycle adopted within the last ``STUCK`` is a loop that moves, so the work limits it, and the latest cause
     a cycle named says where. Past that it reads the cycles since its last adoption. ``lessons`` and ``seen``: as ``g6.metaharness.lessons.repeats`` takes."""
+    rows = list(rows)
     recent = _recent(rows)
     last = max((i for i, row in enumerate(recent) if row.get("outcome") == "adopted"), default=-1)
     since = recent[last + 1:]
@@ -257,10 +262,14 @@ def diagnose(rows: Iterable[Mapping[str, Any]], lessons: Iterable[Lesson] = (), 
     known = {stage.name for stage in measured}
     returned = repeats(lessons, seen)
     keeps = recurring(returned)
-    return Diagnosis(WORK if moving else _level(constraint), constraint,
+    # every tick's, not the recent ones': a run of ticks that decided nothing must not hide the two before it that failed
+    scored = [[outcome for _, outcome in row["rca_scored"]] for row in rows if isinstance(row.get("rca_scored"), list)]
+    analysis = analysis_is_the_constraint(scored)
+    return Diagnosis(LOOP if analysis else WORK if moving else _level(constraint), ANALYSIS if analysis else constraint,
                      {"cycles": len(basis), "adopted": sum(row.get("outcome") == "adopted" for row in recent), "held": held,
                       "stages": {stage.name: {"attempted": stage.attempted, "succeeded": stage.succeeded} for stage in measured},
-                      "unknown": [name for name in STAGES if name not in known], "refusals": refusals(basis)},
+                      "unknown": [name for name in STAGES if name not in known], "refusals": refusals(basis),
+                      **({"analysis": {"scored_ticks": len(scored), "last": scored[-2:]}} if analysis else {})},
                      stuck, CHANGES[min(held // STUCK, len(CHANGES)) - 1] if stuck else None,
                      {cause: {**row, "stuck": cause in keeps} for cause, row in returned.items()})
 
@@ -311,5 +320,5 @@ def read(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         return {"unreadable": f"{type(exc).__name__}: {exc}"[:200]}
 
 
-__all__ = ["CHANGES", "Diagnosis", "LOOP", "OWNER", "RECENT", "STAGES", "STUCK", "UNKNOWN", "WORK", "diagnose", "funnel", "lessons_from", "lessons_in", "read",
+__all__ = ["ANALYSIS", "CHANGES", "Diagnosis", "LOOP", "OWNER", "RECENT", "STAGES", "STUCK", "UNKNOWN", "WORK", "diagnose", "funnel", "lessons_from", "lessons_in", "read",
            "refusals", "seen_in", "stages"]

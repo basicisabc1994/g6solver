@@ -108,5 +108,10 @@ class CodingReplay:
         sends a right patch to repair. Any other cause has no place on it yet."""
         return {ACCEPTED_DEFECT: "verification_gap", FALSE_ALARM: "bad_remediation"}.get(cause)
 
+    def label_of(self, case: SuiteCase) -> str:
+        """A case's label, the maintainers' verdict on its patch: what ``tick_rca`` sorts a tick's wins and losses by, as a
+        reviewer that stops one kind of error by making the other has traded, not gained."""
+        return case.expected
+
 
 __all__ = ["ACCEPTED_DEFECT", "FALSE_ALARM", "READ_AS_WRITTEN", "CodingReplay", "load_cases", "right_verdict", "verdict_of"]
