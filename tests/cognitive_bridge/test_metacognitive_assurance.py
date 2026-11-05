@@ -297,7 +297,8 @@ def test_orchestration_dossier_remains_scoped_and_blocked_if_method_refused():
                         artifacts={"c1": evidence}, verifiers={"checker1": check},
                         documentation=docs(), candidate_actor="candidate")
     assert report["completion_state"] == "qualified-draft"
-    assert not report["verified"]
+    # the state is completion_state alone: no second state field, and never verified
+    assert "verified" not in report and report["completion_state"] != "verified"
     assert report["dossier"]["content_sha256"]
     broken = {**run, "completion_state": "blocked-escalated"}
     denied = obj.assess(compiled, standard=standard(), run_result=broken,

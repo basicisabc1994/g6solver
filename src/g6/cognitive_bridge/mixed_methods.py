@@ -9,8 +9,11 @@ explicitly approved Python-side action against the real G6 registry.
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import asdict, dataclass
 from typing import Any, Mapping, Protocol, Sequence
+
+from .codes import APPROVAL_REQUIRED, PLAN_TAMPERED, refusal
 
 # Every name resolves to an existing G6 component and a fixed, documented op.
 # Models are declarative data, never arbitrary modules, code or pickle paths.
@@ -195,16 +198,14 @@ class MixedMethodExecutor:
 
     def execute(self, plan: MethodPlan, *, approved: bool = False) -> dict[str, Any]:
         if not approved:
-            return {"completion_state": "blocked-escalated", "code": "G6_E_COGNITIVE_APPROVAL_REQUIRED",
-                    "reason": "execution requires caller approval; planning alone does no work",
-                    "steps": [], "method_execution_coverage": 0.0}
+            return refusal(APPROVAL_REQUIRED, "execution requires caller approval; planning alone does no work",
+                           steps=[], method_execution_coverage=0.0)
         try:
             canonical = MethodRouter().plan(plan.claims)
             if canonical.steps != plan.steps or canonical.missing != plan.missing:
                 raise ValueError("method steps differ from canonical allowlisted routing")
         except (TypeError, ValueError) as exc:
-            return {"completion_state": "blocked-escalated", "code": "G6_E_COGNITIVE_PLAN_TAMPERED",
-                    "reason": str(exc)[:400], "steps": [], "method_execution_coverage": 0.0}
+            return refusal(PLAN_TAMPERED, str(exc), steps=[], method_execution_coverage=0.0)
         outcomes: list[dict[str, Any]] = []
         by_id: dict[str, dict[str, Any]] = {}
         for step in plan.steps:
@@ -248,6 +249,7 @@ class MixedMethodExecutor:
         incomplete = bool(plan.missing) or len(successful) != len(plan.steps)
         return {
             "completion_state": "blocked-escalated" if incomplete else "qualified-draft",
+            "run_id": uuid.uuid4().hex,
             "steps": outcomes, "missing": list(plan.missing),
             "method_execution_coverage": coverage,
             "method_execution_coverage_definition": "executed non-blocked method steps / requested executable steps",

@@ -34,6 +34,16 @@ held-out trials. Every result is `qualified-draft` or `blocked-escalated`: it ne
 - `rank_methods`: a cold-start ranking of method variants for a problem signature; no trial data over MCP.
 - `assurance_schema`: the documentary fields an assurance dossier must fill, and the two states it can carry.
 
+## Reading the result
+
+Every refusal is `blocked-escalated` with its code in `code` and in its `warning_card`. A parameter an op does not
+take is `G6_E_INPUT_VALIDATION`; input the op cannot use (priors that do not sum to one, a probe that does not predict
+every hypothesis, a plan with no claim) is `G6_E_COGNITIVE_BRIDGE_INPUT`. From Python: running a plan without approval
+is `G6_E_COGNITIVE_APPROVAL_REQUIRED`, an edited plan `G6_E_COGNITIVE_PLAN_TAMPERED`, and an orchestrator plan that is
+not approved, not fully specified or has no registry `G6_E_COGNITIVE_EXECUTION_NOT_APPROVED`, each before anything
+runs. An assessment carries `warning_card`, `evidence`, `request_id` and `run_id`: `G6_E_COGNITIVE_ASSURANCE_BLOCKED`
+names what failed, and `G6_E_COGNITIVE_NOT_PROMOTED` says the checks passed in this process and nothing more.
+
 ## Alone and composed
 
 Alone, over MCP: `g6_invoke("cognitive_bridge", "rank_methods", params_json)`. From Python:

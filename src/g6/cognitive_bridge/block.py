@@ -13,6 +13,7 @@ from g6.core.ai_block import AIBlock
 from g6.core.contract_decorator import block_contract
 from g6.core.maturity import component_maturity
 from g6.core.result import Result
+from .codes import INPUT, refusal
 from .engine import BayesianUpdater, Hypothesis, InformationGainSelector, Probe, check_beliefs
 from .mixed_methods import ClaimIR, MethodRouter
 from .metacognition import MetacognitiveMethodSelector, ProblemSignature, MethodVariant
@@ -156,5 +157,4 @@ class CognitiveBridgeBlock(AIBlock[CognitiveInput, dict, dict]):
                                               "likelihoods and predictions are caller-provided assumptions",
                                               "does not verify the reality of any observations"]})
         except (ValidationError, ValueError, TypeError, KeyError, OverflowError) as exc:
-            return Result.ok({"component": self.name, "completion_state": "blocked-escalated",
-                              "code": "G6_E_COGNITIVE_BRIDGE_INPUT", "reason": str(exc)[:400]})
+            return Result.ok({"component": self.name, **refusal(INPUT, str(exc))})

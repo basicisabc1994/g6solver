@@ -8,13 +8,17 @@ step upgrades the result to G6's `verified` label.
 """
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
+
+from g6.core.reliability_envelope import warning_card
 
 from .adaptation import detect_failure_modes
 from .assurance import (DomainStandard, EvidenceArtifact,
                         FrozenVerifier, IndependentAssuranceEvaluator,
                         ProfessionalAttestation, canonical_json, sha256)
+from .codes import ASSURANCE_BLOCKED, EXECUTION_NOT_APPROVED, NOT_PROMOTED, refusal
 from .epistemic import CrossMethodConflictGate, ScopedAssertion
 from .metacognition import (MethodVariant, MetacognitiveMethodSelector,
                             ProblemSignature, SelectionDecision)
@@ -99,8 +103,7 @@ class CognitiveAssuranceOrchestrator:
 
     def execute(self, compiled: CompiledResearch, *, approved: bool = False) -> dict[str, Any]:
         if not approved or self.registry is None or compiled.completion_state != "qualified-draft":
-            return {"completion_state": "blocked-escalated", "code": "G6_E_COGNITIVE_EXECUTION_NOT_APPROVED",
-                    "reason": "approved, fully specified plan and connected G6 registry required"}
+            return refusal(EXECUTION_NOT_APPROVED, "approved, fully specified plan and connected G6 registry required")
         # Ensure the approved plan is the same canonical plan before touching
         # any engine: MixedMethodExecutor re-derives the steps and refuses edits.
         out = MixedMethodExecutor(self.registry).execute(compiled.executable_plan, approved=True)
@@ -143,20 +146,29 @@ class CognitiveAssuranceOrchestrator:
             conflict_report = (epistemic_gate or CrossMethodConflictGate()).reconcile(scoped_assertions)
         epistemic_ok = conflict_report is None or conflict_report["completion_state"] == "qualified-draft"
         faults = detect_failure_modes(dossier)
+        passed = backend_ok and epistemic_ok and dossier.payload["completion_state"] == "qualified-draft"
+        warning = "Independent external custody and G6 door replay are NOT established here."
+        # The state is completion_state alone (never a second state field); the card says why, with a stable code.
+        why = ((["a method step was blocked"] if not backend_ok else [])
+               + (["the cross-method assertions were not reconciled"] if not epistemic_ok else [])
+               + list(dossier.payload["blockers"]))
+        card = (warning_card(NOT_PROMOTED, "the checks this process ran passed. " + warning) if passed else
+                warning_card(ASSURANCE_BLOCKED, "; ".join(why)[:400]))
         return {
-            "completion_state": ("qualified-draft" if backend_ok and epistemic_ok and
-                                 dossier.payload["completion_state"] == "qualified-draft"
-                                 else "blocked-escalated"),
+            "completion_state": "qualified-draft" if passed else "blocked-escalated",
+            "warning_card": card,
+            "evidence": [{"source": f"dossier:{dossier.content_sha256}",
+                          "summary": f"assurance dossier for claim {compiled.original_claim.id}"}],
+            "request_id": uuid.uuid4().hex[:12],
+            "run_id": str(run_result.get("run_id", "")),
             "method_results": dict(run_result),
             "metacognitive_selection": compiled.decision.to_dict(),
             "dossier": dossier.to_dict(),
             "failure_mode_findings": [vars(x) for x in faults],
             "epistemic_reconciliation": conflict_report,
             "next_action": ("submit frozen artifact/check bundle to independent G6 promotion door"
-                            if backend_ok and epistemic_ok and dossier.payload["completion_state"] == "qualified-draft"
-                            else "address failed method/acceptance checks; do not promote"),
-            "verified": False,
-            "warning": "Independent external custody and G6 door replay are NOT established here."
+                            if passed else "address failed method/acceptance checks; do not promote"),
+            "warning": warning,
         }
 
 

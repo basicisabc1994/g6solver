@@ -66,3 +66,26 @@ def test_assertions_without_a_gate_are_judged_not_a_name_error():
     assert report["epistemic_reconciliation"]["unadmitted_evidence_refs"] == ["source1"]
     json.dumps(report)  # the report is plain data
     assert canonical_json(report["dossier"])
+    assert report["warning_card"]["code"] == "G6_E_COGNITIVE_ASSURANCE_BLOCKED"
+
+
+def _keys(value) -> set[str]:
+    """Every key anywhere in a nested result, except inside G6's own warning cards (whose shape, INV-ENV-2, carries
+    its own flag)."""
+    if isinstance(value, dict):
+        return set(value) | {k for key, item in value.items() if key != "warning_card" for k in _keys(item)}
+    if isinstance(value, list):
+        return {k for item in value for k in _keys(item)}
+    return set()
+
+
+def test_the_assessment_carries_the_envelope_fields_and_no_bare_verified_field():
+    # 9ebfbbe's assess() returned "verified": False beside completion_state: a second state field, and no
+    # warning_card, evidence, request_id or run_id. The state lives in completion_state only.
+    orchestrator, compiled = _compiled()
+    report = _assess(orchestrator, compiled)
+    assert report["completion_state"] == "qualified-draft"
+    assert "verified" not in _keys(report)
+    assert report["warning_card"]["code"] == "G6_E_COGNITIVE_NOT_PROMOTED"
+    assert report["request_id"] and report["run_id"] == report["method_results"]["run_id"]
+    assert report["evidence"][0]["source"] == "dossier:" + report["dossier"]["content_sha256"]
