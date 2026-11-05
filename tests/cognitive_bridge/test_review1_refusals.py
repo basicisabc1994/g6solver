@@ -68,7 +68,7 @@ def test_finding_12_executor_failed_run_has_a_coded_refusal(mode):
     _coded(out, 'executor')
     blocked = [step for step in out['steps'] if step['completion_state'] == 'blocked-escalated']
     assert blocked
-    for step in blocked:  # a step the door refused keeps the door's own code; the bridge's own steps use its codes
+    for step in blocked:  # every blocked step carries a bridge code (review 2: a supplied card is a registered code's)
         assert step.get('warning_card') and step['code'] == step['warning_card']['code'], step['id']
         assert step['code'].startswith('G6_E_'), step['id']
 

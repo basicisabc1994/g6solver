@@ -15,12 +15,11 @@ import math
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
-from .assurance import canonical_json, sha256
+from .assurance import canonical_json, is_risk, sha256
 from .codes import MODEL_MISSING, OBLIGATION_NOT_PLANNED, SELECTION_INCOMPLETE, refusal, settled
 from .mixed_methods import ENGINE_SPECS, ENGINE_OP_VARIANTS, ClaimIR, MethodRouter, MethodPlan
 
 CAPABILITIES = frozenset(ENGINE_SPECS)
-RISK_BANDS = range(4)
 #: The splits a trial can come from (``EvaluatedTrial.split``); a selector learns from the ones its ``learn_from`` names.
 SPLITS = ("training", "heldout", "shadow")
 
@@ -39,7 +38,7 @@ class ProblemSignature:
     def __post_init__(self) -> None:
         if not all((self.domain, self.uncertainty, self.claim_kind)):
             raise ValueError("domain, uncertainty and claim kind are required")
-        if self.risk not in RISK_BANDS or not math.isfinite(self.budget) or self.budget < 0:
+        if not is_risk(self.risk) or not math.isfinite(self.budget) or self.budget < 0:
             raise ValueError("risk is the risk tier's number, 0 to 3 for R0 to R3; budget finite and nonnegative")
         if len(set(self.available_evidence)) != len(self.available_evidence):
             raise ValueError("duplicate evidence identifiers")

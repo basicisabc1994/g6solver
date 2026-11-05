@@ -318,13 +318,13 @@ def pairs(n=26, wins=24, losses=0):
         was, now = ((False, True) if i < wins else
                     ((True, False) if i < wins + losses else (True, True)))
         result.append(PairedTrial(f"heldout-{i}", PIN3, was, now, True, "holdout",
-                                  f"outside://case/{i}"))
+                                  f"outside://case/{i}", candidate_digest=PIN, baseline_digest=PIN2))
     return result
 
 
 def controls():
-    return [ControlTrial("neg-1", True, "negative", "outside://control/neg"),
-            ControlTrial("pos-1", True, "positive", "outside://control/pos")]
+    return [ControlTrial("neg-1", True, "negative", "outside://control/neg", suite_digest=PIN3),
+            ControlTrial("pos-1", True, "positive", "outside://control/pos", suite_digest=PIN3)]
 
 
 def gate(**kwargs):

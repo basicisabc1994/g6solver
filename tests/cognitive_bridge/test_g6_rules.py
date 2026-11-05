@@ -108,7 +108,8 @@ def test_a_sensitive_op_runs_only_with_the_persons_allow(monkeypatch):
     registry = _ClaimingRegistry(sensitive=frozenset({("formal", "check_validity")}))
     refused = MixedMethodExecutor(registry).execute(_formal_plan(), approved=True)["steps"][0]
     assert refused["completion_state"] == "blocked-escalated" and registry.calls == []
-    assert refused["warning_card"]["code"] == "G6_E_SENSITIVE_COMPONENT_DENIED"
+    assert refused["code"] == refused["warning_card"]["code"] == "G6_E_COGNITIVE_STEP_FAILED"
+    assert refused["door"]["warning_card"]["code"] == "G6_E_SENSITIVE_COMPONENT_DENIED"  # the door's own card, whole
     assert "allow=('formal.check_validity',)" in refused["reason"]
     allowed = MixedMethodExecutor(registry, allow=("formal.check_validity",)).execute(_formal_plan(), approved=True)
     assert allowed["steps"][0]["completion_state"] == "qualified-draft"

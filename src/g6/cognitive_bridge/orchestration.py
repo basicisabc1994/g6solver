@@ -18,8 +18,6 @@ from dataclasses import asdict, dataclass
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
 
-from g6.core.reliability_envelope import warning_card
-
 from .adaptation import detect_failure_modes
 from .assurance import (DomainStandard, EvidenceArtifact,
                         FrozenVerifier, InProcessAssuranceEvaluator,
@@ -29,11 +27,18 @@ from .codes import (ASSURANCE_BLOCKED, COMPILE_BLOCKED, EXECUTION_NOT_APPROVED, 
 from .epistemic import CrossMethodConflictGate, ScopedAssertion
 from .metacognition import (MethodVariant, MetacognitiveMethodSelector,
                             ProblemSignature, SelectionDecision)
-from .mixed_methods import (ENGINE_SPECS, ClaimIR, MethodPlan, MethodRouter, MixedMethodExecutor, step_digest)
+from .mixed_methods import (ENGINE_SPECS, ClaimIR, MethodPlan, MethodRouter, MixedMethodExecutor, frozen_plan,
+                            step_digest)
 
 
 def _plan_digest(plan: MethodPlan) -> str:
     return sha256(canonical_json([asdict(step) for step in plan.steps]))
+
+
+def _claims_digest(claims: Sequence[ClaimIR]) -> str:
+    """The identity of the claims a run is for (each one's id, statement, evidence needs, sources and origin)."""
+    return sha256(canonical_json([{"id": c.id, "statement": c.statement, "evidence_needs": list(c.evidence_needs),
+                                   "source_refs": list(c.source_refs), "origin": c.origin} for c in claims]))
 
 
 @dataclass(frozen=True)
@@ -51,10 +56,11 @@ class CompiledResearch:
     def completion_state(self) -> str:
         return settled(self.refused)["completion_state"]
 
-    def changed_since_compiled(self) -> str:
-        """Why the plan no longer matches what was compiled and pinned (a selected model's digest, the steps'
-        digest), or ``""`` when it still does."""
-        models = {need: model for claim in self.executable_plan.claims for need, model in claim.models.items()}
+    def changed_since_compiled(self, plan: MethodPlan | None = None) -> str:
+        """Why ``plan`` (the executable plan, or a frozen copy of it about to run) no longer matches what was compiled
+        and pinned (a selected model's digest, the steps' digest), or ``""`` when it still does."""
+        plan = self.executable_plan if plan is None else plan
+        models = {need: model for claim in plan.claims for need, model in claim.models.items()}
         for row in self.decision.ordered_variants:
             pin = self.selected_model_hashes.get(row["variant_id"])
             if pin is None:
@@ -66,7 +72,7 @@ class CompiledResearch:
             if digest != pin:
                 return f"the compiled {row['method']} model no longer matches the digest pinned at compilation"
         try:
-            steps = _plan_digest(self.executable_plan)
+            steps = _plan_digest(plan)
         except (TypeError, ValueError):
             steps = ""
         return "" if steps and steps == self.plan_digest else "the compiled steps no longer match their pin"
@@ -84,9 +90,10 @@ class CompiledResearch:
 class CognitiveAssuranceOrchestrator:
     def __init__(self, selector: MetacognitiveMethodSelector, *, registry: Any = None):
         self.selector, self.registry = selector, registry
-        #: This orchestrator's own record of each run it executed: run id -> (the plan's pinned digest, the run's
-        #: bytes). An assessment credits a run only from here. It is in memory: after a restart nothing is credited.
-        self._runs: dict[str, tuple[str, bytes]] = {}
+        #: This orchestrator's own record of each run it executed: run id -> (the plan's pinned digest, the digest of
+        #: the claims it ran, the run's bytes). An assessment credits a run only from here, and only for those claims.
+        #: It is in memory: after a restart nothing is credited.
+        self._runs: dict[str, tuple[str, str, bytes]] = {}
 
     def compile(self, *, claim: ClaimIR, context: ProblemSignature,
                 standard: DomainStandard, variants: Sequence[MethodVariant],
@@ -149,31 +156,35 @@ class CognitiveAssuranceOrchestrator:
         """Run the approved plan through G6's checked door; ``allow`` is the person's allow for a sensitive op."""
         if not approved or self.registry is None or compiled.completion_state != "qualified-draft":
             return refusal(EXECUTION_NOT_APPROVED, "approved, fully specified plan and connected G6 registry required")
-        changed = compiled.changed_since_compiled()
-        if changed:  # checked here, then the executor runs the copies it validates
+        # Freeze, then check, then run: the plan is copied whole, the copy is checked against the pins, and the copy
+        # runs (the executor freezes and checks it again against the canonical routing).
+        try:
+            plan = frozen_plan(compiled.executable_plan)
+        except (TypeError, ValueError) as exc:
+            return refusal(PLAN_TAMPERED, str(exc), steps=[], method_execution_coverage=0.0)
+        changed = compiled.changed_since_compiled(plan)
+        if changed:
             return refusal(PLAN_TAMPERED, changed, steps=[], method_execution_coverage=0.0)
-        # Ensure the approved plan is the same canonical plan before touching
-        # any engine: MixedMethodExecutor re-derives the steps and refuses edits.
-        out = MixedMethodExecutor(self.registry, allow=allow).execute(compiled.executable_plan, approved=True)
+        out = MixedMethodExecutor(self.registry, allow=allow).execute(plan, approved=True)
         result = {**out, "selection_policy_digest": compiled.decision.policy_digest,
                   "standard_digest": compiled.standard_digest,
-                  "claim_id": compiled.original_claim.id}
+                  "claim_id": ",".join(c.id for c in plan.claims)}
         if isinstance(result.get("run_id"), str):
-            self._runs[result["run_id"]] = (compiled.plan_digest, canonical_json(result))
+            self._runs[result["run_id"]] = (compiled.plan_digest, _claims_digest(plan.claims), canonical_json(result))
         return result
 
     def _executed(self, compiled: CompiledResearch, run_result: Mapping[str, Any]) -> dict[str, Any] | None:
-        """This orchestrator's own record of the run ``run_result`` names, when it ran this compiled plan and the
-        caller's copy is that record unchanged; else None."""
+        """This orchestrator's own record of the run ``run_result`` names, when it ran this compiled plan for the
+        claim the compiled research names, and the caller's copy is that record unchanged; else None."""
         record = self._runs.get(str(run_result.get("run_id", ""))) if isinstance(run_result, Mapping) else None
         if record is None or record[0] != compiled.plan_digest or compiled.changed_since_compiled():
             return None
         try:
-            if canonical_json(dict(run_result)) != record[1]:
+            if record[1] != _claims_digest([compiled.original_claim]) or canonical_json(dict(run_result)) != record[2]:
                 return None
         except (TypeError, ValueError):
             return None
-        return json.loads(record[1])
+        return json.loads(record[2])
 
     @staticmethod
     def _every_step_ran(compiled: CompiledResearch, executed: Mapping[str, Any]) -> bool:
@@ -207,6 +218,7 @@ class CognitiveAssuranceOrchestrator:
         # The compiled plan is the caller's object: what it covers is read again here, not taken from compile().
         uncovered = sorted({m for criterion in standard.criteria for m in criterion.required_methods}
                            - {step.method for step in compiled.executable_plan.steps})
+        artifacts = dict(artifacts)  # one frozen set: what is checked here is what the evaluator checks and scopes
         for item in artifacts.values():
             if item.claim_id != compiled.original_claim.id:
                 raise ValueError("evidence belongs to a different claim")
@@ -251,8 +263,7 @@ class CognitiveAssuranceOrchestrator:
         }
         if not passed:
             return refusal(ASSURANCE_BLOCKED, "; ".join(why), **fields)
-        return settled(None, warning_card=warning_card(NOT_PROMOTED, "the checks this process ran passed. " + warning),
-                       **fields)
+        return settled(None, draft_card=(NOT_PROMOTED, "the checks this process ran passed. " + warning), **fields)
 
 
 __all__ = ["CompiledResearch", "CognitiveAssuranceOrchestrator"]

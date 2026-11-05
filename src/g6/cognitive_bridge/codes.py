@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from g6.core.reliability_envelope import warning_card
+from g6.core.reliability_envelope import WarningCard, warning_card
 from g6.invariants import ERROR_CODE_PATTERN
 
 #: The block refused its input: a field it does not take is ``G6_E_INPUT_VALIDATION`` at the door; this is the rest
@@ -38,7 +38,8 @@ OBLIGATION_NOT_PLANNED = "G6_E_COGNITIVE_OBLIGATION_NOT_PLANNED"
 MODEL_MISSING = "G6_E_COGNITIVE_MODEL_MISSING"
 #: A step's prerequisite was not established (a causal estimate without identification): it did not run.
 PREREQUISITE_UNMET = "G6_E_COGNITIVE_PREREQUISITE_UNMET"
-#: A step's call raised, or answered with something that is not an answer: it is not counted as run.
+#: A step's call raised, G6's door refused it or did not pass its answer (the door's own card is kept under ``door``),
+#: or it answered with something that is not an answer: it is not counted as run.
 STEP_FAILED = "G6_E_COGNITIVE_STEP_FAILED"
 #: An executed plan had a blocked step or a missing model: the run as a whole is not complete.
 EXECUTION_INCOMPLETE = "G6_E_COGNITIVE_EXECUTION_INCOMPLETE"
@@ -66,31 +67,64 @@ CODES: tuple[str, ...] = (INPUT, APPROVAL_REQUIRED, PLAN_TAMPERED, EXECUTION_NOT
                           NO_PROBE)
 #: The two states the bridge gives a result (it never gives ``verified``).
 STATES: tuple[str, ...] = ("qualified-draft", "blocked-escalated")
+#: The name of G6's own flag, which only G6's warning card carries (INV-ENV-2); the one place the package names it.
+VERIFIED_FLAG = "verified"
+#: The fields only :func:`refusal` and :func:`settled` write. A caller's value for any of them is refused, never taken.
+RESERVED: tuple[str, ...] = ("completion_state", "code", "warning_card", VERIFIED_FLAG)
+
+
+def _no_reserved(values: Mapping[str, Any], where: str) -> None:
+    taken = sorted(set(values) & set(RESERVED))
+    if taken:
+        raise ValueError(f"{where} may not set {', '.join(taken)}: only codes.refusal and codes.settled write them")
+
+
+def _card(code: str, reason: str, card: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The warning card for a registered ``code``: a new one, or a supplied card for that same code that claims
+    nothing (no state of its own, ``verified`` false)."""
+    if code not in CODES or not ERROR_CODE_PATTERN.match(str(code)):
+        raise ValueError(f"{code!r} is not a code g6.cognitive_bridge registered")
+    if card is None:
+        return warning_card(code, reason)
+    if (not isinstance(card, Mapping) or card.get("code") != code or "completion_state" in card
+            or card.get(VERIFIED_FLAG, False) is not False):
+        raise ValueError(f"a supplied card must be a warning card for the registered code {code!r} that claims "
+                         "nothing of its own")
+    return WarningCard.model_validate(dict(card)).model_dump()
 
 
 def refusal(code: str, reason: str, *, card: Mapping[str, Any] | None = None, **extra: Any) -> dict[str, Any]:
     """A ``blocked-escalated`` answer that says why, under ``code`` and in a warning card with the same code.
 
-    ``code`` is one of :data:`CODES`. A step G6's door refused passes the door's own ``card`` instead, whose code (a
-    ``G6_E_*`` code G6 or the component registered) the refusal then carries."""
-    reason = reason[:400]
-    if card is None:
-        if code not in CODES:
-            raise ValueError(f"{code!r} is not a code g6.cognitive_bridge registered")
-        card = warning_card(code, reason)
-    elif card.get("code") != code or not ERROR_CODE_PATTERN.match(str(code)):
-        raise ValueError(f"the door's card does not carry a registered G6_E_ code: {card.get('code')!r}")
-    return {"completion_state": "blocked-escalated", "code": code, "reason": reason, "warning_card": dict(card),
-            **extra}
+    ``code`` is one of :data:`CODES`; a supplied ``card`` must be a card for that code. ``extra`` may not set any of
+    :data:`RESERVED`, and this function's own fields are written last."""
+    _no_reserved(extra, "a refusal's extra fields")
+    reason = str(reason)[:400]
+    made = _card(code, reason, card)
+    return {**extra, "completion_state": "blocked-escalated", "code": code, "reason": reason, "warning_card": made}
 
 
-def settled(refused: Mapping[str, Any] | None, **fields: Any) -> dict[str, Any]:
-    """``fields`` under the state a result has: a refusal's state, code, reason and card, or ``qualified-draft``."""
-    return {**(dict(refused) if refused else {"completion_state": "qualified-draft"}), **fields}
+def settled(refused: Mapping[str, Any] | None, *, draft_card: tuple[str, str] | None = None,
+            **fields: Any) -> dict[str, Any]:
+    """``fields`` under the state a result has: ``refused`` (a refusal :func:`refusal` made, made again here so a
+    changed state, code or card is refused), or ``qualified-draft``, with a card for a registered code when
+    ``draft_card`` (``(code, message)``) is given. ``fields`` may not set any of :data:`RESERVED`."""
+    _no_reserved(fields, "a result's fields")
+    if refused is None:
+        out = {**fields, "completion_state": "qualified-draft"}
+        if draft_card is not None:
+            out["warning_card"] = _card(draft_card[0], draft_card[1], None)
+        return out
+    if (draft_card is not None or not isinstance(refused, Mapping) or refused.get("completion_state") != STATES[1]
+            or VERIFIED_FLAG in refused):
+        raise ValueError("settled takes a refusal codes.refusal made, unchanged, or None")
+    rest = {k: v for k, v in refused.items() if k not in RESERVED and k != "reason"}
+    return {**refusal(refused.get("code", ""), str(refused.get("reason", "")), card=refused.get("warning_card"),
+                      **rest), **fields}
 
 
 __all__ = ["ADAPTATION_REFUSED", "APPROVAL_REQUIRED", "ASSURANCE_BLOCKED", "CODES", "COMPILE_BLOCKED",
            "DOSSIER_BLOCKED", "EVIDENCE_CONTESTED", "EVIDENCE_NOT_RECONCILED", "EVIDENCE_REFUTED",
            "EVIDENCE_UNDETERMINED", "EXECUTION_INCOMPLETE", "EXECUTION_NOT_APPROVED", "INPUT", "MODEL_MISSING",
            "NOT_PROMOTED", "NO_PROBE", "OBLIGATION_NOT_PLANNED", "PLAN_TAMPERED", "PREREQUISITE_UNMET",
-           "SELECTION_INCOMPLETE", "STATES", "STEP_FAILED", "refusal", "settled"]
+           "RESERVED", "SELECTION_INCOMPLETE", "STATES", "STEP_FAILED", "VERIFIED_FLAG", "refusal", "settled"]

@@ -6,7 +6,9 @@ This is a conservative conflict tripwire, NOT a fact checker. It builds on
 whose lineage is its source, so one source repeated is one lineage
 (`collapse_independence`), and each proposition's status (supported, contested,
 refuted, undetermined) is `adjudicate_claim`'s, by that component's rules, not
-a second set: the bridge maps the answer, it does not decide again.
+a second set: the bridge maps the answer, it does not decide again. It reads the
+whole answer: a BLOCK or ASK disposition, or a failure the adjudicator
+triggered (a G6_E_ code), refuses whatever the status says.
 An independent evaluator must admit a statement before it can be used as
 evidence. No score averaging.
 """
@@ -18,6 +20,7 @@ from typing import Any, Callable, Sequence
 
 from g6.core.evidence import EvidenceRecord
 from g6.epistemic_integrity import adjudicator
+from g6.invariants import ERROR_CODE_PATTERN
 
 from .codes import (EVIDENCE_CONTESTED, EVIDENCE_NOT_RECONCILED, EVIDENCE_REFUTED, EVIDENCE_UNDETERMINED, refusal,
                     settled)
@@ -29,6 +32,8 @@ _STANCE = {"supports": "supports", "refutes": "opposes", "unknown": "context_onl
 #: not listed blocks too.
 _STATUS = {"ASSERTED": ("consistent_with_admitted_evidence", None), "CONTESTED": ("contested", EVIDENCE_CONTESTED),
            "REFUTED": ("refuted", EVIDENCE_REFUTED), "UNVERIFIABLE": ("undetermined", EVIDENCE_UNDETERMINED)}
+#: ``adjudicate_claim``'s dispositions that let a passing status stand; BLOCK, ASK and any other refuse.
+_PASSING = ("ALLOW", "ALLOW_WITH_LABEL")
 
 
 @dataclass(frozen=True)
@@ -86,13 +91,21 @@ class CrossMethodConflictGate:
                                            independence_group=row.evidence_ref, claim_id=claim_id) for row in data)
             lineages = adjudicator.collapse_independence(records)
             duplicate_sources += [source for source, members in lineages.items() for _ in members[1:]]
-            status = adjudicator.adjudicate_claim(proposition_id, evidence_records=records).claim.epistemic_status
+            # The adjudicator's whole result is read: its status, its disposition and any failure it triggered (a
+            # G6_E_ code). A passing result is a status the bridge maps to a pass, an ALLOW disposition and no failure.
+            result = adjudicator.adjudicate_claim(proposition_id, evidence_records=records)
+            status, disposition = result.claim.epistemic_status, result.claim.disposition
+            failures = [t for t in result.triggered if ERROR_CODE_PATTERN.match(str(t))]
             label, code = _STATUS.get(status, ("not_reconciled", EVIDENCE_NOT_RECONCILED))
+            if code is None and (disposition not in _PASSING or failures):
+                label, code = "not_reconciled", EVIDENCE_NOT_RECONCILED
             conflicts += label == "contested"
             findings.append(settled(
-                refusal(code, f"{proposition_id}: {label} ({status})") if code else None,
+                refusal(code, f"{proposition_id}: {label} ({status}, {disposition}"
+                              + "".join(f", {f}" for f in failures) + ")") if code else None,
                 claim_id=claim_id, proposition_id=proposition_id, scope_digest=scope, status=label,
-                epistemic_status=status, source_count=len(lineages), methods=sorted({r.method for r in data}),
+                epistemic_status=status, disposition=disposition, triggered=list(result.triggered),
+                source_count=len(lineages), methods=sorted({r.method for r in data}),
                 warning="Consistency does not establish truth or domain correctness"))
         # Every unadmitted claim is insufficient. Do not call it a successful
         # reconciliation merely because the contradictory evidence was rejected.

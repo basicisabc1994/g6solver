@@ -17,7 +17,7 @@ from g6.core.door import SENSITIVE_ENV, allowed_sensitive, invoke_checked
 
 from .assurance import canonical_json, sha256
 from .codes import (APPROVAL_REQUIRED, EXECUTION_INCOMPLETE, MODEL_MISSING, PLAN_TAMPERED, PREREQUISITE_UNMET,
-                    STEP_FAILED, refusal, settled)
+                    STEP_FAILED, VERIFIED_FLAG, refusal, settled)
 
 # Every name resolves to an existing G6 component and a fixed, documented op.
 # Models are declarative data, never arbitrary modules, code or pickle paths.
@@ -126,12 +126,25 @@ def step_digest(step: MethodStep) -> str:
     return sha256(canonical_json(asdict(step)))
 
 
+def frozen_plan(plan: MethodPlan) -> MethodPlan:
+    """A copy of ``plan`` made from one canonical rendering of all of it (claims, steps, missing), taken before
+    anything about the plan is checked: nothing in the copy aliases the caller's data, so what is checked next is
+    what runs. Raises TypeError or ValueError when the plan is not declarative JSON data."""
+    data = json.loads(canonical_json({"claims": [asdict(c) for c in plan.claims],
+                                      "steps": [asdict(s) for s in plan.steps], "missing": list(plan.missing)}))
+    claims = tuple(ClaimIR(c["id"], c["statement"], tuple(c["evidence_needs"]), c["models"], tuple(c["source_refs"]),
+                           c["origin"]) for c in data["claims"])
+    steps = tuple(MethodStep(s["id"], s["claim_id"], s["method"], s["component"], s["op"], s["params"], s["metric"],
+                             tuple(s["depends_on"])) for s in data["steps"])
+    return MethodPlan(claims, steps, tuple(data["missing"]), plan.translation_status)
+
+
 def _no_bare_verified(value: Any, under_card: bool = False) -> Any:
     """A copy with no ``verified`` field anywhere except in G6's own warning cards (INV-ENV-2): the door already
     corrected the state, so a component's own flag says nothing the state does not."""
     if isinstance(value, Mapping):
         return {k: _no_bare_verified(v, under_card or k == "warning_card") for k, v in value.items()
-                if under_card or k != "verified"}
+                if under_card or k != VERIFIED_FLAG}
     if isinstance(value, (list, tuple)):
         return [_no_bare_verified(v, under_card) for v in value]
     return value
@@ -232,19 +245,21 @@ class MixedMethodExecutor:
                               how_to_allow=how, registry=self.registry)
 
     def _run(self, step: MethodStep, params: bytes, head: dict[str, Any]) -> dict[str, Any]:
-        """One validated step through G6's door; every refusal keeps the door's own card, or names its own code."""
+        """One validated step through G6's door. A step the door refused, or did not pass, is the bridge's own
+        ``STEP_FAILED`` refusal, and keeps the door's own card whole under ``door``."""
         try:
             reply = self._invoke(step, json.loads(params))  # a fresh copy of the bytes that were checked
             card, request_id = reply["warning_card"], reply["request_id"]
+            door = {"warning_card": dict(card), "request_id": request_id}
             if "result" not in reply:  # refused, or failed, before any answer: the door's error and card say why
-                return refusal(card["code"], str(reply["error"]), card=card, request_id=request_id, **head)
+                return refusal(STEP_FAILED, str(reply["error"]), door=door, request_id=request_id, **head)
             response = reply["result"]
             if not isinstance(response, dict):
                 raise ValueError("registry did not return an evidence envelope")
             response = _no_bare_verified(response)
             if reply.get("ok") is not True:  # the door's own verdict; anything but a usable reply is not a run
-                return refusal(card["code"], f"{step.component}.{step.op}: G6's door did not pass its answer",
-                               card=card, request_id=request_id, result=response, **head)
+                return refusal(STEP_FAILED, f"{step.component}.{step.op}: G6's door did not pass its answer",
+                               door=door, request_id=request_id, result=response, **head)
             # The door decided the state; a composed step never claims more than qualified-draft.
             return {"completion_state": "qualified-draft", **head, "warning_card": card, "request_id": request_id,
                     "result": response}
@@ -256,11 +271,12 @@ class MixedMethodExecutor:
             return refusal(APPROVAL_REQUIRED, "execution requires caller approval; planning alone does no work",
                            steps=[], method_execution_coverage=0.0)
         try:
+            # Freeze, then check, then run the frozen copy: the plan is copied whole first, the copy is checked against
+            # the canonical routing of its own claims, and only the copy's steps run, from their own bytes.
+            plan = frozen_plan(plan)
             canonical = MethodRouter().plan(plan.claims)
             if canonical.steps != plan.steps or canonical.missing != plan.missing:
                 raise ValueError("method steps differ from canonical allowlisted routing")
-            # What was checked is what runs: each validated step's parameters are frozen as bytes now, so a caller's
-            # later edit of the plan's dictionaries cannot reach a pending step.
             frozen = [(step, canonical_json(dict(step.params)), step_digest(step)) for step in canonical.steps]
         except (TypeError, ValueError) as exc:
             return refusal(PLAN_TAMPERED, str(exc), steps=[], method_execution_coverage=0.0)

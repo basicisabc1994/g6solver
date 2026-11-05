@@ -54,7 +54,7 @@ class ProblemSignatureInput(BaseModel):
     domain: str = Field(min_length=1, max_length=200)
     uncertainty: str = Field(min_length=1, max_length=200)
     claim_kind: str = Field(min_length=1, max_length=200)
-    risk: int = Field(ge=0, le=3, description="the risk tier's number: 0 to 3 for R0 to R3")
+    risk: int = Field(ge=0, le=3, strict=True, description="the risk tier's number: 0 to 3 for R0 to R3")
     budget: float = Field(ge=0, allow_inf_nan=False)
     available_evidence: list[str] = Field(default_factory=list, max_length=100)
 

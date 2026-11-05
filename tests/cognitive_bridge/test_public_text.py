@@ -18,10 +18,12 @@ PUBLIC = sorted([*(ROOT / "docs" / "cognitive_bridge").glob("*.md"),
 #: The tool that wrote the PR's first draft, and the words G6 keeps out of what it says of a check (the verb for
 #: establishing beyond doubt, in each form, its noun, and the maturity word for untried work).
 BARRED = re.compile(r"(?i)chatgpt|\bpro(?:v(?:e|ed|en|es|ing|ably)|ofs?)\b|experiment(?:al)")
-#: ``verified`` said of something, rather than G6's state or field named as a token (in backticks or quotes, as the code
-#: names the key it drops); G6's own warning card carries the flag ``"verified": false`` (INV-ENV-2), which says the
-#: opposite, so the example dossier's cards may show it.
-BARE_VERIFIED = re.compile(r'(?<![`"\'])\bverified\b(?![`"\'])')
+#: ``verified`` said of something, rather than G6's state named in backticks; G6's own warning card carries the flag
+#: ``"verified": false`` (INV-ENV-2), which says the opposite, so the example dossier's cards may show it.
+BARE_VERIFIED = re.compile(r'(?<!`)\bverified\b(?!`)(?!": false)')
+#: The one line that names G6's flag as a key, so the code can refuse it and drop it from a result; exempt by file and
+#: exact text, so a quoted ``verified`` anywhere else is still caught.
+EXEMPT = {("src/g6/cognitive_bridge/codes.py", 'VERIFIED_FLAG = "verified"')}
 
 
 def test_the_checker_that_runs_in_process_is_named_for_what_it_is():
@@ -37,5 +39,14 @@ def test_the_public_text_claims_no_more_than_the_code():
     assert PUBLIC
     hits = [f"{path.relative_to(ROOT).as_posix()}:{n}: {match.group(0)}"
             for path in PUBLIC for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+            if (path.relative_to(ROOT).as_posix(), line.strip()) not in EXEMPT
             for pattern in (BARRED, BARE_VERIFIED) for match in pattern.finditer(line)]
     assert hits == []
+
+
+def test_the_exemption_is_one_line_and_a_quoted_verified_elsewhere_is_caught():
+    named = [(path, line) for path in PUBLIC for line in path.read_text(encoding="utf-8").splitlines()
+             if (path.relative_to(ROOT).as_posix(), line.strip()) in EXEMPT]
+    assert len(named) == len(EXEMPT) == 1
+    assert BARE_VERIFIED.search('the result is "verified" here') and BARE_VERIFIED.search("it was 'verified'")
+    assert not BARE_VERIFIED.search('"verified": false') and not BARE_VERIFIED.search("G6's `verified` state")

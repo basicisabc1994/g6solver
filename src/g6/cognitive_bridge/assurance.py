@@ -35,6 +35,12 @@ def canonical_json(value: Any) -> bytes:
                       ensure_ascii=True, allow_nan=False).encode("utf-8")
 
 
+def is_risk(value: Any) -> bool:
+    """A risk is the number of one of G6's tiers, ``R0`` to ``R3``: an ``int`` (never a ``bool``) from 0 to 3. The
+    standard and the problem context both take it by this one rule."""
+    return type(value) is int and 0 <= value <= 3
+
+
 @dataclass(frozen=True)
 class Criterion:
     id: str
@@ -73,7 +79,7 @@ class DomainStandard:
             raise ValueError("standard requires identity, edition, jurisdiction and authority")
         if not HEX64.fullmatch(self.source_sha256):
             raise ValueError("standard source must have a 64-digit SHA-256 pin")
-        if not self.criteria or not (0 <= self.risk <= 3):
+        if not self.criteria or not is_risk(self.risk):
             raise ValueError("standard requires criteria and a risk tier: risk 0 to 3 for R0 to R3")
         if len({x.id for x in self.criteria}) != len(self.criteria):
             raise ValueError("duplicate standard criterion IDs")
@@ -103,6 +109,11 @@ class EvidenceArtifact:
     claim_id: str
 
     def __post_init__(self) -> None:
+        # The content is immutable bytes from the moment the artifact is made: a bytes-like buffer is copied now, so a
+        # later change to the caller's buffer cannot change what is checked after its manifest was recorded.
+        if not isinstance(self.content, (bytes, bytearray, memoryview)):
+            raise TypeError("evidence content must be bytes")
+        object.__setattr__(self, "content", bytes(self.content))
         if not all((self.id, self.content, self.kind, self.claimed_by, self.source_ref, self.claim_id)):
             raise ValueError("evidence needs bytes, claim, origin, kind and source reference")
         if len(self.content) > 2_000_000:
@@ -229,6 +240,9 @@ class InProcessAssuranceEvaluator:
                  attestation: ProfessionalAttestation | None = None) -> CandidateDossier:
         if not candidate_actor or candidate_actor == self.evaluator_id:
             raise ValueError("producer and evaluator must have distinct identities")
+        # One frozen set, taken before anything is checked: the checks, the dossier and the review scope all read these
+        # copies, never the caller's mappings (an artifact is frozen, its content immutable bytes).
+        artifacts, verifiers, documentation = dict(artifacts), dict(verifiers), dict(documentation)
         if set(artifacts) - {c.id for c in standard.criteria}:
             raise ValueError("artifact supplied for undeclared criterion")
         if set(verifiers) - {c.verifier_id for c in standard.criteria}:

@@ -32,13 +32,15 @@ held-out trials. Every result is `qualified-draft` or `blocked-escalated`: it ne
 - `update`: the posterior after one observed probe outcome, under the probe's stated likelihood.
 - `plan_methods`: the typed G6 solver steps for each claim's evidence needs; the steps are planned, not run.
 - `rank_methods`: a cold-start ranking of method variants for a problem signature; no trial data over MCP. A
-  context's `risk` is the number of its risk tier (`1` is R1); at R2 and R3 no exploration bonus applies.
+  context's `risk` is the number of its risk tier, an integer from 0 to 3 (`1` is R1; `true`, `1.0` or `"1"` is
+  refused); at R2 and R3 no exploration bonus applies.
 - `assurance_schema`: the documentary fields an assurance dossier must fill, and the two states it can carry.
 
 ## Reading the result
 
 Every refusal is `blocked-escalated` with its code in `code` and in its `warning_card`, made in one place
-(`codes.refusal`). A parameter an op does not take is `G6_E_INPUT_VALIDATION`; input the op cannot use (priors that
+(`codes.refusal`), which writes those fields itself and refuses a caller's value for them or for `verified`. A
+parameter an op does not take is `G6_E_INPUT_VALIDATION`; input the op cannot use (priors that
 do not sum to one, a probe that does not predict every hypothesis, a plan with no claim) is
 `G6_E_COGNITIVE_BRIDGE_INPUT`. A need with no typed model is `G6_E_COGNITIVE_MODEL_MISSING`; a mandatory method with no
 affordable variant `G6_E_COGNITIVE_SELECTION_INCOMPLETE`; a required method no claim needs
@@ -48,14 +50,15 @@ From Python: running a plan without approval is `G6_E_COGNITIVE_APPROVAL_REQUIRE
 that no longer matches its pin `G6_E_COGNITIVE_PLAN_TAMPERED`, an orchestrator plan that is not approved, not fully
 specified or has no registry `G6_E_COGNITIVE_EXECUTION_NOT_APPROVED`, and an incomplete compiled plan
 `G6_E_COGNITIVE_COMPILE_BLOCKED`, each before anything runs. A step whose prerequisite failed is
-`G6_E_COGNITIVE_PREREQUISITE_UNMET`, one whose call raised `G6_E_COGNITIVE_STEP_FAILED`, one G6's door refused keeps
-the door's code, and the run is then `G6_E_COGNITIVE_EXECUTION_INCOMPLETE`. A dossier with a blocker is
+`G6_E_COGNITIVE_PREREQUISITE_UNMET`, one whose call raised or that G6's door refused or did not pass
+`G6_E_COGNITIVE_STEP_FAILED` (the door's own card is kept under `door`), and the run is then
+`G6_E_COGNITIVE_EXECUTION_INCOMPLETE`. A dossier with a blocker is
 `G6_E_COGNITIVE_DOSSIER_BLOCKED`; a refused guard change `G6_E_COGNITIVE_ADAPTATION_REFUSED`; a proposition
 `G6_E_COGNITIVE_EVIDENCE_CONTESTED`, `G6_E_COGNITIVE_EVIDENCE_REFUTED` or `G6_E_COGNITIVE_EVIDENCE_UNDETERMINED`, and the
 reconciliation `G6_E_COGNITIVE_EVIDENCE_NOT_RECONCILED`; an agent with no executable probe `G6_E_COGNITIVE_NO_PROBE`.
 An assessment carries `warning_card`, `evidence`, `request_id` and `run_id`: `G6_E_COGNITIVE_ASSURANCE_BLOCKED`
 names what failed, and `G6_E_COGNITIVE_NOT_PROMOTED` says the checks passed in this process and nothing more. It
-credits only a run this orchestrator executed, from its own record, step by step.
+credits only a run this orchestrator executed, from its own record, for the claim that run executed, step by step.
 
 ## Alone and composed
 
@@ -66,17 +69,19 @@ Composed (Python only):
 
 - `MixedMethodExecutor` runs an approved plan's steps through G6's checked door (`g6.core.door.invoke_checked`, the
   call `g6.invoke` makes): a sensitive op runs only when the person allowed it (`allow=` or `G6_MCP_SENSITIVE`), and
-  a component's own `verified` is held at `qualified-draft` with the door's card. It re-derives the plan first and
-  refuses an edited one (`G6_E_COGNITIVE_PLAN_TAMPERED`), and runs nothing without approval
-  (`G6_E_COGNITIVE_APPROVAL_REQUIRED`).
+  a component's own `verified` is held at `qualified-draft` with the door's card. It copies the plan whole first,
+  checks the copy against the canonical routing, refuses an edited one (`G6_E_COGNITIVE_PLAN_TAMPERED`) and runs
+  only that copy; it runs nothing without approval (`G6_E_COGNITIVE_APPROVAL_REQUIRED`).
 - `CognitiveAssuranceOrchestrator` joins the selector, the router, the executor and `InProcessAssuranceEvaluator`:
   compile, execute with approval, then assess the produced bytes against the standard's criteria.
 - The cross-method conflict gate reads stance and lineage by `epistemic_integrity`'s rules: one source repeated is
-  one lineage, and each proposition's status (contested, refuted, undetermined) is `adjudicate_claim`'s.
+  one lineage, and each proposition's status (contested, refuted, undetermined) is `adjudicate_claim`'s; a BLOCK or
+  ASK disposition, or a failure it triggered, refuses whatever the status says.
 - The adaptation gate's paired sign test is `reasoning.sign_test_p`, the statistic the meta-harness gate decides by,
-  at alpha divided by the number of evaluations. Its protected paths are `g6.core.adaptation_gate`'s, G6's core and
-  the files of the code that judges a bridge result (`adaptation.judged_files`), compared as the file system resolves
-  the path.
+  at alpha divided by the number of evaluations. A change may write only the files the bridge declares adaptable
+  (`adaptation.ADAPTABLE`), compared by file identity however the path is spelled or linked, and never one
+  `g6.core.adaptation_gate` protects; every other path is refused. A paired trial credits only the change whose
+  candidate and baseline digests it names, and a control only the frozen suite it names.
 
 ## Failure modes it catches
 

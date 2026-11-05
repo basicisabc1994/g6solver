@@ -6,16 +6,17 @@ change protected evaluators, mint G6 `verified`, or bypass owner merge.
 Real separation requires evaluator-owned records plus isolated execution.
 
 The gate's statistic is the meta-harness gate's own (``g6.reasoning.sign_test_p`` at alpha / max_evaluations, the
-rule ``g6.metaharness.schema.EvidencePolicy`` states). Its protected paths are G6's own
-(``g6.core.adaptation_gate.protected_hits``), the files that define the code judging a bridge result, listed from those
-functions themselves (:func:`judged_files`), and G6's core, each compared as the file system resolves the candidate
-path; its other conditions are stricter additions on top.
+rule ``g6.metaharness.schema.EvidencePolicy`` states). What a change may write is an allow-list: only the files this
+component declares adaptable (:data:`ADAPTABLE`), compared by file identity however a path is spelled or linked, and
+never one G6's own policy protects (``g6.core.adaptation_gate.protected_hits``); everything else is refused. Its other
+conditions are stricter additions on top.
 """
 from __future__ import annotations
 
 import inspect
 import os
 import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Any, Callable, Sequence
@@ -27,9 +28,6 @@ from .assurance import CandidateDossier
 from .codes import ADAPTATION_REFUSED, refusal, settled
 
 HEX = re.compile(r"^[0-9a-f]{64}$")
-PROTECTED_PARTS = ("test", "fixture", "oracle", "verifier", "evaluator", "approval", "promotion", "gate",
-                   "certificate", "invariant", "policy", "ledger", "vault", "harness",
-                   "risk", "benchmark", "pyproject.toml", "lock", ".github")
 
 
 @dataclass(frozen=True)
@@ -125,10 +123,16 @@ class PairedTrial:
     critical: bool
     phase: str
     evaluator_receipt: str
+    #: What was evaluated: the candidate patch's and the baseline's digests (``GuardChange.code_digest`` and
+    #: ``baseline_digest``). A trial credits only the change with both; a trial that names neither credits nothing.
+    candidate_digest: str = ""
+    baseline_digest: str = ""
 
     def __post_init__(self) -> None:
         if not self.case_id or not self.evaluator_receipt or not HEX.fullmatch(self.suite_digest):
             raise ValueError("paired trial must bind suite and evaluator receipt")
+        if any(x and not HEX.fullmatch(x) for x in (self.candidate_digest, self.baseline_digest)):
+            raise ValueError("a paired trial's candidate and baseline are SHA-256 pins")
         if self.phase not in ("holdout", "shadow"):
             raise ValueError("paired trial must be separately held out")
         if any(type(x) is not bool for x in (self.baseline_passed, self.adapted_passed, self.critical)):
@@ -141,12 +145,17 @@ class ControlTrial:
     correct_detection: bool
     category: str  # negative | positive
     evaluator_receipt: str
+    #: What the control evaluated: the frozen suite's digest (``GuardChange.suite_digest``). A control credits only the
+    #: change whose suite it names; a control that names none credits nothing.
+    suite_digest: str = ""
 
     def __post_init__(self) -> None:
         if self.category not in ("negative", "positive"):
             raise ValueError("control must be known-positive or planted-negative")
         if type(self.correct_detection) is not bool or not self.case_id or not self.evaluator_receipt:
             raise ValueError("control outcome invalid")
+        if self.suite_digest and not HEX.fullmatch(self.suite_digest):
+            raise ValueError("a control's suite is a SHA-256 pin")
 
 
 #: The one-sided exact sign test the meta-harness gate decides by (``g6.metaharness.evaluate`` uses it): one rule for
@@ -154,16 +163,16 @@ class ControlTrial:
 exact_sign_p = sign_test_p
 
 
-#: The checkout and its ``src`` folder: a relative candidate path is read against each, as a change names it.
-_SRC = Path(__file__).resolve().parents[2]
-_ROOT = _SRC.parent
+#: The checkout: a changed path is named relative to it, as a change names it.
+_ROOT = Path(__file__).resolve().parents[3]
 
 
 def judged_files() -> frozenset[Path]:
     """The source files that define the code judging a bridge result or its evidence, listed from the functions and
     classes themselves (never from file names): this gate and its path guard, the assurance evaluator and its checker
     type, the selector that credits trials, the conflict gate, the orchestrator's assessment, the executor, the one maker
-    of refusals, the sign test, ``g6.epistemic_integrity``'s adjudication, G6's protected-path policy and G6's door."""
+    of refusals, the sign test, ``g6.epistemic_integrity``'s adjudication, G6's protected-path policy and G6's door.
+    The gate admits none of them whatever :data:`ADAPTABLE` says (a declaration naming one admits nothing)."""
     from g6.core import door, reliability_envelope
     from g6.epistemic_integrity import adjudicator
     from g6.epistemic_integrity.markers import markers
@@ -180,49 +189,66 @@ def judged_files() -> frozenset[Path]:
     return frozenset(Path(inspect.getsourcefile(judge)).resolve() for judge in judges)
 
 
+#: The only files a guard change to this component may write, relative to the checkout: the bridge's guard modules,
+#: which it does not ship yet (a change creates them). Every other path is refused, the judges and G6's core among
+#: them; a candidate is compared with these by file identity (:func:`_identity`), never by its spelling.
+ADAPTABLE: tuple[str, ...] = ("src/g6/cognitive_bridge/guard.py", "src/g6/cognitive_bridge/method_adapter.py")
+
+
 def _absolute(path: str) -> bool:
     return Path(path).is_absolute() or PureWindowsPath(path).is_absolute() or path.startswith(("/", "\\"))
 
 
-def _resolved(path: str) -> set[str]:
-    """Every file the candidate path can name, as the file system resolves it: absolute as given, or relative to the
-    checkout or to its ``src`` folder; links and ``..`` resolved, and case folded where the file system folds it."""
-    candidate = Path(path)
-    bases = [candidate] if candidate.is_absolute() else [_ROOT / candidate, _SRC / candidate]
+def _identity(path: Path) -> tuple[Any, ...]:
+    """What ``path`` names, however it is spelled or linked: an existing file's (device, inode), or, for a file not
+    made yet, the location the file system resolves it to (links followed, case folded where the file system folds
+    it). Raises for anything a change may not write by name: not a regular file, or a file with another name too (a
+    hard link)."""
+    resolved = os.path.normcase(os.path.realpath(path))
+    if not os.path.lexists(resolved):
+        return ("new", resolved)
+    found = os.stat(resolved)
+    if not stat.S_ISREG(found.st_mode) or found.st_nlink != 1:
+        raise ValueError(f"{path} is not a regular file with one name")
+    return ("file", found.st_dev, found.st_ino)
+
+
+def _declared() -> frozenset[tuple[Any, ...]]:
+    """The identities of :data:`ADAPTABLE`. Raises when a declared file is reached through a link or is one of the
+    judges (:func:`judged_files`): then the declaration itself is wrong and nothing is admitted."""
+    judges = {("file", found.st_dev, found.st_ino) for found in map(os.stat, judged_files())}
     found = set()
-    for base in bases:
-        try:
-            found.add(os.path.normcase(os.path.realpath(base)))
-        except (OSError, ValueError):
-            continue
-    return found
+    for name in ADAPTABLE:
+        path = _ROOT / name
+        if os.path.normcase(os.path.realpath(path)) != os.path.normcase(os.path.abspath(path)):
+            raise ValueError(f"the adaptable file {name} is reached through a link")
+        found.add(_identity(path))
+    if found & judges:
+        raise ValueError("an adaptable file is one of the files that judge the bridge")
+    return frozenset(found)
 
 
-def _judged(path: str) -> bool:
-    """The path resolves to a file that judges the bridge (:func:`judged_files`) or into G6's core."""
-    judged = {os.path.normcase(str(f)) for f in judged_files()}
-    core = os.path.normcase(str(_SRC / "g6" / "core"))
-    return any(resolved in judged or resolved == core or resolved.startswith(core + os.sep)
-               for resolved in _resolved(path))
+def _admitted(path: str, declared: frozenset[tuple[Any, ...]]) -> bool:
+    """``path`` (relative to the checkout) is one of the declared adaptable files; any error refuses it."""
+    if _absolute(path):
+        return False
+    try:
+        return _identity(_ROOT / path) in declared
+    except Exception:
+        return False
 
 
 def protected_paths(paths: Sequence[str]) -> list[str]:
-    """G6's protected paths (``g6.core.adaptation_gate.protected_hits``), each path that resolves to code that judges
-    the bridge or into G6's core (:func:`judged_files`, compared as the file system resolves the path, in any spelling),
-    and this gate's stricter local denylist: an absolute path, a ``..`` step, and the PR's protected name parts.
-
-    A failure in G6's existing policy fails closed rather than being silently
-    replaced by this extension's shorter static list.
-    """
-    local = [p for p in paths if _absolute(p) or ".." in p.replace("\\", "/").split("/")
-             or p.replace("\\", "/").startswith(("src/g6/core/", "g6/core/", ".github/"))
-             or any(part in p.lower().replace("\\", "/") for part in PROTECTED_PARTS)]
+    """The changed paths this gate refuses: every path that is not one of the files this component declares adaptable
+    (:data:`ADAPTABLE`, compared by file identity), and every path G6's own policy protects
+    (``g6.core.adaptation_gate.protected_hits``). An allow-list, so a judge nobody listed is refused too. Any error
+    resolving a path refuses that path; an error in the declaration or in G6's policy refuses every path."""
     try:
-        upstream = protected_hits(tuple(paths))
-        judged = [p for p in paths if _judged(p)]
+        declared = _declared()
+        upstream = set(protected_hits(tuple(paths)))
     except Exception:
-        return list(paths)  # upstream policy or the listing broken => refuse every changed path
-    return sorted(set(local).union(upstream, judged))
+        return sorted(set(paths))
+    return sorted(p for p in set(paths) if p in upstream or not _admitted(p, declared))
 
 
 class AdaptationPromotionGate:
@@ -240,6 +266,8 @@ class AdaptationPromotionGate:
 
     def assess(self, change: GuardChange, pairs: Sequence[PairedTrial],
                controls: Sequence[ControlTrial], *, detected_failures: Sequence[str]) -> dict[str, Any]:
+        # One frozen copy, taken before anything is checked: what is admitted is what is counted.
+        pairs, controls, detected_failures = tuple(pairs), tuple(controls), tuple(detected_failures)
         violations: list[str] = []
         if change.candidate_actor == change.evaluator_actor:
             violations.append("candidate and evaluator are not independent")
@@ -256,6 +284,10 @@ class AdaptationPromotionGate:
             violations.append("test set overlaps adaptation/development cases")
         if any(x.suite_digest != change.suite_digest for x in pairs):
             violations.append("evaluation suite digest differs from frozen suite")
+        if any((x.candidate_digest, x.baseline_digest) != (change.code_digest, change.baseline_digest) for x in pairs):
+            violations.append("a paired trial was not measured on this change's candidate and baseline")
+        if any(x.suite_digest != change.suite_digest for x in controls):
+            violations.append("a control was not run on this change's frozen suite")
         if any(x.phase != "holdout" for x in pairs):
             violations.append("promotion measurements must come from held-out cases")
         if any(x.case_id in {c.case_id for c in controls} for x in pairs):
@@ -313,4 +345,4 @@ class AdaptationPromotionGate:
 
 __all__ = ["FailureModeFinding", "MitigationHypothesis", "CompositionalFailureModel",
            "detect_failure_modes", "GuardChange", "PairedTrial", "ControlTrial",
-           "AdaptationPromotionGate", "exact_sign_p", "judged_files", "protected_paths"]
+           "AdaptationPromotionGate", "ADAPTABLE", "exact_sign_p", "judged_files", "protected_paths"]
