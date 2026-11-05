@@ -219,7 +219,8 @@ NDJSON_USES = {
     ("run.py", "reviews_until_clean", "numbered_stream"):
         [("run_session", SESSION), ("session", "a host repair's stream: host_session writes it and host_facts reads it, " + HANDED)],
     ("run.py", "review_once", "numbered_stream"): [("run_session", SESSION)],
-    ("run.py", "rule_step", "tagged_stream"): [("run_session", SESSION)],
+    ("run.py", "rule_step", "tagged_stream"):
+        [("run_session", SESSION), ("session", "a host rule step's stream: host_session writes it and host_facts reads it, " + HANDED)],
     ("run.py", "reviews_with_bug_test", "numbered_stream"): [("run_session", SESSION)],
     ("run.py", "_run_task", "stream"):
         [("turn", "the host session's stream: host_session writes it and host_facts reads it, " + HANDED),

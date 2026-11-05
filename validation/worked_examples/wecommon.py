@@ -13,7 +13,7 @@ import hashlib
 import json
 import os
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -225,6 +225,10 @@ class RunFolder:
     archive: Archive
     path: Path
     rel: str
+    #: How a status becomes the run's ending, for a run whose end is decided from durable state (arm K3: ``run.ended_as``): every
+    #: ending this folder writes (``end``, so ``failed`` and ``finish`` too) goes through it, so an ending written early says what
+    #: the run's end would say. None: the status as it is.
+    ending_rule: Callable[[str], str] | None = field(default=None, repr=False, compare=False)
 
     def write(self, name: str, data: str | bytes) -> Path:
         target = self.path / name
@@ -250,6 +254,7 @@ class RunFolder:
         """The run's ending, in a file of its own (``ENDING``), written the moment it is decided and never written again: an ending
         decided later is not written over it, and a failure after it is recorded beside it (``failed``)."""
         if not (self.path / ENDING).exists():
+            status = self.ending_rule(status) if self.ending_rule is not None else status
             self.write_json(ENDING, {"status": status, "why": why, "agent_started": agent_started, "at": now()})
 
     def failed(self, why: str, *, agent_started: bool) -> None:
@@ -364,7 +369,8 @@ def ending(root: Path, row: Mapping[str, Any]) -> dict[str, Any] | None:
     """How the run ``row["run"]`` ended, read from its folder under the archive ``root``: the one source every entry point asks
     whether a run may be scored and whether it was made (``scoreable``, ``on_patch``; ``run.check``, ``run.r3_done``,
     ``loop.one``, ``loop.rescore``, ``compare.saved``). Its ending file when it has one (``ENDING``), its status "error" when a
-    failure was recorded after an ending that would be scored (``AFTER``), while "limited" and "refused" stay as they are. A host
+    failure was recorded after an ending that would be scored (``AFTER``), while one with no verdict to give stays as it is
+    ("limited", "refused", and arm K3's "no_first_patch"), so a failure after it never makes it more scoreable. A host
     run with no ending file has no ending (None, never scored): an empty or missing record says nothing. Any other run's ending is
     ``row`` itself, its status as its own record gives it, as before; so is that of a row whose run has no folder."""
     rel = row.get("run")
@@ -380,7 +386,7 @@ def ending(root: Path, row: Mapping[str, Any]) -> dict[str, Any] | None:
     status = str(first.get("status") or "") if isinstance(first, dict) else ""
     if not status:
         return None
-    return {**first, "status": status if status in UNSCORED or not (folder / AFTER).exists() else "error"}
+    return {**first, "status": status if status not in SCORED or not (folder / AFTER).exists() else "error"}
 
 
 def _host(root: Path, rel: str, folder: Path, row: Mapping[str, Any]) -> bool:

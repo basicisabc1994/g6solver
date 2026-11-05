@@ -2718,20 +2718,26 @@ def kept(ctx: Context, task: Task, agent: str, base: str, run: Any, name: str, d
 
 
 def rule_step(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, tally: c.Tally,
-              stop: float, started: Any) -> str:
+              stop: float, started: Any, session: Callable[[str, str], str] | None = None) -> str:
     """Arm K3's step, after the first patch is kept: the same session resumed with ``RULE_STEP``, as a repair resumes it, on the
     run's one tally and stop, so its turns and spend count against the run's allowance. ``started`` is the run's watchdog (or,
     for a unit called alone, the run's start, whose deadline it makes one for): the step does not start once it has fired, and
     the session gets no prompt after it and is ended by it. Its ending (``step_ending``) reads its own result only, never one an
     earlier session left in the tally, and that result must be the first session's: any other session's is "error". From a
-    success, the tree is then kept as ``RULE_PATCH``, by the same watchdog."""
+    success, the tree is then kept as ``RULE_PATCH``, by the same watchdog. ``session``: the host executor's, as a repair's
+    (``reviews_until_clean``): the same host session resumed, which returns how it ended ("" when cleanly, its exit code read
+    by ``host_ending``, so a clean one is a clean exit); by default the same session continued in the container."""
     dog = started if isinstance(started, Watchdog) else Watchdog(deadline_of(started))
     if not dog.may_start("rule session"):
         return "timeout"
     before, codes = tally.result, []
     first = str((before or {}).get("session_id") or "")                # the session the step continues
-    stopped = run_session(ctx, run, agent, scout_again(docker_args), key, tally, RULE_STEP, c.NDJSON["tagged_stream"].format(tag="rule"),
-                          seconds=dog.left(), stop_usd=stop, codes=codes, deadline=dog)
+    if session is None:
+        stopped = run_session(ctx, run, agent, scout_again(docker_args), key, tally, RULE_STEP,
+                              c.NDJSON["tagged_stream"].format(tag="rule"), seconds=dog.left(), stop_usd=stop, codes=codes, deadline=dog)
+    else:
+        stopped = session(RULE_STEP, c.NDJSON["tagged_stream"].format(tag="rule"))
+        codes.append(None if stopped else 0)
     late = dog.end("rule session")
     own = tally.result if tally.result is not before else None      # ``Tally.feed`` keeps each result as a new dict
     ended = "timeout" if late and not stopped else step_ending(stopped, own, codes[-1] if codes else None, session=first)
@@ -2739,17 +2745,18 @@ def rule_step(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
 
 
 def rule_led_start(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, tally: c.Tally,
-                   stop: float, started: Any, first: tuple[str | None, int | None]) -> dict[str, str]:
+                   stop: float, started: Any, first: tuple[str | None, int | None],
+                   session: Callable[[str, str], str] | None = None) -> dict[str, str]:
     """Arm K3 from the end of its first session to its first review (``K3_STEPS``): the first session's ending, from its stop and
     exit (``first``) and its result, the only one in the tally yet; the first patch kept; the rule step, its session and then its
     patch kept. Each runs only when the one before it ended "finished"; the first that did not is where the run ends, with its
     status ("ended") and its step ("at"). Both are "" when every step finished. ``started``: the run's watchdog (or its start).
-    Whether the run has its baseline, and whether it ended late, is not decided here: the archive and the watchdog say, once,
-    at the run's end (``ended_as``)."""
+    ``session``: the host executor's (``rule_step``). Whether the run has its baseline, and whether it ended late, is not
+    decided here: the archive and the watchdog say, once, at the run's end (``ended_as``)."""
     dog = started if isinstance(started, Watchdog) else Watchdog(deadline_of(started))
     steps = (lambda: step_ending(first[0], tally.result, first[1]),
              lambda: kept(ctx, task, agent, base, run, FIRST_PATCH, dog),
-             lambda: rule_step(ctx, task, run, agent, base, docker_args, key, tally, stop, dog))
+             lambda: rule_step(ctx, task, run, agent, base, docker_args, key, tally, stop, dog, session))
     for at, step in zip(K3_STEPS, steps):
         ended = step()
         if ended != "finished":
@@ -2762,8 +2769,10 @@ def ended_as(ctx: Context, run: Any, status: str, *, dry: bool, dog: Watchdog | 
     (``has_baseline``) ends ``NO_FIRST_PATCH`` whatever stopped it: a preflight check, a cap, an error or an exception. One whose
     watchdog fired, or any of whose steps ended at or after the deadline (``Watchdog.late``), ends "timeout" whatever it returned,
     and is scored as K2's timed-out runs are. A refusal at its first prompt's check keeps its own status, and a dry run is never
-    scored."""
-    if dry or status == "refused" or ctx.variant != ROUND3 or not rule_led(ctx.arm):
+    scored. So does any ending with no verdict that is made again (``wecommon.UNSCORED``): a host run that met the subscription's
+    usage limit, or whose session G6 refused, is "limited" or "refused" wherever it stopped, as K2's is. On the host every ending
+    the run writes is decided by this rule (``RunFolder.ending_rule``), so the one written early is the one its end decides."""
+    if dry or status in c.UNSCORED or ctx.variant != ROUND3 or not rule_led(ctx.arm):
         return status
     if not has_baseline(ctx.archive, run.rel):
         return NO_FIRST_PATCH
@@ -3019,6 +3028,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
     agent, net, px, status = "", "", "", "error"
     workspace: Path | None = None
     dog: Watchdog | None = None          # arm K3's watchdog, from the run's deadline on
+    # every ending the run writes before its end (a host session's, the host's clock, a failure) is the one its end decides
+    run.ending_rule = lambda status: ended_as(ctx, run, status, dry=dry, dog=dog)
 
     def finish(status: str) -> dict[str, Any]:
         """The run's end, on every way out of this function, decided once (``ended_as``): for a K3 run from the archive and the
@@ -3178,9 +3189,14 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             box_mcp.mirror(workspace, ctx.docker, container=agent, repo=task.repo, user=USER, timeout=BOX_TIMEOUT_S)
             return ended
 
+        # the host session resumed, for K3's rule step and arm K's repairs alike; in the container they continue it there
+        resumed = (lambda note, name: turn(note, name, tally.session_id)) if host else None
         if host:
             record["agent_started"] = True
             ended = turn(text_in, c.NDJSON["stream"])
+            first_code = None if ended else 0     # its exit is read by host_ending: a clean session is a clean exit
+            if dog is not None:
+                dog.end("first session")
         else:
             proc = ctx.docker.popen(*docker_args, env=ctx.client_env(key))
             record["agent_started"] = True
@@ -3217,14 +3233,14 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             steps_ctx = copy.copy(ctx)       # every docker call of K3's steps bounded by the watchdog, which their reviews see too
             steps_ctx.docker, steps_ctx.watchdog = dog.docker(ctx.docker), dog
             record["rule_step"] = rule_led_start(steps_ctx, task, run, agent, base, docker_args, key, tally, stop, dog,
-                                                 (ended, first_code))
+                                                 (ended, first_code), session=resumed)
             ended = record["rule_step"]["ended"]
             record["first_patch_sha256"] = kept_digest(ctx.archive, run.rel)    # whether it is a baseline: has_baseline, at the end
         if critic_led and not dry and not ended:
             record["repairs"] = reviews_until_clean(steps_ctx, task, run, agent, base, docker_args, key, tally, stop, started,
                                                     lambda n: run_critic(steps_ctx, task, run, agent, base, title, text, n),
                                                     finding=finding_rule(ctx.arm),
-                                                    session=(lambda note, name: turn(note, name, tally.session_id)) if host else None,
+                                                    session=resumed,
                                                     tree=(lambda: hashlib.sha256(box_mcp.pack(workspace)).hexdigest()) if host else None,
                                                     after_step=stepped, **({"deadline": dog} if stepped else {}))
             if host:     # a host repair that did not end cleanly: the run ends as it did; a container K3 loop's end is read at finish
