@@ -311,7 +311,7 @@ class CognitiveAgent:
                 "remaining_budget": remaining, "limitations": [
                     "The hypotheses must be mutually exclusive and exhaustive within the model.",
                     "Probe predictions and likelihoods are assumptions, not independently measured facts.",
-                    "Tool observations and provenance are recorded, not independently verified here.",
+                    "Tool observations and provenance are recorded, not independently checked here.",
                     "An LLM proposal or high posterior probability is not a discovery certificate."]}
 
 

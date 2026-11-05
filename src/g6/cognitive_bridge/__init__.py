@@ -15,7 +15,7 @@ from .quantitative import ACQUISITION_FEATURES, UTILITY_TARGET, evaluated_trace_
 from .metacognition import (ProblemSignature, MethodVariant, EvaluatedTrial, SelectionDecision,
                             MetacognitiveMethodSelector, MetacognitivePlanner)
 from .assurance import (Criterion, DomainStandard, EvidenceArtifact, FrozenVerifier,
-                        ProfessionalAttestation, CandidateDossier, IndependentAssuranceEvaluator,
+                        ProfessionalAttestation, CandidateDossier, InProcessAssuranceEvaluator,
                         DOCUMENT_FIELDS)
 from .critique import CritiqueCandidate, CritiqueReport, LLMMetacognitiveCritic
 from .adaptation import (FailureModeFinding, MitigationHypothesis, CompositionalFailureModel,
@@ -42,7 +42,7 @@ __all__ = ["BayesianUpdater", "CognitiveAgent", "CognitiveBridgeBlock", "Cogniti
            "ProblemSignature", "MethodVariant", "EvaluatedTrial", "SelectionDecision",
            "MetacognitiveMethodSelector", "MetacognitivePlanner",
            "Criterion", "DomainStandard", "EvidenceArtifact", "FrozenVerifier",
-           "ProfessionalAttestation", "CandidateDossier", "IndependentAssuranceEvaluator", "DOCUMENT_FIELDS",
+           "ProfessionalAttestation", "CandidateDossier", "InProcessAssuranceEvaluator", "DOCUMENT_FIELDS",
            "CritiqueCandidate", "CritiqueReport", "LLMMetacognitiveCritic",
            "FailureModeFinding", "MitigationHypothesis", "CompositionalFailureModel",
            "detect_failure_modes", "GuardChange", "PairedTrial", "ControlTrial",

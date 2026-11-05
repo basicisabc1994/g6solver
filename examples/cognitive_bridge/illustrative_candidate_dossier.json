@@ -10,9 +10,9 @@
           "claimed_by": "research_agent",
           "id": "execution:claim1",
           "kind": "report",
-          "length": 1078,
-          "sha256": "c97bfea482a8ba4e6c3879623081308e899167fdcfe21ccac6d9f0a8dceec8a0",
-          "source_ref": "g6:execution:c97bfea482a8ba4e6c3879623081308e899167fdcfe21ccac6d9f0a8dceec8a0"
+          "length": 1659,
+          "sha256": "6ce86ba94e7aec9d93e829c86c21d001ab478d35fd0dcb04a4346a1ac0f9caae",
+          "source_ref": "g6:execution:6ce86ba94e7aec9d93e829c86c21d001ab478d35fd0dcb04a4346a1ac0f9caae"
         },
         "control_tests": {
           "negative_count": 1,
@@ -32,18 +32,18 @@
         "verifier_manifest": {
           "id": "tiny_truth_table",
           "negative_control_hashes": [
-            "5dadeb92d382b0f767d72cb68bb5ca59048617b59e1567c9c78c1a3aaf5b2e64"
+            "6a702c5e6745c6d71491d31d767bc66778dc98bf94f60780de20f372309b5de5"
           ],
           "owner": "external_evaluator",
           "positive_control_hashes": [
-            "c97bfea482a8ba4e6c3879623081308e899167fdcfe21ccac6d9f0a8dceec8a0"
+            "6ce86ba94e7aec9d93e829c86c21d001ab478d35fd0dcb04a4346a1ac0f9caae"
           ],
           "version_sha256": "0d8559b7f487997a34e8b71c57872e09d9fbc504a39281a6892a85bc0c07fecd"
         }
       }
     ],
     "completion_state": "qualified-draft",
-    "content_sha256": "86e968357045c2120bb21e05ea34e0df6d979abcbbece0a228978911490d948e",
+    "content_sha256": "7fc2967f33acc1ba7bf84b0b191b6f574edc4ebed97665e3779e7dc2aeb10ca7",
     "documentary_sections": {
       "assumptions": "Classical Boolean logic only, two named variables.",
       "counterexamples_and_refutations": "Negative control removes premise A, admitting A=False B=False etc.",
@@ -62,7 +62,7 @@
       "A model being true in its formalisation does not imply it describes reality.",
       "The SHA-256 content digest is unkeyed: it detects edits, not malicious rewrite and reissuance.",
       "Executor/custody isolation is not established by this in-process reference implementation.",
-      "An assurance dossier is not professional accreditation, an audit opinion, or G6 verified status."
+      "An assurance dossier is not professional accreditation, an audit opinion, or a result G6 promoted."
     ],
     "metrics": {
       "advisory_exceptions": 0,
@@ -76,16 +76,17 @@
     "professional_review": {
       "authenticated": false,
       "reason": "not requested at this risk level",
-      "required": false
+      "required": false,
+      "risk_tier": "R1"
     },
-    "promotion_authority": "none: G6's independent door must replay for verified",
+    "promotion_authority": "none: only a G6 door that re-runs a check can promote a result",
     "schema": "g6.cognitive_assurance.dossier/1",
     "scope_decision": "all_declared_checks_passed_in_this_evaluator",
     "standard": {
       "authority": "Illustrative local rubric; NOT a professional or accredited standard",
       "criteria": [
         {
-          "description": "Prove entailment over the two Boolean symbols",
+          "description": "Check entailment over the two Boolean symbols",
           "expected_artifact_kind": "report",
           "failure_modes": [
             "false_confidence"
@@ -105,9 +106,15 @@
       "risk": 1,
       "source_sha256": "527e7f48c11da68080fe9be975090e8e839b2bc2b120f58a9c405e2de86a7e87"
     },
-    "standard_digest": "fa7a01a526648910d7d31f91c5f2455a41eef208a9e1aa0c091578c0f4bca9eb"
+    "standard_digest": "1cb9d446acc2117e1790bccef585ffe4ca21ea102c8e548ed529d219b3816d9f"
   },
   "epistemic_reconciliation": null,
+  "evidence": [
+    {
+      "source": "dossier:7fc2967f33acc1ba7bf84b0b191b6f574edc4ebed97665e3779e7dc2aeb10ca7",
+      "summary": "assurance dossier for claim claim1"
+    }
+  ],
   "failure_mode_findings": [],
   "metacognitive_selection": {
     "admitted_trials": 0,
@@ -148,15 +155,16 @@
     "claim_id": "claim1",
     "completion_state": "qualified-draft",
     "limits": [
-      "Only the provided models were executed; model semantics and data provenance were not verified.",
+      "Only the provided models were executed; model semantics and data provenance were not checked.",
       "A valid formal model does not establish that the natural language formalisation is accurate."
     ],
     "measured_insight": "method outputs and their original metrics, not a synthetic truth score",
     "method_execution_coverage": 1.0,
     "method_execution_coverage_definition": "executed non-blocked method steps / requested executable steps",
     "missing": [],
+    "run_id": "80ee0b6c3b374853b5be15e8b05ca040",
     "selection_policy_digest": "3418ce3bfccde9852017d9ae65d063eb87f3c065925c1b298bdcf013dada27ff",
-    "standard_digest": "fa7a01a526648910d7d31f91c5f2455a41eef208a9e1aa0c091578c0f4bca9eb",
+    "standard_digest": "1cb9d446acc2117e1790bccef585ffe4ca21ea102c8e548ed529d219b3816d9f",
     "steps": [
       {
         "claim_id": "claim1",
@@ -166,6 +174,7 @@
         "method": "formal",
         "metric": "validity_or_counterexample_under_formalised_assumptions",
         "op": "check_validity",
+        "request_id": "db85fea77fae",
         "result": {
           "completion_state": "qualified-draft",
           "component": "formal",
@@ -179,11 +188,34 @@
             "A": "Bool",
             "B": "Bool"
           }
+        },
+        "warning_card": {
+          "code": "G6_E_QUALIFIED_DRAFT",
+          "message": "formal.check_validity: it reported a qualified draft: usable with caution",
+          "next_step": "Inspect the degraded invocation envelope before trusting the result.",
+          "risks": [
+            "formal.check_validity: it reported a qualified draft: usable with caution"
+          ],
+          "severity": "amber",
+          "suggested_action": "Inspect the degraded invocation envelope before trusting the result.",
+          "verified": false,
+          "why": "formal.check_validity: it reported a qualified draft: usable with caution"
         }
       }
     ]
   },
   "next_action": "submit frozen artifact/check bundle to independent G6 promotion door",
-  "verified": false,
-  "warning": "Independent external custody and G6 door replay are NOT established here."
+  "request_id": "c943f3dabf92",
+  "run_id": "80ee0b6c3b374853b5be15e8b05ca040",
+  "warning": "Independent external custody and G6 door replay are NOT established here.",
+  "warning_card": {
+    "code": "G6_E_COGNITIVE_NOT_PROMOTED",
+    "message": "the checks this process ran passed. Independent external custody and G6 door replay are NOT established here.",
+    "next_step": "Inspect the degraded invocation envelope before trusting the result.",
+    "risks": [],
+    "severity": "amber",
+    "suggested_action": "Inspect the degraded invocation envelope before trusting the result.",
+    "verified": false,
+    "why": "the checks this process ran passed. Independent external custody and G6 door replay are NOT established here."
+  }
 }

@@ -22,7 +22,7 @@ The bridge uses G6's canonical nouns (`task`, `run`, `evidence`, `envelope`, `ri
 
 A universal learning system needs an interface by which quantitative optimisers, heuristics, symbolic solvers, causal models, graph systems and LLM-based research strategies may be swapped without changing the surrounding task contract. G6's differentiator is not the presence of these solvers. It is a **compilation-and-assurance boundary** allowing their output to be independently checked against the task's *actual* acceptance obligations.
 
-Novelty **hypothesis** (not an experimentally established claim): context-dependent choice of representation and computation, constrained by independently verified epistemic obligations, can outperform fixed reasoning pipelines on reliable progress per unit resource, without allowing the learned selector to weaken the standard that judges it. This remains to be validated against appropriate baselines.
+Novelty **hypothesis** (not a claim established by measurement): context-dependent choice of representation and computation, constrained by independently checked epistemic obligations, can outperform fixed reasoning pipelines on reliable progress per unit resource, without allowing the learned selector to weaken the standard that judges it. This remains to be validated against appropriate baselines.
 
 The design has five separately accountable roles:
 
@@ -42,7 +42,7 @@ Define a task as
 
 where \(I\) is the user's intended outcome, \(G\) is the reviewable claim/constraint graph, \(S\) is an authoritative versioned set of standards, \(J\) is jurisdiction, \(R\) is material risk, and \(B\) is a computational/financial budget.
 
-The candidate proposes an intermediate representation \(M\) and transformation \(\phi: I\rightarrow M\). **The fidelity of \(\phi\) is an additional obligation, not implied by proving anything about \(M\).**
+The candidate proposes an intermediate representation \(M\) and transformation \(\phi: I\rightarrow M\). **The fidelity of \(\phi\) is an additional obligation, not implied by establishing anything about \(M\).**
 
 Each method alternative is a tuple
 
@@ -162,7 +162,7 @@ p_{\mathrm{sign}}=2^{-(W+L)}\sum_{k=W}^{W+L}\binom{W+L}{k}.
 
 A preregistered conservative multiple-testing threshold is \(\alpha/m\), where \(m\) is the maximum number of adaptation candidates evaluated. The reference gate additionally requires minimum numbers of untouched pairs and disagreements, positive and negative controls, authentic evaluator receipts, bound code/suite digests, no overlap with development cases, a net positive advantage and **zero regression on critical held-out obligations**. Passing means at most *recommend isolated shadow*. Owner authorisation is still required.
 
-This **does not** prove monotonic improvement in the deployment distribution. The guarantee is a *bounded nonregression observation on the frozen test set* plus an observed positive paired effect under specific assumptions. Maintain ongoing monitoring, canary cohorts, distribution-shift detection, recall/rollback, fresh tests and independent reviews after changes. Do not repeatedly inspect the same holdout until it stops being held out.
+This **does not** show monotonic improvement in the deployment distribution. The guarantee is a *bounded nonregression observation on the frozen test set* plus an observed positive paired effect under specific assumptions. Maintain ongoing monitoring, canary cohorts, distribution-shift detection, recall/rollback, fresh tests and independent reviews after changes. Do not repeatedly inspect the same holdout until it stops being held out.
 
 A proposed guard affecting a protected path (tests, frozen validators, verification, certificates, approvals, ledger, G6 core) must never be promoted through this extension. Core changes require the repository's existing certificate-reissuance process and human authorisation.
 
@@ -170,21 +170,21 @@ A proposed guard affecting a protected path (tests, frozen validators, verificat
 
 | Threat | Protection in reference code | Remaining required protection |
 |---|---|---|
-| LLM chooses arbitrary code/tool | Fixed operation allowlist and typed declarative payloads; executor recomputes canonical plan | G6's real execution sandbox and tool permission boundary |
+| LLM chooses arbitrary code/tool | Fixed operation allowlist and typed declarative payloads; executor recomputes canonical plan and runs each step through G6's checked door | G6's real execution sandbox and tool permission boundary |
 | LLM scores its own work | History blocked without independent admission hook | Separate evaluator process with keyed authenticity and withheld gold data |
 | Fabricated claim/causal model | Translation and model marked unreviewed | Expert source/semantic-faithfulness adjudication |
 | Good-looking but fake results | Actual artifact bytes submitted to distinct checker, negative controls required | Independent custody and deployment of the executable oracle |
 | Replacing an artifact | SHA-256 content digest | Authenticated publication and secure artifact store |
-| Forged certificate | Candidate label only; never emits `verified` | G6 door replay, source-bound promotion witness, verified signatures |
+| Forged certificate | Candidate label only; never emits `verified` | G6 door replay, source-bound promotion witness, checked signatures |
 | Weakening tests in an adaptation | Protected path denylist, controls, frozen suite | G6 adaptation gate and code/isolation review outside candidate scope |
 | Selection biased toward easy cases | Mandatory obligations retained, trial matching, holdout admission, disclosed proxy score | Randomised paired evaluations, stratification, confidence calibration |
 | Repeated experiments / p-hacking | Bonferroni max evaluations, external samples and split tracking | Preregistration, experiment tracking and prevention of repeated holdout peeking |
-| “Formal proof” of wrong task | All model translations candidate and incomplete by default | Independent semantic-specification review / user intent binding |
-| Claimed professional authority | Standard edition/jurisdiction, reviewer authentication hook | Actual verified regulations, credentials, authority, professional supervision |
+| A formal result about the wrong task | All model translations candidate and incomplete by default | Independent semantic-specification review / user intent binding |
+| Claimed professional authority | Standard edition/jurisdiction, reviewer authentication hook | Regulations, credentials, authority and professional supervision, each checked at its source |
 | Hidden dependent errors | Failure-mode trace and compositional guard hypotheses | Causal root-cause evaluation and independent falsification |
 | Supply chain / compromised evaluator | None in same-process Python prototype | Isolated evaluator, sealed binaries, reproducible build and secure key storage |
 
-The `admit_trial`, `admit_pair`, `admit_control`, and `reviewer_authenticator` callables are **trust-boundary interfaces**, not built-in verification of the callers' trustworthiness. A malicious candidate can pass a permissive lambda in its own process. Production must make these capabilities inaccessible to candidate-generated code. The bundle tests are local model/unit tests; they do not prove that outside-process separation holds in a full G6 deployment.
+The `admit_trial`, `admit_pair`, `admit_control`, and `reviewer_authenticator` callables are **trust-boundary interfaces**, not built-in verification of the callers' trustworthiness. A malicious candidate can pass a permissive lambda in its own process. Production must make these capabilities inaccessible to candidate-generated code. The tests are unit tests inside G6's suite; they do not show that outside-process separation holds in a full G6 deployment.
 
 ## 9. Scientific and professional evaluation design
 

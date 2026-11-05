@@ -2,7 +2,7 @@
 """Metacognitive primitives: assumption audit, premortem, blind spots, falsification.
 
 The LLM may only propose candidates. It cannot assert that its critique has
-independently verified a claim, lower the standard, change an evaluator, or
+independently checked a claim, lower the standard, change an evaluator, or
 execute a tool. All proposals are tentative and require external testing.
 """
 from __future__ import annotations

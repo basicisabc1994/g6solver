@@ -100,7 +100,7 @@ class CrossMethodConflictGate:
                 "repeated_source_refs": duplicate_sources,
                 "scoped_findings": findings,
                 "limitations": ["Only exact proposition-and-scope identity is compared; differing scopes are incomparable.",
-                                "Agreement is neither independent replication nor proof of truth.",
+                                "Agreement is neither independent replication nor evidence of truth.",
                                 "Admissibility depends on an external trusted evaluator, not a field or an LLM judgment."]}
 
 

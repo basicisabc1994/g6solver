@@ -47,7 +47,7 @@ def _compiled():
 
 
 def _assess(orchestrator, compiled, **kwargs):
-    from g6.cognitive_bridge import IndependentAssuranceEvaluator as Evaluator
+    from g6.cognitive_bridge import InProcessAssuranceEvaluator as Evaluator
 
     run = orchestrator.execute(compiled, approved=True)
     evidence = orchestrator.execution_artifact(run, actor="candidate", claim_id="claim-1")

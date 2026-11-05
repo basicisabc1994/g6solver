@@ -191,11 +191,12 @@ def _test(checker: FrozenVerifier, content: bytes) -> tuple[bool, str]:
     return result, "boolean result"
 
 
-class IndependentAssuranceEvaluator:
-    """Replays tests on actual bytes and frozen controls; emits bounded claims.
+class InProcessAssuranceEvaluator:
+    """Replays the evaluator's checks on actual bytes and frozen controls, in this Python process; emits bounded claims.
 
-    Real custody/separation requires an OUTSIDE evaluator. This class makes
-    that protocol executable but cannot attest to its own host isolation.
+    It does not isolate the checks it runs and does not attest that they were isolated: the checkers, controls and
+    admission hooks are Python objects the caller hands it, run with the caller's own rights. Custody and separation
+    need an evaluator outside this process, which this class does not provide.
     """
     def __init__(self, *, evaluator_id: str, reviewer_authenticator: ReviewAuthenticator | None = None):
         if not evaluator_id:
@@ -323,18 +324,18 @@ class IndependentAssuranceEvaluator:
                             x.get("control_tests", {}).get("negative_detected", 0) for x in checks),
                         "negative_controls_attempted": sum(
                             x.get("control_tests", {}).get("negative_count", 0) for x in checks)},
-            "promotion_authority": "none: G6's independent door must replay for verified",
+            "promotion_authority": "none: only a G6 door that re-runs a check can promote a result",
             "limitations": [
                 "The standard and its faithful translation are trusted evaluator inputs, not independently confirmed here.",
                 "A model being true in its formalisation does not imply it describes reality.",
                 "The SHA-256 content digest is unkeyed: it detects edits, not malicious rewrite and reissuance.",
                 "Executor/custody isolation is not established by this in-process reference implementation.",
-                "An assurance dossier is not professional accreditation, an audit opinion, or G6 verified status.",
+                "An assurance dossier is not professional accreditation, an audit opinion, or a result G6 promoted.",
             ],
         }
         return CandidateDossier.from_payload(payload)
 
 
 __all__ = ["Criterion", "DomainStandard", "EvidenceArtifact", "FrozenVerifier",
-           "ProfessionalAttestation", "CandidateDossier", "IndependentAssuranceEvaluator",
+           "ProfessionalAttestation", "CandidateDossier", "InProcessAssuranceEvaluator",
            "DOCUMENT_FIELDS", "FORMAT", "canonical_json", "sha256"]

@@ -5,7 +5,7 @@ Chooses a method *order and implementation*; never deletes a mandatory
 professional obligation or changes an independent acceptance oracle.
 
 Training is admitted by an OUTSIDE evaluator-owned predicate. No predictor
-self-rating, LLM score, document presence or 'verified' string grants credit.
+self-rating, LLM score, document presence or label string grants credit.
 The reference algorithm is a smoothed contextual upper-confidence bound,
 NOT a calibrated probability of research success.
 """

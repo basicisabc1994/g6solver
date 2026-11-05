@@ -57,8 +57,8 @@ Composed (Python only):
   a component's own `verified` is held at `qualified-draft` with the door's card. It re-derives the plan first and
   refuses an edited one (`G6_E_COGNITIVE_PLAN_TAMPERED`), and runs nothing without approval
   (`G6_E_COGNITIVE_APPROVAL_REQUIRED`).
-- `CognitiveAssuranceOrchestrator` joins the selector, the router, the executor and the assurance checker: compile,
-  execute with approval, then assess the produced bytes against the standard's criteria.
+- `CognitiveAssuranceOrchestrator` joins the selector, the router, the executor and `InProcessAssuranceEvaluator`:
+  compile, execute with approval, then assess the produced bytes against the standard's criteria.
 - The cross-method conflict gate reads stance and lineage by `epistemic_integrity`'s rules: one source repeated is
   one lineage, and support with opposition on the same scope is contested.
 - The adaptation gate's paired sign test is `reasoning.sign_test_p`, the statistic the meta-harness gate decides by,
@@ -79,7 +79,7 @@ Composed (Python only):
 - `unevaluated_model_shipped`: a predictor handed to `MLAcquisitionSelector`, or a surrogate tree, is used as given;
   its fidelity is measured only on the held-out rows you supply.
 - The likelihoods, priors, standards and admission hooks are the caller's. A permissive admission hook admits
-  anything, and the assurance checker runs in this Python process: it neither isolates the checks it runs nor
+  anything, and `InProcessAssuranceEvaluator` runs in this Python process: it neither isolates the checks it runs nor
   attests that they were isolated.
 - A planned step checks the typed model you gave, not whether that model says what the claim means.
 

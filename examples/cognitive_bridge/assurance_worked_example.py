@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """A REPRODUCIBLE LOCAL WORKED EXAMPLE, not a G6 product certificate.
 
-Run with: PYTHONPATH=_local_shims:src python examples/assurance_worked_example.py
-Uses an illustrative operator-owned acceptance rubric, a stubbed G6 executor,
-and a small independent truth-table verifier. It does not establish separated
-process custody, domain accreditation or G6's production promotion law.
+Run from a G6 checkout with: python examples/cognitive_bridge/assurance_worked_example.py
+Uses an illustrative operator-owned acceptance rubric, a stubbed G6 registry
+behind G6's checked door, and a small truth-table checker run in this process.
+It does not establish separated process custody, domain accreditation or
+G6's production promotion law.
 """
 import itertools
 import json
@@ -13,8 +14,8 @@ from pathlib import Path
 from returns.result import Success
 
 from g6.cognitive_bridge import (
-    ClaimIR, CognitiveAssuranceOrchestrator, Criterion, DomainStandard, FrozenVerifier, IndependentAssuranceEvaluator, MetacognitiveMethodSelector,
-    MethodVariant, ProblemSignature,
+    ClaimIR, CognitiveAssuranceOrchestrator, Criterion, DomainStandard, FrozenVerifier, InProcessAssuranceEvaluator,
+    MetacognitiveMethodSelector, MethodVariant, ProblemSignature,
 )
 from g6.cognitive_bridge.assurance import DOCUMENT_FIELDS, canonical_json, sha256
 
@@ -72,7 +73,7 @@ def main() -> None:
         id="software_research_demo", edition="demo-v1", jurisdiction="example",
         authority="Illustrative local rubric; NOT a professional or accredited standard",
         source_sha256=sha256(std_text), risk=1,
-        criteria=(Criterion("logical_entailment", "Prove entailment over the two Boolean symbols",
+        criteria=(Criterion("logical_entailment", "Check entailment over the two Boolean symbols",
                             "tiny_truth_table", "demo-v1/clause-1", "critical",
                             ("false_confidence",), "report", ("formal",)),))
     alternatives = [MethodVariant("smt", "formal", "SMT", "formal", "check_validity", 2.0)]
@@ -108,7 +109,7 @@ def main() -> None:
     documentation["exceptions_and_unresolved_items"] = "Unresolved: actual G6 registry integration and external trust root."
     output = orchestrator.assess(
         compiled, standard=std, run_result=run,
-        evaluator=IndependentAssuranceEvaluator(evaluator_id="review_runner"),
+        evaluator=InProcessAssuranceEvaluator(evaluator_id="review_runner"),
         verifiers={"tiny_truth_table": checker}, artifacts={"logical_entailment": actual},
         documentation=documentation, candidate_actor="research_agent")
     assert output["completion_state"] == "qualified-draft"  # its only state field, and never more than this

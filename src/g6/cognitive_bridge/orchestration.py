@@ -16,7 +16,7 @@ from g6.core.reliability_envelope import warning_card
 
 from .adaptation import detect_failure_modes
 from .assurance import (DomainStandard, EvidenceArtifact,
-                        FrozenVerifier, IndependentAssuranceEvaluator,
+                        FrozenVerifier, InProcessAssuranceEvaluator,
                         ProfessionalAttestation, canonical_json, sha256)
 from .codes import ASSURANCE_BLOCKED, EXECUTION_NOT_APPROVED, NOT_PROMOTED, refusal
 from .epistemic import CrossMethodConflictGate, ScopedAssertion
@@ -125,7 +125,7 @@ class CognitiveAssuranceOrchestrator:
                                 claim_id=claim_id)
 
     def assess(self, compiled: CompiledResearch, *, standard: DomainStandard,
-               run_result: Mapping[str, Any], evaluator: IndependentAssuranceEvaluator,
+               run_result: Mapping[str, Any], evaluator: InProcessAssuranceEvaluator,
                verifiers: Mapping[str, FrozenVerifier],
                artifacts: Mapping[str, EvidenceArtifact], documentation: Mapping[str, str],
                candidate_actor: str,

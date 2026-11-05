@@ -7,7 +7,7 @@ This is a **release-blocker checklist**, not a claim of passed certification. Al
 - [ ] Define at least one concrete initial professional domain, risk envelope, jurisdiction and named owner of the acceptance standard.
 - [ ] Resolve authoritative source bytes, edition, licence and canonical reference; pin and revalidate standards over time.
 - [ ] Bind every material natural-language requirement to typed claims, explicit assumptions and a reviewer-approved model.
-- [ ] Test on adversarial ambiguity where a valid SMT proof about the wrong model must **not** certify the original request.
+- [ ] Test on adversarial ambiguity where a valid SMT result about the wrong model must **not** certify the original request.
 - [ ] Supply qualified independent domain reviewers and verify their credentials for R2/R3 cases.
 
 ## Gate B — True evaluator independence
@@ -55,4 +55,4 @@ This is a **release-blocker checklist**, not a claim of passed certification. Al
 
 ## Current local verification record
 
-Local unit tests and a worked two-variable Boolean example are supplied. These verify the **reference implementation's internal logic and refusal paths** under lightweight G6 API shims. They do not satisfy gates A–F for a production product; no completed professional assurance certificate is being issued by this bundle.
+Unit tests in G6's suite and a worked two-variable Boolean example are supplied. These check the **reference implementation's internal logic and refusal paths**, with each executed step going through G6's checked door. They do not satisfy gates A–F for a production product; no completed professional assurance certificate is being issued by this bundle.

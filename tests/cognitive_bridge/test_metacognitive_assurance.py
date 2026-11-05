@@ -16,7 +16,7 @@ from g6.cognitive_bridge import (
     AdaptationPromotionGate, CandidateDossier, ClaimIR, CognitiveAssuranceOrchestrator,
     CognitiveBridgeBlock, CompositionalFailureModel, ControlTrial, Criterion,
     DomainStandard, EvaluatedTrial, EvidenceArtifact,
-    FrozenVerifier, GuardChange, IndependentAssuranceEvaluator,
+    FrozenVerifier, GuardChange, InProcessAssuranceEvaluator,
     LLMMetacognitiveCritic, MetacognitiveMethodSelector, MethodVariant,
     MitigationHypothesis, PairedTrial, ProblemSignature, ProfessionalAttestation,
     detect_failure_modes,
@@ -54,7 +54,7 @@ def verifier(check=None, *, owner="outside"):
 
 def audit(*, risk=1, content=b"GOOD", check=None, attestation=None, auth=None,
           documentation=None, who="candidate", verifier_owner="outside"):
-    return IndependentAssuranceEvaluator(evaluator_id="evaluator", reviewer_authenticator=auth).evaluate(
+    return InProcessAssuranceEvaluator(evaluator_id="evaluator", reviewer_authenticator=auth).evaluate(
         standard=standard(risk), artifacts={"c1": artifact(content, who)},
         verifiers={"checker1": verifier(check, owner=verifier_owner)},
         documentation=docs() if documentation is None else documentation,
@@ -105,7 +105,7 @@ def test_missing_documentation_blocks_all_passing_checks():
 def test_same_producer_and_verifier_blocks():
     assert audit(verifier_owner="candidate").payload["completion_state"] == "blocked-escalated"
     with pytest.raises(ValueError, match="distinct identities"):
-        IndependentAssuranceEvaluator(evaluator_id="candidate").evaluate(
+        InProcessAssuranceEvaluator(evaluator_id="candidate").evaluate(
             standard=standard(), artifacts={"c1": artifact()}, verifiers={"checker1": verifier()},
             documentation=docs(), candidate_actor="candidate")
 
@@ -290,7 +290,7 @@ def test_orchestration_dossier_remains_scoped_and_blocked_if_method_refused():
     check = FrozenVerifier("checker1", "outside", PIN2, independent_report_checker,
                            (positive,), (b'{}',))
     report = obj.assess(compiled, standard=standard(), run_result=run,
-                        evaluator=IndependentAssuranceEvaluator(evaluator_id="evaluator"),
+                        evaluator=InProcessAssuranceEvaluator(evaluator_id="evaluator"),
                         artifacts={"c1": evidence}, verifiers={"checker1": check},
                         documentation=docs(), candidate_actor="candidate")
     assert report["completion_state"] == "qualified-draft"
@@ -299,7 +299,7 @@ def test_orchestration_dossier_remains_scoped_and_blocked_if_method_refused():
     assert report["dossier"]["content_sha256"]
     broken = {**run, "completion_state": "blocked-escalated"}
     denied = obj.assess(compiled, standard=standard(), run_result=broken,
-                        evaluator=IndependentAssuranceEvaluator(evaluator_id="evaluator"),
+                        evaluator=InProcessAssuranceEvaluator(evaluator_id="evaluator"),
                         artifacts={"c1": evidence}, verifiers={"checker1": check},
                         documentation=docs(), candidate_actor="candidate")
     assert denied["completion_state"] == "blocked-escalated"
@@ -490,7 +490,7 @@ def test_orchestration_never_averages_conflicting_independent_assertions():
     assertions = [ScopedAssertion("claim-1", "truth", PIN, "supports", "formal", "source1", "sig1"),
                   ScopedAssertion("claim-1", "truth", PIN, "refutes", "causal", "source2", "sig2")]
     result = obj.assess(compiled, standard=standard(), run_result=run,
-                        evaluator=IndependentAssuranceEvaluator(evaluator_id="evaluator"),
+                        evaluator=InProcessAssuranceEvaluator(evaluator_id="evaluator"),
                         artifacts={"c1": evidence}, verifiers={"checker1": verifier_spec},
                         documentation=docs(), candidate_actor="candidate",
                         scoped_assertions=assertions,

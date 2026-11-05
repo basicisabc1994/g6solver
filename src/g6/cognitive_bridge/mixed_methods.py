@@ -69,7 +69,7 @@ ENGINE_OP_VARIANTS: dict[str, tuple[str, ...]] = {
 
 @dataclass(frozen=True)
 class ClaimIR:
-    """Reviewable problem statement, *not* a verified translation or fact."""
+    """Reviewable problem statement, *not* a checked translation or fact."""
     id: str
     statement: str
     evidence_needs: tuple[str, ...]
@@ -109,7 +109,7 @@ class MethodPlan:
                 "The language-to-model translation must be reviewed; it may not capture user intent.",
                 "A causal model is an assumption and does not follow from observed correlation.",
                 "A solver can only establish results about the model and scope supplied.",
-                "Information gain and predictive fidelity are not independent proof of a research claim.",
+                "Information gain and predictive fidelity are not an independent check of a research claim.",
             ],
         }
 
@@ -265,7 +265,7 @@ class MixedMethodExecutor:
             "method_execution_coverage": coverage,
             "method_execution_coverage_definition": "executed non-blocked method steps / requested executable steps",
             "measured_insight": "method outputs and their original metrics, not a synthetic truth score",
-            "limits": ["Only the provided models were executed; model semantics and data provenance were not verified.",
+            "limits": ["Only the provided models were executed; model semantics and data provenance were not checked.",
                        "A valid formal model does not establish that the natural language formalisation is accurate."],
         }
 
@@ -286,7 +286,7 @@ class LLMClaimCompiler:
             raise ValueError("question size invalid")
         system = (
             "Translate research objectives to candidate claims and optional DECLARATIVE "
-            "models, with no invented observations or experimental results. "
+            "models, with no invented observations or measured results. "
             "Reply with JSON {'claims':[{'id':str, 'statement':str, "
             "'evidence_needs':[graph|causal|formal|predictive|optimisation], "
             "'models':{capability:{...}}}]}. If there is not enough information "
