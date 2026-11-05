@@ -614,8 +614,14 @@ cognitive work, with programming as the first toy model. So P2 was built first a
   **The freeze's threat model is honest drift (the owner's ruling, 2026-11-05).** A candidate cannot write the judge's
   files: proposers edit a view and candidates run confined. What the freeze guards against is a person or another process
   editing what judges in ordinary ways during a cycle, not code written to evade the check. So a person declares as a root
-  every folder the judge reads or loads code from. Left out, as limits and not findings: a module imported from an archive
-  outside the roots, a file run with `runpy` outside them, and a timestamp-valid bytecode cache replaced by hand (the
+  every folder the judge reads or loads code from. What cannot be read is never a digest: one reader takes every byte the
+  freeze stands on, and any failure, a locked file, a folder that cannot be listed, a file gone mid-listing or an error of
+  any other kind, makes the reading unreadable, which refuses enrolment (`G6_E_LOOP_JUDGE_UNPINNED`) and every cycle and
+  adoption as a frozen change while it stands. Under `__pycache__` only a bytecode cache named for an interpreter
+  (`<name>.<tag>.pyc`) is left out; every other file there is pinned. A declared root is checked as given, so one that is
+  itself a link or junction refuses. Left out, as limits and not findings: a module imported from an archive outside the
+  roots, a file run with `runpy` outside them, a plugin loaded with `importlib.util` outside them and kept out of
+  `sys.modules`, and a timestamp-valid bytecode cache replaced by hand (the
   runner runs with `-B` and a fresh cache prefix, so a cache under a root is not what it loads), as well as an edit in the
   moment after the last read and before the write, bytes changed and put back between the two reads, and state that lives
   in no file: a module's globals or a class's attributes changed as it runs, a closure's cells, a callable object's
