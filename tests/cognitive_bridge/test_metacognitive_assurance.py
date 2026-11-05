@@ -14,8 +14,8 @@ import pytest
 from g6.cognitive_bridge import (
     AdaptationPromotionGate, CandidateDossier, ClaimIR, CognitiveAssuranceOrchestrator,
     CognitiveBridgeBlock, CompositionalFailureModel, ControlTrial, Criterion,
-    CritiqueCandidate, DomainStandard, EvaluatedTrial, EvidenceArtifact,
-    FailureModeFinding, FrozenVerifier, GuardChange, IndependentAssuranceEvaluator,
+    DomainStandard, EvaluatedTrial, EvidenceArtifact,
+    FrozenVerifier, GuardChange, IndependentAssuranceEvaluator,
     LLMMetacognitiveCritic, MetacognitiveMethodSelector, MethodVariant,
     MitigationHypothesis, PairedTrial, ProblemSignature, ProfessionalAttestation,
     detect_failure_modes,
@@ -413,7 +413,6 @@ def test_router_allows_real_g6_alternative_operations_not_arbitrary_ops():
 
 
 def test_meta_selects_true_g6_operation_variant_and_executor_preserves_it():
-    from g6.cognitive_bridge import MethodRouter
     choices = [MethodVariant("z3", "formal", "SMT", "formal", "check_validity", 2),
                MethodVariant("dpll", "formal", "propositional", "formal", "check_propositional", 1)]
     class Registry:

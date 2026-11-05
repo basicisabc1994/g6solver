@@ -10,10 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import re
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Mapping, Protocol
 
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 FORMAT = "g6.cognitive_assurance.dossier/1"

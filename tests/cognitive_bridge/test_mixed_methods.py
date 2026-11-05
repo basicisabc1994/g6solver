@@ -7,7 +7,7 @@ import pytest
 
 from g6.cognitive_bridge import (
     ClaimIR, CognitiveBridgeBlock, LLMClaimCompiler, MethodRouter,
-    MethodStep, MixedMethodExecutor,
+    MixedMethodExecutor,
 )
 
 

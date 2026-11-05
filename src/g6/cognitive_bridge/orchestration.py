@@ -12,9 +12,10 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from .adaptation import detect_failure_modes
-from .assurance import (CandidateDossier, DomainStandard, EvidenceArtifact,
+from .assurance import (DomainStandard, EvidenceArtifact,
                         FrozenVerifier, IndependentAssuranceEvaluator,
                         ProfessionalAttestation, canonical_json, sha256)
+from .epistemic import CrossMethodConflictGate, ScopedAssertion
 from .metacognition import (MethodVariant, MetacognitiveMethodSelector,
                             ProblemSignature, SelectionDecision)
 from .mixed_methods import ENGINE_SPECS, ClaimIR, MethodPlan, MethodRouter, MixedMethodExecutor

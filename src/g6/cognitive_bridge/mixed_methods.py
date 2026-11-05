@@ -9,7 +9,7 @@ explicitly approved Python-side action against the real G6 registry.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Any, Mapping, Protocol, Sequence
 
 # Every name resolves to an existing G6 component and a fixed, documented op.

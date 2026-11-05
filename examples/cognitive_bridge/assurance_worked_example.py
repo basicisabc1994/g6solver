@@ -11,8 +11,7 @@ import json
 from pathlib import Path
 
 from g6.cognitive_bridge import (
-    ClaimIR, CognitiveAssuranceOrchestrator, Criterion, DomainStandard, EvidenceArtifact,
-    FrozenVerifier, IndependentAssuranceEvaluator, MetacognitiveMethodSelector,
+    ClaimIR, CognitiveAssuranceOrchestrator, Criterion, DomainStandard, FrozenVerifier, IndependentAssuranceEvaluator, MetacognitiveMethodSelector,
     MethodVariant, ProblemSignature,
 )
 from g6.cognitive_bridge.assurance import DOCUMENT_FIELDS, canonical_json, sha256

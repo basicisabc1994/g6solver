@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
-from .assurance import CandidateDossier, canonical_json, sha256
+from .assurance import CandidateDossier
 
 HEX = re.compile(r"^[0-9a-f]{64}$")
 PROTECTED_PARTS = ("test", "fixture", "oracle", "verifier", "evaluator", "approval", "promotion", "gate",
