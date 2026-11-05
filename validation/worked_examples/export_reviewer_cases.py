@@ -101,18 +101,29 @@ def issue_of(prompt: str) -> str:
     return prompt[at:] if at >= 0 else prompt
 
 
-def distinct(rows: Iterable[tuple[str, Path, Any]]) -> dict[tuple[str, str], tuple[Path, bool]]:
-    """One case per distinct patch of a bug. Two labels on the same bytes keep neither: they say the check was unsteady, not what the patch is."""
-    found: dict[tuple[str, str], tuple[Path, bool]] = {}
+def distinct(rows: Iterable[tuple[str, Path | bytes, Any]]) -> dict[tuple[str, str], tuple[bytes, bool]]:
+    """One case per distinct patch of a bug, each with the bytes it was named by. Two labels on the same bytes keep neither: they say the check was
+    unsteady, not what the patch is. A patch is a path, read here once, or the bytes ``labelled`` already checked, which are used as they are: the
+    case's id, its label and its diff (``main``, ``diff_of``) all come from those bytes, and no path is read again."""
+    found: dict[tuple[str, str], tuple[bytes, bool]] = {}
     clashed = set()
     for task, patch, ok in rows:
-        if not isinstance(ok, bool) or not patch.is_file() or not patch.stat().st_size:
+        if not isinstance(ok, bool):
             continue
-        key = (task, hashlib.sha256(patch.read_bytes()).hexdigest()[:16])
+        data = patch if isinstance(patch, bytes) else patch.read_bytes() if patch.is_file() else b""
+        if not data:
+            continue
+        key = (task, hashlib.sha256(data).hexdigest()[:16])
         if key in found and found[key][1] != ok:
             clashed.add(key)
-        found.setdefault(key, (patch, ok))
+        found.setdefault(key, (data, ok))
     return {key: value for key, value in found.items() if key not in clashed}
+
+
+def diff_of(data: bytes) -> str:
+    """A case's patch as text, from the bytes its id was made from: UTF-8 with what cannot be read replaced, and its line ends made "\\n", as
+    ``Path.read_text`` read a patch before."""
+    return data.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
 
 
 def row(task: str, sha: str, text: str, ok: bool) -> dict[str, str]:
@@ -132,10 +143,11 @@ def _checks(root: Path, task: str) -> dict[str, list[dict[str, Any]]]:
     return found
 
 
-def labelled(root: Path, task: str) -> list[tuple[str, Path, Any]]:
+def labelled(root: Path, task: str) -> list[tuple[str, Path | bytes, Any]]:
     """Each recorded patch of ``task`` with its verdict. Counts of tests stay on this side: only passed or failed leaves here. Arm
     K3 keeps its first patch, "round-1", in its baseline folder (``run.baseline_of``), not in ``rounds``; it is a case only while
-    its bytes have the digest kept at its capture (``run.baseline_bytes``), the arm read from the run's start (``run.started_row``)."""
+    its bytes have the digest kept at its capture (``run.baseline_bytes``), the arm read from the run's start (``run.started_row``),
+    and it is handed on as those bytes, never as its path, so the case is what was checked."""
     checks, rows, archive = _checks(root, task), [], c.Archive(root)
     for path in sorted((root / "loop").glob(f"*-{task}-*.json")):
         rec = json.loads(path.read_text("utf-8"))
@@ -155,8 +167,8 @@ def labelled(root: Path, task: str) -> list[tuple[str, Path, Any]]:
                 continue
             if name != first:
                 rows.append((task, folder / "rounds" / f"{name}.patch", ok))
-            elif we.baseline_bytes(archive, run) is not None:     # K3's baseline, its bytes checked against the kept digest
-                rows.append((task, we.baseline_of(folder), ok))
+            elif (checked := we.baseline_bytes(archive, run)) is not None:    # K3's baseline: the bytes checked by the kept digest
+                rows.append((task, checked, ok))
         rows.append((task, folder / "final.patch", by.get("final", rec.get("passes"))))
     return rows
 
@@ -199,7 +211,7 @@ def main() -> None:
     behind, rows, count = sealed_bugs(BUGS), {"dev": [], "sealed": []}, collections.Counter()
     for task in usable(BUGS):
         patches = distinct(labelled(root, task))
-        diffs = {key: path.read_text("utf-8", errors="replace") for key, (path, _) in patches.items()}
+        diffs = {key: diff_of(data) for key, (data, _) in patches.items()}     # the bytes each case's id was made from
         files = parent_files(task, {p for diff in diffs.values() for p in changed(diff)}, out / "parent")
         issue, side = issue_for(root, task), "sealed" if task in behind else "dev"
         for key, (_, ok) in patches.items():

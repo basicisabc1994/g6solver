@@ -947,10 +947,38 @@ def test_the_reviewer_export_finds_k3s_round_1_in_its_baseline_only_while_it_has
                                                                              "status": "finished", "passes": True}), "utf-8")
         runs[arm] = run
     k3, k2, baseline = runs["K3"].path, runs["K2"].path, we.baseline_of(runs["K3"].path)
-    got = {(path, ok) for _, path, ok in ex.labelled(tmp_path, task)}
-    assert got == {(baseline, False), (k3 / "rounds" / "rule.patch", True), (k3 / "final.patch", True),
+    got = {(path, ok) for _, path, ok in ex.labelled(tmp_path, task)}         # K3's baseline as the bytes checked by its digest
+    assert got == {(b"the first session's tree", False), (k3 / "rounds" / "rule.patch", True), (k3 / "final.patch", True),
                    (k2 / "rounds" / "round-1.patch", False), (k2 / "final.patch", True)}
     assert len(ex.distinct(ex.labelled(tmp_path, task))) == 5                   # the baseline is a case, with its label
     baseline.write_bytes(b"something else")                                    # its bytes no longer have the kept digest
     assert {path for _, path, _ in ex.labelled(tmp_path, task)} == {k3 / "rounds" / "rule.patch", k3 / "final.patch",
                                                                      k2 / "rounds" / "round-1.patch", k2 / "final.patch"}
+
+
+def test_repair_4_the_export_labels_the_baseline_bytes_it_checked_and_never_reads_the_path_again(monkeypatch, tmp_path):
+    """Review 1, finding 5: identity from the bytes. ``labelled`` hands on the bytes it checked against the kept digest, and
+    ``distinct`` (the case's id and label) and ``main`` (the case's diff, ``diff_of``) use those bytes, never the path again."""
+    import export_reviewer_cases as ex
+    archive, task = we.c.Archive(tmp_path), "black-5634"
+    run = archive.start("run", task, arm="K3")
+    _keep_baseline(archive, run, b"checked first-session patch\r\n")
+    baseline = we.baseline_of(run.path)
+    run.write("final.patch", b"final patch")
+    run.finish({"arm": "K3", "agent_started": True}, "finished")
+    archive.start("check", task, checked_run=run.rel).finish({"checks": [{"patch": "round-1", "passes": False}]}, "finished")
+    (tmp_path / "loop").mkdir()
+    (tmp_path / "loop" / f"K3-{task}-1.json").write_text(json.dumps({"arm": "K3", "run": run.rel, "status": "finished"}), "utf-8")
+    read = we.baseline_bytes
+
+    def replaced_after_read(*args):
+        data = read(*args)
+        baseline.write_bytes(b"unscored replacement patch")                    # after the check of its digest
+        return data
+
+    monkeypatch.setattr(we, "baseline_bytes", replaced_after_read)
+    cases = ex.distinct(ex.labelled(tmp_path, task))
+    sha = lambda data: hashlib.sha256(data).hexdigest()[:16]               # noqa: E731
+    assert (task, sha(b"unscored replacement patch")) not in cases
+    held, ok = cases[(task, sha(b"checked first-session patch\r\n"))]
+    assert ok is False and ex.diff_of(held) == "checked first-session patch\n"     # as read_text gave a patch's text before
