@@ -1,11 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """Public copy says "checked" for what G6 ran and "challenged" for what an independent reviewer or a replay tried to
-break; it never says that G6 verified work (the owner's ruling, 2026-11-05). The copy is read as a reader sees it:
-Markdown rendered by the site's own renderer (``pages.views.markdown_html``), a skill's front matter as G6 reads it
-(``g6.core.skills.front_matter``), and HTML read by an HTML parser, its visible text and the attributes a reader or a
-search engine is shown. The reliability state keeps its name: a code span is passed over when it holds only a state or
-an identifier (`verified`, `verify_answer`); a code block is code, but a diagram is read. The three states named
-together as one list pass, and so does the bare word in quotation marks, which mentions it.
+break; it never says that G6 verified work (the owner's ruling, 2026-11-05).
+
+What it guards against: honest drift, a claim written in good faith by the owner, an agent or a contributor. It does
+not guard against deliberate evasion: anyone can hide a word in an image, in CSS or behind look-alike characters, and
+no reading of the text stops that.
+
+The copy is read as a reader sees it: Markdown rendered by the site's own renderer (``pages.views.markdown_html``) or,
+for the docs site, with the extensions site/mkdocs.yml names; a skill's front matter as G6 reads it
+(``g6.core.skills.front_matter``); HTML read by an HTML parser, its visible text, the attributes and the structured-data
+fields a reader or a search engine is shown, with only block-level elements ending a run of text. The reliability state
+keeps its name: a code span is passed over when it holds a state, the three states listed together, a Python identifier
+or dotted name, or code Python parses as code (`verified`, `verify_answer`, `verify(body, artifact)`); a code block is
+code, but a diagram is read. The three states named together as one list pass, and so does the bare word in quotation
+marks, which mentions it.
 
 ``LEFT`` holds the names the owner kept (2026-11-05): a failure mode's title and description, an interface's name, the
 guide's Pattern 5, a field of study and an essay's title, a third party's task, an essay's heading, a registered
@@ -39,8 +47,13 @@ _STATE = r"(?:verified|qualified-draft|blocked-escalated)"
 _SEP = r"(?:\s*[,;/]\s*|\s+)(?:(?:or|and)\s+)?"
 #: Three states in one list (a list is kept only when it names all three): the home page's chips, llms.txt, a note.
 STATE_LIST = re.compile(rf"\b{_STATE}{_SEP}{_STATE}{_SEP}{_STATE}\b", re.IGNORECASE)
-#: The bare word in quotation marks mentions it; a quoted phrase is read.
-MENTION = re.compile(r"[\"\u201c\u2018]\s*verif\w*[.,;:!?]?\s*[\"\u201d\u2019]", re.IGNORECASE)
+
+
+def _all_states(text: str) -> bool:
+    return {state.lower() for state in re.findall(_STATE, text, re.IGNORECASE)} == set(STATE_NAMES)
+#: The bare word in quotation marks, double or single, straight or curly, mentions it; a quoted phrase is read.
+MENTION = re.compile(r"(?:\"\s*verif\w*[.,;:!?]?\s*\"|(?<!\w)'\s*verif\w*[.,;:!?]?\s*'(?!\w)"
+                     r"|\u201c\s*verif\w*[.,;:!?]?\s*\u201d|\u2018\s*verif\w*[.,;:!?]?\s*\u2019)", re.IGNORECASE)
 #: Names left as they are, each with the reason; the report lists where each one stands.
 LEFT = {
     "work called verified when the evidence does not support it":
@@ -54,6 +67,8 @@ LEFT = {
     "formal verification": "the field of study (the About page) and an essay's title (the using-g6 lifecycle)",
     "fact-verification": "SciFact's task, a third party's name",
     "Move deliberately and verify things": "an essay's heading, quoted",
+    "--no-verify": "git's flag that skips its hooks, an interface name (the coding agent gate's skill)",
+    "verification-before-completion": "the vendored superpowers skill's name, a third party's (the using-g6 lifecycle)",
 }
 
 #: The Markdown and text a reader sees on GitHub and on the docs site, and the skills G6 installs.
@@ -67,10 +82,16 @@ MARKDOWN = sorted({
     *(OSS / "src" / "g6" / "skills" / "using-g6").rglob("*.md"),
     *(path for path in (OSS / "src" / "g6").rglob("skill/SKILL.md") if "vendor" not in path.parts),
 })
-#: Elements that sit inside a line of text; any other element starts or ends a block.
-_INLINE = frozenset("a abbr b bdi bdo cite code data dfn em i kbd mark q s samp small span strong sub sup time u var "
-                    "wbr".split())
+#: Elements that end a run of text: the HTML block-level elements, as Python-Markdown, the site's renderer, lists them.
+#: Every other element (a, span, em, br, tspan) sits inside a line, and a line break is whitespace.
+_BLOCK = frozenset(markdown.util.BLOCK_LEVEL_ELEMENTS)
 _SHOWN = ("title", "alt", "aria-label", "aria-description", "placeholder")
+#: The structured-data fields a search engine shows a reader, read wherever they sit; an address field is not one.
+_READ_FIELDS = ("headline", "description", "name", "alternativeHeadline", "abstract", "text")
+_ADDRESS_FIELDS = ("url", "@id", "image", "sameAs", "logo", "contentUrl", "thumbnailUrl")
+#: The meta tags a reader or a search engine is shown, by their name or property; an address tag is not one.
+_META_READ = frozenset({"description", "og:title", "og:description", "og:site_name", "og:image:alt", "twitter:title",
+                        "twitter:description", "twitter:image:alt"})
 _BUTTONS = ("button", "submit", "reset")                  # an <input> of these types shows its value
 #: Characters a reader never sees: the soft hyphen and the zero-width ones.
 _INVISIBLE = re.compile("[\u00ad\u200b-\u200d\u2060\ufeff]")
@@ -87,20 +108,15 @@ def _normalise(text: str) -> str:
     return " ".join(unicodedata.normalize("NFC", text).split())
 
 
-def _mixed_script(word: str) -> bool:
-    """A word with Latin letters and letters of another script, which can look like a Latin word (a Cyrillic e)."""
-    scripts = {unicodedata.name(ch, "?").split(" ")[0] for ch in word if ch.isalpha()}
-    return "LATIN" in scripts and len(scripts) > 1
-
-
 def _diagram(source: str) -> str:
     """A diagram's words as prose, as the drawn diagram shows them: Mermaid's own escapes (#quot;, #9829;) decoded and
-    its emphasis marks (*, _, `) taken out; a node labelled with a state's name alone names the state; every other
-    label is read, quotation marks and all."""
+    its emphasis marks (*, _, `) taken out; then a node labelled with a state's name alone names the state, and every
+    other label is read, quotation marks and all."""
     source = re.sub(r"#(\d+|[A-Za-z]+);", lambda m: html.unescape(f"&{'#' if m.group(1).isdigit() else ''}"
                                                                   f"{m.group(1)};"), source)
-    source = re.sub(r'\["(?:verified|qualified-draft|blocked-escalated)"\]', " ", source)
-    return re.sub(r"[*_`]", "", source).replace('"', " ")
+    source = re.sub(r"[*_`]", "", source)
+    source = re.sub(r'\["\s*(?:verified|qualified-draft|blocked-escalated)\s*"\]', " ", source)
+    return source.replace('"', " ")
 
 
 #: Python that prose cannot be: a call, an import, an attribute, a subscript, an assignment, a keyword, an ordering.
@@ -109,10 +125,13 @@ _ORDER = (ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE)
 
 
 def _is_name(code: str) -> bool:
-    """A code span that is not prose: a state, an identifier with no space in it (a field, a tool, a path), or code
-    Python's own parser reads as code (``verify(body, artifact_bytes)``, an import line)."""
+    """A code span that is not prose: a state, the three states listed together, a Python identifier or dotted name
+    (a field, a tool, a module), or code Python's own parser reads as code (``verify(body, artifact_bytes)``, an
+    import line)."""
     code = _normalise(code)
-    if code.lower() in STATE_NAMES or (code and " " not in code):
+    if code.lower() in STATE_NAMES or (STATE_LIST.fullmatch(code) and _all_states(code)):
+        return True
+    if code and all(part.isidentifier() for part in code.split(".")):
         return True
     try:
         tree = ast.parse(code)
@@ -127,18 +146,22 @@ class _Span(str):
     """An inline code span's text, kept apart until the words around it are known."""
 
 
-def _strings(value: object):
-    """Every string in parsed JSON."""
-    if isinstance(value, str):
+def _fields(value: object, key: str = ""):
+    """The reader-facing fields of parsed structured data, wherever they sit; an address field is never read."""
+    if isinstance(value, dict):
+        for name, item in value.items():
+            if name not in _ADDRESS_FIELDS:
+                yield from _fields(item, name)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _fields(item, key)
+    elif isinstance(value, str) and key in _READ_FIELDS:
         yield value
-    elif isinstance(value, dict | list):
-        for item in value.values() if isinstance(value, dict) else value:
-            yield from _strings(item)
 
 
 class _Reader(HTMLParser):
     """What a reader sees: each block's text, with inline markup joined into it, and each attribute and structured-data
-    string a reader or a search engine is shown, as units of their own. Scripts and styles are not read (structured
+    field a reader or a search engine is shown, as units of their own. Scripts and styles are not read (structured
     data is, through json), nor code blocks except diagrams."""
 
     def __init__(self) -> None:
@@ -161,9 +184,8 @@ class _Reader(HTMLParser):
         self.units += [[values[shown]] for shown in _SHOWN if values.get(shown)]
         if tag == "input" and values.get("type", "").lower() in _BUTTONS and values.get("value"):
             self.units.append([values["value"]])
-        meta = name == "description" or name.startswith("twitter:") or prop.startswith("og:")
-        if tag == "meta" and meta and values.get("content") and not re.match(r"(?:https?:|/)", values["content"]):
-            self.units.append([values["content"]])                  # an address is not read
+        if tag == "meta" and values.get("content") and ({name, prop} & _META_READ):
+            self.units.append([values["content"]])                  # read by its key; an address key is not one
         classes = values.get("class", "").lower().split()
         if tag == "script" and values.get("type", "").lower() == "application/ld+json":
             self.data = []
@@ -176,7 +198,9 @@ class _Reader(HTMLParser):
             self.pre[-1] = self.pre[-1] or "language-mermaid" in classes   # the docs site's mermaid fence
         elif tag == "code":
             self.code = []
-        elif tag not in _INLINE:
+        elif tag == "br":
+            (self.code if self.code is not None else self.run).append("\n")    # a line break is whitespace
+        elif tag in _BLOCK:
             self.end_run()
 
     def handle_endtag(self, tag: str) -> None:
@@ -185,7 +209,7 @@ class _Reader(HTMLParser):
                 data = json.loads("".join(self.data))
             except json.JSONDecodeError:
                 data = None                                          # a search engine cannot read it either
-            self.units += [[text] for text in _strings(data) if not re.match(r"(?:https?:|/)", text)]
+            self.units += [[text] for text in _fields(data)]
             self.data = None
         elif tag in ("script", "style"):
             self.hidden = max(0, self.hidden - 1)
@@ -195,7 +219,7 @@ class _Reader(HTMLParser):
         elif tag == "code" and self.code is not None:
             self.run.append(_Span("".join(self.code)))
             self.code = None
-        elif tag not in _INLINE:
+        elif tag in _BLOCK:
             self.end_run()
 
     def handle_data(self, data: str) -> None:
@@ -241,13 +265,18 @@ def _page_copy(page: str) -> str:
 
 
 #: The docs site's Markdown extensions: MkDocs' own (toc, tables, fenced_code) and those site/mkdocs.yml adds, but
-#: pymdownx, which is not a dependency here: its fences are read as Python-Markdown's, and a collapsible note (???) as a
-#: note (!!!), with the same words.
+#: pymdownx, which is not a dependency here. Of those that change how indented text renders, admonition and
+#: md_in_html are installed; pymdownx.details (a collapsible note, ???) and pymdownx.tabbed (a tab, === "Title") are
+#: read as notes (!!!), with the same words; pymdownx.superfences' fences are read as Python-Markdown's, so a fence
+#: inside an indented block is read as prose (more is read, nothing is hidden).
 DOCS_SITE = ("toc", "tables", "fenced_code", "admonition", "attr_list", "md_in_html")
+DOCS_SITE_PYMDOWNX = ("pymdownx.superfences", "pymdownx.tabbed", "pymdownx.details")
 
 
 def _docs_site_html(text: str) -> str:
-    return markdown.markdown(re.sub(r"^(\s*)\?\?\?\+?", r"\1!!!", text, flags=re.MULTILINE), extensions=DOCS_SITE)
+    text = re.sub(r"^([ \t]*)\?\?\?\+?(?=[ \t]+\S)", r"\1!!!", text, flags=re.MULTILINE)        # a collapsible note
+    text = re.sub(r'^([ \t]*)===[+!]*(?=[ \t]+")', r"\1!!! tab", text, flags=re.MULTILINE)     # a tab
+    return markdown.markdown(text, extensions=DOCS_SITE)
 
 
 def _markdown_copy(text: str, *, docs_site: bool = False) -> str:
@@ -261,16 +290,13 @@ def _markdown_copy(text: str, *, docs_site: bool = False) -> str:
 
 def claims(copy: str) -> list[str]:
     """Each claim form left in ``copy``, read as a reader reads it, once the whole phrases in ``LEFT``, the mentions
-    and the three-state lists are taken out, in its context; and each word that mixes scripts, which a reader may
-    read as a Latin word it is not."""
+    and the three-state lists are taken out, in its context."""
     copy = _normalise(copy)
-    mixed = [f"mixed scripts: {word}" for word in re.findall(r"\w+", copy) if _mixed_script(word)]
     for name in LEFT:
         copy = re.sub(rf"(?<![\w-]){re.escape(name)}(?![\w-])", " ", copy, flags=re.IGNORECASE)
     copy = MENTION.sub(" ", copy)
-    copy = STATE_LIST.sub(lambda m: " " if {s.lower() for s in re.findall(_STATE, m.group(0), re.IGNORECASE)}
-                          == set(STATE_NAMES) else m.group(0), copy)
-    return mixed + [copy[max(0, m.start() - 60):m.end() + 60] for m in CLAIM.finditer(copy)]
+    copy = STATE_LIST.sub(lambda m: " " if _all_states(m.group(0)) else m.group(0), copy)
+    return [copy[max(0, m.start() - 60):m.end() + 60] for m in CLAIM.finditer(copy)]
 
 
 def g6_claims(page: str) -> list[str]:
@@ -329,16 +355,18 @@ def test_the_check_refuses_the_claim_and_allows_the_state_in_code_format():
     assert not claims(_page_copy('<p>Never call it "<code>verified</code>".</p>'))
     assert _page_copy("<p>The <code>verify_answer</code> op.</p>") == f"The {PLACEHOLDER} op."
     assert g6_claims("<p><code>G6</code> checks it.</p>") == [] and g6_claims("<p>G\u200b6 verifies it.</p>")
-    # a word is read as it looks: a combining mark does not split it, and a letter from another script is refused
-    assert claims(_page_copy("<p>G6 produces v\u0301erified answers.</p>"))
-    assert claims(_page_copy("<p>G6 produces v\u0435rified answers.</p>")) and not claims("G\u00f6del's theorem.")
-    # structured data, button values and placeholders are read; so is a word the site holds back for now
+    # a word is read as it looks: a combining mark does not split it, and a name keeps its letters
+    assert claims(_page_copy("<p>G6 produces v\u0301erified answers.</p>")) and not claims("G\u00f6del's theorem.")
+    # structured data is read by its reader-facing fields, button values and placeholders are read, and so is a word
+    # the site holds back for now
     assert claims(_page_copy('<script type="application/ld+json">{"a": {"description": "G6 verifies it."}}</script>'))
     assert not claims(_page_copy('<script type="application/ld+json">{"a": "G6 "verifies" it"}</script>'))  # unreadable
+    assert not claims(_page_copy('<script type="application/ld+json">{"keywords": "verification"}</script>'))
+    assert not claims(_page_copy('<meta property="og:url" content="G6 verifies it">'))     # an address tag, by its key
     assert claims(_page_copy('<input type="submit" value="Verify">')) and claims(_page_copy('<input placeholder="Verify">'))
     assert claims(_markdown_copy("Text. <!-- planned -->G6 verifies it.<!-- /planned -->\n"))
     # a diagram is read as drawn: Mermaid's escapes decoded, its emphasis marks gone
-    assert claims(_markdown_copy('```mermaid A caption\nflowchart TD\n  a["veri**fied**"]\n```\n'))
+    assert claims(_markdown_copy('```mermaid A caption\nflowchart TD\n  a["G6 veri**fies** it"]\n```\n'))
     assert claims(_markdown_copy('```mermaid A caption\nflowchart TD\n  a["#118;erified it"]\n```\n'))
 
 
@@ -409,13 +437,55 @@ def test_soft_hyphens_and_zero_width_characters_do_not_split_a_word():
     assert claims(_page_copy("<p>G6 produces veri\ufb01ed answers.</p>"))       # a ligature, read as the letters
 
 
+# Review 3 of the check (2026-11-05): the rest of the class, read as a reader reads honest copy.
+def test_a_code_span_is_exempt_only_as_a_state_a_name_or_python_code():
+    assert claims(_markdown_copy("G6 outputs are `verified!`"))
+    assert not claims(_markdown_copy("`verified`, `coding_agent_gate.verify_answer` and `verify(body, artifact)`."))
+
+
+def test_an_inline_element_keeps_a_sentence_and_a_word_whole():
+    assert g6_claims("<p>G6<br>verifies every answer.</p>")
+    assert claims(_page_copy("<svg><text>G6 veri<tspan>fies</tspan> every patch.</text></svg>"))
+    assert g6_claims("<p><a href='/x'>G6</a> <span>verifies</span> every answer.</p>")
+
+
+def test_a_name_in_another_alphabet_is_not_refused():
+    assert claims(_markdown_copy("G6 is used in Hawai\u02bbi.")) == []
+
+
+def test_ascii_single_quotes_mark_a_mention_as_curly_ones_do():
+    assert claims("Avoid the word \u2018verified\u2019 in public copy.") == []
+    assert claims(_markdown_copy("Avoid the word 'verified' in public copy.")) == []
+    assert claims(_markdown_copy("G6 gives 'verified answers' every time."))
+    assert claims("G6's verified answers' quality.")                     # an apostrophe is not a quotation mark
+
+
+def test_a_state_only_diagram_label_is_exempt_after_its_emphasis_is_taken_out():
+    assert claims(_markdown_copy('```mermaid\nflowchart TD\n  a["`**verified**`"]\n```\n')) == []
+
+
+def test_structured_data_is_read_by_field_whatever_its_text_starts_with():
+    data = '{"@type": "WebPage", "description": "/ G6 verifies every patch.", "url": "/verified/"}'
+    assert claims(_page_copy(f'<script type="application/ld+json">{data}</script>'))
+    nested = '{"author": {"name": "G6 verified"}, "image": {"name": "verified.png"}, "sameAs": ["/verify"]}'
+    assert len(claims(_page_copy(f'<script type="application/ld+json">{nested}</script>'))) == 1
+
+
+def test_a_docs_site_tab_is_read_as_prose():
+    assert claims(_markdown_copy('=== "Result"\n\n    G6 verifies every patch.\n', docs_site=True))
+
+
 def test_the_docs_site_is_read_with_the_extensions_mkdocs_yml_names():
     config = (OSS / "site" / "mkdocs.yml").read_text(encoding="utf-8")
     block = config.split("\nmarkdown_extensions:\n", 1)[1].split("\n\n", 1)[0]
-    named = {name for name in re.findall(r"^  - ([\w.]+)", block, re.MULTILINE) if not name.startswith("pymdownx.")}
-    assert named == set(DOCS_SITE) - {"tables", "fenced_code"}, named
-    # the collapsible note's words are read, not taken for an indented code block
+    named = set(re.findall(r"^  - ([\w.]+)", block, re.MULTILINE))
+    # every extension the docs site names is either rendered here or read as this test says (DOCS_SITE_PYMDOWNX)
+    assert named == (set(DOCS_SITE) - {"tables", "fenced_code"}) | set(DOCS_SITE_PYMDOWNX), named
+    # a collapsible note's and a tab's words are read, not taken for an indented code block
     assert claims(_markdown_copy('??? question "Why"\n    G6 verifies it.\n', docs_site=True))
+    assert claims(_markdown_copy('===+ "One"\n    G6 verifies it.\n', docs_site=True))
+    # a setext heading's underline is not a tab
+    assert "<h1" in _docs_site_html("A title\n===\n")
 
 
 def _file_copy(path: Path) -> str:
