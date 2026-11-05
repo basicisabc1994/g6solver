@@ -78,7 +78,7 @@ from g6.core import component_process, host_models
 from g6.core.llm import LLMError
 from g6.core.outside import clean_environment, find_program
 from g6.core.process_tree import ProcessTreeError
-from g6.self_maintenance.pacing import REFRESH, AccountReading, ProviderWindow, standing, utc
+from g6.self_maintenance.pacing import REFRESH, AccountReading, ProviderWindow, figure_of, standing, utc
 
 MODEL_REFUSED = "G6_E_MODEL_REFUSED"
 #: Claude Code's ``api_error`` values that say something other than the model's own reply stopped the turn.
@@ -256,7 +256,7 @@ def _reads(window: Any) -> bool:
     if not isinstance(window, Mapping):
         return False
     percent, minutes, reset = window.get("usedPercent"), window.get("windowDurationMins"), window.get("resetsAt")
-    return (_number(percent) and 0 <= percent <= FULL and (minutes is None or _number(minutes) and minutes > 0)
+    return (figure_of(percent, FULL) is not None and (minutes is None or (figure_of(minutes) or 0) > 0)
             and (reset is None or _time(reset) is not None))
 
 

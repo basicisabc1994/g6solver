@@ -901,3 +901,50 @@ def test_the_one_reader_of_an_amount_admits_only_a_finite_number_of_zero_or_more
     for bad in ("1", "unreadable", b"1", None, True, False, -1, -0.5, float("inf"), float("-inf"), float("nan")):
         with pytest.raises(ValueError):
             stored_amount(bad)
+
+
+# 2. One check of an account's figure, however a reading is made (review wks4, finding 1) -----------------------------------------
+
+def test_every_figure_of_an_account_reading_goes_through_the_one_check():
+    """Listed from the code: every number field of ``AccountReading`` is read by ``figure_of`` where the reading is made, and
+    the tool's percentage and window length are read by it too; nothing in ``usage`` checks a figure by a rule of its own
+    (failure_read_as_success, met again in review wks4)."""
+    trees = _trees()
+    reading = next(n for n in ast.walk(trees["g6.self_maintenance.pacing"])
+                   if isinstance(n, ast.ClassDef) and n.name == "AccountReading")
+    numbers = {s.target.id for s in reading.body if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name)
+               and ast.unparse(s.annotation) in ("float", "int", "float | int")}
+    post = next(f for f in reading.body if isinstance(f, ast.FunctionDef) and f.name == "__post_init__")
+    checked = {ast.unparse(c.args[0]) for c in ast.walk(post) if isinstance(c, ast.Call) and _called(c) == "figure_of"}
+    assert numbers == {"used"}, numbers
+    assert {f"self.{name}" for name in numbers} <= checked, checked
+    usage_tree = trees["g6.self_maintenance.usage"]
+    reads = next(f for f in _functions(usage_tree) if f.name == "_reads")
+    assert {ast.unparse(c.args[0]) for c in ast.walk(reads) if isinstance(c, ast.Call) and _called(c) == "figure_of"} \
+        == {"percent", "minutes"}
+    own = [f"{n.lineno}: {ast.unparse(n)}" for n in ast.walk(usage_tree) if isinstance(n, ast.Call) and _called(n) == "isfinite"]
+    assert not own, own
+
+
+def test_the_one_check_of_a_figure():
+    from g6.self_maintenance.pacing import figure_of
+
+    assert [figure_of(v) for v in (0, 0.0, 7, 2.5, 10 ** 300)] == [0.0, 0.0, 7.0, 2.5, float(10 ** 300)]
+    assert figure_of(100, 100) == 100.0 and figure_of(100.0001, 100) is None
+    for bad in (float("nan"), float("inf"), float("-inf"), -1, -1e-300, 10 ** 400, True, False, None, "1", b"1", [1]):
+        assert figure_of(bad) is None, bad
+
+
+# 1. The store's stamps never go backwards (review wks4, finding 3) -----------------------------------------------------------------
+
+def test_every_settlement_stamp_is_written_over_the_floor_the_store_already_holds():
+    """Listed from the code: the statements that stamp a settlement. A settlement's is ``_settle``'s, which takes the floor
+    of what the store already recorded for the provider (``_kept_times``); the only other is adoption's dating of a charge the
+    book code made before spans, which is in the past of everything recorded since."""
+    trees = _package_trees()
+    stamps = sorted({(name, _enclosing(tree, node)) for name, tree in trees.items() for node in ast.walk(tree)
+                     if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                     and re.search(r"INSERT\s+(?:OR\s+\w+\s+)?INTO\s+week_settled\b", node.value, re.I)})
+    assert stamps == [("g6.operator.store", "_date_old_charge"), ("g6.operator.store", "_settle")], stamps
+    settle = next(f for f in _functions(trees["g6.operator.store"]) if f.name == "_settle")
+    assert "_kept_times(" in ast.unparse(settle)

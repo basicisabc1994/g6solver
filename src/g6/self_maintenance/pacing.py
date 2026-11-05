@@ -115,6 +115,19 @@ def ceiling(allowance: float, day: int, reserve_share: float) -> float:
     return paced if day >= 7 else min(paced, allowance * (1 - reserve_share))
 
 
+def figure_of(value: Any, most: float = math.inf) -> float | None:
+    """The one check of a figure an account reports, wherever it is made: a number (not a flag), finite, from zero to
+    ``most``, as a float. ``None`` for anything else: a NaN, an infinity, a negative, one past ``most``, or a type never
+    seen. A reading with such a figure is unread (``AccountReading``); a reply with one is no reading (``usage``)."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) and 0 <= number <= most else None
+
+
 @dataclass(frozen=True)
 class AccountReading:
     used: float = 0.0                       # the whole account's use this week, where a tool reports it
@@ -126,8 +139,21 @@ class AccountReading:
     unread: str = ""                        # why a tool that reports could not be read, with no good figure left standing
 
     def __post_init__(self) -> None:
+        """Every time goes through ``utc``, and every figure through ``figure_of``, however the reading is made: by the
+        reader, a caller, or ``replace``. One figure or flag that does not read loses the whole reading, as a reply that
+        wrong says nothing of the rest: it is unread, and admits nothing."""
         for name in ("limited_until", "read_at", "resets_at", "ended_at"):
             object.__setattr__(self, name, utc(getattr(self, name)))
+        used = figure_of(self.used)
+        why = (f"its figure {self.used!r:.80} is not a finite number of zero or more" if used is None
+               else f"whether its figure is an estimate reads {self.estimated!r:.80}" if not isinstance(self.estimated, bool)
+               else f"why it is unread reads {self.unread!r:.80}" if not isinstance(self.unread, str) else "")
+        if not why:
+            object.__setattr__(self, "used", used)
+            return
+        for name, value in (("used", 0.0), ("estimated", True), ("limited_until", None), ("read_at", None),
+                            ("resets_at", None), ("ended_at", None), ("unread", f"the account's reading does not read: {why}")):
+            object.__setattr__(self, name, value)
 
 
 def standing(reading: AccountReading | None, now: datetime) -> AccountReading | None:
@@ -229,6 +255,8 @@ class BudgetMeter:
         except ValueError as exc:
             grid, grid_at, refused = None, None, refused or f"where {provider}'s weeks fall cannot be read from operator.db ({exc})"
         given = self._read_account(provider, now) if self._read_account is not None else None
+        if given is not None and not isinstance(given, AccountReading):
+            given = AccountReading(unread=f"what reads the account gave a {type(given).__name__}, not a reading")
         account = standing(given, now)
         if account is not None and account.unread:
             refused = refused or (f"{provider}'s account is not known ({account.unread}), so nothing is reserved on it until "
@@ -306,7 +334,7 @@ class BudgetMeter:
         person looks (``_look``), never reading that amount as zero."""
         try:
             return self.scope.settle_open(provider, _ACCOUNT, made_by_a_tick=True)
-        except ValueError:
+        except ValueError:                 # nothing of it was kept: it is all or none (``OwnerScope.settle_open``)
             return 0.0
 
     def settle_open(self, provider: str) -> float:
@@ -316,4 +344,4 @@ class BudgetMeter:
 
 
 __all__ = ["REFRESH", "AccountReading", "Admission", "BudgetMeter", "ProviderWindow", "SETTINGS_FILE", "ceiling",
-           "read_settings", "standing", "target", "utc", "windows_from"]
+           "figure_of", "read_settings", "standing", "target", "utc", "windows_from"]

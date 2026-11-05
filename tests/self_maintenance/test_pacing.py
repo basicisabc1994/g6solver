@@ -954,10 +954,17 @@ elif step == "settling":
 elif step == "grid kept":
     meter.scope.conn = Dies(meter.scope.conn, "FROM week_spans")
     meter.reading("codex", NOW)
+elif step == "recovering":                  # three ticks that are gone left theirs open; recovery stops after one settles
+    for tick in ("one", "two", "three"):
+        meter.reserve("codex", NOW, 100, tick=tick)
+    meter.scope.conn = Dies(meter.scope.conn, "INSERT INTO week_settled", at=2)
+    with meter.scope.immediate():
+        meter.recover("codex")
 '''
 
 
-@pytest.mark.parametrize("step, used", [("reserving", 0), ("settling", 350), ("grid kept", 350), ("adopting", 450)])
+@pytest.mark.parametrize("step, used", [("reserving", 0), ("settling", 350), ("grid kept", 350), ("adopting", 450),
+                                        ("recovering", 300)])
 def test_a_stop_between_two_writes_leaves_every_reservation_counted_once(tmp_path, step, used):
     path = tmp_path / "op.db"
     if step == "grid kept":
@@ -1358,5 +1365,216 @@ def test_a_grid_row_that_cannot_be_read_refuses_once_and_a_reading_replaces_it(t
         assert not refused.admitted and "cannot be read" in refused.reason, refused.reason
         assert store.for_owner(OWNER).kept_grid("codex") == (reset, now)
         assert meter.reserve("codex", now, 1).admitted
+    finally:
+        store.close()
+
+
+# Review wks4: the three findings of the fourth review of the week spans -------------------------------------------------------
+
+_WKS4 = datetime(2026, 11, 1, tzinfo=UTC)
+
+
+def _wks4_meter(store, read_account=None) -> BudgetMeter:
+    return BudgetMeter((ProviderWindow("codex", 100, _WKS4, reserve_share=0),), store=store, read_account=read_account)
+
+
+@pytest.mark.parametrize("used", [float("nan"), float("inf"), float("-inf"), -1.0, -1e-9, 10 ** 400, "60", b"60", None,
+                                  True, [60], object()])
+def test_an_account_figure_that_is_not_one_makes_an_unread_reading_that_refuses(used):
+    """Finding 1: a reading checked only its times, so a NaN, an infinity or a negative figure fell out of every comparison
+    with the ledger and admitted the whole week. A figure is checked where the reading is made: a finite number of zero or
+    more; anything else (a type never seen among them) is an unread reading, and admits nothing."""
+    now = _WKS4 + timedelta(days=6)
+    reading = AccountReading(used=used, estimated=False, read_at=now, resets_at=_WKS4 + timedelta(days=7))
+    assert reading.unread and reading.used == 0.0 and reading.read_at is None and reading.resets_at is None, reading
+    store = OperatorStore(":memory:", clock=lambda: now)
+    try:
+        refused = _wks4_meter(store, lambda *_: reading).reserve("codex", now, 100)
+        assert not refused.admitted and "not known" in refused.reason, refused.reason
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("estimated, unread", [("no", ""), (0, ""), (False, None), (False, 3)])
+def test_a_reading_whose_other_fields_are_of_a_type_never_seen_is_unread(estimated, unread):
+    reading = AccountReading(used=10, estimated=estimated, unread=unread)
+    assert isinstance(reading.unread, str) and reading.unread and reading.used == 0.0 and reading.estimated is True
+
+
+@pytest.mark.parametrize("given", [{"used": 0}, 0.0, "fine", (0, None)])
+def test_what_a_caller_hands_back_that_is_no_reading_refuses(given):
+    now = _WKS4 + timedelta(days=6)
+    store = OperatorStore(":memory:", clock=lambda: now)
+    try:
+        refused = _wks4_meter(store, lambda *_: given).reserve("codex", now, 1)
+        assert not refused.admitted and "not known" in refused.reason, refused.reason
+    finally:
+        store.close()
+
+
+def test_a_good_figure_still_reads_as_itself():
+    now = _WKS4 + timedelta(days=6)
+    for used in (0, 0.0, 60, 99.5):
+        reading = AccountReading(used=used, estimated=False, read_at=now, resets_at=_WKS4 + timedelta(days=7))
+        assert not reading.unread and reading.used == used and isinstance(reading.used, float)
+
+
+@pytest.mark.parametrize("percent", [100.0001, 101, 1e309, float("nan"), -0.5, "50", True])
+def test_a_provider_figure_past_full_or_not_a_figure_is_no_reading_and_refuses(percent):
+    """The one check of a figure reads the tool's percentage too: past 100, or not a finite number, the reply is no reading."""
+    from g6.self_maintenance.usage import AccountReader
+
+    now = _WKS4 + timedelta(days=6)
+    reply = {"rateLimits": {"primary": {"usedPercent": percent, "windowDurationMins": 10080,
+                                        "resetsAt": (_WKS4 + timedelta(days=7)).timestamp()}}}
+    window = ProviderWindow("codex", 100, _WKS4, reserve_share=0)
+    reader = AccountReader((window,), ask={"codex": lambda: reply})
+    reader.refresh(now)
+    assert reader("codex", now).unread
+    store = OperatorStore(":memory:", clock=lambda: now)
+    try:
+        assert not _wks4_meter(store, reader).reserve("codex", now, 1).admitted
+    finally:
+        store.close()
+
+
+def test_a_nested_transaction_rolls_back_its_own_part_and_the_outer_one_goes_on(tmp_path):
+    """Finding 2's root: a nested ``immediate`` joined the outer transaction with nothing of its own, so a failure caught
+    inside left its writes for the outer commit. It is a savepoint now: its part rolls back, the rest stands."""
+    path = tmp_path / "op.db"
+    store = OperatorStore(path)
+    try:
+        scope = store.for_owner("ada")
+        venture = scope.create_venture("v", caps={"model": 10, "cash": 0})["venture_id"]
+        with scope.immediate():
+            scope.record(venture, "before")
+            with pytest.raises(RuntimeError):
+                with scope.immediate():
+                    scope.record(venture, "inside")
+                    with scope.immediate():
+                        scope.record(venture, "deeper")
+                    raise RuntimeError("the nested part fails")
+            scope.record(venture, "after")
+            assert store.in_transaction()
+    finally:
+        store.close()
+    reopened = OperatorStore(path)
+    try:
+        assert [e["kind"] for e in reopened.for_owner("ada").evidence(venture)] == ["created", "before", "after"]
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("outer", [True, False])
+@pytest.mark.parametrize("bad_at", [0, 1, 2])
+def test_recovery_settles_every_open_tick_reservation_or_none(tmp_path, bad_at, outer):
+    """Finding 2: recovery settled the open reservations one by one, so one whose amount does not read, met after another,
+    left that one settled for an outer transaction to commit. Every amount is read before anything is settled, and the
+    recovery is one savepoint: all or none, inside an outer transaction or not, wherever the unreadable one falls."""
+    from g6.operator.store import _us
+    from g6.workspace._coordination import Coordination
+
+    now, path = _WKS4 + timedelta(days=6), tmp_path / "operator.db"
+    store = OperatorStore(path, clock=lambda: now)
+    try:
+        meter = _wks4_meter(store)
+        scope = meter.scope
+        venture = scope.create_venture(f"codex@{_WKS4.isoformat()}", caps={"model": 100, "cash": 0})["venture_id"]
+        span = (_us(_WKS4), _us(now), _us(_WKS4 + timedelta(days=7)))
+        with scope.immediate():             # three open reservations of ticks that are gone, in order, written by hand
+            for position in range(3):
+                ref = f"open-{position}"
+                store.conn.execute("INSERT INTO ledger (venture_id, month, account, kind, amount, ref, at)"
+                                   " VALUES (?, ?, 'model', 'reserve', ?, ?, ?)",
+                                   (venture, _WKS4.isoformat(), "unreadable" if position == bad_at else 10.0, ref,
+                                    now.isoformat()))
+                store.conn.execute("INSERT INTO week_spans VALUES (?, ?, 'codex', ?, ?, ?)", (ref, OWNER, *span))
+                store.conn.execute("INSERT INTO week_ticks VALUES (?, 'a tick that is gone')", (ref,))
+        with Coordination(tmp_path / ".tick").mutex():
+            if outer:
+                with meter.scope.immediate():
+                    assert meter.recover("codex") == 0.0
+            else:
+                assert meter.recover("codex") == 0.0
+    finally:
+        store.close()
+    reopened = OperatorStore(path, clock=lambda: now)
+    try:
+        assert reopened.conn.execute("SELECT COUNT(*) FROM ledger WHERE kind IN ('release', 'charge')").fetchone()[0] == 0
+        assert reopened.conn.execute("SELECT COUNT(*) FROM week_settled").fetchone()[0] == 0
+        refused = _wks4_meter(reopened).reserve("codex", now, 1)
+        assert not refused.admitted and "cannot be read" in refused.reason, refused.reason
+    finally:
+        reopened.close()
+
+
+def test_recovery_that_can_read_every_amount_settles_them_all_inside_an_outer_transaction(tmp_path):
+    from g6.workspace._coordination import Coordination
+
+    now, path = _WKS4 + timedelta(days=6), tmp_path / "operator.db"
+    store = OperatorStore(path, clock=lambda: now)
+    try:
+        meter = _wks4_meter(store)
+        for position in range(3):
+            assert meter.reserve("codex", now, 10, tick=f"tick-{position}").admitted
+        with Coordination(tmp_path / ".tick").mutex(), meter.scope.immediate():
+            assert meter.recover("codex") == 30.0
+    finally:
+        store.close()
+    reopened = OperatorStore(path, clock=lambda: now)
+    try:
+        assert reopened.conn.execute("SELECT COUNT(*) FROM week_settled").fetchone()[0] == 3
+    finally:
+        reopened.close()
+
+
+def _stamps(store) -> list[datetime]:
+    from g6.operator.store import _moment
+
+    return [_moment(row[0]) for row in store.conn.execute("SELECT at_us FROM week_settled ORDER BY rowid")]
+
+
+def test_a_clock_rewound_before_a_kept_reading_cannot_stamp_a_later_charge_inside_it():
+    """Finding 3: a settlement was stamped by the clock alone, no earlier than its reservation's start, so a clock set back
+    stamped a charge made after a kept reading before it, and the reading's figure swallowed it. A stamp is now after the
+    newest reading the store has kept for the provider and no earlier than its newest settlement, as well as the start."""
+    clock = [_WKS4 + timedelta(days=6)]
+    reset = _WKS4 + timedelta(days=7)
+    reading = [AccountReading(used=0, estimated=False, read_at=clock[0], resets_at=reset)]
+    store = OperatorStore(":memory:", clock=lambda: clock[0])
+    try:
+        meter = _wks4_meter(store, lambda *_: reading[0])
+        first = meter.reserve("codex", clock[0], 30)
+        second = meter.reserve("codex", clock[0], 5)
+        assert first.admitted and second.admitted
+        clock[0] += timedelta(minutes=2)
+        read_at = clock[0]
+        reading[0] = AccountReading(used=60, estimated=False, read_at=read_at, resets_at=reset)
+        assert meter.reading("codex", clock[0]).used == 95                # 60 read, and the 35 still open on top
+        clock[0] -= timedelta(minutes=1)                                  # the clock is set back before the reading
+        meter.settle(first, 30)
+        assert _stamps(store)[0] > read_at
+        assert meter.reading("codex", clock[0]).used == 95                # the charge stays on top of the figure
+        clock[0] -= timedelta(minutes=5)                                  # and further back, before the last settlement
+        meter.settle(second, 5)
+        assert _stamps(store)[1] >= _stamps(store)[0]
+        clock[0] = read_at + timedelta(seconds=1)                         # time catches up
+        extra = meter.reserve("codex", clock[0], 20)
+        assert extra.used == 95 and not extra.admitted, extra
+        assert meter.reserve("codex", clock[0], 5).admitted               # 95 + 5 is the ceiling exactly
+    finally:
+        store.close()
+
+
+def test_once_the_clock_is_past_every_kept_time_a_settlement_is_stamped_by_it():
+    clock = [_WKS4 + timedelta(days=6)]
+    reading = AccountReading(used=0, estimated=False, read_at=clock[0], resets_at=_WKS4 + timedelta(days=7))
+    store = OperatorStore(":memory:", clock=lambda: clock[0])
+    try:
+        meter = _wks4_meter(store, lambda *_: reading)
+        spend = meter.reserve("codex", clock[0], 10)
+        clock[0] += timedelta(minutes=3)
+        meter.settle(spend, 10)
+        assert _stamps(store) == [clock[0]]
     finally:
         store.close()

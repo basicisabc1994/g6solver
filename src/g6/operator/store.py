@@ -267,15 +267,24 @@ class OwnerScope:
         """One ``BEGIN IMMEDIATE`` transaction: what is read inside it is what a write inside it is checked against, as no
         other connection can write until it ends. It belongs to the thread that opened it: another thread on this same
         connection waits here until it ends, then opens its own and reads what the first one wrote. A use inside one the
-        same thread already holds joins it, so a store method that writes on its own can also be one step of a larger
-        check."""
+        same thread already holds is a savepoint within it, so a store method that writes on its own can also be one step
+        of a larger check: when that step fails, its own part rolls back, whatever the larger check then does, and the rest
+        stands."""
         store = self.store
         with store._writing:
             depth = getattr(store._held, "depth", 0)
             store._held.depth = depth + 1
             try:
                 if depth:
-                    yield
+                    point = f"g6_step_{depth}"
+                    self.conn.execute(f"SAVEPOINT {point}")
+                    try:
+                        yield
+                    except BaseException:
+                        self.conn.execute(f"ROLLBACK TO {point}")
+                        self.conn.execute(f"RELEASE {point}")
+                        raise
+                    self.conn.execute(f"RELEASE {point}")
                 else:
                     self.conn.execute("BEGIN IMMEDIATE")
                     try:
@@ -373,15 +382,18 @@ class OwnerScope:
         Only an owner that knows none of them can still be spending may. ``made_by_a_tick``: only those a tick made, as the
         loop recovers under its folder's tick lock: one tick holds it at a time, so an open reservation a tick made is one a
         tick that is gone left. One made outside a tick is never recovered: it stays open, and counts, until its maker
-        settles it."""
+        settles it. All or none: every amount is read (``stored_amount``) before any is settled, and the whole is one
+        transaction, or one savepoint of the caller's, so one that does not read is a ``ValueError`` with nothing settled."""
         with self.immediate():
             rows = self.conn.execute(
-                "SELECT l.venture_id, l.ref FROM week_spans s JOIN ledger l ON l.ref = s.ref AND l.kind = 'reserve'"
+                "SELECT l.venture_id, l.ref, l.amount FROM week_spans s JOIN ledger l ON l.ref = s.ref AND l.kind = 'reserve'"
                 " JOIN ventures v ON v.venture_id = l.venture_id AND v.owner = s.owner"
                 " WHERE s.owner = ? AND s.provider = ? AND l.account = ?"
                 " AND NOT EXISTS (SELECT 1 FROM ledger x WHERE x.ref = s.ref AND x.kind = 'release')"
                 " AND (? = 0 OR EXISTS (SELECT 1 FROM week_ticks k WHERE k.ref = s.ref)) ORDER BY l.seq",
                 (self.owner, provider, account, int(made_by_a_tick))).fetchall()
+            for row in rows:
+                stored_amount(row["amount"])
             return sum(self._settle(row["venture_id"], row["ref"], None, None) for row in rows)
 
     def adopt_books(self, providers: Sequence[str]) -> dict[str, str]:
@@ -582,7 +594,7 @@ class OwnerScope:
                                 " AND kind='reserve'", (vid, reservation)).fetchone()
         if row is None:
             raise LookupError("no such reservation for this venture")
-        span = self.conn.execute("SELECT start_us FROM week_spans WHERE ref=?", (reservation,)).fetchone()
+        span = self.conn.execute("SELECT owner, provider, start_us FROM week_spans WHERE ref=?", (reservation,)).fetchone()
         reserved = stored_amount(row["amount"])
         charged = reserved
         reported_value = gates.amount_of(reported)
@@ -593,6 +605,25 @@ class OwnerScope:
         self._append_ledger(vid, row["month"], row["account"], "release", reserved, reservation)
         self._append_ledger(vid, row["month"], row["account"], "charge", charged, reservation)
         if span is not None:
-            ended = max(_us(self.store.clock()), span["start_us"])
+            ended = max(_us(self.store.clock()), span["start_us"], *self._kept_times(span["owner"], span["provider"]))
             self.conn.execute("INSERT INTO week_settled VALUES (?, ?)", (reservation, ended))
         return charged
+
+    def _kept_times(self, owner: str, provider: str) -> list[int]:
+        """Inside the caller's transaction: the floor of a settlement's stamp from what the store has already recorded for
+        the provider, so its stamps never go backwards whatever its clock does. A settlement written after the store kept
+        a reading cannot be in that reading's figure, so it is stamped after it (a microsecond on); and no settlement is
+        stamped before the newest one already written. A kept time that does not read sets no floor: such a grid is
+        refused and replaced by the next reading (``keep_grid``)."""
+        floors = []
+        newest = self.conn.execute("SELECT MAX(t.at_us) FROM week_settled t JOIN week_spans s ON s.ref = t.ref"
+                                   " WHERE s.owner = ? AND s.provider = ?", (owner, provider)).fetchone()[0]
+        if newest is not None:
+            floors.append(int(newest))
+        row = self.conn.execute("SELECT read_at FROM week_grids WHERE owner = ? AND provider = ?", (owner, provider)).fetchone()
+        try:
+            if row is not None and row["read_at"]:
+                floors.append(_us(_instant(row["read_at"])) + 1)
+        except ValueError:
+            pass
+        return floors
