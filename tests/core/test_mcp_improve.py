@@ -653,14 +653,16 @@ def test_a_stop_arriving_while_a_start_is_recorded_wins_over_it(rig, monkeypatch
 def test_a_stop_arriving_just_after_a_start_read_an_old_stop_still_wins(rig, monkeypatch):
     rig.enrol()
     (rig.root / "STOP").write_text("an old stop\n", encoding="utf-8")
-    real = improve._read_stop_state                                      # the start's one reading of the stop state
+    real, readings = improve.stop_in_force, []
 
-    def a_stop_after_the_read(root):
-        found = real(root)
-        improve.stop(str(rig.root), "a late stop")
+    def a_stop_after_the_read(root, *args, **kwargs):
+        found = real(root, *args, **kwargs)
+        readings.append(found)
+        if len(readings) == 2:                                           # the start's reading under its locks
+            improve.stop(str(rig.root), "a late stop")
         return found
 
-    monkeypatch.setattr(improve, "_read_stop_state", a_stop_after_the_read)
+    monkeypatch.setattr(improve, "stop_in_force", a_stop_after_the_read)
     got = improve.start(rig.root, "Ada")
     assert rig.spawned == [] and _code(got) == "G6_E_LOOP_START_STOPPED" and "a late stop" in stop_reason(rig.root)
 

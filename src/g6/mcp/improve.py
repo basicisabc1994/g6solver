@@ -32,7 +32,6 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -50,7 +49,7 @@ from g6.self_maintenance.envelope import (
     STOP_UNREADABLE,
     STOPS_FILE,
     CycleLog,
-    StopSeen,
+    Stop,
     ask_to_stop,
     file_digest,
     heartbeat,
@@ -128,11 +127,6 @@ def _not_a_loop(root: Path) -> dict:
                     "done", f"Name the folder, or create {SETTINGS_FILE} there: see the design's section 11.")
 
 
-def _log(root: Path) -> CycleLog | None:
-    """The folder's records, or ``None`` before any: a ``CycleLog`` makes its folder, so it is opened only when there."""
-    return CycleLog(root / CYCLE_LOG) if (root / CYCLE_LOG).is_file() else None
-
-
 def _pinned_python(settings: dict[str, Any]) -> str:
     """The interpreter a folder pins its runner to, or ``""`` with none named. A ``ValueError`` says what is wrong with it."""
     if "python" not in settings:
@@ -143,7 +137,9 @@ def _pinned_python(settings: dict[str, Any]) -> str:
     return python
 
 
-def _cannot_start(root: Path) -> dict | None:
+def _cannot_start(root: Path, reading: Stop) -> dict | None:
+    """Why nothing may start on ``root``, from its settings and from ``reading``, the one reading of the stop's files and the
+    records (``stop_in_force``): this opens none of them."""
     if not (root / SETTINGS_FILE).is_file():
         return _not_a_loop(root)
     try:
@@ -156,31 +152,26 @@ def _cannot_start(root: Path) -> dict | None:
         return _blocked(RUNNER_ALIVE, "a runner is already alive on this folder, so nothing was started",
                         "Read g6_improve_status. If you have just stopped it, it ends once it sees the STOP file: at its next "
                         "model call, or within a minute while it waits.")
-    halted = stop_in_force(root)           # the stop's files and the records it stands on, read once
-    if halted.code == STOP_UNREADABLE:
-        return _stop_unreadable(root, halted.reason)
-    try:
-        log = _log(root)
-    except (LedgerError, OSError) as exc:  # they moved since that reading: the stop decision has nothing to stand on
-        return _stop_unreadable(root, f"the loop's records cannot be read or cannot be trusted ({type(exc).__name__}: "
-                                      f"{exc})")
-    enrol =(f'A person enrols it at their own terminal: python -P -m g6.metaharness.loop enrol "{root}" --as "Your name". '
+    if reading.code == STOP_UNREADABLE:
+        return _stop_unreadable(root, reading.reason)
+    enrol = (f'A person enrols it at their own terminal: python -P -m g6.metaharness.loop enrol "{root}" --as "Your name". '
              "An agent cannot do that step.")
-    if log is None or log.enrolled() is None:
+    enrolled = reading.log.enrolled() if reading.log is not None else None
+    if enrolled is None:
         return _blocked(NOT_ENROLLED, "no person has enrolled a domain in this folder, so nothing was started", enrol)
-    if log.enrolled()["frozen"].get("domain_file") != file_digest(read_settings(root).get("domain_file")):
+    if enrolled["frozen"].get("domain_file") != file_digest(settings.get("domain_file")):
         return _blocked(FROZEN_CHANGED, "the Python file that declares this domain is not the one a person enrolled, so "
                         "nothing was started and it did not run", enrol)
     return None
 
 
-def _terms(root: Path, settings: dict[str, Any], seen: StopSeen) -> str:
-    """A digest of all a dialog shows or stands on: the whole settings file, the Python file, who enrolled it, the stop state
-    as one reading saw it (``StopSeen.binding``, all that a start records of it), and any pause. Any write to a stop
-    changes that, a stop that died between its two writes included."""
-    log = _log(root)
+def _terms(root: Path, settings: dict[str, Any], reading: Stop) -> str:
+    """A digest of all a dialog shows or stands on: the whole settings file, the Python file, and ``reading`` whole, its
+    digest, which names every byte of the ``STOP`` file, the journal and the records it was read from, so who enrolled,
+    any pause, the last start and any stop after it are in it without a field listed. Any write to any of them changes
+    it."""
     return digest_of({"settings": settings, "domain_file": file_digest(settings.get("domain_file")),
-                      "enrolled": log.enrolled(), "stop": seen.binding(), "paused": log.paused()})
+                      "reading": reading.digest})
 
 
 def _stop_unreadable(root: Path, why: str) -> dict:
@@ -189,30 +180,35 @@ def _stop_unreadable(root: Path, why: str) -> dict:
                     "in force.", running=False, folder=str(root))
 
 
-def _read_stop_state(root: Path) -> tuple[StopSeen, Mapping[str, Any] | None] | dict:
-    """The stop's files and the last start, in ``stop_in_force``'s one reading, or the refusal when any of it cannot be
-    read."""
-    halted = stop_in_force(root)
-    if halted.code == STOP_UNREADABLE or halted.seen is None:
-        return _stop_unreadable(root, halted.reason)
-    return halted.seen, halted.start
+#: How many times a dialog is made again when what it reads moves while it is being made.
+DIALOG_TRIES = 3
 
 
 def asked(folder: str) -> tuple[Path, str, str] | dict:
     """What the person reads before the runner starts, the folder it is about, and the terms that binds them to; a
-    blocked reply when it cannot start, so no dialog is shown for nothing. The terms are read before the question, so a
-    change between the two asks again rather than starting on what was not read. The stop state is read once, with the
-    start it is measured against, and the question and the terms both stand on that reading."""
+    blocked reply when it cannot start, so no dialog is shown for nothing. Everything it says comes from one reading
+    (``stop_in_force``), and it is shown only if a reading taken once it is made is that same reading: a change while it
+    was made makes it again, and a reading that cannot be made then refuses as any reader does."""
     root = _root(folder)
-    cannot = _cannot_start(root)
-    if cannot is not None:
-        return cannot
-    reading = _read_stop_state(root)
-    if isinstance(reading, dict):
-        return reading
-    seen, started = reading
-    settings, log = read_settings(root), _log(root)
-    terms = _terms(root, settings, seen)
+    for _ in range(DIALOG_TRIES):
+        reading = stop_in_force(root)
+        cannot = _cannot_start(root, reading)
+        if cannot is not None:
+            return cannot
+        made = _dialog(root, reading)
+        again = stop_in_force(root)
+        if again.code == STOP_UNREADABLE:
+            return _stop_unreadable(root, again.reason)
+        if again.digest == reading.digest:
+            return made
+    return _blocked(TERMS_CHANGED, "what the dialog stands on kept changing while it was made, so nothing was asked",
+                    ASK_AGAIN, running=False, folder=str(root))
+
+
+def _dialog(root: Path, reading: Stop) -> tuple[Path, str, str]:
+    """The question and its terms, from ``reading`` and the settings alone."""
+    settings, log, seen, started = read_settings(root), reading.log, reading.seen, reading.start
+    terms = _terms(root, settings, reading)
     enrolled = log.enrolled()
     use = [f"{w.provider}: {w.allowance:g} a week{' (an estimate)' if w.estimated else ''}, keeping {w.reserve_share:.0%} for "
            "you until the week's last day" for w in windows_from(settings)]
@@ -228,6 +224,8 @@ def asked(folder: str) -> tuple[Path, str, str] | dict:
     elif seen.by_journal(started):
         question.append(f"A stop was asked for since the last start and no STOP file stands for it: {STOPS_FILE} in the folder "
                         "says why. Starting goes past it.")
+    if reading.revoked:
+        question.append(f"The last start was ended by a stop on record ({reading.revoked}). Starting goes past it."[:300])
     if log.paused():
         question.append(f"The loop is paused, so it will spend nothing until you lift that: {log.paused()}"[:300])
     return root, "\n".join([*question, NAME]), terms
@@ -283,25 +281,32 @@ def start(root: Path, who: str, shown: str | None = None) -> dict:
     """Record who started it and start the runner. What the person read may have moved while the dialog was up, so
     ``shown``, the terms ``asked`` gave, must still be what stands, and a change asks them again. The start records what
     it stands on, so a restart holds to the same settings and any stop since closes it. It lifts only the stop state those
-    terms cover, by recording it: any other stop stands, and nothing starts. The stop state is read, compared with what
-    was shown and recorded all under the tick lock and ``stop_lock``, read last thing before the write, so a stop cannot
-    land between the reading and the row, and a start refused there writes nothing. A stop state that cannot be read
-    starts nothing."""
-    cannot = _cannot_start(root)
+    terms cover, by recording it: any other stop stands, and nothing starts. Under the tick lock and ``stop_lock`` it takes
+    a fresh reading (``stop_in_force``), refuses if that reading is not the one the dialog showed, its whole digest being in
+    the terms, and writes its row: no stop can land between the reading and the row, and a start refused there writes
+    nothing. A reading that cannot be made, there or when the row will not take, starts nothing and says so as any reader
+    does."""
+    cannot = _cannot_start(root, stop_in_force(root))
     if cannot is not None:
         return cannot
     settings = read_settings(root)
     try:
         with Coordination(root / ".tick").mutex(), stop_lock(root):
-            reading = _read_stop_state(root)
-            if isinstance(reading, dict):
-                return reading
-            seen, _ = reading
-            if shown is not None and _terms(root, settings, seen) != shown:
+            reading = stop_in_force(root)
+            cannot = _cannot_start(root, reading)
+            if cannot is not None:
+                return cannot
+            if shown is not None and _terms(root, settings, reading) != shown:
                 return _blocked(TERMS_CHANGED, "what the person read is no longer what would start, so nothing was started",
                                 ASK_AGAIN, running=False, folder=str(root))
-            CycleLog(root / CYCLE_LOG).start(who, at=datetime.now().astimezone().isoformat(), settings=digest_of(settings),
-                                             **seen.binding())
+            try:
+                CycleLog(root / CYCLE_LOG).start(who, at=datetime.now().astimezone().isoformat(),
+                                                 settings=digest_of(settings), **reading.seen.binding())
+            except (OSError, LedgerError):
+                moved = stop_in_force(root)      # the records would not take the row: say what a reading says of them
+                if moved.code == STOP_UNREADABLE:
+                    return _stop_unreadable(root, moved.reason)
+                raise
         halted = stop_in_force(root)
         if halted:
             record_stop(root, halted.reason, at=datetime.now().astimezone().isoformat())
@@ -347,13 +352,13 @@ def status(folder: str) -> dict:
     if not _is_a_loop(root):
         return _not_a_loop(root)
     beat, running = heartbeat(root) or {}, runner_alive(root)
+    halted = stop_in_force(root)           # the one reading: the stop's files and the records, which status opens no more of
     cycles, paused, started, seen, unreadable = [], "", None, 0, ""
-    try:
-        log = _log(root)
-        if log is not None:
-            cycles, paused, started, seen = log.cycles(), log.paused(), log.started(), log.generation()
-    except (LedgerError, OSError) as exc:
-        unreadable = f"the loop's records cannot be read or cannot be trusted: {type(exc).__name__}: {exc}"[:400]
+    log = halted.log
+    if log is not None:
+        cycles, paused, started, seen = log.cycles(), log.paused(), log.started(), log.generation()
+    elif "records" in halted.unread:
+        unreadable = f"the loop's records cannot be read or cannot be trusted: {halted.reason}"[:400]
     try:
         generations = lineage(root / "workspace", last=RECENT)
     except LedgerError as exc:
@@ -365,7 +370,6 @@ def status(folder: str) -> dict:
     pause = ({"code": PAUSED, "reason": paused} if paused else
              {"code": RECORDS_UNREADABLE, "reason": unreadable} if unreadable else held)
     named = [c for c in cycles if c.get("constraint")]
-    halted = stop_in_force(root)           # its own one reading of the stop's files and the records, as every reader's
     page = digest.latest(root)
     return _envelope("qualified-draft", STATUS, f"a runner is {'alive' if running else 'not alive'} on {root}",
                      running=running, folder=str(root), last_heartbeat=beat or None,

@@ -204,8 +204,7 @@ EXPECTED = {"nothing": "", "a journal that cannot be read": STOP_UNREADABLE, "a 
 
 def _readers(f) -> dict[str, str]:
     """What each reader says of the stop: the tick, the runner's gate, status and the start's dialog."""
-    f.loop.log.reload()                             # as a tick does under its lock
-    halted = f.loop._halted()
+    halted = f.loop._halted()                       # the tick's per-request guard, which reads what is on disk
     gate = _gate(f.root, read_settings(f.root))[0]
     status = improve.status(str(f.root))
     offered = improve.asked(str(f.root))
@@ -213,7 +212,8 @@ def _readers(f) -> dict[str, str]:
         dialog = _code(offered)
     else:
         question = offered[1]
-        dialog = STOPPED if "Starting lifts the stop" in question or "no STOP file stands for it" in question else ""
+        dialog = STOPPED if any(said in question for said in ("Starting lifts the stop", "no STOP file stands for it",
+                                                              "ended by a stop on record")) else ""
     return {"tick": halted.code if halted else "", "gate": {NOT_STARTED: STOPPED}.get(gate, gate),
             "status": status.get("stop_code", "?") if bool(status["stop"]) else "", "dialog": dialog}
 
@@ -448,7 +448,7 @@ def test_a_journal_a_start_saw_with_a_line_cut_short_is_lifted_with_it(folder):
 def test_a_stop_on_record_after_the_last_start_holds_every_reader_until_a_person_starts_again(folder):
     _agreed(folder)
     CycleLog(folder.root / CYCLE_LOG).stop("a tick met a stop and ended", at="noon")
-    assert _readers(folder) == {"tick": STOPPED, "gate": STOPPED, "status": STOPPED, "dialog": ""}
+    assert _readers(folder) == {"tick": STOPPED, "gate": STOPPED, "status": STOPPED, "dialog": STOPPED}
     _agreed(folder)
     assert _readers(folder) == {"tick": "", "gate": "", "status": "", "dialog": ""}
 
@@ -483,3 +483,132 @@ def test_a_record_changed_mid_tick_with_its_size_and_tail_kept_cuts_the_tick_off
     domain.llm._responder = changed_after_the_first
     got = folder.loop.tick()
     assert _code(got) == STOP_UNREADABLE and len(seen) == 1
+
+
+# Review 2: the reading is a value, taken once from bytes, and nothing else opens the stop's files ------------------------
+
+#: Every place in G6 that joins a path to the STOP file, the journal or the constraint log, or opens a CycleLog, and why.
+#: The reading is the only reader; the rest write, or keep a writer's own handle, or only ask whether a folder is a loop.
+OPENS = {
+    ("g6/self_maintenance/envelope.py", "stop_in_force"): "the one reading: STOP, the journal and the records, once each",
+    ("g6/self_maintenance/envelope.py", "ask_to_stop"): "writes a stop: the journal line, then the STOP file",
+    ("g6/self_maintenance/envelope.py", "record_stop"): "writes a stopped row through the records' writer",
+    ("g6/self_maintenance/envelope.py", "_parsed"): "parses the bytes the reading took, from a copy of its own",
+    ("g6/mcp/improve.py", "start"): "writes the started row through the records' writer",
+    ("g6/mcp/improve.py", "_is_a_loop"): "asks only whether a folder is a loop at all, before a stop writes there",
+    ("g6/metaharness/loop.py", "__init__"): "the tick's own records handle, which writes cycle rows",
+}
+
+
+def _opens_in(path) -> set[tuple[str, str]]:
+    import ast
+
+    names, found = {"STOP_FILE", "STOPS_FILE", "CYCLE_LOG"}, set()
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+
+    def walk(node, where):
+        for child in ast.iter_child_nodes(node):
+            inside = child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else where
+            joined = (isinstance(child, ast.BinOp) and isinstance(child.op, ast.Div) and isinstance(child.right, ast.Name)
+                      and child.right.id in names)
+            opened = isinstance(child, ast.Call) and isinstance(child.func, ast.Name) and child.func.id == "CycleLog"
+            if joined or opened:
+                found.add(where)
+            walk(child, inside)
+
+    walk(tree, "<module>")
+    return found
+
+
+def test_nothing_but_the_reading_reads_the_stop_files_and_the_records():
+    import g6
+
+    package = Path(g6.__file__).resolve().parent
+    seen = {(f"g6/{path.relative_to(package).as_posix()}", where)
+            for path in sorted(package.rglob("*.py")) for where in _opens_in(path)}
+    assert seen == set(OPENS), f"a reader outside the one reading, or one gone: {sorted(seen ^ set(OPENS))}"
+
+
+def _records_folder_a_file(f) -> None:
+    (f.root / CYCLE_LOG).unlink()
+    (f.root / CYCLE_LOG).parent.rmdir()
+    (f.root / CYCLE_LOG).parent.write_bytes(b"a file where the records folder was")
+
+
+def _records_not_json(f) -> None:
+    (f.root / CYCLE_LOG).write_bytes(b"this is not a chain\n")
+
+
+def _a_start_with_null_lift_fields(f) -> None:
+    from g6.core.ledger import ChainLedger
+    rows = len(CycleLog(f.root / CYCLE_LOG)._rows())
+    ChainLedger(f.root / CYCLE_LOG).append("started", str(rows + 1), {"by": "Ada", "lifted": None, "lifted_bytes": None})
+
+
+ON_DISK = {
+    "nothing at STOP or the journal": (lambda f: None, ""),
+    "a directory at STOP": (lambda f: _unreadable(f.root / STOP_FILE), STOP_UNREADABLE),
+    "a directory at the journal": (lambda f: _unreadable(f.root / STOPS_FILE), STOP_UNREADABLE),
+    "a directory at the records": (_records_a_directory, STOP_UNREADABLE),
+    "a file in place of the records folder": (_records_folder_a_file, STOP_UNREADABLE),
+    "records cut short": (_records_cut_short, STOP_UNREADABLE),
+    "records that are not a chain": (_records_not_json, STOP_UNREADABLE),
+    "a start with null lift fields": (_a_start_with_null_lift_fields, STOP_UNREADABLE),
+    "a cut-off row after the start": (lambda f: CycleLog(f.root / CYCLE_LOG).stop("cut off", cut_off={"charged": 1}),
+                                      STOPPED),
+}
+
+
+@pytest.mark.parametrize("state", list(ON_DISK))
+def test_every_consumer_takes_the_one_reading_and_gives_its_code(folder, state):
+    from g6.self_maintenance.envelope import stop_in_force
+
+    _agreed(folder)
+    change, expected = ON_DISK[state]
+    change(folder)
+    seen = {"decision": stop_in_force(folder.root).code, **_readers(folder)}
+    assert seen == dict.fromkeys(seen, expected)
+    if expected == STOP_UNREADABLE:
+        assert _code(improve.start(folder.root, "Ada")) == STOP_UNREADABLE and folder.spawned == []
+
+
+def test_a_path_under_a_regular_file_is_not_absent_on_this_machine(tmp_path):
+    """Windows says such a path is not found, where elsewhere it is not a directory: only the folder above can say."""
+    from g6.self_maintenance.envelope import stop_in_force
+
+    (tmp_path / "records").write_bytes(b"a file")
+    try:
+        (tmp_path / CYCLE_LOG).read_bytes()
+    except OSError as exc:
+        said = type(exc).__name__
+    assert said in ("FileNotFoundError", "NotADirectoryError")
+    assert stop_in_force(tmp_path).code == STOP_UNREADABLE
+
+
+def test_a_missing_records_folder_in_a_readable_loop_folder_is_absent(tmp_path):
+    from g6.self_maintenance.envelope import stop_in_force
+
+    found = stop_in_force(tmp_path)
+    assert found.code == "" and found.start is None and found.records_sha256 == "" and found.log is None
+
+
+def test_the_reading_names_every_byte_it_stood_on(folder):
+    from g6.self_maintenance.envelope import stop_in_force
+
+    _agreed(folder)
+    first = stop_in_force(folder.root)
+    assert stop_in_force(folder.root).digest == first.digest
+    CycleLog(folder.root / CYCLE_LOG).pause("a person paused it")
+    assert stop_in_force(folder.root).digest != first.digest
+
+
+def test_a_runner_ended_by_a_stop_beats_that_stops_code_not_the_last_ticks(folder, monkeypatch):
+    from g6.metaharness.runner import Runner
+    from g6.self_maintenance.envelope import heartbeat
+
+    _agreed(folder)
+    runner = Runner(folder.loop, now=lambda: NOW)
+    runner.last = {"warning_card": {"code": "G6_E_LOOP_BUDGET_WAIT"}, "message": "a tick before"}
+    monkeypatch.setattr(runner, "_digest", lambda *args: None)
+    _unreadable(folder.root / STOPS_FILE)
+    assert runner.step() is None and heartbeat(folder.root)["code"] == STOP_UNREADABLE
