@@ -1,0 +1,189 @@
+{
+  "completion_state": "qualified-draft",
+  "dossier": {
+    "blockers": [],
+    "candidate_actor": "research_agent",
+    "checks": [
+      {
+        "artifact": {
+          "claim_id": "claim1",
+          "claimed_by": "research_agent",
+          "id": "execution:claim1",
+          "kind": "report",
+          "length": 1078,
+          "sha256": "c97bfea482a8ba4e6c3879623081308e899167fdcfe21ccac6d9f0a8dceec8a0",
+          "source_ref": "g6:execution:c97bfea482a8ba4e6c3879623081308e899167fdcfe21ccac6d9f0a8dceec8a0"
+        },
+        "control_tests": {
+          "negative_count": 1,
+          "negative_detected": 1,
+          "positive_count": 1,
+          "positive_passed": 1
+        },
+        "controls": "detected",
+        "criterion_id": "logical_entailment",
+        "failure_modes": [
+          "false_confidence"
+        ],
+        "normative_ref": "demo-v1/clause-1",
+        "result": "passed",
+        "severity": "critical",
+        "verifier_id": "tiny_truth_table",
+        "verifier_manifest": {
+          "id": "tiny_truth_table",
+          "negative_control_hashes": [
+            "5dadeb92d382b0f767d72cb68bb5ca59048617b59e1567c9c78c1a3aaf5b2e64"
+          ],
+          "owner": "external_evaluator",
+          "positive_control_hashes": [
+            "c97bfea482a8ba4e6c3879623081308e899167fdcfe21ccac6d9f0a8dceec8a0"
+          ],
+          "version_sha256": "0d8559b7f487997a34e8b71c57872e09d9fbc504a39281a6892a85bc0c07fecd"
+        }
+      }
+    ],
+    "completion_state": "qualified-draft",
+    "content_sha256": "86e968357045c2120bb21e05ea34e0df6d979abcbbece0a228978911490d948e",
+    "documentary_sections": {
+      "assumptions": "Classical Boolean logic only, two named variables.",
+      "counterexamples_and_refutations": "Negative control removes premise A, admitting A=False B=False etc.",
+      "data_provenance": "G6 registry is stubbed; artifact bytes are bound to execution report hash.",
+      "exceptions_and_unresolved_items": "Unresolved: actual G6 registry integration and external trust root.",
+      "methodology": "Enumerate every valuation of A and B; reject any countermodel.",
+      "objective_and_scope": "Check one finite propositional entailment with two Boolean symbols.",
+      "reproduction_instructions": "Run this script and re-evaluate truth table + controls.",
+      "standards_and_sources": "Illustrative local rubric demo-v1; source sha256 527e7f48c11da68080fe9be975090e8e839b2bc2b120f58a9c405e2de86a7e87",
+      "uncertainty_and_limitations": "No real G6 solver, no outside-process custody, no professional review."
+    },
+    "evaluator_id": "review_runner",
+    "kind": "candidate_verification_dossier_not_G6_promotion_certificate",
+    "limitations": [
+      "The standard and its faithful translation are trusted evaluator inputs, not independently confirmed here.",
+      "A model being true in its formalisation does not imply it describes reality.",
+      "The SHA-256 content digest is unkeyed: it detects edits, not malicious rewrite and reissuance.",
+      "Executor/custody isolation is not established by this in-process reference implementation.",
+      "An assurance dossier is not professional accreditation, an audit opinion, or G6 verified status."
+    ],
+    "metrics": {
+      "advisory_exceptions": 0,
+      "critical_passed": 1,
+      "declared_advisory": 0,
+      "declared_critical": 1,
+      "negative_controls_attempted": 1,
+      "negative_controls_detected": 1
+    },
+    "missing_documentation": [],
+    "professional_review": {
+      "authenticated": false,
+      "reason": "not requested at this risk level",
+      "required": false
+    },
+    "promotion_authority": "none: G6's independent door must replay for verified",
+    "schema": "g6.cognitive_assurance.dossier/1",
+    "scope_decision": "all_declared_checks_passed_in_this_evaluator",
+    "standard": {
+      "authority": "Illustrative local rubric; NOT a professional or accredited standard",
+      "criteria": [
+        {
+          "description": "Prove entailment over the two Boolean symbols",
+          "expected_artifact_kind": "report",
+          "failure_modes": [
+            "false_confidence"
+          ],
+          "id": "logical_entailment",
+          "normative_ref": "demo-v1/clause-1",
+          "required_methods": [
+            "formal"
+          ],
+          "severity": "critical",
+          "verifier_id": "tiny_truth_table"
+        }
+      ],
+      "edition": "demo-v1",
+      "id": "software_research_demo",
+      "jurisdiction": "example",
+      "risk": 1,
+      "source_sha256": "527e7f48c11da68080fe9be975090e8e839b2bc2b120f58a9c405e2de86a7e87"
+    },
+    "standard_digest": "fa7a01a526648910d7d31f91c5f2455a41eef208a9e1aa0c091578c0f4bca9eb"
+  },
+  "epistemic_reconciliation": null,
+  "failure_mode_findings": [],
+  "metacognitive_selection": {
+    "admitted_trials": 0,
+    "completion_state": "qualified-draft",
+    "limitations": [
+      "Historical success estimates are uncalibrated contextual heuristics, not truth probabilities.",
+      "If method assignment was not randomized or paired, off-policy comparisons may be confounded.",
+      "Selection cannot waive, redefine, or relabel mandatory acceptance criteria.",
+      "Claims remain candidate hypotheses until independently evidenced and promoted by G6."
+    ],
+    "missing": [],
+    "ordered_variants": [
+      {
+        "admitted_trial_ids": [],
+        "critical_regressions": 0,
+        "engine": "formal",
+        "expected_cost": 2.0,
+        "exploration_bonus": 0.22234557110512668,
+        "historical_resolutions": 0,
+        "method": "formal",
+        "obligation": "mandatory",
+        "op": "check_validity",
+        "ranking_note": "evaluator-admitted historical outcomes only; not a calibrated forecast",
+        "ranking_score": 0.2407818570350422,
+        "representation": "SMT",
+        "smoothed_success_proxy": 0.5,
+        "training_cases": 0,
+        "variant_id": "smt"
+      }
+    ],
+    "policy_digest": "3418ce3bfccde9852017d9ae65d063eb87f3c065925c1b298bdcf013dada27ff",
+    "rejected_trials": 0,
+    "requirements": [
+      "formal"
+    ]
+  },
+  "method_results": {
+    "claim_id": "claim1",
+    "completion_state": "qualified-draft",
+    "limits": [
+      "Only the provided models were executed; model semantics and data provenance were not verified.",
+      "A valid formal model does not establish that the natural language formalisation is accurate."
+    ],
+    "measured_insight": "method outputs and their original metrics, not a synthetic truth score",
+    "method_execution_coverage": 1.0,
+    "method_execution_coverage_definition": "executed non-blocked method steps / requested executable steps",
+    "missing": [],
+    "selection_policy_digest": "3418ce3bfccde9852017d9ae65d063eb87f3c065925c1b298bdcf013dada27ff",
+    "standard_digest": "fa7a01a526648910d7d31f91c5f2455a41eef208a9e1aa0c091578c0f4bca9eb",
+    "steps": [
+      {
+        "claim_id": "claim1",
+        "completion_state": "qualified-draft",
+        "component": "formal",
+        "id": "claim1:formal:check_validity",
+        "method": "formal",
+        "metric": "validity_or_counterexample_under_formalised_assumptions",
+        "op": "check_validity",
+        "result": {
+          "completion_state": "qualified-draft",
+          "component": "formal",
+          "formula": "B",
+          "op": "check_validity",
+          "premises": [
+            "(=> A B)",
+            "A"
+          ],
+          "sorts": {
+            "A": "Bool",
+            "B": "Bool"
+          }
+        }
+      }
+    ]
+  },
+  "next_action": "submit frozen artifact/check bundle to independent G6 promotion door",
+  "verified": false,
+  "warning": "Independent external custody and G6 door replay are NOT established here."
+}
