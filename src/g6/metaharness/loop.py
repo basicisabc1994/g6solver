@@ -27,6 +27,7 @@ import importlib.machinery
 import inspect
 import math
 import os
+import site
 import sys
 import threading
 import time
@@ -35,14 +36,15 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from functools import wraps
+from functools import partial, wraps
 from pathlib import Path
+from types import CodeType
 from typing import Any
 
 import g6
 from g6.core import stop
 from g6.core.adaptation_gate import is_automated
-from g6.core.ledger import LedgerError, digest
+from g6.core.ledger import LedgerError, canonical, digest
 from g6.core.llm import _WAITS, DEFAULT_MAX_TOKENS, LLMError
 from g6.core.model_calls import counting
 from g6.integrity import build_manifest, in_cache, manifest_sha256
@@ -50,11 +52,14 @@ from g6.metaharness.api import _blocked, _envelope, judging_sha256
 from g6.metaharness.domain import (
     BARRED,
     FALLBACK_MODEL,
+    SHARES,
+    AnswerUnidentifiable,
     Cut,
     Domain,
     Execution,
     FailureRecord,
     Judge,
+    answer_identity,
     backends,
     caller_problems,
     cut_pool,
@@ -72,7 +77,7 @@ from g6.metaharness.monitor import MIN_PAIRS
 from g6.metaharness.propose import DevRunner, ProposerView
 from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, SuiteCase, Workflow, default_objectives
 from g6.metaharness.select import race_calls
-from g6.metaharness.shadow import FROZEN_CHANGED, SCOPE, adapt_shadow
+from g6.metaharness.shadow import FROZEN_CHANGED, ROLLED_BACK, SCOPE, Held, adapt_shadow
 from g6.operator.store import OperatorStore
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
 from g6.self_maintenance.envelope import (
@@ -122,6 +127,19 @@ CANNOT_RECORD = "G6_E_LOOP_CANNOT_RECORD"
 SPLIT_REUSED = "G6_E_LOOP_SPLIT_REUSED"
 UNMETERED_CALLER = "G6_E_LOOP_UNMETERED_CALLER"
 CLASSIFIER_STOP = "G6_E_LOOP_CLASSIFIER_STOP"
+#: Judging code in a file no listing pins (``_unpinned``), and an answer no exact encoding identifies (``_answer_problems``):
+#: what cannot be identified exactly is refused at enrolment, never guessed.
+JUDGE_UNPINNED = "G6_E_LOOP_JUDGE_UNPINNED"
+ANSWER_UNIDENTIFIABLE = "G6_E_LOOP_ANSWER_UNIDENTIFIABLE"
+#: A cycle's safety stops: each holds the loop for a person (``_must_stop``), whatever code its row was given.
+SAFETY_STOPS = (SEALED_BREACH, UNMETERED_CALLER, CLASSIFIER_STOP, *BARRED)
+#: The order the one rule codes a cycle by (``_coded``), first ranking highest; a status not here ranks after them all.
+#: A rollback first: it has happened, the chain went back a generation, and the log counts generations by that outcome.
+#: Then a frozen change, above every safety stop: nothing the cycle measured stands, and the next tick is refused until a
+#: person enrols again. A safety stop it outranks loses nothing: the row keeps every status, ``_must_stop`` reads them all,
+#: so the loop still pauses, and a pause is read before the frozen digests, so enrolling again does not lift it. Then the
+#: tick's own reservation spent.
+RANKED = (ROLLED_BACK, FROZEN_CHANGED, *SAFETY_STOPS, TICK_BUDGET_SPENT)
 #: What enforces the envelope, beside ``JUDGING_PATTERNS``: all of G6. The loop's own files import much of the package and those
 #: files import more, so a list of them leaves out whatever an import reaches next. It is read in a tenth of a second, and a
 #: change to what runs is a person's to enrol again, as it is theirs to merge. Every kind of file Python imports from a
@@ -135,6 +153,11 @@ UNKNOWN = "unknown"
 #: gate's default margin are as they were, so a workflow a person runs still holds all three.
 GATED = ("success",)
 _SOURCE = Path(g6.__file__).resolve().parent
+#: Code another digest pins: G6's own package (``envelope_sha256``) and the Python installation, its prefixes and every
+#: folder packages are installed to, the user's own among them, so a package first imported in the middle of a run (a
+#: provider's SDK at its first request) is not a change to what judges.
+_INSTALLED = tuple(dict.fromkeys((_SOURCE, *(Path(place).resolve() for place in (
+    sys.prefix, sys.base_prefix, sys.exec_prefix, *getattr(site, "getsitepackages", list)(), site.getusersitepackages())))))
 STATUS_LINE = ("Early alpha. Individual capabilities have been tested; general application-level improvements have not "
                "yet been established.")
 
@@ -473,6 +496,23 @@ def _pool_problems(cut: Cut, policy: EvidencePolicy) -> list[tuple[str, str]]:
             for name, (found, least) in needs.items() if len(found) < least]
 
 
+def _answer_problems(cut: Cut) -> list[tuple[str, str]]:
+    """Cases whose answer the loop cannot hold exactly: one no exact encoding identifies (``answer_identity``), or one the
+    split's reference cannot render, which the evaluation count is kept by (``SuiteCase.ref``). Either is refused at
+    enrolment, by case id only: an answer is never shown."""
+    found = []
+    for name, _ in SHARES:
+        for case in getattr(cut, name):
+            try:
+                answer_identity(case.expected)
+                canonical(case.expected)
+            except (AnswerUnidentifiable, ValueError, RecursionError) as exc:
+                found.append(f"{case.case_id} ({type(exc).__name__})")
+    return [(ANSWER_UNIDENTIFIABLE, f"{len(found)} cases have an answer the loop cannot identify exactly, for example "
+             f"{', '.join(found[:3])}: each answer must be one it encodes exactly (answer_identity) and one the split's "
+             "reference can render as JSON (SuiteCase.ref)")] if found else []
+
+
 def _groups(cases: Sequence[SuiteCase]) -> list[str]:
     """The groups these cases name: a case's group is exposed when any of its members is, whatever its id or text."""
     return sorted({f"group:{c.meta['group']}" for c in cases if c.meta.get("group")})
@@ -484,10 +524,9 @@ def _overlap(a: str, b: str) -> bool:
 
 def _in_reach(root: Path, domain: Domain) -> list[str]:
     """What judges that lies in or around the loop's folder, which is the only place it writes."""
-    judge, sealed = domain.judge(), domain.sealed()
-    source = judge_source(judge.verdict) if judge is not None else None
+    sealed = domain.sealed()
     guarded = {"G6's own source": str(_SOURCE),
-               **({"the judge's folder": str(source.resolve().parent)} if source is not None else {}),
+               **{f"the judge's root {root}": str(root) for root in _roots(domain)},
                **{f"sealed root {i}": r for i, r in enumerate(sealed.vault.roots if sealed is not None else ())}}
     where = os.path.normcase(str(root))
     return [name for name, path in guarded.items() if _overlap(where, os.path.normcase(path))]
@@ -552,30 +591,127 @@ def _writable(value: Any) -> Any:
     return value
 
 
-def _judge_digest(judge: Judge | None) -> str:
-    """What decides a verdict: the verdict function the domain selected, by its file and its qualified name, so another
-    function in the same file is another judge, and the bytes of every file its module reaches through its import graph,
-    so a helper it calls judges too. G6's own package is the envelope's to pin (``envelope_sha256``), and an installed
-    package or the standard library the installation's, so the graph is followed only through the person's own files."""
+def _judge_digest(judge: Judge | None, roots: Sequence[Path] | None = None) -> str:
+    """What decides a verdict, pinned by files listed whole and never by following imports: the verdict function the domain
+    selected, by its file and its qualified name, so another function in the same file is another judge, and every file
+    under the roots that hold the domain's judging code, each by its bytes, as the envelope pins G6 (every importable
+    suffix, namespace packages and importable caches included), so a helper it calls, or imports only once it runs, judges
+    too. ``roots``: the folders the enrolment pins (``_roots``), or the verdict's own folder when none are given. G6's own
+    package is the envelope's, and the installation's code its own."""
     if judge is None:
         return ""
-    verdict = inspect.unwrap(judge.verdict)
-    source = judge_source(judge.verdict)
-    named = getattr(verdict, "__qualname__", None) or type(verdict).__qualname__
-    files = sorted({*_imported_files(verdict), *((source.resolve(),) if source is not None else ())})
-    return digest({"verdict": [str(source) if source is not None else "", named],
-                   "files": [[str(path), file_digest(path)] for path in files]})
+    return digest({"verdict": _named(judge.verdict),
+                   "roots": _pinned(roots if roots is not None else _roots_of([_code_file(judge.verdict)]))})
+
+
+def _named(fn: Any) -> list[str]:
+    """A callable as the enrolment names it: its file, its qualified name, and the line its code starts on, so two lambdas
+    of one function are two names."""
+    unwrapped = _unwrapped(fn)
+    named = getattr(unwrapped, "__qualname__", None)
+    where = _code_file(fn)
+    code = getattr(unwrapped, "__code__", None)
+    return [str(where) if where is not None else "", named if isinstance(named, str) else type(unwrapped).__qualname__,
+            str(code.co_firstlineno) if isinstance(code, CodeType) else ""]
+
+
+def _unwrapped(fn: Any) -> Any:
+    while isinstance(fn, partial):
+        fn = fn.func
+    return inspect.unwrap(fn)
+
+
+def _code_file(fn: Any) -> Path | None:
+    """The file a callable's code is in: its source file; for a class or a callable object, its class's; for a built-in,
+    its module's file, or the interpreter's when it is built into it. ``None`` when none is known, as for Python code that
+    is in no file."""
+    unwrapped = _unwrapped(fn)
+    source = judge_source(unwrapped)
+    if source is not None:
+        return source.resolve()
+    if inspect.isfunction(unwrapped) or inspect.ismethod(unwrapped):
+        return None
+    owner = getattr(unwrapped, "__objclass__", None) or (unwrapped if isinstance(unwrapped, type) else None)
+    if owner is None and not inspect.isbuiltin(unwrapped):
+        owner = type(unwrapped)                  # a callable object: its class's code is what runs
+    source = judge_source(owner) if owner is not None else None
+    if source is not None:
+        return source.resolve()
+    name = getattr(owner if owner is not None else unwrapped, "__module__", None)
+    if not isinstance(name, str):
+        return None
+    if name in sys.builtin_module_names:
+        return Path(sys.base_prefix).resolve()
+    where = getattr(sys.modules.get(name), "__file__", None)
+    return Path(where).resolve() if isinstance(where, str) and where else None
+
+
+def _judging_code(domain: Domain) -> list[tuple[str, Any]]:
+    """What decides a verdict, each by the name a person reads: the verdict and every check of the workflow."""
+    judge, run = domain.judge(), domain.execution()
+    return ([("the verdict", judge.verdict)] if judge is not None else []) + [
+        (f"check {check.key}", check.run) for check in (*run.checks, *run.optional_checks.values())]
+
+
+def _roots(domain: Domain) -> tuple[Path, ...]:
+    """The folders that hold a domain's judging code, each pinned whole: those it declares as ``roots``, or else the folders
+    its verdict and checks are in. G6's package and the installation are pinned by their own digests."""
+    declared = getattr(domain, "roots", None)
+    if declared is not None:
+        return tuple(sorted({Path(root).resolve() for root in declared}))
+    return _roots_of([_code_file(fn) for _, fn in _judging_code(domain)])
+
+
+def _roots_of(files: Sequence[Path | None]) -> tuple[Path, ...]:
+    """The folders that hold these files, leaving out G6's package and the installation."""
+    return tuple(sorted({path.parent for path in files if path is not None and not _installed(path)}))
+
+
+def _held_by(path: Path | None, roots: Sequence[Path]) -> bool:
+    return path is not None and (_installed(path) or any(path.is_relative_to(root) for root in roots))
+
+
+def _unpinned(domain: Domain) -> list[tuple[str, str]]:
+    """Judging code whose file no listing pins: refused at enrolment, as what cannot be identified exactly is refused."""
+    roots = _roots(domain)
+    found = [f"{name} lives in {where or 'no file'}" for name, fn in _judging_code(domain)
+             if not _held_by(where := _code_file(fn), roots)]
+    return [(JUDGE_UNPINNED, "; ".join(found) + ", outside G6, the Python installation and every root this domain "
+             "declares, so no listing pins what it does")] if found else []
+
+
+def _pinned(roots: Sequence[Path]) -> dict[str, str]:
+    """Each root pinned whole by the bytes of every file Python could import from it, as ``envelope_sha256`` pins G6."""
+    return {os.path.normcase(str(root)): manifest_sha256({**build_manifest(root, patterns=ENVELOPE_PATTERNS),
+                                                          **_importable_caches(root)}) if root.is_dir() else ""
+            for root in roots}
+
+
+def _loaded_outside(roots: Sequence[Path]) -> list[list[str]]:
+    """Every module loaded in this process whose file is neither G6's, the installation's, nor under a pinned root, each by
+    its file's bytes. Code loaded from anywhere else is code no listing holds, so a module loaded later (a verdict's own
+    import, made as it runs), or a change to any of them, is a change to what judges."""
+    held = [os.path.normcase(str(root)) + os.sep for root in (*roots, *_INSTALLED)]
+    found: dict[str, str] = {}
+    for module in list(sys.modules.values()):
+        where = getattr(module, "__file__", None)
+        if not isinstance(where, str) or not where:
+            continue
+        path = os.path.normcase(os.path.abspath(where))
+        if not any(path.startswith(prefix) for prefix in held):
+            found[path] = file_digest(path)
+    return sorted([path, sealed] for path, sealed in found.items())
 
 
 def _installed(path: Path) -> bool:
     """Whether ``path`` is G6's own package or lies in the Python installation: code another digest pins."""
-    roots = {Path(sys.prefix), Path(sys.base_prefix), Path(sys.exec_prefix), _SOURCE}
-    return any(path.is_relative_to(root.resolve()) for root in roots)
+    return any(path.is_relative_to(root) for root in _INSTALLED)
 
 
 def _imported_files(verdict: Any) -> set[Path]:
-    """The person's own files a verdict's module reaches: its module, each module its names were imported from, and so on,
-    as the modules loaded in this process hold them."""
+    """The person's own files a verdict's module reaches through the modules loaded in this process, for whoever reads what
+    a judge reaches. It pins nothing: ``_judge_digest`` pins files listed whole, and ``_loaded_outside`` every other module
+    loaded."""
     todo, seen, found = [getattr(verdict, "__module__", None)], set(), set()
     while todo:
         name = todo.pop()
@@ -599,6 +735,17 @@ def _imported_files(verdict: Any) -> set[Path]:
                 except Exception:  # noqa: BLE001 - an object that will not say where it came from adds nothing to follow
                     pass
     return found
+
+
+def _coded(row: dict[str, Any], statuses: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """The one rule that codes a cycle: of every status that held, the cycle's own end among them, the first in ``RANKED``,
+    or else the last to hold, gives the row its outcome, code and reason. The row keeps every status, so a frozen change or
+    a safety stop is never lost whatever ranks first."""
+    held = [{name: status[name] for name in ("outcome", "code", "reason")} for status in statuses]
+    if held:
+        row |= min(reversed(held), key=lambda status: RANKED.index(status["code"]) if status["code"] in RANKED else len(RANKED))
+    row["statuses"] = held
+    return row
 
 
 def _differs(now: Mapping[str, str], breached: bool, recorded: Mapping[str, str]) -> list[str]:
@@ -669,7 +816,7 @@ class ShadowLoop:
                                  read_account=read_account)
         for provider, until in self.log.limits().items():
             self.meter.limit_reached(provider, until)
-        self.problems = domain_problems(domain)
+        self.problems = domain_problems(domain) + _unpinned(domain)
         if backends(proposer) > 1:
             self.problems.append((FALLBACK_MODEL, "the proposer can answer from more than one backend, so a limit on one would "
                                   "pass unseen and its calls could go where no window covers"))
@@ -694,10 +841,15 @@ class ShadowLoop:
         before. An enrolment does this again, so what a person froze is what runs, on this handle as on a new one."""
         self.cut = cut_pool(self.domain.development(), self.settings.seed)
         self.workflow = _workflow(self.domain, self.cut, self.settings, self.requests)
-        self.problems = _pool_problems(self.cut, self.workflow.policy) + self.workflow.problems()
+        # a workflow is digested by its answers' rendering, so answers that cannot be held are refused before it is read
+        self.problems = _pool_problems(self.cut, self.workflow.policy) + (_answer_problems(self.cut)
+                                                                          or self.workflow.problems())
+        # the harness holds its own last check from here: what judges, read and compared by the one function the loop
+        # calls too (``_still_frozen``), never a check a caller of ``adopt`` hands it
         self.mh = None if self.problems else adapt_shadow(self.workflow, self.domain.execution().factory,
                                                           workspace=self.root / "workspace", clock=self._clock,
-                                                          before_evaluation=self._before_evaluation)
+                                                          before_evaluation=self._before_evaluation,
+                                                          hold=lambda: self._still_frozen())
 
     def _before_evaluation(self) -> None:
         """Read the account once more before a held-out evaluation: a limit reads as a failed case, and an evaluation of
@@ -785,16 +937,20 @@ class ShadowLoop:
 
     def _frozen(self) -> dict[str, str]:
         """What must not change, read fresh from the domain: the code that judges, every frozen case, and the sealed
-        split, and the file that declares it all when a runner opened one. The judge's whole file is digested, since a
-        helper it calls judges too. No profile is in it. ``profile_space`` is what a profile may express, which a new version
-        of the domain changes and a change of method in the same file does not (``tick_rca``'s domain part)."""
+        split, and the file that declares it all when a runner opened one. What judges is pinned by files listed whole: the
+        roots that hold the verdict and the checks (``_roots``), each check by its file and name rather than its own
+        ``code_sha``, and every module loaded from outside those, G6 and the installation (``_loaded_outside``). No profile
+        is in it. ``profile_space`` is what a profile may express, which a new version of the domain changes and a change of
+        method in the same file does not (``tick_rca``'s domain part)."""
         run, sealed, judge = self.domain.execution(), self.domain.sealed(), self.domain.judge()
+        roots = _roots(self.domain)
         return {"envelope": envelope_sha256(), "domain_file": file_digest(self.domain_file),
                 "profile_space": _profile_space(str(getattr(self.domain, "name", "")), run),
-                "evaluator": digest({"judging": judging_sha256(), "judge": _judge_digest(judge),
+                "evaluator": digest({"judging": judging_sha256(), "judge": _judge_digest(judge, roots),
                                      "independence": [judge.answers_by, judge.is_model] if judge is not None else [],
-                                     "task": run.task, "checks": [c.code_sha() for c in (*run.checks,
-                                                                                         *run.optional_checks.values())]}),
+                                     "task": run.task, "checks": [[c.predicate, c.key, c.kind, *_named(c.run)]
+                                                                  for c in (*run.checks, *run.optional_checks.values())],
+                                     "loaded": _loaded_outside(roots)}),
                 "cases": cut_pool(self.domain.development(), self.settings.seed).digest(),
                 "sealed": digest({"vault": sealed.vault.digest if sealed is not None else "",
                                   "refs": [dict(r) for r in sealed.refs] if sealed is not None else []})}
@@ -868,7 +1024,7 @@ class ShadowLoop:
 
     def _lacking(self) -> dict[str, Any] | None:
         """The domain checked as it is now: a handle's first check says nothing of what has changed since."""
-        problems = domain_problems(self.domain) + provider_problems(self._callers(), self.provider)
+        problems = domain_problems(self.domain) + _unpinned(self.domain) + provider_problems(self._callers(), self.provider)
         if not problems:
             return None
         return _blocked(problems[0][0], "; ".join(why for _, why in problems),
@@ -876,11 +1032,13 @@ class ShadowLoop:
 
     def _must_stop(self) -> str:
         """Why the durable record of cycles says stop, whether or not a pause was written: the cycles themselves are the
-        fact, and the pause is only its note."""
+        fact, and the pause is only its note. Every status a cycle kept counts, so a safety stop that another status
+        outranked (``_coded``) still stops the loop."""
         cycles = self.log.since_resumed()
         for cycle in reversed(cycles):
-            if cycle["outcome"] == "sealed_breach" or cycle.get("code") in (UNMETERED_CALLER, CLASSIFIER_STOP, *BARRED):
-                return cycle["reason"]
+            for held in (cycle, *cycle.get("statuses", ())):
+                if held.get("outcome") == "sealed_breach" or held.get("code") in SAFETY_STOPS:
+                    return held["reason"]
         streak = self.log.failed_run()
         if len(streak) < MAX_FAILED_CYCLES:
             return ""
@@ -1009,22 +1167,24 @@ class ShadowLoop:
         self.requests.close()
         if self.tuned and "tuning" not in row:     # a tick cut short keeps what it had made
             row["tuning"] = reflex.funnel(self.tuned)
-        if breaches:                  # read only now: a strategy that swallowed the refusal adopts nothing either
-            row |= {"outcome": "sealed_breach", "code": SEALED_BREACH,
-                    "reason": f"{len(breaches)} sign(s) that the sealed split was within reach while developing. Nothing "
-                              "is adopted. A read through a handle already open leaves no trace, so a person decides "
-                              "whether it still counts as sealed"}
-        elif unseen:
-            row |= {"outcome": "error", "code": UNMETERED_CALLER,
-                    "reason": "a model caller answered with no request noted, so the loop cannot count what it sends: "
-                              "nothing is adopted, and a person gives it a caller that notes each request"}
-        elif refusal is not None:     # a cycle, so it is on the record, and a pause, so nothing rephrases it on the next tick
-            row |= {"outcome": "blocked", "code": CLASSIFIER_STOP, "classifier_stop": refusal,
-                    "reason": f"a classifier or a permission stopped a request ({refusal['said']}): nothing is adopted, it is "
-                              "not sent again, and a person reads this before the loop goes on"}
-        elif limit is not None:       # a wait and no cycle, like any other: what ran is charged, and none of it counts
-            self.meter.limit_reached(spend.provider, limit.until)
-            try:
+        held: list[dict[str, Any]] = []           # what held over the cycle, read only now: a strategy that swallowed a
+        if breaches:                              # refusal adopts nothing either
+            held.append({"outcome": "sealed_breach", "code": SEALED_BREACH,
+                         "reason": f"{len(breaches)} sign(s) that the sealed split was within reach while developing. "
+                                   "Nothing is adopted. A read through a handle already open leaves no trace, so a person "
+                                   "decides whether it still counts as sealed"})
+        if unseen:
+            held.append({"outcome": "error", "code": UNMETERED_CALLER,
+                         "reason": "a model caller answered with no request noted, so the loop cannot count what it sends: "
+                                   "nothing is adopted, and a person gives it a caller that notes each request"})
+        if refusal is not None:       # a cycle, so it is on the record, and a pause, so nothing rephrases it on the next tick
+            row["classifier_stop"] = refusal
+            held.append({"outcome": "blocked", "code": CLASSIFIER_STOP,
+                         "reason": f"a classifier or a permission stopped a request ({refusal['said']}): nothing is "
+                                   "adopted, it is not sent again, and a person reads this before the loop goes on"})
+        if not held and limit is not None:   # a wait and no cycle, like any other: what ran is charged, none of it counts,
+            self.meter.limit_reached(spend.provider, limit.until)     # nothing is adopted, and a frozen change stays on
+            try:                                                      # disk for the next tick's reading to refuse
                 self.log.limit(spend.provider, limit.until.isoformat())
             except (OSError, LedgerError):
                 pass                  # this process still waits; after a restart the first request finds the limit again
@@ -1033,18 +1193,26 @@ class ShadowLoop:
                             f"and waits until {limit.until.isoformat()}: {limit.said}",
                             "The loop waits; it runs again when the limit ends.", wait_until=limit.until.isoformat(),
                             charged=charged)
-        elif halted is not None and halted.code in BARRED:   # a fault that is on the record, and holds the loop for a person
-            row |= {"outcome": "error", "code": halted.code, "reason": f"{halted.said}: nothing was sent, and nothing is adopted"}
-        elif halted is not None:      # also no cycle: what ran is charged, and none of it counts
+        if halted is not None and halted.code in BARRED:   # a fault that is on the record, and holds the loop for a person
+            held.append({"outcome": "error", "code": halted.code,
+                         "reason": f"{halted.said}: nothing was sent, and nothing is adopted"})
+        elif not held and halted is not None:   # also no cycle, and as a limit: what ran is charged, none of it counts
             return self._cut_off(halted, charged)
-        elif stopped:                 # runs cut off mid-tick compared nothing: no gate result stands on them
-            row |= {"outcome": "blocked", "code": TICK_BUDGET_SPENT, "reason": f"{stopped}, so nothing is adopted"}
-        elif recommended:             # the adoption runs the frozen check last, under the lock it writes with
-            row |= self._adopt(recommended[-1]["decision"], row)
-        elif row.get("outcome") != "rolled_back" and (held := self._still_frozen()) is not None:
-            # no adoption: the same check as the cycle ends. A rollback is left as it is: its row went back a generation,
-            # which the log must count, and the next tick is refused all the same
-            row |= {"outcome": "blocked", "code": held["warning_card"]["code"], "reason": held["message"]}
+        if stopped:                   # runs cut off mid-tick compared nothing: no gate result stands on them
+            held.append({"outcome": "blocked", "code": TICK_BUDGET_SPENT, "reason": f"{stopped}, so nothing is adopted"})
+        statuses = [row] if "outcome" in row else []   # the cycle's own end is a status like the rest
+        adopted = False
+        if recommended and not held:  # the harness's adoption runs its own frozen check last, under the lock it writes with
+            statuses.append(self._adopt(recommended[-1]["decision"], row))
+            adopted = statuses[-1]["outcome"] == "adopted"
+            if adopted:
+                row["head_version"] = statuses[-1]["head_version"]
+        statuses += held
+        if not adopted and all(status["code"] != FROZEN_CHANGED for status in statuses):
+            frozen = self._still_frozen()        # every other cycle ends on the same check, whatever else held
+            if type(frozen) is not Held:
+                statuses.append({"outcome": "blocked", "code": frozen["warning_card"]["code"], "reason": frozen["message"]})
+        _coded(row, statuses)
         if isinstance(self._rca, str):           # the read for it failed: the row says so
             row["rca"] = _writable({"unreadable": self._rca})
         elif self._rca is not None:               # read once the outcome is known: an adoption is part of what it reads
@@ -1099,10 +1267,11 @@ class ShadowLoop:
                 pass                  # the run still ends on what is held here
         return _blocked(CANNOT_RECORD, why, "A person frees the log, then starts the loop again with g6_improve_start.")
 
-    def _still_frozen(self) -> dict[str, Any] | None:
-        """The one rule for what judges at a cycle's end: the frozen digests this tick read before it developed anything
-        must be the ones on disk now, or the cycle is ``FROZEN_CHANGED``, whether or not a candidate won. A tick with no
-        such reading is refused the same way."""
+    def _still_frozen(self) -> Held | dict[str, Any]:
+        """The one reading and comparison of what judges at a cycle's end, which the loop and its harness both call: the
+        frozen digests this tick read before it developed anything must be the ones on disk now, and then it returns a
+        ``Held`` of them. Otherwise the cycle is ``FROZEN_CHANGED``, whether or not a candidate won, and a tick with no such
+        reading is refused the same way."""
         seen = self._frozen_seen
         if seen is None:                         # nothing to hold the files to, so nothing to stand on
             return _blocked(FROZEN_CHANGED, "this cycle read no frozen digests before it developed anything, so nothing it "
@@ -1110,15 +1279,14 @@ class ShadowLoop:
         changed = self._changed(against=seen)
         return _blocked(FROZEN_CHANGED, f"changed during this cycle: {', '.join(changed)}. What it measured is not what a "
                         "person enrolled, so nothing is adopted, and the next tick is refused while it stands"
-                        ) if changed else None
+                        ) if changed else Held(dict(seen))
 
     def _adopt(self, decision: Any, row: dict[str, Any]) -> dict[str, Any]:
-        """Adopt ``decision`` only if the frozen digests this tick read before it developed anything are the ones on disk
-        as the adoption is written (``_still_frozen``). The adoption runs that check last, with its row already made and
-        under the lock it writes with, and the row carries the digests. A change at any moment between is a refusal of its
-        own, written in this cycle's row, and the next tick is refused while it stands."""
-        adopted = self.mh.adopt(decision, frozen=self._frozen_seen, last_check=self._still_frozen,
-                                findings={name: row[name] for name in FINDINGS if name in row})
+        """Adopt ``decision`` through the harness, whose own last check is ``_still_frozen``: it runs that check last, with
+        the row already made and under the lock it writes with, and the row carries the digests the check held. A change at
+        any moment between is a refusal of its own, written in this cycle's row, and the next tick is refused while it
+        stands."""
+        adopted = self.mh.adopt(decision, findings={name: row[name] for name in FINDINGS if name in row})
         said = {"code": adopted["warning_card"]["code"], "reason": adopted["message"]}
         if adopted["completion_state"] == "blocked-escalated":
             return {**said, "outcome": "blocked"}

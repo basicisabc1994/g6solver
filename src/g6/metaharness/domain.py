@@ -33,10 +33,10 @@ import dataclasses
 import hashlib
 import inspect
 import os
-import pickle
+import struct
 import sys
 import threading
-from collections import Counter
+from collections import Counter, OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -140,6 +140,8 @@ class Domain(Protocol):
 
     # A domain may also give ``root_cause(cause)``: a member of ``g6.metaharness.lessons.ROOT_CAUSES``, or ``None``. It is no member of
     # this protocol, which would make it required: a domain without it leaves no lesson, and nothing else changes.
+    # Likewise ``roots``: the folders that hold its judging code, each pinned whole by the loop. Without it they are the
+    # folders its verdict and its checks are in; a verdict or check outside them, G6 and the installation is refused.
 
 
 def reason_coded(view: ProposerView) -> tuple[FailureRecord, ...]:
@@ -160,37 +162,102 @@ class Cut:
     monitor: tuple[SuiteCase, ...]
 
     def digest(self) -> str:
-        """The cut's identity: each case's reference, and its answer as the judge compares it (``answer_identity``), not a
-        JSON rendering that two answers the judge tells apart can share."""
-        return digest({name: [{**c.ref(), "answer": answer_identity(c.expected)} for c in getattr(self, name)]
-                       for name, _ in SHARES})
+        """The cut's identity: each case by its id, the digest of its input, and its answer exactly as the judge can read it
+        (``answer_identity``), and nothing rendered as JSON. An answer no exact encoding holds, which enrolment refuses, is
+        ``None`` here, never the identity of any answer."""
+        return digest({name: [[c.case_id, hashlib.sha256(c.input.encode("utf-8")).hexdigest(), _identity_or_none(c.expected)]
+                              for c in getattr(self, name)] for name, _ in SHARES})
+
+
+class AnswerUnidentifiable(ValueError):
+    """An answer no exact encoding identifies: what cannot be identified exactly is refused, never guessed."""
+
+
+#: How deep an answer may nest before it is refused.
+_DEEPEST = 64
 
 
 def answer_identity(value: Any) -> str:
-    """The SHA-256 of an expected answer as the judge compares it: every value with its type, so answers a judge can tell
-    apart, as ``1`` and ``"1"`` or ``True`` and ``1``, never share an identity. A mapping's items and a set's members are put
-    in a fixed order first, so the same answer read in another process has the same identity."""
-    return hashlib.sha256(_answer_bytes(value)).hexdigest()
+    """The SHA-256 of an expected answer's exact encoding: every value with its exact type and everything a judge can read
+    of it. ``None``, ``bool``, ``int`` (its two's-complement bytes), ``float`` and ``complex`` (their IEEE bytes, so NaN
+    payloads and -0.0 differ), ``str``, ``bytes``, ``list``, ``tuple`` and ``dict``; ``set`` and ``frozenset`` (their
+    members in the order of their own encodings, so the same answer has the same identity in any process); ``OrderedDict``
+    in its order, which is part of what it is; a namedtuple with its fields' names, a dataclass with its fields, and any
+    other object by its class and the whole of its ``__dict__``, with a built-in type's value too when it is a subclass of
+    one. No pickle and no ``repr``. A class is named by its module and qualified name, and what its code does is pinned by
+    its file, as the loop pins every file loaded (``g6.metaharness.loop``). An object whose state is not all in what is
+    encoded (``__slots__``, no ``__dict__``), a class, a function or anything else that can be called raises
+    ``AnswerUnidentifiable``."""
+    return hashlib.sha256(_exact(value, 0)).hexdigest()
 
 
-def _answer_bytes(value: Any) -> bytes:
-    kind = f"{type(value).__module__}.{type(value).__qualname__}"
-    if value is None or isinstance(value, (bool, int, float, complex, str, bytes)):
-        body = repr(value).encode("utf-8", "backslashreplace")
-    elif isinstance(value, Mapping):
-        body = b",".join(sorted(_answer_bytes(key) + b":" + _answer_bytes(item) for key, item in value.items()))
-    elif isinstance(value, (set, frozenset)):
-        body = b",".join(sorted(_answer_bytes(item) for item in value))
-    elif isinstance(value, (list, tuple)):
-        body = b",".join(_answer_bytes(item) for item in value)
-    elif dataclasses.is_dataclass(value) and not isinstance(value, type):
-        body = _answer_bytes({f.name: getattr(value, f.name) for f in dataclasses.fields(value)})
-    else:
-        try:
-            body = pickle.dumps(value, protocol=4)
-        except Exception:  # noqa: BLE001 - what will not pickle is pinned by what it says of itself
-            body = repr(value).encode("utf-8", "backslashreplace")
-    return f"{kind}({len(body)})".encode() + body
+def _identity_or_none(value: Any) -> str | None:
+    try:
+        return answer_identity(value)
+    except AnswerUnidentifiable:
+        return None
+
+
+def _tagged(value: Any, body: bytes) -> bytes:
+    kind = f"{type(value).__module__}.{type(value).__qualname__}".encode("utf-8", "surrogatepass")
+    return len(kind).to_bytes(4, "big") + kind + len(body).to_bytes(8, "big") + body
+
+
+def _whole(value: int) -> bytes:
+    return value.to_bytes(value.bit_length() // 8 + 1, "big", signed=True)
+
+
+_BUILTINS = (bool, int, float, complex, str, bytes, list, tuple, dict, set, frozenset)
+
+
+def _value_of(value: Any, base: type, depth: int) -> bytes:
+    """A built-in value's own bytes, read as ``base`` whatever subclass holds it, and never through a method it overrides."""
+    if base is bool:
+        return b"\x01" if value else b"\x00"
+    if base is int:
+        return _whole(int.__index__(value))
+    if base is float:
+        return struct.pack(">d", float.__float__(value))
+    if base is complex:
+        return struct.pack(">dd", complex.__getattribute__(value, "real"), complex.__getattribute__(value, "imag"))
+    if base is str:
+        return str.encode(str.__str__(value), "utf-8", "surrogatepass")
+    if base is bytes:
+        return bytes.__bytes__(value)
+    if base in (list, tuple):
+        return b"".join(_exact(item, depth + 1) for item in base.__iter__(value))
+    if base in (set, frozenset):
+        return b"".join(sorted(_exact(item, depth + 1) for item in base.__iter__(value)))
+    if base is OrderedDict:
+        return b"".join(_exact(key, depth + 1) + _exact(item, depth + 1) for key, item in OrderedDict.items(value))
+    return b"".join(sorted(_exact(key, depth + 1) + _exact(item, depth + 1) for key, item in dict.items(value)))
+
+
+def _exact(value: Any, depth: int) -> bytes:
+    if depth > _DEEPEST:
+        raise AnswerUnidentifiable(f"an answer nested deeper than {_DEEPEST} levels")
+    if value is None:
+        return _tagged(value, b"")
+    cls = type(value)
+    if cls in _BUILTINS or cls is OrderedDict:
+        return _tagged(value, _value_of(value, cls, depth))
+    if isinstance(value, type) or callable(value):
+        raise AnswerUnidentifiable(f"an answer that is a {cls.__qualname__}, whose behaviour no encoding holds")
+    if any(vars(klass).get("__slots__", ()) not in ((), [], "") for klass in cls.__mro__[:-1]
+           if klass not in (*_BUILTINS, OrderedDict)):
+        raise AnswerUnidentifiable(f"a {cls.__qualname__} answer keeps state in __slots__, which is not all encoded")
+    base = next((klass for klass in (OrderedDict, *_BUILTINS) if isinstance(value, klass)), None)
+    state = getattr(value, "__dict__", None)
+    if (state is None and base is None) or (state is not None and type(state) is not dict):
+        raise AnswerUnidentifiable(f"a {cls.__qualname__} answer has no __dict__ that holds its state")
+    parts = [_value_of(value, base, depth)] if base is not None else []
+    if isinstance(value, tuple) and isinstance(getattr(cls, "_fields", None), tuple):
+        parts.append(_exact(list(cls._fields), depth + 1))           # a namedtuple's fields' names
+    if dataclasses.is_dataclass(value):
+        parts.append(_exact([f.name for f in dataclasses.fields(value)], depth + 1))
+    if state is not None:                         # none only for a built-in's subclass that adds no state of its own
+        parts.append(_exact(dict(state), depth + 1))
+    return _tagged(value, b"".join(parts))
 
 
 def _point(seed: int, key: str) -> float:
@@ -381,7 +448,8 @@ def domain_problems(domain: Domain) -> list[tuple[str, str]]:
         found.append((NO_SEALED, "this domain has no sealed split, so nothing could ever test the loop's results on "
                                  "work it has not seen"))
     else:
-        seen = {key for c in cases for key in (c.case_id, c.ref()["input_sha256"])}
+        # by id and input only: an answer the loop cannot hold is refused at enrolment, by name (``ShadowLoop._bind``)
+        seen = {key for c in cases for key in (c.case_id, hashlib.sha256(c.input.encode("utf-8")).hexdigest())}
         shared = sorted(r["case_id"] for r in sealed.refs if r["case_id"] in seen or r["input_sha256"] in seen)
         if shared:
             found.append((SEALED_OVERLAP, f"sealed cases are also development cases: {shared[:5]}"))
