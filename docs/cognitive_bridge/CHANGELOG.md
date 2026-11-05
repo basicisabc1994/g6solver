@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.4 — 2026-11-06: review 3 repairs
+
+- Check-then-act removed at the root: one function (`g6.cognitive_bridge.snapshot`) takes a deep, immutable snapshot of what the bridge accepts; every record type snapshots its fields before its own checks; nothing handed back is a live view; an inventory test lists every store from the code. An assessment refuses a dossier whose standard is not the one compiled.
+- `CognitiveAgent` runs each tool step through G6's checked door and credits it only when the door says `ok`; an inventory test allows no other call of a tool or step.
+- The reserved fields include every field G6's door and envelope read as a state (`reliability_label`), taken from G6's own definitions.
+- A path lookup error other than "no such file" refuses the path.
+- Feature names are compared as the strings the tree reads them by; a collision is refused.
+
 ## v0.2.3 — 2026-11-06: review 2 repairs
 
 - The adaptation gate admits a changed path only when it is one of the files the bridge declares adaptable (`adaptation.ADAPTABLE`), compared by file identity; every other path is refused, and any error resolving a path refuses it. The deny-list it replaces missed members in both reviews.
