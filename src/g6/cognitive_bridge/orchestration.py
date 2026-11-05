@@ -38,6 +38,7 @@ class CompiledResearch:
     def to_dict(self) -> dict[str, Any]:
         return {"claim_id": self.original_claim.id,
                 "completion_state": self.completion_state,
+                "risk_tier": self.context.risk_tier,
                 "standard_digest": self.standard_digest,
                 "metacognitive_selection": self.decision.to_dict(),
                 "executable_plan": self.executable_plan.to_dict(),
@@ -54,7 +55,7 @@ class CognitiveAssuranceOrchestrator:
                 variant_models: Mapping[str, Mapping[str, Any]],
                 max_supplemental: int = 0) -> CompiledResearch:
         if context.risk < standard.risk or context.domain != standard.id:
-            raise ValueError("the problem context cannot weaken its standard risk or domain")
+            raise ValueError("the problem context cannot weaken its standard's risk tier or domain")
         mandatory = {m for criterion in standard.criteria for m in criterion.required_methods}
         requested = set(claim.evidence_needs)
         if not mandatory.issubset(requested):

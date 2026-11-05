@@ -24,6 +24,8 @@ RISK_BANDS = range(4)
 
 @dataclass(frozen=True)
 class ProblemSignature:
+    """The features of a task the selector matches trials on. ``risk`` is the number of G6's ``risk_tier``: 0 to 3
+    for R0 to R3."""
     domain: str
     uncertainty: str
     claim_kind: str
@@ -35,9 +37,14 @@ class ProblemSignature:
         if not all((self.domain, self.uncertainty, self.claim_kind)):
             raise ValueError("domain, uncertainty and claim kind are required")
         if self.risk not in RISK_BANDS or not math.isfinite(self.budget) or self.budget < 0:
-            raise ValueError("risk must be 0..3, budget finite and nonnegative")
+            raise ValueError("risk is the risk tier's number, 0 to 3 for R0 to R3; budget finite and nonnegative")
         if len(set(self.available_evidence)) != len(self.available_evidence):
             raise ValueError("duplicate evidence identifiers")
+
+    @property
+    def risk_tier(self) -> str:
+        """G6's ``risk_tier`` for this task: ``R0`` to ``R3``."""
+        return f"R{self.risk}"
 
 
 @dataclass(frozen=True)

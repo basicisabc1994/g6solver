@@ -4,7 +4,10 @@ each fact is decided by the rule G6 already has, and its words say no more than 
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from pathlib import Path
 
+import pytest
 from returns.result import Success
 
 from g6.cognitive_bridge import (
@@ -14,6 +17,7 @@ from g6.cognitive_bridge import (
 from g6.cognitive_bridge.assurance import DOCUMENT_FIELDS, canonical_json
 
 PIN, PIN2 = "a" * 64, "b" * 64
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class FormalRegistry:
@@ -67,6 +71,27 @@ def test_assertions_without_a_gate_are_judged_not_a_name_error():
     json.dumps(report)  # the report is plain data
     assert canonical_json(report["dossier"])
     assert report["warning_card"]["code"] == "G6_E_COGNITIVE_ASSURANCE_BLOCKED"
+
+
+def test_risk_is_the_number_of_g6s_risk_tier():
+    # 9ebfbbe's risk was a bare 0..3 scale; G6's canonical noun is risk_tier, R0 to R3. The number stays the field
+    # (it orders tiers), and every surface names the tier.
+    assert ProblemSignature("d", "u", "k", 2, 1).risk_tier == "R2"
+    assert _standard().risk_tier == "R1"
+    orchestrator, compiled = _compiled()
+    assert compiled.to_dict()["risk_tier"] == "R1"
+    assert _assess(orchestrator, compiled)["dossier"]["professional_review"]["risk_tier"] == "R1"
+    with pytest.raises(ValueError, match="risk tier"):
+        ProblemSignature("d", "u", "k", 4, 1)
+    with pytest.raises(ValueError, match="risk tier"):
+        replace(_standard(), risk=4)
+
+
+def test_the_bridges_own_nouns_are_defined_beside_g6s():
+    spec = (ROOT / "docs" / "cognitive_bridge" / "TECHNICAL_SPEC.md").read_text(encoding="utf-8")
+    vocabulary = spec.split("## Vocabulary", 1)[1].split("\n## ", 1)[0]
+    for noun in ("problem signature", "method variant", "trial", "cohort", "assurance dossier", "risk_tier"):
+        assert f"`{noun}`" in vocabulary, noun
 
 
 def _keys(value) -> set[str]:

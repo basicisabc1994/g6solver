@@ -4,6 +4,20 @@
 **Date:** 2026-11-05  
 **Status:** Draft architectural specification plus locally tested reference code; no production security assurance.
 
+## Vocabulary
+
+The bridge uses G6's canonical nouns (`task`, `run`, `evidence`, `envelope`, `risk_tier`, `completion_state`,
+`failure_mode`) and defines its own here, once, each on the G6 noun it builds on:
+
+| Noun | Definition | Built on |
+|---|---|---|
+| `risk_tier` | G6's R0 to R3. `ProblemSignature.risk` and `DomainStandard.risk` hold the tier's number (`risk=2` is R2) and each exposes `.risk_tier`. | G6's own |
+| `problem signature` | The features of a task the method selector matches trials on (`ProblemSignature`): domain, uncertainty, claim kind, `risk_tier`, budget and available evidence. | `task` |
+| `method variant` | One named way to meet an evidence need (`MethodVariant`): a representation run by a G6 solver op. | `tool` |
+| `trial` | One evaluator-scored run of a method variant, or of a base and a changed harness, on one case (`EvaluatedTrial`, `PairedTrial`, `ControlTrial`). | `run` |
+| `cohort` | The frozen evaluation suite a trial's case was drawn from (`EvaluatedTrial.cohort_id`). | `evidence` |
+| `assurance dossier` | The evidence a claim's artifacts gave against a pinned domain standard's criteria, with its content digest (`CandidateDossier`); its `completion_state` is `qualified-draft` or `blocked-escalated`. | `evidence` |
+
 ## 1. Scope, novelty and goals
 
 A universal learning system needs an interface by which quantitative optimisers, heuristics, symbolic solvers, causal models, graph systems and LLM-based research strategies may be swapped without changing the surrounding task contract. G6's differentiator is not the presence of these solvers. It is a **compilation-and-assurance boundary** allowing their output to be independently checked against the task's *actual* acceptance obligations.

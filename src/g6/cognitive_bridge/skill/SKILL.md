@@ -31,7 +31,8 @@ held-out trials. Every result is `qualified-draft` or `blocked-escalated`: it ne
 - `rank`: the affordable probes by expected information gain (bits), best first, for priors that sum to one.
 - `update`: the posterior after one observed probe outcome, under the probe's stated likelihood.
 - `plan_methods`: the typed G6 solver steps for each claim's evidence needs; the steps are planned, not run.
-- `rank_methods`: a cold-start ranking of method variants for a problem signature; no trial data over MCP.
+- `rank_methods`: a cold-start ranking of method variants for a problem signature; no trial data over MCP. A
+  context's `risk` is the number of its risk tier (`1` is R1); at R2 and R3 no exploration bonus applies.
 - `assurance_schema`: the documentary fields an assurance dossier must fill, and the two states it can carry.
 
 ## Reading the result

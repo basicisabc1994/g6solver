@@ -64,7 +64,7 @@ class DomainStandard:
     authority: str
     source_sha256: str
     criteria: tuple[Criterion, ...]
-    risk: int = 1   # 0..3. R2/R3 need authenticated professional review.
+    risk: int = 1   # the risk tier's number, 0..3 for R0..R3. R2/R3 need authenticated professional review.
 
     def __post_init__(self) -> None:
         if not all((self.id, self.edition, self.jurisdiction, self.authority)):
@@ -72,9 +72,14 @@ class DomainStandard:
         if not HEX64.fullmatch(self.source_sha256):
             raise ValueError("standard source must have a 64-digit SHA-256 pin")
         if not self.criteria or not (0 <= self.risk <= 3):
-            raise ValueError("standard requires criteria and risk 0..3")
+            raise ValueError("standard requires criteria and a risk tier: risk 0 to 3 for R0 to R3")
         if len({x.id for x in self.criteria}) != len(self.criteria):
             raise ValueError("duplicate standard criterion IDs")
+
+    @property
+    def risk_tier(self) -> str:
+        """G6's ``risk_tier`` for this standard: ``R0`` to ``R3``."""
+        return f"R{self.risk}"
 
     def manifest(self) -> dict[str, Any]:
         return {"id": self.id, "edition": self.edition, "jurisdiction": self.jurisdiction,
@@ -307,8 +312,8 @@ class IndependentAssuranceEvaluator:
             "checks": checks,
             "documentary_sections": {k: documentation.get(k, "") for k in DOCUMENT_FIELDS},
             "missing_documentation": documentary_gaps,
-            "professional_review": {"required": standard.risk >= 2, "authenticated": reviewed,
-                                    "reason": review_reason},
+            "professional_review": {"required": standard.risk >= 2, "risk_tier": standard.risk_tier,
+                                    "authenticated": reviewed, "reason": review_reason},
             "blockers": blockers,
             "metrics": {"declared_critical": len(critical),
                         "critical_passed": sum(x["result"] == "passed" for x in critical),
