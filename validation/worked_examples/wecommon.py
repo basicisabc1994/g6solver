@@ -149,10 +149,11 @@ def stream_lines(text: str) -> list[str]:
     return text.split("\n")
 
 
-def read_stream(path: Path) -> list[str]:
+def read_stream(path: Path, *, errors: str = "strict") -> list[str]:
     """A newline-delimited JSON file's lines (``stream_lines``): its bytes decoded as UTF-8 with no newline translation, so a
-    "\\r" is never read as a line's end either."""
-    return stream_lines(Path(path).read_bytes().decode("utf-8"))
+    "\\r" is never read as a line's end either. ``errors``: the decoder's, strict unless a reader that skips a torn last line
+    asks otherwise (``Archive.rows``); a "\\n" is one byte that no other character's UTF-8 holds, so the lines are the same."""
+    return stream_lines(Path(path).read_bytes().decode("utf-8", errors))
 
 
 @dataclass
@@ -288,9 +289,23 @@ class Archive:
             stream.write(json.dumps(dict(row), ensure_ascii=False) + "\n")
 
     def rows(self) -> list[dict[str, Any]]:
+        """Every row of the index, for every reader, framed by ``read_stream``. A torn last line, which a write cut short leaves
+        (cut inside a character, or inside a record), is skipped; a line that cannot be read anywhere before it is an error, as
+        before. Its bytes are read once: a byte that is not UTF-8 is held as an escape (``surrogateescape``), and a line holding one
+        cannot be read, as a line that is not JSON cannot."""
         if not self.index.is_file():
             return []
-        return [json.loads(line) for line in read_stream(self.index) if line.strip()]
+        lines = [line for line in read_stream(self.index, errors="surrogateescape") if line.strip()]
+        rows = []
+        for at, line in enumerate(lines):
+            try:
+                line.encode("utf-8")        # strict: an escaped byte is a UnicodeEncodeError, a ValueError
+                rows.append(json.loads(line))
+            except ValueError:
+                if at == len(lines) - 1:
+                    break
+                raise
+        return rows
 
     def start(self, kind: str, task: str, **meta: Any) -> RunFolder:
         stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%S%fZ")

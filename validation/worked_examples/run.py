@@ -23,12 +23,16 @@ started, by name. The key is read only through ``g6.core.keys`` and passed by na
 from __future__ import annotations
 
 import argparse
+import contextlib
+import hashlib
 import io
 import json
+import math
 import os
 import queue
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -40,7 +44,6 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 import copy
-import hashlib
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any
@@ -587,12 +590,14 @@ def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
             "why": why[1].strip() if why else "", "test": test[1].strip() if test and said_defect else "", "error": ""}
 
 
-def run_codex(pack: Path) -> str:
-    """One read-only Codex task in ``pack``, on the owner's sign-in: what it printed (``codex_task``)."""
-    return codex_task(pack).stdout.decode("utf-8", errors="replace")
+def run_codex(pack: Path, timeout: float | None = None) -> str:
+    """One read-only Codex task in ``pack``, on the owner's sign-in: what it printed (``codex_task``). ``timeout``: arm K3's
+    watchdog's, what is left of the run; without it the call is the frozen review's own, as it was."""
+    got = codex_task(pack) if timeout is None else codex_task(pack, timeout)
+    return got.stdout.decode("utf-8", errors="replace")
 
 
-def codex_task(pack: Path) -> subprocess.CompletedProcess:
+def codex_task(pack: Path, timeout: float = CRITIC_SECONDS) -> subprocess.CompletedProcess:
     """``run_codex``'s call, as it ended: what Codex printed and how it exited. ``G6_CODEX_COMPANION``: the Codex plugin's
     companion script."""
     companion = os.environ.get("G6_CODEX_COMPANION")
@@ -600,12 +605,18 @@ def codex_task(pack: Path) -> subprocess.CompletedProcess:
         raise RuntimeError("G6_CODEX_COMPANION is not set")
     try:
         got = subprocess.run(["node", companion, "task", "--fresh", "--effort", "high", "--cwd", str(pack), "--prompt-file",
-                              str(pack / "critic_prompt.md")], capture_output=True, timeout=CRITIC_SECONDS, cwd=pack)
-    finally:   # the companion leaves a broker and a codex process for each workspace: 0.4 GB a time, and they hold the pack open
-        subprocess.run(["powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | "
-                        f"Where-Object {{ $_.CommandLine -like '*{pack.name}*' }} | "
-                        "ForEach-Object { taskkill /T /F /PID $_.ProcessId | Out-Null }"], capture_output=True, timeout=60)
+                              str(pack / "critic_prompt.md")], capture_output=True, timeout=timeout, cwd=pack)
+    finally:
+        end_codex(pack)
     return got
+
+
+def end_codex(pack: Path) -> None:
+    """Every process of the Codex task in ``pack`` ended: the companion leaves a broker and a codex process for each workspace,
+    0.4 GB a time, and they hold the pack open."""
+    subprocess.run(["powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | "
+                    f"Where-Object {{ $_.CommandLine -like '*{pack.name}*' }} | "
+                    "ForEach-Object { taskkill /T /F /PID $_.ProcessId | Out-Null }"], capture_output=True, timeout=60)
 
 
 def with_critic(found: tuple[set[str], str], critic: Mapping[str, str]) -> tuple[set[str], str]:
@@ -1068,8 +1079,10 @@ def r3_refusal(ctx: Context, task: Task) -> tuple[str, float, float]:
         return f"arm D runs only on the reviewed G6, {R3_D_G6}", 0.0, 0.0
     done = r3_done(rows, ctx.archive.root)
     # a host run that met the subscription's usage limit, or that G6 refused at its session's start, gave no verdict, so it is
-    # made again, as a killed run is; a run a model refusal ended was made (PLAN.md, 2026-11-04; ``wecommon.ending``)
-    if key in done and c.scoreable({"status": done[key]}) and not (ctx.rerun_why and done[key] == "error"):
+    # made again, as a killed run is; a run a model refusal ended was made (PLAN.md, 2026-11-04; ``wecommon.ending``). A K3 run
+    # whose agent started and that kept no baseline (``NO_FIRST_PATCH``) was made too: it is no row, and never made again
+    made = key in done and (c.scoreable({"status": done[key]}) or done[key] == NO_FIRST_PATCH)
+    if made and not (ctx.rerun_why and done[key] == "error"):
         return f"run {key} was already made ({done[key]}); no run is made again for a better result", 0.0, 0.0
     earlier = [k for k in sched if R3_MODELS.index(k[0]) < R3_MODELS.index(ctx.model) and k not in done]
     if earlier and key not in R3_SMOKE and key not in R3_PROBE and not r3_loop_key(key):
@@ -1693,6 +1706,7 @@ class Context:
     rerun_why: str = ""          # round 3: a run whose agent started and ended in "error" may be made again, saying why
     executor: str = "container"  # "host": Claude Code on the host, on the subscription's sign-in (PLAN.md, 2026-11-04)
     starter: Callable[..., Any] | None = None    # how the host session's process starts (default: ``subprocess.Popen``)
+    watchdog: Any = None         # arm K3's steps: the run's one watchdog (``Watchdog``), which ends what they start at the deadline
 
     def client_env(self, key: str | None = None) -> dict[str, str]:
         base = dict(self.environ) if self.environ is not None else {
@@ -1845,22 +1859,40 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
 
 
 def run_session(ctx: Context, run: Any, agent: str, command: list[str], key: str, tally: c.Tally, text_in: str, name: str,
-                *, seconds: float, stop_usd: float) -> str:
-    """One Claude Code session in the container, its stream saved as ``name``: how it ended, as ``read_stream`` says."""
+                *, seconds: float, stop_usd: float, codes: list[int | None] | None = None,
+                deadline: Any = None) -> str:
+    """One Claude Code session in the container, its stream saved as ``name``: how it ended, as ``read_stream`` says. ``codes``,
+    when given, receives the session's exit code, which arm K3's steps read (``step_ending``). ``deadline``, when given, is the
+    run's watchdog (``Watchdog``, or its deadline): it ends the session's processes when it fires, no prompt goes in once it has
+    fired, and the stream ends at its deadline however long the process took to start. Without it the session has ``seconds``
+    from when its prompt has gone in, as before."""
+    dog = None if deadline is None else Watchdog.of(deadline)
+    raw = unbounded(ctx.docker)
     proc = ctx.docker.popen(*command, env=ctx.client_env(key))
     stream = open(run.fresh_path(name), "w", encoding="utf-8", newline="\n")
+
+    def end() -> None:               # Claude Code in the container, then its client, by the helpers every session ends by
+        raw.sh(agent, KILL_AGENT, user="root", timeout=60)
+        proc.kill()
+
     try:
-        proc.stdin.write(text_in.encode("utf-8"))
-        proc.stdin.close()
-        return read_stream(iter(proc.stdout.readline, b""), tally, deadline=time.monotonic() + seconds,
-                           write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
-                           stop_usd=stop_usd)
+        with (dog.watching(end) if dog is not None else contextlib.nullcontext()):
+            if dog is not None and not dog.may_start("prompt"):
+                return "timeout"     # no prompt goes in after the deadline: the process is ended below
+            proc.stdin.write(text_in.encode("utf-8"))
+            proc.stdin.close()
+            return read_stream(iter(proc.stdout.readline, b""), tally,
+                               deadline=dog.deadline if dog is not None else time.monotonic() + seconds,
+                               write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
+                               stop_usd=stop_usd)
     finally:
         stream.close()
         if proc.poll() is None:
-            ctx.docker.sh(agent, KILL_AGENT, user="root", timeout=60)
+            raw.sh(agent, KILL_AGENT, user="root", timeout=60)
             proc.kill()
-        proc.wait(timeout=60)
+        code = proc.wait(timeout=60)
+        if codes is not None:
+            codes.append(code)
 
 
 def host_refusal(ctx: Context, *, dry: bool) -> str:
@@ -2109,7 +2141,12 @@ def run_critic(ctx: Context, task: Task, run: Any, agent: str, base: str, title:
                     dest.write_bytes(tar.extractfile(member).read())
         (pack / "issue.txt").write_text(f"{proof}\n\n{title}\n\n{text}", encoding="utf-8")
         (pack / "critic_prompt.md").write_text(critic_text(ctx.arm), encoding="utf-8")
-        said = (ctx.critic or run_codex)(pack)
+        dog = getattr(ctx, "watchdog", None)
+        if ctx.critic is not None or dog is None:
+            said = (ctx.critic or run_codex)(pack)
+        else:                         # arm K3: the run's watchdog ends the Codex task at the deadline, and it has no more
+            with dog.watching(lambda: end_codex(pack)):
+                said = run_codex(pack, timeout=min(CRITIC_SECONDS, dog.left()))
         run.write(reply, ctx.archive.redact(said))
         found = critic_report(said, proof=proof)
         if found["test"]:
@@ -2287,7 +2324,8 @@ def finding_rule(arm: str) -> str:
 
 def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, tally: c.Tally,
                         stop: float, started: float, critique: Callable[[int], dict[str, Any]], finding: str = "any",
-                        session: Callable[[str, str], Any] | None = None, tree: Callable[[], Any] | None = None) -> dict[str, Any]:
+                        session: Callable[[str, str], Any] | None = None, tree: Callable[[], Any] | None = None,
+                        after_step: bool = False, deadline: float | None = None) -> dict[str, Any]:
     """Arm K (PLAN.md, 2026-11-01): plain Claude Code, then the patch is read by another model family, repaired in the same session if
     the reader's test fails on it, and read again, until a reader reproduces nothing. One review saw one layer of a defect, so one
     repair stopped there. The agent may reject a finding, and leaving the code as it was ends the loop. No scout, no probes, no G6.
@@ -2296,18 +2334,41 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
     a repair as ``session(note, stream name)``, the host executor's (PLAN.md, 2026-11-04), which returns how it ended ("" when
     cleanly); by default the same session continued in the container (``run_session``). A host repair that does not end cleanly
     ends the loop, and how it ended is returned as ``ended``. ``tree``: what says whether a repair changed anything, compared
-    before and after it; by default git's display of the container's tree."""
+    before and after it; by default git's display of the container's tree.
+    ``after_step``: K3's rule step ran before the loop, and the patch review 1 reads is saved already as ``rule.patch``, so round 1
+    saves none and ``round-1.patch`` stays the first session's. ``deadline``: K3's, the run's watchdog (``Watchdog``, or its
+    deadline). Each capture, review and repair asks it at its own start and starts only while it has not fired. Each one's end is
+    recorded, and a repair's session gets what is left and no minute of its own. A loop the watchdog stopped, or one with a step
+    that ended late, says "timeout" (``ended``), unless a host repair ended it first. Without it, K2's loop is as it was."""
     def shown() -> str:
         return out(ctx.docker.sh(agent, "git status --porcelain; git diff", workdir=task.repo, timeout=120))
 
     tree = tree or shown
+    dog = None if deadline is None else Watchdog.of(deadline)
+
+    def starts(step: str) -> bool:       # K3: a step starts only while the run's watchdog has not fired
+        return dog is None or dog.may_start(step)
+
+    def ends(step: str) -> None:
+        if dog is not None:
+            dog.end(step)
+
     gated = finding == "parent"          # K2 (PLAN.md, 2026-11-04, evening)
     at_parent: dict[str, str] = {}       # every round's test on the parent, in a container of its own, by case
-    rounds, failing, reason, verdicts, seconds, broken, ended = 0, [], "", [], 0.0, False, ""
+    rounds, failing, reason, verdicts, seconds, broken, ended, timed_out = 0, [], "", [], 0.0, False, "", False
     for n in range(1, MAX_REPAIRS + 2):
+        if n > 1 or not after_step:
+            if not starts(f"capture round-{n}"):
+                timed_out = True
+                break
+            keep_first_patch(ctx, task, agent, base, n)
+            ends(f"capture round-{n}")
+        if not starts(f"review {n}"):
+            timed_out = True
+            break
         rounds = n
-        keep_first_patch(ctx, task, agent, base, n)
         critic = critique(n)
+        ends(f"review {n}")
         verdicts.append(critic.get("verdict"))
         seconds += float(critic.get("seconds") or 0.0)
         failing = []
@@ -2337,12 +2398,19 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
         if n > MAX_REPAIRS:
             reason = "the repairs ran out with a defect open"
             break
+        if not starts(f"repair {n}"):    # K3: no repair starts once the watchdog has fired
+            timed_out = True
+            break
         before = tree()
         note = CRITIC_NOTE.format(**{k: critic.get(k, "") for k in ("rule", "why", "test")}) + REVIEW_ASK
         if session is None:
             run_session(ctx, run, agent, scout_again(docker_args), key, tally, note, c.NDJSON["numbered_stream"].format(tag="repair", n=n),
-                        seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
-        elif ended := session(note, c.NDJSON["numbered_stream"].format(tag="repair", n=n)):
+                        seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)) if dog is None else dog.left(),
+                        stop_usd=stop, **({"deadline": dog} if dog is not None else {}))
+        else:
+            ended = session(note, c.NDJSON["numbered_stream"].format(tag="repair", n=n))
+        ends(f"repair {n}")
+        if ended:
             reason = {"limited": "the repair met the subscription's usage limit",
                       "refused": "the repair's session was refused: its init was not exactly the five file tools and the box",
                       "model_refused": "the model refused a request in the repair; nothing is resent"
@@ -2351,7 +2419,11 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
         if tree() == before:
             reason = "the agent left the code as it was"
             break
-    clean = not failing and not broken and verdicts[-1] in ("none", "defect")
+    timed_out = timed_out or (dog is not None and dog.late())    # K3: the watchdog's records, read once
+    if timed_out and not ended:
+        reason = "the run's deadline passed"
+    clean = not timed_out and not failing and not broken and verdicts[-1] in ("none", "defect")
+    ended = ended or ("timeout" if timed_out else "")      # a host repair's own ending first: it is the run's ending on record
     return {"status": "no_counterexample_in_domain" if clean else "inconclusive", "rounds": rounds, "reason": reason,
             "failing": failing[:40], "critic": {"verdicts": verdicts, "seconds": round(seconds, 1)},
             **({"finding": "parent"} if gated else {}), **({"ended": ended} if ended else {})}
@@ -2380,6 +2452,404 @@ def review_once(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
         failing = check()
     return {"status": "inconclusive" if failing else "no_counterexample_in_domain", "rounds": rounds, "reason": "",
             "failing": sorted(failing)[:40], "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}}
+
+
+# --- arm K3: K2 with the author's rule step after the first patch (PLAN.md, 2026-11-05, morning, later, items 1 and 4) ----------
+RULE_STEP_ARMS = ("K3",)
+#: What the same session is told after its first patch is saved; its digest is pinned by a test and recorded in each run.
+RULE_STEP = """Before you finish: list each behaviour your change keeps on the code path it touches. For each one, find the
+reference the issue gives for it: the words of the issue or its discussion, the old version's rule, or a parent or sibling
+class the issue names. Write one test that checks the whole rule against that reference, every case the issue or the reference fixes, not
+only the issue's own example, and run it. Where the reference and your code disagree, fix the code. Where the issue's own
+example and the reference it names disagree, say so in your reply and follow the reference. Then reply with the list and
+what you changed."""
+RULE_DIGEST = hashlib.sha256(RULE_STEP.encode("utf-8")).hexdigest()[:16]
+FIRST_PATCH = "round-1.patch"  # the first session's tree: the within-run baseline, scored by ``check`` as "round-1"
+RULE_PATCH = "rule.patch"      # the tree after the step, in ``rounds`` beside each round's patch, scored by ``check`` as "rule"
+BASELINE = "baseline"          # the run's own folder for FIRST_PATCH, outside ``rounds``: nothing after its capture writes there
+#: K3's steps from its first session to its first review, in order; each goes on only from the one before's success. The rule
+#: step is its session and then its patch, each read by ``step_ending``.
+K3_STEPS = ("first session", "first patch", "rule step")
+#: The status of a K3 run with no Claude Code baseline (``has_baseline``), whatever ended it: the report counts it by arm, and it
+#: is no row and never offered to ``check``.
+NO_FIRST_PATCH = "no_first_patch"
+#: What a capture reports to ``step_ending`` when its file is kept: a capture has no result of its own, and this is its success.
+CAPTURED = {"subtype": "success", "is_error": False}
+ROUND_PATCH = re.compile(r"round-(\d+)\.patch")
+
+
+def rule_led(arm: str) -> bool:
+    """Arm K3: K2's loop, with the rule step between the first session and the first review."""
+    return arm in RULE_STEP_ARMS
+
+
+def first_prompt_check(task: Task, title: str, text: str, sent: str) -> tuple[str, str]:
+    """The first prompt a K3 run sends, against what arm A's prompt builder gives for the same task, title and issue text, the
+    text as this run read it (with the issue's discussion, as every K arm's: ``gets_thread``): its sha256, and "" when the two
+    digests are the same, else why the run is refused. A first prompt that is not arm A's would make a first patch that is not
+    Claude Code alone, so the within-run comparison could not read it."""
+    got = hashlib.sha256(sent.encode("utf-8")).hexdigest()
+    want = hashlib.sha256(prompt(task, title, text, "A").encode("utf-8")).hexdigest()
+    if got == want:
+        return got, ""
+    return got, (f"the first prompt (sha256 {got[:16]}) is not arm A's for this task (sha256 {want[:16]}): its first patch "
+                 "would not be Claude Code alone, so the run is refused before the agent starts and is never scored")
+
+
+def deadline_of(started: float) -> float:
+    """The run's one deadline, from its absolute start (``time.monotonic`` when its clock began): the first session reads it,
+    and the run's ``Watchdog`` enforces it on every step after that."""
+    return started + c.WALL_CLOCK_S
+
+
+class Watchdog:
+    """Arm K3's one watchdog: the run's deadline (``deadline_of``), enforced on every step after the first session. A process a
+    step starts is ended when it fires. A session or a review registers how it is ended (``watching``). A docker call's timeout
+    is at most what is left (``docker``), so its process ends at the same moment. When it fires it ends every registered
+    process and sets its one flag (``fired``); no step starts once the flag is set (``may_start``). Each step's end is recorded
+    (``end``), and the run's ending reads those records once (``late``, in ``ended_as``). ``start`` runs its timer in a thread."""
+
+    def __init__(self, deadline: float, clock: Callable[[], float] | None = None) -> None:
+        self.deadline, self._clock = deadline, clock
+        self.fired, self._stop, self._lock = threading.Event(), threading.Event(), threading.Lock()
+        self.ends: list[tuple[str, float]] = []
+        self._killers: dict[int, Callable[[], Any]] = {}
+        self._next = 0
+
+    @staticmethod
+    def of(deadline: Any) -> "Watchdog":
+        """``deadline`` when it is the run's watchdog already, else a watchdog of its own for that deadline (a unit called alone)."""
+        return deadline if isinstance(deadline, Watchdog) else Watchdog(float(deadline))
+
+    def now(self) -> float:
+        return (self._clock or time.monotonic)()
+
+    def left(self) -> float:
+        return max(0.0, self.deadline - self.now())
+
+    def due(self) -> bool:
+        """The timer's one test: when the deadline has come, it fires. Whether it has fired."""
+        if not self.fired.is_set() and self.now() >= self.deadline:
+            self.fire()
+        return self.fired.is_set()
+
+    def fire(self) -> None:
+        """Every process registered now is ended, once, and the flag is set before any of them, so no step starts meanwhile."""
+        with self._lock:
+            if self.fired.is_set():
+                return
+            self.fired.set()
+            killers = list(self._killers.values())
+        for kill in killers:
+            try:
+                kill()
+            except Exception:  # noqa: BLE001 - one process that will not end does not keep the others running
+                pass
+
+    def may_start(self, step: str) -> bool:
+        """Whether ``step`` may start: never once the flag is set, which each step asks at its own start."""
+        return not self.due()
+
+    def end(self, step: str) -> bool:
+        """Records when ``step`` ended; whether it ended at or after the deadline, which ends the run "timeout". After ``stop``
+        the steps are over, and nothing more is recorded."""
+        at = self.now()
+        if self._stop.is_set():
+            return False
+        self.ends.append((step, round(at, 3)))
+        return at >= self.deadline
+
+    def late(self) -> bool:
+        """Whether the watchdog fired or any step ended at or after the deadline: the run then ends "timeout" (``ended_as``)."""
+        return self.fired.is_set() or any(at >= self.deadline for _, at in self.ends)
+
+    @contextlib.contextmanager
+    def watching(self, kill: Callable[[], Any]):
+        """While the block runs, ``kill`` is how its process is ended when the watchdog fires."""
+        with self._lock:
+            key, self._next = self._next, self._next + 1
+            self._killers[key] = kill
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._killers.pop(key, None)
+
+    def docker(self, raw: Any) -> "Bounded":
+        return Bounded(raw, self)
+
+    def start(self) -> None:
+        """The timer: a thread that fires the watchdog at the deadline, until ``stop``."""
+        def watch() -> None:
+            while not self._stop.is_set() and not self.due():
+                self._stop.wait(min(1.0, max(0.01, self.deadline - self.now())))
+        threading.Thread(target=watch, name="k3-watchdog", daemon=True).start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+
+class Bounded:
+    """A docker client whose every call the run's watchdog bounds: its timeout is at most what is left of the deadline, so the
+    docker process ends when the watchdog fires, and none starts after it. Removing, killing or stopping a container is cleanup,
+    never a step, so it is not bounded. Neither is ``raw``, which a session's end uses (``unbounded``)."""
+
+    CLEANUP = ("rm", "kill", "stop")
+
+    def __init__(self, raw: Any, dog: Watchdog) -> None:
+        self.raw, self.dog = raw, dog
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.raw, name)
+
+    def __call__(self, *args: Any, timeout: float | None = None, **kw: Any) -> Any:
+        if args and args[0] in self.CLEANUP:
+            return self.raw(*args, timeout=timeout, **kw)
+        return self.raw(*args, timeout=self.bound(args, timeout), **kw)
+
+    def sh(self, ctr: str, script: str, *args: Any, timeout: float = 600, **kw: Any) -> Any:
+        return self.raw.sh(ctr, script, *args, timeout=self.bound((ctr, script), timeout), **kw)
+
+    def popen(self, *args: Any, **kw: Any) -> Any:
+        return self.raw.popen(*args, **kw)
+
+    def bound(self, args: Sequence[Any], timeout: float | None) -> float:
+        left = self.dog.left()
+        if left <= 0:
+            self.dog.due()
+            raise subprocess.TimeoutExpired([str(a) for a in args], 0)
+        return left if timeout is None else min(float(timeout), left)
+
+
+def unbounded(docker: Any) -> Any:
+    """The docker client under a ``Bounded`` one, for ending a process; any other client as it is."""
+    return getattr(docker, "raw", docker) if isinstance(docker, Bounded) else docker
+
+
+def step_ending(stop: str | None, result: Mapping[str, Any] | None, code: int | None, *, session: str | None = None) -> str:
+    """How one of K3's steps ended (``K3_STEPS``), by the one rule every step's caller uses. "finished" only for a success it
+    recognises: no stop, a result of the step's own whose subtype is "success" and whose ``is_error`` is False, an exit of 0,
+    and, with ``session``, the result of that session (the first session's, which the rule step continues). Anything else is
+    the status the run ends with: the stop; "error" for a result of another session, or none to continue; the cap a result
+    names ("cap_turns", "cap_cost"), as ``status_of`` reads one; else "error", which takes in no result, a non-zero or unread
+    exit, and any result it does not know."""
+    if stop:
+        return stop
+    if session is not None and (not session or (result or {}).get("session_id") != session):
+        return "error"
+    sub = str((result or {}).get("subtype") or "")
+    if result is not None and sub == "success" and result.get("is_error") is False and code == 0:
+        return "finished"
+    return "cap_turns" if "max_turns" in sub else "cap_cost" if "budget" in sub else "error"
+
+
+def linked(st: os.stat_result) -> bool:
+    """Whether what ``os.lstat`` described is a link: a symbolic link, a junction or any other reparse point."""
+    return stat.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def plain(path: Path, *, folder: bool = False) -> bool:
+    """Whether ``path`` is a regular file (a folder, with ``folder``) and no link (``linked``)."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return (stat.S_ISDIR(st.st_mode) if folder else stat.S_ISREG(st.st_mode)) and not linked(st)
+
+
+def baseline_of(folder: Path) -> Path:
+    """Where a K3 run's first patch is kept: in a folder of the run's own (``BASELINE``), outside ``rounds``."""
+    return folder / BASELINE / FIRST_PATCH
+
+
+def kept_digest(archive: c.Archive, rel: str) -> str | None:
+    """The sha256 the archive's index recorded when K3 run ``rel``'s first patch was kept (``kept``), or None. It is written
+    once, at the capture, so it holds after any stop or restart. Only K3's readers ask it."""
+    return next((str(r["sha256"]) for r in archive.rows() if r.get("event") == "kept" and r.get("run") == rel
+                 and r.get("patch") == FIRST_PATCH and r.get("sha256")), None)
+
+
+def baseline_bytes(archive: c.Archive, rel: str) -> bytes | None:
+    """K3 run ``rel``'s Claude Code baseline, read once: the kept file's bytes, when they have the digest the index recorded at
+    their capture (``kept_digest``), else None. A reader uses these bytes and never reads the path again, so what it uses is what
+    was checked. A digest that does not match means the baseline changed, and the run is never scored on round-1."""
+    want, path = kept_digest(archive, rel), baseline_of(archive.root / rel)
+    if not want or not plain(path):
+        return None
+    data = path.read_bytes()
+    return data if hashlib.sha256(data).hexdigest() == want else None
+
+
+def has_baseline(archive: c.Archive, rel: str) -> bool:
+    """Whether K3 run ``rel`` has its Claude Code baseline (``baseline_bytes``): the one answer, from durable state only. Every
+    K3 path asks it, never a step's state in memory: the run's end (``ended_as``), its row (``loop.one``) and ``check``, after a
+    stop, an exception or a restart alike. No other arm's run is asked."""
+    return baseline_bytes(archive, rel) is not None
+
+
+def kept(ctx: Context, task: Task, agent: str, base: str, run: Any, name: str, deadline: Any = math.inf) -> str:
+    """One of K3's captures: the tree's patch against ``base`` made in the container, then copied at once into the archive,
+    written once (``fresh_path``), before the agent works again. The first patch goes into the run's ``BASELINE`` folder, with its
+    sha256 in the archive's index (``kept_digest``); the rule step's goes into ``rounds``. It keeps the patch's real bytes, as
+    ``final.patch`` keeps them, so the within-run comparison scores what each session left, and a patch that holds the run's key
+    is not kept. ``deadline`` is the run's watchdog (or its deadline): the capture does not start once it has fired, its docker
+    processes end when it fires, and a capture that ended late is "timeout" and keeps nothing. Otherwise its ending by
+    ``step_ending``: "finished" only when the command exited 0 and the file is kept."""
+    dog, step = Watchdog.of(deadline), f"capture {name}"
+    if not dog.may_start(step):
+        return "timeout"
+    docker = dog.docker(ctx.docker)
+    dest = run.fresh_path(f"{BASELINE}/{name}" if name == FIRST_PATCH else f"rounds/{name}")
+    try:
+        done = docker.sh(agent, diff_script(task.repo, base, f"{WE}/rounds/{name}"), workdir=task.repo, timeout=300)
+        ok = done.returncode == 0 and copy_out(docker, agent, f"{WE}/rounds/{name}", dest)
+    except subprocess.TimeoutExpired:
+        done, ok = None, False
+    late = dog.end(step) or done is None
+    if ok and any(secret.encode("utf-8") in dest.read_bytes() for secret in ctx.archive.redact.secrets):
+        ok = False
+    if (late or not ok) and os.path.lexists(dest):
+        dest.unlink()
+    if late:
+        return "timeout"
+    if ok and name == FIRST_PATCH:
+        run.archive.append({"event": "kept", "run": run.rel, "patch": name, "sha256": c.sha256_file(dest)})
+    return step_ending("", CAPTURED if ok else None, done.returncode)
+
+
+def rule_step(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, tally: c.Tally,
+              stop: float, started: Any) -> str:
+    """Arm K3's step, after the first patch is kept: the same session resumed with ``RULE_STEP``, as a repair resumes it, on the
+    run's one tally and stop, so its turns and spend count against the run's allowance. ``started`` is the run's watchdog (or,
+    for a unit called alone, the run's start, whose deadline it makes one for): the step does not start once it has fired, and
+    the session gets no prompt after it and is ended by it. Its ending (``step_ending``) reads its own result only, never one an
+    earlier session left in the tally, and that result must be the first session's: any other session's is "error". From a
+    success, the tree is then kept as ``RULE_PATCH``, by the same watchdog."""
+    dog = started if isinstance(started, Watchdog) else Watchdog(deadline_of(started))
+    if not dog.may_start("rule session"):
+        return "timeout"
+    before, codes = tally.result, []
+    first = str((before or {}).get("session_id") or "")                # the session the step continues
+    stopped = run_session(ctx, run, agent, scout_again(docker_args), key, tally, RULE_STEP, c.NDJSON["tagged_stream"].format(tag="rule"),
+                          seconds=dog.left(), stop_usd=stop, codes=codes, deadline=dog)
+    late = dog.end("rule session")
+    own = tally.result if tally.result is not before else None      # ``Tally.feed`` keeps each result as a new dict
+    ended = "timeout" if late and not stopped else step_ending(stopped, own, codes[-1] if codes else None, session=first)
+    return kept(ctx, task, agent, base, run, RULE_PATCH, dog) if ended == "finished" else ended
+
+
+def rule_led_start(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, tally: c.Tally,
+                   stop: float, started: Any, first: tuple[str | None, int | None]) -> dict[str, str]:
+    """Arm K3 from the end of its first session to its first review (``K3_STEPS``): the first session's ending, from its stop and
+    exit (``first``) and its result, the only one in the tally yet; the first patch kept; the rule step, its session and then its
+    patch kept. Each runs only when the one before it ended "finished"; the first that did not is where the run ends, with its
+    status ("ended") and its step ("at"). Both are "" when every step finished. ``started``: the run's watchdog (or its start).
+    Whether the run has its baseline, and whether it ended late, is not decided here: the archive and the watchdog say, once,
+    at the run's end (``ended_as``)."""
+    dog = started if isinstance(started, Watchdog) else Watchdog(deadline_of(started))
+    steps = (lambda: step_ending(first[0], tally.result, first[1]),
+             lambda: kept(ctx, task, agent, base, run, FIRST_PATCH, dog),
+             lambda: rule_step(ctx, task, run, agent, base, docker_args, key, tally, stop, dog))
+    for at, step in zip(K3_STEPS, steps):
+        ended = step()
+        if ended != "finished":
+            return {"ended": ended, "at": at, "instruction": RULE_DIGEST}
+    return {"ended": "", "at": "", "instruction": RULE_DIGEST}
+
+
+def ended_as(ctx: Context, run: Any, status: str, *, dry: bool, dog: Watchdog | None = None) -> str:
+    """The status a run ends with, decided once: as it stopped, except a K3 run. A K3 run with no Claude Code baseline
+    (``has_baseline``) ends ``NO_FIRST_PATCH`` whatever stopped it: a preflight check, a cap, an error or an exception. One whose
+    watchdog fired, or any of whose steps ended at or after the deadline (``Watchdog.late``), ends "timeout" whatever it returned,
+    and is scored as K2's timed-out runs are. A refusal at its first prompt's check keeps its own status, and a dry run is never
+    scored."""
+    if dry or status == "refused" or ctx.variant != ROUND3 or not rule_led(ctx.arm):
+        return status
+    if not has_baseline(ctx.archive, run.rel):
+        return NO_FIRST_PATCH
+    return "timeout" if dog is not None and dog.late() else status
+
+
+def plain_files(top: Path) -> list[Path]:
+    """Every regular file under ``top``, found without following a link (``linked``): a folder that is a link is never entered,
+    and a file that is one is never read."""
+    found, todo = [], [top]
+    while todo:
+        with os.scandir(todo.pop()) as entries:
+            for entry in entries:
+                st = entry.stat(follow_symlinks=False)
+                if linked(st):
+                    continue
+                if stat.S_ISDIR(st.st_mode):
+                    todo.append(Path(entry.path))
+                elif stat.S_ISREG(st.st_mode):
+                    found.append(Path(entry.path))
+    return sorted(found)
+
+
+def copy_in(ctx: Context, agent: str, src: str, run: Any, name: str, *, skip: frozenset[str] = frozenset()) -> None:
+    """One of a K3 run's late copies out of the container (``rounds``, Claude Code's projects, G6's home), the only way they reach
+    the archive. It goes into a folder of the run's that did not exist, so ``docker cp`` never nests it. Then each regular file
+    found there without following a link (``plain_files``) is masked, as every copy out of a container is, and written into the
+    run's ``name`` folder as a new file (never over one), and never as a name in ``skip``. A destination whose folder resolves
+    into the baseline (``BASELINE``), or anywhere outside the run's ``name`` folder, is refused (RuntimeError), so the baseline is
+    never written, masked or replaced; and the baseline's readers check its bytes whatever happens here (``baseline_bytes``)."""
+    late = run.path / f"{name}-late-{uuid.uuid4().hex[:8]}"
+    (run.path / name).mkdir(exist_ok=True)
+    fence, own = (run.path / BASELINE).resolve(), (run.path / name).resolve()
+    try:
+        if not copy_out(ctx.docker, agent, src, late) or not plain(late, folder=True):
+            return
+        for path in plain_files(late):
+            rel = path.relative_to(late)
+            dest = run.path / name / rel
+            if rel.as_posix().casefold() in skip or os.path.lexists(dest):
+                continue
+            text = path.read_bytes().decode("utf-8", errors="surrogateescape")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            data = ctx.archive.redact(text).encode("utf-8", errors="surrogateescape")
+            where = dest.parent.resolve()
+            if where == fence or fence in where.parents or not (where == own or own in where.parents):
+                raise RuntimeError(f"a late copy of {name} refused {rel.as_posix()}: its folder resolves to {where}, "
+                                   f"{'inside the baseline' if where == fence or fence in where.parents else 'outside ' + name}")
+            with open(dest, "xb") as stream:
+                stream.write(data)
+    finally:
+        if plain(late, folder=True):
+            shutil.rmtree(late, ignore_errors=True)
+        elif os.path.lexists(late):          # a link where the copy was: the link goes, never what it points at
+            try:
+                os.unlink(late)
+            except OSError:
+                os.rmdir(late)
+
+
+def merge_rounds(ctx: Context, agent: str, run: Any) -> None:
+    """Arm K3's late copy of the container's ``rounds``, which the loop's later rounds are in (``copy_in``), never as one of the
+    two captures (``FIRST_PATCH``, ``RULE_PATCH``), which only ``kept`` writes."""
+    copy_in(ctx, agent, f"{WE}/rounds", run, "rounds", skip=frozenset({FIRST_PATCH.casefold(), RULE_PATCH.casefold()}))
+
+
+def unscored_why(archive: c.Archive, record: Mapping[str, Any]) -> str:
+    """The one admission rule: "" when a run may be saved as a row and offered to ``check``, else why not. ``loop.one`` (a new row
+    and a saved one), ``loop.rescore``, ``check`` and ``compare.saved`` ask it, and nothing else decides it. A K3 run (``record``'s
+    arm) only while it has its Claude Code baseline, read from the archive (``has_baseline``), whatever its ending says. Then
+    every arm's alike: its ending, read from its own folder (``wecommon.ending``), must have a verdict to give
+    (``wecommon.scoreable``), so a stopped or failed run is scored on what it left, as every arm's is, and a K3 run whose
+    baseline was kept is a row on the same endings as K2's. ``wecommon.scoreable`` is this rule's second half; ``wecommon.verdict``
+    and ``wecommon.holds`` ask that half again of a row this rule admitted."""
+    rel = str(record.get("run") or "")
+    if rule_led(str(record.get("arm") or "")) and not has_baseline(archive, rel):
+        return "its baseline changed since it was kept" if kept_digest(archive, rel) else "it has no Claude Code baseline"
+    end = c.ending(archive.root, record)
+    if not c.scoreable(end):
+        return f"it ended {(end or {}).get('status') or 'with no ending on record'}: it has no verdict to give (wecommon.ending)"
+    return ""
+
+
+def scored_run(archive: c.Archive, record: Mapping[str, Any]) -> bool:
+    """Whether the one admission rule (``unscored_why``) admits the run of ``record``."""
+    return not unscored_why(archive, record)
 
 
 # --- arms V3 and V4: arm K's loop with the reviewer's test written before any patch (PLAN.md, 2026-11-04) ---------------
@@ -2548,6 +3018,19 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
     record: dict[str, Any] = {**common, "task": task.id, "run": run.rel, "agent_started": False, "cost_usd": 0.0}
     agent, net, px, status = "", "", "", "error"
     workspace: Path | None = None
+    dog: Watchdog | None = None          # arm K3's watchdog, from the run's deadline on
+
+    def finish(status: str) -> dict[str, Any]:
+        """The run's end, on every way out of this function, decided once (``ended_as``): for a K3 run from the archive and the
+        watchdog's records, with how it stopped kept beside it."""
+        if dog is not None:
+            dog.stop()
+            record.update(step_ends=list(dog.ends), watchdog_fired=dog.fired.is_set())
+        ended = ended_as(ctx, run, status, dry=dry, dog=dog)
+        if ended != status:
+            record["stopped_as"] = status
+        return run.finish(record, ended)
+
     try:
         title, text = ctx.issue_reader(task)
         if round3 and gets_thread(ctx.arm):
@@ -2566,7 +3049,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                 record["cost_usd"] = record["key_check_g6"]["usd"]
             if not record["key_check"]["ok"]:
                 status = "key_check_failed"
-                return run.finish(record, status)
+                return finish(status)
             if not round2:
                 net, px = start_net(ctx, tag)
         agent = f"g6we-run-{task.id}-{tag}"
@@ -2582,7 +3065,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         if (state.get("head") != task.parent or state.get("tree") != expected or state.get("dirty") != 0
                 or state.get("commits") != 1):
             status = "tree_mismatch"     # git must track exactly what upstream tracks at the base (PLAN.md section 9)
-            return run.finish(record, status)
+            return finish(status)
         base = str(state["head"])
         record["base_commit"] = base
         if not host:     # the host's version is read from its stream
@@ -2607,7 +3090,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             servers = record["arm_state"].get("mcp_servers") or []
             if (servers != []) if no_g6 else ("g6" not in servers):
                 status = "arm_mismatch"
-                return run.finish(record, status)
+                return finish(status)
         if round2:
             write_key_file(ctx.docker, agent, key)     # G6's model and its key, where g6.core.keys reads them
         write_in(ctx.docker, agent, f"{WE}/round_hook.sh", hook_script(task.repo, base), mode="755")
@@ -2626,6 +3109,12 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                         "apply the starting patch")
                 ctx.docker.sh(agent, "rm -f /tmp/we-start.patch", user="root", timeout=60)
         run.write("prompt.txt", text_in)
+        if round3 and rule_led(ctx.arm):    # K3's first session is arm A's, byte for byte, by digest (PLAN.md, 2026-11-05)
+            record["first_prompt_sha256"], why = first_prompt_check(task, title, text, text_in)
+            if why:
+                record["why"] = why
+                status = "refused"
+                return finish(status)
         args = claude_args(model, cap)
         way_out = DEAD_PROXY if dry else f"http://{px}:{PROXY_PORT}"
         env_names = ["ANTHROPIC_API_KEY", f"HTTPS_PROXY={way_out}", f"HTTP_PROXY={way_out}",
@@ -2654,6 +3143,10 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         if looped and has_hook(ctx.arm):
             write_in(ctx.docker, agent, f"{HOME}/.claude/settings.json", hook_settings(stop=True))
         started = time.monotonic()    # one clock for the run: arm V's bug test comes out of the same allowance (review v2)
+        deadline = deadline_of(started)     # the run's one deadline, which every step after it reads
+        if critic_led and rule_led(ctx.arm) and not dry:     # K3: one watchdog for the run, its timer running from now
+            dog = Watchdog(deadline)
+            dog.start()
         bug: dict[str, Any] = {}
         if test_led and not dry:      # the bug's test, from the issue and the parent, before the agent starts (PLAN.md, 2026-11-04)
             bug = bug_test(ctx, task, run, title, text)
@@ -2699,7 +3192,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             try:
                 proc.stdin.write(text_in.encode("utf-8"))
                 proc.stdin.close()
-                ended = read_stream(iter(proc.stdout.readline, b""), tally, deadline=started + c.WALL_CLOCK_S,
+                ended = read_stream(iter(proc.stdout.readline, b""), tally, deadline=deadline,
                                     write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
                                     stop_usd=stop)
             finally:
@@ -2707,7 +3200,9 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                 if proc.poll() is None:
                     ctx.docker.sh(agent, KILL_AGENT, user="root", timeout=60)
                     proc.kill()
-                proc.wait(timeout=60)
+                first_code = proc.wait(timeout=60)
+            if dog is not None:
+                dog.end("first session")
             drain.join(timeout=30)
             run.write("stderr.txt", b"".join(errors).decode("utf-8", errors="replace"))
         if looped and holds_loop(ctx.arm) and not dry and not ended:
@@ -2717,13 +3212,25 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             keep_first_patch(ctx, task, agent, base)
             record["repairs"] = review_once(ctx, task, run, agent, docker_args, key, tally, stop, started,
                                             lambda: run_critic(ctx, task, run, agent, base, title, text))
+        stepped, steps_ctx = dog is not None, ctx
+        if stepped:      # K3: the first session, its patch kept, the rule step; each only from a recognised success (step_ending)
+            steps_ctx = copy.copy(ctx)       # every docker call of K3's steps bounded by the watchdog, which their reviews see too
+            steps_ctx.docker, steps_ctx.watchdog = dog.docker(ctx.docker), dog
+            record["rule_step"] = rule_led_start(steps_ctx, task, run, agent, base, docker_args, key, tally, stop, dog,
+                                                 (ended, first_code))
+            ended = record["rule_step"]["ended"]
+            record["first_patch_sha256"] = kept_digest(ctx.archive, run.rel)    # whether it is a baseline: has_baseline, at the end
         if critic_led and not dry and not ended:
-            record["repairs"] = reviews_until_clean(ctx, task, run, agent, base, docker_args, key, tally, stop, started,
-                                                    lambda n: run_critic(ctx, task, run, agent, base, title, text, n),
+            record["repairs"] = reviews_until_clean(steps_ctx, task, run, agent, base, docker_args, key, tally, stop, started,
+                                                    lambda n: run_critic(steps_ctx, task, run, agent, base, title, text, n),
                                                     finding=finding_rule(ctx.arm),
                                                     session=(lambda note, name: turn(note, name, tally.session_id)) if host else None,
-                                                    tree=(lambda: hashlib.sha256(box_mcp.pack(workspace)).hexdigest()) if host else None)
-            ended = record["repairs"].get("ended") or ended      # a host repair that did not end cleanly: the run ends as it did
+                                                    tree=(lambda: hashlib.sha256(box_mcp.pack(workspace)).hexdigest()) if host else None,
+                                                    after_step=stepped, **({"deadline": dog} if stepped else {}))
+            if host:     # a host repair that did not end cleanly: the run ends as it did; a container K3 loop's end is read at finish
+                ended = record["repairs"].get("ended") or ended
+        if dog is not None:
+            dog.stop()                       # the steps are over: what the run does after them is no step
         if test_led and not dry and not ended:
             record["repairs"] = reviews_with_bug_test(ctx, task, run, agent, base, docker_args, key, tally, stop, started, bug)
         result = tally.result or {}
@@ -2752,6 +3259,12 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             checked(ctx.docker("exec", "-u", USER, agent, "rm", "-f", KEY_FILE, timeout=60), "remove G6's key file")
         for src, name in ((f"{WE}/rounds", "rounds"), (f"{HOME}/.claude/projects", "claude_projects"),
                           (f"{HOME}/.g6", "g6_home")):
+            if round3 and rule_led(ctx.arm):     # K3: every late copy goes in by copy_in, which never follows a link
+                if name == "rounds":
+                    merge_rounds(ctx, agent, run)
+                else:
+                    copy_in(ctx, agent, src, run, name)
+                continue
             copy_out(ctx.docker, agent, src, run.path / name)
             redact_tree(run.path / name, ctx.archive.redact)
         saved: dict[str, Any] = {}
@@ -2789,9 +3302,13 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
     except Exception as exc:  # noqa: BLE001 - every failure is recorded and the containers are removed
         record["error"] = ctx.archive.redact(f"{type(exc).__name__}: {exc}")[:2000]
         status = "error"
+        if dog is not None:              # K3: a step that failed is a step that ended, and when it ended is recorded
+            dog.end("error")
         if host:     # the run's ending if none was decided, else a failure beside it, which never makes it more scoreable
             run.failed(record["error"], agent_started=bool(record["agent_started"]))
     finally:
+        if dog is not None:
+            dog.stop()
         for name in (agent, px):
             if name:
                 ctx.docker("rm", "-f", name, timeout=300)
@@ -2799,7 +3316,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             ctx.docker("network", "rm", net, timeout=120)
         if workspace is not None:
             shutil.rmtree(workspace, ignore_errors=True)
-    return run.finish(record, status)
+    return finish(status)
 
 
 # --- validation, the independent check and replays ------------------------------------------------------------------------
@@ -2895,6 +3412,36 @@ def amend_control(archive: c.Archive, task_id: str) -> dict[str, Any] | None:
     return found if found and diff and found["record"].get("sha256") == c.sha256_file(diff) else None
 
 
+def scored_patches(rounds: Path) -> list[Path]:
+    """Arm K3's patches before its final one, in the order its run made them, found and named by one rule: the files at the top
+    of ``rounds``, where its captures and its late copy put them (``kept``, ``merge_rounds``), whose names are exactly
+    ``round-<n>.patch``, by n, or exactly ``RULE_PATCH``, just after round 1's. Each is one label, its stem, so the rule step's
+    patch is scored once; a name in another case or folder is none of them."""
+    names = sorted(p.name for p in rounds.iterdir() if p.is_file()) if rounds.is_dir() else []
+    order = [(int(m[1]), 0, name) for name in names if (m := ROUND_PATCH.fullmatch(name))]
+    order += [(1, 1, name) for name in names if name == RULE_PATCH]
+    return [rounds / name for *_, name in sorted(order)]
+
+
+def patches_to_score(folder: Path, arm: str, baseline: Path | None = None) -> list[tuple[str, Path]]:
+    """The one rule ``check`` selects and labels a run's patches by, before its final one. Arm K3's: its baseline labelled
+    "round-1", as ``check`` read and checked it (``baseline``, a private copy of what ``baseline_bytes`` gave; the kept file when
+    none is given), then its ``rounds`` (``scored_patches``) past round 1. Every other arm's exactly as before K3 (a0ad0a8): each
+    ``round-*.patch`` anywhere under ``rounds``, by its number, a ``RULE_PATCH`` among them or not. Each other label is the
+    patch's stem."""
+    rounds = folder / "rounds"
+    if rule_led(arm):
+        later = [(path.stem, path) for path in scored_patches(rounds) if path.name != FIRST_PATCH]
+        return [(Path(FIRST_PATCH).stem, baseline if baseline is not None else baseline_of(folder)), *later]
+    return [(path.stem, path) for path in sorted(rounds.glob("**/round-*.patch"), key=lambda p: int(p.stem.split("-")[1]))]
+
+
+def started_row(archive: c.Archive, rel: str) -> dict[str, Any]:
+    """What the archive's index said when run ``rel`` started, its arm among it: durable before any file of the run's own, so a
+    record a stop cut short is never read for it."""
+    return next((dict(r) for r in archive.rows() if r.get("event") == "started" and r.get("run") == rel), {})
+
+
 def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool = False) -> dict[str, Any]:
     v = amend_control(ctx.archive, task.id) if amended else latest(ctx.archive, "validate", task.id)
     if v is None:
@@ -2904,17 +3451,26 @@ def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool
         raise SystemExit("no run to check")
     src = Path(src)
     rel = str(src.relative_to(ctx.archive.root)).replace("\\", "/")
-    done = json.loads((src / "run.json").read_text(encoding="utf-8")) if (src / "run.json").is_file() else {}
-    end = c.ending(ctx.archive.root, {**done, "run": rel})
-    if not c.scoreable(end):
-        raise SystemExit(f"{run_rel or src.name} ended {(end or {}).get('status') or 'with no ending on record'}: it has no verdict "
-                         "to give (wecommon.ending)")
+    try:
+        done = json.loads((src / "run.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):    # no record, or one a stop cut short: it says nothing of how the run ended (wecommon.ending)
+        done = {}
+    arm = str(started_row(ctx.archive, rel).get("arm") or "")    # the run's arm is never read from its own record
+    why = unscored_why(ctx.archive, {**done, "run": rel, "arm": arm})     # the one admission rule, as loop.one asks it
+    if why:
+        raise SystemExit(f"{run_rel or src.name}: {why}")
+    first = None
+    if rule_led(arm):                # K3: its baseline read once and its bytes checked; only those bytes are scored
+        first = baseline_bytes(ctx.archive, rel)
+        if first is None:            # changed since the rule above read it: never scored on round-1
+            raise SystemExit(f"{rel} is arm {arm}'s: its baseline changed since it was kept, so it is never scored on round-1 "
+                             "(baseline_bytes)")
     f2p, p2p = v["record"]["fail_to_pass"], v["record"]["pass_to_pass"]
     folder = ctx.archive.start("recheck" if amended else "check", task.id, checked_run=rel)
-    patches = [] if amended else sorted((src / "rounds").glob("**/round-*.patch"), key=lambda p: int(p.stem.split("-")[1]))
+    private = folder.write(FIRST_PATCH, first) if first is not None and not amended else None
+    patches = [] if amended else patches_to_score(src, arm, private)
     rows = []
-    for patch in [*patches, src / "final.patch"]:
-        label = patch.stem
+    for label, patch in [*patches, ("final", src / "final.patch")]:
         body = _oracle_run(ctx, task, patch=patch, folder=folder, label=label, amended=amended)
         if body.get("patch_applied", True) and not body.get("results") and str(body.get("pytest_exit")).strip() != "124":
             raise RuntimeError(f"no test report for {label}")   # a check that did not happen is not a failed patch

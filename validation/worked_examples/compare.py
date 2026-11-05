@@ -42,11 +42,13 @@ def saved(root: Path) -> dict[tuple[str, str, int], dict[str, bool | None]]:
     has an amended verdict only if it was scored for this run on the diff as it stands. Each is read by one rule, the run's ending
     first (``wecommon.verdict``): a verdict saved under an ending the run no longer has is void."""
     rows: dict[tuple[str, str, int], dict[str, bool | None]] = {}
+    archive = c.Archive(root)
     for path in (root / "loop").glob("*-*.json"):
         row, again = json.loads(path.read_text("utf-8")), root / "loop" / "amended" / path.name
-        passes = c.verdict(root, row, row)       # none for a run that may not be scored, on either score
+        admitted = we.scored_run(archive, row)   # the one admission rule (run.unscored_why), asked again of every saved row
+        passes = c.verdict(root, row, row) if admitted else None      # none for a run that may not be scored, on either score
         amended = passes
-        diff = we.amendment(row["task"]) if c.scoreable(c.ending(root, row)) else None
+        diff = we.amendment(row["task"]) if admitted else None
         if diff:
             kept = json.loads(again.read_text("utf-8")) if again.is_file() else None
             amended = c.verdict(root, row, kept, amendment=c.sha256_file(diff))
