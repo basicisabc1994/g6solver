@@ -11,7 +11,7 @@ checks tighten the gate; operation budgets reserve counts and do not authorise o
 ## When to use it
 
 - Before sending, paying, promising, deleting, running code, deploying or changing permissions outside the conversation.
-- When an action depends on factual preconditions, verification, coordination or world-state evidence.
+- When an action depends on factual preconditions, a verification plan, coordination or world-state evidence.
 - When the person supplies count limits over `g6.csf.OPERATIONS`, trusted safeguard predicates or a finite model to check.
 - When a workflow was reviewed for some actions only, and must not drift beyond them: pass its review scope.
 
@@ -102,7 +102,7 @@ mutating calls; the block's dry-run default does not change the decorator's rese
 ## Alone and composed
 
 Use `g6_invoke("action_gating", "evaluate", params_json)` or Python `evaluate_action(action)`.
-`action_logic` supplies verification, coordination and hypothesis controls; `epistemic_integrity` grades declared
+`action_logic` supplies verification-contract, coordination and hypothesis controls; `epistemic_integrity` grades declared
 factual evidence. `g6.csf` supplies the operation vocabulary and optional model bound. Budgets use
 `g6.core.ledger.ChainLedger`; safeguards feed the same `GateDecision`, not another gate. `native_ops` retains its
 single-use tokens and simulated executor (`executed: false`); it is not a live execution backend.
@@ -112,7 +112,7 @@ single-use tokens and simulated executor (`executed: false`); it is not a live e
 - `unsafe_autonomous_action`: deterministic floors, context checks and fail-closed required audits.
 - `repeated_mistake`: a supplied predicate catches the known mistake again; no automatic lesson harvesting.
 - `fail_open_check`: empty configured safeguards, raised predicates, missing policies and failed dependencies refuse.
-- `overstated_verification`: rule passes, model judgements and inactive checks never establish verification.
+- `overstated_verification`: rule passes, model judgements and inactive checks never establish `verified`.
 - `tampered_audit_record`: chain, indexed-field, length and head checks detect altered history; external anchors detect a rewritten internal anchor.
 - `unbounded_risky_operation`: per-run reservations refuse once the person's operation limit is spent.
 - `beyond_review_scope`: an action outside its declared review scope goes to a person or is blocked; a scope never

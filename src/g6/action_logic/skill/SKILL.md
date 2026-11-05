@@ -21,7 +21,7 @@ the action gate's severity scale: `notice`, then `review`, then `block`.
 
 ## When not to use it
 
-- Deciding whether one concrete agent action may go ahead: `action_gating.evaluate`. It runs the verification,
+- Deciding whether one concrete agent action may go ahead: `action_gating.evaluate`. It runs the verification-contract,
   coordination and weak-signal controls itself, works out materiality from the action, and adds impact, authority and
   an audit record.
 - Run limits (tool calls, cost, wall time): `safety_engine`.

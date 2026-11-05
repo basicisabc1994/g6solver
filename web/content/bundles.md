@@ -17,8 +17,8 @@ AI model you choose: a free model that runs on your own computer, or your own An
     page a worked example is called a bundle, and a developer can run one from a copy of the code (`pip install .`,
     then for example `g6 bundle check-claims`). A new one is listed only once it has an offline end-to-end test.
 
-Every result carries a label: **qualified-draft** (usable, read the notes) or **blocked-escalated**
-(not safe to rely on; the page says why). The worked examples never label their own output **verified**.
+Every result carries a label: `qualified-draft` (usable, read the notes) or `blocked-escalated`
+(not safe to rely on; the page says why). The worked examples never label their own output `verified`.
 How well each one does on real tasks has not been measured yet.
 
 | Worked example | What it does for you | Status | Download |

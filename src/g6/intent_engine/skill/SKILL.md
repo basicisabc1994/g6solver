@@ -62,7 +62,7 @@ a field-completeness checklist, not an understanding of the request, and calls n
 The checklist has five fields, asked in this order: `why`, `success_criteria`, `failure_criteria`, `non_goals`,
 `risk_tolerance`. A field counts only when it says something: "TBD", "n/a", "x" or "..." are kept in the contract but
 not counted, so their questions stay open. `confidence` is the share of the five fields given, less 0.08 for each
-assumption that is not explicit; it is a completeness heuristic, never a semantic or verification score. `ended_by` is
+assumption that is not explicit; it is a completeness heuristic, never a semantic or correctness score. `ended_by` is
 `confidence` only when the threshold was reached. A goal answer that replaces the request, and a free-text risk answer
 that names no single level ("anything but high"), are kept as explicit assumptions rather than guessed.
 

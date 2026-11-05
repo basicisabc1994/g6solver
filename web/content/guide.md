@@ -147,7 +147,7 @@ In one small G6 test (an anecdote, not a study), a small model reviewed four of 
 
 This is not a limitation that a better prompt or a longer conversation fixes. Research finds that without outside feedback, models rarely fix their own reasoning errors, and sometimes make them worse ([Huang et al., 2024](https://arxiv.org/abs/2310.01798)). Asking "are you sure?" mostly gets the same confident answer back.
 
-**What this means for you:** Telling your AI "check your work" or "review this code" gives you a false sense of security. The AI will tell you it looks correct even when it is not. Real verification requires something outside the model — tests, tools, or human review.
+**What this means for you:** Telling your AI "check your work" or "review this code" gives you a false sense of security. The AI will tell you it looks correct even when it is not. A real check needs something outside the model — tests, tools, or human review.
 
 
 # Chapter 3: Harness Engineering 101
@@ -159,7 +159,7 @@ A harness is everything between the AI model and the final output. Think of it l
 In software terms, a harness is the system that:
 - Tells the AI what to do (the prompt and instructions)
 - Gives the AI the right information (grounding and context)
-- Checks whether the AI's output is correct (verification)
+- Checks whether the AI's output is correct (checks)
 - Remembers what worked and what did not (memory and learning)
 - Prevents dangerous actions (safety)
 - Connects the AI to useful tools (tool integration)
@@ -183,20 +183,20 @@ flowchart TD
 
 A well-engineered harness has four layers. You do not need to build these yourself — G6 provides them — but understanding what they do helps you make better decisions about your AI-built apps.
 
-### Layer 1: Verification — "Does it actually work?"
+### Layer 1: Checks — "Does it actually work?"
 
-Verification is the most critical layer. It answers one question: does the output actually do what it is supposed to do?
+Checking is the most critical layer. It asks one question: does the output actually do what it is supposed to do?
 
-For code, verification means running tests. Not just "does it compile?" but "does it produce the right answer for known inputs?" For content, verification means checking facts against sources. For data processing, verification means comparing outputs against expected results.
+For code, checking means running tests. Not just "does it compile?" but "does it produce the right answer for known inputs?" For content, checking means comparing facts against sources. For data processing, checking means comparing outputs against expected results.
 
-Without verification, you are guessing. With verification, you know.
+Without checks, you are guessing. With them, you know what passed.
 
 G6 says how far it knows with one of three labels on every result. This is how g6.evidence.issue chooses one. A
 failed check refutes a result only if that check has shown it can tell a good answer from a bad one. Independent proof
 means every check passed, was written by someone other than the producer, was frozen before the work, and caught a
 planted bad answer.
 
-```mermaid How a result earns its label: one refutation blocks it, and only independent proof on every check reaches verified.
+```mermaid How a result earns its label: one refutation blocks it, and only independent proof on every check reaches "verified".
 flowchart TD
     out(["The exact output"]) --> run["Every frozen check runs on it, each result kept as a receipt"]
     run --> refuted{"Refuted?"}
@@ -205,7 +205,7 @@ flowchart TD
     strong -->|no, or a check could not run| draft["qualified-draft, with each gap named"]
     strong -->|yes| gates{"Open questions decided?"}
     gates -->|no| draft
-    gates -->|yes, by a person| verified["verified"]:::approve
+    gates -->|yes, by a person| ok["verified"]:::approve
 ```
 
 ### Layer 2: Memory — "What failed before?"
@@ -252,7 +252,7 @@ This is what makes a harness fundamentally different from just "better prompting
 The improvement cycle works like this:
 
 1. The system attempts a task
-2. It checks whether the result is correct (Layer 1: Verification)
+2. It checks whether the result is correct (Layer 1: Checks)
 3. If the result is wrong, it diagnoses why
 4. It creates or updates a "theory" — a reusable strategy for avoiding that failure
 5. A person approves the theory, and next time a similar task comes up, it is applied
@@ -264,13 +264,13 @@ When professional engineers debug software, they follow patterns. These patterns
 
 Here are five patterns that help when a fix goes wrong.
 
-```mermaid The five patterns as one loop: understand and define correct before fixing, verify before shipping, and learn from every fix that fails.
+```mermaid The five patterns as one loop: understand and define correct before fixing, check before shipping, and learn from every fix that fails.
 flowchart TD
     broken(["Something breaks"]) --> understand["Pattern 1: understand it first, trace what actually happens"]
     understand --> define["Pattern 2: define correct, with examples of the right output"]
     define --> fix["Make one fix"]
-    fix --> verify["Pattern 3: verify on a normal case, an edge case and one that worked before"]
-    verify --> pass{"All pass?"}
+    fix --> check["Pattern 3: check on a normal case, an edge case and one that worked before"]
+    check --> pass{"All pass?"}
     pass -->|yes| ship(["Ship it"])
     pass -->|no| why["Pattern 4: ask why the fix failed, and what that says"]
     why --> understand
@@ -299,11 +299,11 @@ In our experience, fixes often fail not because of bad code, but because nobody 
 
 **How to apply this:** Before asking the AI to fix anything, write down — in plain language — exactly what the correct behavior should be. Include examples. Be specific. "It should work properly" is not a definition. "Given employee Sam Lee with 3 days of annual leave left, a request for 5 days should be refused with the message: 'This request is for 5 days, but you have 3 days of annual leave left. Shorten the request or ask your manager about unpaid leave.'" — that is a definition.
 
-## Pattern 3: Verify Before Shipping
+## Pattern 3: Check Before Shipping
 
-Every change should be verified before it goes live. Not "I looked at it and it seems fine" — actually tested with real inputs and compared against known correct outputs.
+Every change should be checked before it goes live. Not "I looked at it and it seems fine" — actually tested with real inputs and compared against known correct outputs.
 
-**The minimum verification checklist:**
+**The minimum checklist:**
 
 1. Does the change produce the correct output for a normal case?
 2. Does it handle edge cases? (Empty input, very long input, unexpected characters)
@@ -359,7 +359,7 @@ G6 takes a different approach. Instead of changing the model (fine-tuning), it c
 The self-training loop is simple in concept:
 
 1. **Try:** The system attempts a task using its current harness
-2. **Check:** It verifies whether the result is correct
+2. **Check:** It checks whether the result is correct
 3. **Diagnose:** If incorrect, it analyzes why it failed
 4. **Learn:** It proposes a strategy to prevent that failure
 5. **Approve and repeat:** A person accepts the strategy, and the next attempt uses it
@@ -482,7 +482,7 @@ sequenceDiagram
     S->>C: run the op, unless it is sensitive and the server does not allow it
     C-->>S: its result, and the state it reports
     S-->>A: the result, with completion_state, warning_card, evidence, request_id and run_id
-    Note over A,S: verified only with evidence, otherwise qualified-draft or blocked-escalated
+    Note over A,S: verified, qualified-draft or blocked-escalated, as far as the evidence goes
 ```
 
 **Not a programmer?** Download a ready-made [worked example](../bundles/index.md) instead — no installation of Python needed.
@@ -859,7 +859,7 @@ Replace the `[BRACKETED]` placeholders with your specific details. These prompts
 > 2. **Communicate:** Draft a brief status message for affected users
 > 3. **Mitigate:** What is the fastest way to stop the bleeding? (Even if it is not a full fix)
 > 4. **Diagnose:** What is the root cause?
-> 5. **Fix:** Implement and verify the fix
+> 5. **Fix:** Implement and check the fix
 > 6. **Prevent:** What change would prevent this from happening again?
 
 ### Prompt 7.3: Dependency Update

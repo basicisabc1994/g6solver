@@ -44,7 +44,7 @@ For a Python task, work in this order.
    reproduction is a test file: add it to the repository's tests and list its node id), so the person sees the fix
    pass the original counterexample. Review again. Stop after 3 rounds, when a round changes nothing, or when the
    report says only the person can decide.
-8. **Honesty.** Never call a patch verified, and never merge for the person. G6 cannot judge usability by itself;
+8. **Honesty.** Never call a patch `verified`, and never merge for the person. G6 cannot judge usability by itself;
    acceptance tests and the person's confirmation do. The report's not-established list is the to-do list. For
    specialised needs, find more components with `g6_find`.
 
@@ -89,7 +89,7 @@ A job ID is pending work, not success; restart loses process-local handles.
 
 ## Read and ask
 
-Preserve `verified`, `qualified-draft` and `blocked-escalated` exactly as returned. Verification covers only the named
+Preserve `verified`, `qualified-draft` and `blocked-escalated` exactly as returned. `verified` covers only the named
 artifact and check scope. Report the warning card and recovery; never turn a refusal into a successful tuning result.
 
 Ask the user when permissions, task meaning or evidence are missing. Local settings assume a trusted host;

@@ -161,7 +161,7 @@ harness, and 60 extensions are in the library, each in a family for one kind of 
 | `debate` | Has named roles, such as a proposer and a critic, argue a question in turn, and reports how far they agree | Python-only | — |
 | `distillation` | Checks a small function that stands in for repeated model calls: it runs it in a bounded child process and tests it on new cases before anyone relies on it | Python-only | — |
 | `epistemic_integrity` | Grades the evidence behind each claim and holds back a high-stakes conclusion the evidence cannot carry | MCP | none |
-| `evidence` | Gives the final verdict on a piece of work: verified, a qualified draft, or blocked, with every gap named | Python-only | — |
+| `evidence` | Gives the final verdict on a piece of work: verified, qualified-draft or blocked-escalated, with every gap named | Python-only | — |
 | `formal` | Settles small logic questions exactly with a solver, and labels each answer for what it is | MCP | none |
 | `goal_engine` | Holds the subtasks you declare as a tree and checks them against what your executor reports | Python-only | — |
 | `graph_reasoning` | Works out how true each label on a network is, such as who counts as popular or which link can be trusted, as a range from false to true, from your facts and rules, and shows how each range was reached | MCP | none |

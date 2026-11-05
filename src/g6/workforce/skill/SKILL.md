@@ -98,7 +98,7 @@ Composed:
 
 - `runner_in_process` (code under test running with the owner's permissions): tests run in a child process, confined
   by the operating system where G6 can (what that refuses: `repo_tests`' module documentation), else as you, when no
-  pass verifies, as always on Linux and macOS for now.
+  pass supports `verified`, as always on Linux and macOS for now.
 - `live_working_tree` (tests run in a repository that can change during the run): in-place runs use the repository
   itself; git's view is compared before and after, which misses what `repo_tests`' module documentation lists (ignored
   files, say).

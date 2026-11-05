@@ -15,7 +15,7 @@ DOCUMENTS: tuple[dict, ...] = (
                 "Accuracy rises towards a ceiling as the harness learns; the theory loop levels off at about 17 to 20 "
                 "theories.",
                 "Errors compound along a chain of steps, and a model checking its own work shares its own mistakes, "
-                "so a small model cannot verify itself.",
+                "so a small model cannot check itself.",
                 "Estimates how much a harness adds to a model, in accuracy and in tokens."),
      "basis": "Benchmark runs: GAIA, Omni-MATH, SWE-bench Pro, MATH-500, MetaTool and MedXpertQA."},
     {"file": "G6_Theoretical_Foundations.md",
@@ -25,7 +25,7 @@ DOCUMENTS: tuple[dict, ...] = (
                 "checks decide.",
                 "Uses category theory (the Yoneda lemma, sheaves) as an illustrative analogy, and the correspondence "
                 "between proofs and programs.",
-                "Proposes a compression conjecture: caching verified algorithms turns statistical guessing into "
+                "Proposes a compression conjecture: caching checked algorithms turns statistical guessing into "
                 "deterministic lookup.",
                 "Maps the four levels of adaptation in practopoiesis onto G6's self-training levels."),
      "basis": "Theory, drawing on the unified theory's benchmark runs."},
