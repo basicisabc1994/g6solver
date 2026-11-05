@@ -808,8 +808,10 @@ request goes out, the Claude Code or Codex caller really sending it becomes a `W
 `usage_limit_reached` is a limit, and `api_error_status` 529 is its model overloaded, wherever the program writes them.
 `WatchedCodex` runs `codex exec --json` and reads only Codex's own events, `error` and `turn.failed`: Codex's `codex_error_info`
 (`usage_limit_exceeded`, `server_overloaded`, `cyber_policy` and the rest), or where an event carries none, the program's own
-fixed message at its start. A model's words are in item events, inside JSON strings, and never read. What either reads goes to the
-tick as G6's own code (`G6_E_MODEL_REFUSED`, `G6_E_LLM_RATE_LIMITED`, `G6_E_MODEL_AT_CAPACITY`) before any wrapper sees it. A limit
+fixed message at its start. A `turn.failed`, or an `error` of no kind G6 knows, is a failed request whatever the exit status or the
+last-message file say. A model's words are in item events, inside JSON strings, and never read. What either reads goes to the
+tick as G6's own code (`G6_E_MODEL_REFUSED`, `G6_E_LLM_RATE_LIMITED`, `G6_E_MODEL_AT_CAPACITY`) before any wrapper sees it, and for
+a watched caller nothing else decides: the older text pattern is never applied to what it raises, its error stream included. A limit
 or a model at capacity ends the tick as a wait: nothing is scored for either arm, no evaluation of the split's five is spent, and the
 limit is in the log before the tick's charges are settled, so a restart waits it out. It is looked at again after 15 minutes, and
 Codex's `account/rateLimits/read` holds the ticks after that. The account is still read once more just before a held-out
@@ -843,8 +845,23 @@ tick would rephrase it: a proposer's next prompt on the same case is a new reque
 never sent again, across restarts, and reads as a failed case. Only the exact request is known: a changed prompt is a new one,
 and only the pause stands between a refusal and that.
 
-No failure of the records can undo this. A refused request is kept as it happens, by digest, in `refused.log`, a file no lock stands
-in front of, before any record of the tick is written, and this process holds it too, for good. So a crash before its cycle is
+**What a refused request is (2026-11-06).** It has one identity, of what was sent, and no alias of what a wrapper was asked. For a
+host caller that is the digest of the exact arguments and input its program is started with, a file G6 wrote for it standing as
+its bytes and a path in the call's own folder as its place there (`usage.request_identity`), taken at the last step the bound file
+gives a subclass before the program starts: `_command`, whose output `host_models._run` receives unchanged, or `_launch` for a
+session of a caller's own (`ToolSession`). Only the building of the program's environment lies between that step and the start.
+For any other caller it is the digest of the system text and request its own frame names, joined as before so refusals kept
+before still count, and with no two pairs sharing one. Every place a request can leave passes one check (`_Requests.admit`),
+tick or no tick: as a call begins, as each request is noted, as a `Retry-After` resend is made, and where a host program is about
+to start. There a request already refused is stopped, and one identical to a request still out waits for what becomes of that one,
+so a request let in before a refusal of the same bytes was kept cannot leave after it. A stop, records of refusals that cannot be
+read, or a refusal this process could not keep refuses every later request of the process, between ticks too. What a call's tick
+latched decides when the call comes back, whichever way, so a wrapper that catches a limit or a refusal cannot make it an answer.
+
+No failure of the records can undo this. A refused request is kept as it happens, by its identity, in `refused.log`, a file no lock
+stands in front of, flushed to the disk before any other thread can see the refusal and before any record of the tick is written,
+and this process holds it too, for good. A handle reads `refused.log` and the cycles' records as it is built, before its first
+request. So a crash before its cycle is
 written, or a log that will not take that cycle, cannot send it again. A cycle lost that way cannot carry the pause, so it ends the
 run at the first, as three lost cycles do: `STOP` and `stops.log` hold it, the reason says what was refused, and only a person's
 start goes on. If `refused.log`, the log and `STOP` all refuse a write, this process still sends nothing more, and a restart then
