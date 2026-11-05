@@ -920,7 +920,8 @@ class ShadowLoop:
                 row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
                        "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]}
             finally:             # use nobody could count stays charged at its worst case
-                charged = self.meter.settle(spend, spend.amount if self.requests.unseen else self.requests.sent)
+                charged = self.meter.settle(spend, spend.amount if self.requests.unseen else self.requests.sent,
+                                            self._now())
         unseen, stopped, refusal = self.requests.unseen, self.requests.stopped, self.requests.refusal
         self.requests.close()
         if self.tuned and "tuning" not in row:     # a tick cut short keeps what it had made

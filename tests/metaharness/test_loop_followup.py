@@ -710,7 +710,10 @@ def test_a_reservation_booked_in_another_zone_survives_two_moves_of_its_week_and
         store.close()
 
 
-def test_a_week_with_a_venture_of_its_own_in_another_zone_keeps_its_own_book_when_the_grid_moves(tmp_path):
+def test_a_week_with_a_venture_of_its_own_in_another_zone_counts_with_the_other_week_it_may_overlap(tmp_path):
+    """This held that the move counted the provider week's own 350 and not the settings week's 100, by which book it read.
+    No book moves now, so neither stands in for the other: both count. The 100 was kept with no time of its own, so it
+    counts in every week it may have been spent in, the provider's among them, until the last of those is over."""
     from datetime import timezone
 
     settings = datetime(2026, 10, 26, tzinfo=timezone(timedelta(hours=10)))
@@ -721,7 +724,9 @@ def test_a_week_with_a_venture_of_its_own_in_another_zone_keeps_its_own_book_whe
         _zone_named(store, provider, 350)
         meter = BudgetMeter((ProviderWindow("codex", 1000, settings),), store=store,
                             read_account=lambda *_: AccountReading(resets_at=provider + timedelta(days=7)))
-        assert meter.reading("codex", (provider + timedelta(days=2, hours=1)).astimezone(UTC)).used == 350
+        now = (provider + timedelta(days=2, hours=1)).astimezone(UTC)
+        assert meter.reading("codex", now).used == 450 and not meter.reserve("codex", now, 151).admitted
+        assert meter.reading("codex", provider + timedelta(days=7)).used == 0
     finally:
         store.close()
 
@@ -750,18 +755,19 @@ def test_a_week_whose_end_moves_three_times_across_restarts_keeps_its_book(tmp_p
 
 
 def test_a_new_week_still_cannot_take_a_book_another_week_moved_into(tmp_path):
-    from g6.self_maintenance.pacing import OWNER
-
+    """This drove ``week_ledger`` by hand, which is gone. No book moves now: each week's reservations are filed under a venture
+    of its own, named for its own start, and a week counts another's only where their spans overlap."""
     store = OperatorStore(tmp_path / "op.db")
     try:
-        scope = store.for_owner(OWNER)
-        caps = {"model": 1000, "cash": 0}
-        first, _ = scope.week_ledger("codex", "2026-10-26T00:00:00+00:00", caps=caps)
-        moved, book = scope.week_ledger("codex", "2026-10-27T00:00:00+00:00", caps=caps, moved_from="2026-10-26T00:00:00+00:00")
-        assert (moved, book) == (first, "2026-10-26T00:00:00+00:00")
-        other, other_book = scope.week_ledger("codex", "2026-10-28T00:00:00+00:00", caps=caps,
-                                              moved_from="2026-10-26T00:00:00+00:00")       # not the week the book moved to
-        assert other != first and other_book == "2026-10-28T00:00:00+00:00"
+        monday = _meter(store)
+        first = monday.reserve("codex", MONDAY + timedelta(hours=1), 100)
+        monday.settle(first, 100, MONDAY + timedelta(hours=2))
+        moved = _meter(store, resets_at=MONDAY + timedelta(days=8)).reserve("codex", MONDAY + timedelta(days=1, hours=1), 50)
+        wednesday = _meter(store, resets_at=MONDAY + timedelta(days=9))
+        other = wednesday.reserve("codex", MONDAY + timedelta(days=2, hours=1), 50)
+        assert first.admitted and moved.admitted and other.admitted
+        assert len({first.venture, moved.venture, other.venture}) == 3
+        assert wednesday.reading("codex", MONDAY + timedelta(days=2, hours=1)).used == 100    # Tuesday's open 50 and its own
     finally:
         store.close()
 
@@ -793,12 +799,16 @@ def test_a_week_that_moved_before_weeks_were_named_in_utc_keeps_its_book_after_t
     start = datetime(2026, 10, 26, tzinfo=timezone(timedelta(hours=10)))
     moved, caps, path = start + timedelta(days=1), {"model": 1000, "cash": 0}, tmp_path / "op.db"
     store = OperatorStore(path)
-    try:                                    # both weeks named in the settings' zone, as before the upgrade
+    try:                                    # both weeks named in the settings' zone, as the book code before spans left them
+        store.conn.executescript("CREATE TABLE IF NOT EXISTS week_books (owner TEXT NOT NULL, provider TEXT NOT NULL,"
+                                 " week TEXT NOT NULL, book TEXT NOT NULL, PRIMARY KEY (owner, provider, week));")
         scope = store.for_owner(OWNER)
-        venture, book = scope.week_ledger("codex", start.isoformat(), caps=caps)
-        scope.reserve(venture, month=book, account="model", amount=350)
-        assert scope.week_ledger("codex", moved.isoformat(), caps=caps, moved_from=start.isoformat(),
-                                 grid=(moved + timedelta(days=7)).isoformat()) == (venture, book)
+        venture = scope.venture_named(f"codex@{start.isoformat()}", caps=caps)
+        scope.reserve(venture, month=start.isoformat(), account="model", amount=350)
+        with store.conn:
+            store.conn.execute("INSERT INTO week_books VALUES (?, 'codex', ?, ?)", (OWNER, moved.isoformat(), start.isoformat()))
+            store.conn.execute("INSERT OR REPLACE INTO week_grids VALUES (?, 'codex', ?)",
+                               (OWNER, (moved + timedelta(days=7)).isoformat()))
     finally:
         store.close()
     store = OperatorStore(path)
