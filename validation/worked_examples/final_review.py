@@ -342,7 +342,7 @@ def _reproduce(ctx: we.Context, task: we.Task, patch: Path, title: str, text: st
 def _kept(root: Path, row: Mapping[str, Any], folder: str = FOLDER) -> Path | None:
     """Where the review of this run's patch is saved, by the patch's digest, so that identical patches share one."""
     patch = root / str(row.get("run")) / "final.patch"
-    return c.beside(root, folder) / f"{c.sha256_file(patch)}.json" if patch.is_file() else None
+    return c.beside(root, folder, f"{c.sha256_file(patch)}.json") if patch.is_file() else None
 
 
 def of_bug(found: Mapping[str, Any] | None, task: Any) -> dict[str, Any] | None:
@@ -407,9 +407,10 @@ def keep(root: Path, row: Mapping[str, Any], found: Mapping[str, Any], folder: s
     if not isinstance(sha, str) or not sha:
         raise ValueError("a review is kept only under the digest of the bytes its reviewer read, and this one names none")
     found = {k: v for k, v in found.items() if k != "patch_sha256"}     # the digest names the file: the record is as it was
-    path = c.beside(root, folder) / f"{sha}.json"
+    path = c.beside(root, folder, f"{sha}.json")
     _another_bug(path, row["task"])
     path.parent.mkdir(exist_ok=True)
+    c.beside(root, folder, path.name)          # again just before the write: no folder below the store moved since
     write_whole(path, json.dumps({"task": row["task"], "first_seen_in": row.get("run"), **found}, indent=1))
 
 

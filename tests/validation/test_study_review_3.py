@@ -480,9 +480,10 @@ def test_finding_10_a_cached_review_of_another_bug_is_not_given_to_this_one(tmp_
         asked.append(1)
         return {**foreign, "rule": "the requested bug's rule"}, None, None
 
-    got = replay3.review_bug(SimpleNamespace(archive=archive), tmp_path, task, [row], "title", "issue", ask=ask)
-    assert asked == [1] and got[0]["rule"] == "the requested bug's rule"
-    assert json.loads(record.read_text("utf-8"))["task"] == task.id
+    before = record.read_bytes()      # refused, never given to this bug nor written over (study review 4, finding 3)
+    with pytest.raises(ValueError, match="on two bugs"):
+        replay3.review_bug(SimpleNamespace(archive=archive), tmp_path, task, [row], "title", "issue", ask=ask)
+    assert asked == [] and record.read_bytes() == before
 
 
 def _review_reads(folder: Path = STUDY) -> list[tuple[str, str, bool]]:

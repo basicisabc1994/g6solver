@@ -375,7 +375,6 @@ def test_the_rule_step_resumes_the_session_on_the_runs_clock_tally_and_stop_and_
     def session(ctx, run, agent, command, key, tally_, text, name, *, seconds, stop_usd, codes=None, deadline=None):
         calls.append({"command": command, "key": key, "tally": tally_, "text": text, "name": name,
                       "deadline": deadline.deadline, "stop_usd": stop_usd})
-        codes.append(0)
         tally_.feed(dict(SUCCESS))
         return ""
 
@@ -392,7 +391,7 @@ def test_the_rule_step_resumes_the_session_on_the_runs_clock_tally_and_stop_and_
     calls.clear()
     assert we.rule_step(None, None, None, "agent", "base1", args, "key", tally, 7.5, 1000.0 - we.c.WALL_CLOCK_S) == "timeout"
     assert calls == []                                              # no session, and no minute past the run's deadline
-    monkeypatch.setattr(we, "run_session", lambda *a, codes=None, **kw: (codes.append(0), "")[1])
+    monkeypatch.setattr(we, "run_session", lambda *a, **kw: "")
     assert we.rule_step(None, None, None, "agent", "base1", args, "key", tally, 7.5, 1000.0 - 100.0) == "error"  # no own result
 
 
@@ -418,7 +417,7 @@ def _gated_loop(monkeypatch, after_step):
         sessions.append(a[6])
         Docker.tree += 1
         a[5].feed(dict(SUCCESS))                 # a repair that ends cleanly: its own success and a clean exit
-        kw["codes"].append(0)
+        return ""
 
     monkeypatch.setattr(we, "run_set", lambda ctx, task, agent, where: on_tree.pop(0))
     monkeypatch.setattr(we, "run_session", session)
@@ -603,10 +602,9 @@ def test_a_resumed_session_reads_the_runs_deadline_and_gets_no_prompt_once_it_ha
     monkeypatch.setattr(we, "read_stream", read_stream)
     run = we.c.Archive(tmp_path / "archive").start("run", "fake-1", arm="K3")
     ctx = SimpleNamespace(docker=SimpleNamespace(popen=popen), client_env=lambda key: {}, archive=run.archive)
-    codes = []
     ended = we.run_session(ctx, run, "agent", ["claude"], "key", we.c.Tally(), "text", "rule_stream.jsonl", seconds=20.0,
-                           stop_usd=1.0, codes=codes, deadline=1020.0)
-    assert [w for w in written if w] == sent and codes == [0]
+                           stop_usd=1.0, deadline=1020.0)
+    assert [w for w in written if w] == sent and ended == ""      # its exit of 0, read by run_session itself
     assert (ended, deadlines) == (("timeout", []) if not sent else ("", [1020.0]))
 
 
@@ -626,7 +624,7 @@ def _timed_loop(monkeypatch, *, deadline, review_takes=0.0, start=0.0):
         sessions.append(kw)
         Docker.tree += 1
         a[5].feed(dict(SUCCESS))                 # a repair that ends cleanly: its own success and a clean exit
-        kw["codes"].append(0)
+        return ""
 
     def critique(n):
         critiques.append(n)
@@ -1295,9 +1293,7 @@ def _repairing(monkeypatch, *, result, code, stop):
         Docker.tree += 1
         if result is not None:
             tally_.feed(dict(result))
-        if codes is not None:
-            codes.append(code)
-        return stop
+        return we.session_ending(stop, code, dict(result) if result is not None else None)    # the session's whole ending
 
     def critique(n):
         reviews.append(n)
@@ -1338,11 +1334,10 @@ def _container_loop(monkeypatch, first, repaired, arm="K3", after_step=True):
     tally, started, reviews, state = we.c.Tally(), [], [], [0]
     tally.feed(first)
 
-    def repair(ctx, run, agent, command, key, tally_, text, name, *, codes, **kw):
+    def repair(ctx, run, agent, command, key, tally_, text, name, **kw):
         started.append(list(command))
         state[0] += 1
         tally_.feed(dict(repaired))
-        codes.append(0)
         return ""
 
     def review(n):

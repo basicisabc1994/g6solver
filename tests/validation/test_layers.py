@@ -27,7 +27,7 @@ diff --git a/tests/test_mod.py b/tests/test_mod.py
 
 
 def test_a_change_is_its_source_lines_without_whitespace_comments_or_tests():
-    assert layers.change(DIFF) == (("src/pkg/mod.py", ("-returnx", "+returnx+1")),)
+    assert layers.change(DIFF) == (("src/pkg/mod.py", ("-return\0x", "+return\0x\0+\01")),)   # token boundaries kept (review 4, 8)
     assert layers.change(DIFF.replace("x  +  1", "x+1")) == layers.change(DIFF)          # spacing is no difference
     assert layers.change(DIFF.replace("+    # a comment\n", "")) == layers.change(DIFF)  # nor is a comment
 
@@ -44,7 +44,7 @@ def test_a_quoted_name_and_a_hunk_line_that_begins_like_a_header_are_read_as_git
     is content, whatever it begins with."""
     quoted = ('diff --git "a/src/caf\\303\\251.py" "b/src/caf\\303\\251.py"\n--- "a/src/caf\\303\\251.py"\n'
               '+++ "b/src/caf\\303\\251.py"\n@@ -1 +1 @@\n-x = 1\n+x = 2\n')
-    assert layers.change(quoted) == (("src/café.py", ("-x=1", "+x=2")),)
+    assert layers.change(quoted) == (("src/café.py", ("-x\0=\01", "+x\0=\02")),)
     plus = DIFF.replace("+    return x  +  1\n", "+    return x\n+++counter\n")
     assert "+++counter" in layers.change(plus)[0][1]
 

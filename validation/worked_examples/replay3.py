@@ -153,7 +153,7 @@ def verdict(found: Mapping[str, Any], base: we.ProbeRun | None, now: we.ProbeRun
 def bug_record(root: Path, task: str, ins: Instruction | None = None) -> Path:
     """Where a bug's test of the rule is saved: one a bug and instruction."""
     ins = ins or rule()
-    return c.beside(root, ins.folder) / "bugs" / f"{task}-{ins.digest}.json"
+    return c.beside(root, ins.folder, "bugs", f"{task}-{ins.digest}.json")     # checked below the store too (review 4, 4)
 
 
 class Checked:
@@ -201,7 +201,8 @@ def review_bug(ctx: we.Context, root: Path, task: we.Task, rows: Sequence[Mappin
     if not rows:
         return []                                     # nothing waits, so no one is asked
     saved = bug_record(root, task.id, ins)
-    # one cut short is no record, nor one of another bug (``of_bug``, study review 3, finding 10), and the bug is asked again
+    fr._another_bug(saved, task.id)     # another bug's is refused, never overwritten (study review 4, finding 3)
+    # one cut short is no record, and the bug is asked again
     found = (fr.of_bug(fr.read(saved), task.id) or {}).get("found")
     got = []
     if not isinstance(found, dict) or no_answer(found):    # a saved answer meets the same test as a fresh one

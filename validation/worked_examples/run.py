@@ -1094,9 +1094,9 @@ def _r3_made(rows: Iterable[Mapping[str, Any]], root: Path) -> dict[tuple[str, s
             continue
         facts = c.run_facts(root, str(r["run"]), rows)      # the one source of the run's facts, from these rows of the index
         end = facts.ending if facts is not None else None
-        if end and end.get("agent_started") and end.get("status"):
-            done[(str(r.get("model")), str(r.get("task")), str(r.get("arm")), int(r.get("repeat") or 1))] = (facts.name,
-                                                                                                          str(end["status"]))
+        if end and end.get("agent_started") and end.get("status") and facts.repeat is not None:   # its repeat is the facts':
+            done[(str(r.get("model")), str(r.get("task")), str(r.get("arm")), facts.repeat)] = (facts.name,      # none blocks
+                                                                                                 str(end["status"]))   # no repeat
     return done
 
 
@@ -1951,10 +1951,9 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
 
 
 def run_session(ctx: Context, run: Any, agent: str, command: list[str], key: str, tally: c.Tally, text_in: str, name: str,
-                *, seconds: float, stop_usd: float, codes: list[int | None] | None = None,
-                deadline: Any = None) -> str:
-    """One Claude Code session in the container, its stream saved as ``name``: how it ended, as ``read_stream`` says. ``codes``,
-    when given, receives the session's exit code, which arm K3's steps read (``step_ending``). ``deadline``, when given, is the
+                *, seconds: float, stop_usd: float, deadline: Any = None) -> str:
+    """One Claude Code session in the container, its stream saved as ``name``: how it ended, by ``session_ending`` from its stream's
+    own stop and its process's exit, which no caller can leave unread (study review 4, findings 2 and 5). ``deadline``, when given, is the
     run's watchdog (``Watchdog``, or its deadline): it ends the session's processes when it fires, no prompt goes in once it has
     fired, and the stream ends at its deadline however long the process took to start. Without it the session has ``seconds``
     from when its prompt has gone in, as before."""
@@ -1967,24 +1966,39 @@ def run_session(ctx: Context, run: Any, agent: str, command: list[str], key: str
         raw.sh(agent, KILL_AGENT, user="root", timeout=60)
         proc.kill()
 
+    stop, before = "error", tally.result      # a stream that could not be read is no clean end
     try:
         with (dog.watching(end) if dog is not None else contextlib.nullcontext()):
             if dog is not None and not dog.may_start("prompt"):
-                return "timeout"     # no prompt goes in after the deadline: the process is ended below
-            proc.stdin.write(text_in.encode("utf-8"))
-            proc.stdin.close()
-            return read_stream(iter(proc.stdout.readline, b""), tally,
-                               deadline=dog.deadline if dog is not None else time.monotonic() + seconds,
-                               write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
-                               stop_usd=stop_usd)
+                stop = "timeout"     # no prompt goes in after the deadline: the process is ended below
+            else:
+                proc.stdin.write(text_in.encode("utf-8"))
+                proc.stdin.close()
+                stop = read_stream(iter(proc.stdout.readline, b""), tally,
+                                   deadline=dog.deadline if dog is not None else time.monotonic() + seconds,
+                                   write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
+                                   stop_usd=stop_usd)
     finally:
         stream.close()
         if proc.poll() is None:
             raw.sh(agent, KILL_AGENT, user="root", timeout=60)
             proc.kill()
         code = proc.wait(timeout=60)
-        if codes is not None:
-            codes.append(code)
+    return session_ending(stop, code, tally.result if tally.result is not before else None)
+
+
+def session_ending(stop: str, code: Any, result: Mapping[str, Any] | None = None) -> str:
+    """The one rule a session process's ending is decided by, for every session process a run starts (its first session, on
+    either executor, a scout's, each repair, the rule step's): its stream's own stop; "" for an exit of 0; for any other exit, or
+    one not read, what its own ``result`` says, but never a success (``result_status``'s "finished" is "error"), whatever its
+    output says (study review 4, findings 2 and 5), as K3's ``step_ending`` reads an exit. Every place a session process is
+    waited on gives its exit here (tests/validation/test_study_review_4.py lists them from the code)."""
+    if stop:
+        return stop
+    if code == 0 and not isinstance(code, bool):
+        return ""
+    got = result_status(result)
+    return "error" if got == "finished" else got
 
 
 def host_refusal(ctx: Context, *, dry: bool) -> str:
@@ -2161,6 +2175,9 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
     limit = facts["limit"] if facts["limit"] is not None else next((x for x in map(limit_of, c.stream_lines(said)) if x is not None),
                                                                    None)
     ended, why = host_ending(stop, facts, code=code, limit=limit, by_g6=by_g6, left=left)
+    if not ended and not by_g6:     # the one decision (study review 4); an exit G6 caused, ending it after its result, is G6's
+        ended = session_ending("", code, tally.result)
+        why = f"the session exited {code}" if ended else why
     if ended in ("refused", "limited"):
         run.write(f"{stem}_{'refused' if ended == 'refused' else 'limit'}.txt", why)
     if ended and not c.on_patch({"status": ended}):    # a session that did not end cleanly ends its run: the run's ending, before
@@ -2412,9 +2429,12 @@ def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
                 said.append(got)
         return failing, "\n\n".join(said)
 
+    stops: list[str] = []
+
     def ask(text: str, n: int) -> None:
-        run_session(ctx, run, agent, scout_again(docker_args), key, tally, text, c.NDJSON["numbered_stream"].format(tag="repair", n=n),
-                    seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
+        stops.append(run_session(ctx, run, agent, scout_again(docker_args), key, tally, text,
+                                 c.NDJSON["numbered_stream"].format(tag="repair", n=n),
+                                 seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop))
 
     def state() -> str:
         return checked(ctx.docker.sh(agent, "git status --porcelain; git diff", workdir=task.repo, timeout=120), "the tree's state")
@@ -2422,8 +2442,9 @@ def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
     loop = Repairs(check, ask, state if qualified(ctx.arm) else None, repair_text(ctx.arm) if qualified(ctx.arm) else "")
     got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
                 max_iterations=MAX_REPAIRS + 1, timeout_s=float(c.WALL_CLOCK_S))
+    ended = next((s for s in stops if s), "")      # a repair session that did not end cleanly ends the run as it did
     return {"status": got.status, "rounds": loop.round, "reason": got.reason, "failing": sorted(loop.failing)[:40],
-            "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}}
+            "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}, **({"ended": ended} if ended else {})}
 
 
 def keep_first_patch(ctx: Context, task: Task, agent: str, base: str, n: int = 1) -> None:
@@ -2527,13 +2548,13 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
         if session is None and not first:     # no first session to continue: no prompt to any session, and the run is "error"
             ended = "error"
         elif session is None:     # the container's repair, ended by its own stop, result, exit and session (``step_ending``)
-            codes, earlier = [], tally.result
+            earlier = tally.result
             stopped = run_session(ctx, run, agent, scout_again(docker_args), key, tally, note,
                                   c.NDJSON["numbered_stream"].format(tag="repair", n=n),
                                   seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)) if dog is None else dog.left(),
-                                  stop_usd=stop, codes=codes, **({"deadline": dog} if dog is not None else {}))
+                                  stop_usd=stop, **({"deadline": dog} if dog is not None else {}))
             own = tally.result if tally.result is not earlier else None     # ``Tally.feed`` keeps each result as a new dict
-            ended = step_ending(stopped, own, codes[-1] if codes else None, session=first)
+            ended = step_ending(stopped, own, None if stopped else 0, session=first)    # its exit is in ``stopped``
             ended = "" if ended == "finished" else ended
         else:
             ended = session(note, c.NDJSON["numbered_stream"].format(tag="repair", n=n))
@@ -2574,9 +2595,13 @@ def review_once(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
         failing = check()
     if failing:
         rounds = 2
-        run_session(ctx, run, agent, scout_again(docker_args), key, tally,
+        ended = run_session(ctx, run, agent, scout_again(docker_args), key, tally,
                     CRITIC_NOTE.format(**{k: critic.get(k, "") for k in ("rule", "why", "test")}) + REVIEW_ASK, c.NDJSON["numbered_stream"].format(tag="repair", n=1),
                     seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
+        if ended:                    # the repair did not end cleanly: the run ends as it did (study review 4, finding 5)
+            return {"status": "inconclusive", "rounds": rounds, "reason": f"the repair session ended {ended}",
+                    "failing": sorted(failing)[:40], "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")},
+                    "ended": ended}
         failing = check()
     return {"status": "inconclusive" if failing else "no_counterexample_in_domain", "rounds": rounds, "reason": "",
             "failing": sorted(failing)[:40], "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}}
@@ -2824,19 +2849,18 @@ def rule_step(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
     dog = started if isinstance(started, Watchdog) else Watchdog(deadline_of(started))
     if not dog.may_start("rule session"):
         return "timeout"
-    before, codes = tally.result, []
+    before = tally.result
     first = str((before or {}).get("session_id") or "")                # the session the step continues
     if not first:                    # a first session whose own result names none: there is no session to continue, so no
         return "error"               # prompt goes to any, resumed or fresh, and the run ends "error" with its baseline kept
     if session is None:
         stopped = run_session(ctx, run, agent, scout_again(docker_args), key, tally, RULE_STEP,
-                              c.NDJSON["tagged_stream"].format(tag="rule"), seconds=dog.left(), stop_usd=stop, codes=codes, deadline=dog)
+                              c.NDJSON["tagged_stream"].format(tag="rule"), seconds=dog.left(), stop_usd=stop, deadline=dog)
     else:
         stopped = session(RULE_STEP, c.NDJSON["tagged_stream"].format(tag="rule"))
-        codes.append(None if stopped else 0)
     late = dog.end("rule session")
     own = tally.result if tally.result is not before else None      # ``Tally.feed`` keeps each result as a new dict
-    ended = "timeout" if late and not stopped else step_ending(stopped, own, codes[-1] if codes else None, session=first)
+    ended = "timeout" if late and not stopped else step_ending(stopped, own, None if stopped else 0, session=first)
     return kept(ctx, task, agent, base, run, RULE_PATCH, dog) if ended == "finished" else ended
 
 
@@ -3088,8 +3112,13 @@ def reviews_with_bug_test(ctx: Context, task: Task, run: Any, agent: str, base: 
         before = tree()
         note = BUG_NOTE.format(rule=bug.get("rule", ""), why=bug.get("why", ""), test=bug["test"],
                                failing=", ".join(failing[:MAX_SHOWN]))
-        run_session(ctx, run, agent, scout_again(docker_args), key, tally, note + REVIEW_ASK, c.NDJSON["numbered_stream"].format(tag="repair", n=n),
-                    seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
+        ended = run_session(ctx, run, agent, scout_again(docker_args), key, tally, note + REVIEW_ASK,
+                            c.NDJSON["numbered_stream"].format(tag="repair", n=n),
+                            seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
+        if ended:                    # a repair that did not end cleanly: the run ends as it did (study review 4)
+            reason = f"the repair session ended {ended}"
+            return {"status": "inconclusive", "rounds": rounds, "reason": reason, "failing": failing[:40], "critic": summary,
+                    "ended": ended}
         if tree() == before:
             reason = "the agent left the code as it was"
             break
@@ -3335,6 +3364,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                     ctx.docker.sh(agent, KILL_AGENT, user="root", timeout=60)
                     proc.kill()
                 first_code = proc.wait(timeout=60)
+            ended = session_ending(ended, first_code, tally.result)      # every arm's first session (review 4, finding 2)
             if dog is not None:
                 dog.end("first session")
             drain.join(timeout=30)
@@ -3345,10 +3375,12 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         if looped and holds_loop(ctx.arm) and not dry and not ended:
             record["repairs"] = repair_loop(ctx, task, run, agent, docker_args, key, tally, stop, started, at_base,
                                             lambda: run_critic(ctx, task, run, agent, base, title, text))
+            ended = record["repairs"].get("ended") or ended
         if ctx.arm == "R" and not dry and not ended:
             keep_first_patch(ctx, task, agent, base)
             record["repairs"] = review_once(ctx, task, run, agent, docker_args, key, tally, stop, started,
                                             lambda: run_critic(ctx, task, run, agent, base, title, text))
+            ended = record["repairs"].get("ended") or ended
         stepped, steps_ctx = dog is not None, ctx
         if stepped:      # K3: the first session, its patch kept, the rule step; each only from a recognised success (step_ending)
             steps_ctx = copy.copy(ctx)       # every docker call of K3's steps bounded by the watchdog, which their reviews see too
@@ -3377,6 +3409,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             dog.stop()                       # the steps are over: what the run does after them is no step
         if test_led and not dry and not ended:
             record["repairs"] = reviews_with_bug_test(ctx, task, run, agent, base, docker_args, key, tally, stop, started, bug)
+            ended = record["repairs"].get("ended") or ended
         result = tally.result or {}
         record.update(status_detail=status_of(ended, tally),
                       agent_usd=tally.cost_usd,

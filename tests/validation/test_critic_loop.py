@@ -56,7 +56,7 @@ def _loop(monkeypatch, reviews, sets, *, moves=True):
         asked.append((text, name))
         docker.tree += 1 if moves else 0
         tally.feed({"type": "result", "subtype": "success", "is_error": False, "session_id": "s1"})   # a repair that ends
-        kw["codes"].append(0)                                         # cleanly: its own success, of the first session, at exit 0
+        return ""                                                     # cleanly: its own success, of the first session, at exit 0
 
     monkeypatch.setattr(we, "run_set", lambda ctx_, task, agent, where: left.pop(0))
     monkeypatch.setattr(we, "run_session", session)

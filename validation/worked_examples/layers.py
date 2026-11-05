@@ -31,8 +31,9 @@ Said = Mapping[str, Mapping[str, str]]
 
 
 def _tokens(body: str) -> str:
-    """One line of code as Python's tokenizer reads it, its tokens joined: layout and comments go, a string literal stays exactly
-    as written. A line the tokenizer cannot finish (a line of a string spanning lines) keeps the tokens it read, or is kept
+    """One line of code as Python's tokenizer reads it, its tokens joined with their boundaries kept (a NUL between two, which no
+    token holds), so two token sequences are never one change (study review 4, finding 8): layout and comments go, a string
+    literal stays exactly as written. A line the tokenizer cannot finish (a line of a string spanning lines) keeps the tokens it read, or is kept
     stripped when it read none."""
     got: list[str] = []
     skip = (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.ENDMARKER)
@@ -43,7 +44,7 @@ def _tokens(body: str) -> str:
     except (tokenize.TokenError, IndentationError, SyntaxError):
         if not got:
             return "" if body.strip().startswith("#") else body.strip()
-    return "".join(got)
+    return "\0".join(got)
 
 
 def change(text: str) -> tuple[tuple[str, tuple[str, ...]], ...]:

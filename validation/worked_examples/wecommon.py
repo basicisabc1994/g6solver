@@ -705,7 +705,14 @@ def _folders(root: Path | Archive) -> tuple[Path, Path]:
     return rows, amended
 
 
-def beside(root: Path | Archive, name: str) -> Path:
+def row_file(name: str) -> bool:
+    """Whether ``name`` is a saved row's file name, by the one rule the rows' reader (``shelf``) and writer (``keep``) both ask:
+    one name, no folder, ending ".json" as the file system compares names (``os.path.normcase``: on Windows "moved.JSON" is one;
+    study review 4, finding 9)."""
+    return bool(name) and Path(name).name == name and os.path.normcase(name).endswith(".json")
+
+
+def beside(root: Path | Archive, name: str, *below: str) -> Path:
     """A store kept beside the saved rows, in their folder (``SAVED``), by its one name: a review's or a replay's folder of records
     (``final_review`` and the like), or one of the training's own files (``evolve.json``, ``cegis.json``). Never the rows' folder
     itself, nor the amended verdicts' (``AMENDED``): only ``shelf`` reads a row, and only ``keep`` writes one. Names are compared as
@@ -713,14 +720,20 @@ def beside(root: Path | Archive, name: str) -> Path:
     store is checked by identity, junctions and links followed: it is refused (ValueError) if it is the rows' folder, the amended
     verdicts', or another entry of either (another store, or a row by a second name), or if it is a file that holds a row of a run
     the archive started, admitted or barring its key, which only ``keep`` may write (study review 3, findings 9, 13 and 14). A
-    file kept here that is no run's row is found by ``shelf`` and refused, as it names no run."""
+    file kept here that is no run's row is found by ``shelf`` and refused, as it names no run. A path below the store is given as ``below``,
+    one name a part, and checked the same way at every part that exists: each resolves inside the store, never through a
+    junction or link out of it, and a file there holding any indexed run's row, with a key or not, is refused (study review 4,
+    findings 1 and 4)."""
     resolved = os.path.normcase(name.rstrip(". ") if os.name == "nt" else name)
     if not name or Path(name).name != name or resolved in (".", "..", "", os.path.normcase(AMENDED)):
         raise ValueError(f"{name!r} is no store beside the saved rows")
     rows, amended = _folders(root)
     store = rows / name
+    if any(not part or Path(part).name != part or part in (".", "..") for part in below):
+        raise ValueError(f"{below!r} is no path below a store")
+    target = store.joinpath(*below)
     if not os.path.lexists(store):
-        return store
+        return target
     file = store.is_file()             # a folder can be only a folder, and a file with one name only itself
     entries = not file or os.stat(store).st_nlink > 1
     others = [rows, amended, *(Path(e.path) for folder in (rows, amended) if entries and folder.is_dir()
@@ -729,12 +742,18 @@ def beside(root: Path | Archive, name: str) -> Path:
     if any(_same(store, other) for other in others):
         raise ValueError(f"{name!r} is the saved rows' folder, the amended verdicts', or another of their entries, by a junction "
                          "or a link")
-    if store.is_file():
+    inside = os.path.realpath(store)
+    for depth in range(1, len(below) + 1):
+        part = store.joinpath(*below[:depth])
+        if os.path.lexists(part) and os.path.normcase(os.path.realpath(part)) != os.path.normcase(
+                os.path.join(inside, *below[:depth])):
+            raise ValueError(f"{'/'.join((name, *below[:depth]))!r} leaves its store by a junction or a link")
+    if target.is_file():
         archive = root if isinstance(root, Archive) else Archive(Path(root))
-        held, _ = _found(archive, SAVED, store, lambda run: run_facts(archive, run) if run else None)
-        if held.key is not None:
+        held, _ = _found(archive, SAVED, target, lambda run: run_facts(archive, run) if run else None)
+        if held.run and run_facts(archive, held.run) is not None:      # any indexed run's row, admitted or refused
             raise ValueError(f"{name!r} holds the row of {held.run!r}, which only the saved rows' writer writes")
-    return store
+    return target
 
 
 def _own(facts: RunFacts, kept: Mapping[str, Any] | None, amendment: str | None) -> bool:
@@ -943,7 +962,7 @@ def shelf(root: Path | Archive, amendment: Callable[[str], Path | None]) -> Shel
 
     found, read = [], {}
     for folder, where in zip((SAVED, AMENDED), _folders(archive)):      # two folders by identity (study review 3, finding 14)
-        for path in sorted(where.glob("*.json")) if where.is_dir() else ():
+        for path in sorted(p for p in where.glob("*.json") if row_file(p.name)) if where.is_dir() else ():
             one, row = _found(archive, folder, path, facts_of)
             found.append(one)
             read[(folder, one.file)] = row
@@ -1019,8 +1038,10 @@ def keep(root: Path | Archive, row: Mapping[str, Any], *, amended: bool = False,
         raise ArchiveError(f"no row of {name!r} is written: {wrong}")
     folder = _folders(archive)[1 if amended else 0]     # refused when the two are one folder (study review 3, finding 14)
     file = file or saved_name(facts.arm, facts.task, facts.repeat)
-    if Path(file).name != file or not file.endswith(".json"):
+    if not row_file(file):               # the reader's own rule (study review 4, finding 9)
         raise ValueError(f"{file!r} is no saved row's name")
+    if row.get(MADE_UNDER) != facts.ending_sha256:      # the ending the verdict was made under, read again here: a change voids it
+        raise ArchiveError(f"no row of {name!r} is written: its ending changed since its verdict was made (study review 4, 7)")
     path = folder / file
     if os.path.lexists(path):           # read again by the reader's own rule (``_found``), just before the write
         held, _ = _found(archive, AMENDED if amended else SAVED, path, lambda name: run_facts(archive, name) if name else None)
