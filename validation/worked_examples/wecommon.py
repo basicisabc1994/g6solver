@@ -13,7 +13,9 @@ import hashlib
 import json
 import os
 import re
-from collections.abc import Callable, Iterable, Mapping
+import time
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -279,6 +281,39 @@ class RunFolder:
         return body
 
 
+@contextmanager
+def _locked(path: Path) -> Iterator[None]:
+    """One writer of ``path`` at a time, across processes: an exclusive lock on a sidecar file beside it (``.lock``), as
+    ``g6.workforce.receipt_store`` takes one (``msvcrt.locking`` on Windows, ``fcntl.flock`` elsewhere). Waits up to five
+    seconds, then raises the lock's own error."""
+    with path.with_name(path.name + ".lock").open("a+b") as handle:
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.01)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                import msvcrt
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 class Archive:
     def __init__(self, root: Path, redact: Redactor | None = None) -> None:
         self.root = Path(root)
@@ -289,27 +324,46 @@ class Archive:
         return self.root / NDJSON["index"]
 
     def append(self, row: Mapping[str, Any]) -> None:
+        """One row written whole at the index's end, under its lock (``_locked``: one writer at a time, across processes). A tail
+        a write cut short (the bytes after the index's last "\\n") is first moved, exactly, to a side file beside the index
+        (``runs.jsonl.torn-<UTC stamp>``, never written over), and the index cut back to its last "\\n": so the row is never
+        joined to a torn one, and the torn bytes are kept, not lost. A newline alone would not do: the torn line would then end
+        with one and, by ``rows``'s rule, be an error."""
         self.root.mkdir(parents=True, exist_ok=True)
-        with open(self.index, "a", encoding="utf-8", newline="\n") as stream:
-            stream.write(json.dumps(dict(row), ensure_ascii=False) + "\n")
+        line = (json.dumps(dict(row), ensure_ascii=False) + "\n").encode("utf-8")
+        with _locked(self.index), open(self.index, "a+b") as stream:
+            stream.seek(0)
+            data = stream.read()
+            tail = data[data.rfind(b"\n") + 1:]
+            if tail:
+                stamp, n = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%S%fZ"), 0
+                while True:
+                    side = self.index.with_name(f"{self.index.name}.torn-{stamp}" + (f"-{n}" if n else ""))
+                    try:
+                        with open(side, "xb") as kept:
+                            kept.write(tail)
+                        break
+                    except FileExistsError:
+                        n += 1
+                stream.truncate(len(data) - len(tail))
+            stream.write(line)
+            stream.flush()
 
     def rows(self) -> list[dict[str, Any]]:
-        """Every row of the index, for every reader, framed by ``read_stream``. A torn last line, which a write cut short leaves
-        (cut inside a character, or inside a record), is skipped; a line that cannot be read anywhere before it is an error, as
-        before. Its bytes are read once: a byte that is not UTF-8 is held as an escape (``surrogateescape``), and a line holding one
-        cannot be read, as a line that is not JSON cannot."""
+        """Every row of the index, for every reader, framed by ``read_stream``. Only a tail the file does not end with (no "\\n"
+        at the very end of its bytes), which a write cut short leaves, is skipped; the next ``append`` moves it aside. Every line
+        the index ends, last or not, must be read, and one that cannot is an error. Its bytes are read once: a byte that is not
+        UTF-8 is held as an escape (``surrogateescape``), and a line holding one cannot be read, as a line that is not JSON
+        cannot."""
         if not self.index.is_file():
             return []
-        lines = [line for line in read_stream(self.index, errors="surrogateescape") if line.strip()]
+        lines = read_stream(self.index, errors="surrogateescape")
+        lines.pop()                         # what follows the last "\n": "" when the index ends with one, else a torn tail
         rows = []
-        for at, line in enumerate(lines):
-            try:
+        for line in lines:
+            if line.strip():
                 line.encode("utf-8")        # strict: an escaped byte is a UnicodeEncodeError, a ValueError
                 rows.append(json.loads(line))
-            except ValueError:
-                if at == len(lines) - 1:
-                    break
-                raise
         return rows
 
     def start(self, kind: str, task: str, **meta: Any) -> RunFolder:

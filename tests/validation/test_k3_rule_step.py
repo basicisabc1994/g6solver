@@ -786,6 +786,41 @@ def test_the_index_reader_skips_a_torn_last_line_and_still_refuses_a_torn_line_b
         archive.rows()
 
 
+@pytest.mark.parametrize("index", [b'{"event": "started"}\n{"event": invalid}\n', b'{"event": invalid}\n{"event": "started"}\n',
+                                   b'{"event": "started"}\n{"event": "ended", "why": "\xc3"}\n'])
+def test_repair_3_a_malformed_line_the_index_ends_is_an_error_last_or_not(tmp_path, index):
+    """Review 1, finding 4: only a tail the file does not end with ("\\n" absent at the very end) is a write cut short."""
+    archive = we.c.Archive(tmp_path)
+    archive.index.write_bytes(index)
+    with pytest.raises(ValueError):
+        archive.rows()
+
+
+def test_repair_3_a_restart_after_a_torn_write_moves_the_torn_bytes_aside_and_its_next_start_is_read_back(tmp_path):
+    """Review 1, finding 8: the next append, under the index's lock, moves exactly the bytes after the last "\\n" to a side file
+    beside the index (never written over), cuts the index back to its last "\\n", and then writes its row whole."""
+    before = we.c.Archive(tmp_path)
+    before.append({"event": "started", "run": "run/old/1", "kind": "run"})
+    whole = before.index.read_bytes()
+    torn = b'{"event": "ended", "run": "run/old/1", "sta'
+    with open(before.index, "ab") as stream:
+        stream.write(torn)
+    restarted = we.c.Archive(tmp_path)
+    assert restarted.rows() == [{"event": "started", "run": "run/old/1", "kind": "run"}]
+    run = restarted.start("run", "new", arm="K3")
+    durable = we.c.Archive(tmp_path).rows()
+    assert [r["run"] for r in durable] == ["run/old/1", run.rel] and durable[1]["event"] == "started"
+    assert restarted.index.read_bytes().startswith(whole) and restarted.index.read_bytes().endswith(b"\n")
+    sides = sorted(tmp_path.glob(restarted.index.name + ".torn-*"))
+    assert len(sides) == 1 and sides[0].read_bytes() == torn
+    with open(restarted.index, "ab") as stream:     # torn again: a side file of its own, the first one kept as it was
+        stream.write(b"\xc3")
+    restarted.append({"event": "ended", "run": run.rel, "status": "error"})
+    sides = sorted(tmp_path.glob(restarted.index.name + ".torn-*"))
+    assert [s.read_bytes() for s in sides] == [torn, b"\xc3"] or [s.read_bytes() for s in sides] == [b"\xc3", torn]
+    assert [r["event"] for r in we.c.Archive(tmp_path).rows()] == ["started", "started", "ended"]
+
+
 @pytest.mark.parametrize("torn", ["the index's last line", "the run's record"])
 def test_k2s_check_is_as_it_was_after_a_torn_write(monkeypatch, tmp_path, torn):
     archive = we.c.Archive(tmp_path / "archive")
