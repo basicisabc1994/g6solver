@@ -73,7 +73,8 @@ IDS = {"task_image_id": "sha256:" + "a" * 64, "oracle_image_id": "sha256:" + "b"
 
 
 def _seen(results, exit="1"):
-    return {"call": "passed", "pytest_exit": exit, "report": True, "results": results}
+    """A run as the controls keep it: each test's outcome by its node id, from pytest's own report (replay cohort, repair 3)."""
+    return {"call": "passed", "pytest_exit": exit, "report": True, "tests": results}
 
 
 def _passed(ids=IDS):
@@ -234,7 +235,8 @@ def test_a_bug_that_passes_every_control_has_each_result_and_the_round_trip_read
     got, trips = _controls(monkeypatch, tmp_path)
     assert got["failed"] == "" and cohorts.admit(got, IDS) == "" and trips == [(b"gold", "tree")]
     assert [cohorts.control_why(got, c) for c in cohorts.CONTROLS] == ["", "", "", ""]
-    assert got["validate"]["base"] == {"call": "passed", "pytest_exit": "1", "report": True, "results": {"t": "failed"}}
+    assert got["validate"]["base"] == {"call": "passed", "pytest_exit": "1", "report": True, "tests": {"t": "failed"}, "junit": {},
+                                       "collect_errors": None}
 
 
 # --- findings 7 and 11: admission decided from the recorded outcomes, by one rule, on both image ids ------------------------------

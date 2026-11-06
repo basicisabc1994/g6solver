@@ -41,6 +41,11 @@ def ok(stdout: bytes = b"", code: int = 0) -> SimpleNamespace:
     return SimpleNamespace(returncode=code, stdout=stdout, stderr=b"")
 
 
+def captured() -> SimpleNamespace:
+    """A capture's reply (``run.diff_script``) when every step passed: each step's own status line (``run.capture_steps``)."""
+    return ok("".join(f"{we.STEP} {step}=0\n" for step in getattr(we, "CAPTURE_STEPS", ())).encode())
+
+
 def write(root: Path, files: dict[str, str]) -> None:
     for rel, body in files.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -180,9 +185,8 @@ class HostDocker:
 
     def sh(self, ctr, script, *a, **kw):
         self.calls.append(("sh", script))
-        if getattr(we, "PATCH_BYTES", "\0") in script:     # the patch's size (``run.patch_bytes``): mod.py as the base had it, or not
-            changed = (self.repo / "src" / "mod.py").read_text("utf-8") != "def f():\n    return 0\n"
-            return ok(f"{we.PATCH_BYTES}={len((self.repo / 'src' / 'mod.py').read_bytes()) if changed else 0}\n".encode())
+        if "git diff --cached --binary" in script:         # a capture (``run.diff_script``): every step passed
+            return captured()
         if script == we.TREE_STATE:
             return ok(json.dumps({"head": self.task.parent, "tree": "tree", "dirty": 0, "commits": 1}).encode())
         if script == we.ARM_STATE:
@@ -547,7 +551,7 @@ def test_a_repair_that_meets_the_limit_or_is_refused_ends_arm_ks_loop(monkeypatc
                                  SimpleNamespace(write_json=lambda *a: None), "agent", "base", [], "", None, 1.0, 0.0,
                                  lambda n: {"verdict": "defect", "rule": "r", "why": "w", "test": TEST, "seconds": 1.0},
                                  session=lambda text, name: (asked.append(name), end)[1])
-    assert asked == ["repair_stream_1.jsonl"] and got["status"] == "inconclusive" and end[:5] in got["reason"]
+    assert asked == ["repair_stream_1.jsonl"] and got["found"] == "inconclusive" and end[:5] in got["reason"]
 
 
 # --- the host mode of a run -------------------------------------------------------------------------------------------------------
@@ -879,9 +883,7 @@ def test_a_host_run_reserves_and_stops_nothing_of_the_apis_money(monkeypatch, tm
 # R5: on the host the agent's tree is the workspace, by its bytes.
 def test_k_on_the_host_compares_the_workspaces_bytes_and_never_gits_display(monkeypatch):
     class Docker:
-        def sh(self, agent, script, *a, **kw):
-            if we.PATCH_BYTES in script:         # the patch's size at the loop's end (``run.patch_bytes``), which is no display
-                return ok(f"{we.PATCH_BYTES}=100\n".encode())
+        def sh(self, agent, script, *a, **kw):        # the loop measures no patch: its status is decided from the kept one
             raise AssertionError("git's display is not read when the tree is given")
 
     trees = iter(["a", "b", "b", "b"])

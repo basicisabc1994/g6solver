@@ -528,22 +528,27 @@ def test_selfcheck_needs_the_fix_to_pass_and_nothing_to_fail(tmp_path, monkeypat
     seen = []
 
     observed = {"call": "passed", "report": True}           # each run seen to end with its report (replay cohort, repair 1)
+    # each test's outcome by its node id, from pytest's own report (replay cohort, repair 3): a junit key gives no identity
 
     def oracle_run(ctx_, task, *, patch=None, folder=None, label="", **_):
         seen.append(label)
         ok = {"t::a": "passed", "t::b": "passed"}
         return {**observed, "pytest_exit": "0" if label == "gold" else "1",
-                "results": ok if label == "gold" else {"t::a": "failed", "t::b": "passed"}}
+                "tests": ok if label == "gold" else {"t::a": "failed", "t::b": "passed"}}
 
     monkeypatch.setattr(we, "_oracle_run", oracle_run)
     assert we.selfcheck(ctx, TASK)["ok"] and seen == ["gold", "empty"]
     monkeypatch.setattr(we, "_oracle_run", lambda *a, **k: {**observed, "pytest_exit": "0",
-                                                            "results": {"t::a": "passed", "t::b": "passed"}})
+                                                            "tests": {"t::a": "passed", "t::b": "passed"}})
     assert not we.selfcheck(ctx, TASK)["ok"]          # a check an empty patch passes shows nothing
-    monkeypatch.setattr(we, "_oracle_run", lambda *a, **k: {"results": {"t::a": "failed", "t::b": "failed"}} if
-                        k.get("label") == "empty" else {**observed, "pytest_exit": "0", "results": {"t::a": "passed",
-                                                                                                    "t::b": "passed"}})
+    monkeypatch.setattr(we, "_oracle_run", lambda *a, **k: {"tests": {"t::a": "failed", "t::b": "failed"}} if
+                        k.get("label") == "empty" else {**observed, "pytest_exit": "0", "tests": {"t::a": "passed",
+                                                                                                  "t::b": "passed"}})
     assert not we.selfcheck(ctx, TASK)["ok"]          # nor one whose empty patch's run was never seen to end
+    monkeypatch.setattr(we, "_oracle_run", lambda *a, label="", **k: {**observed, "pytest_exit": "0" if label == "gold" else "1",
+                                                                     "results": {"t::a": "passed" if label == "gold" else "failed",
+                                                                                 "t::b": "passed"}})
+    assert not we.selfcheck(ctx, TASK)["ok"]          # nor one whose runs kept only junit's keys: no test has an identity
 
 
 def _amendment(tmp_path, monkeypatch):

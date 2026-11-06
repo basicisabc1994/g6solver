@@ -217,7 +217,8 @@ def known_patch(ctx: we.Context, task: we.Task, gold: Path, dest: Path, tree: di
     """The known patch: the maintainers' fix (``gold``, as ``selfcheck`` kept it) applied in a fresh container from the bug's task
     image, with no network, and kept by the one capture every run's patch is kept by (``run.diff_script``) against the parent,
     so it is in the kept patch's own form. Its bytes, also written to ``dest``. ``tree``: given how many of the tree's files are
-    executable (``EXECUTABLES``). Every step is read by the one reader (``run.checked``, ``run.copy_out``)."""
+    executable (``EXECUTABLES``). Every step is read by the one reader (``run.checked``, ``run.copy_out``), and the capture by its
+    own steps (``run.capture_why``)."""
     task_image, _ = we.image_names(task, str(ctx.g6["commit"]), ctx.variant)
     name = f"g6we-known-{uuid.uuid4().hex[:10]}"
     try:
@@ -230,8 +231,10 @@ def known_patch(ctx: we.Context, task: we.Task, gold: Path, dest: Path, tree: di
         we.checked(ctx.docker("cp", str(gold), f"{name}:/tmp/we-gold.patch", timeout=300), "the fix's copy")
         we.checked(ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we-gold.patch", workdir=task.repo, timeout=300),
                    "the fix applied")
-        we.checked(ctx.docker.sh(name, we.diff_script(task.repo, task.parent, f"{we.WE}/known.patch"), workdir=task.repo,
-                                 timeout=300), "the known patch's capture")       # as the repository's own user, as every capture
+        why = we.capture_why(ctx.docker.sh(name, we.diff_script(task.repo, task.parent, f"{we.WE}/known.patch"), workdir=task.repo,
+                                           timeout=300))      # as the repository's own user, read by its steps, as every capture
+        if why:
+            raise RuntimeError(f"the known patch's capture: {why}")
         if not we.copy_out(ctx.docker, name, f"{we.WE}/known.patch", dest):
             raise RuntimeError("the known patch could not be copied out")
     finally:
@@ -372,7 +375,9 @@ def control_why(record: Mapping[str, Any], control: str) -> str:
     - round trip: the run finished, its kept patch was read, the known patch holds a change and the kept patch's SHA-256 is
       the known patch's.
 
-    An outcome never recorded, and one not known, does not hold."""
+    A test is known by the node id pytest's own report gives it (``box_mcp.tests_of``; replay cohort, repair 3): a record that
+    kept only junit's report has no test identities, so its controls are not known. An outcome never recorded, and one not known,
+    does not hold."""
     v, s, rt = (_part(record, k) for k in ("validate", "selfcheck", "round_trip"))
     f2p, p2p = v.get("fail_to_pass"), v.get("pass_to_pass")
     if control != "round trip" and not (isinstance(f2p, list) and isinstance(p2p, list)):
@@ -383,6 +388,10 @@ def control_why(record: Mapping[str, Any], control: str) -> str:
             return f"the {control}'s outcome was never recorded"
         if control == "base":
             if not f2p:
+                lost = next((name for name in ("base", "fixed") if box_mcp.tests_of(v[name]) is None), "")
+                if lost:      # why its run has none, as the one reader says of a run (box_mcp.unobserved_why)
+                    return (f"no test has an identity: the {'fix' if lost == 'fixed' else 'base'}'s run was not observed: "
+                            f"{box_mcp.unobserved_why(v[lost])}")
                 return "no test fails on the parent's code and passes with the fix"
             fixed = box_mcp.tests_seen(v["fixed"], f2p)
             if fixed["state"] != box_mcp.PASSED:
@@ -514,7 +523,8 @@ def manifest(name: str, images: Mapping[str, Mapping[str, Any]], results: Mappin
                           "seen to pass them (selfcheck)", "an empty patch is seen to fail them (selfcheck)",
                           "the base and the empty patch by one rule: a failure in a test result, or a collection error, in "
                           "pytest's own report, of a fail-to-pass test's module where the gold patch's run on the same image "
-                          "ids saw it pass", "a known patch written "
+                          "ids saw it pass", "each test known by the node id pytest's own report gives it, never by its junit "
+                          "key", "a known patch written "
                           "through the host executor's runner is read back byte for byte in the kept patch (round trip)",
                           "each ran on both of the bug's image ids here, read again after them; a result not known is no pass "
                           "and no failure, and excludes the bug"] if controlled else

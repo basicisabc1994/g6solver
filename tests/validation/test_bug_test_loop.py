@@ -45,8 +45,6 @@ class _Docker:
 
     def sh(self, agent, script, *args, **kw):
         self.scripts.append(script)
-        if we.PATCH_BYTES in script:             # the patch's size (``run.patch_bytes``): the tree holds a change
-            return type("Done", (), {"stdout": f"{we.PATCH_BYTES}=100\n".encode(), "stderr": b"", "returncode": 0})()
         return type("Done", (), {"stdout": f"tree {self.tree}".encode(), "stderr": b"", "returncode": 0})()
 
 
@@ -122,13 +120,13 @@ def test_the_bug_test_is_asked_as_replay_4_asks_it_with_no_patch(monkeypatch):
 @pytest.mark.parametrize("at_parent", [we.ProbeRun(None, {}, {}, ""), None])
 def test_a_parent_run_with_no_result_is_a_failed_review(monkeypatch, at_parent):
     got, asked, _ = _loop(monkeypatch, bug(at_parent=at_parent), [])
-    assert asked == [] and got["status"] == "inconclusive"
+    assert asked == [] and got["found"] == "inconclusive"
 
 
 def test_a_check_whose_docker_step_fails_or_gives_no_exit_is_no_clean_review(monkeypatch):
     """Review v1 finding 4."""
     got, asked, _ = _loop(monkeypatch, bug(), [we.ProbeRun(None, {}, {}, "")])
-    assert asked == [] and got["status"] == "inconclusive"
+    assert asked == [] and got["found"] == "inconclusive"
 
     def broken(ctx, task, agent, where):
         ctx.docker.sh(agent, "probe")
@@ -139,25 +137,25 @@ def test_a_check_whose_docker_step_fails_or_gives_no_exit_is_no_clean_review(mon
     docker.sh = lambda agent, script, *a, **kw: type("Done", (), {"stdout": b"", "stderr": b"", "returncode": 125})()
     ctx = type("Ctx", (), {"docker": docker, "arm": "V4"})()
     got = we.reviews_with_bug_test(ctx, type("T", (), {"repo": "/w/r"})(), _Run(), "agent", "b", [], "k", None, 1.0, 0.0, bug())
-    assert got["status"] == "inconclusive" and "failed to run" in got["reason"]
+    assert got["found"] == "inconclusive" and "failed to run" in got["reason"]
 
 
 def test_a_test_that_reproduces_nothing_on_the_parent_sends_nothing_back(monkeypatch):
     got, asked, _ = _loop(monkeypatch, bug(at_parent=NOTHING_AT_PARENT), [])
     assert asked == [] and got["rounds"] == 0 and "reproduces nothing on the parent" in got["reason"]
-    assert got["status"] == "no_counterexample_in_domain"
+    assert got["found"] == "no_counterexample_in_domain"
 
 
 @pytest.mark.parametrize(("found", "status"), [({"test": "", "verdict": "none", "error": ""}, "no_counterexample_in_domain"),
                                                ({"test": "", "verdict": "failed", "error": "timeout"}, "inconclusive")])
 def test_no_test_sends_nothing_back_and_a_failed_reviewer_is_no_clean_review(monkeypatch, found, status):
     got, asked, _ = _loop(monkeypatch, {**bug(), **found, "at_parent": None}, [])
-    assert asked == [] and got["status"] == status and got["rounds"] == 0
+    assert asked == [] and got["found"] == status and got["rounds"] == 0
 
 
 def test_a_patch_the_bug_test_holds_on_ends_with_no_repair(monkeypatch):
     got, asked, _ = _loop(monkeypatch, bug(), [ALL_HOLD])
-    assert asked == [] and got["rounds"] == 1 and got["status"] == "no_counterexample_in_domain"
+    assert asked == [] and got["rounds"] == 1 and got["found"] == "no_counterexample_in_domain"
 
 
 def test_a_variant_still_failing_goes_back_with_the_test_and_the_failing_case_then_is_checked_again(monkeypatch):
@@ -165,24 +163,24 @@ def test_a_variant_still_failing_goes_back_with_the_test_and_the_failing_case_th
     assert len(asked) == 1 and asked[0][1] == "repair_stream_1.jsonl"
     note = asked[0][0]
     assert "the symptom" in note and TEST.strip() in note and "test_variant" in note and "not your patch" in note
-    assert got["status"] == "no_counterexample_in_domain" and got["rounds"] == 2
+    assert got["found"] == "no_counterexample_in_domain" and got["rounds"] == 2
     tests = [w for w in written if w[0] == f"{r4.SYMPTOM.at}/{r4.SYMPTOM.file}"]
     assert len(tests) == 2 and all(text == TEST + "\n" for _, text in tests)       # a fresh copy before each check
 
 
 def test_the_repairs_stop_at_the_cap_with_the_defect_left_open(monkeypatch):
     got, asked, _ = _loop(monkeypatch, bug(), [VARIANT_FAILS] * (we.MAX_REPAIRS + 1))
-    assert len(asked) == we.MAX_REPAIRS and got["status"] == "inconclusive" and got["failing"] == ["t::test_variant"]
+    assert len(asked) == we.MAX_REPAIRS and got["found"] == "inconclusive" and got["failing"] == ["t::test_variant"]
 
 
 def test_an_agent_that_leaves_the_code_as_it_was_has_decided(monkeypatch):
     got, asked, _ = _loop(monkeypatch, bug(), [VARIANT_FAILS, VARIANT_FAILS], moves=False)
-    assert len(asked) == 1 and "left the code" in got["reason"] and got["status"] == "inconclusive"
+    assert len(asked) == 1 and "left the code" in got["reason"] and got["found"] == "inconclusive"
 
 
 def test_a_test_that_will_not_run_on_the_patch_says_nothing_of_it(monkeypatch):
     got, asked, _ = _loop(monkeypatch, bug(), [WONT_RUN])
-    assert asked == [] and got["status"] == "no_counterexample_in_domain" and "would not run" in got["reason"]
+    assert asked == [] and got["found"] == "no_counterexample_in_domain" and "would not run" in got["reason"]
 
 
 def test_the_bug_tests_folder_holds_only_what_the_reviewer_wrote_at_each_check(monkeypatch, tmp_path):
@@ -221,8 +219,6 @@ def test_the_bug_tests_folder_holds_only_what_the_reviewer_wrote_at_each_check(m
                                        f"--rootdir={copied}", f"--confcutdir={copied}", f"--junitxml={xml}",
                                        "-o", "junit_family=xunit2"], cwd=repo, env=env, capture_output=True, timeout=60)
                 output = done.stdout + f"\nexit={done.returncode}\n{we.JUNIT_MARK}\n".encode() + xml.read_bytes()
-            elif we.PATCH_BYTES in script:        # the patch's size (``run.patch_bytes``): the module changed or not
-                output = f"{we.PATCH_BYTES}={len(module.read_bytes()) if b'touched' in module.read_bytes() else 0}\n".encode()
             elif "sha256sum " in script:
                 output = hashlib.sha256(module.read_bytes()).hexdigest().encode()
             elif script.startswith(f"rm -rf {we.HELD_COPY}"):
@@ -252,7 +248,7 @@ def test_the_bug_tests_folder_holds_only_what_the_reviewer_wrote_at_each_check(m
     got = we.reviews_with_bug_test(ctx, task, SimpleNamespace(write_json=lambda *a: None), "agent", "base", [], "", None, 1.0, 0.0,
                                    bug(test=test))
     assert seen[:2] == [[ins.file], [ins.file]], seen
-    assert got["status"] == "inconclusive" and got["failing"], got
+    assert got["found"] == "inconclusive" and got["failing"], got
 
 
 def test_the_bug_test_before_the_agent_comes_out_of_the_runs_one_allowance(monkeypatch, tmp_path):

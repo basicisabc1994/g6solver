@@ -44,7 +44,7 @@ class K3Docker(helpers.HostDocker):
         if saved:
             self.calls.append(("sh", script))
             self.files[saved[1]] = (self.repo / "src" / "mod.py").read_bytes()
-            return helpers.ok()
+            return helpers.captured()
         return super().sh(ctr, script, *a, **kw)
 
     def __call__(self, *args, input=None, timeout=None, env=None):

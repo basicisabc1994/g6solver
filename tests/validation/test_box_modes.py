@@ -114,12 +114,10 @@ class ModeDocker(one_tree.BoxDocker):
         return super().__call__(*args, input=input, timeout=timeout, env=env, merged=merged)
 
     def sh(self, ctr, script, *a, **kw):
-        if we.PATCH_BYTES in script:
-            return helpers.ok(f"{we.PATCH_BYTES}={len(self.capture())}\n".encode())
         saved = re.search(r'git diff --cached --binary .* > "([^"]+)"', script)
         if saved:
             self.files[saved[1]] = self.capture()
-            return helpers.ok()
+            return helpers.captured()
         return helpers.HostDocker.sh(self, ctr, script, *a, **kw)
 
 

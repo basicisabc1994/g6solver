@@ -132,11 +132,11 @@ class _Run:
 
 
 class _Sized:
-    """The agent's container, which answers only the patch's size (``run.patch_bytes``): the tree holds a change."""
+    """The agent's container, which nothing reads: arm R's loop measures no patch (its status is decided from the kept one,
+    ``run.loop_status`` in ``_run_task``)."""
 
     def sh(self, agent, script, *a, **kw):
-        assert we.PATCH_BYTES in script, script
-        return type("Done", (), {"stdout": f"{we.PATCH_BYTES}=100\n".encode(), "stderr": b"", "returncode": 0})()
+        raise AssertionError(f"the loop read the container: {script}")
 
 
 def _review(monkeypatch, critic, *sets):
@@ -157,23 +157,23 @@ DEFECT = {"verdict": "defect", "rule": "the rule", "why": "the reason", "test": 
 
 def test_a_review_that_finds_nothing_ends_the_run(monkeypatch):
     got, asked = _review(monkeypatch, {"verdict": "none", "test": ""})
-    assert asked == [] and got["status"] == "no_counterexample_in_domain" and got["rounds"] == 1
+    assert asked == [] and got["found"] == "no_counterexample_in_domain" and got["rounds"] == 1
 
 
 def test_a_failing_review_test_gets_one_repair_and_a_second_look(monkeypatch):
     got, asked = _review(monkeypatch, DEFECT, FAILS, PASSES)
     assert len(asked) == 1 and "the rule" in asked[0][0] and "scouts" not in asked[0][0] and "before your change" not in asked[0][0]
-    assert got["status"] == "no_counterexample_in_domain" and got["rounds"] == 2
+    assert got["found"] == "no_counterexample_in_domain" and got["rounds"] == 2
 
 
 def test_a_defect_that_survives_its_one_repair_is_left_open(monkeypatch):
     got, asked = _review(monkeypatch, DEFECT, FAILS, FAILS)
-    assert len(asked) == 1 and got["status"] == "inconclusive" and got["failing"] == ["critic:t"]
+    assert len(asked) == 1 and got["found"] == "inconclusive" and got["failing"] == ["critic:t"]
 
 
 def test_a_review_test_that_will_not_run_says_nothing_of_the_patch(monkeypatch):
     got, asked = _review(monkeypatch, DEFECT, BROKEN)
-    assert asked == [] and got["status"] == "no_counterexample_in_domain"
+    assert asked == [] and got["found"] == "no_counterexample_in_domain"
 
 
 # --- the reference library ----------------------------------------------------------------------------------------------

@@ -176,11 +176,15 @@ def _observed(tmp_path, capsys, monkeypatch):
 
 def _report(tmp_path, capsys, monkeypatch):
     """pytest's own report as the cohort controls' plugin writes it (``run.REPORT_PLUGIN``), copied out of the check container and
-    read by ``read_report`` (replay cohort, repair 2): each failed collection and each test's node id by its junit key."""
-    rows = [{"collect_error": f"tests/test_{HOSTILE}.py"}, {"node": f"tests/test_a.py::test_{HOSTILE}", "junit": f"tests.test_a::{HOSTILE}"},
-            {"node": "tests/test_a.py::test_b", "junit": None}, {"collect_error": "tests/test_c.py"}]
+    read by ``read_report`` (replay cohort, repairs 2 and 3): each failed collection, and each test's outcome by its node id with
+    its junit key beside it for display, then the session's end."""
+    rows = [{"collect_error": f"tests/test_{HOSTILE}.py"},
+            {"node": f"tests/test_a.py::test_{HOSTILE}", "when": "call", "outcome": "failed", "junit": f"tests.test_a::{HOSTILE}"},
+            {"node": "tests/test_a.py::test_b", "when": "call", "outcome": "passed", "junit": None},
+            {"collect_error": "tests/test_c.py"}, {"finished": 1}]
     got = we.read_report(_ndjson(tmp_path / c.NDJSON["report"], rows).read_bytes())
-    return got, {"nodes": {f"tests.test_a::{HOSTILE}": f"tests/test_a.py::test_{HOSTILE}"},
+    return got, {"tests": {f"tests/test_a.py::test_{HOSTILE}": "failed", "tests/test_a.py::test_b": "passed"},
+                 "junit": {f"tests/test_a.py::test_{HOSTILE}": f"tests.test_a::{HOSTILE}"},
                  "collect_errors": [f"tests/test_{HOSTILE}.py", "tests/test_c.py"]}
 
 

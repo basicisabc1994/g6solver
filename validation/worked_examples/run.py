@@ -1117,12 +1117,59 @@ def r3_ledger(archive: c.Archive, record: Mapping[str, Any]) -> dict[str, Any]:
 
 
 # --- the hook that saves each round's patch, and the patch capture -------------------------------------------------------
+#: The capture's steps (``diff_script``), in order: the separate index made, the repository entered, the base read into the index,
+#: the working tree added to it, the diff written, and the index removed. Each prints its own status on a line of its own
+#: (``STEP``), which ``capture_steps`` reads (replay cohort, repair 3, review 3's finding 1).
+CAPTURE_STEPS = ("index", "cd", "read-tree", "add", "diff", "cleanup")
+STEP = "we-step"
+
+
 def diff_script(repo: str, base: str, dest: str) -> str:
     """The working tree's diff against ``base``, new files included, through a separate index: the repository's own
-    index is never touched."""
-    return (f'idx=$(mktemp) && cd "{repo}" && GIT_INDEX_FILE="$idx" git read-tree {base} >/dev/null 2>&1; '
-            f'GIT_INDEX_FILE="$idx" git add -A >/dev/null 2>&1; '
-            f'GIT_INDEX_FILE="$idx" git diff --cached --binary {base} > "{dest}" 2>/dev/null; rm -f "$idx"')
+    index is never touched. Each step (``CAPTURE_STEPS``) runs only when every step before it passed, and prints its status as
+    ``we-step <name>=<status>``; the cleanup always runs and prints its own. The script's own status is its first failing step's
+    (0 when every step passed), so a reader of its status alone never takes the cleanup's for the capture's."""
+    work = (("index", "idx=$(mktemp)"), ("cd", f'cd "{repo}"'),
+            ("read-tree", f'GIT_INDEX_FILE="$idx" git read-tree {base} >/dev/null 2>&1'),
+            ("add", 'GIT_INDEX_FILE="$idx" git add -A >/dev/null 2>&1'),
+            ("diff", f'GIT_INDEX_FILE="$idx" git diff --cached --binary {base} > "{dest}" 2>/dev/null'))
+    lines = ["idx=; we_st=0"]
+    lines += [f'if [ "$we_st" -eq 0 ]; then {command}; we_st=$?; printf "{STEP} {name}=%s\\n" "$we_st"; fi' for name, command in work]
+    lines += [f'rm -f ${{idx:+"$idx"}}; we_rm=$?; printf "{STEP} cleanup=%s\\n" "$we_rm"; [ "$we_st" -ne 0 ] || we_st=$we_rm',
+              '(exit "$we_st")']
+    return "\n".join(lines)
+
+
+def capture_steps(output: bytes) -> dict[str, int] | None:
+    """Each step's status as ``diff_script`` printed it, by name, in order, each read by the one reader of an exit status
+    (``box_mcp.exit_status``); None unless the output's lines are exactly those the script prints: each step of
+    ``CAPTURE_STEPS`` but the cleanup, up to the first that failed, then the cleanup. A line missing, out of order or twice, one
+    the script does not print, or a status that is no integer written: the steps were not seen."""
+    lines = box_mcp._text(output).split("\n")
+    lines = lines[:-1] if lines[-1] == "" else lines
+    said: dict[str, int] = {}
+    for line in lines:
+        name, sep, value = line.removeprefix(f"{STEP} ").partition("=")
+        status = box_mcp.exit_status(value) if sep and line.startswith(f"{STEP} ") else None
+        if status is None or name in said or name not in CAPTURE_STEPS:
+            return None
+        said[name] = status
+    work = [s for s in CAPTURE_STEPS if s != "cleanup"]
+    ran = next((i + 1 for i, s in enumerate(work) if said.get(s, 0) != 0), len(work))     # up to the first that failed
+    return said if list(said) == [*work[:ran], "cleanup"] else None
+
+
+def capture_why(done: Any) -> str:
+    """The one reading of a capture (``diff_script``) a patch is kept by, through the one reader (``box_mcp.seen``, its answer
+    ``capture_steps``): "" only when every step was seen to pass; else why, naming the first step that failed, or saying the
+    steps were not seen (no exit status came back, or a step's own line did not)."""
+    got = box_mcp.seen(done, capture_steps)
+    if got.state == box_mcp.UNKNOWN:
+        return f"the capture's steps were not seen: {got.why}"
+    failed = next((step for step, status in got.answer.items() if status != 0), "")
+    if failed:
+        return f"the capture's step {failed} exited {got.answer[failed]}"
+    return "" if got.state == box_mcp.PASSED else f"the capture {got.why}, though each step was seen to pass"
 
 
 def hook_script(repo: str, base: str) -> str:
@@ -1132,7 +1179,9 @@ def hook_script(repo: str, base: str) -> str:
 n=$(ls {WE}/rounds 2>/dev/null | grep -c '\\.patch$')
 n=$((n + 1))
 cat > {WE}/rounds/round-$n.input.json 2>/dev/null
+{{
 {diff_script(repo, base, WE + "/rounds/round-$n.patch")}
+}} >/dev/null 2>&1
 exit 0
 """
 
@@ -1206,9 +1255,11 @@ while [ $# -gt 1 ]; do st=$1; p=$2; shift 2
 done"""
 JUNIT_IN = "/tmp/we-junit.xml"
 #: pytest's own report, for the cohort controls' oracle runs (coordinator's ruling, 2026-11-06): a plugin given to pytest with
-#: ``-p`` writes, from pytest's own report objects, each test's node id with the junit key pytest's junitxml itself computes for
-#: it (``mangle_test_address``), and each failed collection's node id, one JSON object a line. Passive: it changes no outcome,
-#: and one it cannot write is left out.
+#: ``-p`` writes, from pytest's own report objects, each phase of each test (its node id, the phase, its outcome, and for display
+#: the junit key pytest's junitxml computes for it, ``mangle_test_address``), each failed collection's node id, and, once pytest
+#: has finished the session with every line written, its exit status last; one JSON object a line. Passive: it changes no
+#: outcome. A test's identity is its node id (replay cohort, repair 3, review 3's finding 3): two node ids junit renders as one
+#: key stay two tests.
 PLUGIN_DIR = "/tmp/we-plugin"
 PLUGIN_AT = f"{PLUGIN_DIR}/we_report.py"
 REPORT_IN = f"/tmp/{c.NDJSON['report']}"
@@ -1218,20 +1269,22 @@ import os
 
 try:
     from _pytest.junitxml import mangle_test_address
-except Exception:  # a pytest without it: node ids only, no junit key, so no test is tied to them
+except Exception:  # a pytest without it: no junit key to show beside a node id
     mangle_test_address = None
 try:
     _out = open(os.environ["WE_REPORT"], "w", encoding="utf-8")
 except Exception:
     _out = None
+_whole = _out is not None
 
 
 def _write(entry):
+    global _whole
     try:
         _out.write(json.dumps(entry) + "\\n")
         _out.flush()
     except Exception:
-        pass
+        _whole = False
 
 
 def pytest_collectreport(report):
@@ -1240,15 +1293,25 @@ def pytest_collectreport(report):
 
 
 def pytest_runtest_logreport(report):
-    if report.when == "call" or (report.when == "setup" and not report.passed):
-        key = None
-        try:
-            names = mangle_test_address(report.nodeid)
-            key = ".".join(names[:-1]) + "::" + names[-1]
-        except Exception:
-            pass
-        _write({"node": report.nodeid, "junit": key})
+    key = None
+    try:
+        names = mangle_test_address(report.nodeid)
+        key = ".".join(names[:-1]) + "::" + names[-1]
+    except Exception:
+        pass
+    _write({"node": report.nodeid, "when": report.when, "outcome": report.outcome, "junit": key})
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if _whole:
+        _write({"finished": int(exitstatus)})
 '''
+#: Each phase's outcome as junit's testcase takes it (``parse_junit``'s outcomes, by its rank): a setup or teardown that fails is
+#: an error, a call that fails a failure, any skip a skip, and only the call's pass a pass.
+PHASES = {("setup", "failed"): "error", ("setup", "skipped"): "skipped", ("setup", "passed"): None,
+          ("call", "failed"): "failed", ("call", "skipped"): "skipped", ("call", "passed"): "passed",
+          ("teardown", "failed"): "error", ("teardown", "skipped"): "skipped", ("teardown", "passed"): None}
+RANK = {"passed": 0, "skipped": 1, "failed": 2, "error": 3}
 
 
 def pytest_script(modules: Sequence[str], timeout_s: int = 1800, *, report: bool = False) -> str:
@@ -1264,25 +1327,37 @@ def pytest_script(modules: Sequence[str], timeout_s: int = 1800, *, report: bool
 
 def read_report(data: bytes) -> dict[str, Any] | None:
     """``REPORT_PLUGIN``'s lines (its file is ``wecommon.NDJSON``'s "report"), framed as every such file is (``stream_lines``: at
-    "\\n" alone, the end after the last one no line): each test's node id by its junit key (``nodes``) and each failed
-    collection's node id (``collect_errors``); None when any line is not one the plugin writes, so nothing is read from a torn
-    or foreign report."""
-    nodes: dict[str, str] = {}
+    "\\n" alone, the end after the last one no line): each test's outcome by its identity, the node id pytest gives it
+    (``tests``: the worst of its phases' outcomes, ``PHASES``, as junit's testcase takes them), the junit key beside each, for
+    display only (``junit``), and each failed collection's node id (``collect_errors``). None when any line is not one the plugin
+    writes, a node id cannot be written as UTF-8, or the session's own last line (pytest finished, every line written) is not
+    last: nothing is read from a torn, cut short or foreign report, so a run without it has no test identities."""
+    tests: dict[str, str] = {}
+    junit: dict[str, str] = {}
     errors: list[str] = []
     try:
         lines = c.stream_lines(data.decode("utf-8"))
-        for line in lines[:-1] if lines[-1] == "" else lines:
+        lines = lines[:-1] if lines[-1] == "" else lines
+        if not lines or set(json.loads(lines[-1])) != {"finished"} or type(json.loads(lines[-1])["finished"]) is not int:
+            return None
+        for line in lines[:-1]:
             entry = json.loads(line)
             if set(entry) == {"collect_error"} and isinstance(entry["collect_error"], str):
+                entry["collect_error"].encode("utf-8")
                 errors.append(entry["collect_error"])
-            elif set(entry) == {"node", "junit"} and isinstance(entry["node"], str) and isinstance(entry["junit"], (str, type(None))):
-                if entry["junit"] is not None:
-                    nodes[entry["junit"]] = entry["node"]
+            elif set(entry) == {"node", "when", "outcome", "junit"} and isinstance(entry["node"], str) \
+                    and (entry["when"], entry["outcome"]) in PHASES and isinstance(entry["junit"], (str, type(None))):
+                node, outcome = entry["node"], PHASES[(entry["when"], entry["outcome"])]
+                node.encode("utf-8")
+                if outcome is not None and RANK[outcome] >= RANK.get(tests.get(node, "passed"), 0):
+                    tests[node] = outcome
+                if outcome is not None and entry["junit"] is not None:
+                    junit[node] = entry["junit"]
             else:
                 return None
-    except (UnicodeDecodeError, ValueError, TypeError):
+    except (UnicodeError, ValueError, TypeError, AttributeError):
         return None
-    return {"nodes": nodes, "collect_errors": errors}
+    return {"tests": tests, "junit": junit, "collect_errors": errors}
 
 
 def pytest_exit(output: bytes) -> str | None:
@@ -1836,14 +1911,20 @@ def copy_out(docker: Any, ctr: str, src: str, dest: Path) -> bool:
     return box_mcp.seen(docker("cp", f"{ctr}:{src}", str(dest), timeout=900)).state == box_mcp.PASSED and dest.exists()
 
 
-def keep_final(ctx: Context, task: Task, agent: str, base: str, run: Any) -> bool:
+def keep_final(ctx: Context, task: Task, agent: str, base: str, run: Any, record: dict[str, Any] | None = None) -> bool:
     """The run's kept patch, ``final.patch`` in its folder: captured in the agent's container as every capture is
-    (``diff_script``) and copied out, each step read by the one reader (``box_mcp.seen``). True when both were seen to pass, so
-    its bytes are the ones the capture made; else the file is empty, as a capture that failed always left it, and False: what
-    the run left was not read, which the round-trip control reads (``final_patch_read``) and never takes for a kept patch."""
+    (``diff_script``) and copied out. The capture is read by its steps (``capture_why``) and the copy by the one reader
+    (``box_mcp.seen``). True when every step of the capture and the copy were seen to pass, so its bytes are the ones the capture
+    made; else the file is empty, as a capture that failed always left it, and False: what the run left was not read, which the
+    round-trip control reads (``final_patch_read``) and never takes for a kept patch. ``record``: given why it was not read,
+    the first step that failed named (``final_patch_why``, "" when it was read)."""
     final = run.fresh_path("final.patch")
-    captured = box_mcp.seen(ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/final.patch"), workdir=task.repo, timeout=600))
-    if captured.state == box_mcp.PASSED and copy_out(ctx.docker, agent, f"{WE}/final.patch", final):
+    why = capture_why(ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/final.patch"), workdir=task.repo, timeout=600))
+    if not why and not copy_out(ctx.docker, agent, f"{WE}/final.patch", final):
+        why = "the kept patch's copy out of the container was not seen to pass"
+    if record is not None:
+        record["final_patch_why"] = why
+    if not why:
         return True
     final.write_bytes(b"")
     return False
@@ -2360,8 +2441,9 @@ def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
                 critique: Callable[[], dict[str, Any]] | None = None, base: str | None = None) -> dict[str, Any]:
     """G6's ``cegis`` over the agent's finished work: the runner runs both scouts' probes and sends failures back in the
     same session. The hidden set is copied in for the run and removed, so the agent can never read it. From L8 a set that
-    exercised nothing on the base is left out, as it can say nothing of the patch, and the critic reads the patch once. Its
-    status is cegis's as the one rule reads it with the patch's size against ``base`` (``loop_status``)."""
+    exercised nothing on the base is left out, as it can say nothing of the patch, and the critic reads the patch once. What it
+    found is cegis's status (``found``); the run's status is decided from it once, by the one rule, with the size of the patch the
+    run keeps (``loop_status``, in ``_run_task``). ``base`` is not read here."""
     from g6.cegis import InputDomain, cegis
 
     rounds = [0]
@@ -2412,49 +2494,30 @@ def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
     loop = Repairs(check, ask, state if qualified(ctx.arm) else None, repair_text(ctx.arm) if qualified(ctx.arm) else "")
     got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
                 max_iterations=MAX_REPAIRS + 1, timeout_s=float(c.WALL_CLOCK_S))
-    return {"status": loop_status(got.status, patch_bytes(ctx, task, agent, base)), "rounds": loop.round, "reason": got.reason,
+    return {"found": got.status, "rounds": loop.round, "reason": got.reason,
             "failing": sorted(loop.failing)[:40], "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}}
 
 
-#: A review loop's status when nothing is open over a patch that holds a change: the loop's one "clean", written here only.
+#: What a review loop found when nothing is open, and its status over a patch that holds a change: the loop's one "clean",
+#: written here only.
 LOOP_CLEAN = "no_counterexample_in_domain"
-#: A review loop's status over a tree that holds no change, whatever any review said: never clean (replay cohort, 2026-11-06;
-#: K3 pilot, pygments-3158 repeat 1, whose empty patch a review called clean).
+#: A review loop's status over a kept patch that holds no change, whatever any review said: never clean (replay cohort,
+#: 2026-11-06; K3 pilot, pygments-3158 repeat 1, whose empty patch a review called clean).
 NO_PATCH = "no_patch"
-PATCH_BYTES = "we-patch-bytes"      # the line ``patch_bytes`` reads its answer from
 
 
-def patch_bytes(ctx: Context, task: Task, agent: str, base: str | None) -> int | None:
-    """How many bytes the tree's patch against ``base`` has, in the agent's container, made as every capture makes it
-    (``diff_script``, new files included): 0 for a tree with no change. None when it could not be read: no base, a docker step
-    that raised or ran out of time, or a reply the one reader (``box_mcp.seen``) did not see pass, the size's own line in it:
-    a call that returned another code, or none, is not known, whatever its output says."""
-    if not base:
-        return None
-    at = f"{WE}/we-size.patch"
-
-    def size(output: bytes) -> int | None:
-        found = re.findall(rf"^{PATCH_BYTES}=\s*(\d+)\s*$", box_mcp._text(output), re.M)
-        return int(found[-1]) if found else None
-
-    try:
-        got = box_mcp.seen(ctx.docker.sh(agent, f'{diff_script(task.repo, base, at)}; printf "{PATCH_BYTES}=%s\\n" "$(wc -c < "{at}")"; '
-                                                f'rm -f "{at}"', workdir=task.repo, timeout=300), size)
-    except (OSError, RuntimeError, subprocess.SubprocessError):
-        return None
-    return got.answer if got.state == box_mcp.PASSED else None
-
-
-def loop_status(status: str, size: int | None) -> str:
-    """The one rule every review loop's status is decided by (``reviews_until_clean``, ``review_once``, ``reviews_with_bug_test``,
-    ``repair_loop``), from what the loop found and the size of the patch it read (``patch_bytes``): ``NO_PATCH`` for a tree with
-    no change, whatever the loop found; ``LOOP_CLEAN`` only over a patch known to hold a change, so a size that could not be
-    read is "inconclusive", never clean; any other status as the loop found it."""
+def loop_status(found: str, size: int | None) -> str:
+    """The one rule a review loop's status is decided by, once, in ``_run_task``: from what the loop found (``found``, which
+    ``reviews_until_clean``, ``review_once``, ``reviews_with_bug_test`` and ``repair_loop`` return) and the size of the patch the
+    run keeps, from the one read that keeps it (``keep_final``, after the final mirror; replay cohort, repair 3, review 3's
+    finding 2), None when that patch was not read: ``NO_PATCH`` for a kept patch with no change, whatever the loop found;
+    ``LOOP_CLEAN`` only over a kept patch known to hold a change, so a size that was not read is "inconclusive", never clean;
+    any other finding as the loop found it."""
     if size == 0:
         return NO_PATCH
-    if status == LOOP_CLEAN and not (size and size > 0):
+    if found == LOOP_CLEAN and not (size and size > 0):
         return "inconclusive"
-    return status
+    return found
 
 
 def keep_first_patch(ctx: Context, task: Task, agent: str, base: str, n: int = 1) -> None:
@@ -2582,7 +2645,7 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
         reason = "the run's deadline passed"
     clean = not timed_out and not failing and not broken and verdicts[-1] in ("none", "defect")
     ended = ended or ("timeout" if timed_out else "")      # a host repair's own ending first: it is the run's ending on record
-    return {"status": loop_status(LOOP_CLEAN if clean else "inconclusive", patch_bytes(ctx, task, agent, base)), "rounds": rounds,
+    return {"found": LOOP_CLEAN if clean else "inconclusive", "rounds": rounds,
             "reason": reason,
             "failing": failing[:40], "critic": {"verdicts": verdicts, "seconds": round(seconds, 1)},
             **({"finding": "parent"} if gated else {}), **({"ended": ended} if ended else {})}
@@ -2592,7 +2655,8 @@ def review_once(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
                 started: float, critique: Callable[[], dict[str, Any]], base: str | None = None) -> dict[str, Any]:
     """Arm R, the control for the loop (PLAN.md, 2026-10-31 night): one review by another model family, and one repair if its test
     fails on the patch. No scout, no probes, no G6, so what the full loop adds is the difference. A test that will not run says
-    nothing of the patch. Its status is decided by the one rule, with the patch's size against ``base`` (``loop_status``)."""
+    nothing of the patch. It returns what it found; the run's status is decided from it once, by the one rule, with the size of
+    the patch the run keeps (``loop_status``, in ``_run_task``)."""
     critic = critique()
     rounds, failing = 1, set()
 
@@ -2609,7 +2673,7 @@ def review_once(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
                     CRITIC_NOTE.format(**{k: critic.get(k, "") for k in ("rule", "why", "test")}) + REVIEW_ASK, c.NDJSON["numbered_stream"].format(tag="repair", n=1),
                     seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
         failing = check()
-    return {"status": loop_status("inconclusive" if failing else LOOP_CLEAN, patch_bytes(ctx, task, agent, base)), "rounds": rounds,
+    return {"found": "inconclusive" if failing else LOOP_CLEAN, "rounds": rounds,
             "reason": "", "failing": sorted(failing)[:40], "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}}
 
 
@@ -3068,23 +3132,24 @@ def reviews_with_bug_test(ctx: Context, task: Task, run: Any, agent: str, base: 
     """Arms V3 and V4 after the agent's session (PLAN.md, 2026-11-04): the bug's test, written before the patch, run on the tree
     after each session; while a case fails, the failing cases and the test go back to the same session, as arm K's reviewer's
     do, up to ``MAX_REPAIRS`` repairs. A fresh copy of the test is put in place before each check. A test that fails nothing on
-    the parent says nothing of any patch, so it sends nothing back, as replays 3 and 4 read it. Each status it returns is decided
-    by the one rule, with the patch's size as it stands then (``loop_status``)."""
+    the parent says nothing of any patch, so it sends nothing back, as replays 3 and 4 read it. It returns what it found; the
+    run's status is decided from it once, by the one rule, with the size of the patch the run keeps (``loop_status``, in
+    ``_run_task``)."""
     import replay3
 
     ins = bug_instruction(ctx.arm)
     summary = {"verdict": bug.get("verdict"), "instruction": bug.get("instruction"), "seconds": bug.get("seconds")}
     if not bug.get("test") or bug.get("error") or replay3.no_answer(bug):
         failed = bool(replay3.no_answer(bug)) or bool(bug.get("error"))
-        return {"status": loop_status("inconclusive" if failed else LOOP_CLEAN, patch_bytes(ctx, task, agent, base)), "rounds": 0,
+        return {"found": "inconclusive" if failed else LOOP_CLEAN, "rounds": 0,
                 "failing": [], "critic": summary,
                 "reason": "the bug's reviewer failed" if failed else "no test of the bug was written"}
     at_parent = bug.get("at_parent")
     if at_parent is None or at_parent.exit is None:
-        return {"status": loop_status("inconclusive", patch_bytes(ctx, task, agent, base)), "rounds": 0, "failing": [],
+        return {"found": "inconclusive", "rounds": 0, "failing": [],
                 "critic": summary, "reason": "the bug's test gave no result on the parent, as a container failure gives"}
     if not replay3.failed_cases(at_parent):
-        return {"status": loop_status(LOOP_CLEAN, patch_bytes(ctx, task, agent, base)), "rounds": 0, "failing": [],
+        return {"found": LOOP_CLEAN, "rounds": 0, "failing": [],
                 "critic": summary, "reason": "the bug's test reproduces nothing on the parent"}
     checked_ctx = copy.copy(ctx)                       # every exec of a check is checked: a docker failure is no clean review
     checked_ctx.docker = replay3.Checked(ctx.docker)
@@ -3104,11 +3169,11 @@ def reviews_with_bug_test(ctx: Context, task: Task, run: Any, agent: str, base: 
             write_in(ctx.docker, agent, f"{ins.at}/{ins.file}", bug["test"] + "\n", user="root")
             got = run_set(checked_ctx, task, agent, ins.at)
         except RuntimeError as exc:
-            return {"status": loop_status("inconclusive", patch_bytes(ctx, task, agent, base)), "rounds": rounds, "failing": [],
+            return {"found": "inconclusive", "rounds": rounds, "failing": [],
                     "critic": summary, "reason": f"a check of the bug's test failed to run: {exc}"[:300]}
         run.write_json(f"repair_check_{n}_bug.json", {"exit": got.exit, "ran": got.ran, "results": got.results, "tail": got.tail})
         if got.exit is None:
-            return {"status": loop_status("inconclusive", patch_bytes(ctx, task, agent, base)), "rounds": rounds, "failing": [],
+            return {"found": "inconclusive", "rounds": rounds, "failing": [],
                     "critic": summary, "reason": "a check of the bug's test gave no exit, as a container failure gives"}
         failing = [case.split(":", 1)[1] for case in replay3.failed_cases(got)]
         if not failing:
@@ -3125,7 +3190,7 @@ def reviews_with_bug_test(ctx: Context, task: Task, run: Any, agent: str, base: 
         if tree() == before:
             reason = "the agent left the code as it was"
             break
-    return {"status": loop_status("inconclusive" if failing else LOOP_CLEAN, patch_bytes(ctx, task, agent, base)), "rounds": rounds,
+    return {"found": "inconclusive" if failing else LOOP_CLEAN, "rounds": rounds,
             "reason": reason, "failing": failing[:40], "critic": summary}
 
 
@@ -3425,10 +3490,14 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             calls = box_mcp.read_state(box_state_of(workspace))
             if calls is not None:
                 run.write_json("box_calls.json", calls)
-        record["final_patch_read"] = keep_final(ctx, task, agent, base, run)
+        record["final_patch_read"] = keep_final(ctx, task, agent, base, run, record)
         final = run.path / "final.patch"
         record["final_patch_bytes"] = final.stat().st_size
         record["final_patch_sha256"] = c.sha256_file(final)
+        if "repairs" in record:   # a review loop's status, decided once, from the one read that kept the patch, after the final
+            # mirror (replay cohort, repair 3): a size not read is None, never clean
+            record["repairs"]["status"] = loop_status(record["repairs"]["found"],
+                                                      record["final_patch_bytes"] if record["final_patch_read"] else None)
         if round2:   # G6's key file never leaves the container
             checked(ctx.docker("exec", "-u", USER, agent, "rm", "-f", KEY_FILE, timeout=60), "remove G6's key file")
         for src, name in ((f"{WE}/rounds", "rounds"), (f"{HOME}/.claude/projects", "claude_projects"),
@@ -3505,9 +3574,11 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
     """In a fresh container from the oracle image, with no network: the code (the parent's, the maintainers' fix or
     a patch), the maintainers' test files when ``tests``, the bug's amendment when ``amended``, extra files, then
     pytest on ``modules``. Every step's result is read by the one reader (``box_mcp.seen``): the body keeps the pytest call's
-    state (``call``, with ``call_why``), its exit (``pytest_exit``), whether its report came back (``report``) and the results,
-    which ``box_mcp.tests_seen`` reads. ``report``: pytest's own report too (``REPORT_PLUGIN``): ``nodes`` and
-    ``collect_errors``, each None when the report did not come back or could not be read."""
+    state (``call``, with ``call_why``), its exit (``pytest_exit``), whether its junit report came back (``report``) and that
+    report's results by junit key (``results``, which the study's frozen check scores by). ``report``: pytest's own report too
+    (``REPORT_PLUGIN``, ``read_report``): each test's outcome by its node id (``tests``), the one identity
+    ``box_mcp.tests_seen`` reads, with its junit key for display (``junit``) and each failed collection (``collect_errors``),
+    each None when that report did not come back or could not be read: then no test of the run has an identity."""
     _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     name = f"g6we-check-{uuid.uuid4().hex[:10]}"
     body: dict[str, Any] = {"label": label}
@@ -3546,7 +3617,7 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
             if report:
                 own = Path(tmp) / c.NDJSON["report"]
                 got = read_report(own.read_bytes()) if copy_out(ctx.docker, name, REPORT_IN, own) and own.is_file() else None
-                body.update(got or {"nodes": None, "collect_errors": None})
+                body.update(got or {"tests": None, "junit": None, "collect_errors": None})
             junit = Path(tmp) / "junit.xml"
             body["report"], body["results"] = copy_out(ctx.docker, name, JUNIT_IN, junit), {}
             if body["report"]:
@@ -3560,17 +3631,24 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
 
 
 def validate(ctx: Context, task: Task, *, report: bool = False) -> dict[str, Any]:
-    """The lists every check scores against, from the base and the maintainers' fix. ``report``: each run keeps pytest's own
-    report too (``_oracle_run``), as the cohort controls ask."""
+    """The lists every check scores against, from the base and the maintainers' fix: by junit key, as the study's frozen check
+    scores them. ``report``: each run keeps pytest's own report too (``_oracle_run``), as the cohort controls ask, and the lists
+    are of node ids, each test's one identity there (``box_mcp.tests_of``): with no such report of either run, no test has
+    one and the lists are empty."""
     run = ctx.archive.start("validate", task.id, g6_commit=ctx.g6.get("commit"))
     _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     oracle_id = checked(ctx.docker("image", "inspect", oracle, "--format", "{{.Id}}"), "the oracle image")
     base = _oracle_run(ctx, task, folder=run, label="base", report=report)
     fixed = _oracle_run(ctx, task, fix=True, folder=run, label="fixed", report=report)
-    f2p, p2p = fail_to_pass(base.get("results") or {}, fixed.get("results") or {})
+    why = "no test fails on the parent's code and passes with the fix"
+    if not report:
+        f2p, p2p = fail_to_pass(base.get("results") or {}, fixed.get("results") or {})
+    elif box_mcp.tests_of(base) is None or box_mcp.tests_of(fixed) is None:
+        f2p, p2p, why = [], [], "pytest's own report of the base or the fix did not come back: no test has an identity"
+    else:
+        f2p, p2p = fail_to_pass(box_mcp.tests_of(base), box_mcp.tests_of(fixed))
     record = {"oracle_image_id": oracle_id, "base": base, "fixed": fixed, "fail_to_pass": f2p, "pass_to_pass": p2p,
-              "modules": task.test_modules,
-              "ok": bool(f2p), "why": "" if f2p else "no test fails on the parent's code and passes with the fix"}
+              "modules": task.test_modules, "ok": bool(f2p), "why": "" if f2p else why}
     return run.finish(record, "finished")
 
 
@@ -3687,8 +3765,9 @@ def selfcheck(ctx: Context, task: Task, *, report: bool = False) -> dict[str, An
     rows, bodies = {}, {}
     for label, patch in (("gold", gold), ("empty", empty)):
         body = bodies[label] = _oracle_run(ctx, task, patch=patch, folder=folder, label=label, report=report)
+        shown = (box_mcp.tests_of(body) if report else body.get("results")) or {}     # by the lists' own identity (``validate``)
         # the empty patch is seen failing by the one rule, the gold run of this same image its evidence (box_mcp.seen_failing)
-        rows[label] = {"patch_applied": body.get("patch_applied", True), **verdict(body.get("results") or {}, f2p, p2p),
+        rows[label] = {"patch_applied": body.get("patch_applied", True), **verdict(shown, f2p, p2p),
                        "seen": box_mcp.tests_seen(body, [*f2p, *p2p], seen_passing_in=bodies["gold"] if label == "empty" else None,
                                                   fail_to_pass=f2p),
                        "observed": observed(body, [*f2p, *p2p])}
@@ -3700,19 +3779,20 @@ def selfcheck(ctx: Context, task: Task, *, report: bool = False) -> dict[str, An
 
 def observed(body: Mapping[str, Any] | None, tests: Iterable[str]) -> dict[str, Any]:
     """What a test run observed of ``tests``, kept so ``box_mcp.tests_seen`` reads it again from the record alone: the pytest
-    call's state, its exit, whether its report came back, whether the patch applied, and each of ``tests``' results the report
-    holds (a test it does not hold is absent, as in the report)."""
+    call's state, its exit, whether its junit report came back, whether the patch applied, and, for a run asked for pytest's own
+    report, each of ``tests``' outcomes by node id (``tests``, None when that report did not come back), its junit key for display
+    (``junit``) and every failed collection; else each of ``tests``' results by junit key, as the study keeps them. A test the
+    report does not hold is absent, as in the report."""
     body = body or {}
-    names, results = set(tests), body.get("results") or {}
-    own = {}                          # pytest's own report, when the run kept one: these tests' node ids, every failed collection
-    if "nodes" in body:
-        nodes = body["nodes"]
-        own["nodes"] = {t: nodes[t] for t in sorted(names) if t in nodes} if isinstance(nodes, Mapping) else None
-    if "collect_errors" in body:
-        own["collect_errors"] = body["collect_errors"]
+    names, results = sorted(set(tests)), body.get("results") or {}
+    if "tests" in body:               # pytest's own report: the tests' one identity, the junit key a display beside it
+        own, shown = box_mcp.tests_of(body), body.get("junit") if isinstance(body.get("junit"), Mapping) else {}
+        outcomes = {"tests": None if own is None else {t: own[t] for t in names if t in own},
+                    "junit": {t: shown[t] for t in names if t in shown}, "collect_errors": body.get("collect_errors")}
+    else:
+        outcomes = {"results": {t: results[t] for t in names if t in results}}
     return {**{k: body[k] for k in ("call", "call_why", "pytest_exit", "patch_applied") if k in body},
-            "report": bool(body.get("report", bool(results))), "results": {t: results[t] for t in sorted(names) if t in results},
-            **own}
+            "report": bool(body.get("report", bool(results))), **outcomes}
 
 
 G6_REPLAY = """import json, sys

@@ -39,8 +39,6 @@ class _Docker:
 
     def sh(self, agent, script, *args, **kw):
         self.scripts.append(script)
-        if we.PATCH_BYTES in script:             # the patch's size (``run.patch_bytes``): the tree holds a change
-            return type("Done", (), {"stdout": f"{we.PATCH_BYTES}=100\n".encode(), "stderr": b"", "returncode": 0})()
         return type("Done", (), {"stdout": f"tree {self.tree}".encode(), "stderr": b"", "returncode": 0})()
 
 
@@ -72,7 +70,7 @@ def _loop(monkeypatch, reviews, sets, *, moves=True):
 
 def test_a_review_that_finds_nothing_at_once_ends_the_run_with_no_repair(monkeypatch):
     got, asked, seen, _ = _loop(monkeypatch, [QUIET], [])
-    assert asked == [] and seen == [1] and got["rounds"] == 1 and got["status"] == "no_counterexample_in_domain"
+    assert asked == [] and seen == [1] and got["rounds"] == 1 and got["found"] == "no_counterexample_in_domain"
 
 
 def test_the_patch_is_reviewed_again_after_each_repair_until_a_review_finds_nothing(monkeypatch):
@@ -80,7 +78,7 @@ def test_the_patch_is_reviewed_again_after_each_repair_until_a_review_finds_noth
     got, asked, seen, _ = _loop(monkeypatch, [defect(1), defect(2), QUIET], [FAILS, FAILS])
     assert seen == [1, 2, 3] and [a[1] for a in asked] == ["repair_stream_1.jsonl", "repair_stream_2.jsonl"]
     assert "rule 1" in asked[0][0] and "rule 2" in asked[1][0] and "rule 1" not in asked[1][0]
-    assert got["status"] == "no_counterexample_in_domain" and got["rounds"] == 3
+    assert got["found"] == "no_counterexample_in_domain" and got["rounds"] == 3
 
 
 def test_each_review_reads_what_the_last_repair_left_and_each_patch_is_kept_for_the_check(monkeypatch):
@@ -93,23 +91,23 @@ def test_the_repairs_stop_at_the_cap_and_a_defect_left_open_says_so(monkeypatch)
     reviews = [defect(n) for n in range(1, we.MAX_REPAIRS + 2)]
     got, asked, seen, _ = _loop(monkeypatch, reviews, [FAILS] * len(reviews))
     assert len(asked) == we.MAX_REPAIRS and len(seen) == we.MAX_REPAIRS + 1
-    assert got["status"] == "inconclusive" and got["failing"]
+    assert got["found"] == "inconclusive" and got["failing"]
 
 
 def test_an_agent_that_leaves_the_code_as_it_was_has_decided(monkeypatch):
     """It may reject a finding with a reason, as the reviewer can be wrong. Asking again would only spend money."""
     got, asked, seen, _ = _loop(monkeypatch, [defect(1), defect(2)], [FAILS], moves=False)
-    assert len(asked) == 1 and seen == [1] and "left the code" in got["reason"] and got["status"] == "inconclusive"
+    assert len(asked) == 1 and seen == [1] and "left the code" in got["reason"] and got["found"] == "inconclusive"
 
 
 def test_a_test_that_passes_on_the_patch_is_no_finding_and_sends_nothing_back(monkeypatch):
     got, asked, _, _ = _loop(monkeypatch, [defect(1)], [PASSES])
-    assert asked == [] and got["status"] == "no_counterexample_in_domain"
+    assert asked == [] and got["found"] == "no_counterexample_in_domain"
 
 
 def test_a_test_that_will_not_run_says_nothing_of_the_patch(monkeypatch):
     got, asked, _, _ = _loop(monkeypatch, [defect(1)], [BROKEN])
-    assert asked == [] and got["status"] == "no_counterexample_in_domain"
+    assert asked == [] and got["found"] == "no_counterexample_in_domain"
 
 
 def test_a_review_with_no_test_sends_nothing_back(monkeypatch):
@@ -119,7 +117,7 @@ def test_a_review_with_no_test_sends_nothing_back(monkeypatch):
 
 def test_a_review_that_failed_ends_the_loop_and_is_recorded_as_no_clean_review(monkeypatch):
     got, asked, _, _ = _loop(monkeypatch, [{"verdict": "failed", "test": "", "error": "timeout"}], [])
-    assert asked == [] and got["status"] == "inconclusive" and got["critic"]["verdicts"] == ["failed"]
+    assert asked == [] and got["found"] == "inconclusive" and got["critic"]["verdicts"] == ["failed"]
 
 
 @pytest.mark.parametrize("arm", ["K1"])

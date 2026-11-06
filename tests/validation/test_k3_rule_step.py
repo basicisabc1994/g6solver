@@ -127,6 +127,7 @@ class _Docker:
             if Path(saved[1]).name in self.fail:
                 return self.done(1)
             self.files[saved[1]] = self.tree
+            return self.done(stdout="".join(f"{we.STEP} {s}=0\n" for s in we.CAPTURE_STEPS).encode())     # every step passed
         return self.done()
 
     def popen(self, *a, **kw):
@@ -174,7 +175,7 @@ def _run(monkeypatch, tmp_path, arm, *, step_ends="", thread="", fail=(), first=
             a[7].feed(dict(loop_ends))
         if loop_late:               # a review that ended after the run's deadline, as the watchdog records it
             kw["deadline"].ends.append(("review 1", kw["deadline"].deadline + 1.0))
-        return loop_result or {"status": "no_counterexample_in_domain"}
+        return loop_result or {"found": "no_counterexample_in_domain"}       # a loop returns what it found (repair 3)
 
     monkeypatch.setattr(we, "key_check", lambda *a, **kw: {"ok": key_ok})
     monkeypatch.setattr(we, "start_net", lambda *a: ("net", "proxy"))
@@ -412,8 +413,6 @@ def _gated_loop(monkeypatch, after_step):
         tree = 0
 
         def sh(self, agent, script, *a, **kw):
-            if we.PATCH_BYTES in script:         # the patch's size (``run.patch_bytes``): the tree holds a change
-                return SimpleNamespace(returncode=0, stdout=f"{we.PATCH_BYTES}=100\n".encode(), stderr=b"")
             return SimpleNamespace(returncode=0, stdout=f"tree {Docker.tree}".encode(), stderr=b"")
 
     def session(*a, **kw):
@@ -622,8 +621,6 @@ def _timed_loop(monkeypatch, *, deadline, review_takes=0.0, start=0.0):
         tree = 0
 
         def sh(self, agent, script, *a, **kw):
-            if we.PATCH_BYTES in script:         # the patch's size (``run.patch_bytes``): the tree holds a change
-                return SimpleNamespace(returncode=0, stdout=f"{we.PATCH_BYTES}=100\n".encode(), stderr=b"")
             return SimpleNamespace(returncode=0, stdout=f"tree {Docker.tree}".encode(), stderr=b"")
 
     def session(*a, **kw):
@@ -651,12 +648,12 @@ def _timed_loop(monkeypatch, *, deadline, review_takes=0.0, start=0.0):
 
 def test_k2s_loop_after_the_step_reads_the_runs_one_deadline_and_no_review_follows_it(monkeypatch):
     got, sessions, critiques = _timed_loop(monkeypatch, deadline=0.0)            # reached before review 1
-    assert critiques == [] and sessions == [] and got["ended"] == "timeout" and got["status"] == "inconclusive"
+    assert critiques == [] and sessions == [] and got["ended"] == "timeout" and got["found"] == "inconclusive"
     got, sessions, critiques = _timed_loop(monkeypatch, deadline=50.0, review_takes=60.0)   # review 1 crosses it
     assert critiques == [1] and sessions == [] and got["ended"] == "timeout"
     got, sessions, critiques = _timed_loop(monkeypatch, deadline=500.0, review_takes=1.0)
     assert sessions[0]["deadline"].deadline == 500.0 and sessions[0]["seconds"] <= 500.0 - 1.0  # no allowance of its own
-    assert critiques == [1, 2] and "ended" not in got and got["status"] == "no_counterexample_in_domain"
+    assert critiques == [1, 2] and "ended" not in got and got["found"] == "no_counterexample_in_domain"
 
 
 def test_a_k3_run_with_a_step_that_ended_after_the_deadline_ends_timeout_as_finish_reads_it_and_is_k2s_row(monkeypatch, tmp_path):
@@ -1184,8 +1181,6 @@ def _repairing(monkeypatch, *, result, code, stop):
         tree = 0
 
         def sh(self, *a, **kw):
-            if we.PATCH_BYTES in a[1]:           # the patch's size (``run.patch_bytes``): the tree holds a change
-                return SimpleNamespace(returncode=0, stdout=f"{we.PATCH_BYTES}=100\n".encode(), stderr=b"")
             return SimpleNamespace(returncode=0, stdout=f"tree {Docker.tree}".encode(), stderr=b"")
 
     def session(ctx, run, agent, command, key, tally_, text, name, *, seconds, stop_usd, codes=None, deadline=None):
@@ -1219,7 +1214,7 @@ def _repairing(monkeypatch, *, result, code, stop):
 def test_review_2_a_container_repair_that_does_not_end_cleanly_ends_the_loop_and_the_run_with_its_own_ending(monkeypatch, result,
                                                                                                              code, stop, ending):
     got, reviews = _repairing(monkeypatch, result=result, code=code, stop=stop)
-    assert got["ended"] == ending and got["status"] == "inconclusive" and reviews == [1]
+    assert got["ended"] == ending and got["found"] == "inconclusive" and reviews == [1]
     assert got["reason"] == f"the repair's session ended {ending}"
 
 
@@ -1250,8 +1245,8 @@ def _container_loop(monkeypatch, first, repaired, arm="K3", after_step=True):
     monkeypatch.setattr(we, "run_set", lambda *a: we.ProbeRun(1, {"test_critic.py::test_rule": "failed"}, {}, ""))
     monkeypatch.setattr(we, "parent_check", lambda *a: we.ProbeRun(1, {"test_critic.py::test_rule": "failed"}, {}, ""))
     monkeypatch.setattr(we, "keep_first_patch", lambda *a: None)
-    sized = SimpleNamespace(sh=lambda agent, script, **kw: SimpleNamespace(      # the container answers only the patch's size
-        returncode=0, stdout=f"{we.PATCH_BYTES}=100\n".encode() if we.PATCH_BYTES in script else b"", stderr=b""))
+    sized = SimpleNamespace(sh=lambda agent, script, **kw: SimpleNamespace(      # the container answers nothing: the loop
+        returncode=0, stdout=b"", stderr=b""))                                     # measures no patch
     got = we.reviews_until_clean(SimpleNamespace(arm=arm, docker=sized), SimpleNamespace(repo="/repo"),
                                  SimpleNamespace(write_json=lambda *a: None),
                                  "agent", "base", ["claude", "--disallowedTools", "x"], "key", tally, 10, time.monotonic(), review,

@@ -44,9 +44,10 @@ def _held(bugs):
 
 def _observed(ids):
     """A control record whose four controls were observed to hold on ``ids`` (``cohorts.controls``' form): a manifest admits a
-    bug by these outcomes, never by a ``failed`` flag (replay cohort, repair 1)."""
+    bug by these outcomes, never by a ``failed`` flag (replay cohort, repair 1), each test known by the node id pytest's own
+    report gives it (repair 3)."""
     def seen(results, exit="1"):
-        return {"call": "passed", "pytest_exit": exit, "report": True, "results": results}
+        return {"call": "passed", "pytest_exit": exit, "report": True, "tests": results}
     return {"failed": "", "why": "",
             "validate": {"images": ids, "fail_to_pass": ["t"], "pass_to_pass": [], "base": seen({"t": "failed"}),
                          "fixed": seen({"t": "passed"}, "0")},

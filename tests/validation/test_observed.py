@@ -60,7 +60,9 @@ def test_one_reader_turns_a_container_calls_result_into_three_states(got, read, 
 
 
 def body(results, *, exit="1", call=P, report=True, **kw):
-    return {"call": call, "pytest_exit": exit, "report": report, "results": results, **kw}
+    """A test run's body as ``run._oracle_run`` keeps it with pytest's own report: each test's outcome by its node id
+    (``tests``), or None when no report came back (replay cohort, repair 3)."""
+    return {"call": call, "pytest_exit": exit, "report": report, "tests": results if report else None, **kw}
 
 
 @pytest.mark.parametrize(("got", "state", "why"), [
@@ -75,7 +77,8 @@ def body(results, *, exit="1", call=P, report=True, **kw):
     (body({"t1": "failed"}, exit=None), U, "no exit status"),
     (body({"t1": "failed"}, call=U, call_why="the call itself returned 125"), U, "returned 125"),
     (body({"t1": "failed"}, call=F), U, "not seen to run"),
-    ({"pytest_exit": "1", "results": {"t1": "failed", "t2": "failed"}}, U, "never recorded"),   # no call recorded
+    ({"pytest_exit": "1", "tests": {"t1": "failed", "t2": "failed"}}, U, "never recorded"),     # no call recorded
+    ({"call": P, "pytest_exit": "1", "report": True, "results": {"t1": "failed", "t2": "failed"}}, U, "no test report"),
     ({"patch_applied": False}, U, "did not apply"),
     (None, U, "never recorded"),
     (["not", "a", "body"], U, "never recorded"),
@@ -86,26 +89,40 @@ def test_one_reader_turns_a_test_report_into_three_states(got, state, why):
     assert seen["passed"] + seen["failed"] + seen["unknown"] == seen["tests"] == 2
 
 
-# --- finding 5: the patch-size probe ----------------------------------------------------------------------------------------------
-def test_finding_5_a_failed_size_probe_whose_output_holds_a_size_is_unknown_so_arm_r_is_inconclusive_never_clean():
-    class FailedDocker:
-        def sh(self, *args, **kw):
-            return done(1, f"{we.PATCH_BYTES}=123\n".encode(), b"failed\n")
+# --- finding 5: the patch's size, now the kept patch's (replay cohort, repair 3) -----------------------------------------------
+STEPS_PASSED = "".join(f"{we.STEP} {s}=0\n" for s in we.CAPTURE_STEPS).encode()
 
-    result = we.review_once(SimpleNamespace(docker=FailedDocker(), arm="R"), SimpleNamespace(repo="/w/toy"),
+
+def _status_over(tmp_path, capture, found=we.LOOP_CLEAN):
+    """A loop's status as ``_run_task`` decides it, from ``found`` and the patch ``keep_final`` kept, its capture answered
+    ``capture`` and its copy writing 123 bytes."""
+    class Docker:
+        def sh(self, *args, **kw):
+            return capture
+
+        def __call__(self, *args, **kw):
+            Path(args[2]).write_bytes(b"x" * 123)
+            return done(0)
+
+    folder = we.c.Archive(tmp_path / "a").start("run", "toy-1")
+    read = we.keep_final(SimpleNamespace(docker=Docker()), SimpleNamespace(repo="/w/toy"), "ctr", "base", folder)
+    size = (folder.path / "final.patch").stat().st_size
+    return we.loop_status(found, size if read else None)
+
+
+def test_finding_5_a_kept_patch_whose_capture_failed_is_unknown_so_arm_r_is_inconclusive_never_clean(tmp_path):
+    result = we.review_once(SimpleNamespace(docker=None, arm="R"), SimpleNamespace(repo="/w/toy"),
                             SimpleNamespace(write_json=lambda *args: None), "ctr", [], "", None, 0, 0,
                             lambda: {"verdict": "none", "test": ""}, base="base")
-    assert result["status"] == "inconclusive"
+    assert result["found"] == we.LOOP_CLEAN and "status" not in result         # the loop measures nothing itself
+    assert _status_over(tmp_path, done(1, STEPS_PASSED, b"failed\n"), result["found"]) == "inconclusive"
 
 
-@pytest.mark.parametrize(("got", "size"), [(done(0, f"{we.PATCH_BYTES}=123\n".encode()), 123), (done(0, b"0 lines\n"), None),
-                                           (done(1, f"{we.PATCH_BYTES}=0\n".encode()), None), (done(None), None),
-                                           (done(-15, f"{we.PATCH_BYTES}=5\n".encode()), None)])
-def test_the_size_is_read_only_from_a_call_seen_to_pass_with_its_own_line(got, size):
-    docker = SimpleNamespace(sh=lambda *a, **kw: got)
-    assert we.patch_bytes(SimpleNamespace(docker=docker), SimpleNamespace(repo="/w/r"), "agent", "base") == size
-    assert we.loop_status(we.LOOP_CLEAN, we.patch_bytes(SimpleNamespace(docker=docker), SimpleNamespace(repo="/w/r"), "a", "b")) \
-        == (we.LOOP_CLEAN if size else "inconclusive")
+@pytest.mark.parametrize(("got", "status"), [(done(0, STEPS_PASSED), we.LOOP_CLEAN), (done(0, b"0 lines\n"), "inconclusive"),
+                                             (done(1, STEPS_PASSED), "inconclusive"), (done(None, STEPS_PASSED), "inconclusive"),
+                                             (done(-15, STEPS_PASSED), "inconclusive")])
+def test_the_size_is_read_only_from_a_kept_patch_whose_capture_was_seen_to_pass_every_step(tmp_path, got, status):
+    assert _status_over(tmp_path, got) == status
 
 
 # --- findings 6 and 10: the four controls hold only on observed results ----------------------------------------------------------
@@ -180,7 +197,7 @@ def test_a_control_holds_only_on_observed_results_and_an_unknown_one_excludes_th
 def test_a_bug_whose_four_controls_were_observed_to_hold_is_admitted(monkeypatch, tmp_path):
     got = controls(monkeypatch, tmp_path)
     assert got["failed"] == "" and got["why"] == "", got
-    assert got["validate"]["base"]["results"] == {"t::bug": "failed"}                   # the outcome as observed, kept
+    assert got["validate"]["base"]["tests"] == {"t::bug": "failed"}                     # the outcome as observed, kept
     assert cohorts.admit(got, {"task_image_id": ORACLE, "oracle_image_id": ORACLE}) == ""
 
 
@@ -189,17 +206,35 @@ JUNIT = (b'<testsuites><testsuite><testcase classname="t" name="bug"><failure/><
          b'<testcase classname="t" name="ok"/></testsuite></testsuites>')
 
 
-class OracleDocker:
-    """A check container: the pytest call answers ``said`` with ``code``, and the report's copy writes ``report`` (None: it fails)."""
+def plugin_lines(*entries: dict, finished: int | None = 1) -> bytes:
+    """pytest's own report as ``run.REPORT_PLUGIN`` writes it: ``entries``, then the session's last line (``finished``)."""
+    import json as _json
+    rows = [*entries, *([{"finished": finished}] if finished is not None else [])]
+    return b"".join(_json.dumps(r).encode() + b"\n" for r in rows)
 
-    def __init__(self, said: bytes, code, report: bytes | None) -> None:
-        self.said, self.code, self.report = said, code, report
+
+def phase(node: str, when: str, outcome: str, junit: str | None = None) -> dict:
+    return {"node": node, "when": when, "outcome": outcome, "junit": junit}
+
+
+#: The same two tests as ``JUNIT``, as pytest's own report gives them: by node id, each with its junit key for display.
+PLUGIN = plugin_lines(phase("t.py::bug", "setup", "passed", "t::bug"), phase("t.py::bug", "call", "failed", "t::bug"),
+                      phase("t.py::bug", "teardown", "passed", "t::bug"), phase("t.py::ok", "call", "passed", "t::ok"))
+
+
+class OracleDocker:
+    """A check container: the pytest call answers ``said`` with ``code``; the junit report's copy writes ``report``, and pytest's
+    own report's copy ``plugin`` (each None: its copy fails)."""
+
+    def __init__(self, said: bytes, code, report: bytes | None, plugin: bytes | None = None) -> None:
+        self.said, self.code, self.report, self.plugin = said, code, report, plugin
 
     def __call__(self, *args, input=None, timeout=None, env=None):
-        if args[0] == "cp" and args[1].endswith(we.JUNIT_IN):
-            if self.report is None:
-                return done(1, b"", b"Error: no such file")
-            Path(args[2]).write_bytes(self.report)
+        for kept, at in ((self.report, we.JUNIT_IN), (self.plugin, we.REPORT_IN)):
+            if args[0] == "cp" and args[1].endswith(at):
+                if kept is None:
+                    return done(1, b"", b"Error: no such file")
+                Path(args[2]).write_bytes(kept)
         return done(0)
 
     def sh(self, ctr, script, *a, **kw):
@@ -217,12 +252,19 @@ class OracleDocker:
 def test_the_oracle_run_keeps_its_calls_state_its_exit_and_whether_its_report_came_back(tmp_path, said, code, report, call, exit,
                                                                                        seen):
     task = SimpleNamespace(id="toy-1", repo="/w/toy", test_modules=["t.py"])
-    ctx = SimpleNamespace(docker=OracleDocker(said, code, report), g6={"commit": "0" * 40}, variant=we.ROUND3)
-    got = we._oracle_run(ctx, task, label="base")
+    plugin = None if report is None else PLUGIN if b"broken" not in report else b'{"node": "t.py::bug", "wh'
+    ctx = SimpleNamespace(docker=OracleDocker(said, code, report, plugin), g6={"commit": "0" * 40}, variant=we.ROUND3)
+    got = we._oracle_run(ctx, task, label="base", report=True)
     assert (got["call"], got["pytest_exit"], got["report"]) == (call, exit, report is not None and b"broken" not in report), got
-    assert box.tests_seen(got, ["t::bug", "t::ok"])["state"] == seen
-    assert we.observed(got, ["t::bug"]) == {"call": call, "call_why": got["call_why"], "pytest_exit": exit,
-                                            "report": got["report"], "results": {"t::bug": "failed"} if got["report"] else {}}
+    assert box.tests_seen(got, ["t.py::bug", "t.py::ok"])["state"] == seen
+    own = plugin == PLUGIN
+    assert we.observed(got, ["t.py::bug"]) == {"call": call, "call_why": got["call_why"], "pytest_exit": exit,
+                                               "report": got["report"], "tests": {"t.py::bug": "failed"} if own else None,
+                                               "junit": {"t.py::bug": "t::bug"} if own else {},
+                                               "collect_errors": [] if own else None}
+    junit_only = we._oracle_run(SimpleNamespace(docker=OracleDocker(said, code, report), g6={"commit": "0" * 40},
+                                                variant=we.ROUND3), task, label="base")
+    assert box.tests_seen(junit_only, ["t::bug", "t::ok"])["state"] == U, "a junit key gave a test its identity"
 
 
 def test_the_round_trip_compares_bytes_it_read_never_a_capture_that_failed(tmp_path):
@@ -231,7 +273,7 @@ def test_the_round_trip_compares_bytes_it_read_never_a_capture_that_failed(tmp_p
             self.capture_code, self.copies = capture_code, copies
 
         def sh(self, *a, **kw):
-            return done(self.capture_code)
+            return done(self.capture_code, STEPS_PASSED if self.capture_code == 0 else b"")
 
         def __call__(self, *args, **kw):
             if args[0] == "cp" and self.copies:
@@ -249,12 +291,12 @@ def test_the_round_trip_compares_bytes_it_read_never_a_capture_that_failed(tmp_p
 
 # --- a base's collection error, by the coordinator's ruling (2026-11-06) -----------------------------------------------------------
 #: A base whose run errors collecting the module that holds the fail-to-pass test (pytest's own report: a failed collection's node
-#: id), and a gold patch's run, on the same image ids, whose own report gives that test's node id below that module and saw it pass.
-NEW, OLD = "tests.test_new::test_bug", "tests.test_old::test_ok"
-ERRED = body({"::tests.test_new": "error", OLD: "passed"}, exit="2", nodes={OLD: "tests/test_old.py::test_ok"},
-             collect_errors=["tests/test_new.py"])
-GOLD_RUN = body({NEW: "passed", OLD: "passed"}, exit="0",
-                nodes={NEW: "tests/test_new.py::test_bug", OLD: "tests/test_old.py::test_ok"}, collect_errors=[])
+#: id), and a gold patch's run, on the same image ids, whose own report holds that test, by its node id below that module, passing.
+#: Each test is its node id (replay cohort, repair 3); junit's rendering of the collection error is no test of the report's.
+NEW, OLD = "tests/test_new.py::test_bug", "tests/test_old.py::test_ok"
+ERRED = body({OLD: "passed"}, exit="2", junit={OLD: "tests.test_old::test_ok"}, collect_errors=["tests/test_new.py"])
+GOLD_RUN = body({NEW: "passed", OLD: "passed"}, exit="0", junit={NEW: "tests.test_new::test_bug", OLD: "tests.test_old::test_ok"},
+                collect_errors=[])
 
 
 def test_a_base_collection_error_of_the_fail_to_pass_tests_module_is_seen_failing_when_the_gold_run_saw_it_pass():
@@ -265,15 +307,15 @@ def test_a_base_collection_error_of_the_fail_to_pass_tests_module_is_seen_failin
 
 @pytest.mark.parametrize(("base", "gold", "why"), [
     ({**ERRED, "collect_errors": ["tests/test_other.py"]}, GOLD_RUN, "a module that holds no fail-to-pass test"),
-    (ERRED, {**GOLD_RUN, "results": {NEW: "error", OLD: "passed"}}, "the gold run errors too"),
-    (ERRED, {**GOLD_RUN, "results": {OLD: "passed"}}, "the gold run has no result for it"),
-    (ERRED, {**GOLD_RUN, "nodes": {OLD: "tests/test_old.py::test_ok"}}, "the gold run's report gives no node id for it"),
+    (ERRED, {**GOLD_RUN, "tests": {NEW: "error", OLD: "passed"}}, "the gold run errors too"),
+    (ERRED, {**GOLD_RUN, "tests": {OLD: "passed"}}, "the gold run has no result for it"),
+    (ERRED, {**GOLD_RUN, "tests": None, "results": {"tests.test_new::test_bug": "passed"}},
+     "the gold run kept only junit's report: no test of it has an identity"),
     ({k: v for k, v in ERRED.items() if k != "collect_errors"}, GOLD_RUN, "the base's own report names no collection error: "
                                                                           "only its junit rendering does"),
     ({**ERRED, "collect_errors": ["tests/test_new"]}, GOLD_RUN, "an error whose node id is not the module the test is below"),
     ({**ERRED, "collect_errors": "tests/test_new.py"}, GOLD_RUN, "a report that is not a list of node ids"),
-    ({**ERRED, "results": {OLD: "passed"}, "collect_errors": ["tests/test_old.py"]}, GOLD_RUN,
-     "an error in the module of a pass-to-pass test only"),
+    ({**ERRED, "collect_errors": ["tests/test_old.py"]}, GOLD_RUN, "an error in the module of a pass-to-pass test only"),
 ])
 def test_a_collection_error_stays_unknown_unless_pytests_own_report_puts_the_test_below_it_and_the_gold_run_saw_it_pass(base,
                                                                                                                        gold, why):
@@ -305,14 +347,14 @@ def test_the_base_control_reads_the_gold_run_of_the_same_image_ids_and_the_empty
 #: on the same two image ids: (base or empty body, gold body).
 CASES = {"seen failing": (ERRED, GOLD_RUN),
          "a module that holds no fail-to-pass test": ({**ERRED, "collect_errors": ["tests/test_other.py"]}, GOLD_RUN),
-         "the gold run errors too": (ERRED, {**GOLD_RUN, "results": {NEW: "error", OLD: "passed"}}),
-         "the gold run has no result for it": (ERRED, {**GOLD_RUN, "results": {OLD: "passed"}}),
-         "the gold run's report gives no node id for it": (ERRED, {**GOLD_RUN, "nodes": {OLD: "tests/test_old.py::test_ok"}}),
+         "the gold run errors too": (ERRED, {**GOLD_RUN, "tests": {NEW: "error", OLD: "passed"}}),
+         "the gold run has no result for it": (ERRED, {**GOLD_RUN, "tests": {OLD: "passed"}}),
+         "the gold run kept only junit's report": (ERRED, {**GOLD_RUN, "tests": None,
+                                                           "results": {"tests.test_new::test_bug": "passed"}}),
          "only junit's rendering names the error": ({k: v for k, v in ERRED.items() if k != "collect_errors"}, GOLD_RUN),
          "an error node id that is not the test's module": ({**ERRED, "collect_errors": ["tests/test_new"]}, GOLD_RUN),
          "a report that is not a list of node ids": ({**ERRED, "collect_errors": "tests/test_new.py"}, GOLD_RUN),
-         "an error in the module of a pass-to-pass test only": ({**ERRED, "results": {OLD: "passed"},
-                                                                 "collect_errors": ["tests/test_old.py"]}, GOLD_RUN)}
+         "an error in the module of a pass-to-pass test only": ({**ERRED, "collect_errors": ["tests/test_old.py"]}, GOLD_RUN)}
 
 
 def _case_record(run, gold):
@@ -381,25 +423,96 @@ class ReportDocker(OracleDocker):
         return super().sh(ctr, script, *a, **kw)
 
 
-def test_an_oracle_run_asked_for_pytests_own_report_keeps_each_tests_node_id_and_each_failed_collection(tmp_path):
-    lines = b"".join(json.dumps(x).encode() + b"\n" for x in (
-        {"collect_error": "tests/test_new.py"}, {"node": "tests/test_old.py::test_ok", "junit": OLD},
-        {"node": "tests/test_old.py::test_ok", "junit": OLD}))
+def test_an_oracle_run_asked_for_pytests_own_report_keeps_each_tests_outcome_by_node_id_and_each_failed_collection(tmp_path):
+    lines = plugin_lines({"collect_error": "tests/test_new.py"}, phase(OLD, "setup", "passed", "tests.test_old::test_ok"),
+                         phase(OLD, "call", "passed", "tests.test_old::test_ok"),
+                         phase(OLD, "teardown", "passed", "tests.test_old::test_ok"), finished=2)
     task = SimpleNamespace(id="toy-1", repo="/w/toy", test_modules=["t.py"])
     docker = ReportDocker(lines)
     got = we._oracle_run(SimpleNamespace(docker=docker, g6={"commit": "0" * 40}, variant=we.ROUND3), task, label="base", report=True)
-    assert got["collect_errors"] == ["tests/test_new.py"] and got["nodes"] == {OLD: "tests/test_old.py::test_ok"}
+    assert got["collect_errors"] == ["tests/test_new.py"] and got["tests"] == {OLD: "passed"}
+    assert got["junit"] == {OLD: "tests.test_old::test_ok"} and "nodes" not in got
     assert docker.written[we.PLUGIN_AT] == we.REPORT_PLUGIN.encode() and "-p we_report" in docker.scripts[-1]
-    assert we.observed(got, [NEW, OLD])["nodes"] == {OLD: "tests/test_old.py::test_ok"}
+    assert we.observed(got, [NEW, OLD])["tests"] == {OLD: "passed"}
     lost = we._oracle_run(SimpleNamespace(docker=ReportDocker(None), g6={"commit": "0" * 40}, variant=we.ROUND3), task,
                           label="base", report=True)
-    assert lost["collect_errors"] is None and lost["nodes"] is None          # not recorded: the rule cannot apply
+    assert lost["collect_errors"] is None and lost["tests"] is None and lost["junit"] is None   # not recorded: no identities
+    assert box.tests_seen(lost, [OLD])["state"] == U
     plain = we._oracle_run(SimpleNamespace(docker=OracleDocker(b"exit=1\n", 0, JUNIT), g6={"commit": "0" * 40},
                                            variant=we.ROUND3), task, label="base")
-    assert "nodes" not in plain and "collect_errors" not in plain            # the study's own runs are as they were
+    assert "tests" not in plain and "collect_errors" not in plain            # the study's own runs are as they were
 
 
-def test_the_report_plugin_gives_pytests_own_node_ids_and_the_junit_key_pytest_itself_computes(tmp_path):
+KINDS = '''import pytest
+
+
+@pytest.fixture
+def broken_setup():
+    raise RuntimeError("setup")
+
+
+@pytest.fixture
+def broken_teardown():
+    yield
+    raise RuntimeError("teardown")
+
+
+def test_pass():
+    pass
+
+
+def test_fail():
+    assert 0
+
+
+def test_setup_error(broken_setup):
+    pass
+
+
+def test_teardown_error(broken_teardown):
+    pass
+
+
+def test_fail_and_teardown_error(broken_teardown):
+    assert 0
+
+
+def test_skip():
+    pytest.skip("no")
+
+
+@pytest.mark.skipif(True, reason="no")
+def test_skip_mark():
+    pass
+
+
+@pytest.mark.xfail(reason="known")
+def test_xfail():
+    assert 0
+
+
+@pytest.mark.xfail(reason="known", strict=True)
+def test_xpass_strict():
+    pass
+
+
+@pytest.mark.xfail(reason="known")
+def test_xpass():
+    pass
+'''
+
+
+def _plugin_run(project: Path, plugins: Path, tmp_path: Path, *args: str):
+    import os
+    import subprocess
+    report, junit = tmp_path / "report.jsonl", tmp_path / "junit.xml"
+    done_ = subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-p", "we_report", "-q", f"--junitxml={junit}",
+                            "-o", "junit_family=xunit2", *args], cwd=project, capture_output=True, timeout=120,
+                           env={**os.environ, "PYTHONPATH": str(plugins), "WE_REPORT": str(report), "PYTHONDONTWRITEBYTECODE": "1"})
+    return done_, report, junit
+
+
+def test_the_report_plugin_gives_each_tests_outcome_by_node_id_as_junit_takes_it_with_its_junit_key_beside(tmp_path):
     project, plugins = tmp_path / "project", tmp_path / "plugins"
     (project / "tests").mkdir(parents=True)
     plugins.mkdir()
@@ -409,20 +522,116 @@ def test_the_report_plugin_gives_pytests_own_node_ids_and_the_junit_key_pytest_i
     (project / "tests" / "test_old.py").write_text("class TestOld:\n    def test_ok(self):\n        pass\n\n"
                                                     "import pytest\n\n@pytest.mark.parametrize('x', [1, 2])\n"
                                                     "def test_p(x):\n    pass\n", encoding="utf-8")
+    (project / "tests" / "test_kinds.py").write_text(KINDS, encoding="utf-8")
     (plugins / "we_report.py").write_text(we.REPORT_PLUGIN, encoding="utf-8")
-    report, junit = tmp_path / "report.jsonl", tmp_path / "junit.xml"
-    import os
-    done_ = __import__("subprocess").run(                  # the other module's tests run too, so one report holds both kinds
-        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-p", "we_report", "-q", f"--junitxml={junit}",
-         "-o", "junit_family=xunit2", "--continue-on-collection-errors", "tests"], cwd=project, capture_output=True, timeout=120,
-        env={**os.environ, "PYTHONPATH": str(plugins), "WE_REPORT": str(report)})
+    done_, report, junit = _plugin_run(project, plugins, tmp_path, "--continue-on-collection-errors", "tests")
     assert done_.returncode == 1, done_.stdout
     got = we.read_report(report.read_bytes())
     assert got["collect_errors"] == ["tests/test_new.py"], got
     keys = we.parse_junit(junit.read_text(encoding="utf-8"))
-    assert {k for k in keys if keys[k] == "passed"} == set(got["nodes"]), (keys, got)     # the same tests, keyed as junit keys them
-    assert got["nodes"]["tests.test_old.TestOld::test_ok"] == "tests/test_old.py::TestOld::test_ok"
-    assert got["nodes"]["tests.test_old::test_p[2]"] == "tests/test_old.py::test_p[2]"
+    shown = got["junit"]
+    assert set(shown) == set(got["tests"]) and len(set(shown.values())) == len(shown)      # here no two share a junit key
+    assert {shown[node]: outcome for node, outcome in got["tests"].items()} == {k: v for k, v in keys.items() if "::" in k
+                                                                                and not k.startswith("::")}, (keys, got)
+    kinds = {node.split("::")[-1]: outcome for node, outcome in got["tests"].items() if "test_kinds" in node}
+    assert kinds == {"test_pass": "passed", "test_fail": "failed", "test_setup_error": "error", "test_teardown_error": "error",
+                     "test_fail_and_teardown_error": "error", "test_skip": "skipped", "test_skip_mark": "skipped",
+                     "test_xfail": "skipped", "test_xpass_strict": "failed", "test_xpass": "passed"}, kinds
+    assert got["tests"]["tests/test_old.py::TestOld::test_ok"] == "passed"
+    assert shown["tests/test_old.py::test_p[2]"] == "tests.test_old::test_p[2]"
+
+
+@pytest.mark.parametrize(("lines", "why"), [
+    (plugin_lines(phase("t.py::a", "call", "passed"), finished=None), "no session end: pytest did not finish, or was cut short"),
+    (plugin_lines(phase("t.py::a", "call", "passed"))[:-1] + b"\n" + plugin_lines(phase("t.py::b", "call", "passed"), finished=None),
+     "the session's end before another line"),
+    (plugin_lines({"node": "t.py::a", "junit": "t::a"}), "a line in the form that kept no outcome"),
+    (plugin_lines(phase("t.py::a", "call", "maybe")), "an outcome pytest never gives"),
+    (plugin_lines(phase("t.py::a", "later", "passed")), "a phase pytest never has"),
+    (plugin_lines(phase("t.py::a", "call", "passed"), finished=True), "a session end that is no exit status"),
+    (plugin_lines({"node": "t.py::\ud800", "when": "call", "outcome": "passed", "junit": None}), "a node id no UTF-8 can hold"),
+    (b'{"node": "t.py::a", "when": "call", "outco', "a torn line"),
+    (b"", "nothing at all"),
+])
+def test_a_report_pytest_did_not_finish_or_that_is_not_the_plugins_gives_no_test_an_identity(lines, why):
+    assert we.read_report(lines) is None, why
+
+
+def test_a_tests_outcome_is_the_worst_of_its_phases_and_two_node_ids_stay_two_tests_whatever_their_junit_keys():
+    got = we.read_report(plugin_lines(phase("t.py::a[\x01]", "setup", "passed", "t::a[\x01]"),
+                                      phase("t.py::a[\x01]", "call", "passed", "t::a[\x01]"),
+                                      phase("t.py::a[\x01]", "teardown", "failed", "t::a[\x01]"),
+                                      phase("t.py::a[#x01]", "call", "passed", "t::a[\x01]"),
+                                      phase("t.py::b", "setup", "passed"), phase("t.py::b", "teardown", "passed")))
+    assert got["tests"] == {"t.py::a[\x01]": "error", "t.py::a[#x01]": "passed"}, got        # b never reached its call: no result
+    assert got["junit"] == {"t.py::a[\x01]": "t::a[\x01]", "t.py::a[#x01]": "t::a[\x01]"}    # one key shown for both, two tests
+
+
+# --- review 3's finding 3: two node ids junit renders as one key stay two tests ------------------------------------------------
+def test_review_3_finding_3_a_different_pytest_nodes_failure_never_supplies_a_failure_for_another_node(tmp_path):
+    import os
+    import subprocess
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pytest.ini").write_text(
+        "[pytest]\ndisable_test_id_escaping_and_forfeit_all_rights_to_community_support = True\n", encoding="utf-8")
+    (project / "we_report.py").write_text(we.REPORT_PLUGIN, encoding="utf-8")
+    # The same maintainer test is parametrized from the library's public data. pytest keeps the two ids, while junit renders the
+    # control character as the other's text.
+    (project / "test_case.py").write_text(
+        "import pytest\nfrom mod import value\n"
+        "@pytest.mark.parametrize('item', [value], ids=[value])\n"
+        "def test_case(item):\n    assert item == '#x01'\n", encoding="utf-8")
+
+    def observed_run(value, name):
+        (project / "mod.py").write_text("value = " + repr(value) + "\n", encoding="utf-8")
+        junit = tmp_path / (name + ".xml")
+        report = tmp_path / (name + ".jsonl")
+        ran = subprocess.run(
+            [sys.executable, "-m", "pytest", "test_case.py", "-q", "-p", "no:cacheprovider", "-p", "we_report",
+             "-c", str(project / "pytest.ini"), "--rootdir=" + str(project), "--junitxml=" + str(junit),
+             "-o", "junit_family=xunit2", "-o", "disable_test_id_escaping_and_forfeit_all_rights_to_community_support=True"],
+            cwd=project, env={**os.environ, "PYTHONPATH": str(project), "WE_REPORT": str(report), "PYTHONDONTWRITEBYTECODE": "1"},
+            capture_output=True, timeout=60)
+        assert ran.returncode == (0 if value == "#x01" else 1), ran.stdout + ran.stderr
+        docker = ReportDocker(report.read_bytes())        # the producer's real files through the oracle's own reader
+        docker.report = junit.read_bytes()
+        docker.said = f"exit={ran.returncode}\n".encode()
+        task = SimpleNamespace(id="toy-1", repo="/w/toy", test_modules=("test_case.py",))
+        return we._oracle_run(SimpleNamespace(docker=docker, g6={"commit": "0" * 40}, variant=we.ROUND3), task, report=True)
+
+    base = observed_run("\x01", "base")
+    gold = observed_run("#x01", "gold")
+    assert set(base["results"]) == set(gold["results"]), "junit renders the two node ids as one key (the finding's premise)"
+    assert set(base["tests"]).isdisjoint(gold["tests"]), "pytest's own report keeps them two tests"
+    f2p, p2p = we.fail_to_pass(base["tests"], gold["tests"])
+    ids = {"task_image_id": "sha256:" + "a" * 64, "oracle_image_id": "sha256:" + "b" * 64}
+    record = {
+        "validate": {"images": ids, "fail_to_pass": f2p, "pass_to_pass": p2p, "base": base, "fixed": gold},
+        "selfcheck": {"images": ids, "gold": gold, "empty": base},
+        "round_trip": {"images": ids, "status": "finished", "kept_read": True, "known_bytes": 1,
+                       "kept_bytes": 1, "known_sha256": "c" * 64, "kept_sha256": "c" * 64},
+        "images_after": ids,
+    }
+    assert cohorts.admit(record, ids) != "", "a different pytest node's failure admitted the bug"
+    junit_keyed = we.fail_to_pass(base["results"], gold["results"])          # the lists as junit keys would give them
+    record["validate"].update(fail_to_pass=junit_keyed[0], pass_to_pass=junit_keyed[1])
+    assert cohorts.admit(record, ids) != "", "a junit key gave a test its identity"
+
+
+def test_a_record_that_kept_only_junits_report_has_no_test_identities_so_no_control_holds():
+    ids = {"task_image_id": ORACLE, "oracle_image_id": ORACLE}
+    junit = {k: {key: value for key, value in v.items() if key != "tests"} | {"results": dict(v["tests"])} for k, v in GOOD.items()}
+    record = {"validate": {"images": ids, "fail_to_pass": ["t::bug"], "pass_to_pass": ["t::ok"], "base": junit["base"],
+                           "fixed": junit["fixed"]},
+              "selfcheck": {"images": ids, "gold": junit["gold"], "empty": junit["empty"]},
+              "round_trip": {**TRIP, "images": ids}, "images_after": ids}
+    for control in ("base", "gold patch", "empty patch"):
+        assert cohorts.control_why(record, control) != "", control
+    assert cohorts.admit(record, ids).startswith("base: ")
+    for name in ("base", "fixed", "gold", "empty"):                      # the same outcomes, by node id, hold
+        record["validate" if name in ("base", "fixed") else "selfcheck"][name] = GOOD[name]
+    assert cohorts.admit(record, ids) == ""
 
 
 # --- finding 8: the call phases are a closed set -----------------------------------------------------------------------------------
@@ -484,15 +693,15 @@ def test_no_phase_outside_the_closed_set_is_ever_written(tmp_path):
 # --- the inventory: every place a container result or a test report is read --------------------------------------------------------
 #: What is a read: an exit code or an output taken from a call's result (``.returncode``, ``.stdout``, ``.stderr``, but
 #: ``sys``'s own streams), the runner's raw readers of a result (``out``, ``err``), a test report's parse (``parse_junit``,
-#: ``read_probes``), or a test report's results or exit taken from a body (``"results"``, ``"pytest_exit"``).
-ATTRS, RAW, KEYS = {"returncode", "stdout", "stderr"}, {"out", "err", "parse_junit", "read_probes"}, {"results", "pytest_exit"}
-#: The one reader, and the ``read`` each consumer hands it to take its answer from a call's output.
-READERS = {("box_mcp.py", "seen"), ("box_mcp.py", "tests_seen"), ("box_mcp.py", "_run_seen"), ("box_mcp.py", "_collect_failed"),
-           ("box_mcp.py", "seen_failing")}
+#: ``read_probes``), or a test report's results or exit taken from a body (``"results"``, ``"tests"``, ``"pytest_exit"``).
+ATTRS, RAW, KEYS = {"returncode", "stdout", "stderr"}, {"out", "err", "parse_junit", "read_probes"}, {"results", "tests", "pytest_exit"}
+#: The one reader, and the ``read`` each consumer hands it to take its answer from a call's output. A test's outcomes are taken by
+#: ``tests_of`` alone (replay cohort, repair 3), which ``_run_seen``, ``_collect_failed`` and ``seen_failing`` call.
+READERS = {("box_mcp.py", "seen"), ("box_mcp.py", "tests_seen"), ("box_mcp.py", "unobserved_why"), ("box_mcp.py", "tests_of")}
 #: Where the controls, the probe and the call phases start, and the host run, which the round trip reads only by its record's
 #: status, its ``final_patch_read`` and the kept patch ``keep_final`` read: a boundary the walk below does not cross.
 ROOTS = {("cohorts.py", n) for n in ("main", "controls", "manifest", "admit", "round_trip", "known_patch", "image_ids")} | \
-        {("run.py", n) for n in ("patch_bytes", "keep_final", "workspace_from")} | {("box_mcp.py", n) for n in ("call", "settle", "serve")}
+        {("run.py", n) for n in ("loop_status", "keep_final", "workspace_from")} | {("box_mcp.py", n) for n in ("call", "settle", "serve")}
 BOUNDARY = {("run.py", "_run_task")}
 #: Inside the controls, the probe and the call phases: the places that read a test report's results other than the reader, each
 #: with why it is not a verdict the reader should give.
@@ -597,7 +806,7 @@ def test_every_place_a_container_result_or_a_test_report_is_read_is_listed_and_i
     functions = {(file, name): fn for file in ("box_mcp.py", "cohorts.py", "run.py") for name, fn in _functions(file).items()}
     sites = {(file, name, kind) for (file, name), fn in functions.items() for kind in _reads(fn)}
     scope = _scope(functions)
-    assert {("run.py", "patch_bytes"), ("run.py", "_oracle_run"), ("run.py", "validate"), ("run.py", "selfcheck"),
+    assert {("run.py", "capture_why"), ("run.py", "_oracle_run"), ("run.py", "validate"), ("run.py", "selfcheck"),
             ("run.py", "checked"), ("run.py", "copy_out"), ("cohorts.py", "control_why"), ("box_mcp.py", "mirror"),
             ("box_mcp.py", "pull"), ("box_mcp.py", "run_command"), ("box_mcp.py", "read_state")} <= scope
     inside = {s for s in sites if s[:2] in scope and s[:2] not in READERS}
@@ -647,7 +856,75 @@ def test_both_controls_decide_a_seen_failure_by_the_one_rule_and_nothing_else_de
         assert empties, f"{key[1]} reads an empty patch or a base without the one rule"
 
 
+# --- the inventory: every place a test's identity is taken (replay cohort, repair 3, review 3's finding 3) ------------------------
+#: What takes a test's identity: an outcome map read by its key (``results``, junit's keys; ``tests``, pytest's node ids; ``junit``,
+#: the display; ``nodes``, the junit-keyed map repair 3 removed; ``node``, the plugin's own field), or a call that makes or keys one.
+ID_KEYS, ID_CALLS = {"results", "tests", "junit", "nodes", "node"}, {"parse_junit", "read_report", "fail_to_pass", "tests_of"}
+#: Every place, by (module, function, what), with its part. Inside the controls only ``tests_of`` gives a test its identity, and only
+#: the node id pytest's own report gives: a junit key is a producer's, a display, or the study's frozen scoring.
+IDENTITY = {
+    ("box_mcp.py", "tests_of", "[tests]"): "THE one place a test's identity is taken: the node ids of pytest's own report",
+    ("box_mcp.py", "tests_seen", "tests_of()"): "the reader, by node id",
+    ("box_mcp.py", "seen_failing", "tests_of()"): "the one rule for a seen failure, by node id",
+    ("box_mcp.py", "_collect_failed", "tests_of()"): "the gold run's pass of the same node id",
+    ("box_mcp.py", "unobserved_why", "tests_of()"): "a run is observed only with its tests' identities",
+    ("cohorts.py", "control_why", "tests_of()"): "names a base or fix with no identities, when no list was made",
+    ("run.py", "read_report", "[node]"): "the producer: each test's node id, from pytest's own report",
+    ("run.py", "read_report", "[junit]"): "the producer: the junit key beside each node id, for display",
+    ("run.py", "_oracle_run", "read_report()"): "the producer: pytest's own report into the body's tests",
+    ("run.py", "_oracle_run", "parse_junit()"): "the producer: junit's report into results, the study's frozen scoring",
+    ("run.py", "_oracle_run", "[results]"): "the producer: junit's results set from the report it read",
+    ("run.py", "observed", "tests_of()"): "the record's copy of the node ids",
+    ("run.py", "observed", "[junit]"): "the record's copy of the display",
+    ("run.py", "observed", "[results]"): "the record's copy for a run with no report of pytest's own: the study's",
+    ("run.py", "validate", "tests_of()"): "the lists, by node id, when pytest's own report was asked for",
+    ("run.py", "validate", "fail_to_pass()"): "the lists, by node id, or by junit key for the study's frozen check",
+    ("run.py", "validate", "[results]"): "the study's lists, by junit key, when pytest's own report was not asked for",
+    ("run.py", "selfcheck", "tests_of()"): "verdict's display, by the lists' own identity",
+    ("run.py", "selfcheck", "[results]"): "verdict's display for the study's junit-keyed lists",
+    ("run.py", "amend", "[results]"): "the amended tests' own controls, by the frozen rule's junit keys: the study's",
+    ("run.py", "amend", "fail_to_pass()"): "the amended tests' lists, by the frozen rule's junit keys: the study's",
+    ("run.py", "check", "[results]"): "the independent check that scores a run, by the frozen rule's junit keys: the study's",
+    ("run.py", "brief", "[results]"): "a printed count of a validate record's results",
+    ("run.py", "read_probes", "parse_junit()"): "a probe run's junit, the study's arms",
+}
+
+
+def _identity_sites(fn: ast.AST) -> set[str]:
+    found: set[str] = set()
+
+    def visit(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if isinstance(child, ast.Call):
+                name = child.func.attr if isinstance(child.func, ast.Attribute) else getattr(child.func, "id", "")
+                if name in ID_CALLS:
+                    found.add(name + "()")
+                elif name == "get" and child.args and isinstance(child.args[0], ast.Constant) and child.args[0].value in ID_KEYS:
+                    found.add(f"[{child.args[0].value}]")
+            elif isinstance(child, ast.Subscript) and isinstance(child.slice, ast.Constant) and child.slice.value in ID_KEYS:
+                found.add(f"[{child.slice.value}]")
+            visit(child)
+    visit(fn)
+    return found
+
+
+def test_every_place_a_tests_identity_is_taken_is_listed_and_inside_the_controls_only_the_node_id_decides():
+    functions = {(file, name): fn for file in ("box_mcp.py", "cohorts.py", "run.py") for name, fn in _functions(file).items()}
+    sites = {(file, name, kind) for (file, name), fn in functions.items() for kind in _identity_sites(fn)}
+    assert sites == set(IDENTITY), ("a place a test's identity is taken that is not listed, or one listed that is gone",
+                                    sorted(sites - set(IDENTITY)), sorted(set(IDENTITY) - sites))
+    assert not any(kind == "[nodes]" for _, _, kind in sites), "a junit-keyed map of node ids is read again"
+    deciding = {("box_mcp.py", n) for n in ("tests_seen", "seen_failing", "_collect_failed", "_run_seen", "unobserved_why")} | {("cohorts.py", n)
+                                                                                                               for n in ("control_why", "admit", "summary")}
+    for key in deciding:                 # the readers and the controls take outcomes by node id only, through tests_of
+        assert not {kind for f, n, kind in sites if (f, n) == key} - {"tests_of()"}, key
+    assert ("box_mcp.py", "tests_of") in functions and box.tests_of({"results": {"t": "failed"}}) is None
+
+
 # --- an exit status is a number that was seen (replay cohort, repair 2, review 2's finding 4) ------------------------------------
+
 @pytest.mark.parametrize(("value", "code"), [
     ("0", 0), ("1", 1), ("2", 2), ("124", 124), ("255", 255), (0, 0), (5, 5), ("124\n", 124), (" 1 ", 1),
     ("", None), (" ", None), (None, None), ("abc", None), ("1.0", None), ("-1", None), ("256", None), ("1\n2", None),
@@ -697,11 +974,11 @@ EXIT_READERS = {("box_mcp.py", "seen"), ("box_mcp.py", "exit_status")}
 #: Inside the controls, the probe and the call phases: each place that reads an exit status, and how. Each that reads pytest's exit
 #: reads it through ``exit_status`` (``THROUGH``), and each that reads a return code through ``seen``.
 EXIT_INSIDE = {
-    ("box_mcp.py", "_run_seen", "[pytest_exit]"): "through exit_status: a gold run's exit, for the collection rule",
+    ("box_mcp.py", "unobserved_why", "[pytest_exit]"): "through exit_status: whether a run, a gold run among them, was seen to end",
     ("box_mcp.py", "tests_seen", "[pytest_exit]"): "through exit_status: no integer written is no exit status, so unknown",
     ("run.py", "pytest_exit", "exit="): "the exit= line, given only when exit_status reads it as an integer that was written",
 }
-THROUGH = {("box_mcp.py", "_run_seen"), ("box_mcp.py", "tests_seen"), ("run.py", "pytest_exit")}
+THROUGH = {("box_mcp.py", "unobserved_why"), ("box_mcp.py", "tests_seen"), ("run.py", "pytest_exit")}
 #: Outside them, every function that reads an exit status, with why it is not a control's: a new one fails until it is named.
 _PROBED = "a probe run's exit, as read_probes read it (digits only, else None, so the run is not usable): " + _STUDY
 EXIT_OUTSIDE = {

@@ -381,8 +381,8 @@ class Seen(NamedTuple):
 
 
 def seen(done: Any, read: Callable[[bytes], Any] | None = None) -> Seen:
-    """The one reader of a container call's result, which every consumer imports: the box's own steps, the runner's captures and
-    the patch-size probe (``run.patch_bytes``), the cohort controls (``run._oracle_run``, ``cohorts``) and ``run.checked``.
+    """The one reader of a container call's result, which every consumer imports: the box's own steps, the runner's captures (each
+    step's status their answer, ``run.capture_why``), the cohort controls (``run._oracle_run``, ``cohorts``) and ``run.checked``.
     ``done`` is what docker returned (a return code and an output); ``read``, for a call whose answer is a line its command
     prints, takes that answer from the output, or gives None when it is not there.
 
@@ -421,57 +421,83 @@ def exit_status(value: Any) -> int | None:
     return value if isinstance(value, int) and 0 <= value <= 255 else None
 
 
+def tests_of(body: Any) -> Mapping[str, Any] | None:
+    """The one place a test's identity is taken (replay cohort, repair 3, review 3's finding 3): a test run's outcomes by the node
+    id pytest's own report gives each test (``run.read_report``, the body's ``tests``), or None when the run kept no such report:
+    it did not come back, could not be read or was never asked for. A junit key is a rendering of a node id, which two node ids can
+    share, so a run with only junit's report has no test identities."""
+    tests = body.get("tests") if isinstance(body, Mapping) else None
+    return tests if isinstance(tests, Mapping) else None
+
+
+def unobserved_why(body: Any) -> str:
+    """Why a test run (a ``run._oracle_run`` body) was not observed, "" when it was (``tests_seen``'s first rules, and
+    ``_run_seen``'s): its patch did not apply; its call was not seen to pass (``seen``), or its own result was never recorded; no
+    exit status came back (one that is no integer written is none: ``exit_status``); or pytest's own report did not come back,
+    so no test of it has an identity (``tests_of``; a timeout with no result among them, and a run that kept only junit's
+    report)."""
+    body = body if isinstance(body, Mapping) else {}
+    if body.get("patch_applied") is False:
+        return "the patch did not apply, so no test ran on it"
+    if body.get("call") != PASSED:
+        return (f"the test call was not seen to run: {body.get('call_why') or body.get('call')}" if "call" in body else
+                "the test call's own result was never recorded")
+    exit_ = exit_status(body.get("pytest_exit"))
+    if exit_ is None:
+        return ("no exit status came back: the tests were not seen to end" if body.get("pytest_exit") is None else
+                f"no exit status came back, {body.get('pytest_exit')!r} is no integer written: the tests were not seen to end")
+    if tests_of(body) is None:
+        return ("the tests ran out of time (exit 124) with no report" if exit_ == 124 else
+                f"no test report came back (exit {exit_}): pytest's own report gave no test an identity")
+    return ""
+
+
 def _run_seen(body: Any) -> bool:
-    """Whether a test run was observed: its call seen to pass, its exit and its report came back (``tests_seen``'s first rules)."""
-    return (isinstance(body, Mapping) and body.get("patch_applied") is not False and body.get("call") == PASSED
-            and exit_status(body.get("pytest_exit")) is not None and isinstance(body.get("results"), Mapping)
-            and bool(body.get("report", bool(body.get("results")))))
+    """Whether a test run was observed (``unobserved_why``)."""
+    return isinstance(body, Mapping) and not unobserved_why(body)
 
 
 def _collect_failed(test: str, body: Mapping[str, Any], gold: Mapping[str, Any] | None) -> bool:
-    """Whether pytest's own report shows ``test`` failing at collection in ``body``'s run (coordinator's ruling, 2026-11-06): the
-    run's report names a failed collection (``collect_errors``, node ids as pytest gives them) whose node id, with "::", begins
-    the test's own node id, which only ``gold`` (the gold patch's run, on the same image ids, ``cohorts.control_why``) can give,
-    as pytest's report of it (``nodes``), and that run, observed, saw the test pass. Anything else is no failure: a collection
-    error in a module that holds no such test, a gold run that errors or holds no result for it, or a test whose module pytest's
-    own report does not tie to the error."""
+    """Whether pytest's own report shows ``test`` (a node id) failing at collection in ``body``'s run (coordinator's ruling,
+    2026-11-06): the run's report names a failed collection (``collect_errors``, node ids as pytest gives them) whose node id, with
+    "::", begins the test's node id, and ``gold`` (the gold patch's run, on the same image ids, ``cohorts.control_why``), observed,
+    saw that test pass. Anything else is no failure: a collection error in a module that holds no such test, a gold run that
+    errors or holds no result for it, or a run whose own report names no collection error."""
     errors = body.get("collect_errors")
-    nodes = gold.get("nodes") if isinstance(gold, Mapping) else None
-    if not (isinstance(errors, list) and isinstance(nodes, Mapping) and _run_seen(gold) and gold["results"].get(test) == "passed"):
+    if not (isinstance(errors, list) and _run_seen(gold) and tests_of(gold).get(test) == "passed"):
         return False
-    node = nodes.get(test)
-    return isinstance(node, str) and any(isinstance(e, str) and e and node.startswith(e + "::") for e in errors)
+    return any(isinstance(e, str) and e and test.startswith(e + "::") for e in errors)
 
 
 def seen_failing(test: str, body: Mapping[str, Any], gold: Mapping[str, Any] | None = None) -> bool:
     """The one rule for "this test was seen failing" in a run (``body``), by which both the base's and the empty patch's controls
-    decide (``tests_seen``; coordinator's ruling and its Option B, 2026-11-06 and 07): a failure in its test result (failed or
-    error); or, for a fail-to-pass test given the gold patch's run on the same two image ids (``gold``), no result where
-    pytest's own report names a failed collection whose node id and "::" begin the test's node id, and that run saw it pass
-    (``_collect_failed``). Without ``gold``, a missing result is never a failure."""
-    results = body.get("results") if isinstance(body, Mapping) else None
-    if not isinstance(results, Mapping):
+    decide (``tests_seen``; coordinator's ruling and its Option B, 2026-11-06 and 07): ``test`` is a node id, its identity in
+    pytest's own report (``tests_of``); a failure in its outcome there (failed or error); or, for a fail-to-pass test given the
+    gold patch's run on the same two image ids (``gold``), no outcome where pytest's own report names a failed collection whose
+    node id and "::" begin the test's node id, and that run saw it pass (``_collect_failed``). Without ``gold``, a missing result
+    is never a failure; a run with no test identities never fails a test."""
+    tests = tests_of(body)
+    if tests is None:
         return False
-    if results.get(test) in ("failed", "error"):
+    if tests.get(test) in ("failed", "error"):
         return True
-    return gold is not None and test not in results and _collect_failed(test, body, gold)
+    return gold is not None and test not in tests and _collect_failed(test, body, gold)
 
 
 def tests_seen(body: Mapping[str, Any] | None, tests: Iterable[str], *, seen_passing_in: Mapping[str, Any] | None = None,
                fail_to_pass: Iterable[str] = ()) -> dict[str, Any]:
-    """The one reader of a test report (a ``run._oracle_run`` body: its pytest call's state, its exit, whether its report came
-    back, its results), over ``tests``: PASSED when the run was observed and every one of them was seen to pass; FAILED when the
-    run was observed and at least one was seen to fail (failed or error); else UNKNOWN, with why. The run is not observed when
-    its patch did not apply, its call was not seen to pass (``seen``) or its call's own result was never recorded, no exit
-    status came back (one that is no integer written is none: ``exit_status``), or no report came back (a timeout with no result
-    among them); a test the report does not hold, or holds as skipped, is a missing result: never a pass and never a failure.
-    Whether each test was seen to fail is the one rule's
+    """The one reader of a test report (a ``run._oracle_run`` body: its pytest call's state, its exit, and each test's outcome by
+    its identity, the node id pytest's own report gives it, ``tests_of``), over ``tests`` (node ids): PASSED when the run was
+    observed and every one of them was seen to pass; FAILED when the run was observed and at least one was seen to fail (failed
+    or error); else UNKNOWN, with why. A run not observed (``unobserved_why``: among them a timeout with no result, and a run that
+    kept only junit's report, whose keys are renderings and no identity) is UNKNOWN; a test the report does not hold, or holds as
+    skipped, is a missing result: never a pass and never a failure. Whether each test was seen to fail is the one rule's
     (``seen_failing``); ``seen_passing_in``, the gold patch's run on the same image ids, is its evidence for each of
     ``fail_to_pass``, as the base's and the empty patch's controls give them. Returns the state, why, and how many tests were
     seen to pass, seen to fail, and not seen."""
     names = sorted(set(tests))
     body = body if isinstance(body, Mapping) else {}
-    results = body.get("results")
+    results = tests_of(body)
     exit_ = exit_status(body.get("pytest_exit"))
     counts = {"tests": len(names), "passed": 0, "failed": 0, "unknown": len(names)}
 
@@ -480,17 +506,9 @@ def tests_seen(body: Mapping[str, Any] | None, tests: Iterable[str], *, seen_pas
 
     if not names:
         return unknown("there is no test to read")
-    if body.get("patch_applied") is False:
-        return unknown("the patch did not apply, so no test ran on it")
-    if body.get("call") != PASSED:
-        return unknown(f"the test call was not seen to run: {body.get('call_why') or body.get('call')}" if "call" in body else
-                       "the test call's own result was never recorded")
-    if exit_ is None:
-        return unknown("no exit status came back: the tests were not seen to end" if body.get("pytest_exit") is None else
-                       f"no exit status came back, {body.get('pytest_exit')!r} is no integer written: the tests were not seen to end")
-    if not isinstance(results, Mapping) or not body.get("report", bool(results)):
-        return unknown("the tests ran out of time (exit 124) with no report" if exit_ == 124 else
-                       f"no test report came back (exit {exit_})")
+    why = unobserved_why(body)
+    if why or results is None:
+        return unknown(why)
     f2p = set(fail_to_pass or ())
     passed = sum(results.get(t) == "passed" for t in names)
     failed = sum(seen_failing(t, body, seen_passing_in if t in f2p else None) for t in names)

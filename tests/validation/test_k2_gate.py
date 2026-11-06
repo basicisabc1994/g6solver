@@ -33,8 +33,6 @@ def _loop(monkeypatch, arm, on_tree, at_parent, *, parent_raises=False):
         tree = 0
 
         def sh(self, agent, script, *a, **kw):
-            if we.PATCH_BYTES in script:         # the patch's size (``run.patch_bytes``): the tree holds a change
-                return SimpleNamespace(returncode=0, stdout=f"{we.PATCH_BYTES}=100\n".encode(), stderr=b"")
             return SimpleNamespace(returncode=0, stdout=f"tree {Docker.tree}".encode(), stderr=b"")
 
     def session(*a, **kw):
@@ -85,26 +83,26 @@ def test_a_structural_field_takes_only_its_listed_values(tmp_path, monkeypatch):
 
 def test_k1_sends_back_every_failing_case_and_never_runs_the_parent(monkeypatch):
     got, sessions, parents, _ = _loop(monkeypatch, "K1", [KEPT_ONLY, ALL_HOLD], AT_PARENT)
-    assert parents == [] and len(sessions) == 1 and got["status"] == "no_counterexample_in_domain"
+    assert parents == [] and len(sessions) == 1 and got["found"] == "no_counterexample_in_domain"
 
 
 def test_k2_sends_back_only_the_cases_that_failed_on_the_parent_too(monkeypatch):
     got, sessions, parents, writes = _loop(monkeypatch, "K2", [ON_TREE, ALL_HOLD], [AT_PARENT, AT_PARENT])
     assert parents and parents[0] == (TEST, we.CRITIC_AT, "test_critic.py")
     assert len(sessions) == 1 and "repair_check_1_critic_parent.json" in writes
-    assert got["status"] == "no_counterexample_in_domain" and got["rounds"] == 2
+    assert got["found"] == "no_counterexample_in_domain" and got["rounds"] == 2
 
 
 def test_k2_sends_nothing_back_when_every_failing_case_passed_on_the_parent(monkeypatch):
     got, sessions, _, _ = _loop(monkeypatch, "K2", [KEPT_ONLY], AT_PARENT)
-    assert sessions == [] and got["status"] == "no_counterexample_in_domain"
+    assert sessions == [] and got["found"] == "no_counterexample_in_domain"
     assert "passed on the parent" in got["reason"] and got["rounds"] == 1
 
 
 @pytest.mark.parametrize("raises", [True, False])
 def test_k2_sends_nothing_back_and_is_inconclusive_when_the_parent_gives_no_result(monkeypatch, raises):
     got, sessions, _, _ = _loop(monkeypatch, "K2", [ON_TREE], we.ProbeRun(None, {}, {}, ""), parent_raises=raises)
-    assert sessions == [] and got["status"] == "inconclusive" and "parent" in got["reason"]
+    assert sessions == [] and got["found"] == "inconclusive" and "parent" in got["reason"]
 
 
 def test_k2_reads_each_rounds_new_test_on_the_parent_and_keeps_the_earlier_rounds_results(monkeypatch):
@@ -139,7 +137,7 @@ def test_the_run_hands_the_loop_its_arms_finding_rule(monkeypatch, tmp_path, arm
 
     def loop(*a, finding="any", **kw):
         seen.append(finding)
-        return {"status": "no_counterexample_in_domain"}
+        return {"found": "no_counterexample_in_domain"}          # a loop returns what it found (replay cohort, repair 3)
 
     monkeypatch.setattr(we, "key_check", lambda *a, **kw: {"ok": True})
     monkeypatch.setattr(we, "start_net", lambda *a: ("net", "proxy"))

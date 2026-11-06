@@ -100,15 +100,11 @@ class BoxDocker(helpers.HostDocker):
         return super().__call__(*args, input=input, timeout=timeout, env=env)
 
     def sh(self, ctr, script, *a, **kw):
-        mark = getattr(we, "PATCH_BYTES", "\0no size\0")          # the patch's size, as ``run.patch_bytes`` reads it
-        if mark in script:
-            self.calls.append(("sh", script))
-            return helpers.ok(f"{mark}={len(tree_patch(self.base, snapshot(self.repo)))}\n".encode())
         saved = re.search(r'git diff --cached --binary .* > "([^"]+)"', script)
         if saved:
             self.calls.append(("sh", script))
             self.files[saved[1]] = tree_patch(self.base, snapshot(self.repo))
-            return helpers.ok()
+            return helpers.captured()
         return super().sh(ctr, script, *a, **kw)
 
 
