@@ -59,10 +59,13 @@ def test_finding_17_the_executor_carries_no_bare_verified_field_outside_warning_
                             "answer": {"valid": True, "verified": True}})
     plan = MethodRouter().plan([ClaimIR("c", "claim", ("formal",), {"formal": {"formula": "P"}})])
     out = MixedMethodExecutor(Registry()).execute(plan, approved=True)
-    result = out["steps"][0]["result"]
-    assert result["completion_state"] == "qualified-draft"
-    assert out["steps"][0]["warning_card"]["code"] == "G6_E_PROMOTION_LAW"
-    assert "verified" not in result, f'bare field remains in method result: verified={result.get("verified")}'
+    # Follow-up review 2's ruling: the flag, even the false one G6's door left, is neither republished outside the
+    # door's card nor dropped unsaid. The step fails with its code, names each place, keeps the door's card whole.
+    step = out["steps"][0]
+    assert step["completion_state"] == "blocked-escalated" and step["code"] == "G6_E_COGNITIVE_STEP_FAILED"
+    assert step["door"]["warning_card"]["code"] == "G6_E_PROMOTION_LAW"
+    assert "result" not in step, f'the method result was kept: {step.get("result")}'
+    assert "verified" in step["reason"] and "answer.verified" in step["reason"], step["reason"]
     assert _bare_verified(out) == []
 
 

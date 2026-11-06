@@ -24,7 +24,7 @@ from g6.invariants import ERROR_CODE_PATTERN
 
 from .assurance import canonical_json, sha256
 from .codes import (EVIDENCE_CONTESTED, EVIDENCE_NOT_RECONCILED, EVIDENCE_REFUTED, EVIDENCE_UNDETERMINED, MADE_FIELDS,
-                    STATES, only_fields, refusal, settled)
+                    STATES, affirmed, only_fields, refusal, settled)
 from .snapshot import fresh, record, snapshot
 
 HEX64 = re.compile("[0-9a-f]{64}\\Z")
@@ -71,7 +71,8 @@ def assertions_sha256(assertions: Sequence[ScopedAssertion]) -> str:
 
 def checked_report(report: Any) -> Mapping[str, Any]:
     """A reconciliation report as the bridge takes it from a gate: only its format's fields (:data:`REPORT_FIELDS`), no
-    claim of a state anywhere in it (``codes.only_fields``) and a ``completion_state`` of the bridge's two states."""
+    claim of a state anywhere in it (``codes.only_fields``), and itself a result in the makers' format
+    (``codes.result_faults``: blocked with a registered code and that code's card, or a qualified draft)."""
     return only_fields(report, allowed=REPORT_FIELDS + MADE_FIELDS, required=("completion_state",),
                        where="a conflict report")
 
@@ -105,7 +106,7 @@ class CrossMethodConflictGate:
             admitted = False
             if self.admit_assertion is not None:
                 try:
-                    admitted = self.admit_assertion(fresh(row)) is True  # a copy: what it admits is what is used
+                    admitted = affirmed(self.admit_assertion(fresh(row)))  # a copy: what it admits is what is used
                 except Exception:
                     admitted = False
             if not admitted:

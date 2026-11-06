@@ -11,8 +11,9 @@ import json
 from dataclasses import asdict
 from typing import Any, Mapping, Sequence
 
+from .codes import settled
 from .mixed_methods import ENGINE_SPECS
-from .snapshot import fresh, record, returned, snapshot, text
+from .snapshot import fresh, json_reply, record, returned, snapshot
 
 
 @record
@@ -48,8 +49,8 @@ class CritiqueReport:
             raise ValueError("a critique report is a qualified-draft proposal")
 
     def to_dict(self) -> dict[str, Any]:
-        return {"objective": self.objective, "completion_state": "qualified-draft",
-                "warning": self.warning, "candidates": [asdict(x) for x in self.candidates]}
+        return settled(None, objective=self.objective, warning=self.warning,
+                       candidates=[asdict(x) for x in self.candidates])
 
 
 class LLMMetacognitiveCritic:
@@ -82,10 +83,7 @@ class LLMMetacognitiveCritic:
                            "max_items": self.max_items}, ensure_ascii=False, allow_nan=False)
         if len(user) > 25000:
             raise ValueError("critique prompt cap exceeded")
-        response = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=2600), text)
-        if len(response) > 20000:
-            raise ValueError("critique response exceeded bound")
-        doc = json.loads(response)
+        doc = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=2600), json_reply, 20000)
         if not isinstance(doc, dict) or set(doc) != {"candidates"} or not isinstance(doc["candidates"], list):
             raise ValueError("critique must be a JSON candidate array")
         if len(doc["candidates"]) > self.max_items:

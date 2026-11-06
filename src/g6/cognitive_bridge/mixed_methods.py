@@ -17,8 +17,8 @@ from g6.core.door import SENSITIVE_ENV, allowed_sensitive, invoke_checked
 
 from .assurance import canonical_json, sha256
 from .codes import (APPROVAL_REQUIRED, EXECUTION_INCOMPLETE, MODEL_MISSING, PLAN_TAMPERED, PREREQUISITE_UNMET,
-                    STEP_FAILED, VERIFIED_FLAG, refusal, settled)
-from .snapshot import fresh, record, returned, snapshot, text
+                    STEP_FAILED, affirmed, claims, refusal, settled, unclaimed)
+from .snapshot import fresh, json_reply, record, returned, snapshot
 
 # Every name resolves to an existing G6 component and a fixed, documented op.
 # Models are declarative data, never arbitrary modules, code or pickle paths.
@@ -127,17 +127,6 @@ def step_digest(step: MethodStep) -> str:
     return sha256(canonical_json(asdict(step)))
 
 
-def _no_bare_verified(value: Any, under_card: bool = False) -> Any:
-    """A copy with no ``verified`` field anywhere except in G6's own warning cards (INV-ENV-2): the door already
-    corrected the state, so a component's own flag says nothing the state does not."""
-    if isinstance(value, Mapping):
-        return {k: _no_bare_verified(v, under_card or k == "warning_card") for k, v in value.items()
-                if under_card or k != VERIFIED_FLAG}
-    if isinstance(value, (list, tuple)):
-        return [_no_bare_verified(v, under_card) for v in value]
-    return value
-
-
 class MethodRouter:
     """Choose the smallest matching family for each requested evidence obligation.
 
@@ -235,7 +224,10 @@ class MixedMethodExecutor:
 
     def _run(self, step: MethodStep, params: bytes, head: dict[str, Any]) -> dict[str, Any]:
         """One validated step through G6's door. A step the door refused, or did not pass, is the bridge's own
-        ``STEP_FAILED`` refusal, and keeps the door's own card whole under ``door``."""
+        ``STEP_FAILED`` refusal, and keeps the door's own card whole under ``door``. So is a step whose answer, as the
+        door hands it on, claims a state anywhere outside the door's card (``codes.claims``: a ``reliability_label``, a
+        ``verified`` flag, even one the door turned false, outside a warning card, or a nested result outside the
+        makers' format): the step fails with its code, and the reason names each place; that answer is not kept."""
         try:
             reply = self._invoke(step, json.loads(params))  # a fresh copy of the bytes that were checked
             card, request_id = reply["warning_card"], reply["request_id"]
@@ -245,18 +237,23 @@ class MixedMethodExecutor:
             response = reply["result"]
             if not isinstance(response, dict):
                 raise ValueError("registry did not return an evidence envelope")
-            response = _no_bare_verified(response)
-            if reply.get("ok") is not True:  # the door's own verdict; anything but a usable reply is not a run
-                return refusal(STEP_FAILED, f"{step.component}.{step.op}: G6's door did not pass its answer",
-                               door=door, request_id=request_id, result=response, **head)
+            claimed = claims(response)
+            said = (f"; its answer is not kept: it claims a state the bridge did not decide ({'; '.join(claimed)})"
+                    if claimed else "")
+            if not affirmed(reply.get("ok")):  # the door's own verdict; anything but a usable reply is not a run
+                return refusal(STEP_FAILED, f"{step.component}.{step.op}: G6's door did not pass its answer{said}",
+                               door=door, request_id=request_id, **({} if claimed else {"result": response}), **head)
+            if claimed:
+                return refusal(STEP_FAILED, f"{step.component}.{step.op}: G6's door passed it{said}", door=door,
+                               request_id=request_id, **head)
             # The door decided the state; a composed step never claims more than qualified-draft.
-            return {"completion_state": "qualified-draft", **head, "warning_card": card, "request_id": request_id,
-                    "result": response}
+            return unclaimed({"completion_state": "qualified-draft", **head, "warning_card": card,
+                              "request_id": request_id, "result": response}, where=f"{step.component}.{step.op}'s step")
         except Exception as exc:  # registry is a trust boundary
             return refusal(STEP_FAILED, f"{type(exc).__name__}: {exc}", **head)
 
     def execute(self, plan: MethodPlan, *, approved: bool = False) -> dict[str, Any]:
-        if not approved:
+        if not affirmed(approved):
             return refusal(APPROVAL_REQUIRED, "execution requires caller approval; planning alone does no work",
                            steps=[], method_execution_coverage=0.0)
         try:
@@ -279,9 +276,9 @@ class MixedMethodExecutor:
             parent = by_id.get(step.depends_on[0]) if step.depends_on else None
             # In particular, never estimate a causal effect when identification
             # was refused, inconclusive or not established by G6.
-            identified = (parent or {}).get("result", {}).get("answer", {}).get("identifiable")
+            identified = affirmed((parent or {}).get("result", {}).get("answer", {}).get("identifiable"))
             if step.depends_on and ((parent or {}).get("completion_state") != "qualified-draft"
-                                    or identified is not True):
+                                    or not identified):
                 result = refusal(PREREQUISITE_UNMET, "causal identifiability prerequisite not established", **head)
             else:
                 result = self._run(step, params, head)
@@ -337,10 +334,7 @@ class LLMClaimCompiler:
                            "max_claims": self.max_claims}, ensure_ascii=False)
         if len(user) > 15000:
             raise ValueError("question and context exceed prompt cap")
-        raw = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=2200), text)
-        if len(raw) > 18000:
-            raise ValueError("model output exceeded cap")
-        doc = json.loads(raw)
+        doc = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=2200), json_reply, 18000)
         if not isinstance(doc, dict) or set(doc) != {"claims"} or not isinstance(doc["claims"], list):
             raise ValueError("LLM response did not match the claim schema")
         if not 1 <= len(doc["claims"]) <= self.max_claims:

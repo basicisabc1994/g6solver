@@ -12,6 +12,7 @@ import struct
 from dataclasses import asdict
 from typing import Any, Mapping, Sequence
 
+from .codes import settled
 from .snapshot import fresh, record, returned
 
 
@@ -183,7 +184,7 @@ def distill_blackbox(blackbox: Any, X_train: Sequence[Sequence[float]],
     explicit = extract_tree(tree, names, provenance="blackbox_surrogate")
     predicted = explicit.predict(holdout)
     report: dict[str, Any] = {
-        "method": "held_out_surrogate_fidelity", "completion_state": "qualified-draft",
+        "method": "held_out_surrogate_fidelity",
         "train_n": len(train), "holdout_n": len(holdout), "max_depth": max_depth,
         "model_origin": "blackbox_predictions", "reference": "blackbox_predictor",
         "caveat": "fidelity measures agreement with model output, not accuracy against real outcomes",
@@ -199,4 +200,4 @@ def distill_blackbox(blackbox: Any, X_train: Sequence[Sequence[float]],
         report.update({"metric": "rmse", "fidelity": math.sqrt(sum(x*x for x in errors)/len(errors)),
                        "mae": sum(abs(x) for x in errors)/len(errors),
                        "lower_is_better": True})
-    return explicit, report
+    return explicit, settled(None, **report)

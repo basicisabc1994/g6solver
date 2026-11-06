@@ -3,9 +3,9 @@
 four reviews). This lists, from the code, every call in ``g6.cognitive_bridge`` of code a caller handed in (a
 collaborator: what a class keeps by reference, a parameter typed as code, a record's callable field) and what is done
 with what it returns. It fails on any use that is not through the one taken-and-checked snapshot
-(``snapshot.returned(<call>, <check>, ...)``) or a verdict taken by identity (``<call> is True``), and on any argument
-that is not a fresh copy (``snapshot.fresh``) or a constant. Each call is then made, with a spy that fails on any
-argument it could change."""
+(``snapshot.returned(<call>, <check>, ...)``) or a verdict read as ``True`` and nothing else (``codes.affirmed(<call>)``,
+``test_approval_inventory.py``), and on any argument that is not a fresh copy (``snapshot.fresh``) or a constant. Each
+call is then made, with a spy that fails on any argument it could change."""
 from __future__ import annotations
 
 import ast
@@ -37,22 +37,22 @@ _spec.loader.exec_module(_stores)
 #: Every call of a collaborator in the package, with what is done with its answer: (module, class.function, callee,
 #: use). Built from the code by the tests below and compared whole, so a new call is listed here with its check.
 EXPECTED = sorted([
-    ("adaptation.py", "AdaptationPromotionGate.assess", "self.admit_control", "is True"),
-    ("adaptation.py", "AdaptationPromotionGate.assess", "self.admit_pair", "is True"),
-    ("assurance.py", "InProcessAssuranceEvaluator.evaluate", "self.reviewer_authenticator", "is True"),
+    ("adaptation.py", "AdaptationPromotionGate.assess", "self.admit_control", "affirmed"),
+    ("adaptation.py", "AdaptationPromotionGate.assess", "self.admit_pair", "affirmed"),
+    ("assurance.py", "InProcessAssuranceEvaluator.evaluate", "self.reviewer_authenticator", "affirmed"),
     ("assurance.py", "._test", "checker.check", "returned(_verdict)"),
-    ("critique.py", "LLMMetacognitiveCritic.propose", "self.llm.complete", "returned(text)"),
+    ("critique.py", "LLMMetacognitiveCritic.propose", "self.llm.complete", "returned(json_reply)"),
     ("engine.py", "CognitiveAgent.run", "self.proposer.propose", "returned(_proposed)"),
     ("engine.py", "CognitiveAgent.run", "self.selector.rank", "returned(_selection)"),
     ("engine.py", "CognitiveAgent.run", "self.updater.update", "returned(_posterior)"),
-    ("engine.py", "LLMIdeaGenerator.generate", "self.llm.complete", "returned(text)"),
-    ("engine.py", "LLMProposer.propose", "self.llm.complete", "returned(text)"),
+    ("engine.py", "LLMIdeaGenerator.generate", "self.llm.complete", "returned(json_reply)"),
+    ("engine.py", "LLMProposer.propose", "self.llm.complete", "returned(json_reply)"),
     ("engine.py", "MLAcquisitionSelector.rank", "self.predictor.predict", "returned(_scores)"),
     ("engine.py", "_ToolDoor.invoke", "self.tool.call", "returned(_observed)"),
-    ("epistemic.py", "CrossMethodConflictGate.reconcile", "self.admit_assertion", "is True"),
-    ("metacognition.py", "MetacognitiveMethodSelector.__init__", "admit_trial", "is True"),
+    ("epistemic.py", "CrossMethodConflictGate.reconcile", "self.admit_assertion", "affirmed"),
+    ("metacognition.py", "MetacognitiveMethodSelector.__init__", "admit_trial", "affirmed"),
     ("metacognition.py", "MetacognitivePlanner.plan", "self.selector.select", "returned(checked_selection)"),
-    ("mixed_methods.py", "LLMClaimCompiler.draft", "self.llm.complete", "returned(text)"),
+    ("mixed_methods.py", "LLMClaimCompiler.draft", "self.llm.complete", "returned(json_reply)"),
     ("orchestration.py", "CognitiveAssuranceOrchestrator.assess",
      "(epistemic_gate or CrossMethodConflictGate()).reconcile", "returned(_reconciled)"),
     ("orchestration.py", "CognitiveAssuranceOrchestrator.assess", "evaluator.evaluate", "returned(_dossier)"),
@@ -67,7 +67,6 @@ EXPECTED = sorted([
 DATA_WALKERS = {
     ("snapshot.py", "_freeze", "value"),             # the snapshot itself: it reads a caller's value once, to copy it
     ("snapshot.py", "returned", "check"),            # calls the bridge's own check on the fresh copy
-    ("mixed_methods.py", "_no_bare_verified", "value"),  # walks the door's own copy of a reply
     ("xai.py", "_native", "value"),                  # reads a numpy scalar's Python value
     ("codes.py", "claims", "value"),                 # walks a snapshot the bridge holds, to find a claim in it
 }
@@ -223,10 +222,9 @@ def sites():
             if (isinstance(up, ast.Call) and isinstance(up.func, ast.Name) and up.func.id == "returned"
                     and up.args and up.args[0] is node and len(up.args) >= 2):
                 use = f"returned({ast.unparse(up.args[1])})"
-            elif (isinstance(up, ast.Compare) and up.left is node and len(up.ops) == 1
-                  and isinstance(up.ops[0], ast.Is) and isinstance(up.comparators[0], ast.Constant)
-                  and up.comparators[0].value is True):
-                use = "is True"
+            elif (isinstance(up, ast.Call) and isinstance(up.func, ast.Name) and up.func.id == "affirmed"
+                  and up.args == [node] and not up.keywords):
+                use = "affirmed"
             else:
                 use = "UNCHECKED: " + ast.unparse(up)[:120]
             loose = [ast.unparse(a) for a in [*node.args, *(k.value for k in node.keywords)]
@@ -258,7 +256,7 @@ def test_every_check_is_the_bridges_own_function():
 
 def test_no_collaborators_answer_is_used_unchecked():
     bad = [f"{m}:{where} {callee} -> {use}" for m, where, callee, use, _ in sites() if use.startswith("UNCHECKED")]
-    assert bad == [], "a collaborator's answer used other than through returned(...) or `is True`: " + "; ".join(bad)
+    assert bad == [], "a collaborator's answer used other than through returned(...) or affirmed(...): " + "; ".join(bad)
 
 
 def test_every_collaborator_call_is_listed_with_what_is_done_with_its_answer():

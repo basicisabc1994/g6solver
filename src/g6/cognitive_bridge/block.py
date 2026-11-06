@@ -13,7 +13,7 @@ from g6.core.ai_block import AIBlock
 from g6.core.contract_decorator import block_contract
 from g6.core.maturity import component_maturity
 from g6.core.result import Result
-from .codes import INPUT, STATES, refusal
+from .codes import INPUT, STATES, refusal, settled
 from .engine import BayesianUpdater, Hypothesis, InformationGainSelector, Probe, check_beliefs
 from .mixed_methods import ClaimIR, MethodRouter
 from .metacognition import MetacognitiveMethodSelector, ProblemSignature, MethodVariant
@@ -112,18 +112,15 @@ class CognitiveBridgeBlock(AIBlock[CognitiveInput, dict, dict]):
         try:
             d = data if isinstance(data, CognitiveInput) else CognitiveInput.model_validate(data)
             if d.op == "ops":
-                return Result.ok({"component": self.name, "completion_state": "qualified-draft",
-                                  "ops": list(_OPS),
-                                  "note": "LLM research and in-memory ML adapters are Python-only; no tools are invoked via this surface."})
+                return Result.ok({"component": self.name, **settled(
+                    None, ops=list(_OPS),
+                    note="LLM research and in-memory ML adapters are Python-only; no tools are invoked via this surface.")})
             if d.op == "help":
-                return Result.ok({"component": self.name, "op": "help", "completion_state": "qualified-draft",
-                                  "help": list(_OPS.values())})
+                return Result.ok({"component": self.name, "op": "help", **settled(None, help=list(_OPS.values()))})
             if d.op == "assurance_schema":
-                return Result.ok({"component": self.name, "op": d.op,
-                                  "completion_state": "qualified-draft",
-                                  "documentary_fields": list(DOCUMENT_FIELDS),
-                                  "levels": list(STATES),
-                                  "note": "Assurance issuance and historical trial admission require an independently owned Python evaluator; not exposed via MCP."})
+                return Result.ok({"component": self.name, "op": d.op, **settled(
+                    None, documentary_fields=list(DOCUMENT_FIELDS), levels=list(STATES),
+                    note="Assurance issuance and historical trial admission require an independently owned Python evaluator; not exposed via MCP.")})
             if d.op == "rank_methods":
                 if d.context is None:
                     raise ValueError("rank_methods requires a typed context")
@@ -153,10 +150,9 @@ class CognitiveBridgeBlock(AIBlock[CognitiveInput, dict, dict]):
                 if p is None:
                     raise ValueError("update probe_id not among probes")
                 result = BayesianUpdater().update(beliefs, p, d.observed_positive)
-            return Result.ok({"component": self.name, "op": d.op,
-                              "completion_state": "qualified-draft", "result": result,
-                              "assumptions": ["priors are mutually exclusive and exhaustive",
-                                              "likelihoods and predictions are caller-provided assumptions",
-                                              "does not verify the reality of any observations"]})
+            return Result.ok({"component": self.name, "op": d.op, **settled(
+                None, result=result, assumptions=["priors are mutually exclusive and exhaustive",
+                                                  "likelihoods and predictions are caller-provided assumptions",
+                                                  "does not verify the reality of any observations"])})
         except (ValidationError, ValueError, TypeError, KeyError, OverflowError) as exc:
             return Result.ok({"component": self.name, **refusal(INPUT, str(exc))})

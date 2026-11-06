@@ -25,7 +25,7 @@ from g6.core.adaptation_gate import protected_hits
 from g6.reasoning import sign_test_p
 
 from .assurance import CandidateDossier
-from .codes import ADAPTATION_REFUSED, refusal, settled
+from .codes import ADAPTATION_REFUSED, affirmed, refusal, settled
 from .snapshot import fresh, record, snapshot
 
 HEX = re.compile(r"^[0-9a-f]{64}$")
@@ -86,11 +86,11 @@ class CompositionalFailureModel:
             edges.append({"from": proposed.failure_code, "to": proposed.id,
                           "edge": "proposed_mitigation_not_established",
                           "test_to_falsify": proposed.falsifying_case})
-        return {"observed": [asdict(f) for f in findings],
-                "candidate_guards": [asdict(p) for p in proposals],
-                "edges": edges, "unmatched_proposals": unresolved,
-                "completion_state": "qualified-draft",
-                "warning": "A failure signature is not a confirmed root cause; an LLM's guard is not an established mitigation."}
+        return settled(None, observed=[asdict(f) for f in findings],
+                       candidate_guards=[asdict(p) for p in proposals],
+                       edges=edges, unmatched_proposals=unresolved,
+                       warning="A failure signature is not a confirmed root cause; an LLM's guard is not an established "
+                               "mitigation.")
 
 
 @record
@@ -300,7 +300,7 @@ class AdaptationPromotionGate:
         if self.admit_pair is not None:
             for x in pairs:
                 try:
-                    accepted = self.admit_pair(fresh(x)) is True
+                    accepted = affirmed(self.admit_pair(fresh(x)))
                 except Exception:
                     accepted = False
                 if not accepted:
@@ -309,7 +309,7 @@ class AdaptationPromotionGate:
         if self.admit_control is not None:
             for x in controls:
                 try:
-                    accepted = self.admit_control(fresh(x)) is True
+                    accepted = affirmed(self.admit_control(fresh(x)))
                 except Exception:
                     accepted = False
                 if not accepted:

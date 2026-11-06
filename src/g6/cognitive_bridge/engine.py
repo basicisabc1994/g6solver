@@ -6,7 +6,8 @@ exhaustive is an assumption of the caller. The proposed likelihood model is
 not independently established. Every result is at most qualified-draft.
 
 Every tool step goes through G6's checked door (``g6.core.door.invoke_checked``) and is credited only when the door's
-reply says ``ok``; ``tests/cognitive_bridge/test_step_inventory.py`` lists every call of a tool or step in the package
+reply says ``ok`` (``codes.affirmed``) and the tool's answer, as the door hands it on, claims no state at any depth
+(``codes.claims``); ``tests/cognitive_bridge/test_step_inventory.py`` lists every call of a tool or step in the package
 and allows only the door. The agent's history is written only from such a step (:func:`_credited`).
 
 The proposer, selector, updater and tools are the caller's code. Each is handed a fresh copy of what the agent checked
@@ -27,8 +28,8 @@ from returns.result import Failure, Success
 from g6.core import door
 
 from .assurance import canonical_json, sha256
-from .codes import NO_PROBE, STEP_FAILED, refusal, settled
-from .snapshot import FrozenMap, fresh, record, returned, snapshot, text
+from .codes import NO_PROBE, STEP_FAILED, affirmed, claims, refusal, settled
+from .snapshot import FrozenMap, fresh, json_reply, record, returned, snapshot
 
 
 @record
@@ -207,10 +208,7 @@ class LLMProposer:
             "allowed_tools": [{"name": t.name, "cost": t.cost,
                                "assumed_match_probability": t.assumed_match_probability} for t in self.tools.values()],
             "max_probes": self.max_probes}, ensure_ascii=False)
-        raw = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=1500), text)
-        if len(raw) > 12000:
-            raise ValueError("model proposal exceeded output size cap")
-        data = json.loads(raw)
+        data = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=1500), json_reply, 12000)
         if not isinstance(data, dict) or not isinstance(data.get("probes"), list):
             raise ValueError("model did not return the required probes array")
         if len(data["probes"]) > self.max_probes:
@@ -296,7 +294,7 @@ class _ToolDoor:
             observation = returned(self.tool.call(fresh(params["question"]), fresh(params["arguments"])), _observed)
         except Exception as exc:  # the tool is the caller's code: anything it raises is a failed step
             return Failure(f"[{STEP_FAILED}] {self.tool.name}: {type(exc).__name__}: {exc}")
-        return Success({"completion_state": "qualified-draft", "observation": asdict(observation)})
+        return Success(settled(None, observation=asdict(observation)))
 
 
 def _observed(observation: Any) -> Observation:
@@ -359,7 +357,7 @@ def _prior(beliefs: FrozenMap, checked: str) -> FrozenMap:
 def _credited(reply: Mapping[str, Any], entry: Mapping[str, Any]) -> FrozenMap:
     """The one writer of the agent's history: an entry for a tool step whose reply from G6's door said ``ok``, with
     that reply's ``request_id``. Anything else is refused."""
-    if reply.get("ok") is not True:
+    if not affirmed(reply.get("ok")):
         raise ValueError("only a tool step G6's door passed enters the history")
     return snapshot({**entry, "request_id": reply.get("request_id", "")})
 
@@ -380,18 +378,24 @@ class CognitiveAgent:
         self.updater = updater or BayesianUpdater()
         self.allow = snapshot(frozenset(allow))
 
-    def _observe(self, tool: ToolSpec, probe: Probe) -> tuple[Observation | None, dict[str, Any]]:
-        """One tool step through G6's door: the observation, when the door's reply says ``ok``, and the reply."""
+    def _observe(self, tool: ToolSpec, probe: Probe) -> tuple[Observation | None, dict[str, Any], str]:
+        """One tool step through G6's door: the observation, when the door's reply says ``ok`` and the tool's answer,
+        as the door hands it on, claims no state (``codes.claims``); the reply; and why it is not used (``""`` when it
+        is)."""
         reply = door.invoke_checked(
             f"tool:{tool.name}", "observe", {"question": probe.question, "arguments": dict(probe.arguments)},
             allow=door.allowed_sensitive() | self.allow, registry=_ToolDoor(tool),
             how_to_allow=f"Allow it in your own code with CognitiveAgent(..., allow=('tool:{tool.name}',)).")
-        if reply.get("ok") is not True:
-            return None, reply
-        answer = reply.get("result", {}).get("observation")
+        if not affirmed(reply.get("ok")):
+            return None, reply, str(reply.get("error") or f"{tool.name}: G6's door did not pass the tool step")
+        result = reply.get("result")
+        claimed = claims(result) if isinstance(result, Mapping) else ["the door's copy is not a mapping"]
+        if claimed:
+            return None, reply, f"{tool.name}'s answer claims a state the bridge did not decide: {'; '.join(claimed)}"
+        answer = result.get("observation")
         if not isinstance(answer, Mapping):
-            return None, reply
-        return Observation(**answer), reply
+            return None, reply, f"{tool.name}: G6's door handed on no observation"
+        return Observation(**answer), reply, ""
 
     def run(self, objective: str, hypotheses: Sequence[Hypothesis], *, budget: float, max_steps: int = 3) -> dict:
         if not 1 <= max_steps <= 20 or not math.isfinite(budget) or budget < 0:
@@ -425,12 +429,11 @@ class CognitiveAgent:
                 raise ValueError("probe cost/likelihood must match the caller-owned tool registry")
             if chosen.cost > remaining + 1e-12:  # checked again where it runs, against what is left now
                 raise ValueError("the chosen probe costs more than the remaining budget")
-            observation, reply = self._observe(tool, chosen)
+            observation, reply, unused = self._observe(tool, chosen)
             if observation is None:  # the door did not pass the step: it is not credited, and the run stops here
-                refused = refusal(STEP_FAILED, str(reply.get("error") or f"{chosen.tool}: G6's door did not pass the "
-                                                                           "tool step"),
-                                  door={"warning_card": dict(reply.get("warning_card") or {}),
-                                        "request_id": reply.get("request_id", "")}, probe_id=chosen.id)
+                refused = refusal(STEP_FAILED, unused, door={"warning_card": dict(reply.get("warning_card") or {}),
+                                                             "request_id": reply.get("request_id", "")},
+                                  probe_id=chosen.id)
                 break
             if type(observation.positive) is not bool:
                 raise ValueError("tool must return an Observation with a boolean outcome")
@@ -497,10 +500,7 @@ class LLMIdeaGenerator:
         )
         user = json.dumps({"objective": objective[:2000], "observations": list(observations)[-6:],
                            "max_ideas": self.max_ideas})
-        raw = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=1200), text)
-        if len(raw) > 12000:
-            raise ValueError("idea proposal exceeded output cap")
-        doc = json.loads(raw)
+        doc = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=1200), json_reply, 12000)
         if not isinstance(doc, dict) or not isinstance(doc.get("ideas"), list) or len(doc["ideas"]) > self.max_ideas:
             raise ValueError("invalid idea schema or count")
         result = []

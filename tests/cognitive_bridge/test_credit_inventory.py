@@ -10,6 +10,9 @@ lists, from the code, every check an answer goes through and holds every one to 
 * an answer carries only its format's fields and claims nothing (``codes.only_fields``): an answer with a field G6
   reads as a state (``reliability_label``), G6's ``verified`` flag outside a warning card, or a field its format does
   not define, never reaches an output. Each answer is planted with them, through the public call that takes it.
+
+``test_claim_inventory.py`` extends this: it plants a claim at each one place of each answer, and lists the tool replies
+and the makers too.
 """
 from __future__ import annotations
 
@@ -252,7 +255,7 @@ SITES = {
     "_reconciled": [("assess's conflict gate", _report_site)],
     "checked_selection": [("compile's selector", _compile_site), ("plan's selector", _plan_site)],
     "_verdict": [("the evaluator's checker", _verdict_site)],
-    "text": [("LLMProposer", lambda p, f: [asdict(x) for x in LLMProposer(_model(p, _PROBES_REPLY),
+    "json_reply": [("LLMProposer", lambda p, f: [asdict(x) for x in LLMProposer(_model(p, _PROBES_REPLY),
                                                                              {"read": _tool()}).propose(
                  "goal", _hypotheses(), [])]),
              ("LLMIdeaGenerator", lambda p, f: [asdict(x) for x in LLMIdeaGenerator(_model(p, _IDEAS_REPLY)).generate(

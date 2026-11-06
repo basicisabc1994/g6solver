@@ -12,13 +12,18 @@ Collaborators (code a caller hands in: a model, a selector, an updater, a callba
 rule. A collaborator is handed only :func:`fresh` copies, which share nothing with what the bridge checked, and what it
 returns is used only through :func:`returned`: a fresh copy taken the moment it returns, then checked against what was
 checked. ``tests/cognitive_bridge/test_collaborator_inventory.py`` lists every call of a collaborator from the code and
-fails on any other use of its answer or any other argument.
+fails on any other use of its answer or any other argument. :func:`returned` also holds every answer, and what its check
+makes of it, to the one rule for a claim of a state (``codes.claims``), at any depth
+(``tests/cognitive_bridge/test_claim_inventory.py``).
 """
 from __future__ import annotations
 
 import dataclasses
+import json
 from collections.abc import Mapping, Set
 from typing import Any, Callable, TypeVar
+
+from .codes import unclaimed
 
 T = TypeVar("T")
 
@@ -96,15 +101,20 @@ def fresh(value: Any) -> Any:
 
 def returned(value: Any, check: Callable[..., T], *against: Any) -> T:
     """What a collaborator returned, as the bridge uses it: a :func:`fresh` copy taken the moment it returns, then
-    ``check(copy, *against)``, which raises, or returns what is used from then on. Nothing else of ``value`` is read."""
-    return check(fresh(value), *against)
+    ``check(copy, *against)``, which raises, or returns what is used from then on. Nothing else of ``value`` is read.
+    The copy, and what the check makes of it, claim no state at any depth (``codes.unclaimed``), else ``ValueError``."""
+    copy = unclaimed(fresh(value), where=f"an answer taken by {check.__name__}")
+    return unclaimed(check(copy, *against), where=f"what {check.__name__} made of an answer")
 
 
-def text(reply: Any) -> str:
-    """A :func:`returned` check for a model's reply: a string, or a ``ValueError``."""
+def json_reply(reply: Any, cap: int) -> Any:
+    """A :func:`returned` check for a model's reply: text of at most ``cap`` characters, read as JSON; the value it
+    holds (so :func:`returned` reads what is used), or a ``ValueError``."""
     if type(reply) is not str:
         raise ValueError(f"a model's reply is text, not a {type(reply).__name__}")
-    return reply
+    if len(reply) > cap:
+        raise ValueError(f"a model's reply is longer than its {cap}-character cap")
+    return json.loads(reply)
 
 
 def record(cls: type[T]) -> type[T]:
@@ -123,4 +133,4 @@ def record(cls: type[T]) -> type[T]:
     return dataclasses.dataclass(frozen=True)(cls)
 
 
-__all__ = ["FrozenMap", "fresh", "record", "returned", "snapshot", "text"]
+__all__ = ["FrozenMap", "fresh", "json_reply", "record", "returned", "snapshot"]

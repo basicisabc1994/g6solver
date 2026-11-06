@@ -14,7 +14,7 @@ import re
 from dataclasses import field, fields
 from typing import Any, Mapping, Protocol
 
-from .codes import DOSSIER_BLOCKED, MADE_FIELDS, STATES, only_fields, refusal, settled
+from .codes import DOSSIER_BLOCKED, MADE_FIELDS, STATES, affirmed, only_fields, refusal, settled
 from .snapshot import fresh, record, returned, snapshot
 
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
@@ -191,7 +191,8 @@ class ReviewAuthenticator(Protocol):
 @record
 class CandidateDossier:
     """An evaluator's dossier: only its format's fields (:data:`PAYLOAD_FIELDS`), no claim of a state anywhere in it
-    (``codes.only_fields``), and the state its blockers give, checked when it is made, whoever makes it."""
+    (``codes.only_fields``), itself a result in the makers' format (``codes.result_faults``: blocked with a registered
+    code and that code's card), and the state its blockers give, checked when it is made, whoever makes it."""
     payload: dict[str, Any]
     content_sha256: str
 
@@ -362,7 +363,7 @@ class InProcessAssuranceEvaluator:
                 if (attestation.scope_sha256 == evidence_scope
                         and attestation.reviewer_id not in (candidate_actor, self.evaluator_id)):
                     try:
-                        authentic = self.reviewer_authenticator(fresh(attestation)) is True
+                        authentic = affirmed(self.reviewer_authenticator(fresh(attestation)))
                     except Exception:
                         authentic = False
                     if authentic:

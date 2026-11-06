@@ -13,8 +13,9 @@ own record of each run, step by step through G6's door, never a caller's run res
 Credit binds its subject. A dossier is credited only for the evidence submitted to that assessment, and a
 reconciliation only for the assertions submitted to it, each by the digest it names; a selection is taken only when
 each row is a variant given, eligible under the context given, and the rows together fit its budget. What an evaluator,
-a gate or a selector answers carries only its format's fields and claims no state (``codes.only_fields``), so what this
-module republishes from them is what was checked (``tests/cognitive_bridge/test_credit_inventory.py``).
+a gate or a selector answers carries only its format's fields and claims no state at any depth (``codes.only_fields``
+and ``codes.claims``; a nested result is in the makers' format), so what this module republishes from them is what was
+checked (``tests/cognitive_bridge/test_credit_inventory.py``, ``test_claim_inventory.py``).
 """
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ from .assurance import (CandidateDossier, DomainStandard, EvidenceArtifact,
                         FrozenVerifier, InProcessAssuranceEvaluator,
                         ProfessionalAttestation, canonical_json, evidence_sha256, sha256)
 from .codes import (ASSURANCE_BLOCKED, COMPILE_BLOCKED, EXECUTION_NOT_APPROVED, NOT_PROMOTED, PLAN_TAMPERED,
-                    refusal, settled)
+                    affirmed, refusal, settled)
 from .epistemic import CrossMethodConflictGate, ScopedAssertion, assertions_sha256, checked_report, findings_state
 from .metacognition import (MethodVariant, MetacognitiveMethodSelector,
                             ProblemSignature, SelectionDecision, checked_selection)
@@ -185,8 +186,9 @@ class CognitiveAssuranceOrchestrator:
 
     def execute(self, compiled: CompiledResearch, *, approved: bool = False,
                 allow: Iterable[str] = ()) -> dict[str, Any]:
-        """Run the approved plan through G6's checked door; ``allow`` is the person's allow for a sensitive op."""
-        if not approved or self.registry is None or compiled.completion_state != "qualified-draft":
+        """Run the approved plan through G6's checked door; ``approved`` is ``True`` and nothing else
+        (``codes.affirmed``), and ``allow`` is the person's allow for a sensitive op."""
+        if not affirmed(approved) or self.registry is None or compiled.completion_state != "qualified-draft":
             return refusal(EXECUTION_NOT_APPROVED, "approved, fully specified plan and connected G6 registry required")
         # Snapshot, then check, then run: the plan is a record (immutable all the way down), checked against the pins,
         # and that same plan runs (the executor checks it again against the canonical routing).

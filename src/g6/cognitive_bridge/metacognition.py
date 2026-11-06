@@ -16,7 +16,7 @@ from dataclasses import asdict
 from typing import Any, Callable, Mapping, Sequence
 
 from .assurance import canonical_json, is_risk, sha256
-from .codes import MODEL_MISSING, OBLIGATION_NOT_PLANNED, SELECTION_INCOMPLETE, only_fields, refusal, settled
+from .codes import MODEL_MISSING, OBLIGATION_NOT_PLANNED, SELECTION_INCOMPLETE, affirmed, only_fields, refusal, settled
 from .mixed_methods import ENGINE_SPECS, ENGINE_OP_VARIANTS, ClaimIR, MethodRouter, MethodPlan
 from .snapshot import fresh, record, returned, snapshot
 
@@ -228,7 +228,7 @@ class MetacognitiveMethodSelector:
                 self.rejected_trials += 1
                 continue
             try:
-                allowed = admit_trial(fresh(t)) is True  # the hook is handed a copy: what it admits is what is kept
+                allowed = affirmed(admit_trial(fresh(t)))  # the hook is handed a copy: what it admits is what is kept
             except Exception:
                 allowed = False
             if not allowed:
