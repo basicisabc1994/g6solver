@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.5 — 2026-11-06: review 4 repairs
+
+- What a collaborator returns is checked where it is used: every collaborator (a model, proposer, selector, updater, predictor, tool, checker, evaluator, conflict gate, admission or review callback, black box) is handed only fresh copies (`snapshot.fresh`), and its answer is taken as a fresh copy the moment it returns and checked against what was checked (`snapshot.returned`) or taken as a verdict by identity (`is True`). The agent runs the validated candidate the selection names, refuses a posterior that breaks the rule priors follow, and uses beliefs only under the digest taken when they were checked. An inventory test lists every call of a collaborator from the code with what is done with its answer. Found by it: a black box could add held-out rows to the rows a surrogate is fitted on.
+- `CognitiveAgent`'s history is written only from a tool step G6's door passed, each entry with that reply's `request_id`; a proposer is shown a copy, so nothing it writes enters the history.
+
 ## v0.2.4 — 2026-11-06: review 3 repairs
 
 - Check-then-act removed at the root: one function (`g6.cognitive_bridge.snapshot`) takes a deep, immutable snapshot of what the bridge accepts; every record type snapshots its fields before its own checks; nothing handed back is a live view; an inventory test lists every store from the code. An assessment refuses a dossier whose standard is not the one compiled.
