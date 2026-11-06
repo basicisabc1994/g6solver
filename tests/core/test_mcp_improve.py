@@ -188,7 +188,9 @@ def test_a_decline_a_cancel_no_name_or_a_client_with_no_dialog_starts_nothing(ri
     before = _files(rig.root)
     got = rig.start(handler)
     assert got["completion_state"] == "blocked-escalated" and check_envelope(got) == []
-    assert _code(got) == "G6_E_META_APPROVAL_REQUIRED" and rig.spawned == []
+    # changed on purpose: each way the dialog ended has its own code (was G6_E_META_APPROVAL_REQUIRED for all four)
+    assert _code(got) == {declined: "G6_E_CONSENT_DECLINED", cancelled: "G6_E_CONSENT_CANCELLED", nameless: "G6_E_CONSENT_NO_NAME",
+                          None: "G6_E_CONSENT_NO_DIALOG"}[handler] and rig.spawned == []
     assert _files(rig.root) == before and TERMINAL not in json.dumps(got)
     assert "Nothing started" in got["next_action"] and "no other way" in got["next_action"]
 
@@ -209,7 +211,8 @@ def test_it_refuses_while_a_runner_is_alive_and_says_what_to_do(rig):
 def test_it_refuses_a_folder_with_no_enrolled_domain_and_a_person_still_enrols(rig):
     got = rig.start()
     assert _code(got) == "G6_E_LOOP_NOT_ENROLLED" and rig.asked == [] and rig.spawned == []
-    assert "g6.metaharness.loop enrol" in got["next_action"] and "An agent cannot" in got["next_action"]
+    # changed on purpose: a person enrols in the client's dialog, never at a terminal
+    assert "g6_improve_enrol" in got["next_action"] and "an agent cannot" in got["next_action"]
 
 
 def test_a_python_file_that_is_not_the_one_a_person_enrolled_is_refused_before_it_could_run(rig):
@@ -217,7 +220,7 @@ def test_a_python_file_that_is_not_the_one_a_person_enrolled_is_refused_before_i
     rig.domain_file.write_text("# something else now\n", encoding="utf-8")
     got = rig.start()
     assert _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "did not run" in got["message"]
-    assert rig.asked == [] and rig.spawned == [] and "g6.metaharness.loop enrol" in got["next_action"]
+    assert rig.asked == [] and rig.spawned == [] and "g6_improve_enrol" in got["next_action"]
 
 
 def test_settings_pointed_at_another_file_after_enrolment_are_refused_the_same_way(rig, tmp_path):

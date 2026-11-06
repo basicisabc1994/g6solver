@@ -111,7 +111,7 @@ def probe() -> dict:
                     results[consent] = call("metaharness_confirm", arguments)
                 if not prompts:
                     assert all(r["completion_state"] == "blocked-escalated" for r in results.values()), results
-                    assert all(r["warning_card"]["code"] == "G6_E_META_APPROVAL_REQUIRED"
+                    assert all(r["warning_card"]["code"] == "G6_E_CONSENT_NO_DIALOG"
                                for r in results.values()), results
                     return {"client": version, "model_calls": 0, "human_ui_tested": False,
                             "status": "elicitation-unavailable-direct-call", "fail_closed": True,

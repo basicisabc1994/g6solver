@@ -7,6 +7,10 @@ fallback and no agent answer: a decline, a cancel or a client with no dialog sta
 process of its own, which outlives the session that asked, and refuses when a runner is alive, no person has enrolled a
 domain in the folder or the count of stops cannot be read there. This module never runs the domain's code: only the runner
 it starts does, and the dialog names it.
+**Enrol, resume and demote** are a person's too, asked the same way, with the same allow rule and no other way to agree: the
+dialog names the folder, the Python file by digest and what the act does, and binds to a digest of all it shows
+(``g6.metaharness.runner.person_terms``). The act then runs in a process like the runner's, so an enrolment freezes what a
+tick on that interpreter compares, and it records nothing if any of it moved meanwhile.
 An agreement binds what the dialog showed: if any of it moved while the dialog was up, nothing starts and the person is
 asked again. The start records the settings it agreed to, and the runner holds to them on every restart, so a changed
 settings file needs a new agreement even with no stop in between. It never moves or deletes a ``STOP`` file. It records the
@@ -26,6 +30,7 @@ a stop or status never imports the tick, so neither can fail for the reasons a t
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -94,6 +99,16 @@ NOT_ASKED = ("Nothing started. The person decided in the client's dialog, or no 
              "whether they want this before calling the tool again, and offer no other way to agree.")
 ASK_AGAIN = ("Nothing started and nothing was recorded. Call g6_improve_start again: the person reads what stands now, in "
              "the client's dialog, and agrees to that or not.")
+NOT_PAUSED = "G6_E_LOOP_NOT_PAUSED"
+ACT_FAILED = "G6_E_LOOP_ACT_FAILED"
+#: The longest a person's act may take in its process before the reply says to read the status instead. It is not killed.
+ACT_WAIT = 300.0
+#: COPY: Said in the dialog of a person's act on the folder.
+NAME_RECORDED = ("Type your name to agree; it is recorded as you give it and is not authenticated. To refuse, decline: "
+                 "nothing is recorded.")
+ENROL = "A person enrols it with g6_improve_enrol, which asks them in the client's dialog; an agent cannot answer for them."
+CHANGED_SINCE = ("Nothing was recorded. Call the tool again: the person reads what stands now, in the client's dialog, and "
+                 "agrees to that or not.")
 
 
 def refused() -> dict | None:
@@ -161,13 +176,11 @@ def _cannot_start(root: Path) -> dict | None:
     if stops_asked(root) < 0:
         return _blocked(RECORDS_UNREADABLE, "the count of stops cannot be read, so a restart would have nothing to stand on "
                         "and nothing was started", f"A person frees {STOPS_FILE} in {root}.")
-    enrol = (f'A person enrols it at their own terminal: python -P -m g6.metaharness.loop enrol "{root}" --as "Your name". '
-             "An agent cannot do that step.")
     if log is None or log.enrolled() is None:
-        return _blocked(NOT_ENROLLED, "no person has enrolled a domain in this folder, so nothing was started", enrol)
+        return _blocked(NOT_ENROLLED, "no person has enrolled a domain in this folder, so nothing was started", ENROL)
     if log.enrolled()["frozen"].get("domain_file") != file_digest(read_settings(root).get("domain_file")):
         return _blocked(FROZEN_CHANGED, "the Python file that declares this domain is not the one a person enrolled, so "
-                        "nothing was started and it did not run", enrol)
+                        "nothing was started and it did not run", ENROL)
     return None
 
 
@@ -219,12 +232,16 @@ def _spawn(root: Path, settings: dict[str, Any]) -> Any:
     ``PYTHON*`` setting."""
     detached = ({"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
                 else {"start_new_session": True})
+    with open(root / RUNNER_LOG, "ab") as log:
+        return subprocess.Popen([*_interpreter(settings), "-m", "g6.metaharness.loop", "run", str(root)],
+                                cwd=root, stdin=subprocess.DEVNULL, stdout=log, stderr=log, close_fds=True, **detached)
+
+
+def _interpreter(settings: dict[str, Any]) -> list[str]:
+    """How the runner's Python starts, for the runner and for a person's act alike (``_spawn``)."""
     python = _pinned_python(settings)
     cache = tempfile.mkdtemp(prefix="g6-loop-no-bytecode-")
-    with open(root / RUNNER_LOG, "ab") as log:
-        return subprocess.Popen([python or sys.executable, "-I" if python else "-P", "-B", "-X", f"pycache_prefix={cache}",
-                                 "-m", "g6.metaharness.loop", "run", str(root)],
-                                cwd=root, stdin=subprocess.DEVNULL, stdout=log, stderr=log, close_fds=True, **detached)
+    return [python or sys.executable, "-I" if python else "-P", "-B", "-X", f"pycache_prefix={cache}"]
 
 
 def _past_opening(root: Path, since: datetime) -> bool:
@@ -284,6 +301,143 @@ def start(root: Path, who: str, shown: str | None = None) -> dict:
     except (OSError, LedgerError, WorkspaceRefused, ValueError) as exc:
         return _blocked(START_FAILED, f"the runner could not be started: {type(exc).__name__}: {exc}"[:500], running=False,
                         folder=str(root))
+
+
+def _cannot_act(act_name: str, root: Path, generation: int | None) -> dict | None:
+    """Why a person's act cannot be put to them on this folder as it stands, so no dialog is shown for nothing. It runs none
+    of the folder's code."""
+    from g6.metaharness.runner import held
+    from g6.metaharness.shadow import NOT_DEMOTABLE, lineage
+
+    if not (root / SETTINGS_FILE).is_file():
+        return _not_a_loop(root)
+    try:
+        settings = read_settings(root)
+        windows_from(settings)
+        _pinned_python(settings)
+        path = settings.get("domain_file")
+        if not path or not Path(str(path)).is_file():
+            raise ValueError(f"{SETTINGS_FILE} needs domain_file: the Python file that defines LOOP, not {path!r}")
+    except ValueError as exc:
+        return _blocked(BAD_SETTINGS, f"{exc}"[:400], f"Fix {SETTINGS_FILE} in {root}; nothing was asked or recorded.")
+    try:
+        log = _log(root)
+        current = lineage(root / "workspace")["current"] if act_name == "demote" else 0
+    except LedgerError as exc:
+        return _blocked(RECORDS_UNREADABLE, f"the loop's records cannot be trusted: {exc}"[:400],
+                        "A person inspects the folder; nothing was asked or recorded.")
+    if act_name == "enrol":
+        return None
+    if log is None or log.enrolled() is None:
+        return _blocked(NOT_ENROLLED, "no person has enrolled a domain in this folder, so there is nothing to act on", ENROL)
+    if log.enrolled()["frozen"].get("domain_file") != file_digest(settings.get("domain_file")):
+        return _blocked(FROZEN_CHANGED, "the Python file that declares this domain is not the one a person enrolled, so "
+                        "nothing was asked and it did not run", ENROL)
+    if act_name == "resume" and not held(log):
+        return _blocked(NOT_PAUSED, "the loop is not paused, so there is nothing to lift", "g6_improve_status says where "
+                        "it stands.")
+    if act_name == "demote" and (generation != current or current < 1):
+        return _blocked(NOT_DEMOTABLE, f"the head is generation {current}, not {generation}, so nothing was asked",
+                        "Read g6_improve_status and name the generation that stands.")
+    return None
+
+
+def asked_act(act_name: str, folder: str, generation: int | None = None) -> tuple[Path, str, str] | dict:
+    """What the person reads before ``act_name`` (``enrol``, ``resume`` or ``demote``), the folder, and the digest that
+    binds the two (``g6.metaharness.runner.person_terms``); a blocked reply when it cannot be put to them."""
+    from g6.metaharness.runner import held, person_terms
+    from g6.metaharness.shadow import lineage
+
+    root = _root(folder)
+    cannot = _cannot_act(act_name, root, generation)
+    if cannot is not None:
+        return cannot
+    shown = person_terms(act_name, root, generation=generation)
+    settings, log = read_settings(root), _log(root)
+    path, python = settings.get("domain_file"), _pinned_python(settings)
+    runs = f"It runs on {python}." if python else "It runs on the Python of this server."
+    if act_name == "enrol":
+        before = log.enrolled() if log is not None else None
+        question = ["Enrol a domain for G6's self-improvement loop?", f"Folder: {root}",
+                    f"Python file: {path} (sha256 {file_digest(path)}). It runs on this computer as you: now, to read what "
+                    "it declares, and in every tick once the loop is started.",
+                    *([f"It replaces the enrolment by {before['by']} (the name they gave)."] if before else []),
+                    "Enrolling freezes what judges this domain as the file declares it now: its judge, its cases and its "
+                    "held-out split. Every change the loop tries is measured against them, and only a new enrolment "
+                    "changes them. It starts nothing: g6_improve_start asks for that.",
+                    runs, f"Settings digest: {digest_of(settings)}."]
+    else:
+        enrolled = log.enrolled()
+        domain = enrolled.get("domain", "its domain")
+        file = (f"Python file: {path}, as enrolled by {enrolled['by']} (the name they gave). It runs on this computer as "
+                f"you, to read what it declares. {runs}")
+        if act_name == "resume":
+            question = [f"Lift the pause on G6's self-improvement loop on {domain}?", f"Folder: {root}",
+                        f"It is paused because: {held(log)}"[:600],
+                        "Lifting it lets the ticks run again within the pacing rule, from the generation that stands. A "
+                        "stop in place stays: only g6_improve_start lifts one.", file]
+        else:
+            head = lineage(root / "workspace")["recent"][-1]
+            question = [f"Take generation {generation} of G6's self-improvement loop on {domain} back?", f"Folder: {root}",
+                        f"Generation {generation}: {head.get('change', '')}; measured {head.get('measured', {})}"[:600],
+                        f"The loop goes back to the profile of generation {head.get('parent')} and runs on from there; the "
+                        "change can be proposed again.", file]
+    return root, "\n".join([*question, NAME_RECORDED]), shown
+
+
+def act(act_name: str, root: Path, who: str, shown: str, generation: int | None = None) -> dict:
+    """Do what the person agreed to, if what they read still stands: in a process like the runner's (``_run_act``), which
+    checks it again under the folder's lock. The Python file's digest is read before the check, so the bytes that run are
+    the ones the person was shown, or none."""
+    from g6.metaharness.runner import person_terms
+
+    cannot = _cannot_act(act_name, root, generation)
+    if cannot is not None:
+        return cannot
+    try:
+        settings = read_settings(root)
+        pinned = file_digest(settings.get("domain_file"))
+        if person_terms(act_name, root, generation=generation) != shown:
+            return _blocked(TERMS_CHANGED, "what the person read is no longer what stands, so nothing ran or was recorded",
+                            CHANGED_SINCE, folder=str(root))
+    except (ValueError, LedgerError) as exc:
+        return _blocked(RECORDS_UNREADABLE, f"the loop's records cannot be trusted: {exc}"[:400], CHANGED_SINCE)
+    request = {"act": act_name, "folder": str(root), "who": who, "shown": shown, "generation": generation,
+               "settings": digest_of(settings), "domain_file": pinned}
+    return {**_run_act(root, settings, request), "by": who}
+
+
+def _run_act(root: Path, settings: dict[str, Any], request: dict[str, Any]) -> dict:
+    """The act in its own process, on the interpreter the runner uses: the request on its input, its reply as the last
+    line of its output. It never shares this server's input or output, and one that outlives ``ACT_WAIT`` is left to finish."""
+    hidden = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+    command = [*_interpreter(settings), "-c", "import sys; from g6.metaharness.runner import act_main; sys.exit(act_main())"]
+    try:
+        process = subprocess.Popen(command, cwd=root, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True, encoding="utf-8", errors="replace", close_fds=True, **hidden)
+        out, err = process.communicate(json.dumps(request), timeout=ACT_WAIT)
+    except subprocess.TimeoutExpired:
+        return _blocked(ACT_FAILED, f"the act did not finish in {ACT_WAIT:g} seconds; it was left to finish",
+                        "g6_improve_status says what the folder's records hold.", folder=str(root))
+    except OSError as exc:
+        return _blocked(ACT_FAILED, f"the act could not be started: {type(exc).__name__}: {exc}"[:500],
+                        "Nothing was recorded.", folder=str(root))
+    return _read_act(process.returncode, out, err)
+
+
+def _read_act(code: int | None, out: str, err: str = "") -> dict:
+    """The act's reply, or a failure: a reply that does not read, or claims more than a qualified draft, is not taken."""
+    lines = [line for line in (out or "").splitlines() if line.strip()]
+    try:
+        reply = json.loads(lines[-1]) if lines else None
+    except ValueError:
+        reply = None
+    if (not isinstance(reply, dict) or not isinstance(reply.get("warning_card"), dict)
+            or reply.get("completion_state") not in ("qualified-draft", "blocked-escalated")):
+        return _blocked(ACT_FAILED, f"the act ended with exit code {code} and no reply G6 could read, so nothing it did is "
+                        f"claimed: {(err or out or '')[-300:]}"[:500], "g6_improve_status says what the folder's records "
+                        "hold.")
+    return reply
 
 
 def stop(folder: str, reason: str = "") -> dict:
@@ -350,4 +504,4 @@ def status(folder: str) -> dict:
                      g6_status=STATUS_LINE)
 
 
-__all__ = ["NOT_ASKED", "asked", "refused", "start", "status", "stop"]
+__all__ = ["NOT_ASKED", "act", "asked", "asked_act", "refused", "start", "status", "stop"]

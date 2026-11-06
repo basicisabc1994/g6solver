@@ -554,6 +554,19 @@ def _judge_digest(judge: Judge | None) -> str:
     return hashlib.sha256(source.read_bytes()).hexdigest() if source is not None else ""
 
 
+def must_stop(log: CycleLog) -> str:
+    """Why the durable record of cycles says stop, whether or not a pause was written: the cycles themselves are the fact,
+    and the pause is only its note. A tick reads it, and so does a person's dialog that lifts it."""
+    for cycle in reversed(log.since_resumed()):
+        if cycle["outcome"] == "sealed_breach" or cycle.get("code") in (UNMETERED_CALLER, CLASSIFIER_STOP, *BARRED):
+            return cycle["reason"]
+    streak = log.failed_run()
+    if len(streak) < MAX_FAILED_CYCLES:
+        return ""
+    return "three failed cycles in a row: " + "; ".join(
+        f"tick {c['tick']} {c['outcome']} ({str(c.get('reason', ''))[:160]})" for c in streak)
+
+
 def _exclusive(method: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
     """One operation at a time per folder, on what is written and not on what this handle last read: a restart can
     overlap a tick that is still running, and a person's process is not the loop's. The lock is the operating system's,
@@ -739,7 +752,8 @@ class ShadowLoop:
             return _blocked(self.problems[0][0], "; ".join(why for _, why in self.problems),
                             "Give this domain what it lacks; the loop will not run without it.")
         if self.log.enrolled() is None:
-            return _blocked(NOT_ENROLLED, "no person has enrolled this domain", "loop.enrol('<your name>')")
+            return _blocked(NOT_ENROLLED, "no person has enrolled this domain",
+                            "A person enrols it with g6_improve_enrol, in the client's dialog.")
         return None
 
     def _refused(self) -> dict[str, Any] | None:
@@ -757,7 +771,8 @@ class ShadowLoop:
                             "check out.")
         paused = self.log.paused() or self._must_stop()
         if paused:
-            return _blocked(PAUSED, f"the loop is paused: {paused}", "A person reads why, then loop.resume('<name>').")
+            return _blocked(PAUSED, f"the loop is paused: {paused}",
+                            "A person reads why, then lifts it with g6_improve_resume, in the client's dialog.")
         changed = self._changed()
         if changed:
             return _blocked(FROZEN_CHANGED, f"changed since a person enrolled this domain: {', '.join(changed)}. Nothing "
@@ -792,21 +807,14 @@ class ShadowLoop:
                         "Give this domain what it lacks; the loop will not run without it.")
 
     def _must_stop(self) -> str:
-        """Why the durable record of cycles says stop, whether or not a pause was written: the cycles themselves are the
-        fact, and the pause is only its note."""
-        cycles = self.log.since_resumed()
-        for cycle in reversed(cycles):
-            if cycle["outcome"] == "sealed_breach" or cycle.get("code") in (UNMETERED_CALLER, CLASSIFIER_STOP, *BARRED):
-                return cycle["reason"]
-        streak = self.log.failed_run()
-        if len(streak) < MAX_FAILED_CYCLES:
-            return ""
-        return "three failed cycles in a row: " + "; ".join(
-            f"tick {c['tick']} {c['outcome']} ({str(c.get('reason', ''))[:160]})" for c in streak)
+        return must_stop(self.log)
 
     @_exclusive
-    def enrol(self, confirmed_by: str) -> dict[str, Any]:
-        """A person confirms what judges this domain, as it stands now. It is the one step the loop cannot do."""
+    def enrol(self, confirmed_by: str, *, last_check: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None
+              ) -> dict[str, Any]:
+        """A person confirms what judges this domain, as it stands now. It is the one step the loop cannot do.
+        ``last_check``: given what would be frozen, under the folder's lock and before anything is written, the refusal
+        when that is no longer what the person read (``g6.mcp.improve``), or ``None``."""
         if self.problems:
             return self._invalid()
         who = confirmed_by.strip()
@@ -823,10 +831,13 @@ class ShadowLoop:
             return _blocked(SPLIT_REUSED, f"{len(reused)} held-out cases were already seen by proposers or spent by an "
                             f"earlier split, for example {reused[:3]}: a gain measured on them proves nothing",
                             "Give the gate cases the loop has not used: a split changed by a few cases is not fresh.")
+        frozen = self._frozen()
+        refused = last_check(frozen) if last_check is not None else None
+        if refused is not None:
+            return refused
         confirmed = self.mh.confirm(who, initial=self.domain.execution().initial)
         if confirmed["completion_state"] == "blocked-escalated":
             return confirmed
-        frozen = self._frozen()
         exposed = (*self.cut.tune, *self.cut.selection)
         self.log.enrol(who, frozen, domain=self.domain.name, at=self._now().isoformat(),
                        seen=sorted(c.case_id for c in exposed),
@@ -1033,18 +1044,23 @@ class ShadowLoop:
                 pass                  # the cycles are already written, so the next tick is refused all the same
 
     @_exclusive
-    def resume(self, accepted_by: str) -> dict[str, Any]:
-        """A person lifts a pause, having read why. The loop cannot lift its own."""
+    def resume(self, accepted_by: str, *, last_check: Callable[[], dict[str, Any] | None] | None = None) -> dict[str, Any]:
+        """A person lifts a pause, having read why. The loop cannot lift its own. ``last_check`` as for ``enrol``."""
         who = accepted_by.strip()
         if not who or is_automated(who):
             return _blocked(APPROVAL_REQUIRED, "a person lifts a pause (no empty or auto: name)")
+        refused = last_check() if last_check is not None else None
+        if refused is not None:
+            return refused
         if self.log.paused() or self._must_stop():
             self.log.resume(who)
         return _envelope("qualified-draft", RESUMED, "the loop is not paused", next_action="loop.tick()")
 
     @_exclusive
-    def demote(self, generation: int, asked_by: str) -> dict[str, Any]:
-        """A person takes back the generation at the head, having read the digest. The loop goes on from what stood before."""
+    def demote(self, generation: int, asked_by: str, *,
+               last_check: Callable[[], dict[str, Any] | None] | None = None) -> dict[str, Any]:
+        """A person takes back the generation at the head, having read the digest. The loop goes on from what stood before.
+        ``last_check`` as for ``enrol``."""
         who = asked_by.strip()
         if not who or is_automated(who):
             return _blocked(APPROVAL_REQUIRED, "a person takes a generation back (no empty or auto: name)")
@@ -1054,6 +1070,9 @@ class ShadowLoop:
         lost = self._lost_generations()
         if lost:
             return _blocked(RECORDS_UNREADABLE, lost, "A person inspects the folder. Nothing runs on records that do not check out.")
+        refused = last_check() if last_check is not None else None
+        if refused is not None:
+            return refused
         taken = self.mh.demote(generation, who)
         if taken["completion_state"] != "blocked-escalated":
             self.log.demote(who, at=self._now().isoformat(), undoes=taken["undoes"], head_version=taken["head_version"])

@@ -32,8 +32,10 @@ calls are billed to one provider, so with more than one window ``provider`` name
 without it. Nothing else is read from it, so neither file can reach ``person_free_adoption_outside_shadow``. Enrolling pins
 its digest, so an edit is a changed frozen item, and ``g6_improve_start`` refuses it before it could run.
 
-``enrol``, ``resume`` and ``demote`` are a person's: as in ``g6.workforce.decide``, an answer counts only when the domain's
-name is typed back at an interactive terminal. That is a convenience check, not proof that a person typed it.
+Enrolling, lifting a pause and taking a generation back are a person's, given only in the client's dialog through
+``g6_improve_enrol``, ``g6_improve_resume`` and ``g6_improve_demote`` (``g6.mcp.improve``). Each runs here (``act``), on the
+interpreter the runner uses, bound to what the dialog showed. ``enrol``, ``resume`` and ``demote`` on the command line
+record nothing and say so: there is no terminal fallback and no agent answer.
 
 Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been
 established.
@@ -44,6 +46,7 @@ import argparse
 import ctypes
 import hashlib
 import importlib.util
+import json
 import os
 import sys
 import time
@@ -56,17 +59,21 @@ from typing import Any
 
 from g6.core import stop
 from g6.core.ledger import LedgerError, digest as digest_of
+from g6.metaharness.api import _blocked
 from g6.metaharness.loop import (
     BUDGET_WAIT,
     BUSY,
+    CANNOT_RECORD,
     CYCLE_FAILED,
     FROZEN_CHANGED,
     STATUS_LINE,
     STOPPED,
     LoopSettings,
     ShadowLoop,
+    must_stop,
 )
 from g6.metaharness import reflex
+from g6.metaharness.schema import CONSENT_DIALOG_ONLY
 from g6.metaharness.shadow import lineage
 from g6.self_maintenance import digest
 from g6.self_maintenance.envelope import (
@@ -74,6 +81,7 @@ from g6.self_maintenance.envelope import (
     ENDS_A_STREAK,
     CycleLog,
     beat,
+    file_digest,
     record_stop,
     runner_alive,
     runner_lock,
@@ -281,8 +289,8 @@ class Runner:
         found = []
         pause = self._pause()
         if pause is not None and self.loop.log.paused():
-            found.append("The loop is paused. Read why below, then lift it at your terminal: python -P -m "
-                         "g6.metaharness.loop resume <folder> --as <your name>")
+            found.append("The loop is paused. Read why below, then lift it with g6_improve_resume, which asks you in the "
+                         "client's dialog.")
         elif pause is not None:
             found.append(f"{pause['reason']}. {self.last.get('next_action', '')}")
         return [*found, *(f"The allowance for {w.provider} is an estimate: put the real figure in {SETTINGS_FILE} when there "
@@ -417,48 +425,106 @@ def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable
         return 1
 
 
-def _at_a_terminal() -> bool:
-    try:
-        return sys.stdin.isatty() and sys.stdout.isatty()
-    except (AttributeError, ValueError):
-        return False
+#: A person's acts on a folder, each given only in the client's dialog, through its tool (``g6.mcp.improve``).
+DIALOG = {"enrol": ("Enrolment", "g6_improve_enrol"), "resume": ("Lifting a pause", "g6_improve_resume"),
+          "demote": ("Taking a generation back", "g6_improve_demote")}
+#: The code ``g6_improve_start`` gives the same fact: what the person read no longer stands.
+TERMS_CHANGED = "G6_E_LOOP_TERMS_CHANGED"
 
 
-def _person(root: Path, who: str, verb: str, pinned: str | None = None) -> ShadowLoop | None:
-    """The folder's loop when a person is at this terminal and types its domain's name back. A convenience check."""
-    if not _at_a_terminal():
-        print(f"Only a person at an interactive terminal can {verb}: nothing was recorded.", file=sys.stderr)
-        return None
+def _dialog_only(act_name: str) -> int:
+    """The command line's answer to a person's act: it records nothing, and says where the act is done."""
+    what, tool = DIALOG[act_name]
+    print(f"{what} is done from a client session over MCP: {tool} asks the person in the client's dialog, and nothing "
+          f"else records it. Nothing was recorded ({CONSENT_DIALOG_ONLY}).", file=sys.stderr)
+    return 1
+
+
+def enrol(root: Path, who: str = "") -> int:
+    return _dialog_only("enrol")
+
+
+def resume(root: Path, who: str = "") -> int:
+    return _dialog_only("resume")
+
+
+def demote(root: Path, generation: int = 0, who: str = "") -> int:
+    return _dialog_only("demote")
+
+
+def held(log: CycleLog | None) -> str:
+    """What holds the ticks until a person lifts it: the pause on record, or what the cycles themselves say."""
+    return (log.paused() or must_stop(log)) if log is not None else ""
+
+
+def person_terms(act_name: str, root: Path, *, generation: int | None = None) -> str:
+    """A digest of all a person's dialog for ``act_name`` shows or stands on, read from the folder as it is now: the whole
+    settings file, the Python file's digest, the enrolment on record, what holds the ticks for a pause, and the chain for a
+    generation taken back. ``g6.mcp.improve`` binds the dialog to it, and the act checks it again under the folder's
+    lock, so a change in between records nothing."""
+    settings = read_settings(root)
+    path = root / CYCLE_LOG
+    log = CycleLog(path) if path.is_file() else None
+    seen: dict[str, Any] = {"act": act_name, "settings": settings, "domain_file": file_digest(settings.get("domain_file")),
+                            "enrolled": log.enrolled() if log is not None else None}
+    if act_name == "resume":
+        seen |= {"held": held(log), "cycles": len(log.cycles()) if log is not None else 0}
+    if act_name == "demote":
+        seen |= {"generation": generation, "lineage": lineage(root / "workspace")}
+    return digest_of(seen)
+
+
+def act(request: dict[str, Any]) -> dict[str, Any]:
+    """A person's act that the client's dialog agreed to (``g6.mcp.improve``), in a process like the runner's, so what an
+    enrolment freezes is what a tick on that interpreter compares. It runs only the Python file the dialog named, by
+    digest (an enrolment's) or the one on record, and records nothing if anything the person read moved since. Like the
+    start, this is a check and not a boundary: a process with the owner's rights can reach this code."""
+    name, root, who, shown = request["act"], Path(request["folder"]), str(request["who"]), str(request["shown"])
+    generation = request.get("generation")
     try:
-        loop, _ = open_loop(root, pinned=pinned)
+        settings = read_settings(root)
+        if digest_of(settings) != request["settings"]:
+            return _blocked(TERMS_CHANGED, f"{SETTINGS_FILE} changed after the person read it, so nothing ran or was "
+                            "recorded", "Call the tool again: the person reads what stands now.")
+        loop, _ = open_loop(root, pinned=request["domain_file"] if name == "enrol" else _pinned(root), settings=settings)
     except DomainChanged as exc:
-        print(f"{exc}: nothing was recorded.", file=sys.stderr)
-        return None
-    print(f"Domain: {loop.domain.name}. Folder: {root}. Name given: {who}, recorded as given and not authenticated.")
-    if input(f"Type the domain's name to {verb}: ").strip() != loop.domain.name:
-        print("That is not the domain's name: nothing was recorded.", file=sys.stderr)
-        return None
-    return loop
+        return _blocked(FROZEN_CHANGED, f"{exc}: nothing was recorded"[:500], "Call the tool again: the person reads what "
+                        "stands now.")
+    except Exception as exc:  # noqa: BLE001 - the domain file is the person's own code: say why
+        return _blocked(CANNOT_OPEN, f"The loop could not be opened: {type(exc).__name__}: {exc}"[:500])
+
+    def unchanged(frozen: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        try:
+            same = person_terms(name, root, generation=generation) == shown
+        except (ValueError, LedgerError):
+            same = False
+        if same and (frozen is None or frozen.get("domain_file") == request["domain_file"]):
+            return None
+        return _blocked(TERMS_CHANGED, "what the person read is no longer what stands, so nothing was recorded",
+                        "Call the tool again: the person reads what stands now, in the client's dialog.")
+
+    try:
+        if name == "enrol":
+            return loop.enrol(who, last_check=unchanged)
+        if name == "resume":
+            return loop.resume(who, last_check=unchanged)
+        return loop.demote(int(generation), who, last_check=unchanged)
+    except Exception as exc:  # noqa: BLE001 - a write that failed: nothing it began counts, and the person may ask again
+        return _blocked(CANNOT_RECORD, f"the act could not be recorded: {type(exc).__name__}: {exc}"[:500],
+                        "Nothing counts. Free the folder, then call the tool again: the person agrees again.")
 
 
-def _said(reply: dict[str, Any]) -> int:
-    print(reply["message"])
+def act_main() -> int:
+    """The entry ``g6.mcp.improve`` starts: the request on standard input, the reply as the last line of standard output.
+    It refuses, as ``run`` does, where cached bytecode could run in place of G6's source."""
+    unsafe = _launch_risk()
+    try:
+        request = json.loads(sys.stdin.read())
+        reply = _blocked(CACHED_BYTECODE, unsafe[:500]) if unsafe else act(request)
+    except (ValueError, KeyError, TypeError) as exc:
+        reply = _blocked(CANNOT_OPEN, f"the request could not be read: {type(exc).__name__}")
+    sys.stdout.write(json.dumps(reply, default=str) + "\n")
     return 1 if reply["completion_state"] == "blocked-escalated" else 0
-
-
-def enrol(root: Path, who: str) -> int:
-    loop = _person(root, who, "enrol it")
-    return 1 if loop is None else _said(loop.enrol(who))
-
-
-def resume(root: Path, who: str) -> int:
-    loop = _person(root, who, "lift the pause", pinned=_pinned(root))
-    return 1 if loop is None else _said(loop.resume(who))
-
-
-def demote(root: Path, generation: int, who: str) -> int:
-    loop = _person(root, who, f"take generation {generation} back", pinned=_pinned(root))
-    return 1 if loop is None else _said(loop.demote(generation, who))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -466,20 +532,17 @@ def main(argv: list[str] | None = None) -> int:
                                      description="Run G6's self-improvement loop on a folder, or act on it as a person.")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("run", help="run ticks until a STOP file appears").add_argument("folder")
-    for name, about in (("enrol", "confirm what judges this folder's domain"), ("resume", "lift a pause, having read why"),
-                        ("demote", "take back the generation at the head, having read the digest")):
-        command = commands.add_parser(name, help=about)
+    for name, (what, tool) in DIALOG.items():
+        command = commands.add_parser(name, help=f"{what.lower()} is done over MCP, with {tool}: this records nothing")
         command.add_argument("folder")
         if name == "demote":
-            command.add_argument("generation", type=int, help="the generation at the head, as the digest shows it")
-        command.add_argument("--as", dest="who", required=True, help="your name; recorded as given, not authenticated")
+            command.add_argument("generation", nargs="?", help="not used")
+        command.add_argument("--as", dest="who", default="", help="not used: a name comes only from the client's dialog")
     args = parser.parse_args(argv)
-    root = Path(args.folder).expanduser().resolve()
     if args.command == "run":
-        return run(root, unsafe=_launch_risk())
-    if args.command == "demote":
-        return demote(root, args.generation, args.who)
-    return {"enrol": enrol, "resume": resume}[args.command](root, args.who)
+        return run(Path(args.folder).expanduser().resolve(), unsafe=_launch_risk())
+    return _dialog_only(args.command)
 
 
-__all__ = ["FIRST_REST", "LONGEST_REST", "NAP", "Runner", "demote", "enrol", "main", "open_loop", "resume", "run"]
+__all__ = ["FIRST_REST", "LONGEST_REST", "NAP", "Runner", "act", "act_main", "demote", "enrol", "held", "main", "open_loop",
+           "person_terms", "resume", "run"]

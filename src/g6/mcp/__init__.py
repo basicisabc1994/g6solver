@@ -6,8 +6,9 @@ Six discovery tools: ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, `
 ``g6_review_until_clean``, one step of the completion loop for a client the plugin's hook cannot reach (``g6.mcp.review_loop``),
 as a job; ``g6_premortem`` and six ``g6_mission_*`` tools (``_create``, ``_clarify``, ``_confirm``, ``_submit``, ``_status``,
 ``_certificate``) for a coding mission (``g6.mcp.mission``), where what a person allows and confirms goes through the
-client's own dialog and nowhere else, and the check step is the patch review; three ``g6_improve_*`` tools (``_start``,
-``_stop``, ``_status``) for the self-improvement loop (``g6.mcp.improve``), whose start asks the person the same way; and
+client's own dialog and nowhere else, and the check step is the patch review; six ``g6_improve_*`` tools (``_start``,
+``_stop``, ``_status``, ``_enrol``, ``_resume``, ``_demote``) for the self-improvement loop (``g6.mcp.improve``), whose
+start, enrolment, resumption and take-back ask the person the same way and whose stop asks nobody; and
 thirteen meta-harness tools (``metaharness_start``, ``_confirm``, ``_propose_code``, ``_evaluate_start``, ``_job``, ``_run``,
 ``_inspect``, ``_propose``, ``_evaluate``, ``_decide``, ``_diagnose``, ``_approve``, ``_rollback``) for the workflows
 declared in the file ``G6_METAHARNESS`` names, where confirmation, approval and rollback ask the person through the
@@ -318,28 +319,24 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             return blocked_reply("[G6_E_INPUT_VALIDATION] specification_json must be JSON")
 
     async def metaharness_confirm(workflow: str, workflow_digest: str, ctx: Any) -> dict:
-        """Confirm the frozen task, checks, split and baseline through client-mediated consent."""
+        """Confirm the frozen task, checks, split and baseline: the person answers in the client's dialog, bound to the
+        digest they read. No dialog, a decline, a cancel, no name or a changed digest confirms nothing, each with its own
+        code, and there is no other way to confirm: no terminal, no command and no argument."""
+        from g6.metaharness.surface import workflow_changed
+
         held = mh.harness(workflow)
         if isinstance(held, dict):
             return held
         if held.workflow.digest() != workflow_digest:
-            from g6.core.door import blocked_reply
-            return {**blocked_reply("[G6_E_META_APPROVAL_REQUIRED] workflow changed; inspect it before confirming"),
-                    "consent_status": "workflow_changed"}
+            return workflow_changed()
         question = (f"Confirm workflow {workflow} digest {workflow_digest}? Task: {held.workflow.task}. "
                     f"Development cases: {len(held.workflow.suite.dev)}; held-out: {len(held.workflow.suite.held_out)}. "
                     "The baseline and generated candidates execute Python inside the configured boundary. "
                     "Future activation requires separate consent. Type your name; identity is recorded as given.")
         consent = await request_consent(ctx, question)
-        if consent.status in ("declined", "cancelled"):   # the person said no, or closed the form (the owner's pilot)
-            return consent_refusal(consent, next_action=(
-                "No change was made. The person declined or closed the form: ask the person whether they want to "
-                "confirm before calling metaharness_confirm again, and never offer another way to confirm."))
-        if consent.status != "accepted":   # no form, or no name with acceptance: the person can confirm in a terminal
-            return consent_refusal(consent, next_action=(
-                f'From the project directory, the user can inspect with g6 workflow inspect {workflow}, then '
-                f'personally confirm with g6 workflow confirm {workflow} {workflow_digest} --as "Your name".'))
-        return mh.confirm(workflow, workflow_digest, answer=consent.answer)
+        if consent.status != "accepted":
+            return consent_refusal(consent)
+        return mh.confirm(workflow, workflow_digest, answer=consent.answer)   # checks the digest again, under its lock
 
     def metaharness_propose_code(workflow: str, files_json: str, hypothesis: str, ctx: Any) -> dict:
         """Propose generated application code as {filename.py: source}, with a falsifiable hypothesis.
@@ -465,7 +462,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         if lines is not None:
             consent = await request_consent(ctx, found["question"])
             if consent.status != "accepted":
-                return refusal(consent, next_action=mission.NOT_ASKED)
+                return refusal(consent, nothing="Nothing was recorded.")
             who = consent.answer
         return jobs.start(lambda: mission.create(found["name"], objective, lines=lines, who=who, module=module,
                                                  function=function, helpers=helpers, risk=risk,
@@ -500,7 +497,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         lines, sha, question = found
         consent = await request_consent(ctx, question)
         if consent.status != "accepted":
-            return refusal(consent, next_action=mission.NOT_ASKED)
+            return refusal(consent, nothing="Nothing was recorded.")
         return jobs.start(lambda: mission.confirm(mission_id, lines, sha, consent.answer))
 
     def g6_mission_submit(mission_id: str, repo: str, claim: str = "", timeout_s: int = 300) -> dict:
@@ -541,8 +538,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         them, and a decline, a cancel or a client without a dialog starts nothing; ask the person, and offer no other way
         to agree. The name they give is recorded as given and is not authenticated. If what they read changes while the
         dialog is open, nothing starts: call this again and they read what stands. Refused, with what to do, while a
-        runner is alive or when no person has enrolled a domain in the folder, which only a person does, at their terminal.
-        Requires host permission metaharness.improve in G6_MCP_SENSITIVE."""
+        runner is alive or when no person has enrolled a domain in the folder, which only a person does, in the client's
+        dialog (g6_improve_enrol). Requires host permission metaharness.improve in G6_MCP_SENSITIVE."""
         from g6.mcp import improve
         from g6.mcp.consent import refusal, request_consent
 
@@ -555,7 +552,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         root, question, shown = found
         consent = await request_consent(ctx, question)
         if consent.status != "accepted":
-            return refusal(consent, next_action=improve.NOT_ASKED)
+            return refusal(consent, nothing="Nothing started.")
         return await asyncio.to_thread(improve.start, root, consent.answer, shown)
 
     def g6_improve_stop(folder: str = "", reason: str = "") -> dict:
@@ -574,12 +571,54 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         from g6.mcp import improve
         return improve.status(folder)
 
+    async def person_act(ctx: Any, act: str, folder: str, generation: int | None = None) -> dict:
+        """A person's act on the loop's folder: asked in the client's dialog, bound to what it showed, and nowhere else."""
+        from g6.mcp import improve
+        from g6.mcp.consent import refusal, request_consent
+
+        denied = improve.refused()
+        if denied is not None:
+            return denied
+        found = improve.asked_act(act, folder, generation)
+        if isinstance(found, dict):
+            return found
+        root, question, shown = found
+        consent = await request_consent(ctx, question)
+        if consent.status != "accepted":
+            return refusal(consent, nothing="Nothing was recorded.")
+        return await asyncio.to_thread(improve.act, act, root, consent.answer, shown, generation)
+
+    async def g6_improve_enrol(ctx: Any, folder: str = "") -> dict:
+        """Enrol the domain a loop's folder declares (empty: the one beside G6's state folder): freeze what judges it, its
+        judge, its cases and its held-out split, as its Python file declares them now. Only a person enrols, in the
+        client's own dialog, which names the folder and the file by digest: you never answer for them, and a decline, a
+        cancel or a client without a dialog records nothing; ask the person, and offer no other way to agree. The name they
+        give is recorded as given and is not authenticated. If what they read changes while the dialog is open, nothing is
+        recorded. The file then runs, as the person, on the Python the runner uses. It starts nothing: g6_improve_start
+        does. Requires host permission metaharness.improve in G6_MCP_SENSITIVE."""
+        return await person_act(ctx, "enrol", folder)
+
+    async def g6_improve_resume(ctx: Any, folder: str = "") -> dict:
+        """Lift the pause that holds the loop's ticks, once a person has read why: they are asked in the client's own
+        dialog, which says why it is paused, and agree there or nowhere, as for g6_improve_enrol. A stop in place stays.
+        Refused with nothing asked when nothing is paused, nothing is enrolled, or the Python file is not the one enrolled.
+        Requires host permission metaharness.improve in G6_MCP_SENSITIVE."""
+        return await person_act(ctx, "resume", folder)
+
+    async def g6_improve_demote(ctx: Any, generation: int, folder: str = "") -> dict:
+        """Take back the generation at the head of the loop's chain (as g6_improve_status shows it), so the loop goes on
+        from the version before it: a person agrees in the client's own dialog, which names the generation and what it
+        changed, and nowhere else, as for g6_improve_enrol. A head that is not that generation is refused with nothing
+        asked, and one that moves while the dialog is open is not taken back. Requires host permission
+        metaharness.improve in G6_MCP_SENSITIVE."""
+        return await person_act(ctx, "demote", folder, generation)
+
     for tool in (metaharness_inspect, metaharness_propose, metaharness_evaluate, metaharness_decide,
                  metaharness_diagnose, metaharness_approve, metaharness_rollback, metaharness_start,
                  metaharness_confirm, metaharness_propose_code, metaharness_evaluate_start, metaharness_job,
                  metaharness_run, g6_premortem, g6_mission_create, g6_mission_clarify, g6_mission_confirm,
                  g6_mission_submit, g6_mission_status, g6_mission_certificate, g6_improve_start, g6_improve_stop,
-                 g6_improve_status):
+                 g6_improve_status, g6_improve_enrol, g6_improve_resume, g6_improve_demote):
         if "ctx" in tool.__annotations__:  # the real Context type, so the server injects it (annotations are strings)
             tool.__annotations__["ctx"] = context_type
         server.tool()(tool)

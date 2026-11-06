@@ -128,7 +128,8 @@ Use `metaharness_evaluate_start` and `metaharness_job` for long evaluations. Job
 a server restart loses handles and must never be interpreted as success. Inspect the workflow's ledger afterward.
 `metaharness_run` runs the approved version as a job. Approval may happen in the proposing session through
 client-mediated consent tied to the decision and candidate digests. The supplied name is not authenticated.
-If elicitation is unavailable, the refusal gives a `g6 workflow confirm` or `g6 workflow approve` terminal command.
+If elicitation is unavailable, nothing is confirmed or approved, and there is no terminal fallback: the person answers in
+a client session that shows the dialog. `g6 workflow confirm` and `g6 workflow approve` record nothing.
 
 Generated-code workflows use `main.py` with `solve(task)`. Exact, contains and finite-number checks are supported.
 Below 30 held-out cases is exploration, not validated tuning. Code activation additionally needs a host-configured

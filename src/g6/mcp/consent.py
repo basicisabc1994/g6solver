@@ -33,16 +33,31 @@ async def request_consent(ctx: Any, question: str) -> Consent:
     return Consent("invalid")
 
 
-def refusal(consent: Consent, *, next_action: str = "") -> dict:
-    from g6.metaharness.api import _blocked
-    from g6.metaharness.schema import APPROVAL_REQUIRED
+#: COPY: What the person can do after each way a dialog ends without their agreement. None offers another way to agree,
+#: since there is none: no terminal, no command, no setting and no agent's answer.
+ASK = "Ask the person whether they want this before calling again, and offer no other way to agree: there is none."
+CAN = {
+    "declined": ("The person declined in the client's dialog; nothing was authorized.", ASK),
+    "cancelled": ("The client cancelled the dialog. G6 cannot tell whether it was displayed.", ASK),
+    "unavailable": ("This client showed the person no dialog (it has no MCP elicitation, or the request failed), so no "
+                    "consent was received.",
+                    "The person agrees only in the dialog of a client session that can show one (MCP elicitation), and "
+                    "there is no other way: no command, setting or argument agrees for them. Tell the person; do not ask "
+                    "for their name yourself."),
+    "invalid": ("The client returned acceptance with no name, so nothing was authorized.",
+                "Call again and ask the person to type their name in the dialog: the name is what counts, and there is "
+                "no other way to agree."),
+}
 
-    messages = {
-        "declined": "The client returned declined consent; no change was authorized.",
-        "cancelled": "The client cancelled the consent request. G6 cannot tell whether a prompt was displayed.",
-        "unavailable": "Client elicitation failed or is unavailable; no consent was received.",
-        "invalid": "The client returned no valid, nonempty name with acceptance; no change was authorized.",
-    }
-    return _blocked(APPROVAL_REQUIRED, messages[consent.status],
-                    next_action or "No change was made. Inspect the request and client consent support before retrying.",
+
+def refusal(consent: Consent, *, nothing: str = "No change was made.") -> dict:
+    """The one refusal for a dialog that ended without a person's agreement: a code for each way it ended, what did not
+    happen (``nothing``), and what the person can do."""
+    from g6.metaharness import schema
+    from g6.metaharness.api import _blocked
+
+    codes = {"declined": schema.CONSENT_DECLINED, "cancelled": schema.CONSENT_CANCELLED,
+             "unavailable": schema.CONSENT_NO_DIALOG, "invalid": schema.CONSENT_NO_NAME}
+    message, can = CAN[consent.status]
+    return _blocked(codes[consent.status], message, f"{nothing} {can}",
                     consent_status=consent.status, consent_error_type=consent.error_type)
