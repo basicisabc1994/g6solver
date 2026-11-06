@@ -879,6 +879,29 @@ its own record. A send nested in a metered call is let out, and charged, once, b
 call's end charges only notes that had no boundary at all, a child's totals. Every refusal row in `refused.log` begins on a line
 of its own, after a row a crash cut short too, and the reader keeps every whole row around a torn one.
 
+**One admission and one record for the process (2026-11-06, the refusals follow-up).** Counting a send had findings in every
+round: a resend charged by each call around it, a child's totals charged by each call around them, an identical send on another
+thread of the same call let out beside the first, a nested host send that passed the reservation of the meter around it, a refused
+note that hid a child's totals. Each repair covered one more case of the same fault: each metered call counted for itself and
+decided for itself whether a send was its own. Now every model request in the process, nested or not, on any thread, a resend
+included, passes one admission (`_Requests.admit`). Under one lock it reads every meter around the send, which are those of the
+metered calls open where it is made, with their stops, latches and refused requests; it takes exactly one place on each, and makes
+the send's record before the send goes. The innermost call lets each send in, for all of them. A meter keeps no count: what it has
+taken, and what it has out, are views of the one record of sends (`_Record`), which only admission and the end of a call charge.
+A call's children's totals, which pass no boundary, are settled once as the call ends, into that record and onto every meter
+around the call, and each call around it counts them as settled; a note refused at its boundary was never counted, so it offsets
+nothing. What a provider said of a send goes to every meter its record took a place on. A tick closes in one step under the lock,
+which keeps what it latched. Its outcome, the limits it writes, in the order they were met, and the charges it settles are all
+read from that, so a refusal or a limit is either in what the tick ends on or was met once it had ended. Each limit row names
+the tick that met it: a tick's limits stand until the furthest of them ends, whatever order they came in, and a later tick's
+replace them, as the latest always did. A death while a refusal is being kept stays a death, and is not read as the refusal it
+was keeping. Whether a request was refused is read from the store at
+every admission, so every handle of the loop, in this process or another, refuses it. A send waits for an identical one out on
+another thread whose own outcome releases it: a watched one, or one of another call. An unwatched send of the same call has no
+outcome before the call ends, so one beside it on another thread does not wait and both go out, each charged; and a send made
+inside one that is out never waits for it. Tests built from the code list every place a request can leave, every writer of the
+record, and the one step that closes a tick.
+
 No failure of the records can undo this. A refused request is kept as it happens, by its identity, in `refused.log`, a file no lock
 stands in front of, flushed to the disk before any other thread can see the refusal and before any record of the tick is written,
 and this process holds it too, for good. A handle reads `refused.log` and the cycles' records as it is built, before its first
