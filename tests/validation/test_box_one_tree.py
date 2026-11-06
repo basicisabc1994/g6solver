@@ -255,6 +255,27 @@ def test_a_command_that_makes_what_the_workspace_cannot_hold_is_told_and_the_con
     assert calls[-1]["phase"] == "set back" and "evil" in calls[-1]["error"]
 
 
+def test_a_pull_that_fails_part_way_says_so_and_leaves_one_tree_never_that_nothing_was_kept(monkeypatch, tmp_path):
+    real, writes = box._write_new, []
+
+    def write_new(path, data, **kw):           # the pull's second write of the command's changes fails, after its first
+        if data in (BOX_EDIT, BOX_NEW):
+            writes.append(path)
+            if len(writes) == 2:
+                raise OSError(28, "No space left on device")
+        return real(path, data, **kw)
+
+    monkeypatch.setattr(box, "_write_new", write_new)
+    got = run_with(monkeypatch, tmp_path, "A", [("s1", [("run", "sed -i ...")])], commands={"sed -i ...": box_edits})
+    text = got.replies[0]["content"][0]["text"]
+    assert got.replies[0]["isError"] is True and "only in part" in text and "none of it is kept" not in text, text
+    assert "No space left on device" in text and "set back" in text
+    final = (got.folder / "final.patch").read_bytes()
+    assert final.count(b"=== end") == 1, final   # one of the two changes is in the workspace, and so in the container and the patch
+    assert b"=== src/mod.py" not in final        # the file whose new bytes failed to land is as it was, never removed
+    assert not box.spare(got.workspaces[0]).exists()       # the box's pull folder goes with the workspace at the run's end
+
+
 # --- a stop between every two steps that write state ------------------------------------------------------------------------
 @pytest.mark.parametrize("at", ["before the command", "after the command", "during the pull", "after the pull"])
 def test_a_box_ended_between_its_steps_leaves_no_command_change_out_of_the_kept_patch(monkeypatch, tmp_path, at):
@@ -266,12 +287,12 @@ def test_a_box_ended_between_its_steps_leaves_no_command_change_out_of_the_kept_
             raise Killed
         monkeypatch.setattr(box, "run_command", run_command)
     elif at == "during the pull" and real_write is not None:
-        def write_new(path, data):          # the pull's first write of the command's change, never the export's at the start
+        def write_new(path, data, **kw):    # the pull's first write of the command's change, never the export's at the start
             if data in (BOX_EDIT, BOX_NEW) and not killed:
                 killed.append(at)
-                real_write(path, data)
+                real_write(path, data, **kw)
                 raise Killed
-            return real_write(path, data)
+            return real_write(path, data, **kw)
         monkeypatch.setattr(box, "_write_new", write_new)
     elif at == "after the pull" and real_state is not None:
         def write_state(path, entry_):

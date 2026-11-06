@@ -3388,8 +3388,11 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             ctx.docker("network", "rm", net, timeout=120)
         if workspace is not None:
             shutil.rmtree(workspace, ignore_errors=True)
-            for left in box_state_of(workspace).parent.glob(f"{box_state_of(workspace).name}*"):
-                left.unlink(missing_ok=True)       # the box's state and any write of it it did not finish
+            for left in workspace.parent.glob(f"{workspace.name}.box*"):   # the box's state, its pull folder, any write left
+                if left.is_dir() and not left.is_symlink():
+                    shutil.rmtree(left, ignore_errors=True)
+                else:
+                    left.unlink(missing_ok=True)
     return finish(status)
 
 

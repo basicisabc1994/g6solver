@@ -480,10 +480,35 @@ def export_members(tar: tarfile.TarFile) -> dict[str, tarfile.TarInfo]:
     return found
 
 
-def _write_new(path: Path, data: bytes) -> None:
-    """A file made fresh, exclusively, with ``data``: never written through a name that is there."""
-    with open(path, "xb") as f:
-        f.write(data)
+class Partial(Refused):
+    """A container's tree that could not be brought into the workspace after the pull began to write it: part of it is there."""
+
+
+def spare(workspace: Path) -> Path:
+    """The box's own folder beside the workspace, outside it, where a file the pull writes is made whole before it is moved into
+    its place: no pack reads it, and the run removes it with the workspace."""
+    base = Path(workspace).resolve()
+    return base.parent / f"{base.name}.box.pull"
+
+
+def _write_new(path: Path, data: bytes, *, over: Path | None = None) -> None:
+    """A file put in place with ``data``, never written through a name that is there. A new one is made fresh, exclusively, so a
+    name that is another file's short-name alias meets that file and fails. ``over``: the file replaces one, so it is made whole,
+    exclusively, in that folder (``spare``), then moved over its name in one step (``os.replace``): a write that fails leaves the
+    old file as it was."""
+    if over is None:
+        with open(path, "xb") as f:
+            f.write(data)
+        return
+    over.mkdir(exist_ok=True)
+    temp = over / f"{secrets.token_hex(8)}.part"
+    try:
+        with open(temp, "xb") as f:
+            f.write(data)
+        os.replace(temp, path)
+    finally:
+        if os.path.lexists(temp):
+            os.remove(temp)
 
 
 def bring_in(workspace: Path, data: bytes, repo: str = "", before: Mapping[str, str] | None = None) -> list[str]:
@@ -493,10 +518,11 @@ def bring_in(workspace: Path, data: bytes, repo: str = "", before: Mapping[str, 
     each name takes the container's side where the workspace still holds what the container was given, and keeps the workspace's
     where the workspace changed since, so nothing written in the workspace after the mirror is lost; with no ``before`` (an empty
     workspace, ``run.workspace_from``) the container's tree is taken whole. Removals go first, deepest first, then folders,
-    shallowest first, then files in the export's own order, each changed file made fresh (``_write_new``), never written
-    through, so a name that is another file's short-name alias meets that file and refuses the tree. Last, the workspace is read
-    again: every member is there under its exact name and no two files are one (``written``), and the tree is exactly the one
-    decided, else ``Refused``."""
+    shallowest first, then files in the export's own order (``_write_new``): a new file made fresh, exclusively, so a name that
+    is another file's short-name alias meets that file and refuses the tree, and a changed file made whole beside the workspace
+    and moved over the old one, so a write that fails leaves it as it was. Last, the workspace is read again: every member is
+    there under its exact name and no two files are one (``written``), and the tree is exactly the one decided. A failure before
+    anything is touched is ``Refused``; one after, ``Partial``: part of the tree is in the workspace."""
     root = Path(workspace)
     _root(root)
     base = root.resolve()
@@ -523,40 +549,42 @@ def bring_in(workspace: Path, data: bytes, repo: str = "", before: Mapping[str, 
             if target.get(parent, FOLDER) != FOLDER:
                 raise Refused(f"{rel!r} would be inside {parent!r}, a file: the container's and the workspace's changes clash")
             target[parent] = FOLDER
-    changed = []
+    changed: list[str] = []                     # each name is listed before it is touched, so a failure after it says "in part"
+
+    def failed(why: str) -> Refused:
+        return (Partial if changed else Refused)(why)
+
     try:
         for rel in sorted(now, key=lambda r: (-r.count("/"), r)):
             if target.get(rel) == now[rel] or (rel in target and FOLDER not in (target[rel], now[rel])):
-                continue                        # the same, or a file changed in place: made fresh below
+                continue                        # the same, or a file changed in place: put in place whole below
             path = base.joinpath(*rel.split("/"))
             if not os.path.lexists(path):
                 continue                        # gone already with its folder
+            changed.append(rel)
             if now[rel] == FOLDER:
                 shutil.rmtree(path)
             else:
                 os.remove(path)
-            changed.append(rel)
         order = {rel: i for i, rel in enumerate(members)}      # files in the export's own order, as an extraction writes them
         for rel in sorted(target, key=lambda r: (target[r] != FOLDER, r.count("/") if target[r] == FOLDER else order.get(r, -1), r)):
             if target[rel] == now.get(rel):
                 continue
             path = base.joinpath(*rel.split("/"))
+            changed.append(rel)
             if target[rel] == FOLDER:
                 os.mkdir(path)
-            else:
-                if now.get(rel) not in (None, FOLDER):
-                    os.remove(path)             # the old file's name is removed and the new one made fresh, never written through
-                _write_new(path, theirs[rel])
-            changed.append(rel)
+            else:                               # over an old file: made whole beside the workspace, then moved over it
+                _write_new(path, theirs[rel], over=spare(base) if now.get(rel) not in (None, FOLDER) else None)
         written(base, [m for rel, m in members.items() if target.get(rel) == marks[rel]])
         after = tree_map(root, repo)
-    except Refused:
-        raise
+    except Refused as exc:
+        raise failed(str(exc)) from exc
     except (OSError, ValueError) as exc:
-        raise Refused(f"the container's tree could not be written into the workspace: {type(exc).__name__}: {exc}") from exc
+        raise failed(f"the container's tree could not be written into the workspace: {type(exc).__name__}: {exc}") from exc
     if after != target:
         wrong = sorted(set(after.items()) ^ set(target.items()))[:5]
-        raise Refused(f"the workspace is not the tree decided after the container's tree was brought in: {wrong}")
+        raise failed(f"the workspace is not the tree decided after the container's tree was brought in: {wrong}")
     return sorted(set(changed))
 
 
@@ -656,6 +684,9 @@ def settle(workspace: Path, docker: Callable[..., Any], *, state: Path, containe
 
 BACK = ("what the command changed in files could not be brought back into your working folder ({why}), so none of it is kept: "
         "{after}. Make the change with your own editing tools.")
+#: A pull that failed after it began to write (``Partial``): part of the command's change is in the working folder.
+PART = ("what the command changed in files was brought back into your working folder only in part ({why}): {after}, as your "
+        "working folder now is. Read the files the command was to change before you go on.")
 
 
 def run_command(command: str, docker: Callable[..., Any], *, container: str, repo: str, user: str, timeout: float) -> tuple[int, str]:
@@ -723,13 +754,15 @@ def call(opts: Any, params: dict[str, Any], docker: Callable[..., Any]) -> dict[
         left = set_back(workspace, docker, **where)
         after = ("the container was set back to your working folder" if not left else
                  f"the container could not be set back to your working folder ({left}), and is set back before your next command")
-        entry: dict[str, Any] = {"call": n, "phase": "set back" if not left else "not settled", "error": why[:2000]}
+        partial = isinstance(exc, Partial)
+        entry: dict[str, Any] = {"call": n, "phase": "set back" if not left else "not settled", "error": why[:2000],
+                                 "in_part": partial}
         try:
             if state is not None:
                 write_state(state, entry)
         except (Refused, OSError) as exc2:
             after += f"; the box could not keep its state ({exc2})"
-        return _result(f"{text}\n\n{BACK.format(why=why, after=after)}", error=True)
+        return _result(f"{text}\n\n{(PART if partial else BACK).format(why=why, after=after)}", error=True)
     try:
         if state is not None:
             write_state(state, {"call": n, "phase": "settled", **_changes(changed)})
