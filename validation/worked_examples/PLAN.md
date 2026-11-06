@@ -3383,3 +3383,29 @@ by one count in each.
 
 **Not changed.** The recorded figures stand as written above, with the corrected ones beside them. No run is re-scored, and
 the 727 saved rows and 149 amended rows that kept no ending digest are read as they were.
+
+## 2026-11-07 (midday): the study runner's trust follow-up ended its review loop at the limit
+
+**What it was.** `claude/study-trust-followup`, from 59271b9: the follow-up to the study runner's own findings (sessions and
+their endings, the rows' writer, the layers reader, the store folders, the training records). Four Codex reviews and three
+repairs, the most this loop allows. Findings by round: 7, 8, 7 and 4, every one reproduced by a test that failed on the reviewed
+commit; none rejected; never clean. The last repaired commit is 0069586.
+
+**What changed in the record: nothing.** Each repair compared the archive's derived tables before and after: no answer, saved
+row, layer line, export case or comparison moved. The layer tables keep the correction of this morning.
+
+**Open, for their own change** (tests in `review-stfu4\tests\_review\`, reproduced on 0069586):
+1. a `run.json` with no status gives no ending but still has a digest, so the writer keeps a new row for an unfinished run;
+2. the first container session closes its stream outside the cleanup guards, so a failed close skips its kill and exit wait;
+3. a binary patch to a Python file gives the layers reader no tokens, so two different binary patches read as one change;
+4. a failed prompt write in a host session is discarded, so a session whose prompt never arrived can end clean.
+
+Also open: the third review's finding 2, offered and not repaired. One edit can read as two changes under different amounts of
+diff context. No recorded patch has another context (all were written by `git diff --cached` with its default), so nothing
+recorded moves. The repair waits for runs to keep their parent files when a patch is captured; then each change is read from
+the whole old and new file.
+
+**What it says about the design.** The layers reader had a finding in all four rounds, and session cleanup in three. Both go
+to the next change as design questions, not as fifth patches: the layers reader reads whole files where they are held, and
+says it cannot read a change where they are not; every process a session starts is owned by one object whose cleanup runs
+every step.
