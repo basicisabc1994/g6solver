@@ -1929,13 +1929,14 @@ def workspace_from(ctx: Context, task: Task, agent: str, dest: Path) -> int:
     """The parent's tree, from the agent's container into ``dest`` on the host, where the host's Claude Code works on it: no
     ``.git`` and no ``.venv``, which stay in the container. It comes out by the one export (``box_mcp.EXPORT``) and goes in by the
     one rule every tree from the container is brought into the workspace by, a command's after each call of the box among them
-    (``box_mcp.bring_in``): only plain files and folders come out, and an absolute name, a ``..`` part, a link, a device, or a
-    name the host cannot hold as it is (two differing only in case, or one Windows would refuse or change) refuses the whole
-    tree before anything is written. Then each member is checked against what was written: it is there under its exact name,
-    and no two files are one file (the same device and inode, which NTFS gives too), so a short-name alias or any other
-    collision refuses the whole tree, and ``dest`` is left empty, before the agent starts. First of all, ``dest`` itself must be
-    a path the host holds as named, by the box's one check (``box_mcp.root_named``), so nothing is exported into ``workspace``
-    for ``workspace.``. Returns how many files came out."""
+    (``box_mcp.bring_in``): only plain files, folders and symbolic links come out, a link as git holds one where links cannot be
+    made (a plain file holding its target, listed in the workspace's link record, ``box_mcp.links_of``), and an absolute name, a
+    ``..`` part, a hard link, a device, or a name the host cannot hold as it is (two differing only in case, or one Windows would
+    refuse or change) refuses the whole tree before anything is written. Then each member is checked against what was written:
+    it is there under its exact name, and no two files are one file (the same device and inode, which NTFS gives too), so a
+    short-name alias or any other collision refuses the whole tree, and ``dest`` is left empty, with no link record, before the
+    agent starts. First of all, ``dest`` itself must be a path the host holds as named, by the box's one check
+    (``box_mcp.root_named``), so nothing is exported into ``workspace`` for ``workspace.``. Returns how many files came out."""
     box_mcp.root_named(dest)
     done = ctx.docker("exec", "-u", USER, "-w", task.repo, agent, *box_mcp.EXPORT, timeout=900)
     if done.returncode != 0:
@@ -1953,6 +1954,7 @@ def workspace_from(ctx: Context, task: Task, agent: str, dest: Path) -> int:
                 shutil.rmtree(child)
             else:
                 child.unlink()
+        box_mcp.links_of(dest).unlink(missing_ok=True)
         raise RuntimeError(f"the workspace's export was refused, and nothing of it kept: {exc}") from exc
     return sum(member.isfile() for member in members.values())
 
@@ -3388,7 +3390,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             ctx.docker("network", "rm", net, timeout=120)
         if workspace is not None:
             shutil.rmtree(workspace, ignore_errors=True)
-            for left in workspace.parent.glob(f"{workspace.name}.box*"):   # the box's state, its pull folder, any write left
+            for left in workspace.parent.glob(f"{workspace.name}.box*"):   # the box's state, its pull folder, link record, any write left
                 if left.is_dir() and not left.is_symlink():
                     shutil.rmtree(left, ignore_errors=True)
                 else:

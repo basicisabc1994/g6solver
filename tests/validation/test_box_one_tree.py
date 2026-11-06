@@ -243,8 +243,8 @@ def test_a_repair_made_by_a_box_command_is_a_change_and_reaches_the_kept_patch(m
 
 # --- a change the workspace cannot hold is never dropped in silence ---------------------------------------------------------
 def test_a_command_that_makes_what_the_workspace_cannot_hold_is_told_and_the_container_is_set_back(monkeypatch, tmp_path):
-    got = run_with(monkeypatch, tmp_path, "A", [("s1", [("run", "ln -s")])], commands={"ln -s": box_edits},
-                   extra=[("./evil", "sym", b"/etc/passwd")])
+    got = run_with(monkeypatch, tmp_path, "A", [("s1", [("run", "ln")])], commands={"ln": box_edits},
+                   extra=[("./evil", "lnk", b"src/mod.py")])        # a hard link: a symbolic link is carried (test_box_links.py)
     reply = got.replies[0]
     assert reply["isError"] is True and "evil" in reply["content"][0]["text"], reply
     assert "set back" in reply["content"][0]["text"] and "exit code 0" in reply["content"][0]["text"]
@@ -360,7 +360,7 @@ def test_the_pull_takes_each_names_container_side_unless_the_workspace_changed_i
     assert {rel.split("/")[0] for rel in after} == set(os.listdir(ws)), "a name the tree does not hold is left in the workspace"
 
 
-@pytest.mark.parametrize("bad", [("./evil", "sym", b"/etc/passwd"), ("/abs.py", "file", b"x"), ("./a/../../up.py", "file", b"x"),
+@pytest.mark.parametrize("bad", [("./evil", "lnk", b"a.py"), ("/abs.py", "file", b"x"), ("./a/../../up.py", "file", b"x"),
                                  ("./A.PY", "file", b"y"), ("./sub/.git/config", "file", b"x"), ("./con", "file", b"x")])
 def test_the_pull_refuses_by_the_exports_one_rule_and_writes_nothing(tmp_path, bad):
     ws = tmp_path / "ws"
@@ -409,6 +409,8 @@ CROSSINGS = {
     ("box_mcp.py", "settle", "pull"): "a call ended before its pull, finished by the runner (test_a_box_ended_between_...)",
     ("box_mcp.py", "call", "tree_map"): "the tree the call mirrored, kept in its state for the three-way pull",
     ("box_mcp.py", "bring_in", "tree_map"): "the workspace read before anything is written, and again to check what was",
+    ("box_mcp.py", "bring_in.failed", "tree_map"): "a pull that failed part way through links: its link record set to what the "
+                                                   "workspace then holds, which the reply tells the agent to read",
     ("run.py", "workspace_from", "bring_in"): "the parent's tree into the empty workspace, by the pull's one rule",
     ("run.py", "_run_task", "workspace_from"): "the parent's tree, once, into an empty workspace before any session",
     ("run.py", "_run_task.turn", "settle"): "after each host session, before its tree is mirrored: a call it ended is settled",
@@ -443,3 +445,38 @@ def test_every_place_the_tree_crosses_between_the_workspace_and_the_container_is
     found = _crossings(here / "box_mcp.py") | _crossings(here / "run.py")
     assert found == set(CROSSINGS), (sorted(found - set(CROSSINGS)), sorted(set(CROSSINGS) - found))
     assert "comes back into your working folder" in box.TOOL["description"], "the tool still tells the agent changes are lost"
+
+
+#: Each crossing above, with the test in ``test_box_links.py`` that drives a symbolic link through it (PLAN.md, 2026-11-06 evening,
+#: ruling 1): every place the tree crosses carries a link, as git carries one where links cannot be made.
+_REACH = "test_a_link_reaches_the_workspace_as_git_holds_it_and_the_container_as_the_same_link"
+_CHANGED = "test_a_link_a_command_changes_comes_back_to_the_workspace_and_into_the_kept_patch"
+_SWAPPED = "test_a_link_a_command_makes_a_file_or_a_file_it_makes_a_link_is_that_in_the_workspace_and_the_kept_patch"
+_SET_BACK = "test_a_pull_refused_with_links_in_the_tree_sets_the_container_back_with_its_links"
+_ENDED = "test_a_box_ended_while_its_pull_brings_links_back_leaves_each_a_link_in_the_kept_patch"
+LINKED = {
+    ("box_mcp.py", "mirror", "pack"): _REACH,
+    ("box_mcp.py", "call", "mirror"): _CHANGED,
+    ("box_mcp.py", "call", "run_command"): _CHANGED,
+    ("box_mcp.py", "call", "pull"): _CHANGED,
+    ("box_mcp.py", "call", "set_back"): _SET_BACK,
+    ("box_mcp.py", "pull", "bring_in"): _SWAPPED,
+    ("box_mcp.py", "set_back", "mirror"): _SET_BACK,
+    ("box_mcp.py", "settle", "pull"): _ENDED,
+    ("box_mcp.py", "call", "tree_map"): _ENDED,
+    ("box_mcp.py", "bring_in", "tree_map"): _SWAPPED,
+    ("box_mcp.py", "bring_in.failed", "tree_map"): "test_a_pull_that_fails_part_way_through_links_sets_the_record_to_what_the_workspace_holds",
+    ("run.py", "workspace_from", "bring_in"): _REACH,
+    ("run.py", "_run_task", "workspace_from"): _REACH,
+    ("run.py", "_run_task.turn", "settle"): _ENDED,
+    ("run.py", "_run_task.turn", "mirror"): "test_the_write_tool_writing_a_links_file_changes_its_target_as_git_does_and_never_writes_through_it",
+    ("run.py", "_run_task", "mirror"): _REACH,
+    ("run.py", "_run_task.<lambda>", "pack"): "test_arm_ks_check_that_a_repair_changed_the_tree_sees_a_repair_that_changes_only_a_link",
+}
+
+
+def test_every_place_the_tree_crosses_carries_a_symbolic_link_by_a_named_test():
+    assert set(LINKED) == set(CROSSINGS), (sorted(set(CROSSINGS) - set(LINKED)), sorted(set(LINKED) - set(CROSSINGS)))
+    tests = {node.name for node in ast.parse(Path(__file__).with_name("test_box_links.py").read_text("utf-8")).body
+             if isinstance(node, ast.FunctionDef)}
+    assert set(LINKED.values()) <= tests, sorted(set(LINKED.values()) - tests)

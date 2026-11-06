@@ -59,7 +59,7 @@ def link(target: Path, at: Path) -> None:
 
 
 def tar_of(entries: list[tuple[str, str, bytes]]) -> bytes:
-    """A tar from (name, kind, data): kind "file", "dir" or "sym"."""
+    """A tar from (name, kind, data): kind "file", "dir", "sym" or "lnk" (a hard link to the name ``data``)."""
     out = io.BytesIO()
     with tarfile.open(fileobj=out, mode="w") as tar:
         for name, kind, data in entries:
@@ -67,8 +67,8 @@ def tar_of(entries: list[tuple[str, str, bytes]]) -> bytes:
             if kind == "dir":
                 info.type = tarfile.DIRTYPE
                 tar.addfile(info)
-            elif kind == "sym":
-                info.type, info.linkname = tarfile.SYMTYPE, data.decode()
+            elif kind in ("sym", "lnk"):
+                info.type, info.linkname = tarfile.SYMTYPE if kind == "sym" else tarfile.LNKTYPE, data.decode()
                 tar.addfile(info)
             else:
                 info.size = len(data)
@@ -289,7 +289,7 @@ def test_no_key_or_token_reaches_the_host_session_even_when_set(monkeypatch, tmp
 
 
 # --- the workspace's export -------------------------------------------------------------------------------------------------
-@pytest.mark.parametrize("bad", [("./evil", "sym", b"/etc/passwd"), ("/abs.py", "file", b"x"), ("./../up.py", "file", b"x"),
+@pytest.mark.parametrize("bad", [("./evil", "lnk", b"a.py"), ("/abs.py", "file", b"x"), ("./../up.py", "file", b"x"),
                                  ("./a/../../up.py", "file", b"x"), ("./A.py", "file", b"y")])
 def test_the_workspace_export_refuses_a_link_an_absolute_name_a_dotdot_part_or_a_case_clash_and_writes_nothing(tmp_path, bad):
     task = SimpleNamespace(repo="/home/tester/work/r")

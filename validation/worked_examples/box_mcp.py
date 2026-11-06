@@ -5,6 +5,11 @@ first mirrors the workspace into the bug's container (``mirror``), then runs the
 repository, then brings what the command changed in files back into the workspace (``pull``), so the call ends with one tree in
 both places (replay cohort, 2026-11-06). The container has no network, and the subscription's sign-in never enters it.
 
+A symbolic link is carried as git carries one where links cannot be made (PLAN.md, 2026-11-06 evening, ruling 1): in the
+workspace it is a plain file holding its target, listed in the workspace's link record (``links_of``) as git's index lists mode
+120000 under ``core.symlinks=false``; in the container it is a link again. It is never followed on either side, whatever its
+target, and two trees compare a link by its target and kind (``_mark``), never by what it points to.
+
 ``python -I box_mcp.py --container NAME --repo PATH_IN_CONTAINER --workspace HOST_DIR --user USER --timeout SECONDS --docker EXE
 [--state FILE]``
 
@@ -44,8 +49,11 @@ TOOL = {"name": "run",
                         ".venv and its git history, and no network. Your working folder is mirrored into it before each "
                         "command, so the command sees your latest edits, and when the command ends what it changed in files "
                         "comes back into your working folder, so a file a command writes, edits or removes is part of your "
-                        "change. A process a command leaves running is stopped when the command ends. Returns the exit code and "
-                        "the last 20000 characters of the command's combined output."),
+                        "change. A symbolic link in the repository is a plain file in your working folder holding the link's "
+                        "target, as git holds a link where links cannot be made: writing that file changes where the link "
+                        "points; to change what it points to, edit the file its target names. A process a command leaves "
+                        "running is stopped when the command ends. Returns the exit code and the last 20000 characters of the "
+                        "command's combined output."),
         "inputSchema": {"type": "object", "properties": {"command": {"type": "string", "description": "The shell command (sh -c)."}},
                         "required": ["command"]}}
 
@@ -80,11 +88,13 @@ def stop(uid):
 
 #: Run in the container as root, ``python3 -I -c MIRROR REPO USER``, with ``pack``'s tar on standard input. First every process of
 #: USER is stopped (``STOP``); then the repository's root must be a folder of its own, not a link, and its real path, resolved once,
-#: the path it was given, so no ancestor is a link or a junction; every member is checked,
-#: and no folder holding ``.git`` or ``.venv`` at any depth may be removed, all before anything changes. Then what is new or
-#: changed is written: never through a name already there, which is removed (a folder, a link, another name of a file) and the
-#: file made fresh, exclusively, keeping a replaced file's mode and owner; what the tar does not hold removed, ``.git`` and
-#: ``.venv`` left as they are, and what it made given to USER. Prints what it wrote and removed.
+#: the path it was given, so no ancestor is a link or a junction; every member is checked (a plain file, a folder or a symbolic
+#: link, each named once, and each inside a folder the tar holds, so nothing is made through a link or a file), and no folder
+#: holding ``.git`` or ``.venv`` at any depth may be removed, all before anything changes. Then what is new or changed is
+#: written: never through a name already there, which is removed (a folder, a link, another name of a file) and the file or link
+#: made fresh, exclusively, keeping a replaced file's mode and owner; a link already there with the same target is left as it is;
+#: what the tar does not hold removed (a link by itself, never what it points to), ``.git`` and ``.venv`` left as they are, and
+#: what it made given to USER. A link's target is its text: never read, followed or checked. Prints what it wrote and removed.
 MIRROR = r'''import io, json, os, shutil, signal, stat, sys, tarfile, time
 try:
     import pwd
@@ -120,15 +130,21 @@ real = os.path.realpath(repo)      # resolved once, now that nothing of the user
 if os.path.normcase(real) != os.path.normcase(repo):
     sys.exit("refused: the repository's path " + repr(repo) + " passes through a link to " + repr(real))
 tar = tarfile.open(fileobj=io.BytesIO(sys.stdin.buffer.read()))
-files, dirs = {}, set()
+files, dirs, links = {}, set(), {}
 for m in tar.getmembers():
     parts = m.name.split("/")
-    if m.name.startswith("/") or {"", ".", ".."} & set(parts) or kept & set(parts) or not (m.isfile() or m.isdir()):
+    if (m.name.startswith("/") or {"", ".", ".."} & set(parts) or kept & set(parts) or not (m.isfile() or m.isdir() or m.issym())
+            or m.name in files or m.name in dirs or m.name in links or (m.issym() and not m.linkname)):
         sys.exit("refused: " + repr(m.name))
     if m.isdir():
         dirs.add(m.name)
+    elif m.issym():
+        links[m.name] = m.linkname
     else:
         files[m.name] = m
+for name in [*dirs, *files, *links]:
+    if "/" in name and name.rsplit("/", 1)[0] not in dirs:
+        sys.exit("refused: " + repr(name) + " is not inside a folder the tar holds")
 written = removed = 0
 
 
@@ -136,7 +152,7 @@ def at(name):
     return os.path.join(repo, *name.split("/"))
 
 
-for name in files:
+for name in [*files, *links]:
     if kind(at(name))[0] == "dir" and any(kept & {*subdirs, *names} for _, subdirs, names in os.walk(at(name))):
         sys.exit("refused: " + repr(name) + " would replace a folder holding .git or .venv")
 
@@ -173,6 +189,19 @@ def fresh(path, data, mode, owner):
     sys.exit("refused: " + repr(path) + " was held again each time it was cleared")
 
 
+def link(path, target):
+    for _ in range(3):
+        try:
+            os.symlink(target, path)
+        except FileExistsError:
+            clear(path)        # the name is held: removed, never written through
+            continue
+        if ids:
+            os.chown(path, *ids, follow_symlinks=False)
+        return
+    sys.exit("refused: " + repr(path) + " was held again each time it was cleared")
+
+
 for name in sorted(dirs):
     path = at(name)
     if kind(path)[0] not in (None, "dir"):
@@ -191,13 +220,22 @@ for name, m in sorted(files.items()):
         clear(path)
     fresh(path, data, *((stat.S_IMODE(st.st_mode), (st.st_uid, st.st_gid)) if held == "file" and ids else (0o644, ids)))
     written += 1
+for name, target in sorted(links.items()):
+    path = at(name)
+    held, st = kind(path)
+    if held == "other" and stat.S_ISLNK(st.st_mode) and os.readlink(path) == target:
+        continue               # the same link: left as it is
+    if held is not None:
+        clear(path)
+    link(path, target)
+    written += 1
 for here, subdirs, names in os.walk(repo, topdown=False):
     rel = os.path.relpath(here, repo).replace(os.sep, "/")
     parts = [] if rel == "." else rel.split("/")
     if kept & set(parts):
         continue
     for n in names + [d for d in subdirs if os.path.islink(os.path.join(here, d))]:
-        if n not in kept and "/".join(parts + [n]) not in files:
+        if n not in kept and "/".join(parts + [n]) not in files and "/".join(parts + [n]) not in links:
             os.remove(os.path.join(here, n))
             removed += 1
     if parts and rel not in dirs and not os.listdir(here):
@@ -236,10 +274,11 @@ os.execvp(''' + repr(EXPORT[0]) + ", " + repr(list(EXPORT)) + r''')
 
 
 class Refused(RuntimeError):
-    """A workspace that cannot be sent: a link, a junction or another reparse point, an entry that is not inside it, a name the
-    container cannot hold or the host cannot hold as named, a tree changed while it was packed, or anything that could not be
-    packed. And a container's tree that cannot be brought back (``bring_in``): an entry the workspace cannot hold as it is, or a
-    workspace that is not, after it, exactly that tree."""
+    """A workspace that cannot be sent: a real link, a junction or another reparse point (a symbolic link of the repository's is
+    a plain file there, ``links_of``), an entry that is not inside it, a name the container cannot hold or the host cannot hold
+    as named, a link's target the container cannot make, a link record that cannot be read, a tree changed while it was packed,
+    or anything that could not be packed. And a container's tree that cannot be brought back (``bring_in``): an entry the
+    workspace cannot hold as it is, or a workspace that is not, after it, exactly that tree."""
 
 
 class BoxError(RuntimeError):
@@ -341,16 +380,111 @@ def _root(path: Path) -> os.stat_result:
     return st
 
 
-def _tree(root: Path, repo: str) -> Iterator[tuple[Path, str, os.stat_result, bytes | None]]:
+FOLDER = "/"          # what a folder holds in a tree's map (``tree_map``), where a file holds its SHA-256 in hex
+LINK = "@"            # before a link's mark in a tree's map: the SHA-256 of its target, in hex, after it
+
+
+def _mark(data: bytes | None, link: bool = False) -> str:
+    """The one rule for what an entry is in a tree's map, on either side: ``FOLDER`` for a folder, a file's SHA-256 in hex, and for
+    a symbolic link ``LINK`` and its target's SHA-256, so a link and a file holding the same bytes differ, and a link is compared by
+    its target and kind, never by what it points to."""
+    if data is None:
+        return FOLDER
+    return (LINK if link else "") + hashlib.sha256(data).hexdigest()
+
+
+def _link_target(rel: str, target: bytes) -> str:
+    """A link's target as the container can make it, else ``Refused``: UTF-8, as every name is (``_holdable``), not empty, with no
+    NUL, and shorter than ``PATH_MAX`` bytes. Every other target is carried, one that leaves the repository too: it is the link's
+    text, which nothing reads, follows or checks."""
+    try:
+        text = target.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise Refused(f"{rel} is a link whose target is not UTF-8 ({exc.reason})") from exc
+    nul = b"\x00" in target
+    if not target or nul or len(target) >= PATH_MAX:
+        raise Refused(f"{rel} is a link whose target the container cannot make ({len(target)} bytes{', with a NUL' if nul else ''}): "
+                      f"a target is 1 to {PATH_MAX - 1} bytes with no NUL")
+    return text
+
+
+def links_of(workspace: Path) -> Path:
+    """The workspace's link record: a file beside it, outside it, so the agent's tools never reach it and no pack reads it as the
+    tree's, removed with it at the run's end. It lists which of the workspace's plain files are symbolic links, as git's index
+    lists mode 120000 where links cannot be made (``core.symlinks=false``): such a file holds the link's target, and writing it
+    changes the target, as it does in git."""
+    base = Path(workspace).resolve()
+    return base.parent / f"{base.name}.box.links.json"
+
+
+def _is_mark(mark: Any) -> bool:
+    """A mark as ``_mark`` writes one, or None for a name that is not there."""
+    return mark is None or mark == FOLDER or (isinstance(mark, str)
+                                              and re.fullmatch(f"{re.escape(LINK)}?[0-9a-f]{{64}}", mark) is not None)
+
+
+def read_links(workspace: Path) -> dict[str, Any]:
+    """The workspace's link record (``links_of``): ``links``, the names of its plain files that are links, and ``pending``, by name,
+    what a pull that may not have ended was changing a link-or-file to (``{"from": mark, "to": mark}``). None there: no link. One
+    that cannot be read as the box writes it refuses (``Refused``): which files are links is then not known, and nothing may
+    guess, since a link read as a file would reach the container as a file."""
+    path = links_of(workspace)
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return {"links": set(), "pending": {}}
+    except OSError as exc:
+        raise Refused(f"the workspace's link record {path.name} could not be read: {exc}") from exc
+    try:
+        got = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise Refused(f"the workspace's link record {path.name} cannot be read: {exc}") from exc
+    links, pending = (got.get("links"), got.get("pending")) if isinstance(got, dict) else (None, None)
+    if not (isinstance(links, list) and all(isinstance(x, str) for x in links) and isinstance(pending, dict)
+            and all(isinstance(v, dict) and set(v) == {"from", "to"} and _is_mark(v["from"]) and _is_mark(v["to"])
+                    for v in pending.values())):
+        raise Refused(f"the workspace's link record {path.name} is not a list of links with the changes a pull was making")
+    return {"links": set(links), "pending": pending}
+
+
+def write_links(workspace: Path, links: Iterable[str], pending: Mapping[str, Mapping[str, str | None]] | None = None) -> None:
+    """The workspace's link record written whole to a file of its own beside it, flushed to disk, then put in its place in one step
+    (``os.replace``), so a reader finds it before or after the write, never part of it."""
+    path = links_of(workspace)
+    temp = path.with_name(path.name + f".{os.getpid()}.tmp")
+    with open(temp, "wb") as f:
+        f.write(json.dumps({"links": sorted(links), "pending": dict(pending or {})}, indent=1, sort_keys=True).encode("utf-8"))
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(temp, path)
+
+
+def _is_link(rel: str, data: bytes, record: Mapping[str, Any]) -> bool:
+    """Whether the workspace's plain file ``rel``, holding ``data``, is a link: by the record (``read_links``). A name a pull was
+    changing (``pending``) is what the side its bytes are is: the side it was changing to, or else the side it was changing
+    from, so a pull ended after it wrote a name and before it kept the record is read as it left the name. Otherwise, as git
+    reads mode 120000, a listed name is a link, whatever its bytes now are."""
+    change = record["pending"].get(rel)
+    if change is not None:
+        for side in (change["to"], change["from"]):
+            if side in (_mark(data), _mark(data, True)):
+                return side.startswith(LINK)
+    return rel in record["links"]
+
+
+def _tree(root: Path, repo: str) -> Iterator[tuple[Path, str, os.stat_result, bytes | None, bool]]:
     """The workspace's entries in the order they are packed. First the root itself is checked (``_root``), so a walk, the re-walk
     among them, reads nothing through a root that became a link. Then each plain file and folder (``_plain``) but ``.git`` and
     ``.venv`` (``KEPT``), its name relative to the workspace with ``/``, checked before it is used to read anything as one the
-    host holds as named and the container can hold (``_holdable``), and a file's bytes, read as the file that was checked
-    (``_read``); a folder's are None. A folder that cannot be read refuses the workspace."""
+    host holds as named and the container can hold (``_holdable``), a file's bytes, read as the file that was checked
+    (``_read``), a folder's None, and whether the file is a symbolic link by the workspace's link record (``_is_link``), whose
+    target the container must be able to make (``_link_target``). A folder or a record that cannot be read refuses the
+    workspace."""
     def unreadable(exc: OSError) -> None:
         raise Refused(f"the workspace could not be read: {exc}")
 
     _root(root)
+    record = read_links(root)
     for here, dirs, files in os.walk(root, onerror=unreadable):
         dirs[:] = sorted(d for d in dirs if d not in KEPT)
         for name in [*dirs, *sorted(f for f in files if f not in KEPT)]:
@@ -358,45 +492,51 @@ def _tree(root: Path, repo: str) -> Iterator[tuple[Path, str, os.stat_result, by
             rel = path.relative_to(root).as_posix()
             _holdable(rel, repo)
             st = _plain(path, root)
-            yield path, rel, st, None if stat.S_ISDIR(st.st_mode) else _read(path, st, rel)
-
-
-def _digest(data: bytes | None) -> bytes | None:
-    """A file's SHA-256, None for a folder."""
-    return None if data is None else hashlib.sha256(data).digest()
+            if stat.S_ISDIR(st.st_mode):
+                yield path, rel, st, None, False
+                continue
+            data = _read(path, st, rel)
+            link = _is_link(rel, data, record)
+            if link:
+                _link_target(rel, data)
+            yield path, rel, st, data, link
 
 
 def pack(workspace: Path, repo: str = "") -> bytes:
     """The workspace as a tar, in memory: its plain files and folders, without ``.git`` or ``.venv`` (``KEPT``), each named relative
-    to it with ``/``, every name one the container can hold under ``repo`` (``_holdable``). Anything else refuses the whole
+    to it with ``/``, every name one the container can hold under ``repo`` (``_holdable``), and each file its link record lists
+    (``_is_link``) as a symbolic link whose target is the file's bytes, never as a file. Anything else refuses the whole
     workspace (``Refused``), so nothing is sent; so does a workspace that is itself a link, a junction or another reparse point,
     and a folder that cannot be read, which would otherwise look empty and have its files removed in the container. Each file is
     read as the file that was checked (``_read``); once the walk is done every folder it went through, the workspace's own
     included, is checked again (``_same_folder``), and then the whole tree is walked again, its root checked first (``_tree``):
-    its names, what each is, and each file's SHA-256 must be what was packed, else the workspace changed while it was packed and
-    is refused, so the next call sends it as it is then. Any failure to pack it (a name the tar cannot hold, a read that fails,
-    the tar's own error) refuses it too: nothing is sent or run."""
+    its names and each one's mark (``_mark``: what it is, and a file's or a link's SHA-256) must be what was packed, else the
+    workspace changed while it was packed and is refused, so the next call sends it as it is then. Any failure to pack it (a
+    name the tar cannot hold, a read that fails, the tar's own error) refuses it too: nothing is sent or run."""
     given = Path(workspace)
     top = _root(given)
     try:
         root = given.resolve()
         out = io.BytesIO()
         walked = [(given, top, "the workspace")]
-        packed: list[tuple[str, bytes | None]] = []
+        packed: list[tuple[str, str]] = []
         with tarfile.open(fileobj=out, mode="w", format=tarfile.PAX_FORMAT) as tar:
-            for path, rel, st, data in _tree(root, repo):
+            for path, rel, st, data, link in _tree(root, repo):
                 info = tarfile.TarInfo(rel)
                 if data is None:
                     walked.append((path, st, rel))
                     info.type, info.mode = tarfile.DIRTYPE, 0o755
                     tar.addfile(info)
+                elif link:
+                    info.type, info.linkname, info.mode = tarfile.SYMTYPE, data.decode("utf-8"), 0o777
+                    tar.addfile(info)
                 else:
                     info.size, info.mode = len(data), 0o644
                     tar.addfile(info, io.BytesIO(data))
-                packed.append((rel, _digest(data)))
+                packed.append((rel, _mark(data, link)))
         for path, st, rel in walked:
             _same_folder(path, st, rel)
-        now = [(rel, _digest(data)) for _, rel, _, data in _tree(root, repo)]
+        now = [(rel, _mark(data, link)) for _, rel, _, data, link in _tree(root, repo)]
         if now != packed:
             at = next((i for i, (was, is_) in enumerate(zip(packed, now)) if was != is_), min(len(packed), len(now)))
             raise Refused(f"{(packed if at < len(packed) else now)[at][0]} changed while the workspace was packed: walked again, "
@@ -419,16 +559,14 @@ def mirror(workspace: Path, docker: Callable[..., Any], *, container: str, repo:
     return _text(done.stdout).strip()
 
 
-FOLDER = "/"          # what a folder holds in a tree's map (``tree_map``), where a file holds its SHA-256 in hex
-
-
 def tree_map(workspace: Path, repo: str = "") -> dict[str, str]:
-    """The workspace's tree as a map: each entry's name relative to it with ``/``, to its file's SHA-256 in hex, or ``FOLDER``. It
-    is read as ``pack`` reads it (``_tree``): the root and every entry checked, and anything that could not be packed refuses it."""
+    """The workspace's tree as a map: each entry's name relative to it with ``/``, to its mark (``_mark``): a file's SHA-256 in hex,
+    ``LINK`` and a link's target's, or ``FOLDER``. It is read as ``pack`` reads it (``_tree``): the root and every entry checked,
+    and anything that could not be packed refuses it."""
     given = Path(workspace)
     _root(given)
     try:
-        return {rel: FOLDER if data is None else hashlib.sha256(data).hexdigest() for _, rel, _, data in _tree(given.resolve(), repo)}
+        return {rel: _mark(data, link) for _, rel, _, data, link in _tree(given.resolve(), repo)}
     except Refused:
         raise
     except (OSError, ValueError) as exc:
@@ -437,8 +575,9 @@ def tree_map(workspace: Path, repo: str = "") -> dict[str, str]:
 
 def written(dest: Path, members: Iterable[tarfile.TarInfo]) -> None:
     """Each member of an export brought into ``dest`` is what was written: there under its exact name in its folder's listing, and,
-    for a file, a file no other member is (by device and inode, which NTFS gives too). Raises ``Refused`` at the first that is not,
-    so a short-name alias, a name in another case or any other collision is never taken for the member."""
+    for a file or a link (a plain file holding its target there), a file no other member is (by device and inode, which NTFS
+    gives too). Raises ``Refused`` at the first that is not, so a short-name alias, a name in another case or any other collision
+    is never taken for the member."""
     listed: dict[Path, set[str]] = {}
     held: dict[tuple[int, int], str] = {}
     for member in members:
@@ -448,31 +587,43 @@ def written(dest: Path, members: Iterable[tarfile.TarInfo]) -> None:
         path = Path(dest).joinpath(*parts)
         if parts[-1] not in listed.setdefault(path.parent, set(os.listdir(path.parent))):
             raise Refused(f"{member.name!r} is not there under its own name: the host gave it another's")
-        if member.isfile():
+        if not member.isdir():
             st = os.lstat(path)
             if (st.st_dev, st.st_ino) in held:
                 raise Refused(f"{member.name!r} and {held[(st.st_dev, st.st_ino)]!r} are one file on the host")
             held[(st.st_dev, st.st_ino)] = member.name
 
 
+def target_of(member: tarfile.TarInfo) -> bytes:
+    """A link member's target as bytes, as the tar holds them (``tarfile`` reads a name it cannot decode with ``surrogateescape``);
+    one that cannot be put back into bytes refuses (``Refused``)."""
+    try:
+        return member.linkname.encode("utf-8", "surrogateescape")
+    except UnicodeEncodeError as exc:
+        raise Refused(f"{member.name!r} is a link whose target is not UTF-8 ({exc.reason})") from exc
+
+
 def export_members(tar: tarfile.TarFile) -> dict[str, tarfile.TarInfo]:
     """The one rule for a tree that comes out of the container (``EXPORT``), into an empty workspace (``run.workspace_from``) or over
     one after a command (``pull``): each member by its name relative to the repository with ``/``, the export's own ``./`` taken
-    off (the root itself is no member). Only plain files and folders: an absolute name, a ``..`` part, a link, a hard link, a
-    device, a ``.git`` or ``.venv`` part, a name the host cannot hold as named (``_holdable``), or two names the host reads as one
-    (differing only in case) refuses the whole tree (``Refused``), before anything is written."""
+    off (the root itself is no member). Only plain files, folders and symbolic links, a link whatever its target, which is its
+    text and is never followed: an absolute name, a ``..`` part, a hard link, a device, a ``.git`` or ``.venv`` part, a name the
+    host cannot hold as named (``_holdable``), a link's target the container could not make again (``_link_target``), or two
+    names the host reads as one (differing only in case) refuses the whole tree (``Refused``), before anything is written."""
     found: dict[str, tarfile.TarInfo] = {}
     seen: dict[str, str] = {}
     for member in tar.getmembers():
         parts = PurePosixPath(member.name).parts
-        if (member.name.startswith(("/", "\\")) or ".." in parts or not (member.isfile() or member.isdir())
+        if (member.name.startswith(("/", "\\")) or ".." in parts or not (member.isfile() or member.isdir() or member.issym())
                 or set(parts) & set(KEPT)):
-            raise Refused(f"the container's tree holds {member.name!r}, which the host cannot hold as a plain file or folder "
-                          "inside the workspace")
+            raise Refused(f"the container's tree holds {member.name!r}, which the host cannot hold as a plain file, a folder or "
+                          "a symbolic link inside the workspace")
         if not parts:
             continue
         rel = "/".join(parts)
         _holdable(rel, "")
+        if member.issym():
+            _link_target(rel, target_of(member))
         if rel.casefold() in seen:
             raise Refused(f"the container's tree holds {member.name!r} and {seen[rel.casefold()]!r}, which the host holds as one name")
         seen[rel.casefold()] = member.name
@@ -520,19 +671,25 @@ def bring_in(workspace: Path, data: bytes, repo: str = "", before: Mapping[str, 
     workspace, ``run.workspace_from``) the container's tree is taken whole. Removals go first, deepest first, then folders,
     shallowest first, then files in the export's own order (``_write_new``): a new file made fresh, exclusively, so a name that
     is another file's short-name alias meets that file and refuses the tree, and a changed file made whole beside the workspace
-    and moved over the old one, so a write that fails leaves it as it was. Last, the workspace is read again: every member is
-    there under its exact name and no two files are one (``written``), and the tree is exactly the one decided. A failure before
-    anything is touched is ``Refused``; one after, ``Partial``: part of the tree is in the workspace."""
+    and moved over the old one, so a write that fails leaves it as it was. A symbolic link is written as git writes one where
+    links cannot be made, a plain file holding its target, and listed in the workspace's link record (``write_links``): before
+    anything is written, every name whose link-or-file the pull changes is kept there as pending, so a pull ended part way is
+    read as it left each name (``_is_link``); once the tree is checked the record is set to the tree's links. Last, the
+    workspace is read again: every member is there under its exact name and no two files are one (``written``), and the tree is
+    exactly the one decided. A failure before anything is touched is ``Refused``; one after, ``Partial``: part of the tree is in
+    the workspace, and the link record is set to what the workspace then holds."""
     root = Path(workspace)
     _root(root)
     base = root.resolve()
     try:
         tar = tarfile.open(fileobj=io.BytesIO(data))
         members = export_members(tar)
-        theirs = {rel: None if m.isdir() else tar.extractfile(m).read() for rel, m in members.items()}
+        theirs = {rel: None if m.isdir() else target_of(m) if m.issym() else tar.extractfile(m).read()
+                  for rel, m in members.items()}
     except tarfile.TarError as exc:
         raise Refused(f"the container's tree could not be read: {type(exc).__name__}: {exc}") from exc
-    marks = {rel: FOLDER if body is None else hashlib.sha256(body).hexdigest() for rel, body in theirs.items()}
+    marks = {rel: _mark(body, members[rel].issym()) for rel, body in theirs.items()}
+    record = read_links(base)
     now = tree_map(root, repo)
     if before is None:
         target = dict(marks)
@@ -547,14 +704,25 @@ def bring_in(workspace: Path, data: bytes, repo: str = "", before: Mapping[str, 
         for i in range(1, len(parts)):
             parent = "/".join(parts[:i])
             if target.get(parent, FOLDER) != FOLDER:
-                raise Refused(f"{rel!r} would be inside {parent!r}, a file: the container's and the workspace's changes clash")
+                raise Refused(f"{rel!r} would be inside {parent!r}, a file or a link: the tree cannot hold it")
             target[parent] = FOLDER
+    linked = {rel for rel, mark in target.items() if mark.startswith(LINK)}
+    current = {rel for rel, mark in now.items() if mark.startswith(LINK)}     # as the record reads the workspace now
+    pending = {rel: {"from": now.get(rel), "to": target.get(rel)} for rel in sorted({*now, *target})
+               if now.get(rel) != target.get(rel) and LINK in (str(now.get(rel))[:1], str(target.get(rel))[:1])}
     changed: list[str] = []                     # each name is listed before it is touched, so a failure after it says "in part"
 
     def failed(why: str) -> Refused:
+        if pending:                             # the record set to what the workspace holds now; else its pending stays, read as is
+            try:
+                write_links(base, {rel for rel, mark in tree_map(root, repo).items() if mark.startswith(LINK)})
+            except (Refused, OSError, ValueError):
+                pass
         return (Partial if changed else Refused)(why)
 
     try:
+        if pending:                             # before anything is written: which names the pull changes a link of, and to what
+            write_links(base, current, pending)
         for rel in sorted(now, key=lambda r: (-r.count("/"), r)):
             if target.get(rel) == now[rel] or (rel in target and FOLDER not in (target[rel], now[rel])):
                 continue                        # the same, or a file changed in place: put in place whole below
@@ -585,6 +753,11 @@ def bring_in(workspace: Path, data: bytes, repo: str = "", before: Mapping[str, 
     if after != target:
         wrong = sorted(set(after.items()) ^ set(target.items()))[:5]
         raise failed(f"the workspace is not the tree decided after the container's tree was brought in: {wrong}")
+    if pending or record["pending"] or linked != record["links"]:
+        try:
+            write_links(base, linked)
+        except OSError as exc:
+            raise failed(f"the workspace's link record could not be kept: {type(exc).__name__}: {exc}") from exc
     return sorted(set(changed))
 
 
