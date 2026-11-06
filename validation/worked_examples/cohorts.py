@@ -310,10 +310,11 @@ def manifest(name: str, images: Mapping[str, Mapping[str, Any]], results: Mappin
     """A cohort's manifest: every bug its source names, each with its image names and ids, and, for a controlled cohort, its
     control results; the bugs left out before the controls, and the bugs a control excluded, each with why; the usable bugs;
     the sources; and its digest (``digest``). A controlled cohort's bug with no control result, or no image, is excluded and
-    says so; a final-cohort bug is listed with its images only, and is usable when docker holds both."""
+    says so. A final-cohort bug is listed with its images only: none is usable until its controls have run, which they do only
+    before the registered final measurement, so each is pending, with whether docker holds its images."""
     names = cohort(name)
     controlled = name in CONTROLLED
-    bugs, excluded = [], []
+    bugs, excluded, pending = [], [], []
     for bug in names:
         entry: dict[str, Any] = {"id": bug, **{k: v for k, v in (images.get(bug) or {}).items()}}
         if name == "final" and bug in FINAL_SEEN:
@@ -321,15 +322,19 @@ def manifest(name: str, images: Mapping[str, Mapping[str, Any]], results: Mappin
         why = ""
         if not (entry.get("task_image_id") and entry.get("oracle_image_id")):
             why = "docker holds no task or oracle image for it"
-        if controlled:
-            got = (results or {}).get(bug)
-            entry["controls"] = dict(got) if got else None
-            if not why and not got:
-                why = "no control result"
-            elif not why and got.get("failed"):
-                why = f"{got['failed']}: {got.get('why') or ''}".strip()
-            elif not why and (got.get("validate") or {}).get("oracle_image_id") != entry.get("oracle_image_id"):
-                why = "the controls ran on another oracle image than docker holds now"
+        if not controlled:
+            entry["usable"] = False
+            bugs.append(entry)
+            pending.append({"id": bug, "why": why or "its images are present; its controls have not run"})
+            continue
+        got = (results or {}).get(bug)
+        entry["controls"] = dict(got) if got else None
+        if not why and not got:
+            why = "no control result"
+        elif not why and got.get("failed"):
+            why = f"{got['failed']}: {got.get('why') or ''}".strip()
+        elif not why and (got.get("validate") or {}).get("oracle_image_id") != entry.get("oracle_image_id"):
+            why = "the controls ran on another oracle image than docker holds now"
         entry["usable"] = not why
         bugs.append(entry)
         if why:
@@ -342,7 +347,8 @@ def manifest(name: str, images: Mapping[str, Mapping[str, Any]], results: Mappin
                           "patch)", "an empty patch fails them (selfcheck)", "a known patch written through the host executor's "
                           "runner comes back byte for byte in the kept patch (round trip)"] if controlled else
                          "none here: the final cohort's issues, tests and fixes stay unread"),
-            "bugs": bugs, "excluded": excluded, "usable": [b["id"] for b in bugs if b["usable"]]}
+            "bugs": bugs, "excluded": excluded, **({} if controlled else {"pending": pending}),
+            "usable": [b["id"] for b in bugs if b["usable"]]}
     return {**body, "digest": digest(body)}
 
 

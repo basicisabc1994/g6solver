@@ -1,0 +1,1974 @@
+{
+ "bugs": [
+  {
+   "controls": {
+    "failed": "round trip",
+    "images": {
+     "oracle_image": "g6we-oracle:pydantic-13243-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:fc8335616742d50aa206c666a57de47dfc65392e06ddb273d7368d36e3f287f2",
+     "task_image": "g6we-task:pydantic-13243-c53d310d65a5-r3",
+     "task_image_id": "sha256:f0f6e76085d2ac23c5a02b2cd8a7f921156fd4c9f53eb8dd2af792d0e68d9388"
+    },
+    "round_trip": {
+     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './tests/pydantic_core', which the host cannot hold as a plain file or folder inside the workspace",
+     "holds": false,
+     "kept_bytes": null,
+     "kept_sha256": null,
+     "known_bytes": 3136,
+     "known_sha256": "f17b4bc12635a5142be8d0f6a53b54c7faf4409bd79d97d66098eb4620250a8d",
+     "run": "run/pydantic-13243/20261106T065425162492Z",
+     "same_bytes": false,
+     "status": "error"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/pydantic-13243/20261106T065418103327Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 6,
+     "ok": true,
+     "oracle_image_id": "sha256:fc8335616742d50aa206c666a57de47dfc65392e06ddb273d7368d36e3f287f2",
+     "pass_to_pass": 120,
+     "run": "validate/pydantic-13243/20261106T065411616829Z"
+    },
+    "waited_s": 0.0,
+    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './tests/pydantic_core', which the host cannot hold as a plain file or folder inside the workspace"
+   },
+   "id": "pydantic-13243",
+   "oracle_image": "g6we-oracle:pydantic-13243-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:fc8335616742d50aa206c666a57de47dfc65392e06ddb273d7368d36e3f287f2",
+   "task_image": "g6we-task:pydantic-13243-c53d310d65a5-r3",
+   "task_image_id": "sha256:f0f6e76085d2ac23c5a02b2cd8a7f921156fd4c9f53eb8dd2af792d0e68d9388",
+   "usable": false
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:black-5144-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:991686599ab656bb5bcdc278169d76bb4c7c396fc71c951ebf65a3ef14a9633a",
+     "task_image": "g6we-task:black-5144-c53d310d65a5-r3",
+     "task_image_id": "sha256:fbbbda8f75ae8b7249b59aafdae603e77871bc16d56245654f3e0e0612e1b7c5"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 4140,
+     "kept_sha256": "8b5649617c93e4a8a465c8acd55dc7ef7cf2b027e54964189745dbfd755b6336",
+     "known_bytes": 4140,
+     "known_sha256": "8b5649617c93e4a8a465c8acd55dc7ef7cf2b027e54964189745dbfd755b6336",
+     "run": "run/black-5144/20261106T065607282290Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/black-5144/20261106T065515495928Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:991686599ab656bb5bcdc278169d76bb4c7c396fc71c951ebf65a3ef14a9633a",
+     "pass_to_pass": 218,
+     "run": "validate/black-5144/20261106T065426409688Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "black-5144",
+   "oracle_image": "g6we-oracle:black-5144-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:991686599ab656bb5bcdc278169d76bb4c7c396fc71c951ebf65a3ef14a9633a",
+   "task_image": "g6we-task:black-5144-c53d310d65a5-r3",
+   "task_image_id": "sha256:fbbbda8f75ae8b7249b59aafdae603e77871bc16d56245654f3e0e0612e1b7c5",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:black-5148-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:d1337fc611d9dc858709562a5d06d238d4e667e5ac7e8aacf911d73bf4ad25a2",
+     "task_image": "g6we-task:black-5148-c53d310d65a5-r3",
+     "task_image_id": "sha256:cda658ae2bba18519963a7b3858511cf76834f1e4e45de2c05f27ba43e901994"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 3945,
+     "kept_sha256": "fa2518623cccedf206869f9d7d4581d9e560f49058b737745bc34dee85d5df45",
+     "known_bytes": 3945,
+     "known_sha256": "fa2518623cccedf206869f9d7d4581d9e560f49058b737745bc34dee85d5df45",
+     "run": "run/black-5148/20261106T065808141845Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 3,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/black-5148/20261106T065710122476Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 3,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:d1337fc611d9dc858709562a5d06d238d4e667e5ac7e8aacf911d73bf4ad25a2",
+     "pass_to_pass": 375,
+     "run": "validate/black-5148/20261106T065614867406Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "black-5148",
+   "oracle_image": "g6we-oracle:black-5148-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:d1337fc611d9dc858709562a5d06d238d4e667e5ac7e8aacf911d73bf4ad25a2",
+   "task_image": "g6we-task:black-5148-c53d310d65a5-r3",
+   "task_image_id": "sha256:cda658ae2bba18519963a7b3858511cf76834f1e4e45de2c05f27ba43e901994",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:click-3434-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:5447ef5de8d1840cba4099f98f9261d465d12f25773bd4da0d556f80aefe4fbc",
+     "task_image": "g6we-task:click-3434-c53d310d65a5-r3",
+     "task_image_id": "sha256:a3dbaec91e1799604ec89add4ee9652ece559604ab10736f7c0d0535191c7a78"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 5794,
+     "kept_sha256": "a0fe59647d3ef3fdd599742ed499104710149e03babec0352499c41048d1aefc",
+     "known_bytes": 5794,
+     "known_sha256": "a0fe59647d3ef3fdd599742ed499104710149e03babec0352499c41048d1aefc",
+     "run": "run/click-3434/20261106T065821306665Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 7,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/click-3434/20261106T065817376329Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 7,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:5447ef5de8d1840cba4099f98f9261d465d12f25773bd4da0d556f80aefe4fbc",
+     "pass_to_pass": 28,
+     "run": "validate/click-3434/20261106T065814763975Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "click-3434",
+   "oracle_image": "g6we-oracle:click-3434-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:5447ef5de8d1840cba4099f98f9261d465d12f25773bd4da0d556f80aefe4fbc",
+   "task_image": "g6we-task:click-3434-c53d310d65a5-r3",
+   "task_image_id": "sha256:a3dbaec91e1799604ec89add4ee9652ece559604ab10736f7c0d0535191c7a78",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:click-3404-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:d363740854024354f757f3ce92da534eef34b0de6af16f15963264c8d4454fae",
+     "task_image": "g6we-task:click-3404-c53d310d65a5-r3",
+     "task_image_id": "sha256:d2eaf453f9dded5d316cc43ab2413e640d1f79803e2f8e9065f2f53cb442d6ad"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 42057,
+     "kept_sha256": "14fe4ce93b7d3c4cf4fce0d26d324584913d8d80e394d5a66e23391a2001eb77",
+     "known_bytes": 42057,
+     "known_sha256": "14fe4ce93b7d3c4cf4fce0d26d324584913d8d80e394d5a66e23391a2001eb77",
+     "run": "run/click-3404/20261106T065833721749Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 18,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/click-3404/20261106T065828822781Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 18,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:d363740854024354f757f3ce92da534eef34b0de6af16f15963264c8d4454fae",
+     "pass_to_pass": 619,
+     "run": "validate/click-3404/20261106T065824942816Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "click-3404",
+   "oracle_image": "g6we-oracle:click-3404-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:d363740854024354f757f3ce92da534eef34b0de6af16f15963264c8d4454fae",
+   "task_image": "g6we-task:click-3404-c53d310d65a5-r3",
+   "task_image_id": "sha256:d2eaf453f9dded5d316cc43ab2413e640d1f79803e2f8e9065f2f53cb442d6ad",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "round trip",
+    "images": {
+     "oracle_image": "g6we-oracle:pydantic-13133-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:95711b3caee4e457b4e93ba4ac6596a1efe0a5d18251b7174e98071e029fe106",
+     "task_image": "g6we-task:pydantic-13133-c53d310d65a5-r3",
+     "task_image_id": "sha256:af49e7d7faafa8c28ac3e4a0720c03c73f08e9ba63a41d1bbda50d833b782885"
+    },
+    "round_trip": {
+     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './tests/pydantic_core', which the host cannot hold as a plain file or folder inside the workspace",
+     "holds": false,
+     "kept_bytes": null,
+     "kept_sha256": null,
+     "known_bytes": 24316,
+     "known_sha256": "fac5b9c12afa51fe74866bf9f29df3a3e62930ec52a5bb5bcf4ec26ab328625a",
+     "run": "run/pydantic-13133/20261106T065852544322Z",
+     "same_bytes": false,
+     "status": "error"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/pydantic-13133/20261106T065844592679Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 32,
+     "ok": true,
+     "oracle_image_id": "sha256:95711b3caee4e457b4e93ba4ac6596a1efe0a5d18251b7174e98071e029fe106",
+     "pass_to_pass": 602,
+     "run": "validate/pydantic-13133/20261106T065837190912Z"
+    },
+    "waited_s": 0.0,
+    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './tests/pydantic_core', which the host cannot hold as a plain file or folder inside the workspace"
+   },
+   "id": "pydantic-13133",
+   "oracle_image": "g6we-oracle:pydantic-13133-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:95711b3caee4e457b4e93ba4ac6596a1efe0a5d18251b7174e98071e029fe106",
+   "task_image": "g6we-task:pydantic-13133-c53d310d65a5-r3",
+   "task_image_id": "sha256:af49e7d7faafa8c28ac3e4a0720c03c73f08e9ba63a41d1bbda50d833b782885",
+   "usable": false
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:starlette-3189-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:9272f785a4fa8691a6b67c3abaf5f800fb778290a168b1ef77622659d1d2a1e7",
+     "task_image": "g6we-task:starlette-3189-c53d310d65a5-r3",
+     "task_image_id": "sha256:b272ca7f9979873c234daa2ab5351d3370e8d99569c8be8466f2ac2c05a88716"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 8539,
+     "kept_sha256": "51d25a6ce4d35f39156b8557caf2c3b1b6d64de0653ff1decad9fe16adbce749",
+     "known_bytes": 8539,
+     "known_sha256": "51d25a6ce4d35f39156b8557caf2c3b1b6d64de0653ff1decad9fe16adbce749",
+     "run": "run/starlette-3189/20261106T065904415944Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 6,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/starlette-3189/20261106T065858984007Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 6,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:9272f785a4fa8691a6b67c3abaf5f800fb778290a168b1ef77622659d1d2a1e7",
+     "pass_to_pass": 199,
+     "run": "validate/starlette-3189/20261106T065853871114Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "starlette-3189",
+   "oracle_image": "g6we-oracle:starlette-3189-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:9272f785a4fa8691a6b67c3abaf5f800fb778290a168b1ef77622659d1d2a1e7",
+   "task_image": "g6we-task:starlette-3189-c53d310d65a5-r3",
+   "task_image_id": "sha256:b272ca7f9979873c234daa2ab5351d3370e8d99569c8be8466f2ac2c05a88716",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:attrs-1509-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:686131e3fb016451c756d3b608fccccfd2d0f79fff44e47e06f0a365f5bdf33d",
+     "task_image": "g6we-task:attrs-1509-c53d310d65a5-r3",
+     "task_image_id": "sha256:2fb4e3a74a47b1e86161bfec7ab37066f3cb2def353a7224d2bf634e5048d7d9"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 17284,
+     "kept_sha256": "72e617cf6a9e3db374ceddf030782da5166501e4f24618a9288f904b1a58eb30",
+     "known_bytes": 17284,
+     "known_sha256": "72e617cf6a9e3db374ceddf030782da5166501e4f24618a9288f904b1a58eb30",
+     "run": "run/attrs-1509/20261106T065932586926Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 17,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/attrs-1509/20261106T065920057366Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 17,
+     "fixed_not_passed": 4,
+     "ok": true,
+     "oracle_image_id": "sha256:686131e3fb016451c756d3b608fccccfd2d0f79fff44e47e06f0a365f5bdf33d",
+     "pass_to_pass": 684,
+     "run": "validate/attrs-1509/20261106T065908687019Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "attrs-1509",
+   "oracle_image": "g6we-oracle:attrs-1509-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:686131e3fb016451c756d3b608fccccfd2d0f79fff44e47e06f0a365f5bdf33d",
+   "task_image": "g6we-task:attrs-1509-c53d310d65a5-r3",
+   "task_image_id": "sha256:2fb4e3a74a47b1e86161bfec7ab37066f3cb2def353a7224d2bf634e5048d7d9",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:starlette-3166-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:51aef3b68bcdf740d68c7b72dcd289afbc6299f47ad2139b0f9645f0e299f756",
+     "task_image": "g6we-task:starlette-3166-c53d310d65a5-r3",
+     "task_image_id": "sha256:d97c2ef8c6a8d85621d996a83be982abd9559bb3e4ab6c15e46f49e8c5d24b69"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 8696,
+     "kept_sha256": "74df75a5d8b32f44e73486e4de1021d94c50c1b02eed1fffb7cc905ad28439f3",
+     "known_bytes": 8696,
+     "known_sha256": "74df75a5d8b32f44e73486e4de1021d94c50c1b02eed1fffb7cc905ad28439f3",
+     "run": "run/starlette-3166/20261106T065944437003Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 19,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/starlette-3166/20261106T065939789404Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 19,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:51aef3b68bcdf740d68c7b72dcd289afbc6299f47ad2139b0f9645f0e299f756",
+     "pass_to_pass": 0,
+     "run": "validate/starlette-3166/20261106T065936334263Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "starlette-3166",
+   "oracle_image": "g6we-oracle:starlette-3166-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:51aef3b68bcdf740d68c7b72dcd289afbc6299f47ad2139b0f9645f0e299f756",
+   "task_image": "g6we-task:starlette-3166-c53d310d65a5-r3",
+   "task_image_id": "sha256:d97c2ef8c6a8d85621d996a83be982abd9559bb3e4ab6c15e46f49e8c5d24b69",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:fastapi-14616-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:85734af8b73f8937f4e924b6d538624a87dfa4280db9da2ffb1d91e425a2020c",
+     "task_image": "g6we-task:fastapi-14616-c53d310d65a5-r3",
+     "task_image_id": "sha256:f1b7c99281ee33f148ac8680a052553ac3f9c7ad92df95a822fcb5844ee59afc"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 3278,
+     "kept_sha256": "8503c059b39c02a409f97ddfc7af4e8a05dbcd4868b59270d9f81d337b2482cb",
+     "known_bytes": 3278,
+     "known_sha256": "8503c059b39c02a409f97ddfc7af4e8a05dbcd4868b59270d9f81d337b2482cb",
+     "run": "run/fastapi-14616/20261106T070000260295Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 3,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/fastapi-14616/20261106T065953687058Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 3,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:85734af8b73f8937f4e924b6d538624a87dfa4280db9da2ffb1d91e425a2020c",
+     "pass_to_pass": 1,
+     "run": "validate/fastapi-14616/20261106T065948461532Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "fastapi-14616",
+   "oracle_image": "g6we-oracle:fastapi-14616-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:85734af8b73f8937f4e924b6d538624a87dfa4280db9da2ffb1d91e425a2020c",
+   "task_image": "g6we-task:fastapi-14616-c53d310d65a5-r3",
+   "task_image_id": "sha256:f1b7c99281ee33f148ac8680a052553ac3f9c7ad92df95a822fcb5844ee59afc",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:fastapi-13920-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:f328d8753ba4860e3c27e87d059152fd32b1e640ec90a44d616673375dce3eca",
+     "task_image": "g6we-task:fastapi-13920-c53d310d65a5-r3",
+     "task_image_id": "sha256:70ee13c9543d864681746d996a16503787128dcebd161b1bf15599a76a2787db"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 3252,
+     "kept_sha256": "f2cdcad37932cad031c6001dec481da992af44355ac8eb36a2cd68d4231dd5ca",
+     "known_bytes": 3252,
+     "known_sha256": "f2cdcad37932cad031c6001dec481da992af44355ac8eb36a2cd68d4231dd5ca",
+     "run": "run/fastapi-13920/20261106T070049174028Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/fastapi-13920/20261106T070042674266Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:f328d8753ba4860e3c27e87d059152fd32b1e640ec90a44d616673375dce3eca",
+     "pass_to_pass": 0,
+     "run": "validate/fastapi-13920/20261106T070037332691Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "fastapi-13920",
+   "oracle_image": "g6we-oracle:fastapi-13920-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:f328d8753ba4860e3c27e87d059152fd32b1e640ec90a44d616673375dce3eca",
+   "task_image": "g6we-task:fastapi-13920-c53d310d65a5-r3",
+   "task_image_id": "sha256:70ee13c9543d864681746d996a16503787128dcebd161b1bf15599a76a2787db",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:black-5521-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:4b6c512f6166753cf04d80fe470fc6d9fefaa392470f218cda1405afd0712c73",
+     "task_image": "g6we-task:black-5521-c53d310d65a5-r3",
+     "task_image_id": "sha256:63f7a1b647ac59b16ef91e3a29ea7980d3bfaf3fe30a9b6acfd94a0389f13d2c"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 2969,
+     "kept_sha256": "0265b01f8facda071f228b8825680a442a6a4b678b06dbe939f9a625d6e2a882",
+     "known_bytes": 2969,
+     "known_sha256": "0265b01f8facda071f228b8825680a442a6a4b678b06dbe939f9a625d6e2a882",
+     "run": "run/black-5521/20261106T070332067703Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/black-5521/20261106T070229471265Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:4b6c512f6166753cf04d80fe470fc6d9fefaa392470f218cda1405afd0712c73",
+     "pass_to_pass": 294,
+     "run": "validate/black-5521/20261106T070124470125Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "black-5521",
+   "oracle_image": "g6we-oracle:black-5521-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:4b6c512f6166753cf04d80fe470fc6d9fefaa392470f218cda1405afd0712c73",
+   "task_image": "g6we-task:black-5521-c53d310d65a5-r3",
+   "task_image_id": "sha256:63f7a1b647ac59b16ef91e3a29ea7980d3bfaf3fe30a9b6acfd94a0389f13d2c",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:click-3769-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:c45be297a0040de1f4845b5f126589978cd730921d3882a98d4b426db120b136",
+     "task_image": "g6we-task:click-3769-c53d310d65a5-r3",
+     "task_image_id": "sha256:5cfe032770f16ace8782f6b560d856c032a24400fffffce0a0b390dde50bdf50"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 3153,
+     "kept_sha256": "2e0fa86cfe94d281931e96b866c242baba17f047b3f466a13f9ce19c16d65831",
+     "known_bytes": 3153,
+     "known_sha256": "2e0fa86cfe94d281931e96b866c242baba17f047b3f466a13f9ce19c16d65831",
+     "run": "run/click-3769/20261106T065348584082Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 6,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/click-3769/20261106T065344869442Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 6,
+     "fixed_not_passed": 23,
+     "ok": true,
+     "oracle_image_id": "sha256:c45be297a0040de1f4845b5f126589978cd730921d3882a98d4b426db120b136",
+     "pass_to_pass": 231,
+     "run": "validate/click-3769/20261106T065342058594Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "click-3769",
+   "oracle_image": "g6we-oracle:click-3769-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:c45be297a0040de1f4845b5f126589978cd730921d3882a98d4b426db120b136",
+   "task_image": "g6we-task:click-3769-c53d310d65a5-r3",
+   "task_image_id": "sha256:5cfe032770f16ace8782f6b560d856c032a24400fffffce0a0b390dde50bdf50",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:starlette-3718-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:095aeee35b5f0955fcb4941ab4b26549c5e461b81d0f51a3158f14f0b26e650b",
+     "task_image": "g6we-task:starlette-3718-c53d310d65a5-r3",
+     "task_image_id": "sha256:681d6a18539d106648ff05dfa44ad628c70ece479a4f137d3d001fec8b73c3de"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 1639,
+     "kept_sha256": "bc915a4872003cae388ed8ebb98a7d70258117602b267e4fed28a5e065d1d22f",
+     "known_bytes": 1639,
+     "known_sha256": "bc915a4872003cae388ed8ebb98a7d70258117602b267e4fed28a5e065d1d22f",
+     "run": "run/starlette-3718/20261106T070349195603Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/starlette-3718/20261106T070344410685Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:095aeee35b5f0955fcb4941ab4b26549c5e461b81d0f51a3158f14f0b26e650b",
+     "pass_to_pass": 12,
+     "run": "validate/starlette-3718/20261106T070340821805Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "starlette-3718",
+   "oracle_image": "g6we-oracle:starlette-3718-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:095aeee35b5f0955fcb4941ab4b26549c5e461b81d0f51a3158f14f0b26e650b",
+   "task_image": "g6we-task:starlette-3718-c53d310d65a5-r3",
+   "task_image_id": "sha256:681d6a18539d106648ff05dfa44ad628c70ece479a4f137d3d001fec8b73c3de",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:urllib3-5347-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:5bd5b3e777ed4943e85b683bf58e0a051c69d4bf368247dcd0a4ca3401515557",
+     "task_image": "g6we-task:urllib3-5347-c53d310d65a5-r3",
+     "task_image_id": "sha256:181e27ac7b34261e473508f99d1bf301d63089ea1d63fe5addca7e60fee6893f"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 1839,
+     "kept_sha256": "d199ffc929a75d18d8f3465d0cb407de7eb49f11987648e785535eced2e640ea",
+     "known_bytes": 1839,
+     "known_sha256": "d199ffc929a75d18d8f3465d0cb407de7eb49f11987648e785535eced2e640ea",
+     "run": "run/urllib3-5347/20261106T070405102578Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/urllib3-5347/20261106T070359252187Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:5bd5b3e777ed4943e85b683bf58e0a051c69d4bf368247dcd0a4ca3401515557",
+     "pass_to_pass": 49,
+     "run": "validate/urllib3-5347/20261106T070354018626Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "urllib3-5347",
+   "oracle_image": "g6we-oracle:urllib3-5347-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:5bd5b3e777ed4943e85b683bf58e0a051c69d4bf368247dcd0a4ca3401515557",
+   "task_image": "g6we-task:urllib3-5347-c53d310d65a5-r3",
+   "task_image_id": "sha256:181e27ac7b34261e473508f99d1bf301d63089ea1d63fe5addca7e60fee6893f",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:urllib3-5254-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:a34ab2ec870fea156f14e13921859d8ae8540368198c4b9fee28b21cf11376f3",
+     "task_image": "g6we-task:urllib3-5254-c53d310d65a5-r3",
+     "task_image_id": "sha256:b4d2139ab5af33133054c1ea4507063ba18c223332f4c226a706b3aa562df371"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 1588,
+     "kept_sha256": "3afdc307ffaa061cf9b4a520f9f40e69e42927c219a0f1a7245490f72b4541fa",
+     "known_bytes": 1588,
+     "known_sha256": "3afdc307ffaa061cf9b4a520f9f40e69e42927c219a0f1a7245490f72b4541fa",
+     "run": "run/urllib3-5254/20261106T070420411314Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/urllib3-5254/20261106T070414967214Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:a34ab2ec870fea156f14e13921859d8ae8540368198c4b9fee28b21cf11376f3",
+     "pass_to_pass": 0,
+     "run": "validate/urllib3-5254/20261106T070409874190Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "urllib3-5254",
+   "oracle_image": "g6we-oracle:urllib3-5254-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:a34ab2ec870fea156f14e13921859d8ae8540368198c4b9fee28b21cf11376f3",
+   "task_image": "g6we-task:urllib3-5254-c53d310d65a5-r3",
+   "task_image_id": "sha256:b4d2139ab5af33133054c1ea4507063ba18c223332f4c226a706b3aa562df371",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:charset-normalizer-772-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:20df9dad929a53bdf86a618fcd0c4e5a9fb83519dea8508fa0f471083280c9b2",
+     "task_image": "g6we-task:charset-normalizer-772-c53d310d65a5-r3",
+     "task_image_id": "sha256:02809ce497ca18729bdcf8883f3570ac5db4a921f7af8fa7694353f163ebc3ec"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 3639,
+     "kept_sha256": "4f18154512952c9afeb024510598d5a7f55a964544875dbaf308eb37e9e86b9a",
+     "known_bytes": 3639,
+     "known_sha256": "4f18154512952c9afeb024510598d5a7f55a964544875dbaf308eb37e9e86b9a",
+     "run": "run/charset-normalizer-772/20261106T070430366750Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/charset-normalizer-772/20261106T070426836539Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:20df9dad929a53bdf86a618fcd0c4e5a9fb83519dea8508fa0f471083280c9b2",
+     "pass_to_pass": 4,
+     "run": "validate/charset-normalizer-772/20261106T070424317810Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "charset-normalizer-772",
+   "oracle_image": "g6we-oracle:charset-normalizer-772-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:20df9dad929a53bdf86a618fcd0c4e5a9fb83519dea8508fa0f471083280c9b2",
+   "task_image": "g6we-task:charset-normalizer-772-c53d310d65a5-r3",
+   "task_image_id": "sha256:02809ce497ca18729bdcf8883f3570ac5db4a921f7af8fa7694353f163ebc3ec",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:charset-normalizer-715-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:ac6dc202339d02da5f55ead78c70a1813c298e6119792331bcb90a57b0783074",
+     "task_image": "g6we-task:charset-normalizer-715-c53d310d65a5-r3",
+     "task_image_id": "sha256:1c9eb27756fe6df8aaed67aded06a1a5d7d6324cc36fa7f2fb4389fdb1b5c127"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 94528,
+     "kept_sha256": "79a7b85845c096ead5f55d24b66dfef002178ca7edf03ccdd369a00d307cd615",
+     "known_bytes": 94528,
+     "known_sha256": "79a7b85845c096ead5f55d24b66dfef002178ca7edf03ccdd369a00d307cd615",
+     "run": "run/charset-normalizer-715/20261106T070441299839Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/charset-normalizer-715/20261106T070436909316Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:ac6dc202339d02da5f55ead78c70a1813c298e6119792331bcb90a57b0783074",
+     "pass_to_pass": 46,
+     "run": "validate/charset-normalizer-715/20261106T070433813510Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "charset-normalizer-715",
+   "oracle_image": "g6we-oracle:charset-normalizer-715-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:ac6dc202339d02da5f55ead78c70a1813c298e6119792331bcb90a57b0783074",
+   "task_image": "g6we-task:charset-normalizer-715-c53d310d65a5-r3",
+   "task_image_id": "sha256:1c9eb27756fe6df8aaed67aded06a1a5d7d6324cc36fa7f2fb4389fdb1b5c127",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:setuptools-5362-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:9e7d9da0fb58a9d46961ef122fda43c884d04a5c2df63fbaf543db9920dc05ca",
+     "task_image": "g6we-task:setuptools-5362-c53d310d65a5-r3",
+     "task_image_id": "sha256:f156dcde992f9dedbca73a988ad9047f054130e6bc5e3449b6bfdb66310c106b"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 23179,
+     "kept_sha256": "57c0566050b00012c282aa74378d6f0ce08c401991cb898b6f05d2077f20c190",
+     "known_bytes": 23179,
+     "known_sha256": "57c0566050b00012c282aa74378d6f0ce08c401991cb898b6f05d2077f20c190",
+     "run": "run/setuptools-5362/20261106T070502032429Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 139,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/setuptools-5362/20261106T070452785201Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 139,
+     "fixed_not_passed": 9,
+     "ok": true,
+     "oracle_image_id": "sha256:9e7d9da0fb58a9d46961ef122fda43c884d04a5c2df63fbaf543db9920dc05ca",
+     "pass_to_pass": 0,
+     "run": "validate/setuptools-5362/20261106T070444470644Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "setuptools-5362",
+   "oracle_image": "g6we-oracle:setuptools-5362-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:9e7d9da0fb58a9d46961ef122fda43c884d04a5c2df63fbaf543db9920dc05ca",
+   "task_image": "g6we-task:setuptools-5362-c53d310d65a5-r3",
+   "task_image_id": "sha256:f156dcde992f9dedbca73a988ad9047f054130e6bc5e3449b6bfdb66310c106b",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:setuptools-5352-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:7be9f0df62b2ec452960cc2fcb24cfb94c50259401322255e524f2d315fcae21",
+     "task_image": "g6we-task:setuptools-5352-c53d310d65a5-r3",
+     "task_image_id": "sha256:fd5fcf34f18977e072829c9ef834d8dbd91ace90a71836df56f2cf61f5335ddf"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 8545,
+     "kept_sha256": "247b16a574fe344288abd70e209fe3ae45006e917f8d861f2803167e31f129cc",
+     "known_bytes": 8545,
+     "known_sha256": "247b16a574fe344288abd70e209fe3ae45006e917f8d861f2803167e31f129cc",
+     "run": "run/setuptools-5352/20261106T070531736103Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 32,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/setuptools-5352/20261106T070521336011Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 32,
+     "fixed_not_passed": 7,
+     "ok": true,
+     "oracle_image_id": "sha256:7be9f0df62b2ec452960cc2fcb24cfb94c50259401322255e524f2d315fcae21",
+     "pass_to_pass": 36,
+     "run": "validate/setuptools-5352/20261106T070511870856Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "setuptools-5352",
+   "oracle_image": "g6we-oracle:setuptools-5352-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:7be9f0df62b2ec452960cc2fcb24cfb94c50259401322255e524f2d315fcae21",
+   "task_image": "g6we-task:setuptools-5352-c53d310d65a5-r3",
+   "task_image_id": "sha256:fd5fcf34f18977e072829c9ef834d8dbd91ace90a71836df56f2cf61f5335ddf",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:pygments-3204-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:d9e6d99c2b6748439db88da82d72741cf3fd0116b843b2f4f99ad7d9bbf8af58",
+     "task_image": "g6we-task:pygments-3204-c53d310d65a5-r3",
+     "task_image_id": "sha256:5db850feada2843bd7b4527fb94e7e6b801d5c50e18d7b3cb1e6a456716e6217"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 2597,
+     "kept_sha256": "b699a0fae1bf8121e9be007f8b3c65c64d0f0a8bea6d5101474dd8040a704c3b",
+     "known_bytes": 2597,
+     "known_sha256": "b699a0fae1bf8121e9be007f8b3c65c64d0f0a8bea6d5101474dd8040a704c3b",
+     "run": "run/pygments-3204/20261106T070546960652Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 6,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/pygments-3204/20261106T070543026644Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 6,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:d9e6d99c2b6748439db88da82d72741cf3fd0116b843b2f4f99ad7d9bbf8af58",
+     "pass_to_pass": 3,
+     "run": "validate/pygments-3204/20261106T070540517047Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "pygments-3204",
+   "oracle_image": "g6we-oracle:pygments-3204-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:d9e6d99c2b6748439db88da82d72741cf3fd0116b843b2f4f99ad7d9bbf8af58",
+   "task_image": "g6we-task:pygments-3204-c53d310d65a5-r3",
+   "task_image_id": "sha256:5db850feada2843bd7b4527fb94e7e6b801d5c50e18d7b3cb1e6a456716e6217",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:pygments-3158-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:3fe51b934199b2d6ae8efcfdc83b3c0e5ab16c73bb2fb3461ebd22464878d1f9",
+     "task_image": "g6we-task:pygments-3158-c53d310d65a5-r3",
+     "task_image_id": "sha256:5c473ad139e5d2b6367704c778c0262b1c390de200c35205ac43b34b3f97fbb8"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 4749,
+     "kept_sha256": "bc9c22382aa23ae4862c68a97d7611f2fd1433ecb8d6d3653fdae5b61fbafc72",
+     "known_bytes": 4749,
+     "known_sha256": "bc9c22382aa23ae4862c68a97d7611f2fd1433ecb8d6d3653fdae5b61fbafc72",
+     "run": "run/pygments-3158/20261106T070634355937Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 3,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/pygments-3158/20261106T070629923440Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 3,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:3fe51b934199b2d6ae8efcfdc83b3c0e5ab16c73bb2fb3461ebd22464878d1f9",
+     "pass_to_pass": 0,
+     "run": "validate/pygments-3158/20261106T070627213412Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "pygments-3158",
+   "oracle_image": "g6we-oracle:pygments-3158-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:3fe51b934199b2d6ae8efcfdc83b3c0e5ab16c73bb2fb3461ebd22464878d1f9",
+   "task_image": "g6we-task:pygments-3158-c53d310d65a5-r3",
+   "task_image_id": "sha256:5c473ad139e5d2b6367704c778c0262b1c390de200c35205ac43b34b3f97fbb8",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:pluggy-809-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:33715da00ef3d51b616813c24f84eef2d37c7a999d07b8c2b93c5a5cf42f4a7d",
+     "task_image": "g6we-task:pluggy-809-c53d310d65a5-r3",
+     "task_image_id": "sha256:5a69ea020b23a9ce9bdb511af8fd5ff3b0dc6412edf754b5e50c04c0dbd747a8"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 2546,
+     "kept_sha256": "abc7189608286ae86ecc94ac9f4bba87053fca68d1e15977cc7677faccb8d682",
+     "known_bytes": 2546,
+     "known_sha256": "abc7189608286ae86ecc94ac9f4bba87053fca68d1e15977cc7677faccb8d682",
+     "run": "run/pluggy-809/20261106T070719400854Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/pluggy-809/20261106T070715623055Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:33715da00ef3d51b616813c24f84eef2d37c7a999d07b8c2b93c5a5cf42f4a7d",
+     "pass_to_pass": 78,
+     "run": "validate/pluggy-809/20261106T070712512541Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "pluggy-809",
+   "oracle_image": "g6we-oracle:pluggy-809-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:33715da00ef3d51b616813c24f84eef2d37c7a999d07b8c2b93c5a5cf42f4a7d",
+   "task_image": "g6we-task:pluggy-809-c53d310d65a5-r3",
+   "task_image_id": "sha256:5a69ea020b23a9ce9bdb511af8fd5ff3b0dc6412edf754b5e50c04c0dbd747a8",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:pluggy-799-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:0179da481c49f1b82e18341e87481d51e208d6819e49539bab688511ca7150e0",
+     "task_image": "g6we-task:pluggy-799-c53d310d65a5-r3",
+     "task_image_id": "sha256:dd123a89da74e11f1b999da23f911199b79b5b7835263febc8bb5eb5a5907bcc"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 7401,
+     "kept_sha256": "ed285225aba7866747ea2d4f5076ecd5d83ad04385b3483a60035d6b79b8d51b",
+     "known_bytes": 7401,
+     "known_sha256": "ed285225aba7866747ea2d4f5076ecd5d83ad04385b3483a60035d6b79b8d51b",
+     "run": "run/pluggy-799/20261106T070729502932Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 5,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/pluggy-799/20261106T070725391828Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 5,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:0179da481c49f1b82e18341e87481d51e208d6819e49539bab688511ca7150e0",
+     "pass_to_pass": 29,
+     "run": "validate/pluggy-799/20261106T070722596463Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "pluggy-799",
+   "oracle_image": "g6we-oracle:pluggy-799-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:0179da481c49f1b82e18341e87481d51e208d6819e49539bab688511ca7150e0",
+   "task_image": "g6we-task:pluggy-799-c53d310d65a5-r3",
+   "task_image_id": "sha256:dd123a89da74e11f1b999da23f911199b79b5b7835263febc8bb5eb5a5907bcc",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:botocore-3852-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:cd3ef2d998accbf8321bfb325f7521fede7da24d3f22ce4bdb17c181bc5f4b91",
+     "task_image": "g6we-task:botocore-3852-c53d310d65a5-r3",
+     "task_image_id": "sha256:f06b676d8cbb5bd8c9fcbc0012d169529201e1e1807150c18c9189d37c59eb48"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 1263,
+     "kept_sha256": "ae801879506bfb0bda0563871e71c0ffb05146a46967e47a0032ff136d414f1c",
+     "known_bytes": 1263,
+     "known_sha256": "ae801879506bfb0bda0563871e71c0ffb05146a46967e47a0032ff136d414f1c",
+     "run": "run/botocore-3852/20261106T070803485389Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/botocore-3852/20261106T070747220015Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:cd3ef2d998accbf8321bfb325f7521fede7da24d3f22ce4bdb17c181bc5f4b91",
+     "pass_to_pass": 72,
+     "run": "validate/botocore-3852/20261106T070732384445Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "botocore-3852",
+   "oracle_image": "g6we-oracle:botocore-3852-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:cd3ef2d998accbf8321bfb325f7521fede7da24d3f22ce4bdb17c181bc5f4b91",
+   "task_image": "g6we-task:botocore-3852-c53d310d65a5-r3",
+   "task_image_id": "sha256:f06b676d8cbb5bd8c9fcbc0012d169529201e1e1807150c18c9189d37c59eb48",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:botocore-3835-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:e41ad1b3511bc5df7cba217c5e7070c0f27341132a0d6ae645cc66b31ff79cfc",
+     "task_image": "g6we-task:botocore-3835-c53d310d65a5-r3",
+     "task_image_id": "sha256:6f169606488172ecfc05bb8b7a7a427715e9ed52ce9f7b729d3024164a5fd693"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 5743,
+     "kept_sha256": "5f3531bc0e648fe22c99d0cff163205c59120e1ffc1e475bbab560a77ac79af2",
+     "known_bytes": 5743,
+     "known_sha256": "5f3531bc0e648fe22c99d0cff163205c59120e1ffc1e475bbab560a77ac79af2",
+     "run": "run/botocore-3835/20261106T071011887445Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/botocore-3835/20261106T070954050424Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 15,
+     "ok": true,
+     "oracle_image_id": "sha256:e41ad1b3511bc5df7cba217c5e7070c0f27341132a0d6ae645cc66b31ff79cfc",
+     "pass_to_pass": 194,
+     "run": "validate/botocore-3835/20261106T070937577703Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "botocore-3835",
+   "oracle_image": "g6we-oracle:botocore-3835-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:e41ad1b3511bc5df7cba217c5e7070c0f27341132a0d6ae645cc66b31ff79cfc",
+   "task_image": "g6we-task:botocore-3835-c53d310d65a5-r3",
+   "task_image_id": "sha256:6f169606488172ecfc05bb8b7a7a427715e9ed52ce9f7b729d3024164a5fd693",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:anyio-1424-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:3485f2dff8298a1c3ed313cb61ed1e6ba5e7e9efddae31165fa8458c3ae149c8",
+     "task_image": "g6we-task:anyio-1424-c53d310d65a5-r3",
+     "task_image_id": "sha256:4fd16c38856fca625ff94fc1368753cae77647cb35b2088e280a11fa963543d1"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 1984,
+     "kept_sha256": "09e96ea9a7bce4edb9e39e49a158d214e8b191eb97df8918d49691897bdfc85a",
+     "known_bytes": 1984,
+     "known_sha256": "09e96ea9a7bce4edb9e39e49a158d214e8b191eb97df8918d49691897bdfc85a",
+     "run": "run/anyio-1424/20261106T071402034754Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 6,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/anyio-1424/20261106T071253885493Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 6,
+     "fixed_not_passed": 260,
+     "ok": true,
+     "oracle_image_id": "sha256:3485f2dff8298a1c3ed313cb61ed1e6ba5e7e9efddae31165fa8458c3ae149c8",
+     "pass_to_pass": 1279,
+     "run": "validate/anyio-1424/20261106T071147258517Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "anyio-1424",
+   "oracle_image": "g6we-oracle:anyio-1424-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:3485f2dff8298a1c3ed313cb61ed1e6ba5e7e9efddae31165fa8458c3ae149c8",
+   "task_image": "g6we-task:anyio-1424-c53d310d65a5-r3",
+   "task_image_id": "sha256:4fd16c38856fca625ff94fc1368753cae77647cb35b2088e280a11fa963543d1",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:anyio-1354-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:ab487d65b10b7fcb43ca65da65e52aabd24fc1c0a7e3cb074f05e88be727b934",
+     "task_image": "g6we-task:anyio-1354-c53d310d65a5-r3",
+     "task_image_id": "sha256:c5f7119665316a179a96f308ed676aec980b9d7ab96c01084361f1355df56101"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 3257,
+     "kept_sha256": "a3d00b173e6b2df102403fdfe31e9f28a51ff6059e41b23435ba5ed679fbb760",
+     "known_bytes": 3257,
+     "known_sha256": "a3d00b173e6b2df102403fdfe31e9f28a51ff6059e41b23435ba5ed679fbb760",
+     "run": "run/anyio-1354/20261106T071447013402Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 2,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/anyio-1354/20261106T071425988038Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 2,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:ab487d65b10b7fcb43ca65da65e52aabd24fc1c0a7e3cb074f05e88be727b934",
+     "pass_to_pass": 40,
+     "run": "validate/anyio-1354/20261106T071405991302Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "anyio-1354",
+   "oracle_image": "g6we-oracle:anyio-1354-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:ab487d65b10b7fcb43ca65da65e52aabd24fc1c0a7e3cb074f05e88be727b934",
+   "task_image": "g6we-task:anyio-1354-c53d310d65a5-r3",
+   "task_image_id": "sha256:c5f7119665316a179a96f308ed676aec980b9d7ab96c01084361f1355df56101",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:s3transfer-423-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:5088f4e163d1e9f3b1ee1bb96ee1aa2377757e5a8a018cbb357e4f315d8469dc",
+     "task_image": "g6we-task:s3transfer-423-c53d310d65a5-r3",
+     "task_image_id": "sha256:2b2bcd1fcd9849cb8434b2276f88f99f491a23f6f3f8c53bc357f0167ccf21f2"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 6553,
+     "kept_sha256": "ea129eb46e36b40dbd4d0f627e104e341c8bac9e2dca1950961790b5789b8610",
+     "known_bytes": 6553,
+     "known_sha256": "ea129eb46e36b40dbd4d0f627e104e341c8bac9e2dca1950961790b5789b8610",
+     "run": "run/s3transfer-423/20261106T071517040158Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 6,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/s3transfer-423/20261106T071503355733Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 6,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:5088f4e163d1e9f3b1ee1bb96ee1aa2377757e5a8a018cbb357e4f315d8469dc",
+     "pass_to_pass": 193,
+     "run": "validate/s3transfer-423/20261106T071450399370Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "s3transfer-423",
+   "oracle_image": "g6we-oracle:s3transfer-423-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:5088f4e163d1e9f3b1ee1bb96ee1aa2377757e5a8a018cbb357e4f315d8469dc",
+   "task_image": "g6we-task:s3transfer-423-c53d310d65a5-r3",
+   "task_image_id": "sha256:2b2bcd1fcd9849cb8434b2276f88f99f491a23f6f3f8c53bc357f0167ccf21f2",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "round trip",
+    "images": {
+     "oracle_image": "g6we-oracle:python-dotenv-711-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:c90269b95c786229bc3cf54789d973cb92459afa479898818234d3be27fa64fa",
+     "task_image": "g6we-task:python-dotenv-711-c53d310d65a5-r3",
+     "task_image_id": "sha256:f2bbd64df1b824ecb7cd8b50923ca535103f001b74b28b1707f08902b9517ad8"
+    },
+    "round_trip": {
+     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/license.md', which the host cannot hold as a plain file or folder inside the workspace",
+     "holds": false,
+     "kept_bytes": null,
+     "kept_sha256": null,
+     "known_bytes": 6289,
+     "known_sha256": "5a2c53c8e67437a5cafcc9dafa86a65de81efff22c0d537fcbcfaca118d4078f",
+     "run": "run/python-dotenv-711/20261106T071531405007Z",
+     "same_bytes": false,
+     "status": "error"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 4,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/python-dotenv-711/20261106T071525833058Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 4,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:c90269b95c786229bc3cf54789d973cb92459afa479898818234d3be27fa64fa",
+     "pass_to_pass": 181,
+     "run": "validate/python-dotenv-711/20261106T071521114520Z"
+    },
+    "waited_s": 0.0,
+    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/license.md', which the host cannot hold as a plain file or folder inside the workspace"
+   },
+   "id": "python-dotenv-711",
+   "oracle_image": "g6we-oracle:python-dotenv-711-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:c90269b95c786229bc3cf54789d973cb92459afa479898818234d3be27fa64fa",
+   "task_image": "g6we-task:python-dotenv-711-c53d310d65a5-r3",
+   "task_image_id": "sha256:f2bbd64df1b824ecb7cd8b50923ca535103f001b74b28b1707f08902b9517ad8",
+   "usable": false
+  },
+  {
+   "controls": {
+    "failed": "round trip",
+    "images": {
+     "oracle_image": "g6we-oracle:python-dotenv-700-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:a1e7baf237f835bb9856ef29c6f9421a73aa6f5f00f84e5d32b481e5fc29a903",
+     "task_image": "g6we-task:python-dotenv-700-c53d310d65a5-r3",
+     "task_image_id": "sha256:e7608b380499960ad92d1e274586a0388a8eaf0e9e4244ca9febea6fe1f5dc17"
+    },
+    "round_trip": {
+     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/license.md', which the host cannot hold as a plain file or folder inside the workspace",
+     "holds": false,
+     "kept_bytes": null,
+     "kept_sha256": null,
+     "known_bytes": 3137,
+     "known_sha256": "935204c7e4f8eddcb32342846999e0d5d9f8c987521a209142201ad96a5b56d9",
+     "run": "run/python-dotenv-700/20261106T071540991787Z",
+     "same_bytes": false,
+     "status": "error"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/python-dotenv-700/20261106T071536319374Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 1,
+     "ok": true,
+     "oracle_image_id": "sha256:a1e7baf237f835bb9856ef29c6f9421a73aa6f5f00f84e5d32b481e5fc29a903",
+     "pass_to_pass": 43,
+     "run": "validate/python-dotenv-700/20261106T071532612829Z"
+    },
+    "waited_s": 0.0,
+    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/license.md', which the host cannot hold as a plain file or folder inside the workspace"
+   },
+   "id": "python-dotenv-700",
+   "oracle_image": "g6we-oracle:python-dotenv-700-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:a1e7baf237f835bb9856ef29c6f9421a73aa6f5f00f84e5d32b481e5fc29a903",
+   "task_image": "g6we-task:python-dotenv-700-c53d310d65a5-r3",
+   "task_image_id": "sha256:e7608b380499960ad92d1e274586a0388a8eaf0e9e4244ca9febea6fe1f5dc17",
+   "usable": false
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:pyjwt-1216-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:90bc521f4055de41c2c15b5aab13cc199839c5e412bdb61618786de1ee47096a",
+     "task_image": "g6we-task:pyjwt-1216-c53d310d65a5-r3",
+     "task_image_id": "sha256:5a8e0a87960cce7df5592fe33666570e1db1896673057a6f464436d0a28e8667"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 5793,
+     "kept_sha256": "042619512c7a03b00588aa48097f8dee363b96593c3632e0a0e6c231beee0bf3",
+     "known_bytes": 5793,
+     "known_sha256": "042619512c7a03b00588aa48097f8dee363b96593c3632e0a0e6c231beee0bf3",
+     "run": "run/pyjwt-1216/20261106T071549723087Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 4,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/pyjwt-1216/20261106T071545459736Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 4,
+     "fixed_not_passed": 1,
+     "ok": true,
+     "oracle_image_id": "sha256:90bc521f4055de41c2c15b5aab13cc199839c5e412bdb61618786de1ee47096a",
+     "pass_to_pass": 197,
+     "run": "validate/pyjwt-1216/20261106T071542171714Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "pyjwt-1216",
+   "oracle_image": "g6we-oracle:pyjwt-1216-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:90bc521f4055de41c2c15b5aab13cc199839c5e412bdb61618786de1ee47096a",
+   "task_image": "g6we-task:pyjwt-1216-c53d310d65a5-r3",
+   "task_image_id": "sha256:5a8e0a87960cce7df5592fe33666570e1db1896673057a6f464436d0a28e8667",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:pyjwt-1201-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:91ec1a6c9d1d1582bad9f53b64a822d7082c1b9edafe7522572d08dc49b8db57",
+     "task_image": "g6we-task:pyjwt-1201-c53d310d65a5-r3",
+     "task_image_id": "sha256:9503da3cec0ab8ca19d69e1831d0fa5c2ac4f8ca60c3380b1357d1c37f923ec4"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 3638,
+     "kept_sha256": "1d4dc647305efd1be85e01853153147ed3f1a481bb869e3979656bec4d3e8e7c",
+     "known_bytes": 3638,
+     "known_sha256": "1d4dc647305efd1be85e01853153147ed3f1a481bb869e3979656bec4d3e8e7c",
+     "run": "run/pyjwt-1201/20261106T071617956235Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/pyjwt-1201/20261106T071604895796Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:91ec1a6c9d1d1582bad9f53b64a822d7082c1b9edafe7522572d08dc49b8db57",
+     "pass_to_pass": 46,
+     "run": "validate/pyjwt-1201/20261106T071552801001Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "pyjwt-1201",
+   "oracle_image": "g6we-oracle:pyjwt-1201-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:91ec1a6c9d1d1582bad9f53b64a822d7082c1b9edafe7522572d08dc49b8db57",
+   "task_image": "g6we-task:pyjwt-1201-c53d310d65a5-r3",
+   "task_image_id": "sha256:9503da3cec0ab8ca19d69e1831d0fa5c2ac4f8ca60c3380b1357d1c37f923ec4",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:platformdirs-666-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:af797366727bfb13b268b6858e043cd9733b96d4016fbcbeaa8cf9a02425b8bc",
+     "task_image": "g6we-task:platformdirs-666-c53d310d65a5-r3",
+     "task_image_id": "sha256:89120efcd24f3481317b2b99486de91ce9fd471c873465b6f0cf970e9a1581eb"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 21408,
+     "kept_sha256": "ae07135daafdd025590d69f7573ae9265193ec52729a1d3c0cbee6a2c1dc13b9",
+     "known_bytes": 21408,
+     "known_sha256": "ae07135daafdd025590d69f7573ae9265193ec52729a1d3c0cbee6a2c1dc13b9",
+     "run": "run/platformdirs-666/20261106T071706240333Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 341,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/platformdirs-666/20261106T071642908080Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 341,
+     "fixed_not_passed": 10,
+     "ok": true,
+     "oracle_image_id": "sha256:af797366727bfb13b268b6858e043cd9733b96d4016fbcbeaa8cf9a02425b8bc",
+     "pass_to_pass": 1640,
+     "run": "validate/platformdirs-666/20261106T071620710799Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "platformdirs-666",
+   "oracle_image": "g6we-oracle:platformdirs-666-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:af797366727bfb13b268b6858e043cd9733b96d4016fbcbeaa8cf9a02425b8bc",
+   "task_image": "g6we-task:platformdirs-666-c53d310d65a5-r3",
+   "task_image_id": "sha256:89120efcd24f3481317b2b99486de91ce9fd471c873465b6f0cf970e9a1581eb",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:pydantic-settings-1089-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:3e70e8a378d57ad7c7e29f0795d9a799c9e8c33a0482dbfa501ddfca7eb7f1f6",
+     "task_image": "g6we-task:pydantic-settings-1089-c53d310d65a5-r3",
+     "task_image_id": "sha256:e6f3287c750f05a29eb988df546872bcaf0fb27974170f7d1381c4e8c694063e"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 4266,
+     "kept_sha256": "0912464a4f1130f7d5e35b95c765d89f28049287412308ad9dd3ce288c584b9e",
+     "known_bytes": 4266,
+     "known_sha256": "0912464a4f1130f7d5e35b95c765d89f28049287412308ad9dd3ce288c584b9e",
+     "run": "run/pydantic-settings-1089/20261106T071721736664Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 12,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/pydantic-settings-1089/20261106T071715275577Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 12,
+     "fixed_not_passed": 1,
+     "ok": true,
+     "oracle_image_id": "sha256:3e70e8a378d57ad7c7e29f0795d9a799c9e8c33a0482dbfa501ddfca7eb7f1f6",
+     "pass_to_pass": 479,
+     "run": "validate/pydantic-settings-1089/20261106T071709388004Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "pydantic-settings-1089",
+   "oracle_image": "g6we-oracle:pydantic-settings-1089-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:3e70e8a378d57ad7c7e29f0795d9a799c9e8c33a0482dbfa501ddfca7eb7f1f6",
+   "task_image": "g6we-task:pydantic-settings-1089-c53d310d65a5-r3",
+   "task_image_id": "sha256:e6f3287c750f05a29eb988df546872bcaf0fb27974170f7d1381c4e8c694063e",
+   "usable": true
+  }
+ ],
+ "cohort": "development",
+ "controls": [
+  "the base fails the maintainers' tests (validate)",
+  "the maintainers' fix passes them (selfcheck, as a patch)",
+  "an empty patch fails them (selfcheck)",
+  "a known patch written through the host executor's runner comes back byte for byte in the kept patch (round trip)"
+ ],
+ "design": "docs/superpowers/specs/2026-11-06-explicit-models-one-question-design.md, sections 3.6 and 7.1",
+ "digest": "da19626d97b0a9662645f8d2f78343a1bd466d48b4257f9edff9f8c0a3599264",
+ "excluded": [
+  {
+   "id": "pydantic-13243",
+   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './tests/pydantic_core', which the host cannot hold as a plain file or folder inside the workspace"
+  },
+  {
+   "id": "pydantic-13133",
+   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './tests/pydantic_core', which the host cannot hold as a plain file or folder inside the workspace"
+  },
+  {
+   "id": "python-dotenv-711",
+   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/license.md', which the host cannot hold as a plain file or folder inside the workspace"
+  },
+  {
+   "id": "python-dotenv-700",
+   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/license.md', which the host cannot hold as a plain file or folder inside the workspace"
+  }
+ ],
+ "g6_commit": "c53d310d65a5b5ba02c64c3faf6682dcf048888e",
+ "left_out": [],
+ "plan": "validation/worked_examples/PLAN.md, 2026-11-06 (night)",
+ "sources": {
+  "K3 pilot": [
+   "black-5148",
+   "click-3404",
+   "fastapi-13920",
+   "starlette-3189",
+   "pygments-3158",
+   "s3transfer-423",
+   "pydantic-settings-1089"
+  ],
+  "stage 1 fresh": [
+   "pydantic-13243",
+   "black-5144",
+   "black-5148",
+   "click-3434",
+   "click-3404",
+   "pydantic-13133",
+   "starlette-3189",
+   "attrs-1509",
+   "starlette-3166",
+   "fastapi-14616",
+   "fastapi-13920"
+  ],
+  "stage 1 held-out": [
+   "black-5521",
+   "click-3769",
+   "starlette-3718"
+  ],
+  "stage 2": [
+   "urllib3-5347",
+   "urllib3-5254",
+   "charset-normalizer-772",
+   "charset-normalizer-715",
+   "setuptools-5362",
+   "setuptools-5352",
+   "pygments-3204",
+   "pygments-3158",
+   "pluggy-809",
+   "pluggy-799",
+   "botocore-3852",
+   "botocore-3835",
+   "anyio-1424",
+   "anyio-1354",
+   "s3transfer-423",
+   "python-dotenv-711",
+   "python-dotenv-700",
+   "pyjwt-1216",
+   "pyjwt-1201",
+   "platformdirs-666"
+  ]
+ },
+ "usable": [
+  "black-5144",
+  "black-5148",
+  "click-3434",
+  "click-3404",
+  "starlette-3189",
+  "attrs-1509",
+  "starlette-3166",
+  "fastapi-14616",
+  "fastapi-13920",
+  "black-5521",
+  "click-3769",
+  "starlette-3718",
+  "urllib3-5347",
+  "urllib3-5254",
+  "charset-normalizer-772",
+  "charset-normalizer-715",
+  "setuptools-5362",
+  "setuptools-5352",
+  "pygments-3204",
+  "pygments-3158",
+  "pluggy-809",
+  "pluggy-799",
+  "botocore-3852",
+  "botocore-3835",
+  "anyio-1424",
+  "anyio-1354",
+  "s3transfer-423",
+  "pyjwt-1216",
+  "pyjwt-1201",
+  "platformdirs-666",
+  "pydantic-settings-1089"
+ ],
+ "variant": "r3"
+}

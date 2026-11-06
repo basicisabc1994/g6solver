@@ -1,0 +1,1033 @@
+{
+ "bugs": [
+  {
+   "id": "urllib3-5271",
+   "oracle_image": "g6we-oracle:urllib3-5271-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:1192b67f148db6c7abdb9a1680b5655e528c56ebb480f160f11c4b5545d08ef7",
+   "task_image": "g6we-task:urllib3-5271-c53d310d65a5-r3",
+   "task_image_id": "sha256:e05f28d20d4ea72456059bf56ca9b906812febff88495b8c04a9ea5adb3eda84",
+   "usable": false
+  },
+  {
+   "id": "urllib3-5212",
+   "oracle_image": "g6we-oracle:urllib3-5212-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:b7874661856f8870d56cb9d8b888a2b5314f1fa298a7865fef4ebc17de5ac0f1",
+   "task_image": "g6we-task:urllib3-5212-c53d310d65a5-r3",
+   "task_image_id": "sha256:d84459654b52a2f2f71bac78da82811c525b67c1057863d42ddd1f3567d26a8b",
+   "usable": false
+  },
+  {
+   "id": "charset_normalizer-825",
+   "oracle_image": "g6we-oracle:charset_normalizer-825-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:939645899c306a0d1aa4a1cbe5e819854687b6ba61b79cd9cf97eb22fcbc4eba",
+   "task_image": "g6we-task:charset_normalizer-825-c53d310d65a5-r3",
+   "task_image_id": "sha256:b153d4af9f213337dc33a0c9b9bd6f140095ab3642c26ed4e232d1a11a2e653a",
+   "usable": false
+  },
+  {
+   "id": "pygments-3171",
+   "oracle_image": "g6we-oracle:pygments-3171-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:47d3dc644e41ab620d4df72d75d105756babbb6f53fb7d388aa4ab42812bf6a5",
+   "task_image": "g6we-task:pygments-3171-c53d310d65a5-r3",
+   "task_image_id": "sha256:43f0c39c64702ed698b8dfe61bfebeb4b0f569a0cdbf5d85372105ef29f03745",
+   "usable": false
+  },
+  {
+   "id": "pygments-3175",
+   "oracle_image": "g6we-oracle:pygments-3175-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:pygments-3175-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "pluggy-767",
+   "oracle_image": "g6we-oracle:pluggy-767-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:pluggy-767-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "pluggy-741",
+   "oracle_image": "g6we-oracle:pluggy-741-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:pluggy-741-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "anyio-1367",
+   "oracle_image": "g6we-oracle:anyio-1367-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:anyio-1367-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "aiobotocore-1704",
+   "oracle_image": "g6we-oracle:aiobotocore-1704-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:cca17195ff5e54b88aa636727153d4d76365da905cdd59872c3406276a62e54b",
+   "task_image": "g6we-task:aiobotocore-1704-c53d310d65a5-r3",
+   "task_image_id": "sha256:ecd362f49e9dd5e052408dcb7e02271825dd563383b6f0d0b06d2daf03925999",
+   "usable": false
+  },
+  {
+   "id": "python-dotenv-698",
+   "oracle_image": "g6we-oracle:python-dotenv-698-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:python-dotenv-698-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "python-dotenv-680",
+   "oracle_image": "g6we-oracle:python-dotenv-680-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:python-dotenv-680-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "pyjwt-1208",
+   "oracle_image": "g6we-oracle:pyjwt-1208-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:pyjwt-1208-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "platformdirs-661",
+   "oracle_image": "g6we-oracle:platformdirs-661-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:f2b72ed84d358e040f53b2d7a6f6a0bf3900ba57de23f5cfc62a194557d1fc36",
+   "task_image": "g6we-task:platformdirs-661-c53d310d65a5-r3",
+   "task_image_id": "sha256:2bdf818428390fef4fd923612a0819040c5c71d492ec898906740cf3a873283a",
+   "usable": false
+  },
+  {
+   "id": "platformdirs-663",
+   "oracle_image": "g6we-oracle:platformdirs-663-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:platformdirs-663-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "filesystem_spec-2352",
+   "oracle_image": "g6we-oracle:filesystem_spec-2352-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:filesystem_spec-2352-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "python-pathspec-162",
+   "oracle_image": "g6we-oracle:python-pathspec-162-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:python-pathspec-162-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "python-pathspec-132",
+   "oracle_image": "g6we-oracle:python-pathspec-132-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:python-pathspec-132-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "filelock-880",
+   "oracle_image": "g6we-oracle:filelock-880-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:filelock-880-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "filelock-827",
+   "oracle_image": "g6we-oracle:filelock-827-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:filelock-827-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "uvicorn-3103",
+   "oracle_image": "g6we-oracle:uvicorn-3103-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:uvicorn-3103-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "uvicorn-3041",
+   "oracle_image": "g6we-oracle:uvicorn-3041-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:uvicorn-3041-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "tomlkit-620",
+   "oracle_image": "g6we-oracle:tomlkit-620-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:tomlkit-620-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "tomlkit-563",
+   "oracle_image": "g6we-oracle:tomlkit-563-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:tomlkit-563-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "opentelemetry-python-5650",
+   "oracle_image": "g6we-oracle:opentelemetry-python-5650-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:opentelemetry-python-5650-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "pip-14231",
+   "oracle_image": "g6we-oracle:pip-14231-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:pip-14231-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "pip-14228",
+   "oracle_image": "g6we-oracle:pip-14228-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:pip-14228-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "pydantic-settings-1077",
+   "oracle_image": "g6we-oracle:pydantic-settings-1077-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:pydantic-settings-1077-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "pydantic-settings-1076",
+   "oracle_image": "g6we-oracle:pydantic-settings-1076-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:pydantic-settings-1076-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "s3fs-1042",
+   "oracle_image": "g6we-oracle:s3fs-1042-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:s3fs-1042-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "soupsieve-310",
+   "oracle_image": "g6we-oracle:soupsieve-310-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:soupsieve-310-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "soupsieve-308",
+   "oracle_image": "g6we-oracle:soupsieve-308-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:soupsieve-308-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "openai-python-3875",
+   "oracle_image": "g6we-oracle:openai-python-3875-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:openai-python-3875-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "openai-python-3851",
+   "oracle_image": "g6we-oracle:openai-python-3851-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:openai-python-3851-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "psutil-2965",
+   "oracle_image": "g6we-oracle:psutil-2965-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:psutil-2965-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "python-sdk-3776",
+   "oracle_image": "g6we-oracle:python-sdk-3776-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:python-sdk-3776-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "redis-py-4513",
+   "oracle_image": "g6we-oracle:redis-py-4513-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:redis-py-4513-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "pre-commit-3774",
+   "oracle_image": "g6we-oracle:pre-commit-3774-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:pre-commit-3774-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "pre-commit-3743",
+   "oracle_image": "g6we-oracle:pre-commit-3743-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:pre-commit-3743-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "markitdown-2412",
+   "oracle_image": "g6we-oracle:markitdown-2412-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:markitdown-2412-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "ui-ux-pro-max-skill-548",
+   "oracle_image": "g6we-oracle:ui-ux-pro-max-skill-548-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:ui-ux-pro-max-skill-548-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "graphify-1323",
+   "oracle_image": "g6we-oracle:graphify-1323-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:graphify-1323-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "graphify-1282",
+   "oracle_image": "g6we-oracle:graphify-1282-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:graphify-1282-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "moneyprinterturbo-1585",
+   "oracle_image": "g6we-oracle:moneyprinterturbo-1585-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:moneyprinterturbo-1585-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "moneyprinterturbo-1296",
+   "oracle_image": "g6we-oracle:moneyprinterturbo-1296-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:moneyprinterturbo-1296-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "browser-use-5640",
+   "oracle_image": "g6we-oracle:browser-use-5640-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:browser-use-5640-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "manim-2501",
+   "oracle_image": "g6we-oracle:manim-2501-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:manim-2501-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "learn-claude-code-603",
+   "oracle_image": "g6we-oracle:learn-claude-code-603-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:learn-claude-code-603-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "learn-claude-code-571",
+   "oracle_image": "g6we-oracle:learn-claude-code-571-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:learn-claude-code-571-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "ai-engineering-from-scratch-503",
+   "oracle_image": "g6we-oracle:ai-engineering-from-scratch-503-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:ai-engineering-from-scratch-503-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "llamafactory-10632",
+   "oracle_image": "g6we-oracle:llamafactory-10632-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:llamafactory-10632-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "strix-1116",
+   "oracle_image": "g6we-oracle:strix-1116-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "seen_by_builder": "one line of selection_stage5.md's judgement column (a summary of its issue's report), read by the slice 1 builder on 2026-11-06 while looking for the audit's combined file; nothing else of it was read",
+   "task_image": "g6we-task:strix-1116-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "ppt-master-324",
+   "oracle_image": "g6we-oracle:ppt-master-324-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:ppt-master-324-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "docling-4813",
+   "oracle_image": "g6we-oracle:docling-4813-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:docling-4813-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "ai-job-search-686",
+   "oracle_image": "g6we-oracle:ai-job-search-686-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:ai-job-search-686-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "mem0-6559",
+   "oracle_image": "g6we-oracle:mem0-6559-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:mem0-6559-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "mem0-6547",
+   "oracle_image": "g6we-oracle:mem0-6547-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:mem0-6547-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "annotated_deep_learning_paper_implementations-326",
+   "oracle_image": "g6we-oracle:annotated_deep_learning_paper_implementations-326-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:annotated_deep_learning_paper_implementations-326-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "scrapy-8386",
+   "oracle_image": "g6we-oracle:scrapy-8386-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:scrapy-8386-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "minimind-883",
+   "oracle_image": "g6we-oracle:minimind-883-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:minimind-883-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "ai-hedge-fund-719",
+   "oracle_image": "g6we-oracle:ai-hedge-fund-719-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:ai-hedge-fund-719-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "keras-24055",
+   "oracle_image": "g6we-oracle:keras-24055-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:keras-24055-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "keras-23782",
+   "oracle_image": "g6we-oracle:keras-23782-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:keras-23782-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "crewai-8642",
+   "oracle_image": "g6we-oracle:crewai-8642-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:crewai-8642-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "mempalace-2632",
+   "oracle_image": "g6we-oracle:mempalace-2632-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:mempalace-2632-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "voicebox-895",
+   "oracle_image": "g6we-oracle:voicebox-895-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:voicebox-895-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "cli-anything-421",
+   "oracle_image": "g6we-oracle:cli-anything-421-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:cli-anything-421-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "deeptutor-1041",
+   "oracle_image": "g6we-oracle:deeptutor-1041-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:deeptutor-1041-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "llama_index-23223",
+   "oracle_image": "g6we-oracle:llama_index-23223-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:llama_index-23223-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "llama_index-23208",
+   "oracle_image": "g6we-oracle:llama_index-23208-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:llama_index-23208-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "supervision-2795",
+   "oracle_image": "g6we-oracle:supervision-2795-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:supervision-2795-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "mitmproxy-8489",
+   "oracle_image": "g6we-oracle:mitmproxy-8489-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:mitmproxy-8489-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "mitmproxy-8326",
+   "oracle_image": "g6we-oracle:mitmproxy-8326-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:mitmproxy-8326-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "claude-howto-222",
+   "oracle_image": "g6we-oracle:claude-howto-222-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:claude-howto-222-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "langgraph-9406",
+   "oracle_image": "g6we-oracle:langgraph-9406-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:langgraph-9406-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "langgraph-9407",
+   "oracle_image": "g6we-oracle:langgraph-9407-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:langgraph-9407-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "gradio-13983",
+   "oracle_image": "g6we-oracle:gradio-13983-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:gradio-13983-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "deepspeed-8882",
+   "oracle_image": "g6we-oracle:deepspeed-8882-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:deepspeed-8882-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "ifixai-350",
+   "oracle_image": "g6we-oracle:ifixai-350-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:ifixai-350-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "agno-11347",
+   "oracle_image": "g6we-oracle:agno-11347-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:agno-11347-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "agno-11327",
+   "oracle_image": "g6we-oracle:agno-11327-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:agno-11327-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "manim-5078",
+   "oracle_image": "g6we-oracle:manim-5078-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:manim-5078-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "manim-5040",
+   "oracle_image": "g6we-oracle:manim-5040-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:manim-5040-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "agents-666",
+   "oracle_image": "g6we-oracle:agents-666-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:agents-666-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  },
+  {
+   "id": "colossalai-6468",
+   "oracle_image": "g6we-oracle:colossalai-6468-c53d310d65a5-r3",
+   "oracle_image_id": null,
+   "task_image": "g6we-task:colossalai-6468-c53d310d65a5-r3",
+   "task_image_id": null,
+   "usable": false
+  }
+ ],
+ "cohort": "final",
+ "controls": "none here: the final cohort's issues, tests and fixes stay unread",
+ "design": "docs/superpowers/specs/2026-11-06-explicit-models-one-question-design.md, sections 3.6 and 7.1",
+ "digest": "19764baca00ab65ed1d69c813b5a0ccbbd43cc3fad43a0b00aed80cf0e0d98d8",
+ "excluded": [],
+ "g6_commit": "c53d310d65a5b5ba02c64c3faf6682dcf048888e",
+ "left_out": [],
+ "pending": [
+  {
+   "id": "urllib3-5271",
+   "why": "its images are present; its controls have not run"
+  },
+  {
+   "id": "urllib3-5212",
+   "why": "its images are present; its controls have not run"
+  },
+  {
+   "id": "charset_normalizer-825",
+   "why": "its images are present; its controls have not run"
+  },
+  {
+   "id": "pygments-3171",
+   "why": "its images are present; its controls have not run"
+  },
+  {
+   "id": "pygments-3175",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "pluggy-767",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "pluggy-741",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "anyio-1367",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "aiobotocore-1704",
+   "why": "its images are present; its controls have not run"
+  },
+  {
+   "id": "python-dotenv-698",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "python-dotenv-680",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "pyjwt-1208",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "platformdirs-661",
+   "why": "its images are present; its controls have not run"
+  },
+  {
+   "id": "platformdirs-663",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "filesystem_spec-2352",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "python-pathspec-162",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "python-pathspec-132",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "filelock-880",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "filelock-827",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "uvicorn-3103",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "uvicorn-3041",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "tomlkit-620",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "tomlkit-563",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "opentelemetry-python-5650",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "pip-14231",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "pip-14228",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "pydantic-settings-1077",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "pydantic-settings-1076",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "s3fs-1042",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "soupsieve-310",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "soupsieve-308",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "openai-python-3875",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "openai-python-3851",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "psutil-2965",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "python-sdk-3776",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "redis-py-4513",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "pre-commit-3774",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "pre-commit-3743",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "markitdown-2412",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "ui-ux-pro-max-skill-548",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "graphify-1323",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "graphify-1282",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "moneyprinterturbo-1585",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "moneyprinterturbo-1296",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "browser-use-5640",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "manim-2501",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "learn-claude-code-603",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "learn-claude-code-571",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "ai-engineering-from-scratch-503",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "llamafactory-10632",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "strix-1116",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "ppt-master-324",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "docling-4813",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "ai-job-search-686",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "mem0-6559",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "mem0-6547",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "annotated_deep_learning_paper_implementations-326",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "scrapy-8386",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "minimind-883",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "ai-hedge-fund-719",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "keras-24055",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "keras-23782",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "crewai-8642",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "mempalace-2632",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "voicebox-895",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "cli-anything-421",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "deeptutor-1041",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "llama_index-23223",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "llama_index-23208",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "supervision-2795",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "mitmproxy-8489",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "mitmproxy-8326",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "claude-howto-222",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "langgraph-9406",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "langgraph-9407",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "gradio-13983",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "deepspeed-8882",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "ifixai-350",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "agno-11347",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "agno-11327",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "manim-5078",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "manim-5040",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "agents-666",
+   "why": "docker holds no task or oracle image for it"
+  },
+  {
+   "id": "colossalai-6468",
+   "why": "docker holds no task or oracle image for it"
+  }
+ ],
+ "plan": "validation/worked_examples/PLAN.md, 2026-11-06 (night)",
+ "sources": {
+  "stage 5 determined by both families": {
+   "file": "audit_stage5_labels_combined.json",
+   "record": "selection_stage5.md at claude/stage5 f558566: Opus 86, Codex 95, both 84",
+   "rule": "a bug is determined only if both families say so",
+   "sha256": "fc90565f968ed932cf930a1fc2c928f56f22e2432b548a5750222eabba78dcbf"
+  }
+ },
+ "usable": [],
+ "variant": "r3"
+}

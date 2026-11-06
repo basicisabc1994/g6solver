@@ -107,12 +107,15 @@ def test_a_bug_with_no_image_no_control_or_a_failed_control_is_excluded_and_name
                                                                       "why": cohorts.LEFT_OUT["selection"]["pydantic-settings-1089"]}]
 
 
-def test_the_final_manifest_holds_names_and_image_digests_only_and_says_what_its_builder_saw():
+def test_the_final_manifest_holds_names_and_image_digests_only_none_usable_before_its_controls_and_says_what_its_builder_saw():
     body = cohorts.manifest("final", _images(cohorts.FINAL, missing=cohorts.FINAL[10:]))
     assert all("controls" not in bug for bug in body["bugs"]) and isinstance(body["controls"], str)
     assert set(body["bugs"][0]) <= {"id", "task_image", "oracle_image", "task_image_id", "oracle_image_id", "usable",
                                     "seen_by_builder"}
-    assert body["usable"] == list(cohorts.FINAL[:10]) and len(body["excluded"]) == 74
+    assert body["usable"] == [] and body["excluded"] == [] and len(body["pending"]) == 84
+    why = {p["id"]: p["why"] for p in body["pending"]}
+    assert {why[b] for b in cohorts.FINAL[:10]} == {"its images are present; its controls have not run"}
+    assert {why[b] for b in cohorts.FINAL[10:]} == {"docker holds no task or oracle image for it"}
     seen = [b for b in body["bugs"] if "seen_by_builder" in b]
     assert [b["id"] for b in seen] == list(cohorts.FINAL_SEEN)
 
@@ -124,7 +127,26 @@ def test_a_manifest_is_written_once_and_never_with_a_digest_that_is_not_its_own(
     with pytest.raises(FileExistsError):
         cohorts.write_manifest(tmp_path, body)
     with pytest.raises(ValueError):
-        cohorts.write_manifest(tmp_path, {**body, "usable": []})
+        cohorts.write_manifest(tmp_path / "other", {**body, "g6_commit": "0" * 40})
+    assert not (tmp_path / "other").exists()
+
+
+def test_the_committed_manifests_hold_their_digests_and_every_usable_bug_passed_all_four_controls():
+    found = {json.loads(p.read_text("utf-8"))["cohort"]: (p, json.loads(p.read_text("utf-8")))
+             for p in sorted((HERE / "manifests").glob("*.json"))}
+    assert set(found) == set(cohorts.COHORTS)
+    for name, (path, body) in found.items():
+        assert cohorts.holds(body) and path.name == f"{name}-{body['digest'][:12]}.json"
+        assert [b["id"] for b in body["bugs"]] == list(cohorts.cohort(name))
+        assert set(body["usable"]) | {e["id"] for e in body["excluded"]} | {p["id"] for p in body.get("pending", [])} == \
+            set(cohorts.cohort(name))
+        for bug in body["bugs"]:
+            if bug["usable"]:
+                got = bug["controls"]
+                assert got["failed"] == "" and got["validate"]["base_fails"] and got["selfcheck"]["gold"]["passes"]
+                assert got["selfcheck"]["empty"]["passes"] is False and got["round_trip"]["same_bytes"] is True
+                assert got["validate"]["oracle_image_id"] == bug["oracle_image_id"]
+    assert found["final"][1]["usable"] == [] and all("controls" not in b for b in found["final"][1]["bugs"])
 
 
 # --- the controls -----------------------------------------------------------------------------------------------------------

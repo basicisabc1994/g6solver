@@ -1,0 +1,1207 @@
+{
+ "bugs": [
+  {
+   "controls": {
+    "failed": "round trip",
+    "images": {
+     "oracle_image": "g6we-oracle:uvicorn-3236-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:ace4518c80e5437ea928a90f0cc86792fa771db292dfd2f6e9aaa8d4fb3bb441",
+     "task_image": "g6we-task:uvicorn-3236-c53d310d65a5-r3",
+     "task_image_id": "sha256:1f30f99aae9b673df0c746d61dd2146f4399243823308787e78f5a626816327c"
+    },
+    "round_trip": {
+     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './CHANGELOG.md', which the host cannot hold as a plain file or folder inside the workspace",
+     "holds": false,
+     "kept_bytes": null,
+     "kept_sha256": null,
+     "known_bytes": 3389,
+     "known_sha256": "f61d720f8e4c1940d329059cced809aa4612b8934f1a570b8491a3de6af09c3e",
+     "run": "run/uvicorn-3236/20261106T071859898809Z",
+     "same_bytes": false,
+     "status": "error"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 7,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/uvicorn-3236/20261106T071812194279Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 7,
+     "fixed_not_passed": 9,
+     "ok": true,
+     "oracle_image_id": "sha256:ace4518c80e5437ea928a90f0cc86792fa771db292dfd2f6e9aaa8d4fb3bb441",
+     "pass_to_pass": 440,
+     "run": "validate/uvicorn-3236/20261106T071725449180Z"
+    },
+    "waited_s": 0.0,
+    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './CHANGELOG.md', which the host cannot hold as a plain file or folder inside the workspace"
+   },
+   "id": "uvicorn-3236",
+   "oracle_image": "g6we-oracle:uvicorn-3236-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:ace4518c80e5437ea928a90f0cc86792fa771db292dfd2f6e9aaa8d4fb3bb441",
+   "task_image": "g6we-task:uvicorn-3236-c53d310d65a5-r3",
+   "task_image_id": "sha256:1f30f99aae9b673df0c746d61dd2146f4399243823308787e78f5a626816327c",
+   "usable": false
+  },
+  {
+   "controls": {
+    "failed": "round trip",
+    "images": {
+     "oracle_image": "g6we-oracle:uvicorn-3199-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:d715b98174541f4977f47cdb260b541e58ff115d0d9b088500cffc47a9fb86be",
+     "task_image": "g6we-task:uvicorn-3199-c53d310d65a5-r3",
+     "task_image_id": "sha256:f6f878cceec93ca371a0010166a406561771e12a22f372551d78ad552952c8c4"
+    },
+    "round_trip": {
+     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './CHANGELOG.md', which the host cannot hold as a plain file or folder inside the workspace",
+     "holds": false,
+     "kept_bytes": null,
+     "kept_sha256": null,
+     "known_bytes": 899,
+     "known_sha256": "15c15ff52f50e126c7d151ef4c83d514d3390bd4b736cba3440dd5ebdf350ad5",
+     "run": "run/uvicorn-3199/20261106T071913419884Z",
+     "same_bytes": false,
+     "status": "error"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/uvicorn-3199/20261106T071906898375Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:d715b98174541f4977f47cdb260b541e58ff115d0d9b088500cffc47a9fb86be",
+     "pass_to_pass": 126,
+     "run": "validate/uvicorn-3199/20261106T071901138531Z"
+    },
+    "waited_s": 0.0,
+    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './CHANGELOG.md', which the host cannot hold as a plain file or folder inside the workspace"
+   },
+   "id": "uvicorn-3199",
+   "oracle_image": "g6we-oracle:uvicorn-3199-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:d715b98174541f4977f47cdb260b541e58ff115d0d9b088500cffc47a9fb86be",
+   "task_image": "g6we-task:uvicorn-3199-c53d310d65a5-r3",
+   "task_image_id": "sha256:f6f878cceec93ca371a0010166a406561771e12a22f372551d78ad552952c8c4",
+   "usable": false
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:tomlkit-552-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:3479fecfe1b472adfa7a2ba7117120895245dbbf63b8c8ed145e9dd99ae7c5fe",
+     "task_image": "g6we-task:tomlkit-552-c53d310d65a5-r3",
+     "task_image_id": "sha256:03206bf3f667716c5013d396549f97b050d83c4ad17ae29b925b676bb741d867"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 4693,
+     "kept_sha256": "a6533bcbeaebd3e3be243ea85c48253805fccb79bc76d2f3cf4cf6756252f26a",
+     "known_bytes": 4693,
+     "known_sha256": "a6533bcbeaebd3e3be243ea85c48253805fccb79bc76d2f3cf4cf6756252f26a",
+     "run": "run/tomlkit-552/20261106T071921513671Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/tomlkit-552/20261106T071917497514Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:3479fecfe1b472adfa7a2ba7117120895245dbbf63b8c8ed145e9dd99ae7c5fe",
+     "pass_to_pass": 196,
+     "run": "validate/tomlkit-552/20261106T071914562164Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "tomlkit-552",
+   "oracle_image": "g6we-oracle:tomlkit-552-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:3479fecfe1b472adfa7a2ba7117120895245dbbf63b8c8ed145e9dd99ae7c5fe",
+   "task_image": "g6we-task:tomlkit-552-c53d310d65a5-r3",
+   "task_image_id": "sha256:03206bf3f667716c5013d396549f97b050d83c4ad17ae29b925b676bb741d867",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:tomlkit-581-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:e96a21dc4fdddc09ca0bc1d60da49e54f5ea258f282254f28db0f321cb939a47",
+     "task_image": "g6we-task:tomlkit-581-c53d310d65a5-r3",
+     "task_image_id": "sha256:872fdd343a9055f4b89a0df828f900df6fa98002ebfb69b031b39f6d1bc08f14"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 1685,
+     "kept_sha256": "54583f9a6ca1e5f1d390b90b4aca4aba4aebbdce36acc07086ae23d72e75f158",
+     "known_bytes": 1685,
+     "known_sha256": "54583f9a6ca1e5f1d390b90b4aca4aba4aebbdce36acc07086ae23d72e75f158",
+     "run": "run/tomlkit-581/20261106T071932036593Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/tomlkit-581/20261106T071928194241Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:e96a21dc4fdddc09ca0bc1d60da49e54f5ea258f282254f28db0f321cb939a47",
+     "pass_to_pass": 102,
+     "run": "validate/tomlkit-581/20261106T071925302920Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "tomlkit-581",
+   "oracle_image": "g6we-oracle:tomlkit-581-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:e96a21dc4fdddc09ca0bc1d60da49e54f5ea258f282254f28db0f321cb939a47",
+   "task_image": "g6we-task:tomlkit-581-c53d310d65a5-r3",
+   "task_image_id": "sha256:872fdd343a9055f4b89a0df828f900df6fa98002ebfb69b031b39f6d1bc08f14",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:markdown-it-py-416-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:25e3f666d00949ca19fd7029b3b4725ed8ab6e72aac14753864df029fa6de100",
+     "task_image": "g6we-task:markdown-it-py-416-c53d310d65a5-r3",
+     "task_image_id": "sha256:3a03f078bfab7dd1c3bf117431812a1d2a9f335c419bbb58d36af2be47f32a99"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 2330,
+     "kept_sha256": "973d4b35097e8ee64e1057ab708f3dfe4215b6986187fb63be8e5239f82e4f54",
+     "known_bytes": 2330,
+     "known_sha256": "973d4b35097e8ee64e1057ab708f3dfe4215b6986187fb63be8e5239f82e4f54",
+     "run": "run/markdown-it-py-416/20261106T071940995904Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 2,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/markdown-it-py-416/20261106T071937637631Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 2,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:25e3f666d00949ca19fd7029b3b4725ed8ab6e72aac14753864df029fa6de100",
+     "pass_to_pass": 3,
+     "run": "validate/markdown-it-py-416/20261106T071935106051Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "markdown-it-py-416",
+   "oracle_image": "g6we-oracle:markdown-it-py-416-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:25e3f666d00949ca19fd7029b3b4725ed8ab6e72aac14753864df029fa6de100",
+   "task_image": "g6we-task:markdown-it-py-416-c53d310d65a5-r3",
+   "task_image_id": "sha256:3a03f078bfab7dd1c3bf117431812a1d2a9f335c419bbb58d36af2be47f32a99",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:opentelemetry-python-5823-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:4e3771e7cd8caecd9bb5b2a378e08711d149066c54eaa4782c2d265bd943f2c9",
+     "task_image": "g6we-task:opentelemetry-python-5823-c53d310d65a5-r3",
+     "task_image_id": "sha256:cde80c3c222308e0ab50a3e0e70f83a64aeca2f99a7b53111c1d20ed1dd44cef"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 19396,
+     "kept_sha256": "d301672ea314ba1b7724273ec0e6ff456d30f58af8cf92487ad05cb853399081",
+     "known_bytes": 19396,
+     "known_sha256": "d301672ea314ba1b7724273ec0e6ff456d30f58af8cf92487ad05cb853399081",
+     "run": "run/opentelemetry-python-5823/20261106T071951252507Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 45,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/opentelemetry-python-5823/20261106T071947647140Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 45,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:4e3771e7cd8caecd9bb5b2a378e08711d149066c54eaa4782c2d265bd943f2c9",
+     "pass_to_pass": 0,
+     "run": "validate/opentelemetry-python-5823/20261106T071944901855Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "opentelemetry-python-5823",
+   "oracle_image": "g6we-oracle:opentelemetry-python-5823-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:4e3771e7cd8caecd9bb5b2a378e08711d149066c54eaa4782c2d265bd943f2c9",
+   "task_image": "g6we-task:opentelemetry-python-5823-c53d310d65a5-r3",
+   "task_image_id": "sha256:cde80c3c222308e0ab50a3e0e70f83a64aeca2f99a7b53111c1d20ed1dd44cef",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:pip-14218-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:61a9396d9615cb92540dada6b3f1f50fe82526b06c9d72464a4a62becf9f6d56",
+     "task_image": "g6we-task:pip-14218-c53d310d65a5-r3",
+     "task_image_id": "sha256:033c4b96f95520e09272c52dae411da343d4bf450dd17eda85f52151653ec420"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 14376,
+     "kept_sha256": "2188b6cbbddd0ebc74478aec14f289053ae73f3e22967dc6a559d141b7db87a7",
+     "known_bytes": 14376,
+     "known_sha256": "2188b6cbbddd0ebc74478aec14f289053ae73f3e22967dc6a559d141b7db87a7",
+     "run": "run/pip-14218/20261106T072020430479Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 14,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/pip-14218/20261106T072013950675Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 14,
+     "fixed_not_passed": 21,
+     "ok": true,
+     "oracle_image_id": "sha256:61a9396d9615cb92540dada6b3f1f50fe82526b06c9d72464a4a62becf9f6d56",
+     "pass_to_pass": 0,
+     "run": "validate/pip-14218/20261106T072008094041Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "pip-14218",
+   "oracle_image": "g6we-oracle:pip-14218-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:61a9396d9615cb92540dada6b3f1f50fe82526b06c9d72464a4a62becf9f6d56",
+   "task_image": "g6we-task:pip-14218-c53d310d65a5-r3",
+   "task_image_id": "sha256:033c4b96f95520e09272c52dae411da343d4bf450dd17eda85f52151653ec420",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:pyasn1-108-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:44a739952df01e05a69b75d8bbfa89925dde954a88b738ffa32f4f2035bc20c9",
+     "task_image": "g6we-task:pyasn1-108-c53d310d65a5-r3",
+     "task_image_id": "sha256:d6b30d5552cfe204ebc92b17c0aea632ae4a1d6cf97f4f1f6ea6fef25f983cf0"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 1732,
+     "kept_sha256": "e2ff1ea9329b52f97bd4e50faf178dc278a00239e0ee7ab3a09dcf1cf9ac9705",
+     "known_bytes": 1732,
+     "known_sha256": "e2ff1ea9329b52f97bd4e50faf178dc278a00239e0ee7ab3a09dcf1cf9ac9705",
+     "run": "run/pyasn1-108/20261106T072042968285Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/pyasn1-108/20261106T072039063488Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:44a739952df01e05a69b75d8bbfa89925dde954a88b738ffa32f4f2035bc20c9",
+     "pass_to_pass": 260,
+     "run": "validate/pyasn1-108/20261106T072035913608Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "pyasn1-108",
+   "oracle_image": "g6we-oracle:pyasn1-108-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:44a739952df01e05a69b75d8bbfa89925dde954a88b738ffa32f4f2035bc20c9",
+   "task_image": "g6we-task:pyasn1-108-c53d310d65a5-r3",
+   "task_image_id": "sha256:d6b30d5552cfe204ebc92b17c0aea632ae4a1d6cf97f4f1f6ea6fef25f983cf0",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:pyasn1-102-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:28a854de35054495d805ef9119f762ae6053d41d15cda43d9e33268778a509f6",
+     "task_image": "g6we-task:pyasn1-102-c53d310d65a5-r3",
+     "task_image_id": "sha256:f2f4034f20c012ca824e17fdacda3911977e0de28cea38631ea37be2cbb36b7a"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 5667,
+     "kept_sha256": "e29aa9958089e9d9b93428322558f5e52a0ff606422f11611156a4798b60fb95",
+     "known_bytes": 5667,
+     "known_sha256": "e29aa9958089e9d9b93428322558f5e52a0ff606422f11611156a4798b60fb95",
+     "run": "run/pyasn1-102/20261106T072052384347Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 11,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/pyasn1-102/20261106T072049046691Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 11,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:28a854de35054495d805ef9119f762ae6053d41d15cda43d9e33268778a509f6",
+     "pass_to_pass": 17,
+     "run": "validate/pyasn1-102/20261106T072046637806Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "pyasn1-102",
+   "oracle_image": "g6we-oracle:pyasn1-102-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:28a854de35054495d805ef9119f762ae6053d41d15cda43d9e33268778a509f6",
+   "task_image": "g6we-task:pyasn1-102-c53d310d65a5-r3",
+   "task_image_id": "sha256:f2f4034f20c012ca824e17fdacda3911977e0de28cea38631ea37be2cbb36b7a",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "round trip",
+    "images": {
+     "oracle_image": "g6we-oracle:websockets-1752-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:f13c843ea95ca69f1777243918d2a23251a5875add65b6bacd5b938f55e5dd9a",
+     "task_image": "g6we-task:websockets-1752-c53d310d65a5-r3",
+     "task_image_id": "sha256:0a2bfe1c309cb51c293d4423155efe82b3069207d16bd6df2514f2b3cc13dbce"
+    },
+    "round_trip": {
+     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './example/tutorial/step2/favicon.ico', which the host cannot hold as a plain file or folder inside the workspace",
+     "holds": false,
+     "kept_bytes": null,
+     "kept_sha256": null,
+     "known_bytes": 14646,
+     "known_sha256": "fd8a09f5de6d4eaca9f51b6097bc0b804cd4f9046fc95f96aa2f0983d036716d",
+     "run": "run/websockets-1752/20261106T072111624374Z",
+     "same_bytes": false,
+     "status": "error"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 6,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/websockets-1752/20261106T072103187797Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 6,
+     "fixed_not_passed": 8,
+     "ok": true,
+     "oracle_image_id": "sha256:f13c843ea95ca69f1777243918d2a23251a5875add65b6bacd5b938f55e5dd9a",
+     "pass_to_pass": 1006,
+     "run": "validate/websockets-1752/20261106T072055676268Z"
+    },
+    "waited_s": 0.0,
+    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './example/tutorial/step2/favicon.ico', which the host cannot hold as a plain file or folder inside the workspace"
+   },
+   "id": "websockets-1752",
+   "oracle_image": "g6we-oracle:websockets-1752-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:f13c843ea95ca69f1777243918d2a23251a5875add65b6bacd5b938f55e5dd9a",
+   "task_image": "g6we-task:websockets-1752-c53d310d65a5-r3",
+   "task_image_id": "sha256:0a2bfe1c309cb51c293d4423155efe82b3069207d16bd6df2514f2b3cc13dbce",
+   "usable": false
+  },
+  {
+   "controls": {
+    "failed": "round trip",
+    "images": {
+     "oracle_image": "g6we-oracle:websockets-1738-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:4c5afeaedec316f61af981f9d3d02f7ed8d656eeedf3891fe358200b483f58c6",
+     "task_image": "g6we-task:websockets-1738-c53d310d65a5-r3",
+     "task_image_id": "sha256:5765c7b564e21b1e9641cde29ba708878eb2f3422e1f6aa5e6c3ab5985cdbaed"
+    },
+    "round_trip": {
+     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './example/tutorial/step2/favicon.ico', which the host cannot hold as a plain file or folder inside the workspace",
+     "holds": false,
+     "kept_bytes": null,
+     "kept_sha256": null,
+     "known_bytes": 8869,
+     "known_sha256": "57c0b871524bf6a8507144d957efef63e5233ef06860f71cc04be2cf5744f28c",
+     "run": "run/websockets-1738/20261106T072137660156Z",
+     "same_bytes": false,
+     "status": "error"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 2,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/websockets-1738/20261106T072125054257Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 2,
+     "fixed_not_passed": 2,
+     "ok": true,
+     "oracle_image_id": "sha256:4c5afeaedec316f61af981f9d3d02f7ed8d656eeedf3891fe358200b483f58c6",
+     "pass_to_pass": 475,
+     "run": "validate/websockets-1738/20261106T072112863944Z"
+    },
+    "waited_s": 0.0,
+    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './example/tutorial/step2/favicon.ico', which the host cannot hold as a plain file or folder inside the workspace"
+   },
+   "id": "websockets-1738",
+   "oracle_image": "g6we-oracle:websockets-1738-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:4c5afeaedec316f61af981f9d3d02f7ed8d656eeedf3891fe358200b483f58c6",
+   "task_image": "g6we-task:websockets-1738-c53d310d65a5-r3",
+   "task_image_id": "sha256:5765c7b564e21b1e9641cde29ba708878eb2f3422e1f6aa5e6c3ab5985cdbaed",
+   "usable": false
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:pydantic-settings-1109-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:3dcbce62a8afeda51da2cca2beb95163168f5354ecd4bc283ada723b0b9344f6",
+     "task_image": "g6we-task:pydantic-settings-1109-c53d310d65a5-r3",
+     "task_image_id": "sha256:7a9fd7e3d8a2928cf30802c7dd41fd633a3f9aa113dabf3017ff2ac6e6870dda"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 4140,
+     "kept_sha256": "13a5666184fd899b4d70e0026baf45e2a03e4eb19700ae3e5b4dd318af296996",
+     "known_bytes": 4140,
+     "known_sha256": "13a5666184fd899b4d70e0026baf45e2a03e4eb19700ae3e5b4dd318af296996",
+     "run": "run/pydantic-settings-1109/20261106T072151551507Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 9,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/pydantic-settings-1109/20261106T072144815018Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 9,
+     "fixed_not_passed": 1,
+     "ok": true,
+     "oracle_image_id": "sha256:3dcbce62a8afeda51da2cca2beb95163168f5354ecd4bc283ada723b0b9344f6",
+     "pass_to_pass": 518,
+     "run": "validate/pydantic-settings-1109/20261106T072138856104Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "pydantic-settings-1109",
+   "oracle_image": "g6we-oracle:pydantic-settings-1109-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:3dcbce62a8afeda51da2cca2beb95163168f5354ecd4bc283ada723b0b9344f6",
+   "task_image": "g6we-task:pydantic-settings-1109-c53d310d65a5-r3",
+   "task_image_id": "sha256:7a9fd7e3d8a2928cf30802c7dd41fd633a3f9aa113dabf3017ff2ac6e6870dda",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:wheel-695-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:d8eac4aa86ca9a132631a1e6def7f637587235cb88b7994e3f419f58f663deae",
+     "task_image": "g6we-task:wheel-695-c53d310d65a5-r3",
+     "task_image_id": "sha256:cdb41a2e3420bfc5affbc1ab1b25e7954c98a66c451d1a476c2f9bf7057d5841"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 5612,
+     "kept_sha256": "406294d815b68d9fa36270031d73c9d996e1696da4b11bc14b199a48c54aeefd",
+     "known_bytes": 5612,
+     "known_sha256": "406294d815b68d9fa36270031d73c9d996e1696da4b11bc14b199a48c54aeefd",
+     "run": "run/wheel-695/20261106T072201109106Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/wheel-695/20261106T072157418775Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:d8eac4aa86ca9a132631a1e6def7f637587235cb88b7994e3f419f58f663deae",
+     "pass_to_pass": 11,
+     "run": "validate/wheel-695/20261106T072154856300Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "wheel-695",
+   "oracle_image": "g6we-oracle:wheel-695-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:d8eac4aa86ca9a132631a1e6def7f637587235cb88b7994e3f419f58f663deae",
+   "task_image": "g6we-task:wheel-695-c53d310d65a5-r3",
+   "task_image_id": "sha256:cdb41a2e3420bfc5affbc1ab1b25e7954c98a66c451d1a476c2f9bf7057d5841",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:wheel-686-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:475ac8a28286ea370db365004b2b43706909bfa1d540c689e1bf5a780196338d",
+     "task_image": "g6we-task:wheel-686-c53d310d65a5-r3",
+     "task_image_id": "sha256:282551761b3d0958a641f3178a2941d548af0765afd2864bd0ccc69f4886b3d0"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 3338,
+     "kept_sha256": "b79b0a5cc239a4639a7caf261cef9c74751927ceb6cb7d90e4c510826874acc8",
+     "known_bytes": 3338,
+     "known_sha256": "b79b0a5cc239a4639a7caf261cef9c74751927ceb6cb7d90e4c510826874acc8",
+     "run": "run/wheel-686/20261106T072209880594Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/wheel-686/20261106T072206296616Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:475ac8a28286ea370db365004b2b43706909bfa1d540c689e1bf5a780196338d",
+     "pass_to_pass": 20,
+     "run": "validate/wheel-686/20261106T072203875945Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "wheel-686",
+   "oracle_image": "g6we-oracle:wheel-686-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:475ac8a28286ea370db365004b2b43706909bfa1d540c689e1bf5a780196338d",
+   "task_image": "g6we-task:wheel-686-c53d310d65a5-r3",
+   "task_image_id": "sha256:282551761b3d0958a641f3178a2941d548af0765afd2864bd0ccc69f4886b3d0",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "round trip",
+    "images": {
+     "oracle_image": "g6we-oracle:tenacity-660-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:925016ad4ecbf1d6ea179afd66866e8da58b1e109dd8e0886a8cf8465eca25fc",
+     "task_image": "g6we-task:tenacity-660-c53d310d65a5-r3",
+     "task_image_id": "sha256:63240e9ce74b0d2a041b057b2601fa2a776203af844fef2ae9664c634016a969"
+    },
+    "round_trip": {
+     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './README.rst', which the host cannot hold as a plain file or folder inside the workspace",
+     "holds": false,
+     "kept_bytes": null,
+     "kept_sha256": null,
+     "known_bytes": 2543,
+     "known_sha256": "bb1af7e61cd07904bcc4a5e264ac23f8d9c810b15ccbd5e20e3f13dd27ef4679",
+     "run": "run/tenacity-660/20261106T082221472578Z",
+     "same_bytes": false,
+     "status": "error"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 134,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/tenacity-660/20261106T075216365798Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 134,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:925016ad4ecbf1d6ea179afd66866e8da58b1e109dd8e0886a8cf8465eca25fc",
+     "pass_to_pass": 0,
+     "run": "validate/tenacity-660/20261106T072212546975Z"
+    },
+    "waited_s": 0.0,
+    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './README.rst', which the host cannot hold as a plain file or folder inside the workspace"
+   },
+   "id": "tenacity-660",
+   "oracle_image": "g6we-oracle:tenacity-660-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:925016ad4ecbf1d6ea179afd66866e8da58b1e109dd8e0886a8cf8465eca25fc",
+   "task_image": "g6we-task:tenacity-660-c53d310d65a5-r3",
+   "task_image_id": "sha256:63240e9ce74b0d2a041b057b2601fa2a776203af844fef2ae9664c634016a969",
+   "usable": false
+  },
+  {
+   "controls": {
+    "failed": "round trip",
+    "images": {
+     "oracle_image": "g6we-oracle:pyparsing-652-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:bbdb203651f37076e441882a341ca365cb3b057fd0db0f57cec60b89bdfffa73",
+     "task_image": "g6we-task:pyparsing-652-c53d310d65a5-r3",
+     "task_image_id": "sha256:4fd11cca0fd596fa033eb94064b48d9bacff60df160fa0c1f9e19f4bb58a5f51"
+    },
+    "round_trip": {
+     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/CONTRIBUTING.md', which the host cannot hold as a plain file or folder inside the workspace",
+     "holds": false,
+     "kept_bytes": null,
+     "kept_sha256": null,
+     "known_bytes": 10276,
+     "known_sha256": "0b92b920eae6ad25876a3105d979c63d7427ed8a643d75cf3f706bdd825e6f83",
+     "run": "run/pyparsing-652/20261106T082742314476Z",
+     "same_bytes": false,
+     "status": "error"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 36,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/pyparsing-652/20261106T082500121585Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 36,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:bbdb203651f37076e441882a341ca365cb3b057fd0db0f57cec60b89bdfffa73",
+     "pass_to_pass": 1892,
+     "run": "validate/pyparsing-652/20261106T082222756279Z"
+    },
+    "waited_s": 0.0,
+    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/CONTRIBUTING.md', which the host cannot hold as a plain file or folder inside the workspace"
+   },
+   "id": "pyparsing-652",
+   "oracle_image": "g6we-oracle:pyparsing-652-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:bbdb203651f37076e441882a341ca365cb3b057fd0db0f57cec60b89bdfffa73",
+   "task_image": "g6we-task:pyparsing-652-c53d310d65a5-r3",
+   "task_image_id": "sha256:4fd11cca0fd596fa033eb94064b48d9bacff60df160fa0c1f9e19f4bb58a5f51",
+   "usable": false
+  },
+  {
+   "controls": {
+    "failed": "round trip",
+    "images": {
+     "oracle_image": "g6we-oracle:pyparsing-649-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:97ec1dffaac3ddd1a8fce13265e92f35c945c6995376df420e839321de294e10",
+     "task_image": "g6we-task:pyparsing-649-c53d310d65a5-r3",
+     "task_image_id": "sha256:c7c8001afadbb13d8d4e4cc802c3c2edabfbf854d0c8c63cd9ba307475cb409f"
+    },
+    "round_trip": {
+     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/CONTRIBUTING.md', which the host cannot hold as a plain file or folder inside the workspace",
+     "holds": false,
+     "kept_bytes": null,
+     "kept_sha256": null,
+     "known_bytes": 5339,
+     "known_sha256": "5a33b83a4b3b606f980e2f6ec442130a58ae59c86f3c5757542a7de36e9f764d",
+     "run": "run/pyparsing-649/20261106T082936285955Z",
+     "same_bytes": false,
+     "status": "error"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 6,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/pyparsing-649/20261106T082839780569Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 6,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:97ec1dffaac3ddd1a8fce13265e92f35c945c6995376df420e839321de294e10",
+     "pass_to_pass": 1856,
+     "run": "validate/pyparsing-649/20261106T082743691632Z"
+    },
+    "waited_s": 0.0,
+    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/CONTRIBUTING.md', which the host cannot hold as a plain file or folder inside the workspace"
+   },
+   "id": "pyparsing-649",
+   "oracle_image": "g6we-oracle:pyparsing-649-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:97ec1dffaac3ddd1a8fce13265e92f35c945c6995376df420e839321de294e10",
+   "task_image": "g6we-task:pyparsing-649-c53d310d65a5-r3",
+   "task_image_id": "sha256:c7c8001afadbb13d8d4e4cc802c3c2edabfbf854d0c8c63cd9ba307475cb409f",
+   "usable": false
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:soupsieve-316-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:97527deff07a3cd42275df595a544e624ec8d79f8c3993414cf4cd5c77755536",
+     "task_image": "g6we-task:soupsieve-316-c53d310d65a5-r3",
+     "task_image_id": "sha256:ce5f595861dab5c946fc78e22b85cc6a21ca296565ab3ade643fb9a37f335062"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 2485,
+     "kept_sha256": "d8f3e99d5e2529092fdcf449c5832309c2064bb1cbb6c6a702fad90e9bdd96c1",
+     "known_bytes": 2485,
+     "known_sha256": "d8f3e99d5e2529092fdcf449c5832309c2064bb1cbb6c6a702fad90e9bdd96c1",
+     "run": "run/soupsieve-316/20261106T082944613712Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 3,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/soupsieve-316/20261106T082940699940Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 3,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:97527deff07a3cd42275df595a544e624ec8d79f8c3993414cf4cd5c77755536",
+     "pass_to_pass": 15,
+     "run": "validate/soupsieve-316/20261106T082937588957Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "soupsieve-316",
+   "oracle_image": "g6we-oracle:soupsieve-316-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:97527deff07a3cd42275df595a544e624ec8d79f8c3993414cf4cd5c77755536",
+   "task_image": "g6we-task:soupsieve-316-c53d310d65a5-r3",
+   "task_image_id": "sha256:ce5f595861dab5c946fc78e22b85cc6a21ca296565ab3ade643fb9a37f335062",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:soupsieve-315-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:1717bbf585b09987c9a823390eae4dbce382369e39366f56aee2f82745016b0b",
+     "task_image": "g6we-task:soupsieve-315-c53d310d65a5-r3",
+     "task_image_id": "sha256:f574763e87502e12766c052194ccb246c369003ad6e4a3799cf011490bbf0240"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 3443,
+     "kept_sha256": "75297fe8ef67c990adf401b9ca590ac91a3ccc1d7c410222624fcedbb91baffb",
+     "known_bytes": 3443,
+     "known_sha256": "75297fe8ef67c990adf401b9ca590ac91a3ccc1d7c410222624fcedbb91baffb",
+     "run": "run/soupsieve-315/20261106T082954757433Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 1,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/soupsieve-315/20261106T082951029920Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 1,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:1717bbf585b09987c9a823390eae4dbce382369e39366f56aee2f82745016b0b",
+     "pass_to_pass": 5,
+     "run": "validate/soupsieve-315/20261106T082948241064Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "soupsieve-315",
+   "oracle_image": "g6we-oracle:soupsieve-315-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:1717bbf585b09987c9a823390eae4dbce382369e39366f56aee2f82745016b0b",
+   "task_image": "g6we-task:soupsieve-315-c53d310d65a5-r3",
+   "task_image_id": "sha256:f574763e87502e12766c052194ccb246c369003ad6e4a3799cf011490bbf0240",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:openai-python-4166-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:af2432b95d2d84a871c75260f0430db55049eafa897ef81866ea48ffa872c8ca",
+     "task_image": "g6we-task:openai-python-4166-c53d310d65a5-r3",
+     "task_image_id": "sha256:6e512e0c5fac3595bbff53b32c63232e94db73e363c96c75c26f3a80bbaa179d"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 6069,
+     "kept_sha256": "c10e111eb80a0bb81ea51efb2887d20b54e14c1a5f1bc2051f3b965eb365585f",
+     "known_bytes": 6069,
+     "known_sha256": "c10e111eb80a0bb81ea51efb2887d20b54e14c1a5f1bc2051f3b965eb365585f",
+     "run": "run/openai-python-4166/20261106T083020373416Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 5,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/openai-python-4166/20261106T083008935310Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 5,
+     "fixed_not_passed": 0,
+     "ok": true,
+     "oracle_image_id": "sha256:af2432b95d2d84a871c75260f0430db55049eafa897ef81866ea48ffa872c8ca",
+     "pass_to_pass": 26,
+     "run": "validate/openai-python-4166/20261106T082957903655Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "openai-python-4166",
+   "oracle_image": "g6we-oracle:openai-python-4166-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:af2432b95d2d84a871c75260f0430db55049eafa897ef81866ea48ffa872c8ca",
+   "task_image": "g6we-task:openai-python-4166-c53d310d65a5-r3",
+   "task_image_id": "sha256:6e512e0c5fac3595bbff53b32c63232e94db73e363c96c75c26f3a80bbaa179d",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images": {
+     "oracle_image": "g6we-oracle:openai-python-3982-c53d310d65a5-r3",
+     "oracle_image_id": "sha256:a2708126136019f8d3f5fb776a84f53e55c58a55f17217b3344d6b1adc026436",
+     "task_image": "g6we-task:openai-python-3982-c53d310d65a5-r3",
+     "task_image_id": "sha256:1fa089de3a4a28e86078bce0c7a6d8db83646d60a36af8b7f7874c590aa532fd"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "kept_bytes": 5136,
+     "kept_sha256": "74ec05d27808eaa8fd6732093079b6fcfb5dbcb1bbf66fda6ba4d4a7445aa3fe",
+     "known_bytes": 5136,
+     "known_sha256": "74ec05d27808eaa8fd6732093079b6fcfb5dbcb1bbf66fda6ba4d4a7445aa3fe",
+     "run": "run/openai-python-3982/20261106T083117929302Z",
+     "same_bytes": true,
+     "status": "finished"
+    },
+    "selfcheck": {
+     "empty": {
+      "failing": 20,
+      "passes": false,
+      "patch_applied": true
+     },
+     "gold": {
+      "failing": 0,
+      "passes": true,
+      "patch_applied": true
+     },
+     "ok": true,
+     "run": "selfcheck/openai-python-3982/20261106T083105672783Z"
+    },
+    "validate": {
+     "base_fails": true,
+     "fail_to_pass": 20,
+     "fixed_not_passed": 22,
+     "ok": true,
+     "oracle_image_id": "sha256:a2708126136019f8d3f5fb776a84f53e55c58a55f17217b3344d6b1adc026436",
+     "pass_to_pass": 324,
+     "run": "validate/openai-python-3982/20261106T083053612947Z"
+    },
+    "waited_s": 0.0,
+    "why": ""
+   },
+   "id": "openai-python-3982",
+   "oracle_image": "g6we-oracle:openai-python-3982-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:a2708126136019f8d3f5fb776a84f53e55c58a55f17217b3344d6b1adc026436",
+   "task_image": "g6we-task:openai-python-3982-c53d310d65a5-r3",
+   "task_image_id": "sha256:1fa089de3a4a28e86078bce0c7a6d8db83646d60a36af8b7f7874c590aa532fd",
+   "usable": true
+  }
+ ],
+ "cohort": "selection",
+ "controls": [
+  "the base fails the maintainers' tests (validate)",
+  "the maintainers' fix passes them (selfcheck, as a patch)",
+  "an empty patch fails them (selfcheck)",
+  "a known patch written through the host executor's runner comes back byte for byte in the kept patch (round trip)"
+ ],
+ "design": "docs/superpowers/specs/2026-11-06-explicit-models-one-question-design.md, sections 3.6 and 7.1",
+ "digest": "d3163eb815c122872865ab23fd032086ebd77ae88153fe7fb24bbbd1f78b8ee1",
+ "excluded": [
+  {
+   "id": "uvicorn-3236",
+   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './CHANGELOG.md', which the host cannot hold as a plain file or folder inside the workspace"
+  },
+  {
+   "id": "uvicorn-3199",
+   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './CHANGELOG.md', which the host cannot hold as a plain file or folder inside the workspace"
+  },
+  {
+   "id": "websockets-1752",
+   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './example/tutorial/step2/favicon.ico', which the host cannot hold as a plain file or folder inside the workspace"
+  },
+  {
+   "id": "websockets-1738",
+   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './example/tutorial/step2/favicon.ico', which the host cannot hold as a plain file or folder inside the workspace"
+  },
+  {
+   "id": "tenacity-660",
+   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './README.rst', which the host cannot hold as a plain file or folder inside the workspace"
+  },
+  {
+   "id": "pyparsing-652",
+   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/CONTRIBUTING.md', which the host cannot hold as a plain file or folder inside the workspace"
+  },
+  {
+   "id": "pyparsing-649",
+   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/CONTRIBUTING.md', which the host cannot hold as a plain file or folder inside the workspace"
+  }
+ ],
+ "g6_commit": "c53d310d65a5b5ba02c64c3faf6682dcf048888e",
+ "left_out": [
+  {
+   "id": "pydantic-settings-1089",
+   "why": "in the development cohort: a K3 pilot bug, whose fourteen runs' records, issue and failing tests' names the pilot's analysis read (PLAN.md, 2026-11-06 evening)"
+  }
+ ],
+ "plan": "validation/worked_examples/PLAN.md, 2026-11-06 (night)",
+ "sources": {
+  "stage 4 whole bugs": [
+   "uvicorn-3236",
+   "uvicorn-3199",
+   "tomlkit-552",
+   "tomlkit-581",
+   "markdown-it-py-416",
+   "opentelemetry-python-5823",
+   "pip-14218",
+   "pyasn1-108",
+   "pyasn1-102",
+   "websockets-1752",
+   "websockets-1738",
+   "pydantic-settings-1109",
+   "pydantic-settings-1089",
+   "wheel-695",
+   "wheel-686",
+   "tenacity-660",
+   "pyparsing-652",
+   "pyparsing-649",
+   "soupsieve-316",
+   "soupsieve-315",
+   "openai-python-4166",
+   "openai-python-3982"
+  ]
+ },
+ "usable": [
+  "tomlkit-552",
+  "tomlkit-581",
+  "markdown-it-py-416",
+  "opentelemetry-python-5823",
+  "pip-14218",
+  "pyasn1-108",
+  "pyasn1-102",
+  "pydantic-settings-1109",
+  "wheel-695",
+  "wheel-686",
+  "soupsieve-316",
+  "soupsieve-315",
+  "openai-python-4166",
+  "openai-python-3982"
+ ],
+ "variant": "r3"
+}
