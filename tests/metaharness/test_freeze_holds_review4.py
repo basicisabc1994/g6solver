@@ -238,6 +238,9 @@ def test_unlistable_judge_subdirectory_cannot_hide_changed_data(tmp_path, monkey
             enrolment = loop.enrol("Review owner")
         except OSError:
             return
+        except ValueError as exc:     # the follow-up's review 1: a folder that cannot be listed is in reach, so no loop
+            assert "G6_E_LOOP_EVALUATOR_IN_REACH" in str(exc)         # is built on it (changed on purpose)
+            return
         if enrolment["completion_state"] == "blocked-escalated":
             return
         original, edits = shadow._measured, []

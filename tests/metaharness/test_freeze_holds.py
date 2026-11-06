@@ -697,8 +697,9 @@ def test_every_regular_file_under_a_root_is_pinned_whatever_its_suffix(tmp_path)
         assert _pinned([tmp_path]) != before, path.name
     cache = tmp_path / "__pycache__"
     cache.mkdir()
+    (tmp_path / "helpers.py").write_text("RULE = 1\n", encoding="utf-8")   # the source the cache is the interpreter's for
     before = _pinned([tmp_path])
-    (cache / "helpers.cpython-312.pyc").write_bytes(b"what an import writes")
+    (cache / f"helpers.{sys.implementation.cache_tag}.pyc").write_bytes(b"what an import writes")
     assert _pinned([tmp_path]) == before                      # an interpreter's own cache stays out
 
 
@@ -873,14 +874,24 @@ def inspect_source(module) -> str:
     return inspect.getsource(module)
 
 
-@pytest.mark.parametrize("name, pinned", [("enabled.json", True), ("helper.py", True), ("helper.pyc", True),
-                                          ("helper.cpython-312.pyc", False), ("helper.cpython-312.opt-1.pyc", False),
-                                          ("helper.pypy39.pyc", False)])
-def test_only_a_bytecode_cache_named_for_an_interpreter_is_left_out(tmp_path, name, pinned):
+#: Files under ``__pycache__``, each beside a source ``helper.py`` or not, and whether the freeze pins it: only the cache the
+#: interpreter writes for a source under the root is left out (the follow-up's review 1 changed this on purpose: a name
+#: shaped like a cache with no source, or another interpreter's, is pinned like any other file).
+TAG = sys.implementation.cache_tag
+CACHES = [("enabled.json", True, True), ("helper.py", True, True), ("helper.pyc", True, True),
+          (f"helper.{TAG}.pyc", True, False), (f"helper.{TAG}.opt-1.pyc", True, False),
+          (f"helper.{TAG}.opt-2.pyc", True, False), (f"helper.{TAG}.pyc", False, True),
+          (f"helper.{TAG}.opt-3.pyc", True, True), ("helper.pypy39.pyc", True, True)]
+
+
+@pytest.mark.parametrize("name, beside, pinned", CACHES)
+def test_only_the_cache_the_interpreter_writes_for_a_source_under_the_root_is_left_out(tmp_path, name, beside, pinned):
     from g6.metaharness.loop import _pinned
 
     cache = tmp_path / "__pycache__"
     cache.mkdir()
+    if beside:
+        (tmp_path / "helper.py").write_text("RULE = 1\n", encoding="utf-8")
     before = _pinned([tmp_path])
     (cache / name).write_bytes(b"written")
     assert (_pinned([tmp_path]) != before) is pinned
@@ -898,4 +909,291 @@ def test_a_declared_root_is_checked_as_given_before_it_is_resolved(tmp_path):
         domains.WordProblems(tmp_path)))
     found = _unpinned(domain)
     assert found and found[-1][0] == "G6_E_LOOP_JUDGE_UNPINNED" and "alias" in found[-1][1]
+
+
+# The follow-up's review 1: one reader for every frozen byte, a cycle's statuses survive its last check, reach is checked
+# before anything is written, the interpreter's own cache rule, and every name the file system gives --------------------
+
+#: The files that read what the freeze stands on, from G6's package.
+FREEZE_SOURCES = ("metaharness/loop.py", "core/vault.py", "integrity/__init__.py", "metaharness/api.py", "core/reading.py")
+#: Where ``_frozen_now`` and ``enrol`` start reading what judges: the reading itself, the listings an enrolment and the
+#: loop's construction check, and the judging code the harness pins as an enrolment confirms. The rest of an enrolment
+#: writes the harness and the records, which have readers of their own.
+FREEZE_ENTRIES = ("_frozen_now", "_frozen", "_unpinned", "_in_reach", "judging_sha256")
+#: The calls that read a file or list a folder.
+READS = {"read_bytes", "read_text", "open", "walk", "rglob", "glob", "iterdir", "scandir", "listdir", "getsource"}
+#: Every read or listing the freeze reaches, and why it may stand: only the one reader and lister, and two that say why.
+ALLOWED = {
+    ("core/reading.py", "sha256_of", "read_bytes"): "the one reader: any failure is Unreadable",
+    ("core/reading.py", "walk", "walk"): "the one lister: os.walk with a handler that raises, or names what it skipped",
+    ("integrity/__init__.py", "build_manifest", "glob"): "the caller's patterns choose among the files the one lister "
+                                                         "listed whole; what is read is read by the one reader",
+    ("metaharness/loop.py", "does", "getsource"): "a step's source text for what a profile may express, which inspect "
+                                                  "cannot tell from none at all; left open, and a file under a root is "
+                                                  "pinned by its bytes",
+}
+
+
+def _reads(sources: dict[str, str], entries) -> set[tuple[str, str, str]]:
+    """Every read or listing reachable from ``entries`` in ``sources``, as (file, function, call): a function is reached
+    when a reached function calls it by any name, whatever object it is called on, or names it bare or on ``self``
+    (``_whole(reading)``, ``_whole(self._frozen_reading)``), so the walk errs toward reaching too much. A callable a
+    domain holds (``check.run``) is the domain's, not one of these."""
+    import ast
+
+    functions: dict[str, list[tuple[str, ast.AST]]] = {}
+    for rel, text in sources.items():
+        for node in ast.walk(ast.parse(text)):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                functions.setdefault(node.name, []).append((rel, node))
+
+    def own(node):                                    # a function's own nodes, its nested functions left to be reached
+        stack = list(ast.iter_child_nodes(node))
+        while stack:
+            child = stack.pop()
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                yield ast.Name(id=child.name)          # reached by being defined where it runs
+                continue
+            yield child
+            stack.extend(ast.iter_child_nodes(child))
+
+    found, seen, todo = set(), set(), list(entries)
+    while todo:
+        name = todo.pop()
+        for rel, node in functions.get(name, ()):
+            if (rel, node.lineno) in seen:
+                continue
+            seen.add((rel, node.lineno))
+            parts = list(own(node))
+            calls = {id(part.func) for part in parts if isinstance(part, ast.Call)}
+            local = {arg.arg for arg in ast.walk(node.args) if isinstance(arg, ast.arg)} | {
+                part.id for part in parts if isinstance(part, ast.Name) and isinstance(getattr(part, "ctx", None), ast.Store)}
+            for part in parts:
+                if isinstance(part, ast.Call):
+                    called = part.func.attr if isinstance(part.func, ast.Attribute) else getattr(part.func, "id", "")
+                    if called in READS and (isinstance(part.func, ast.Attribute) or called == "open"):
+                        found.add((rel, node.name, called))
+                if isinstance(part, ast.Attribute):
+                    on_self = isinstance(part.value, ast.Name) and part.value.id in ("self", "cls")
+                    named = part.attr if on_self or id(part) in calls else ""
+                else:                                 # a function's own locals are not other functions
+                    named = part.id if isinstance(part, ast.Name) and part.id not in local else ""
+                if named in functions:
+                    todo.append(named)
+    return found
+
+
+def test_every_read_and_listing_the_freeze_stands_on_goes_through_the_one_reader():
+    import ast
+    import inspect
+
+    import g6
+    from g6.metaharness import loop as loop_module
+
+    package = Path(g6.__file__).resolve().parent
+    found = _reads({rel: (package / rel).read_text(encoding="utf-8") for rel in FREEZE_SOURCES}, FREEZE_ENTRIES)
+    assert found - set(ALLOWED) == set(), sorted(found - set(ALLOWED))
+    assert set(ALLOWED) <= found, sorted(set(ALLOWED) - found)              # each allowance names a read that is there
+    for method in (loop_module.ShadowLoop._frozen, loop_module.ShadowLoop._frozen_now):    # the one boundary
+        last = ast.parse(inspect.getsource(method).strip()).body[0].body[-1]
+        assert isinstance(last, ast.Return) and ast.unparse(last.value).startswith("_whole("), ast.unparse(last)
+    old = {"x.py": "import hashlib\ndef reader(p):\n    return hashlib.sha256(p.read_bytes()).hexdigest()\n"
+                   "def frozen(p):\n    return reader(p)\n"}
+    assert _reads(old, ["frozen"]) == {("x.py", "reader", "read_bytes")}     # the old reader, it finds
+
+
+def _exclusive(path: Path, folder: bool = False):
+    """What another process does when it opens a file or folder and shares nothing: it cannot be read or listed meanwhile."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                  wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel.CreateFileW(str(path), 0x80000000, 0, None, 3, 0x02000000 if folder else 0x80, None)
+    if handle == wintypes.HANDLE(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    return lambda: kernel.CloseHandle(handle)
+
+
+def _sealed_tree(tmp_path) -> tuple[Path, Path]:
+    root = tmp_path / "tree"
+    (root / "data" / "__pycache__").mkdir(parents=True)
+    (root / "data" / "cases.json").write_bytes(b"{}")
+    (root / "data" / "__pycache__" / "planted.pyc").write_bytes(b"importable")
+    return root, root / "data"
+
+
+def _producer(name: str, root: Path):
+    from g6.core.vault import Vault
+    from g6.integrity import build_manifest
+    from g6.metaharness.loop import _importable_caches
+
+    if name == "the sealed split":
+        vault = Vault.seal([root], ledger=None)
+        return vault.verify_unchanged
+    if name == "the integrity manifest":
+        return lambda: build_manifest(root, patterns=("**/*",))
+    return lambda: _importable_caches(root)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a handle that shares nothing is Windows's")
+@pytest.mark.parametrize("held", ["a file", "a folder"])
+@pytest.mark.parametrize("producer", ["the sealed split", "the integrity manifest", "the envelope's caches"])
+def test_every_producer_the_freeze_stands_on_reads_through_the_one_reader(tmp_path, producer, held):
+    from g6.core.reading import Unreadable
+
+    root, data = _sealed_tree(tmp_path)
+    read = _producer(producer, root)
+    assert read() is not None                                # readable, it reads
+    target = data / "__pycache__" / "planted.pyc" if producer == "the envelope's caches" and held == "a file" else (
+        data / "cases.json" if held == "a file" else data)
+    release = _exclusive(target, folder=held == "a folder")
+    try:
+        with pytest.raises(Unreadable):
+            read()
+    finally:
+        release()
+    assert read() is not None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a handle that shares nothing is Windows's")
+def test_the_judging_code_the_harness_pins_is_read_through_the_one_reader():
+    import g6
+    from g6.core.reading import Unreadable
+    from g6.metaharness.api import judging_sha256
+
+    held = Path(g6.__file__).resolve().parent / "metaharness" / "gate.py"
+    before = judging_sha256()
+    release = _exclusive(held)
+    try:
+        with pytest.raises(Unreadable):
+            judging_sha256()
+    finally:
+        release()
+    assert judging_sha256() == before
+
+
+def test_a_sealed_root_that_is_gone_is_a_change_and_a_manifest_of_no_root_is_empty(tmp_path):
+    import shutil
+
+    from g6.integrity import build_manifest
+
+    root, _ = _sealed_tree(tmp_path)
+    vault = Vault.seal([root], ledger=None)
+    shutil.rmtree(root)
+    assert vault.verify_unchanged() and all("removed" in said for said in vault.verify_unchanged())
+    assert build_manifest(tmp_path / "nowhere") == {}
+
+
+def test_a_domain_that_raises_while_what_judges_is_read_refuses_the_tick_and_never_raises(tmp_path, monkeypatch):
+    loop, domain = _enrolled(tmp_path, settings=LEAN)
+    monkeypatch.setattr(domain, "sealed", lambda: (_ for _ in ()).throw(_NeverSeen("a domain's own code broke")))
+    got = loop.tick()
+    assert got["warning_card"]["code"] == FROZEN_CHANGED and "_NeverSeen" in got["message"], got["message"]
+    assert loop.mh.adoption_rows() == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a handle that shares nothing is Windows's")
+def test_a_failed_cycle_whose_reading_cannot_be_made_is_a_frozen_change_naming_what(tmp_path):
+    loop, domain = _enrolled(tmp_path, settings=LEAN)
+    release = _exclusive(domain.sealed_file)
+    try:
+        got = loop.fault(RuntimeError("the tick broke"))
+    finally:
+        release()
+    row = loop.log.cycles()[-1]
+    assert got["warning_card"]["code"] == row["code"] == FROZEN_CHANGED
+    assert os.path.normcase(str(domain.sealed_file)) in os.path.normcase(row["reason"])
+    assert {status["code"] for status in row["statuses"]} >= {"G6_E_LOOP_CYCLE_FAILED", FROZEN_CHANGED}
+
+
+def test_the_last_check_of_a_cycle_never_raises_whatever_its_reading_does(tmp_path, monkeypatch):
+    loop, _ = _enrolled(tmp_path, settings=LEAN)
+    loop._frozen_seen = dict(loop.log.enrolled()["frozen"])
+    monkeypatch.setattr(loop, "_frozen_now", lambda: (_ for _ in ()).throw(_NeverSeen("never seen")))
+    got = loop._still_frozen()
+    assert got["warning_card"]["code"] == FROZEN_CHANGED and "could not be read" in got["message"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a handle that shares nothing and a junction are Windows's")
+def test_a_folder_under_a_judges_root_that_cannot_be_listed_stops_the_loop_before_it_writes(tmp_path):
+    from g6.metaharness.domain import Judge
+
+    judge_dir = tmp_path / "judge"
+    (judge_dir / "data").mkdir(parents=True)
+    source = judge_dir / "frzfu1_reach_judge.py"
+    source.write_text("def verdict(output, expected):\n    return str(output).strip().endswith(str(expected))\n",
+                      encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("frzfu1_reach_judge", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    domain = domains.WordProblems(tmp_path)
+    domain.judge = lambda: Judge(module.verdict, "independent")
+    loop_dir = tmp_path / "loop"
+    loop_dir.mkdir()
+    release = _exclusive(judge_dir / "data", folder=True)
+    try:
+        with pytest.raises(ValueError, match="G6_E_LOOP_EVALUATOR_IN_REACH"):
+            ShadowLoop(domain, loop_dir, LEAN, proposer=domains.proposes({"prompt": domains.WORKING}), now=lambda: NOW,
+                       clock=domains.Clock())
+    finally:
+        release()
+    assert list(loop_dir.iterdir()) == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a handle that shares nothing and a junction are Windows's")
+def test_every_link_is_kept_past_a_folder_that_cannot_be_listed(tmp_path):
+    from g6.metaharness.loop import _links_under
+
+    root = tmp_path / "judge"
+    for name in ("a", "b", "c"):
+        (root / name).mkdir(parents=True)
+    _junction(root / "a" / "out", tmp_path)
+    _junction(root / "c" / "out", tmp_path)
+    release = _exclusive(root / "b", folder=True)
+    try:
+        links, unlisted = _links_under([root])
+    finally:
+        release()
+    assert sorted(link.parent.name for link in links) == ["a", "c"] and [Path(name).name for name in unlisted] == ["b"]
+
+
+def test_the_caches_left_out_are_the_same_whatever_cache_prefix_this_process_has(tmp_path, monkeypatch):
+    import importlib.util as util
+
+    from g6.metaharness.loop import _pinned
+
+    (tmp_path / "rules.v2.py").write_text("RULE = 1\n", encoding="utf-8")
+    bare = _pinned([tmp_path])
+    monkeypatch.setattr(sys, "pycache_prefix", None)
+    cache = Path(util.cache_from_source(str(tmp_path / "rules.v2.py")))
+    cache.parent.mkdir()
+    cache.write_bytes(b"what an import writes")
+    assert _pinned([tmp_path]) == bare
+    monkeypatch.setattr(sys, "pycache_prefix", str(tmp_path.parent / "elsewhere"))   # as a runner has it
+    assert _pinned([tmp_path]) == bare
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a name that is no text is one Windows gives")
+def test_every_name_the_file_system_gives_is_pinned_sealed_and_digested(tmp_path):
+    import hashlib
+
+    from g6.integrity import manifest_sha256, manifest_text
+    from g6.metaharness.loop import _pinned
+
+    root = tmp_path / "rules"
+    root.mkdir()
+    named = root / "rule-\ud800.dat"
+    named.write_bytes(b"judging data")
+    before = _pinned([root])
+    vault = Vault.seal([root], ledger=None)
+    assert vault.verify_unchanged() == ()
+    named.write_bytes(b"other data")
+    assert _pinned([root]) != before and vault.verify_unchanged()
+    ordinary = {"a/b.py": "0" * 64, "cé.txt": "1" * 64}                   # every other name encodes as it did
+    assert manifest_sha256(ordinary) == hashlib.sha256(manifest_text(ordinary).encode("utf-8")).hexdigest()
+    assert manifest_sha256({"x\ud800": "0" * 64}) != manifest_sha256({"x\ud801": "0" * 64})
 

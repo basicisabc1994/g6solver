@@ -357,7 +357,7 @@ def _source_copy(folder: Path) -> Path:
     ("operator/store.py", "charged = float(metered)", "charged = 0.0"),            # the reviewer's edit
     ("operator/gates.py", "if used + amount > cap + _SLACK:", "if False:"),
     ("core/vault.py", "return any(_inside(real, root) for root in self.roots)", "return False"),
-    ("integrity/__init__.py", "return _sha(manifest_text(manifest).encode(\"utf-8\"))", "return \"\""),
+    ("integrity/__init__.py", "return _sha(manifest_text(manifest).encode(\"utf-8\", \"surrogatepass\"))", "return \"\""),
     ("self_maintenance/constraints.py", "ranked = sorted(", "ranked = list("),
 ])
 def test_4_a_one_line_edit_anywhere_in_the_enforcement_set_stops_the_loop(tmp_path, monkeypatch, name, old, new):

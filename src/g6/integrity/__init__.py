@@ -27,6 +27,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from g6.core.reading import files_under, sha256_of
+
 
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -40,10 +42,14 @@ def in_cache(rel: Path) -> bool:
 def build_manifest(root: str | os.PathLike[str], *, patterns: tuple[str, ...] = ("**/*.py",)) -> dict[str, str]:
     """``relative/posix/path -> sha256`` for every file under ``root`` matching ``patterns`` (``__pycache__`` skipped, read
     below ``root`` only, so a root installed under a folder of that name still has its files, and as the system reads a
-    folder's name: on Windows ``__PYCACHE__`` is the same folder, and a first import writes its cache there)."""
+    folder's name: on Windows ``__PYCACHE__`` is the same folder, and a first import writes its cache there). Listed and
+    read by the one reader (``g6.core.reading``): the patterns choose among the files a whole listing found, so a folder
+    under ``root`` that cannot be listed, or a file that cannot be read, raises ``Unreadable`` and never leaves a file out
+    unseen. A ``root`` that does not exist lists nothing."""
     base = Path(root)
-    found = {p for pattern in patterns for p in base.glob(pattern) if p.is_file() and not in_cache(p.relative_to(base))}
-    return {p.relative_to(base).as_posix(): _sha(p.read_bytes()) for p in sorted(found)}
+    listed = set(files_under(base))
+    found = {p for pattern in patterns for p in base.glob(pattern) if p in listed and not in_cache(p.relative_to(base))}
+    return {p.relative_to(base).as_posix(): sha256_of(p) for p in sorted(found)}
 
 
 def manifest_text(manifest: Mapping[str, str]) -> str:
@@ -51,8 +57,10 @@ def manifest_text(manifest: Mapping[str, str]) -> str:
 
 
 def manifest_sha256(manifest: Mapping[str, str]) -> str:
-    """The digest to pin: of the manifest's canonical text."""
-    return _sha(manifest_text(manifest).encode("utf-8"))
+    """The digest to pin: of the manifest's canonical text. Every name the file system gives is encoded, one that is no
+    text (a lone surrogate, as Windows allows) included, so no listed file escapes the digest; other names encode as they
+    always did."""
+    return _sha(manifest_text(manifest).encode("utf-8", "surrogatepass"))
 
 
 def write_manifest(manifest: Mapping[str, str], path: str | os.PathLike[str]) -> str:
