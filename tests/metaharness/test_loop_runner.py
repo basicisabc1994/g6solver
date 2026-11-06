@@ -31,6 +31,7 @@ from g6.self_maintenance.envelope import (
     CycleLog,
     ask_to_stop,
     beat,
+    enrolment_digest,
     heartbeat,
     runner_alive,
     runner_lock,
@@ -678,8 +679,10 @@ def test_a_second_runner_on_a_folder_does_nothing(tmp_path, capsys, monkeypatch)
 
 
 def _agreed(root: Path, log: CycleLog) -> None:
-    """A person's start as ``g6_improve_start`` records it."""
-    log.start("Ada", at=START.isoformat(), settings=digest(read_settings(root)), stops=stops_asked(root))
+    """A person's start as ``g6_improve_start`` records it. Changed on purpose (consent repair 2): a start records the
+    enrolment its dialog showed, and the runner runs only that one."""
+    log.start("Ada", at=START.isoformat(), settings=digest(read_settings(root)), stops=stops_asked(root),
+              enrolment=enrolment_digest(log))
 
 
 def _grow_allowance(root: Path) -> None:
@@ -868,7 +871,7 @@ def test_a_lifted_stop_left_on_disk_lets_a_restart_run_and_any_stop_after_it_end
     root, loop = _enrolled_folder(tmp_path, started=False)
     (root / "STOP").write_text("an old stop\n", encoding="utf-8")
     loop.log.start("Ada", at=START.isoformat(), settings=digest(read_settings(root)), stops=stops_asked(root),
-                   **stop_to_lift(root))
+                   enrolment=enrolment_digest(loop.log), **stop_to_lift(root))
 
     def a_stop_after_a_tick(seconds: float) -> None:
         ask_to_stop(root, "a newer stop")

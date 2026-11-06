@@ -78,6 +78,7 @@ from g6.self_maintenance.constraints import StageMeasurement, identify_constrain
 from g6.self_maintenance.envelope import (
     CYCLE_LOG,
     ENDS_A_STREAK,
+    ENROLMENT_CHANGED,
     FINDINGS,
     MAX_FAILED_CYCLES,
     TICK_BUDGET_SPENT,
@@ -87,7 +88,7 @@ from g6.self_maintenance.envelope import (
     file_digest,
     note_refusal,
     refused_requests,
-    stop_standing,
+    what_stops,
 )
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
 from g6.self_maintenance.usage import limit_ends, read_stops, refused_by, telling_stops
@@ -687,13 +688,22 @@ class ShadowLoop:
     def stopped_by(self) -> str:
         """Why this folder is stopped, which a tick and the runner read alike: if the runner read less, a tick refused for a
         stop would leave it going, and asking again."""
-        return self.cannot_record or stop_standing(self.root, self.log.started())
+        return self._stop()[1]
+
+    def _stop(self) -> tuple[str, str]:
+        """What stops this folder, as a code and a reason (``what_stops``), or ``("", "")``."""
+        if self.cannot_record:
+            return STOPPED, self.cannot_record
+        code, why = what_stops(self.root, self.log.started())
+        return (code or STOPPED, why) if why else ("", "")
 
     def _halted(self) -> _Halted | None:
-        """What stops a tick between two requests: this folder's stop, or G6's own."""
-        why = self.stopped_by()
+        """What stops a tick between two requests: this folder's stop, or G6's own. An enrolment on record that the start
+        did not show is a stop with a code of its own (``ENROLMENT_CHANGED``), read under the folder's lock, so no tick
+        runs on an enrolment its start did not agree to."""
+        code, why = self._stop()
         if why:
-            return _Halted(STOPPED, why)
+            return _Halted(code, why)
         engaged = stop.engaged()
         return _Halted(stop.STOPPED, f"G6 is stopped: {engaged}") if engaged is not None else None
 
@@ -782,7 +792,8 @@ class ShadowLoop:
         halted = self._halted()
         if halted is not None:
             return _blocked(halted.code, halted.said, "Remove the STOP file to resume." if halted.code == STOPPED else
-                            "Whoever engaged the stop releases it.")
+                            "A person starts it again with g6_improve_start, which shows them the enrolment that stands."
+                            if halted.code == ENROLMENT_CHANGED else "Whoever engaged the stop releases it.")
         invalid = self._invalid()
         if invalid is not None:
             return invalid
@@ -1079,9 +1090,9 @@ class ShadowLoop:
 
     @_exclusive
     def demote(self, generation: int, asked_by: str, *,
-               last_check: Callable[[], dict[str, Any] | None] | None = None) -> dict[str, Any]:
+               last_check: Callable[[Mapping[str, Any]], dict[str, Any] | None] | None = None) -> dict[str, Any]:
         """A person takes back the generation at the head, having read the digest. The loop goes on from what stood before.
-        ``last_check`` as for ``enrol``."""
+        ``last_check`` as for ``enrol``, given what the demotion would restore (``ShadowHarness.demote``)."""
         who = asked_by.strip()
         if not who or is_automated(who):
             return _blocked(APPROVAL_REQUIRED, "a person takes a generation back (no empty or auto: name)")
@@ -1091,10 +1102,7 @@ class ShadowLoop:
         lost = self._lost_generations()
         if lost:
             return _blocked(RECORDS_UNREADABLE, lost, "A person inspects the folder. Nothing runs on records that do not check out.")
-        refused = last_check() if last_check is not None else None
-        if refused is not None:
-            return refused
-        taken = self.mh.demote(generation, who)
+        taken = self.mh.demote(generation, who, last_check=last_check or (lambda found: None))
         if taken["completion_state"] != "blocked-escalated":
             self.log.demote(who, at=self._now().isoformat(), undoes=taken["undoes"], head_version=taken["head_version"])
         return taken

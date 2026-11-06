@@ -541,9 +541,10 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         only, pushes nothing and starts no engineer. The person is asked in the client's own dialog: you never answer for
         them, and a decline, a cancel or a client without a dialog starts nothing; ask the person, and offer no other way
         to agree. The name they give is recorded as given and is not authenticated. If what they read changes while the
-        dialog is open, nothing starts: call this again and they read what stands. Refused, with what to do, while a
-        runner is alive or when no person has enrolled a domain in the folder, which only a person does, in the client's
-        dialog (g6_improve_enrol). Requires host permission metaharness.improve in G6_MCP_SENSITIVE."""
+        dialog is open, nothing starts: call this again and they read what stands. The runner runs only the enrolment the
+        dialog showed: an enrolment made after it ends the start, and g6_improve_status shows that stop. Refused, with what
+        to do, while a runner is alive or when no person has enrolled a domain in the folder, which only a person does, in
+        the client's dialog (g6_improve_enrol). Requires host permission metaharness.improve in G6_MCP_SENSITIVE."""
         from g6.mcp import improve
         from g6.mcp.consent import refusal, request_consent
 
@@ -611,10 +612,11 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
 
     async def g6_improve_demote(ctx: Any, generation: int, folder: str = "") -> dict:
         """Take back the generation at the head of the loop's chain (as g6_improve_status shows it), so the loop goes on
-        from the version before it: a person agrees in the client's own dialog, which names the generation and what it
-        changed, and nowhere else, as for g6_improve_enrol. A head that is not that generation is refused with nothing
-        asked, and one that moves while the dialog is open is not taken back. Requires host permission
-        metaharness.improve in G6_MCP_SENSITIVE."""
+        from the version before it: a person agrees in the client's own dialog, which names the generation, what it
+        changed, and the generation and profile (by digest) it goes back to, and nowhere else, as for g6_improve_enrol. A
+        head that is not that generation, or one with nothing adopted left to take back, is refused with nothing asked, and
+        one that moves while the dialog is open is not taken back. Requires host permission metaharness.improve in
+        G6_MCP_SENSITIVE."""
         return await person_act(ctx, "demote", folder, generation)
 
     for tool in (metaharness_inspect, metaharness_propose, metaharness_evaluate, metaharness_decide,

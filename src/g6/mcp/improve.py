@@ -16,7 +16,9 @@ only the bytes it names. An act runs in a process like the runner's, so an enrol
 interpreter compares, and it records nothing if any of it moved meanwhile.
 An agreement binds what the dialog showed: if any of it moved while the dialog was up, nothing starts and the person is
 asked again. The start records the settings it agreed to, and the runner holds to them on every restart, so a changed
-settings file needs a new agreement even with no stop in between. It never moves or deletes a ``STOP`` file. It records the
+settings file needs a new agreement even with no stop in between. It records the enrolment it showed too, by digest, and
+the runner runs only that one: a later or changed enrolment ends the start as a stop does, and the status shows that stop.
+It never moves or deletes a ``STOP`` file. It records the
 file the person agreed to lift, by digest, length and modification time, and anything else stands, so a stop it was not shown
 survives it, whatever became of any count or record.
 
@@ -56,6 +58,7 @@ from g6.self_maintenance.envelope import (
     STOPS_FILE,
     CycleLog,
     ask_to_stop,
+    enrolment_digest,
     file_digest,
     heartbeat,
     record_stop,
@@ -191,6 +194,7 @@ def _cannot_start(root: Path) -> dict | None:
 #: The fields of a start's binding that the start records, and the ``STOP`` file's, as ``stop_to_lift`` names them.
 SETTINGS_DIGEST = "Settings digest"
 STOPS_COUNTED = "Stops counted"
+ENROLMENT = "Enrolment on record"
 LIFTS = {"lifted": "STOP file SHA-256", "lifted_bytes": "STOP file bytes", "lifted_mtime_ns": "STOP file modified (ns)"}
 
 
@@ -206,7 +210,7 @@ def _terms(root: Path) -> dict[str, Any]:
     bound: dict[str, Any] = {
         "Folder": str(root), "Domain": str(enrolled.get("domain", "its domain")),
         "Python file": str(settings.get("domain_file")), "Python file SHA-256": file_digest(settings.get("domain_file")),
-        "Enrolled by": f"{enrolled.get('by')} (the name they gave)", "Enrolment on record": digest_of(enrolled),
+        "Enrolled by": f"{enrolled.get('by')} (the name they gave)", ENROLMENT: enrolment_digest(log),
         "Use": "; ".join(f"{w.provider}: {w.allowance:g} a week{' (an estimate)' if w.estimated else ''}, keeping "
                          f"{w.reserve_share:.0%} for you until the week's last day" for w in windows_from(settings)),
         "Runs on": python or ("the Python of this server, so any edit to that install stops its ticks until a person "
@@ -325,7 +329,7 @@ def start(root: Path, who: str, shown: dict[str, Any] | None = None) -> dict:
             if digest_of(settings) != bound[SETTINGS_DIGEST] or (shown is not None and _terms(root) != bound):
                 return _not_what_was_read(root)
             CycleLog(root / CYCLE_LOG).start(who, at=datetime.now().astimezone().isoformat(), settings=bound[SETTINGS_DIGEST],
-                                             stops=bound[STOPS_COUNTED],
+                                             stops=bound[STOPS_COUNTED], enrolment=bound[ENROLMENT],
                                              **{name: bound[label] for name, label in LIFTS.items() if label in bound})
         why = stop_reason(root)
         if why:
@@ -343,7 +347,7 @@ def _cannot_act(act_name: str, root: Path, generation: int | None) -> dict | Non
     """Why a person's act cannot be put to them on this folder as it stands, so no dialog is shown for nothing. It runs none
     of the folder's code."""
     from g6.metaharness.runner import held
-    from g6.metaharness.shadow import NOT_DEMOTABLE, lineage
+    from g6.metaharness.shadow import NOT_DEMOTABLE, lineage, restores
 
     if not (root / SETTINGS_FILE).is_file():
         return _not_a_loop(root)
@@ -359,6 +363,7 @@ def _cannot_act(act_name: str, root: Path, generation: int | None) -> dict | Non
     try:
         log = _log(root)
         current = lineage(root / "workspace")["current"] if act_name == "demote" else 0
+        restored = restores(root / "workspace") if act_name == "demote" else None
     except LedgerError as exc:
         return _blocked(RECORDS_UNREADABLE, f"the loop's records cannot be trusted: {exc}"[:400],
                         "A person inspects the folder; nothing was asked or recorded.")
@@ -372,9 +377,12 @@ def _cannot_act(act_name: str, root: Path, generation: int | None) -> dict | Non
     if act_name == "resume" and not held(log):
         return _blocked(NOT_PAUSED, "the loop is not paused, so there is nothing to lift", "g6_improve_status says where "
                         "it stands.")
-    if act_name == "demote" and (generation != current or current < 1):
+    if act_name == "demote" and generation != current:
         return _blocked(NOT_DEMOTABLE, f"the head is generation {current}, not {generation}, so nothing was asked",
                         "Read g6_improve_status and name the generation that stands.")
+    if act_name == "demote" and restored is None:
+        return _blocked(NOT_DEMOTABLE, f"generation {current} stands for what a person confirmed: nothing adopted stands to "
+                        "take back, so nothing was asked", "g6_improve_status shows the lineage.")
     return None
 
 
@@ -460,31 +468,78 @@ def _run_act(root: Path, settings: dict[str, Any], request: dict[str, Any]) -> d
 
 #: What each person's act replies when it did what it was asked, and nothing else does.
 ACT_DONE = {"enrol": "G6_E_LOOP_ENROLLED", "resume": "G6_E_LOOP_RESUMED", "demote": "G6_E_LOOP_DEMOTED"}
+#: The shape of a person's act's reply as ``g6.metaharness.api._envelope`` writes it: each field the one reader reads or
+#: passes on as the envelope every surface carries, with the JSON type it must have, and the card's. ``completion_state``,
+#: the card and its ``code`` must be there; any other must have its type when it is there, and a ``code`` or a
+#: ``reliability_label`` beside them must say the same. A reply is recognised by this shape alone; anything else in it is
+#: passed on as it is and read nowhere.
+REPLY_SHAPE: dict[str, type] = {"completion_state": str, "reliability_label": str, "warning_card": dict, "code": str,
+                                "message": str, "next_action": str, "evidence": list, "request_id": str, "run_id": str}
+CARD_SHAPE: dict[str, type] = {"code": str, "message": str, "suggested_action": str}
+_NEEDED = ("completion_state", "warning_card")
+
+
+def _kind(value: Any) -> str:
+    """What a value read from a reply is, by its JSON type alone and never its contents, which may be anything."""
+    for kind, said in ((bool, "a boolean"), (int, "a number"), (float, "a number"), (str, "a string"), (list, "a list"),
+                       (dict, "an object")):
+        if isinstance(value, kind):
+            return said
+    return "null" if value is None else type(value).__name__
+
+
+def _recognised(out: Any) -> tuple[dict[str, Any] | None, str]:
+    """The reply on the last line of an act's output when it has the shape the act writes (``REPLY_SHAPE``), and what was
+    found, in words: its state and code, or the first way it is not that shape. Whatever it is given, it does not raise:
+    each value is read only once its type is known, and a line that does not decode, however deep, is one that does not
+    read."""
+    lines = [line for line in out.splitlines() if line.strip()] if isinstance(out, str) else []
+    if not lines:
+        return None, "no reply"
+    try:
+        reply = json.loads(lines[-1])
+    except (ValueError, RecursionError):
+        return None, "a last line that does not read as JSON"
+    if not isinstance(reply, dict):
+        return None, f"a reply that is {_kind(reply)}, not an object"
+    for name in _NEEDED:
+        if name not in reply:
+            return None, f"a reply with no {name}"
+    for name, kind in REPLY_SHAPE.items():
+        if name in reply and not isinstance(reply[name], kind):
+            return None, f"a reply whose {name} is {_kind(reply[name])}"
+    card = reply["warning_card"]
+    if "code" not in card:
+        return None, "a reply whose warning_card has no code"
+    for name, kind in CARD_SHAPE.items():
+        if name in card and not isinstance(card[name], kind):
+            return None, f"a reply whose warning_card.{name} is {_kind(card[name])}"
+    state, said = reply["completion_state"], card["code"]
+    if reply.get("code", said) != said or reply.get("reliability_label", state) != state:
+        return None, "a reply whose code or state says two different things"
+    return reply, f"a reply of state {state[:80]!r} and code {said[:80]!r}"
 
 
 def _read_act(code: int | None, out: str, err: str = "", *, act_name: str | None = None) -> dict:
     """The one reader of a person's act as its process ended (``g6.metaharness.runner.act_main``). It did what it was
-    asked only on exit status 0 with a qualified draft whose code is that act's own (``ACT_DONE``; any of them when no act
-    is named). It refused only on exit status 1 with a blocked reply that has a G6 code, which is passed on as it is.
-    Anything else is ``ACT_FAILED`` and names the exit status and the reply's state: a reply that does not read, one that
-    claims more than a qualified draft, a success with a failing status, and a status never seen before."""
-    lines = [line for line in (out or "").splitlines() if line.strip()]
-    try:
-        reply = json.loads(lines[-1]) if lines else None
-    except ValueError:
-        reply = None
-    state = reply.get("completion_state") if isinstance(reply, dict) else None
-    card = reply.get("warning_card") if isinstance(reply, dict) else None
-    said = card.get("code") if isinstance(card, dict) else None
-    done = set(ACT_DONE.values()) if act_name is None else {ACT_DONE.get(act_name)}
-    if code == 0 and state == "qualified-draft" and said in done:
-        return reply
-    if code == 1 and state == "blocked-escalated" and isinstance(said, str) and said.startswith("G6_E_"):
-        return reply
-    return _blocked(ACT_FAILED, f"the act ended with exit status {code!r} and a reply of state {state!r} and code "
-                    f"{said!r}, which is neither the act done nor its refusal, so nothing it did is claimed: "
-                    f"{(err or out or '')[-300:]}"[:500], "g6_improve_status says what the folder's records hold.",
-                    exit_status=code, reply_state=state)
+    asked only on exit status 0 with a recognised reply (``_recognised``) that is a qualified draft whose code is that
+    act's own (``ACT_DONE``; any of them when no act is named). It refused only on exit status 1 with a recognised blocked
+    reply that has a G6 code, which is passed on as it is. Anything else is ``ACT_FAILED`` and names the exit status and
+    what was found, and nothing in it raises: a reply that does not read or is not the act's shape, one that claims more
+    than a qualified draft, a success with a failing status, and a status never seen before, of any type."""
+    reply, found = _recognised(out)
+    if reply is not None and type(code) is int:
+        state, said = reply["completion_state"], reply["warning_card"]["code"]
+        done = [value for name, value in ACT_DONE.items() if act_name is None or name == act_name]
+        if code == 0 and state == "qualified-draft" and said in done:
+            return reply
+        if code == 1 and state == "blocked-escalated" and said.startswith("G6_E_"):
+            return reply
+    tail = next((text for text in (err, out) if isinstance(text, str) and text), "")
+    return _blocked(ACT_FAILED, f"the act ended with exit status {code!r} and {found}, which is neither the act done nor "
+                    f"its refusal, so nothing it did is claimed: {tail[-300:]}"[:500],
+                    "g6_improve_status says what the folder's records hold.", exit_status=code,
+                    reply_state=reply["completion_state"] if reply is not None else None)
 
 
 def stop(folder: str, reason: str = "") -> dict:

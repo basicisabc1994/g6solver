@@ -161,6 +161,19 @@ def versions_path(workspace: Path) -> Path:
     return confirmation.parent.parent / "versions" / confirmation.name
 
 
+def recorded_versions(store: ProfileStore, workspace: Path) -> list[dict]:
+    """The store's version rows G6 recorded for ``workspace`` as it appended them (``versions_path``), oldest first: the
+    last is the head a harness on it runs (``MetaHarness._head``), read here by anything that must name it without one."""
+    import json
+
+    try:
+        recorded = {(int(number), str(profile)) for number, profile in
+                    json.loads(versions_path(workspace).read_text(encoding="utf-8"))}
+    except (OSError, ValueError, TypeError):
+        recorded = set()
+    return [row for row in store.versions() if (row["version"], row["profile_digest"]) in recorded]
+
+
 def _write_state(target: Path, data: Any) -> None:
     """``data`` as JSON at ``target``, replaced whole (a reader sees the old file or the new one); ``OSError`` when it
     cannot be written."""
@@ -292,15 +305,8 @@ class MetaHarness:
         _write_state(confirmations_path(self.workspace), self.store.confirmed())
 
     def _ours(self) -> list[dict]:
-        """The store's version rows G6 recorded here as it appended them (``versions_path``), oldest first."""
-        import json
-
-        try:
-            recorded = {(int(number), str(profile)) for number, profile in
-                        json.loads(versions_path(self.workspace).read_text(encoding="utf-8"))}
-        except (OSError, ValueError, TypeError):
-            recorded = set()
-        return [row for row in self.store.versions() if (row["version"], row["profile_digest"]) in recorded]
+        """The store's version rows G6 recorded here as it appended them (``recorded_versions``), oldest first."""
+        return recorded_versions(self.store, self.workspace)
 
     def _append(self, kind: str, profile: Profile, **fields: Any) -> int:
         """``store.append_version``, then recorded under G6's state folder; ``OSError`` when the record cannot be

@@ -7,7 +7,8 @@ person can enrol a domain, resume a paused loop, take a generation back or start
 pause. A ``STOP`` file in the loop's folder halts it at its
 next model call, and a stop that cannot be read still stops. Nothing but a person removes that file: a start records the file a
 person agreed to lift, and anything else, or any later write, stands, so a stop has no moment in which it can be lost. A
-runner ended by a stop needs a person's start again, even with the file gone: the records say the last start was stopped. A
+runner ended by a stop needs a person's start again, even with the file gone: the records say the last start was stopped.
+A start also records the enrolment its dialog showed, and any other enrolment on record ends it as a stop does. A
 heartbeat is written whole or not at all, and a heartbeat that cannot be written is one missed, never a failed tick.
 
 **Is a runner alive?** A runner holds an operating-system lock for as long as it lives, so one that crashed, or a machine
@@ -32,7 +33,7 @@ from typing import Any, ContextManager
 from uuid import uuid4
 
 from g6.core.adaptation_gate import is_automated
-from g6.core.ledger import ChainLedger, LedgerError
+from g6.core.ledger import ChainLedger, LedgerError, digest as digest_of
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
 
@@ -58,6 +59,12 @@ NOTHING_TO_TRY = ("idle", "no_winner", "no_constraint")
 #: What a cycle keeps of what a proposer found, a general research record: a regularity found in the failing cases, what
 #: can be exploited, why it does not hold generally, and the earlier cycles it builds on. Empty when it supplied none.
 FINDINGS = ("structure", "resource", "obstruction", "composed_from")
+#: A start that no longer covers what would run: the enrolment on record is not the one its dialog showed.
+ENROLMENT_CHANGED = "G6_E_LOOP_ENROLMENT_CHANGED"
+# COPY: Why a runner runs nothing more on its start once another enrolment is on record.
+NOT_THE_AGREED_ENROLMENT = ("the enrolment on record is not the one the person agreed to at the last start, so nothing "
+                            "more runs on that start: g6_improve_start shows them the enrolment that stands "
+                            f"({ENROLMENT_CHANGED})")
 
 
 def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dict]) -> list[str]:
@@ -223,13 +230,46 @@ def stop_reason(root: str | Path) -> str:
 
 
 def stop_standing(root: str | Path, start: Mapping[str, Any] | None) -> str:
-    """Why this folder is stopped, for whatever runs on ``start``, the start on record: its ``STOP`` file, or a stop counted
-    since that start which died before its file was written, which is a stop a person asked for all the same. A count that
-    cannot be read is no count that start saw, so it stands too. ``""`` when nothing stops it."""
+    """Why this folder is stopped, for whatever runs on ``start``, the start on record (``what_stops``); ``""`` when
+    nothing stops it."""
+    return what_stops(root, start)[1]
+
+
+def what_stops(root: str | Path, start: Mapping[str, Any] | None) -> tuple[str, str]:
+    """What stops whatever runs on ``start``, the start on record, as a code and a reason, by one rule that a tick, the
+    runner and the status all read: its ``STOP`` file, or a stop counted since that start which died before its file was
+    written, which is a stop a person asked for all the same (no code of its own: the reader's stop), or an enrolment on
+    record that is not the one the start agreed to (``ENROLMENT_CHANGED``, ``enrolment_changed``). A count that cannot be
+    read is no count that start saw, so it stands too. ``("", "")`` when nothing stops it."""
     why, asked = stop_reason(root), (start or {}).get("stops")
-    if why or asked is None or stops_asked(root) == asked:
-        return why
-    return f"a stop was asked for and its STOP file was not written: {STOPS_FILE} in the folder says why"
+    if not why and asked is not None and stops_asked(root) != asked:
+        why = f"a stop was asked for and its STOP file was not written: {STOPS_FILE} in the folder says why"
+    if why:
+        return "", why
+    changed = enrolment_changed(root, start)
+    return (ENROLMENT_CHANGED, changed) if changed else ("", "")
+
+
+def enrolment_digest(log: CycleLog | None) -> str:
+    """The enrolment on record, by digest, or the digest of none: the one rule for which enrolment a start's dialog shows
+    and records (``g6.mcp.improve``), a person's act binds (``g6.metaharness.runner.person_terms``) and a runner holds to."""
+    return digest_of((log.enrolled() if log is not None else None) or {})
+
+
+def enrolment_changed(root: str | Path, start: Mapping[str, Any] | None) -> str:
+    """Why the enrolment on record is not the one ``start`` agreed to, or ``""``. A start records the enrolment its dialog
+    showed, by digest, and a runner on it runs only that one: a later enrolment, a changed one or none at all ends the
+    start as a stop does, until a person starts it again. A start that names none is the runner's gate's to refuse
+    (``g6.metaharness.runner``), and records that do not read are their own rule's: no tick runs on them. It writes
+    nothing, so the status can show it."""
+    agreed, path = (start or {}).get("enrolment"), Path(root) / CYCLE_LOG
+    if agreed is None:
+        return ""
+    try:
+        now = enrolment_digest(CycleLog(path) if path.is_file() else None)
+    except (OSError, LedgerError):
+        return ""
+    return "" if now == agreed else NOT_THE_AGREED_ENROLMENT
 
 
 def _unreadable(exc: Exception) -> str:
@@ -370,7 +410,8 @@ def heartbeat(root: str | Path) -> dict | None:
         return None
 
 
-__all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY",
-           "REFUSED_FILE", "RUNNER_LOCK", "STOPS_FILE", "STOP_FILE", "TICK_BUDGET_SPENT", "ask_to_stop", "beat", "file_digest",
-           "heartbeat", "note_refusal", "record_stop", "refused_requests", "stop_standing",
-           "runner_alive", "runner_lock", "stop_reason", "stop_to_lift", "stops_asked"]
+__all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "ENROLMENT_CHANGED", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES",
+           "NOTHING_TO_TRY", "REFUSED_FILE", "RUNNER_LOCK", "STOPS_FILE", "STOP_FILE", "TICK_BUDGET_SPENT", "ask_to_stop",
+           "beat", "enrolment_changed", "enrolment_digest", "file_digest", "heartbeat", "note_refusal", "record_stop",
+           "refused_requests", "stop_standing", "runner_alive", "runner_lock", "stop_reason", "stop_to_lift", "stops_asked",
+           "what_stops"]

@@ -11,8 +11,11 @@ a crashed tick is charged its worst case, a rest is read back from the log, and 
 agreed to in the client's dialog (``g6_improve_start``). So ``run`` from a shell starts nothing of its own, and it is
 refused before any of the folder's code runs. A scheduled restart carries on a start until a stop ends it, and a stop ends
 it for good, even if its file is later removed: a start records how many stops had been asked for, and any stop since
-closes it, whether or not the records could be written at the time. This is a check and not a boundary: a process with the
-owner's rights can reach this code, or write the records, which are hash-chained and not signed.
+closes it, whether or not the records could be written at the time. A start also records the enrolment its dialog showed,
+by digest, and it runs only that one: the run opens that enrolment's bytes, and any other enrolment on record, read at the
+start of the run and under the folder's lock before each tick, ends it as a stop does (``G6_E_LOOP_ENROLMENT_CHANGED``).
+This is a check and not a boundary: a process with the owner's rights can reach this code, or write the records, which
+are hash-chained and not signed.
 
 **What it never does.** It starts no engineer, pushes nothing, and spends only within the pacing rule. A pause, a changed
 frozen item, records that do not check out or a spent held-out split stop the ticks until a person acts, and the runner
@@ -51,7 +54,7 @@ import json
 import os
 import sys
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from ctypes import wintypes
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
@@ -76,13 +79,16 @@ from g6.metaharness.loop import (
 )
 from g6.metaharness import reflex
 from g6.metaharness.schema import CONSENT_DIALOG_ONLY
-from g6.metaharness.shadow import lineage
+from g6.metaharness.shadow import lineage, restores
 from g6.self_maintenance import digest
 from g6.self_maintenance.envelope import (
     CYCLE_LOG,
     ENDS_A_STREAK,
+    ENROLMENT_CHANGED,
+    NOT_THE_AGREED_ENROLMENT,
     CycleLog,
     beat,
+    enrolment_digest,
     file_digest,
     record_stop,
     runner_alive,
@@ -149,13 +155,6 @@ def _domain_file(path: Any, pinned: str | None = None) -> dict[str, Any]:
     if not isinstance(declared, dict) or "domain" not in declared or "proposer" not in declared:
         raise ValueError(f"{path} must define LOOP = {{'domain': ..., 'proposer': ...}}")
     return declared
-
-
-def _pinned(root: Path) -> str:
-    """The digest of the domain file a person enrolled, from the records and never from the file; ``""`` with none."""
-    path = root / CYCLE_LOG
-    enrolled = CycleLog(path).enrolled() if path.is_file() else None
-    return (enrolled or {}).get("frozen", {}).get("domain_file") or ""
 
 
 def open_loop(root: Path, *, now: Callable[[], datetime] = _local_now, pinned: str | None = None,
@@ -255,7 +254,7 @@ class Runner:
         """When the tick after ``reply`` may run. A cycle that reached a result is followed at once, for the budget and
         the rest to bound. A budget wait lasts until a ceiling can rise, or a reported limit ends if that is sooner."""
         code = reply["warning_card"]["code"]
-        if code == STOPPED:
+        if code in (STOPPED, ENROLMENT_CHANGED):
             return now                      # the next pass reads the stop and ends the run
         if code == BUDGET_WAIT:
             room = self.loop.meter.next_room(now)
@@ -346,25 +345,38 @@ class Runner:
         self.day = day
 
 
-def _gate(root: Path, settings: dict[str, Any]) -> tuple[str, str]:
-    """The code and reason that refuse ``settings`` a run on this folder, both empty when a person's start covers it. It
-    reads the records and runs nothing."""
+def _admission(root: Path, settings: dict[str, Any]) -> tuple[str, str, str]:
+    """The code and reason that refuse ``settings`` a run on this folder, both empty when a person's start covers it, and
+    the digest of the Python file that start's enrolment froze, from the same read: the start records the enrolment its
+    dialog showed (``g6.mcp.improve.start``), so a run opens only the bytes of that enrolment, and any other on record,
+    or a start that names none, is refused. It reads the records and runs nothing."""
     path = root / CYCLE_LOG
     try:
         log = CycleLog(path) if path.is_file() else None
         start = log.started() if log is not None and log.start_in_force() else None
+        enrolled = log.enrolled() if log is not None else None
     except LedgerError as exc:
-        return NOT_STARTED, f"the loop's records cannot be trusted, so nothing ran: {exc}"[:400]
+        return NOT_STARTED, f"the loop's records cannot be trusted, so nothing ran: {exc}"[:400], ""
     if start is None:
         return NOT_STARTED, ("no start stands on this folder, so nothing ran. Only a person starts the loop, in the client's "
-                             "dialog, through g6_improve_start; after that a restart carries on until a stop")
+                             "dialog, through g6_improve_start; after that a restart carries on until a stop"), ""
     if start.get("stops") != stops_asked(root):
         return NOT_STARTED, ("a stop has been asked for since the last start, so nothing ran: only a new g6_improve_start "
-                             "undoes that")
+                             "undoes that"), ""
     if start.get("settings") != digest_of(settings):
         return SETTINGS_CHANGED, (f"{SETTINGS_FILE} is not what the person agreed to at the last start, so nothing ran: "
-                                  "g6_improve_start shows them what stands now")
-    return "", ""
+                                  "g6_improve_start shows them what stands now"), ""
+    if start.get("enrolment") != enrolment_digest(log):
+        return ENROLMENT_CHANGED, (NOT_THE_AGREED_ENROLMENT if "enrolment" in start else
+                                   "the last start names no enrolment, so it covers none and nothing ran: g6_improve_start "
+                                   f"shows the person the enrolment that stands ({ENROLMENT_CHANGED})"), ""
+    return "", "", (enrolled or {}).get("frozen", {}).get("domain_file") or ""
+
+
+def _gate(root: Path, settings: dict[str, Any]) -> tuple[str, str]:
+    """The code and reason that refuse ``settings`` a run on this folder, both empty when a person's start covers it
+    (``_admission``). It reads the records and runs nothing."""
+    return _admission(root, settings)[:2]
 
 
 def _not_started(root: Path) -> str:
@@ -411,10 +423,10 @@ def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable
         with runner_lock(root):
             try:
                 settings = read_settings(root)
-                code, why = _gate(root, settings)
+                code, why, pinned = _admission(root, settings)
                 if code:
                     return _refuse(root, code, why, now)
-                loop, reader = open_loop(root, now=now, pinned=_pinned(root), settings=settings)
+                loop, reader = open_loop(root, now=now, pinned=pinned, settings=settings)
             except DomainChanged as exc:
                 return _refuse(root, FROZEN_CHANGED, str(exc)[:500], now)
             except Exception as exc:  # noqa: BLE001 - the domain file is the person's own code: say why, and leave word
@@ -462,15 +474,20 @@ def held(log: CycleLog | None) -> str:
 #: The fields of a person's act's binding that the act itself uses: the bytes it runs, and the settings it runs on.
 FILE_SHA = "Python file SHA-256"
 SETTINGS_DIGEST = "Settings digest"
+#: The fields of a demotion's binding that name what it restores (``g6.metaharness.shadow.restores``), by the name the
+#: demotion gives each when it is about to write (``ShadowHarness.demote``).
+RESTORING = {"generation": "Goes back to generation", "profile_digest": "Profile it goes back to (SHA-256)",
+             "undoes": "Takes back the adoption of generation"}
 
 
 def person_terms(act_name: str, root: Path, *, generation: int | None = None) -> dict[str, Any]:
     """The binding of a person's act on ``root``: all its dialog shows and the act stands on, read once from the folder as
     it is now, as the fields the dialog shows (``g6.mcp.consent.question``). That is the folder, the Python file by path
     and digest (the only bytes the act runs), the interpreter, the whole settings file by digest, the enrolment on record,
-    what holds the ticks for a pause, and the generation and chain for one taken back. ``g6.mcp.improve`` builds the
-    dialog from it and passes it to the act, which reads it again under the folder's lock before it runs or records
-    anything (``act``), so a change in between runs and records nothing."""
+    what holds the ticks for a pause, and for one taken back the generation, the chain, and what taking it back restores,
+    by the one rule that decides it (``g6.metaharness.shadow.restores``). ``g6.mcp.improve`` builds the dialog from it and
+    passes it to the act, which reads it again under the folder's lock before it runs or records anything (``act``), so a
+    change in between runs and records nothing."""
     settings = read_settings(root)
     path = root / CYCLE_LOG
     log = CycleLog(path) if path.is_file() else None
@@ -481,18 +498,18 @@ def person_terms(act_name: str, root: Path, *, generation: int | None = None) ->
                              SETTINGS_DIGEST: digest_of(settings)}
     if enrolled is not None and act_name == "enrol":
         bound |= {"It replaces the enrolment by": f"{enrolled['by']} (the name they gave)",
-                  "Enrolment it replaces": digest_of(enrolled)}
+                  "Enrolment it replaces": enrolment_digest(log)}
     elif enrolled is not None:
         bound |= {"Domain": str(enrolled.get("domain", "")), "Enrolled by": f"{enrolled['by']} (the name they gave)",
-                  "Enrolment on record": digest_of(enrolled)}
+                  "Enrolment on record": enrolment_digest(log)}
     if act_name == "resume":
         bound |= {"Paused because": held(log), "Cycles on record": len(log.cycles()) if log is not None else 0}
     if act_name == "demote":
-        chain = lineage(root / "workspace")
+        chain, found = lineage(root / "workspace"), restores(root / "workspace") or {}
         head = chain["recent"][-1] if chain["recent"] else {}
         bound |= {"Generation": generation, "Its change": str(head.get("change", "")),
                   "Measured": json.dumps(head.get("measured", {}), sort_keys=True, default=str),
-                  "Goes back to generation": head.get("parent"), "Chain of generations": digest_of(chain)}
+                  **{label: found.get(name) for name, label in RESTORING.items()}, "Chain of generations": digest_of(chain)}
     return bound
 
 
@@ -501,19 +518,25 @@ def act(request: dict[str, Any]) -> dict[str, Any]:
     enrolment freezes is what a tick on that interpreter compares. ``request["binding"]`` is what the dialog showed
     (``person_terms``). The act holds the folder's lock from reading that binding again, before it runs anything, to its
     write, and refuses on any difference. It runs only the Python file's bytes the binding names, by digest, never the
-    current enrolment's, and the enrolment it records freezes those bytes. Like the start, this is a check and not a
-    boundary: a process with the owner's rights can reach this code, and an editor that takes no lock can still write
-    the folder's files between the last read and the write."""
+    current enrolment's, and the enrolment it records freezes those bytes. A demotion writes only the generation and the
+    profile the binding names (``RESTORING``): what the harness would restore is checked against them just before its
+    row is written. Like the start, this is a check and not a boundary: a process with the owner's rights can reach this
+    code, and an editor that takes no lock can still write the folder's files between the last read and the write."""
     name, root, who = request["act"], Path(request["folder"]).resolve(), str(request["who"])
     generation, bound = request.get("generation"), request["binding"]
     again = "Call the tool again: the person reads what stands now, in the client's dialog."
 
-    def unchanged(frozen: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    def unchanged(given: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
+        """``None`` while what the person read still stands, and ``given``, what the act is about to write, is what it
+        names: for an enrolment the bytes it freezes, for a demotion what it restores. A refusal otherwise."""
         try:
             same = person_terms(name, root, generation=generation) == bound
         except (ValueError, LedgerError):
             same = False
-        if same and (frozen is None or frozen.get("domain_file") == bound[FILE_SHA]):
+        if same and given is not None:
+            same = (given.get("domain_file") == bound[FILE_SHA] if name == "enrol" else
+                    all(given.get(field) == bound.get(label) for field, label in RESTORING.items()))
+        if same:
             return None
         return _blocked(TERMS_CHANGED, "what the person read is no longer what stands, so nothing ran or was recorded",
                         again)

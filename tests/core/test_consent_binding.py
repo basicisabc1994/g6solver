@@ -208,6 +208,50 @@ def _child_reads() -> dict[tuple[str, str, str], ast.AST]:
     return found
 
 
+#: Repair 2 (review cons2's finding 1): every place an act's reply is handed on after the one reader made it, and what
+#: each does with it. Each passes it on whole, and none reads it.
+REPLY_HANDS = {
+    ("mcp/improve.py", "_run_act", "_read_act"): "returns what the one reader made of the child's output",
+    ("mcp/improve.py", "act", "_run_act"): "returns it whole, with the name of who agreed added",
+    ("mcp/__init__.py", "person_act", "improve.act"): "returns it whole to the client",
+}
+
+
+def _reply_hands() -> dict[tuple[str, str, str], bool]:
+    """Each call of ``_read_act`` or ``_run_act``, and each use of ``improve.act``, in ``ACT_PATH``, by module, innermost
+    function and name, with whether its value reaches a ``return`` unread: through a ``**`` spread, an ``await`` or
+    ``asyncio.to_thread`` and nothing else."""
+    found: dict[tuple[str, str, str], bool] = {}
+
+    def handed_on(path: list[ast.AST]) -> bool:
+        node = path[-1]
+        for parent in reversed(path[:-1]):
+            if isinstance(parent, ast.Return):
+                return True
+            spread = isinstance(parent, ast.Dict) and any(k is None and v is node for k, v in zip(parent.keys, parent.values))
+            threaded = (isinstance(parent, ast.Call) and ast.unparse(parent.func) == "asyncio.to_thread"
+                        and bool(parent.args) and parent.args[0] is node)
+            if not (spread or threaded or isinstance(parent, ast.Await)):
+                return False
+            node = parent
+        return False
+
+    def visit(node: ast.AST, rel: str, owner: str, path: list[ast.AST]) -> None:
+        path = [*path, node]
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            owner = node.name
+        name = (getattr(node.func, "id", None) or getattr(node.func, "attr", None) if isinstance(node, ast.Call) else
+                ast.unparse(node) if isinstance(node, ast.Attribute) else None)
+        if name in ("_read_act", "_run_act", "improve.act"):
+            found[(rel, owner, name)] = found.get((rel, owner, name), True) and handed_on(path)
+        for child in ast.iter_child_nodes(node):
+            visit(child, rel, owner, path)
+
+    for rel in ACT_PATH:
+        visit(ast.parse((SRC / rel).read_text(encoding="utf-8")), rel, "<module>", [])
+    return found
+
+
 def test_every_place_the_act_path_reads_a_child_is_listed_and_an_acts_status_goes_through_the_one_reader():
     found = _child_reads()
     assert set(found) == set(CHILD_READS), "a child-process read was added or moved: list it with the rule it follows"
@@ -218,6 +262,20 @@ def test_every_place_the_act_path_reads_a_child_is_listed_and_an_acts_status_goe
     returns = [n for n in ast.walk(run_act) if isinstance(n, ast.Return)]
     assert all(isinstance(r.value, ast.Call) and getattr(r.value.func, "id", "") in ("_read_act", "_blocked")
                for r in returns), "an act's reply reaches its caller only through _read_act, or as a refusal"
+    # Repair 2: the reply is read in the one reader and nowhere else. What the child wrote is handed to _read_act and
+    # used for nothing else, it is decoded only by _recognised, and every hand it passes through after the reader
+    # passes it on whole.
+    [talk] = [n for n in ast.walk(run_act) if isinstance(n, ast.Assign) and "communicate(" in ast.unparse(n.value)]
+    outputs = {element.id for element in talk.targets[0].elts}
+    given = {id(n) for argument in readers[0].args for n in ast.walk(argument)}
+    used = [n for n in ast.walk(run_act) if isinstance(n, ast.Name) and n.id in outputs and isinstance(n.ctx, ast.Load)]
+    assert used and all(id(n) in given for n in used), "a child's output is read outside the one reader"
+    decoders = [owner for owner, node in _functions(SRC / "mcp/improve.py").items() for call in ast.walk(node)
+                if isinstance(call, ast.Call) and ast.unparse(call.func) == "json.loads"]
+    assert decoders == ["_recognised"], "a child's reply is decoded outside the one reader"
+    hands = _reply_hands()
+    assert set(hands) == set(REPLY_HANDS), "an act's reply is handed somewhere new: list it with what it does there"
+    assert all(hands.values()), f"an act's reply is read outside the one reader: {[k for k, ok in hands.items() if not ok]}"
 
 
 def test_what_the_reader_takes_as_done_is_what_each_act_replies_when_done():
