@@ -3233,3 +3233,41 @@ Only a person can settle those. Choosing a side changes a default, and right pat
 Each would be registered in its own section before any test.
 
 **Unchanged:** stage 5's runs wait, its bugs stay unread, and the frozen rule stays the claim.
+
+## 2026-11-06 (night): the uplift study stops; the replay cohorts for 0.3, set before any run that uses them
+
+**Decided by the owner (2026-11-06).**
+- The uplift study stops here. Stage 5's runs do not start, and the K3 pilot's repeats 3 and 4 are not run.
+- What this plan records is the instrument: what it measured, and why the agent failed.
+- G6 0.3 follows the approved design `docs/superpowers/specs/2026-11-06-explicit-models-one-question-design.md` (branch
+  claude/design-checking). Its first slice is a frozen replay cohort with its controls, and its third is one behaviour question
+  measured end to end. The cohorts below serve those slices.
+
+**Three cohorts, frozen by name now.**
+- **Development:** the bugs of stages 1 and 2 and the K3 pilot's seven bugs.
+  - These are scored bugs, and development for later work by the ruling of 2026-11-02 (morning).
+  - Tagger rules, question formats and every other choice are made on these.
+- **Selection:** stage 4's 22 bugs.
+  - H-decide's location test is already registered on stage 4's saved runs (2026-11-06, evening).
+  - A choice is scored on this cohort once, then the cohort is retired for that choice.
+- **Final:** the 84 stage 5 bugs that both audit families labelled determined (2026-11-05, late morning).
+  - Their issues, tests and fixes stay unread, as before.
+  - They are used once, for a registered final measurement, and retired after it.
+- Once a cohort informs a routing or adaptation choice, it is retired for confirming that choice.
+
+**Controls each bug must pass before it enters a cohort's runs.**
+- The maintainers' fix passes the maintainers' tests.
+- The base commit fails them.
+- An empty patch fails them.
+- A known patch, written through the runner the slice uses, comes back byte for byte in the kept patch.
+
+A bug that fails a control is excluded and named, with the reason. Each cohort's manifest records the bugs, their image
+digests, the control results and the digest of the manifest itself, before any slice run reads it.
+
+**Fixed first.** The two harness defects found in the pilot are reproduced by a failing test and repaired before any cohort
+run on the host executor:
+- a file written by a command inside the box did not reach the kept patch;
+- a review called an empty patch clean.
+
+**Not changed.** The frozen comparison rule and every earlier registration stand as written, and no earlier result is
+re-scored.
