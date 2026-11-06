@@ -234,8 +234,10 @@ Copy is a draft for the owner's review in the live preview.
                 <p>That is G6 today: a careful, isolated check of what your agent states, not yet a defect finder. A
                 second round turned on G6's own model, also Claude Sonnet 5.5, in every review of the same ten bugs:
                 it proposed 51 checks, and none found a defect. Five of the ten new patches failed the maintainers'
-                tests. Making G6 a defect finder is the self-improvement loop's first job.
-                <a class="link" href="https://github.com/basicisabc1994/g6solver/blob/main/validation/worked_examples/RESULTS.md">All ten runs</a></p>
+                tests. We then built review loops around Claude Code and tested them on real bugs they had never seen,
+                with every test and its bar registered first. None beat Claude Code alone by the rule we fixed in
+                advance. <a class="link" href="{% url 'pages:research' %}#coding-study">What we found, and why</a>
+                &middot; <a class="link" href="https://github.com/basicisabc1994/g6solver/blob/main/validation/worked_examples/RESULTS.md">All ten runs</a></p>
             </div>
         </div>
     </div>
@@ -254,7 +256,9 @@ Copy is a draft for the owner's review in the live preview.
                 change.</p>
                 <p>Everything is public: the code, the decisions, the evidence and the agents' transcripts. It's an
                 open experiment in self-improvement infrastructure for AI agents, and we'll report what it shows,
-                including if it doesn't help.
+                including if it doesn't help. The first measurements of the loops it is built from, on real bugs and on
+                G6's own code, are on the Research page, including where they did not help.
+                <a class="link" href="{% url 'pages:research' %}#coding-study">The findings</a> &middot;
                 <a class="link" href="https://github.com/basicisabc1994/g6solver/blob/main/docs/superpowers/specs/2026-10-29-self-improvement-loop-design.md">Read the design</a></p>
             </div>
         </div>

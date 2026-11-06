@@ -22,11 +22,30 @@ The working theory is published in full:
 | Deterministic gates (action gating, patch promotion) refuse the bypasses found in the 2026 audits | `implemented` — regression-tested |
 | `action_gating` stops harmful agent actions without stopping everything | **the action-gate study: `unsafe_or_regressive`** (2026-10-18). On AgentDojo's 30 harmful tool calls the gate let one run (a password change to an attacker's value); a read-only allow-list let none. That miss is fixed: a credential or permission change now goes to a person. A re-run on the same calls is a development measurement, not a validation. [Results](https://github.com/basicisabc1994/g6solver/blob/main/docs/validation/results/V2/README.md) |
 | Self-training improves benchmark scores | **withdrawn pending re-validation** (a scoring defect could inflate gains) |
-| G6 helps independent coding agents on held-out tasks | `aspirational` — protocol published, not yet run |
+| G6 helps independent coding agents on held-out tasks | **the coding study: not shown** — it has run, and no loop around Claude Code beat Claude Code alone on unseen bugs by the rule registered before it ran ([the coding study](#the-coding-study)) |
 | `grounding.check_claim` does not call negated or wrong-figure claims supported | **the claim-checking study: `component_validated_no_transfer`** (2026-10-18). On 174 such VitaminC pairs it called 0 supported (95% upper bound 2.2%); a relevance baseline called 32% supported. It found support for only 19% of paraphrased claims, against 82% for one call to a local 20B model. [Results](https://github.com/basicisabc1994/g6solver/blob/main/docs/validation/results/V1/README.md) |
 | A multi-call reasoning harness beats a single call | **not claimed** — the one archived observation was negative; any new method must pass the compute-matched gate in `g6.reasoning.compare` |
 | The meta-harness improves a user's held-out results | **the first meta-harness study: `inconclusive`** (2026-10-19). On one local 8B model and four public datasets, its gate approved one change, a step-by-step prompt on GSM8K, which raised held-out success there from 10 of 60 to 42 of 60; on the other three it approved nothing. Pooled over 240 held-out tasks, false accepts fell from 108 to 76. The gain came from one dataset of four, so the pre-registered interval does not exclude zero. Approval was scripted, not a person's. [Results](https://github.com/basicisabc1994/g6solver/blob/main/docs/validation/results/V6/README.md) |
 | G6 with its default settings beats one direct model call | **not shown** — in the first meta-harness study it scored 121 of 240 held-out tasks against the direct call's 125 (descriptive, not an endpoint) |
+
+## The coding study {#the-coding-study}
+
+We set out to measure whether G6 makes a coding agent right more often than Claude Code alone, on real bugs neither
+had seen, and registered every test and its bar before running it. Claude Code, on Claude Sonnet 5.5, fixed bugs
+reported in well-known Python projects, alone and inside review loops. Tests the agent never saw scored every patch:
+the maintainers' own, and amended tests that drop what the issue never states. Loops were compared with Claude Code
+alone bug by bug, under a fixed rule.
+
+| Question | What was measured |
+|---|---|
+| Did a loop beat Claude Code alone on unseen bugs? | No registered test met the fixed rule. The best results were a few bugs better and none worse, too few to rule out chance. |
+| Did tuning carry? | The loops did well on the bugs they were tuned on, and did not keep that lead on unseen bugs, even in the same repositories. G6's own tuning of the reviewer lost on cases held out from it, and its gate refused the change. |
+| Where the issue fully states the fix | Claude Code alone was already right in most runs. The loop made a few wrong first patches right and broke almost no right ones: the right direction, too small for these studies to confirm. |
+| Where the task does not state what is wanted | In new repositories the loop changed no outcome. Only a person, or the maintainers' own tests, could supply the missing behaviour. |
+| G6's own code | Review loops by an AI reviewer seldom ended clean, and many later findings sat in lines a repair wrote: a review is a sample, not a census. |
+
+Every count, with the section of the study's plan it comes from, is in
+[the coding study's counts](https://github.com/basicisabc1994/g6solver/blob/main/docs/validation/results/coding/coding_study.json).
 
 ## The studies
 

@@ -216,7 +216,7 @@ recommending a new release.
 | Governed learning: hints credited from paired runs, a promotion gate for harness changes | `implemented`. Earlier self-training benchmark gains are withdrawn pending re-validation |
 | Bundles (11) | `implemented`. Downloads come with the first release; their study has not run (see [Research](site/docs/research.md)) |
 | Research kernel (the evidence kernel, governed adaptation, the mission bridge) | `wired-but-inert`: off unless `G6_ECHA_RESEARCH=1` |
-| G6 helps independent coding agents on held-out tasks | `aspirational`: protocol published, not run |
+| G6 helps independent coding agents on held-out tasks | **not shown**: the coding study has run, and no loop around Claude Code beat Claude Code alone on unseen bugs by its registered rule (see [Research](site/docs/research.md#the-coding-study)) |
 | Meta-harness: tune G6 to your own recurring work (`g6.metaharness`) | `implemented`. The studies run with it are on the [Research](site/docs/research.md) page, as a worked example |
 | G6 maintains its own repository through its self-improvement loop | `aspirational`: designed, and being built in the open |
 
@@ -234,6 +234,9 @@ finder. A second round turned on G6's own model, also Claude Sonnet 5.5, in ever
 proposed 51 checks, and none found a defect. Five of the ten new patches failed the maintainers' tests. Every run,
 with its plan fixed before the first one, is in
 [validation/worked_examples](https://github.com/basicisabc1994/g6solver/blob/main/validation/worked_examples/RESULTS.md).
+We then built review loops around Claude Code and tested them on real bugs they had never seen, with every test and
+its bar registered first. None beat Claude Code alone by the rule we fixed in advance. What we found, and why, is on
+the [Research](site/docs/research.md#the-coding-study) page.
 
 ## G6 maintaining G6, in public
 
@@ -241,7 +244,9 @@ We're building a loop in which G6 maintains its own GitHub repository. It finds 
 and Codex work on the biggest gap in isolated containers, checks every change with G6's own review, and opens a pull
 request. A maintainer reviews and merges every change. Everything is public: the code, the decisions, the evidence and
 the agents' transcripts. It's an open experiment in self-improvement infrastructure for AI agents, and we'll report
-what it shows, including if it doesn't help. The loop works only on G6 itself. Read
+what it shows, including if it doesn't help. The first measurements of the loops it is built from, on real bugs and on
+G6's own code, are on the [Research](site/docs/research.md#the-coding-study) page, including where they did not help.
+The loop works only on G6 itself. Read
 [the design](https://github.com/basicisabc1994/g6solver/blob/main/docs/superpowers/specs/2026-10-29-self-improvement-loop-design.md).
 
 ## Develop

@@ -22,7 +22,12 @@ SAID = (
     "A second round turned on G6's own model",
     "it proposed 51 checks, and none found a defect",
     "Five of the ten new patches failed",
+    # the coding study (2026-11-06): the review loops, measured on unseen bugs, and where the findings are
+    "We then built review loops around Claude Code and tested them on real bugs they had never seen",
+    "None beat Claude Code alone by the rule we fixed in advance.",
 )
+#: Where each says the findings are: the Research page's coding study, and the README's docs copy of it.
+FINDINGS = {"home": 'href="/research/#coding-study"', "README": "(site/docs/research.md#the-coding-study)"}
 #: Said while round 2 ran; it has run.
 STALE = ("under way",)
 
@@ -38,7 +43,7 @@ def test_the_home_page_says_what_happened_when_we_tried_it(client):
     for phrase in SAID:
         assert phrase in words
     assert not [phrase for phrase in STALE if phrase in words]
-    assert LINK in section
+    assert LINK in section and FINDINGS["home"] in section
     assert not re.search(r"(?i)\bexperimental\b|\bverified\b|proof of concept", words)
 
 
@@ -48,7 +53,10 @@ def test_the_readme_says_the_same_and_links_to_the_record():
         assert phrase in text, phrase
     section = text.split("## What happened when we tried it", 1)[1].split("## ", 1)[0]
     assert not [phrase for phrase in STALE if phrase in section]
-    assert LINK in text
+    assert LINK in text and FINDINGS["README"] in section
+    docs = (OSS / "site" / "docs" / "research.md").read_text(encoding="utf-8")
+    assert "## The coding study {#the-coding-study}" in docs and "`aspirational` — protocol published, not yet run" \
+        not in docs
 
 
 def test_the_record_the_pages_link_to_is_in_the_repository_and_labelled_a_worked_example():

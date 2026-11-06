@@ -183,71 +183,125 @@ def test_the_development_section_is_closed_and_lists_no_study_that_never_ran(cli
     assert not re.search(r"\b(?:ECHA|VLE)\b", dev)
 
 
-def _block(section: str, block_id: str) -> str:
-    """One stage's block inside the coding study's section (its divs hold no nested div but the bars' grid)."""
-    return section.split(f'id="{block_id}"', 1)[1].split('<div id="coding-', 1)[0].split("<h3>What worked", 1)[0]
+def _coding_file() -> dict:
+    return json.loads(evidence.VALIDATION_DIR.joinpath("results", "coding", "coding_study.json")
+                      .read_text(encoding="utf-8"))
 
 
-def test_the_coding_study_is_an_early_worked_example_in_plain_words(client):
+def _table(section: str, table_id: str) -> list[list[str]]:
+    """The rows of one table in the section, each as its cells' text (header cells included)."""
+    table = section.split(f'id="{table_id}"', 1)[1].split("</table>", 1)[0]
+    return [[_text(cell).strip() for cell in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", row, re.S)]
+            for row in re.findall(r"<tr>(.*?)</tr>", table, re.S)]
+
+
+#: The story, in the order the brief of 2026-11-06 set: why, how it was measured, what it found, why, the limits of
+#: self-improvement, G6's own code, cost.
+STORY = ("How it was measured", "What it found", "Why, as the measurements show it",
+         "The limits of self-improvement, and where checking helps", "Reviewing G6's own code", "Cost")
+
+
+def test_the_coding_study_tells_one_story_in_plain_words(client):
     # owner, 2026-11-03: "update the case study on the website with your findings"; plain words, no arm's short name,
-    # results a worked example, never more than the numbers say
+    # results a worked example, never more than the numbers say; why first, and no plans (planned studies not shown)
     page = _page(client)
     assert page.index('id="coding-study"') < page.index('id="the-meta-harness"') < page.index('id="reading"')
     section = _section(page, "coding-study")
     text = _text(section)
     assert "A worked example" in text and "Claude Code on real bugs, with a review loop and without" in text
+    why = re.search(r'<p class="[^"]*\bwhy\b[^"]*">(.*?)</p>', section, re.S)
+    assert why and section.index(why[0]) < section.index("<h3>")
+    assert _text(why[1]).split() == ("We set out to measure whether G6 makes a coding agent right more often than "
+                                     "Claude Code alone, on real bugs neither had seen. We registered every test and "
+                                     "its bar before running it.").split()
+    headings = [_text(h).strip() for h in re.findall(r"<h3[^>]*>(.*?)</h3>", section, re.S)]
+    assert [h for h in headings if h in STORY] == list(STORY), headings
     for arm in evidence.CODING_ARMS.values():
         assert arm in text, arm
-    assert not re.search(r"\b(?:K[012]|M9|L9|arm [A-Z])\b", text)
-    for said in ("no significant uplift", "Uplift not shown: neither loop met the rule", "Uplift not shown; direction "
-                 "only.", "Nothing adopted.", "What worked", "What did not", "Why", "These are plans, not results"):
-        assert said in text, said
+    assert not re.search(r"\b(?:[KLMV]\d+|arm [A-Z])\b", text)
+    assert "No registered test on unseen bugs met the fixed rule." in text
+    assert not re.search(r"(?i)\bplans?\b(?! written)|\bnext\b|\bwill\b|\bnot yet run\b", text.replace(
+        "The study's plan, written before each run", "").replace("the plan's section", "").replace(
+        "where the plan counted them", "").replace("where the plan gave one", ""))
     assert not re.search(r"(?i)\b(?:verified|proven?|proof of concept|experimental|breakthrough|superhuman)\b", text)
     assert not re.search(r"(?i)\bthe first\b|\bfirst (?:to|ever)\b", text)
-    for cause in ("does not carry to unseen bugs", "Little headroom, and too few bugs", "need the maintainers' intent",
-                  "edits are too narrow"):
-        assert cause in text, cause
+    # withdrawn or overstated figures stay off the page: the 0.80 power forecast, replay 4's double count, branch names
+    assert "0.80" not in text and "477" not in text and "claude/" not in section
+
+
+def test_every_registered_comparison_on_unseen_bugs_is_in_the_table_by_bug(client):
+    data = _coding_file()
+    rows = _table(html.unescape(_section(_page(client), "coding-study")), "coding-tests")[1:]
+    expected = [(key, arm) for key in ("stage_1", "stage_2", "stage_4") for arm in data[key]["judged"]]
+    assert len(rows) == len(expected)
+    for row, (key, arm) in zip(rows, expected):
+        stage, passed = data[key], data[key]["passed"]["maintainers"]
+        assert row[0].startswith(f"Stage {key[-1]}") and evidence.CODING_ARMS[arm].lower() in row[0], row
+        assert row[2] == f"{passed['A']} → {passed[arm]} of {stage['runs']}", row
+        by_bug = evidence._by_bug(stage, arm)
+        if by_bug:
+            p = evidence.sign_p(by_bug["better"], by_bug["worse"])       # the sign test over bugs, never over runs
+            assert row[3] == f"{by_bug['better']} better, {by_bug['worse']} worse, {by_bug['same']} the same; p = {p:.2f}"
+        else:
+            assert row[3] == "not counted"
+        assert row[5] == ("Met" if stage["rule_met"] else "Not met")
+
+
+def test_tuned_scores_stand_beside_the_unseen_ones(client):
+    data = _coding_file()
+    rows = _table(html.unescape(_section(_page(client), "coding-study")), "coding-tuned")
+    for row in rows[1:-1]:
+        arm = next(a for a, label in evidence.CODING_ARMS.items() if row[0].startswith(label + ","))
+        score = "maintainers" if "maintainers'" in row[0] else "amended"
+        assert row[1:] == [f"{data[k]['passed'][score][arm]} of {data[k]['runs']}"
+                           for k in ("training", "stage_1", "stage_2")], row
+    assert rows[-1][0].startswith("The review loop's lead")
 
 
 def test_the_coding_studys_numbers_on_the_page_are_its_files(client):
-    data = json.loads(evidence.VALIDATION_DIR.joinpath("results", "coding", "coding_study.json")
-                      .read_text(encoding="utf-8"))
-    section = html.unescape(_section(_page(client), "coding-study"))
-    for block_id, key in (("coding-training", "training"), ("coding-stage-1", "stage_1"), ("coding-stage-2", "stage_2")):
-        block, runs = _block(section, block_id), data[key]["runs"]
-        for score, label in evidence.SCORES:
-            figure = block.split(f">{label}<", 1)[1].split("</figure>", 1)[0]
-            for arm, value in data[key]["passed"][score].items():
-                bar = figure.split(f">{evidence.CODING_ARMS[arm]}<", 1)[1].split("</div>", 1)[0]
-                assert f"{value} of {runs}" in bar, (key, score, arm)
-    text = _text(section)
-    stage3 = data["stage_3"]
-    assert f"{stage3['held_out']['wins']} wins to {stage3['held_out']['losses']} losses" in text
+    data = _coding_file()
+    text = _text(_section(_page(client), "coding-study"))
+    pilot = data["pilot"]
+    assert (f"It made right {pilot['made_right']} of {pilot['wrong_first']} "
+            f"({100 * pilot['made_right'] / pilot['wrong_first']:.0f}%)") in text
+    assert f"make right at least {pilot['bar_pct']}% of the wrong first patches" in text
+    assert "The last pilot did not meet its bar." in text
+    assert (f"In {pilot['named_and_kept']} of the last pilot's {pilot['wrong_first'] - pilot['made_right']} wrong "
+            f"final patches") in text
+    rows = [r for r in data["within_run"]["rows"] if r["determined"]]
+    runs, right = sum(r["runs"] for r in rows), sum(r["first_right"] for r in rows)
+    made, broke = sum(r["wrong_to_right"] for r in rows), sum(r["right_to_wrong"] for r in rows)
+    assert f"passed {right} of {runs} ({100 * right / runs:.0f}%)" in text
+    assert f"made right {made} of {runs - right} wrong first patches and broke {broke} of {right} right ones" in text
+    rev = data["frozen_reviewer"]
+    assert f"flagged {rev['false_alarms']} of {rev['right']} right patches and missed {rev['misses']} of" in text
+    assert "a balanced accuracy of 53.6%" in text                          # (141/279 + 80/141) / 2, worked out
+    wrong = data["wrong_runs"]
+    assert f"Of {wrong['runs']} wrong runs in stages 1 and 2, {wrong['new_behaviour_only']} failed only" in text
+    held = data["stage_3"]["held_out"]
+    assert f"{held['wins']} to {held['losses']}, and G6's gate refused it" in text
+    assert "with probability 0.25, and one of 200 with probability 0.52" in text
     spend = data["spend"]
-    assert f"${spend['usd']:.2f} of the ${spend['budget_usd']} budget" in text
-    assert f"${spend['runs_usd']:.2f} on the study's runs and ${spend['design_review_usd']:.2f} on a review" in text
-    k1 = data["stage_2"]["passed"]
-    assert (f"it passed {k1['maintainers']['K1']} of {data['stage_2']['runs']} runs against {k1['maintainers']['A']} "
-            f"on the maintainers' tests") in text
+    assert f"Paid model calls came to ${spend['usd']:.2f} for the whole study, within a limit of ${spend['limit_usd']}" in text
+    assert f"${spend['design_review_usd']:.2f} of that paid for a review of the study's design" in text
 
 
 def test_the_reviews_of_g6s_own_code_are_counted_by_the_page_not_typed_in(client):
-    data = json.loads(evidence.VALIDATION_DIR.joinpath("results", "coding", "coding_study.json")
-                      .read_text(encoding="utf-8"))
-    branches = data["own_code_reviews"]["branches"]
-    section = _section(_page(client), "coding-study")
-    table = section.split('<table class="rs-matrix is-compact">', 1)[1].split("</table>", 1)[0]
-    for b in branches:
-        row = table.split(f"<code>{b['branch']}</code>", 1)[1].split("</tr>", 1)[0]
-        cells = re.findall(r"<td[^>]*>([^<]*)</td>", row)
-        assert cells[:len(b["found"])] == [str(n) for n in b["found"]] and cells[4] == str(sum(b["found"])), b["branch"]
-    foot = _text(table.split("<tfoot>", 1)[1])
-    total = sum(sum(b["found"]) for b in branches)
-    per_review = [sum(b["found"][i] for b in branches if len(b["found"]) > i) for i in range(4)]
-    assert f"All {len(branches)} {' '.join(map(str, per_review))} {total}" in foot
-    assert f"found {total} defects in {len(branches)} branches" in _text(section)
+    own = _coding_file()["own_code"]
+    section = html.unescape(_section(_page(client), "coding-study"))
+    rows = _table(section, "own-code")
+    later = own["later"]
+    assert [r[1] for r in rows[1:]] == [str(later[k]) for k in ("first_review_read", "earlier_repair", "last_repair",
+                                                                "resolved")]
+    text = _text(section)
+    found, repair = sum(own["by_round"]), later["earlier_repair"] + later["last_repair"]
+    assert f"{own['clean']} of the {own['loops']} loops ended with a review that found nothing" in text
+    assert f"Together the reviews found {found} defects" in text
+    assert f"So {repair} of {later['resolved']} ({100 * repair / later['resolved']:.0f}%) sat in lines a repair" in text
+    assert "An AI review of AI code is a sample, not a census." in text
     template = (Path(evidence.__file__).parents[1] / "templates" / "pages" / "research.html").read_text(encoding="utf-8")
-    assert str(total) not in template and "160.27" not in template          # worked out or read, never typed
+    for typed in (str(found), "168.06", "53.6", "0.25", str(later["resolved"])):
+        assert typed not in template, typed                                  # worked out or read, never typed
 
 
 def test_a_changed_count_in_a_copy_of_the_coding_studys_file_changes_the_page(client, tmp_path, monkeypatch):
@@ -256,13 +310,15 @@ def test_a_changed_count_in_a_copy_of_the_coding_studys_file_changes_the_page(cl
     path = copy / "results" / "coding" / "coding_study.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     data["stage_2"]["passed"]["maintainers"]["K1"] = 29
-    data["own_code_reviews"]["branches"][1]["found"][0] += 7
-    total = sum(sum(b["found"]) for b in data["own_code_reviews"]["branches"])
+    data["stage_2"]["differ_from_A_maintainers"]["K1"]["pluggy-809"] = [0, 2]
+    data["stage_2"]["differ_from_A_maintainers"]["K1"]["anyio-1424"] = [1, 2]
+    data["own_code"]["by_round"][0] += 7
     path.write_text(json.dumps(data), encoding="utf-8")
     monkeypatch.setattr(evidence, "VALIDATION_DIR", copy)
-    text = _text(_section(_page(client), "coding-study"))
-    assert "it passed 29 of 40 runs against 23 on the maintainers' tests" in text
-    assert f"found {total} defects in 10 branches" in text and f"Together the reviews found {total}." in text
+    section = html.unescape(_section(_page(client), "coding-study"))
+    row = next(r for r in _table(section, "coding-tests") if r[0].startswith("Stage 2") and "scout" not in r[0])
+    assert row[2] == "23 → 29 of 40" and row[3] == "4 better, 0 worse, 16 the same; p = 0.06"
+    assert f"Together the reviews found {sum(data['own_code']['by_round'])} defects" in _text(section)
 
 
 def test_the_page_claims_no_more_than_the_coding_study_shows(client):
@@ -280,10 +336,13 @@ def test_the_page_claims_no_more_than_the_coding_study_shows(client):
     reading = _text(_section(page, "reading"))
     assert "where a harness around the same model gained" in reading and "and where it did not" in reading
     status = reading.split("Status", 1)[1]
-    assert "its numbers stand as measured" in status and "none of those has run" in status
+    assert "its numbers stand as measured" in status and "coding study's numbers stand as measured" in status
+    assert "plan" not in status
+    assert "The local-model study" in _text(_section(page, "the-meta-harness"))
     entry = html.unescape(_section(page, "studies").split(">Review loop on unseen coding bugs<", 1)[1]
                           .split("</li>", 1)[0])
     assert "Not shown" in entry and "Review loop: <b>" in entry and "G6: <b>" not in entry
+    assert "p = 0.25 by bug" in entry and "p = 0.125" not in entry               # by bug, never by run
 
 
 def test_the_page_reads_without_javascript(client):

@@ -629,134 +629,173 @@ def archive() -> dict:
     return data
 
 
-# --- The coding study (ended 2026-11-03): Claude Code on real bugs, alone and inside review loops ------------------
+# --- The coding study: Claude Code on real bugs, alone and inside G6's loops (PLAN.md's results to 2026-11-06) -----
 CODING = ("coding", "coding_study.json")
 # Each arm by what it does (owner: plain words on a page, never an arm's short name).
-CODING_ARMS = {"A": "Claude Code alone", "T": "Claude Code with the discussion", "R": "One review, one repair",
-               "M9": "Scout loop", "K1": "Review loop", "K0": "Review loop, issue text only"}
+CODING_ARMS = {"A": "Claude Code alone", "M9": "Scout loop", "K1": "Review loop", "V4": "Review loop with a symptom test"}
 SCORES = (("maintainers", "Maintainers' tests"), ("amended", "Amended tests"))
-ENDINGS = {"clean": "A review found nothing", "repairs ran out": "Repairs ran out", "in its loop": "Still in its loop"}
 
 
 def _signed(points: float, digits: int = 1) -> str:
     return f"+{points:.{digits}f}" if points >= 0 else f"−{-points:.{digits}f}"
 
 
-def _span(lo: int, hi: int) -> str:
-    """A range of counts in words: '7', '7 or 8', '2 to 5'."""
-    return f"{lo}" if lo == hi else f"{lo} or {hi}" if hi == lo + 1 else f"{lo} to {hi}"
+def _share(k: int, n: int) -> str:
+    return f"{100.0 * k / n:.0f}"
 
 
-def _coding_stage(raw: dict, arms: dict, alpha: float) -> dict:
-    """One stage's bars, the pairs of runs that differ with their sign tests, and whether each judged loop met the
-    rule on each score: more runs passed than every comparator, and p below ``alpha`` against each."""
-    runs, passed, judged = raw["runs"], raw["passed"], arms["judged"]
-    bugs = raw["bugs"] if isinstance(raw["bugs"], int) else len(raw["bugs"])
-    pairs = {other: {score: {arm: {"wins": w, "losses": lost, "p": sign_p(w, lost)} for arm, (w, lost) in by.items()}
-                     for score, by in scores.items()}
-             for other, scores in raw.get("pairs", {}).items()}
-    met = {score: {arm: all(passed[score][arm] > passed[score][c] and pairs[c][score][arm]["p"] < alpha
-                            for c in arms["comparators"]) for arm in judged}
-           for score, _ in SCORES} if pairs else None                  # the rule gives no verdict on tuned bugs
-    return {"name": raw.get("name", ""), "bugs": bugs, "runs": runs, "per_bug": runs // bugs, "passed": passed,
-            "repos": len({b.rsplit("-", 1)[0] for b in raw["bugs"]}) if isinstance(raw["bugs"], list) else None,
-            "pairs": pairs, "met": met, "rule_met": bool(met) and any(any(m.values()) for m in met.values()),
-            "lead": _signed(100.0 * (passed["maintainers"]["K1"] - passed["maintainers"]["A"]) / runs),
-            "groups": tuple(Group(label, tuple(Bar(a, CODING_ARMS[a], passed[score][a], runs, a in judged)
-                                               for a in arms["order"] if a in passed[score]))
-                            for score, label in SCORES)}
+def _min_wins(alpha: float) -> int:
+    """The fewest bugs better, with none worse, at which the exact one-sided sign test gives p below ``alpha``."""
+    wins = 1
+    while sign_p(wins, 0) >= alpha:
+        wins += 1
+    return wins
+
+
+def _by_bug(stage: dict, arm: str) -> dict | None:
+    """Bugs better, worse and the same against Claude Code alone on the maintainers' tests, with the sign test over
+    bugs; ``None`` where the plan records no count by bug. Per-bug runs, where recorded, must add up to the passes."""
+    bugs = stage["bugs"] if isinstance(stage["bugs"], int) else len(stage["bugs"])
+    passed = stage["passed"]["maintainers"]
+    if arm in stage.get("differ_from_A_maintainers", {}):
+        differ = stage["differ_from_A_maintainers"][arm]
+        if sum(loop - alone for alone, loop in differ.values()) != passed[arm] - passed["A"]:
+            raise ValueError(f"the bugs on which {CODING_ARMS[arm]} and Claude Code alone differ do not add up")
+        better = sum(loop > alone for alone, loop in differ.values())
+        worse = sum(loop < alone for alone, loop in differ.values())
+    elif arm in stage.get("by_bug_vs_A_maintainers", {}):
+        better, worse = (stage["by_bug_vs_A_maintainers"][arm][k] for k in ("better", "worse"))
+    else:
+        return None
+    return {"better": better, "worse": worse, "same": bugs - better - worse, "p": sign_p(better, worse),
+            "shown_p": f"{sign_p(better, worse):.2f}"}
+
+
+def _verdicts(data: dict, alpha: float) -> list[dict]:
+    """Every registered comparison of a judged loop with Claude Code alone on unseen bugs. Where the plan records
+    counts by bug, the rule is worked out here (more runs than every comparator, and p over bugs below ``alpha``) and
+    must agree with the verdict the plan states."""
+    rows = []
+    for key, number, where in (("stage_1", 1, "new bugs in the training repositories"),
+                               ("stage_2", 2, "repositories never used in training"),
+                               ("stage_4", 4, "more repositories never used in training")):
+        stage = data[key]
+        bugs = stage["bugs"] if isinstance(stage["bugs"], int) else len(stage["bugs"])
+        for arm in stage["judged"]:
+            scores = {}
+            for score, _ in SCORES:
+                passed = stage["passed"].get(score)
+                if passed is None:
+                    scores[score] = None
+                    continue
+                interval = stage.get(f"interval_vs_A_{score}_points", {}).get(arm)
+                scores[score] = {"alone": passed["A"], "loop": passed[arm], "fewer": passed[arm] <= passed["A"],
+                                 "interval": tuple(_signed(v, 0) for v in interval) if interval else None}
+            by_bug = _by_bug(stage, arm)
+            maint = stage["passed"]["maintainers"]
+            if (by_bug is not None and by_bug["p"] < alpha and all(maint[arm] > maint[c] for c in ("A", "T") if c in maint)
+                    and not stage["rule_met"]):       # met on the maintainers' tests, though the plan says not met
+                raise ValueError(f"stage {number}: the worked-out rule disagrees with the plan's verdict")
+            rows.append({"stage": number, "where": where, "bugs": bugs, "runs": stage["runs"], "arm": arm,
+                         "loop": CODING_ARMS[arm], "scores": scores, "by_bug": by_bug, "met": stage["rule_met"],
+                         "reads_discussion": arm in stage.get("reads_discussion", [])})
+    return rows
 
 
 def coding_study() -> dict:
     """The coding study, from its counts file (``results/coding/coding_study.json``): every total, share, sign test
-    and range the Research page states is worked out here from the counts, so none is typed into the template."""
+    and verdict the Research page states is worked out here from the counts, so none is typed into the template."""
     data = _json(*CODING)
-    arms, rule = data["arms"], data["rule"]
-    training, one, two = (_coding_stage(data[key], arms, rule["alpha"]) for key in ("training", "stage_1", "stage_2"))
-    training["cost"] = {arm: f"{usd:.2f}" for arm, usd in data["training"]["cost_per_run_usd"].items()}
+    alpha = data["rule"]["alpha"]
+    verdicts = _verdicts(data, alpha)
+    counted = [v for v in verdicts if v["by_bug"]]
+    top = max(v["by_bug"]["better"] - v["by_bug"]["worse"] for v in counted)
+    best = [v for v in counted if v["by_bug"]["better"] - v["by_bug"]["worse"] == top]
 
-    raw = data["stage_2"]
-    differ, vs_a = raw["k1_and_a_differ_maintainers"], two["pairs"]["A"]
-    k1 = vs_a["maintainers"]["K1"]
-    if sum(b["K1"] - b["A"] for b in differ.values()) != k1["wins"] - k1["losses"]:
-        raise ValueError("the bugs on which the review loop and Claude Code alone differ do not add up to their pairs")
-    gained = [raw["passed"]["amended"][a] - raw["passed"]["maintainers"][a] for a in raw["passed"]["amended"]]
-    two |= {"same_bugs": two["bugs"] - len(differ), "differing": k1["wins"] + k1["losses"],
-            "best_p": f"{sign_p(k1['wins'] + k1['losses'], 0):.3f}",  # the most those pairs could ever show
-            "never_behind": all(vs_a[score]["K1"]["losses"] == 0 for score, _ in SCORES),
-            "ahead": {score: two["passed"][score]["K1"] - two["passed"][score]["A"] for score, _ in SCORES},
-            "k1_p": {score: f"{vs_a[score]['K1']['p']:.3f}" for score, _ in SCORES},
-            "interval": {arm: (_signed(lo, 0), _signed(hi, 0))
-                         for arm, (lo, hi) in raw["interval_vs_A_amended_points"].items()},
-            "amended_gain": _span(min(gained), max(gained)), "one_bug": raw["one_bug"]}
+    stages = {"training": data["training"], "one": data["stage_1"], "two": data["stage_2"]}
+    tuned = [{"arm": arm, "label": CODING_ARMS[arm], "score": label,
+              "cells": [f"{st['passed'][score][arm]} of {st['runs']}" for st in stages.values()]}
+             for score, label in SCORES for arm in ("A", "M9", "K1")]
+    lead = [_signed(100.0 * (st["passed"]["maintainers"]["K1"] - st["passed"]["maintainers"]["A"]) / st["runs"])
+            for st in stages.values()]
 
-    best = max(((100.0 * st["passed"][score][arm] / st["runs"], n, arm, label)
-                for n, st in ((1, one), (2, two)) for score, label in SCORES for arm in arms["judged"]),
-               key=lambda b: b[0])
+    pilot = data["pilot"]
+    if pilot["wrong_first"] + pilot["right_first"] != pilot["runs"] or pilot["named_and_kept"] > pilot["wrong_first"] \
+            - pilot["made_right"]:
+        raise ValueError("the pilot's runs do not add up")
+    pilot = {**pilot, "wrong_final": pilot["wrong_first"] - pilot["made_right"],
+             "share": _share(pilot["made_right"], pilot["wrong_first"]),
+             "met": 100 * pilot["made_right"] >= pilot["bar_pct"] * pilot["wrong_first"] and not pilot["made_wrong"]}
 
-    diag = data["diagnosis"]
-    tuned, held = (100.0 * k / n for k, n in (diag["tuning_false_alarms"], diag["held_out_false_alarms"]))
+    rows = data["within_run"]["rows"]
+    det = {k: sum(r[k] for r in rows if r["determined"]) for k in ("runs", "first_right", "wrong_to_right",
+                                                                   "right_to_wrong")}
+    named = [r["stages"] for r in rows if r["determined"]]
+    det |= {"wrong_first": det["runs"] - det["first_right"], "share": _share(det["first_right"], det["runs"]),
+            "net": _share(det["wrong_to_right"] - det["right_to_wrong"], det["runs"]),
+            "stages": ", ".join(named[:-1]) + f" and {named[-1]}" if len(named) > 1 else named[0]}
+    undet = {r["repositories"]: r for r in rows if not r["determined"]}
 
-    blind = data["blind_labels"]
-    if blind["within_reach"] + blind["out_of_reach"] != blind["agreed"]:
-        raise ValueError("the blind labels' two groups do not add up to the failures the raters agreed on")
+    alone = data["determined_alone"]
+    wrong = data["wrong_runs"]
+    if wrong["new_behaviour_only"] + wrong["existing_behaviour_only"] + wrong["both"] != wrong["runs"]:
+        raise ValueError("the wrong runs' tests do not add up")
+    rev = data["frozen_reviewer"]
+    balanced = 50.0 * ((rev["right"] - rev["false_alarms"]) / rev["right"]
+                       + (rev["wrong"] - rev["misses"]) / rev["wrong"])
+    by_size = dict(zip(data["power"]["bugs"], data["power"]["frozen_rule"]))
+    power = [{"bugs": n, "p": f"{by_size[n]:.2f}"} for n in data["power"]["shown"]]
 
-    own, width = data["own_code_reviews"], data["own_code_reviews"]["max_reviews"]
-    branches = []
-    for b in own["branches"]:
-        found, ended = b["found"], b["ended"]
-        fits = {"clean": found[-1] == 0, "repairs ran out": len(found) == width and found[-1] > 0,
-                "in its loop": len(found) < width and found[-1] > 0}
-        if not fits.get(ended):
-            raise ValueError(f"a branch whose reviews do not match how it ended: {b['branch']}")
-        branches.append({"branch": b["branch"], "cells": [*found, *[""] * (width - len(found))], "total": sum(found),
-                         "open": found[-1], "ended": ended, "ending": ENDINGS[ended]})
-    ran_out = [b["open"] for b in branches if b["ended"] == "repairs ran out"]
-    ends = {e: sum(b["ended"] == e for b in branches) for e in ENDINGS}
+    own = data["own_code"]
+    later = own["later"]
+    if later["first_review_read"] + later["earlier_repair"] + later["last_repair"] != later["resolved"]:
+        raise ValueError("the later findings' places do not add up")
+    repair = later["earlier_repair"] + later["last_repair"]
 
     spend = data["spend"]
     return {
-        "model": data["model"], "label": data["label"], "ended": date.fromisoformat(data["ended"]),
-        "labels": CODING_ARMS, "reviewer": arms["reviewer"], "max_repairs": arms["max_repairs"],
-        "rule": {**rule, "alpha": f"{rule['alpha']:g}", "alt": tuple(rule["or"])},     # "or" reads badly in a template
-        "training": training, "one": one, "two": two, "three": data["stage_3"],
-        "best": {"pct": f"{best[0]:.1f}", "stage": best[1], "arm": CODING_ARMS[best[2]], "score": best[3].lower()},
-        "diagnosis": {**diag, "tuned": f"{tuned:.0f}", "held": f"{held:.0f}", "apart": f"{abs(held - tuned):.0f}"},
-        "blind_labels": blind, "first_verdict": data["reviewer_first_verdict"], "blind_reader": data["blind_reader"],
-        "own": {**{k: own[k] for k in ("reviewer", "max_repairs", "max_reviews")}, "branches": branches,
-                "reviews": list(range(1, width + 1)),
-                "per_review": [sum(b["found"][i] for b in own["branches"] if len(b["found"]) > i) for i in range(width)],
-                "total": sum(b["total"] for b in branches), "count": len(branches), "clean": ends["clean"],
-                "ran_out": ends["repairs ran out"], "in_loop": ends["in its loop"],
-                "open": _span(min(ran_out), max(ran_out)) if ran_out else ""},
-        "spend": {"usd": f"{spend['usd']:.2f}", "budget": f"{spend['budget_usd']:g}", "runs": f"{spend['runs_usd']:.2f}",
+        "model": data["model"], "label": data["label"], "as_of": date.fromisoformat(data["as_of"]),
+        "labels": CODING_ARMS, "reviewer": data["arms"]["reviewer"], "max_repairs": data["arms"]["max_repairs"],
+        "rule": {"alpha": f"{alpha:g}", "min_wins": _min_wins(alpha), "interval_pct": data["rule"]["interval_pct"]},
+        "audit": data["audit"],
+        "training": data["training"], "one": data["stage_1"], "two": data["stage_2"], "three": data["stage_3"],
+        "verdicts": verdicts, "best": best, "met": any(v["met"] for v in verdicts),
+        "tuned": tuned, "lead": lead, "pilot": pilot,
+        "alone": {**alone, "share": _share(alone["passed"], alone["runs"])},
+        "within": {"determined": det, "undetermined": undet, "stuck": data["within_run"]["stuck_bugs"],
+                   "flagged": data["within_run"]["flagged_all_wrong"]},
+        "undetermined": data["undetermined_ever_right"],
+        "wrong": wrong, "reviewer_measured": {**rev, "patches": rev["right"] + rev["wrong"], "balanced": f"{balanced:.1f}"},
+        "power": power,
+        "own": {**own, "found": sum(own["by_round"]), "rest": own["loops"] - own["clean"], "repair": repair,
+                "repair_pct": _share(repair, later["resolved"])},
+        "spend": {"usd": f"{spend['usd']:.2f}", "limit": f"{spend['limit_usd']:g}",
                   "design_review": f"{spend['design_review_usd']:.2f}"},
-        "next": data["next"],
         "url": f"{REPO}docs/validation/results/coding/coding_study.json",
-        "plan_url": f"{REPO}validation/worked_examples/PLAN.md"}
+        "plan_url": f"{REPO}validation/worked_examples/PLAN.md",
+        "own_url": f"{REPO}validation/own_code/RCA.md"}
 
 
 def _coding_entry() -> Entry:
     """The coding study in the ledger: stage 2, bugs from repositories never used in training, on the maintainers'
     tests, the review loop against Claude Code alone; "not shown" unless the study's own rule was met."""
     study = coding_study()
-    one, two, rule = study["one"], study["two"], study["rule"]
+    two, rule = study["two"], study["rule"]
+    row = next(v for v in study["verdicts"] if v["stage"] == 2 and v["arm"] == "K1")
     passed, runs = two["passed"]["maintainers"], two["runs"]
     (without, wp), (with_loop, lp) = _count(passed["A"], runs), _count(passed["K1"], runs)
-    pairs, met = two["pairs"]["A"]["maintainers"]["K1"], two["met"]["maintainers"]["K1"]
-    note = (f"{'' if met else 'Direction only: '}the {two['differing']} pairs of runs that differ went "
-            f"{pairs['wins']} to the review loop and {pairs['losses']} to Claude Code alone (p = {pairs['p']:.3f}), "
-            f"where the study's rule needs at least {rule['min_wins']} wins. On unseen bugs in the training "
-            f"repositories it passed {one['passed']['maintainers']['K1']} of {one['runs']} against "
-            f"{one['passed']['maintainers']['A']}, and the change G6 proposed itself was not adopted.")
+    by_bug = row["by_bug"]
+    note = (f"Better than Claude Code alone on {by_bug['better']} bugs and worse on {by_bug['worse'] or 'none'}, p = "
+            f"{by_bug['shown_p']} by bug, where the study's rule needs at least {rule['min_wins']} bugs better and none "
+            f"worse.{'' if study['met'] else ' No loop met the rule on unseen bugs, in any stage.'}")
     return Entry("Review loop on unseen coding bugs",
                  f"A review loop around Claude Code: {study['reviewer']}, from another model family, writes a test that "
                  f"fails on the patch, Claude Code repairs it in the same session, and a fresh review follows, up to "
                  f"{study['max_repairs']} repairs",
-                 f"runs passed on the maintainers' tests, {two['bugs']} bugs from {two['repos']} repositories never "
-                 f"used in training, {two['per_bug']} runs each", f"{study['model']}, in Claude Code",
-                 "Claude Code alone", without, with_loop, wp, lp, "gain" if met else "not shown", "core", "development",
-                 note, "#coding-study", treatment="Review loop")             # the study's own section, above
+                 f"runs passed on the maintainers' tests, {row['bugs']} bugs from repositories never used in training, "
+                 f"{runs // row['bugs']} runs each", f"{study['model']}, in Claude Code",
+                 "Claude Code alone", without, with_loop, wp, lp, "gain" if row["met"] else "not shown", "core",
+                 "development", note, "#coding-study", treatment="Review loop")             # the study's own section
 
 
 def context() -> dict:

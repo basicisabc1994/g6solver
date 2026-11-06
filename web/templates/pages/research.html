@@ -21,215 +21,219 @@ the harness engineering itself.{% endcomment %}
     </dl>
 </section>
 
-{% comment %}The coding study (owner, 2026-11-03: "update the case study on the website with your findings"). Every
-number comes from docs/validation/results/coding/coding_study.json through evidence.coding_study().{% endcomment %}
-{% with c=coding t=coding.training one=coding.one two=coding.two three=coding.three own=coding.own %}
+{% comment %}The coding study (owner, 2026-11-03: "update the case study on the website with your findings"), told as one
+story: why, how it was measured, what it found, why, the limits of self-improvement, G6's own code, cost. Every number
+comes from docs/validation/results/coding/coding_study.json through evidence.coding_study(), and each count there names
+the plan's section it comes from.{% endcomment %}
+{% with c=coding v=coding.within.determined u=coding.within.undetermined p=coding.pilot own=coding.own r=coding.reviewer_measured %}
 <section class="rs-section" id="coding-study">
     <p class="rs-eyebrow">A worked example</p>
     <h2>Claude Code on real bugs, with a review loop and without</h2>
-    <p class="rs-lede">The study asked whether a harness improved on training bugs beats Claude Code alone on bugs it
-    never saw. In each run Claude Code, on {{ c.model }}, was asked to fix a reported bug in a well-known Python
-    project, and tests the agent never saw scored the run afterwards. The review loop did well on the bugs it was tuned
-    on; on unseen bugs it showed no significant uplift, in any of three stages.</p>
-    <p class="rs-meta">{{ c.label }} Every run has two scores: the maintainers' own tests, and amended tests, which drop
-    any name, message or format the maintainers' tests require and the issue never states.</p>
+    <p class="rs-lede why">We set out to measure whether G6 makes a coding agent right more often than Claude Code alone,
+    on real bugs neither had seen. We registered every test and its bar before running it.</p>
+    <p class="rs-meta">{{ c.label }}</p>
 
-    <h3>The arms</h3>
-    <table class="rs-reading" id="coding-arms">
+    <h3>How it was measured</h3>
+    <table class="rs-reading" id="coding-method">
         <tbody>
-            <tr><th scope="row">{{ c.labels.A }}</th>
-                <td>The comparator: plain Claude Code, given the issue's text.</td></tr>
-            <tr><th scope="row">{{ c.labels.T }}</th>
-                <td>The same, with the comments people made on the issue before its fix.</td></tr>
-            <tr><th scope="row">{{ c.labels.R }}</th>
-                <td>Claude Code with the discussion, then one review by {{ c.reviewer }}, from another model family, and
-                one repair if the reviewer's test fails on the patch. Reported beside the others, not judged.</td></tr>
-            <tr><th scope="row">{{ c.labels.M9 }}</th>
-                <td>Claude Code with the discussion. Before any patch, separate sessions read the issue and the code and
-                write tests for the fix; the fix is run against them and sent back for repair, and {{ c.reviewer }}
-                reviews it once. Built from G6's parts in the study's own runner. Judged by the rule.</td></tr>
-            <tr><th scope="row">{{ c.labels.K1 }}</th>
-                <td>Claude Code with the discussion. {{ c.reviewer }} then reviews the patch and must write a test that
-                fails on it; Claude Code repairs in the same session; a fresh review reads the new patch, up to
-                {{ c.max_repairs }} repairs. Judged by the rule.</td></tr>
-            <tr><th scope="row">{{ c.labels.K0 }}</th>
-                <td>The review loop without the discussion, added after stage 1 to test whether the discussion had cost
-                runs there. Reported beside the others, not judged.</td></tr>
+            <tr><th scope="row">Real bugs</th>
+                <td>Bugs reported in well-known Python projects, each fixed and merged by the project's maintainers. In
+                each run Claude Code, on {{ c.model }}, got the issue and the code as it was before the fix, and wrote a
+                patch. Claude Code alone ran as many times as each loop, on every bug.</td></tr>
+            <tr><th scope="row">Two truths</th>
+                <td>Tests the agent never saw scored every patch afterwards: the maintainers' own tests, and amended
+                tests, which drop any name, message or format the maintainers' tests require and the issue never
+                states.</td></tr>
+            <tr><th scope="row">A fixed rule, by bug</th>
+                <td>A loop shows a gain only if it passes more runs than Claude Code alone, and than Claude Code given the
+                issue's discussion where that ran, and an exact one-sided sign test over the bugs it does better and worse
+                on gives p below {{ c.rule.alpha }}. That takes at least {{ c.rule.min_wins }} bugs better and none worse.
+                The rule was first written over pairs of runs. It is read over bugs, which is stricter, because two runs
+                of one bug are not independent.</td></tr>
+            <tr><th scope="row">Does the issue decide the fix?</th>
+                <td>An auditor that ran no task and saw no run read each issue blind, with the tests its fix changed, and
+                said whether the issue states enough to determine the fix. Where models from {{ c.audit.families }}
+                families made that call independently, on {{ c.audit.issues }} further issues, they agreed on
+                {{ c.audit.agreed }}.</td></tr>
+            <tr><th scope="row">Power</th>
+                <td>How often a study of a given size would meet the rule was estimated by resampling the recorded bugs,
+                each with its own runs.</td></tr>
         </tbody>
     </table>
-    <p class="rs-meta">The rule, fixed before the stages ran: a loop shows a gain only if it passes more runs than both
-    {{ c.labels.A }} and {{ c.labels.T }}, and an exact one-sided sign test on the pairs of runs that differ gives p
-    below {{ c.rule.alpha }} against each, which takes at least {{ c.rule.min_wins }} wins and no losses, or
-    {{ c.rule.alt.0 }} and {{ c.rule.alt.1 }}. In the bars, black is the two loops the rule judged and grey every other
-    arm.</p>
 
-    <div id="coding-training">
-        <h3>On the {{ t.bugs }} bugs the loops were tuned on</h3>
-        <p class="rs-note">The review loop passed {{ t.passed.maintainers.K1 }} of {{ t.runs }} runs on the maintainers'
-        tests and {{ t.passed.amended.K1 }} on the amended tests; the scout loop {{ t.passed.maintainers.M9 }} and
-        {{ t.passed.amended.M9 }}; Claude Code alone {{ t.passed.maintainers.A }} and {{ t.passed.amended.A }}. The
-        review loop cost ${{ t.cost.K1 }} a run, the scout loop ${{ t.cost.M9 }}. These bugs shaped both loops, so these
-        scores say nothing about unseen bugs.</p>
-        <div class="rs-groups">{% for group in t.groups %}{% include "pages/_bars.html" %}{% endfor %}</div>
+    <h3>The loops</h3>
+    <table class="rs-reading" id="coding-arms">
+        <tbody>
+            <tr><th scope="row">{{ c.labels.M9 }}</th>
+                <td>Before any patch, separate sessions read the issue and the code and write tests for the fix. The patch
+                is run against them and sent back for repair, and {{ c.reviewer }} reviews it once. Built from G6's
+                parts.</td></tr>
+            <tr><th scope="row">{{ c.labels.K1 }}</th>
+                <td>{{ c.reviewer }}, from another model family, reviews the patch and must write a test that fails on
+                it. Claude Code repairs in the same session, and a fresh review reads the new patch, up to
+                {{ c.max_repairs }} repairs.</td></tr>
+            <tr><th scope="row">{{ c.labels.V4 }}</th>
+                <td>The review loop, with one test written from the issue and the code before the agent starts, which
+                fails while the reported symptom is still there.</td></tr>
+        </tbody>
+    </table>
+    <p class="rs-meta">Every loop also gave Claude Code the issue's discussion. The review loops ran in the study's own
+    code, with none of G6's at run time.</p>
+
+    <h3>What it found</h3>
+    <p class="rs-note" id="coding-found"><strong>{% if c.met %}A registered test on unseen bugs met the fixed
+    rule.{% else %}No registered test on unseen bugs met the fixed rule.{% endif %}</strong> The best results were
+    {% for b in c.best %}the {{ b.loop|lower }} in stage {{ b.stage }}, better than Claude Code alone on
+    {{ b.by_bug.better }} of {{ b.bugs }} bugs and worse on {{ b.by_bug.worse|default:"none" }} (p =
+    {{ b.by_bug.shown_p }} by bug){% if not forloop.last %}, and {% endif %}{% endfor %}. The rule needs at least
+    {{ c.rule.min_wins }} bugs better.{% for b in c.best %}{% if b.reads_discussion %} In stage {{ b.stage }} Claude Code
+    alone did not read the issue's discussion, so the loop's bugs there measure the loop and the discussion
+    together.{% endif %}{% endfor %}</p>
+    <div class="rs-matrix-wrap" tabindex="0" role="region" aria-labelledby="coding-tests-caption">
+        <table class="rs-matrix is-compact" id="coding-tests">
+            <caption id="coding-tests-caption">Every registered comparison of a loop with Claude Code alone on unseen
+            bugs: runs passed by Claude Code alone, then by the loop. By bug, on the maintainers' tests: bugs better,
+            worse and the same, where the plan counted them. On the amended tests, in brackets: the {{ c.rule.interval_pct }}% range of the
+            loop's gain by bug, in points, where the plan gave one. Stage 3, a change G6 proposed to itself, is under
+            the limits below.</caption>
+            <thead><tr><th scope="col">Stage and loop</th><th scope="col">Bugs</th><th scope="col">Maintainers'
+                tests</th><th scope="col" class="is-text">By bug</th><th scope="col">Amended tests</th><th scope="col"
+                class="is-text">Rule</th></tr></thead>
+            <tbody>
+                {% for t in c.verdicts %}
+                <tr><th scope="row">Stage {{ t.stage }}, {{ t.where }}: {{ t.loop|lower }}</th><td>{{ t.bugs }}</td>
+                    <td>{{ t.scores.maintainers.alone }} &rarr; {{ t.scores.maintainers.loop }} of {{ t.runs }}</td>
+                    <td class="is-text">{% if t.by_bug %}{{ t.by_bug.better }} better, {{ t.by_bug.worse }} worse,
+                    {{ t.by_bug.same }} the same; p = {{ t.by_bug.shown_p }}{% else %}not counted{% endif %}</td>
+                    <td>{% if t.scores.amended %}{{ t.scores.amended.alone }} &rarr; {{ t.scores.amended.loop }}{% if t.scores.amended.interval %} ({{ t.scores.amended.interval.0 }} to {{ t.scores.amended.interval.1 }}){% endif %}{% else %}not used{% endif %}</td>
+                    <td class="is-text">{% if t.met %}Met{% else %}Not met{% endif %}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
-
-    <div id="coding-stage-1">
-        <h3>Stage 1: {{ one.name|capfirst }}</h3>
-        <p class="rs-note"><strong>{% if one.rule_met %}The rule was met.{% else %}Uplift not shown: neither loop met
-        the rule, on either score.{% endif %}</strong> {{ one.bugs }} bugs from the {{ one.repos }} repositories used in
-        training, {{ one.per_bug }} runs on each. On the maintainers' tests Claude Code alone passed
-        {{ one.passed.maintainers.A }} of {{ one.runs }} and the review loop {{ one.passed.maintainers.K1 }}; on the
-        amended tests, {{ one.passed.amended.A }} against {{ one.passed.amended.K1 }}, and the scout loop
-        {{ one.passed.amended.M9 }}.</p>
-        <div class="rs-groups">{% for group in one.groups %}{% include "pages/_bars.html" %}{% endfor %}</div>
+    <div class="rs-matrix-wrap" tabindex="0" role="region" aria-labelledby="coding-tuned-caption">
+        <table class="rs-matrix is-compact" id="coding-tuned">
+            <caption id="coding-tuned-caption">Runs passed on the bugs the loops were tuned on, beside the unseen bugs.
+            The tuned bugs shaped the loops, so their scores say nothing about unseen bugs.</caption>
+            <thead><tr><th scope="col">Arm and truth</th><th scope="col">Tuned on: {{ c.training.bugs }} bugs</th>
+                <th scope="col">Stage 1: {{ c.one.bugs|length }} unseen bugs, the same repositories</th>
+                <th scope="col">Stage 2: {{ c.two.bugs|length }} unseen bugs, new repositories</th></tr></thead>
+            <tbody>
+                {% for row in c.tuned %}<tr><th scope="row">{{ row.label }}, {{ row.score|lower }}</th>{% for cell in row.cells %}<td>{{ cell }}</td>{% endfor %}</tr>
+                {% endfor %}<tr><th scope="row">The review loop's lead over Claude Code alone, maintainers' tests, in
+                points</th>{% for lead in c.lead %}<td>{{ lead }}</td>{% endfor %}</tr>
+            </tbody>
+        </table>
     </div>
+    <p class="rs-note" id="coding-pilot"><strong>{% if p.met %}The last pilot met its bar.{% else %}The last pilot did
+    not meet its bar.{% endif %}</strong> It ran the review loop with a gate on its findings and one more step, in which the agent
+    checks the behaviour its patch keeps against what the issue names, on {{ p.bugs }} bugs already scored on which a first
+    patch had been wrong, {{ p.runs }} runs in all. Its bar, registered first: make right at least {{ p.bar_pct }}% of the
+    wrong first patches, and break no right one. It made right {{ p.made_right }} of {{ p.wrong_first }}
+    ({{ p.share }}%), all on <code>{{ p.made_right_bugs|join:", " }}</code>, and broke {{ p.made_wrong|default:"none" }}
+    of {{ p.right_first }}.{% if not p.changed_by_the_step %} The added step changed no verdict in any run.{% endif %}</p>
 
-    <div id="coding-stage-2">
-        <h3>Stage 2: {{ two.name|capfirst }}</h3>
-        <p class="rs-note"><strong>{% if two.rule_met %}The rule was met.{% else %}Uplift not shown; direction
-        only.{% endif %}</strong> {{ two.bugs }} bugs from {{ two.repos }} repositories never used in training,
-        {{ two.per_bug }} runs on each. {% if two.never_behind %}The review loop was never behind Claude Code alone on
-        any bug: it{% else %}The review loop{% endif %} passed {{ two.passed.maintainers.K1 }} of {{ two.runs }} runs
-        against {{ two.passed.maintainers.A }} on the maintainers' tests, and {{ two.passed.amended.K1 }} against
-        {{ two.passed.amended.A }} on the amended tests. On the maintainers' tests the {{ two.differing }} pairs of runs
-        that differ went {{ two.pairs.A.maintainers.K1.wins }} to it and {{ two.pairs.A.maintainers.K1.losses }} to
-        Claude Code alone, which a one-sided sign test puts at p = {{ two.k1_p.maintainers }}; the rule needs at least
-        {{ c.rule.min_wins }} wins. By bug, the {{ c.rule.interval_pct }}% interval for its gain over Claude Code alone on
-        the amended tests runs from {{ two.interval.K1.0 }} to {{ two.interval.K1.1 }} points. The two scored the same
-        on {{ two.same_bugs }} of the {{ two.bugs }} bugs. The scout loop passed {{ two.passed.maintainers.M9 }} on the
-        maintainers' tests.</p>
-        <p class="rs-note">On one bug, <code>{{ two.one_bug.bug }}</code>, every arm with a reviewer passed all its runs
-        ({{ two.one_bug.runs_passed }} in all) and every arm without one failed all of theirs
-        ({{ two.one_bug.runs_failed }}, screening runs of Claude Code alone included). It rests on one bug whose cause
-        has not been read, so it is a hypothesis.</p>
-        <div class="rs-groups">{% for group in two.groups %}{% include "pages/_bars.html" %}{% endfor %}</div>
-    </div>
-
-    <div id="coding-stage-3">
-        <h3>Stage 3: {{ three.name|capfirst }}</h3>
-        <p class="rs-note"><strong>{% if three.adopted %}A change was adopted.{% else %}Nothing adopted.{% endif %}</strong>
-        G6's self-improvement loop ran one round to tune the review loop's reviewer, with no change written by hand, on
-        {{ three.patches }} recorded patches from {{ three.bugs }} bugs already scored, none of them stage 2's. It
-        measured the reviewer on {{ three.tuning_cases }} tuning cases ({{ three.reviewer_right }} right), offered
-        {{ three.candidates }} candidates, raced {{ three.raced }}, and took the winner to cases held out from it. There it
-        lost to the reviewer it started from, {{ three.held_out.wins }} wins to {{ three.held_out.losses }} losses
-        (p = {{ three.held_out.p }}, where {{ three.held_out.needed }} was needed), and G6's gate refused it, so there
-        was no changed reviewer to test on stage 2's bugs.{% if not three.budget_spent_usd %} The round used none of the
-        study's budget.{% endif %}</p>
-    </div>
-
-    <h3>What worked</h3>
-    <ul class="rs-points" id="coding-worked">
-        <li><strong>The review loop on the bugs it was tuned on:</strong> {{ t.passed.maintainers.K1 }} of
-        {{ t.runs }} runs on the maintainers' tests and {{ t.passed.amended.K1 }} of {{ t.runs }} on the amended tests,
-        at ${{ t.cost.K1 }} a run against the scout loop's ${{ t.cost.M9 }}. These bugs shaped it, so they say nothing
-        about unseen ones.</li>
-        <li><strong>On new repositories, direction only:</strong> in stage 2 the review loop was never behind Claude
-        Code alone on any bug, {{ two.passed.maintainers.K1 }} against {{ two.passed.maintainers.A }} and
-        {{ two.passed.amended.K1 }} against {{ two.passed.amended.A }} of {{ two.runs }}, and on
-        <code>{{ two.one_bug.bug }}</code> every arm with a reviewer passed while every arm without one failed.</li>
-        <li><strong>Finding where G6's own code breaks:</strong> the same loop, with {{ own.reviewer }} as the reviewer,
-        found {{ own.total }} defects in {{ own.count }} branches of G6's own code, each counted only when a test that
-        failed before the fix reproduced it (the table below).</li>
-        <li><strong>Diagnosing the study itself:</strong> G6's root-cause analysis of its own refusal in stage 3 did not
-        bear out the cause a person had named by hand, and named three others (below). Two raters, labelling
-        {{ c.blind_labels.patches }} failed patches blind, agreed on {{ c.blind_labels.agreed }} failures and put
-        {{ c.blind_labels.within_reach }} of them within reach of evidence an engineer has (reading the surrounding code,
-        or running the issue's own example) and {{ c.blind_labels.out_of_reach }} out of reach of anything short of the
-        maintainers' intent. And the amended tests showed that the maintainers' tests reject some fixes that do what
-        the issue asks: in stage 2 every arm gained {{ two.amended_gain }} runs of {{ two.runs }} on them.</li>
-    </ul>
-
-    <h3>What did not</h3>
-    <ul class="rs-points" id="coding-not">
-        <li><strong>No significant uplift over Claude Code alone on unseen bugs,</strong> in any of the three stages.
-        The {{ c.rule.target_pct }}% target was met in none: the best a judged loop did on unseen bugs was the
-        {{ c.best.arm|lower }}'s {{ c.best.pct }}%, on stage {{ c.best.stage }}'s {{ c.best.score }}.</li>
-        <li><strong>The reviewer's first verdict did not carry:</strong> on unseen bugs it agreed with the truth on
-        {{ c.first_verdict.unseen.0 }} of {{ c.first_verdict.unseen.1 }} runs, against {{ c.first_verdict.training.0 }}
-        of {{ c.first_verdict.training.1 }} on the bugs it was tuned on.</li>
-        <li><strong>Picking the right patch:</strong> a blind reader choosing the right one among
-        {{ c.blind_reader.choices }} did no better than chance with {{ c.reviewer }}, and two readers agreeing did no
-        better.</li>
-        <li><strong>Review loops on G6's own code seldom reach an empty review:</strong> {{ own.clean }}
-        branch{{ own.clean|pluralize:"es" }} of {{ own.count }} did; {{ own.ran_out }} ran out of repairs with
-        {{ own.open }} findings still open{% if own.in_loop %}, and {{ own.in_loop }} {{ own.in_loop|pluralize:"is,are" }} still in
-        {{ own.in_loop|pluralize:"its loop,their loops" }}{% endif %}.</li>
-        <li><strong>Spend:</strong> ${{ c.spend.usd }} of the ${{ c.spend.budget }} budget for paid model calls went:
-        ${{ c.spend.runs }} on the study's runs and ${{ c.spend.design_review }} on a review of its design by another
-        model. {{ c.reviewer }}'s reviews ran on a subscription, outside that budget.</li>
-    </ul>
-
-    <h3>Why</h3>
+    <h3>Why, as the measurements show it</h3>
     <table class="rs-reading" id="coding-why">
         <tbody>
-            <tr><th scope="row">The reviewer's feedback does not carry to unseen bugs</th>
-                <td>Its first verdict agreed with the truth on {{ c.first_verdict.training.0 }} of
-                {{ c.first_verdict.training.1 }} runs on the bugs it was tuned on and {{ c.first_verdict.unseen.0 }} of
-                {{ c.first_verdict.unseen.1 }} on unseen ones. The review loop's lead over Claude Code alone on the
-                maintainers' tests went from {{ t.lead }} points in training to {{ one.lead }} in stage 1 and
-                {{ two.lead }} in stage 2.</td></tr>
-            <tr><th scope="row">Little headroom, and too few bugs</th>
-                <td>On {{ two.same_bugs }} of stage 2's {{ two.bugs }} bugs Claude Code alone and the review loop scored
-                the same, so only {{ two.differing }} pairs of runs could differ. Even with all {{ two.differing }} going
-                one way, a sign test puts that at p = {{ two.best_p }}, short of the {{ c.rule.alpha }} the rule
-                needs.</td></tr>
-            <tr><th scope="row">Failures that need the maintainers' intent</th>
-                <td>{{ c.blind_labels.out_of_reach }} of the {{ c.blind_labels.agreed }} failures the two raters agreed
-                on were out of reach of anything short of the maintainers' intent.</td></tr>
-            <tr><th scope="row">A self-improvement step whose edits are too narrow</th>
-                <td>In stage 3 every candidate changed only the reviewer's wording or its examples. G6's root-cause
-                analysis of that round, run as plain code on its records afterwards, names that edit space as too
-                narrow, and two more causes: the winner moved where the reviewer draws its line rather than reading
-                better (all {{ c.diagnosis.threshold_move.wins_all_on_right_patches }} held-out cases it won were right
-                patches, and all {{ c.diagnosis.threshold_move.losses_all_on_wrong_patches }} it lost were wrong ones),
-                and it won its race only {{ c.diagnosis.race_noise.race_won.0 }} to
-                {{ c.diagnosis.race_noise.race_won.1 }}, too close to tell from chance, and a candidate tied with it was
-                dropped. It did not bear out the cause a person had named by hand, that the tuning and held-out
-                cases were mixed differently: the reviewer's failures were false alarms {{ c.diagnosis.tuned }}% of the
-                time on the tuning cases and {{ c.diagnosis.held }}% on the held-out ones, {{ c.diagnosis.apart }}
-                points apart, short of the {{ c.diagnosis.skew_line_points }} points the analysis takes as a
-                skew.</td></tr>
+            <tr><th scope="row">Claude Code alone is usually right already</th>
+                <td>Where the issue determines the fix, Claude Code alone passed {{ c.alone.passed }} of
+                {{ c.alone.runs }} runs ({{ c.alone.share }}%) in stages {{ c.alone.stages }}, and the loops' first
+                patches, written before any review, passed {{ v.first_right }} of {{ v.runs }} ({{ v.share }}%) in stages
+                {{ v.stages }}. A loop can gain only on the rest, and most bugs gave every arm the same score:
+                {{ c.two.same_score_all_judged_and_comparators }} of stage 2's {{ c.two.bugs|length }}.</td></tr>
+            <tr><th scope="row">Wrong patches read the new behaviour differently</th>
+                <td>Of {{ c.wrong.runs }} wrong runs in stages {{ c.wrong.stages }}, {{ c.wrong.new_behaviour_only }}
+                failed only the maintainers' tests of the new behaviour, {{ c.wrong.existing_behaviour_only }} only a test
+                that existed before, and {{ c.wrong.both }} both. Running the existing tests catches few of
+                them.</td></tr>
+            <tr><th scope="row">The reviewer could not tell right from wrong on unseen bugs</th>
+                <td>On {{ r.patches }} recorded patches from stages {{ r.stages }}, the review loop's reviewer, as frozen
+                for the study, flagged {{ r.false_alarms }} of {{ r.right }} right patches and missed {{ r.misses }} of
+                {{ r.wrong }} wrong ones, on the amended tests: a balanced accuracy of {{ r.balanced }}%, barely better
+                than a coin toss.</td></tr>
+            <tr><th scope="row">Repairs fixed the case they were shown, not the rule</th>
+                <td>Where the issue determines the fix, every wrong first patch the loop failed to mend sat on
+                {{ c.within.stuck|length }} bugs. A finding names one failing case, so the repair fixes that case and
+                leaves the rest of the rule the patch misses: on <code>{{ c.within.flagged.bug }}</code> the final review
+                flagged all {{ c.within.flagged.wrong }} wrong patches, and the repairs still failed.</td></tr>
+            <tr><th scope="row">The agent saw the decision, and kept the other side</th>
+                <td>In {{ p.named_and_kept }} of the last pilot's {{ p.wrong_final }} wrong final patches, the agent met
+                or named the behaviour the maintainers' tests check, and kept the other side, calling it
+                back-compatibility, an existing test, out of scope or a separate change. Nothing in the loop read that
+                statement.</td></tr>
+        </tbody>
+    </table>
+
+    <h3>The limits of self-improvement, and where checking helps</h3>
+    <table class="rs-reading" id="coding-limits">
+        <tbody>
+            <tr><th scope="row">Tuning fitted what it was tuned on</th>
+                <td>Both loops led Claude Code alone on the bugs they were tuned on. On unseen bugs, even in the same
+                repositories, that lead shrank or turned into a loss, and no comparison met the rule (the tables above).
+                When G6's own self-improvement loop tuned the reviewer on {{ c.three.tuning_cases }} recorded cases, with
+                no change written by hand, its best candidate lost to the reviewer it started from on cases held out from
+                it, {{ c.three.held_out.wins }} to {{ c.three.held_out.losses }}, and G6's gate refused it.</td></tr>
+            <tr><th scope="row">Where the issue fully states the fix, checking helped a little</th>
+                <td>Across every loop run on such unseen bugs, the loop made right {{ v.wrong_to_right }} of
+                {{ v.wrong_first }} wrong first patches and broke {{ v.right_to_wrong }} of {{ v.first_right }} right
+                ones, a net gain of about {{ v.net }}% of runs. That is the right direction, and too small for these
+                studies to confirm: by resampling the recorded bugs, {% for s in c.power %}{% if forloop.first %}a study
+                of {{ s.bugs }} such bugs would meet the fixed rule with probability {{ s.p }}{% else %}, and one of
+                {{ s.bugs }} with probability {{ s.p }}{% endif %}{% endfor %}.</td></tr>
+            <tr><th scope="row">Where the task does not state what is wanted, only a person can</th>
+                <td>The fix then needs behaviour the issue does not state. Across every arm and repeat, only
+                {{ c.undetermined.ever_right }} of the {{ c.undetermined.bugs }} such bugs in stages
+                {{ c.undetermined.stages }} ever got a patch the maintainers' tests passed. In new repositories the loop,
+                whose checks read the same issue and code as the agent, changed no outcome in {{ u.new.runs }} runs on
+                such bugs. It gained only in the repositories it was tuned in:
+                {{ u.training.wrong_to_right }} wrong first patches made right and {{ u.training.right_to_wrong }} right
+                ones made wrong, in {{ u.training.runs }} runs. In about
+                {{ p.intent_only }} of the last pilot's {{ p.wrong_final }} wrong final patches, what was missing was the
+                maintainers' intent, with nothing in the issue or the repository to ground it. Only a person, or the
+                maintainers' own tests, could supply it.</td></tr>
         </tbody>
     </table>
 
     <h3 id="coding-own-code">Reviewing G6's own code</h3>
-    <p class="rs-note">The same loop, run on {{ own.count }} branches of G6's own code for the review loop and the
-    self-improvement loop, with {{ own.reviewer }} as the reviewer: at most {{ own.max_repairs }} repairs and
-    {{ own.max_reviews }} reviews, and a finding counted only when a test that failed before the fix reproduced it.
-    Together the reviews found {{ own.total }}.</p>
+    <p class="rs-note">{{ own.loops }} branches of G6's own code, written by an AI agent, each went through a review
+    loop: {{ c.reviewer }} reviewed the change and had to write a failing test for each finding, a repair followed, and
+    then a fresh review, up to {{ own.max_reviews }} reviews. {{ own.clean }} of the {{ own.loops }} loops ended with a
+    review that found nothing. Together the reviews found {{ own.found }} defects, each reproduced by its test.</p>
     <div class="rs-matrix-wrap" tabindex="0" role="region" aria-labelledby="own-code-caption">
-        <table class="rs-matrix is-compact">
-            <caption id="own-code-caption">Reproduced defects each review found, per branch. A blank is a review that
-            did not happen, or has not yet.</caption>
-            <thead><tr><th scope="col">Branch</th>{% for n in own.reviews %}<th scope="col">Review {{ n }}</th>{% endfor %}<th scope="col">In all</th><th scope="col" class="is-text">How it ended</th></tr></thead>
+        <table class="rs-matrix is-compact" id="own-code">
+            <caption id="own-code-caption">Where the findings after each loop's first review sat, for those whose lines
+            could be placed against the code each review read.</caption>
+            <thead><tr><th scope="col">Where the finding sat</th><th scope="col">Findings</th></tr></thead>
             <tbody>
-                {% for b in own.branches %}
-                <tr><th scope="row"><code>{{ b.branch }}</code></th>{% for cell in b.cells %}<td>{{ cell }}</td>{% endfor %}<td>{{ b.total }}</td><td class="is-text">{{ b.ending }}{% if b.ended == "repairs ran out" %}, {{ b.open }} open{% endif %}</td></tr>
-                {% endfor %}
+                <tr><th scope="row">In code the loop's first review had already read</th><td>{{ own.later.first_review_read }}</td></tr>
+                <tr><th scope="row">In lines an earlier repair wrote</th><td>{{ own.later.earlier_repair }}</td></tr>
+                <tr><th scope="row">In lines the last repair wrote</th><td>{{ own.later.last_repair }}</td></tr>
             </tbody>
-            <tfoot><tr><th scope="row">All {{ own.count }}</th>{% for n in own.per_review %}<td>{{ n }}</td>{% endfor %}<td>{{ own.total }}</td><td class="is-text">{{ own.clean }} clean, {{ own.ran_out }} out of repairs{% if own.in_loop %}, {{ own.in_loop }} still in {{ own.in_loop|pluralize:"its loop,their loops" }}{% endif %}</td></tr></tfoot>
+            <tfoot><tr><th scope="row">All placed</th><td>{{ own.later.resolved }}</td></tr></tfoot>
         </table>
     </div>
+    <p class="rs-note">So {{ own.repair }} of {{ own.later.resolved }} ({{ own.repair_pct }}%) sat in lines a repair
+    wrote. Nor did a repair remove its kind of defect: {{ own.recurrence.observed }} later findings were of a kind the
+    same loop had met before, where shuffling the labels gives {{ own.recurrence.shuffle_mean }} on average, with
+    {{ own.recurrence.band_pct }}% of shuffles between {{ own.recurrence.band.0 }} and {{ own.recurrence.band.1 }}. The
+    kinds are a model's labels; a second labeller chose the same one for {{ own.second_labeller_same_class_pct }}% of
+    the findings. An AI review of AI code is a sample, not a census.</p>
 
-    <div class="rs-next" id="coding-next">
-        <p><strong>What comes next, as the owner approved it.</strong> These are plans, not results; none has run.</p>
-        <ul class="rs-papers">
-            <li>The reviewer reproduces the issue's own example and reads the surrounding code before it judges,
-            measured on recorded patches.</li>
-            <li>{{ c.next.bugs_at_least }} or more bugs on which Claude Code alone sometimes fails, so that a gain has
-            room to show.</li>
-            <li>The self-improvement step edits whole procedures, not only wording and examples.</li>
-            <li>The reviewer in G6's product matched to the one measured here.</li>
-            <li>G6's own code reviewed until a review comes back clean, first.</li>
-        </ul>
-    </div>
-    <a class="rs-link" href="{{ c.url }}">The counts behind this section, each with its source &rarr;</a>
+    <h3>Cost</h3>
+    <p class="rs-note" id="coding-cost">Paid model calls came to ${{ c.spend.usd }} for the whole study, within a limit
+    of ${{ c.spend.limit }}; ${{ c.spend.design_review }} of that paid for a review of the study's design by another
+    model. {{ c.reviewer }}'s reviews, G6's own tuning round and the last pilot ran on subscriptions, which the study
+    recorded apart and did not add to that figure. What a few containers spent after their runs were stopped was not
+    measured.</p>
+    <a class="rs-link" href="{{ c.url }}">The counts behind this section, each with the plan's section it comes from &rarr;</a>
     <a class="rs-link" href="{{ c.plan_url }}">The study's plan, written before each run &rarr;</a>
+    <a class="rs-link" href="{{ c.own_url }}">Why the reviews of G6's own code did not converge &rarr;</a>
 </section>
 {% endwith %}
 
 <section class="rs-section" id="the-meta-harness">
+    <p class="rs-eyebrow">The local-model study</p>
     <h2>Bootstrapping a small model through its harness</h2>
     <p class="rs-lede">{{ facts.model }}, an 8-billion-parameter model running on one computer with Ollama, on
     {{ facts.per_dataset }} fresh held-out tasks per dataset, in a study registered before it ran. Larger models
@@ -309,8 +313,8 @@ number comes from docs/validation/results/coding/coding_study.json through evide
                 were not, and the method was improved between them. Each task set's winning option is picked after the
                 fact from the options measured. The coding study is Claude Code itself, on {{ coding.model }}, fixing
                 reported bugs in well-known Python projects, alone and inside review loops, each run scored by tests
-                the agent never saw; its scores on the bugs the loops were tuned on are shown as such, and its rule was
-                fixed before its stages ran.</td></tr>
+                the agent never saw; its scores on the bugs the loops were tuned on are shown as such, and every test
+                and its bar was registered before it ran.</td></tr>
             <tr><th scope="row">What they show</th>
                 <td><ul>
                     <li>Where a model fails in a systematic way, G6 can engineer a large gain in minutes, on the same
@@ -329,10 +333,10 @@ number comes from docs/validation/results/coding/coding_study.json through evide
                     every component on did worse than the model alone. Which mode wins depends on the task.</li>
                     <li>A small model can be bootstrapped through its harness: larger models engineer it, and the
                     small model runs inside it alone, with no weights changed.</li>
-                    <li>On real bugs, a review loop around Claude Code did well on the bugs it was tuned on and showed
-                    no significant uplift over Claude Code alone on unseen ones: on bugs from repositories never used in
-                    training it passed {{ coding.two.passed.maintainers.K1 }} of {{ coding.two.runs }} runs against
-                    {{ coding.two.passed.maintainers.A }}, direction only.</li>
+                    <li>On real bugs, the loops around Claude Code did well on the bugs they were tuned on and showed
+                    no significant uplift over Claude Code alone on unseen ones: no registered test there met its fixed
+                    rule. Where the issue fully states the fix, checking moved a few runs the right way; where it does
+                    not, only a person or the maintainers' tests could supply what was missing.</li>
                 </ul></td></tr>
             <tr><th scope="row">What they do not show</th>
                 <td>How G6 does with other models or other coding agents, on your tasks, or that a harness tuned for
@@ -347,8 +351,7 @@ number comes from docs/validation/results/coding/coding_study.json through evide
                 ceiling or lacks the knowledge a task needs.</td></tr>
             <tr><th scope="row">Status</th>
                 <td>The local-model programme closed with development round 3, and its numbers stand as measured. The
-                coding study's three stages ended on {{ coding.ended|date:"j F Y" }}; what it tries next is set out
-                above as plans, and none of those has run.</td></tr>
+                coding study's numbers stand as measured on {{ coding.as_of|date:"j F Y" }}.</td></tr>
         </tbody>
     </table>
 </section>

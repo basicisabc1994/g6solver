@@ -17,6 +17,10 @@ SAID = (
     "A maintainer reviews and merges every change",
     "open experiment in self-improvement infrastructure for AI agents",
 )
+#: Since the coding study (2026-11-06): where the first measurements of the loop's parts are, on the home page and in
+#: the README alike.
+FINDINGS = ("The first measurements of the loops it is built from, on real bugs and on G6's own code, are on the "
+            "Research page, including where they did not help.")
 
 
 def _words(text: str) -> str:
@@ -31,6 +35,9 @@ def test_the_home_page_says_g6_is_to_maintain_its_own_repository_in_public(clien
         assert phrase in words
     assert "including if it doesn't help" in words
     assert LINK in section
+    assert FINDINGS in words and 'href="/research/#coding-study"' in section
+    readme = " ".join((OSS / "README.md").read_text(encoding="utf-8").split())
+    assert FINDINGS.replace("Research page", "[Research](site/docs/research.md#the-coding-study) page") in readme
     # the status rules hold here as everywhere: no "experimental" label, never "verified"
     assert not re.search(r"(?i)\bexperimental\b|\bverified\b", words)
 
