@@ -412,7 +412,7 @@ def keep(root: Path, row: Mapping[str, Any], found: Mapping[str, Any], folder: s
         raise ValueError("a review is kept only under the digest of the bytes its reviewer read, and this one names none")
     found = {k: v for k, v in found.items() if k != "patch_sha256"}     # the digest names the file: the record is as it was
     c.write_whole(lambda: _another_bug(c.beside(root, folder, f"{sha}.json"), row["task"]),
-                  json.dumps({"task": row["task"], "first_seen_in": row.get("run"), **found}, indent=1).encode("utf-8"))
+                  json.dumps({"task": row["task"], "first_seen_in": row.get("run"), **found}, indent=1))
 
 
 def waiting(root: Path, tasks: Sequence[str], folder: str = FOLDER) -> list[dict[str, Any]]:

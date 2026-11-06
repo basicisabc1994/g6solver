@@ -300,7 +300,7 @@ def main(argv: list[str] | None = None) -> None:
     result, best_arm, best = generations(root, args.g6, train, "E", we.ADDENDUM_D, best, caller)
     c.write_whole(lambda: c.beside(root, "cegis.json"), json.dumps(      # the one writer of store files
         {"status": result.status, "iterations": result.iterations, "counterexamples": result.counterexamples,
-         "boundary": result.boundary, "reason": result.reason, "best": best_arm}, indent=1, default=str).encode("utf-8"))
+         "boundary": result.boundary, "reason": result.reason, "best": best_arm}, indent=1, default=str))
     print(f"== best {best_arm}: train {score(best):.2f}", flush=True)
     if best_arm != "E":
         repeats = range(1, we.R3_HELD_REPEATS + 1)

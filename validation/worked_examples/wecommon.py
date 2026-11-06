@@ -1007,7 +1007,7 @@ def durable(path: Path) -> None:
         os.fsync(stream.fileno())
 
 
-def write_whole(where: Callable[[], Path], data: bytes) -> Path:
+def write_whole(where: Callable[[], Path], data: bytes | str) -> Path:
     """The one writer of every store file (study follow-up review 1, finding 2): a saved row (``keep``) and every store kept beside
     the rows (``beside``: the reviews, the replays' records, the training's own files). ``where`` names the destination and checks
     it (for a store, ``beside``; for a row, ``keep``'s reading of the folder and of the run's ending), and it is asked twice: before
@@ -1016,7 +1016,10 @@ def write_whole(where: Callable[[], Path], data: bytes) -> Path:
     can predict, so no file made there in advance is written through), flushed and synced to the disk, and is put in place by
     ``os.replace`` only while neither it nor the destination has a second name (a hard link: a file with another name is another
     file's too, and is never put in place or replaced). A stop at any step leaves the destination as it was, or whole, and no
-    temporary file behind. Returns the destination."""
+    temporary file behind. Text is written as ``Path.write_text`` writes it (UTF-8, each "\\n" the platform's line end), so a
+    store kept as text has the bytes it always had (the frozen review's among them). Returns the destination."""
+    if isinstance(data, str):
+        data = data.replace("\n", os.linesep).encode("utf-8")
     dest = where()
     dest.parent.mkdir(parents=True, exist_ok=True)
     handle, part = tempfile.mkstemp(dir=dest.parent, prefix=f".{dest.name}.", suffix=".part")

@@ -728,6 +728,16 @@ def test_a_stop_between_any_two_steps_of_a_write_leaves_the_store_as_it_was_and_
     assert dest.read_bytes() == b'{"new": 1}' and [p.name for p in dest.parent.iterdir()] == ["cegis.json"]
 
 
+def test_a_store_kept_as_text_keeps_the_bytes_it_always_had(tmp_path):
+    """The reviews, the replays' records and the training's files were written as text (``Path.write_text``): the one writer
+    gives them the same bytes, so the frozen review stays byte for byte what it was; a row is written as the bytes given."""
+    (tmp_path / c.SAVED).mkdir()
+    text, expected = '{\n "a": 1\n}', tmp_path / "expected.json"
+    expected.write_text(text, "utf-8")
+    assert c.write_whole(lambda: c.beside(tmp_path, "cegis.json"), text).read_bytes() == expected.read_bytes()
+    assert c.write_whole(lambda: c.beside(tmp_path, "evolve.json"), text.encode()).read_bytes() == text.encode()
+
+
 def test_a_destination_that_is_a_folder_is_refused_and_no_temporary_file_stays(tmp_path):
     (tmp_path / c.SAVED / "evolve.json").mkdir(parents=True)
     with pytest.raises((OSError, c.ArchiveError)):
@@ -765,7 +775,7 @@ WRITES = {
     ("wecommon", "Archive.append"): ["open", "open", "write", "write", "truncate"],    # the index, and its torn tail moved aside
     ("wecommon", "_unique"): ["replace", "replace"],                       # dataclasses.replace: no file
     ("wecommon", "durable"): ["open"],                                     # r+b, for fsync only
-    ("wecommon", "write_whole"): ["mkstemp", "fdopen", "write", "replace"],
+    ("wecommon", "write_whole"): ["replace", "mkstemp", "fdopen", "write", "replace"],     # str.replace of line ends; os.replace
 }
 PRIMITIVES = {"write_text", "write_bytes", "write", "replace", "rename", "link", "hardlink_to", "symlink_to", "mkstemp", "dump",
               "copy", "copy2", "copyfile", "copytree", "move", "truncate", "open", "fdopen", "touch"}

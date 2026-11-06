@@ -1577,7 +1577,7 @@ HOST_FIXED_ENV = {"ENABLE_CLAUDEAI_MCP_SERVERS": "false", "CLAUDE_CODE_DISABLE_R
 #: Exactly what a host session's init may name: the five file tools and the box's ``run``, and the box as its one MCP server.
 HOST_TOOLS = frozenset({"Edit", "Glob", "Grep", "Read", "Write", "mcp__box__run"})
 HOST_SERVERS = frozenset({"box"})
-SESSION_EXIT_S = 30        # how long a session whose stream has ended is given to exit by itself before G6 ends it, on either executor
+HOST_EXIT_S = 30           # how long a session whose stream has ended is given to exit by itself before G6 ends it (either executor)
 #: Claude Code's word that the subscription's usage limit is reached, with when it resets when it says.
 HOST_LIMIT = re.compile(r"You(?:'|’)ve hit your (?:[\w-]+ ){0,3}limit\b\W{0,4}(resets\b[^\n|]*)?", re.I)
 #: A name part Windows would refuse or change (a device name, a reserved character, a trailing dot or space): the box's one rule,
@@ -1989,11 +1989,11 @@ def run_session(ctx: Context, run: Any, agent: str, command: list[str], key: str
 
 def outlived(proc: Any, *, came_to_end: bool) -> bool:
     """Whether a session's process is still running once its stream has stopped, so that G6 must end it, by one rule on either
-    executor: a stream that came to its end by itself (``came_to_end``) gives the process ``SESSION_EXIT_S`` to exit by itself
+    executor: a stream that came to its end by itself (``came_to_end``) gives the process ``HOST_EXIT_S`` to exit by itself
     first, and its own exit is read; one G6 stopped (a cap, the clock, a refused init) gives it none."""
     if came_to_end:
         try:
-            proc.wait(timeout=SESSION_EXIT_S)
+            proc.wait(timeout=HOST_EXIT_S)
         except subprocess.TimeoutExpired:
             pass
     return proc.poll() is None
