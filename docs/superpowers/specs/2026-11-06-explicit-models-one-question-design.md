@@ -153,7 +153,7 @@ ranking, replay 6's reader protocol (graduated from `validation/`), and `mcp/con
   - the query, its polarity and quantifiers;
   - the assumptions and the model hash;
   - the domain or bound, and the coverage or completeness;
-  - the witness or proof kind;
+  - the witness or certificate kind;
   - a validation receipt;
   - the limitations.
 - **Yes, no or unknown applies only to named existential decision queries,** such as "does a counterexample exist within
