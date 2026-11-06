@@ -322,6 +322,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         """Confirm the frozen task, checks, split and baseline: the person answers in the client's dialog, bound to the
         digest they read. No dialog, a decline, a cancel, no name or a changed digest confirms nothing, each with its own
         code, and there is no other way to confirm: no terminal, no command and no argument."""
+        from g6.mcp.consent import question
         from g6.metaharness.surface import workflow_changed
 
         held = mh.harness(workflow)
@@ -329,14 +330,17 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             return held
         if held.workflow.digest() != workflow_digest:
             return workflow_changed()
-        question = (f"Confirm workflow {workflow} digest {workflow_digest}? Task: {held.workflow.task}. "
-                    f"Development cases: {len(held.workflow.suite.dev)}; held-out: {len(held.workflow.suite.held_out)}. "
-                    "The baseline and generated candidates execute Python inside the configured boundary. "
-                    "Future activation requires separate consent. Type your name; identity is recorded as given.")
-        consent = await request_consent(ctx, question)
+        # The binding: the digest, which covers every other field shown, and what it covers that the person reads.
+        bound = {"Workflow": workflow, "Workflow digest": workflow_digest, "Task": held.workflow.task,
+                 "Development cases": len(held.workflow.suite.dev), "Held-out cases": len(held.workflow.suite.held_out)}
+        asked = question(f"Confirm workflow {workflow}?", bound,
+                         ["The baseline and generated candidates execute Python inside the configured boundary. Future "
+                          "activation requires separate consent."], close="Type your name; identity is recorded as given.")
+        consent = await request_consent(ctx, asked)
         if consent.status != "accepted":
             return consent_refusal(consent)
-        return mh.confirm(workflow, workflow_digest, answer=consent.answer)   # checks the digest again, under its lock
+        # checked again holding the workspace's lock, immediately before it is recorded, and the digest recorded
+        return mh.confirm(workflow, bound["Workflow digest"], answer=consent.answer)
 
     def metaharness_propose_code(workflow: str, files_json: str, hypothesis: str, ctx: Any) -> dict:
         """Propose generated application code as {filename.py: source}, with a falsifiable hypothesis.

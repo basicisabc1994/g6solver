@@ -1,6 +1,18 @@
 """Client-mediated consent with a portable MCP schema; never infer human identity."""
+import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
+
+
+def question(asks: str, binding: Mapping[str, Any], said: Sequence[str] = (), *, close: str) -> str:
+    """The one way a person's dialog is written from what its act binds: what it asks, then every field of ``binding``
+    as ``name: value``, whole, then what the act does and how to agree or refuse. An act shows what it binds by passing
+    it here, so no field it stands on is left out of what the person reads."""
+    def shown(value: Any) -> str:
+        return value if isinstance(value, str) else json.dumps(value, sort_keys=True, default=str)
+
+    return "\n".join([asks, *(f"{name}: {shown(value)}" for name, value in binding.items()), *said, close])
 
 
 @dataclass(frozen=True)

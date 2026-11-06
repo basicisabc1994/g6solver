@@ -34,8 +34,9 @@ its digest, so an edit is a changed frozen item, and ``g6_improve_start`` refuse
 
 Enrolling, lifting a pause and taking a generation back are a person's, given only in the client's dialog through
 ``g6_improve_enrol``, ``g6_improve_resume`` and ``g6_improve_demote`` (``g6.mcp.improve``). Each runs here (``act``), on the
-interpreter the runner uses, bound to what the dialog showed. ``enrol``, ``resume`` and ``demote`` on the command line
-record nothing and say so: there is no terminal fallback and no agent answer.
+interpreter the runner uses, bound to what the dialog showed (``person_terms``): it runs only the bytes that binding names
+and checks it again under the folder's lock before it runs or records anything. ``enrol``, ``resume`` and ``demote`` on
+the command line record nothing and say so: there is no terminal fallback and no agent answer.
 
 Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been
 established.
@@ -70,6 +71,7 @@ from g6.metaharness.loop import (
     STOPPED,
     LoopSettings,
     ShadowLoop,
+    folder_lock,
     must_stop,
 )
 from g6.metaharness import reflex
@@ -457,61 +459,91 @@ def held(log: CycleLog | None) -> str:
     return (log.paused() or must_stop(log)) if log is not None else ""
 
 
-def person_terms(act_name: str, root: Path, *, generation: int | None = None) -> str:
-    """A digest of all a person's dialog for ``act_name`` shows or stands on, read from the folder as it is now: the whole
-    settings file, the Python file's digest, the enrolment on record, what holds the ticks for a pause, and the chain for a
-    generation taken back. ``g6.mcp.improve`` binds the dialog to it, and the act checks it again under the folder's
-    lock, so a change in between records nothing."""
+#: The fields of a person's act's binding that the act itself uses: the bytes it runs, and the settings it runs on.
+FILE_SHA = "Python file SHA-256"
+SETTINGS_DIGEST = "Settings digest"
+
+
+def person_terms(act_name: str, root: Path, *, generation: int | None = None) -> dict[str, Any]:
+    """The binding of a person's act on ``root``: all its dialog shows and the act stands on, read once from the folder as
+    it is now, as the fields the dialog shows (``g6.mcp.consent.question``). That is the folder, the Python file by path
+    and digest (the only bytes the act runs), the interpreter, the whole settings file by digest, the enrolment on record,
+    what holds the ticks for a pause, and the generation and chain for one taken back. ``g6.mcp.improve`` builds the
+    dialog from it and passes it to the act, which reads it again under the folder's lock before it runs or records
+    anything (``act``), so a change in between runs and records nothing."""
     settings = read_settings(root)
     path = root / CYCLE_LOG
     log = CycleLog(path) if path.is_file() else None
-    seen: dict[str, Any] = {"act": act_name, "settings": settings, "domain_file": file_digest(settings.get("domain_file")),
-                            "enrolled": log.enrolled() if log is not None else None}
+    enrolled = log.enrolled() if log is not None else None
+    domain_file = settings.get("domain_file")
+    bound: dict[str, Any] = {"Folder": str(root), "Python file": str(domain_file), FILE_SHA: file_digest(domain_file),
+                             "Runs on": settings.get("python") or "the Python of this server",
+                             SETTINGS_DIGEST: digest_of(settings)}
+    if enrolled is not None and act_name == "enrol":
+        bound |= {"It replaces the enrolment by": f"{enrolled['by']} (the name they gave)",
+                  "Enrolment it replaces": digest_of(enrolled)}
+    elif enrolled is not None:
+        bound |= {"Domain": str(enrolled.get("domain", "")), "Enrolled by": f"{enrolled['by']} (the name they gave)",
+                  "Enrolment on record": digest_of(enrolled)}
     if act_name == "resume":
-        seen |= {"held": held(log), "cycles": len(log.cycles()) if log is not None else 0}
+        bound |= {"Paused because": held(log), "Cycles on record": len(log.cycles()) if log is not None else 0}
     if act_name == "demote":
-        seen |= {"generation": generation, "lineage": lineage(root / "workspace")}
-    return digest_of(seen)
+        chain = lineage(root / "workspace")
+        head = chain["recent"][-1] if chain["recent"] else {}
+        bound |= {"Generation": generation, "Its change": str(head.get("change", "")),
+                  "Measured": json.dumps(head.get("measured", {}), sort_keys=True, default=str),
+                  "Goes back to generation": head.get("parent"), "Chain of generations": digest_of(chain)}
+    return bound
 
 
 def act(request: dict[str, Any]) -> dict[str, Any]:
     """A person's act that the client's dialog agreed to (``g6.mcp.improve``), in a process like the runner's, so what an
-    enrolment freezes is what a tick on that interpreter compares. It runs only the Python file the dialog named, by
-    digest (an enrolment's) or the one on record, and records nothing if anything the person read moved since. Like the
-    start, this is a check and not a boundary: a process with the owner's rights can reach this code."""
-    name, root, who, shown = request["act"], Path(request["folder"]), str(request["who"]), str(request["shown"])
-    generation = request.get("generation")
-    try:
-        settings = read_settings(root)
-        if digest_of(settings) != request["settings"]:
-            return _blocked(TERMS_CHANGED, f"{SETTINGS_FILE} changed after the person read it, so nothing ran or was "
-                            "recorded", "Call the tool again: the person reads what stands now.")
-        loop, _ = open_loop(root, pinned=request["domain_file"] if name == "enrol" else _pinned(root), settings=settings)
-    except DomainChanged as exc:
-        return _blocked(FROZEN_CHANGED, f"{exc}: nothing was recorded"[:500], "Call the tool again: the person reads what "
-                        "stands now.")
-    except Exception as exc:  # noqa: BLE001 - the domain file is the person's own code: say why
-        return _blocked(CANNOT_OPEN, f"The loop could not be opened: {type(exc).__name__}: {exc}"[:500])
+    enrolment freezes is what a tick on that interpreter compares. ``request["binding"]`` is what the dialog showed
+    (``person_terms``). The act holds the folder's lock from reading that binding again, before it runs anything, to its
+    write, and refuses on any difference. It runs only the Python file's bytes the binding names, by digest, never the
+    current enrolment's, and the enrolment it records freezes those bytes. Like the start, this is a check and not a
+    boundary: a process with the owner's rights can reach this code, and an editor that takes no lock can still write
+    the folder's files between the last read and the write."""
+    name, root, who = request["act"], Path(request["folder"]).resolve(), str(request["who"])
+    generation, bound = request.get("generation"), request["binding"]
+    again = "Call the tool again: the person reads what stands now, in the client's dialog."
 
     def unchanged(frozen: dict[str, Any] | None = None) -> dict[str, Any] | None:
         try:
-            same = person_terms(name, root, generation=generation) == shown
+            same = person_terms(name, root, generation=generation) == bound
         except (ValueError, LedgerError):
             same = False
-        if same and (frozen is None or frozen.get("domain_file") == request["domain_file"]):
+        if same and (frozen is None or frozen.get("domain_file") == bound[FILE_SHA]):
             return None
-        return _blocked(TERMS_CHANGED, "what the person read is no longer what stands, so nothing was recorded",
-                        "Call the tool again: the person reads what stands now, in the client's dialog.")
+        return _blocked(TERMS_CHANGED, "what the person read is no longer what stands, so nothing ran or was recorded",
+                        again)
 
     try:
-        if name == "enrol":
-            return loop.enrol(who, last_check=unchanged)
-        if name == "resume":
-            return loop.resume(who, last_check=unchanged)
-        return loop.demote(int(generation), who, last_check=unchanged)
-    except Exception as exc:  # noqa: BLE001 - a write that failed: nothing it began counts, and the person may ask again
-        return _blocked(CANNOT_RECORD, f"the act could not be recorded: {type(exc).__name__}: {exc}"[:500],
-                        "Nothing counts. Free the folder, then call the tool again: the person agrees again.")
+        with folder_lock(root):
+            refused = unchanged()
+            if refused is not None:
+                return refused
+            try:
+                settings = read_settings(root)
+                if digest_of(settings) != bound[SETTINGS_DIGEST]:
+                    return _blocked(TERMS_CHANGED, f"{SETTINGS_FILE} changed after the person read it, so nothing ran or "
+                                    "was recorded", again)
+                loop, _ = open_loop(root, pinned=bound[FILE_SHA], settings=settings)
+            except DomainChanged as exc:
+                return _blocked(FROZEN_CHANGED, f"{exc}: nothing was recorded"[:500], again)
+            except Exception as exc:  # noqa: BLE001 - the domain file is the person's own code: say why
+                return _blocked(CANNOT_OPEN, f"The loop could not be opened: {type(exc).__name__}: {exc}"[:500])
+            try:
+                if name == "enrol":
+                    return loop.enrol(who, last_check=unchanged)
+                if name == "resume":
+                    return loop.resume(who, last_check=unchanged)
+                return loop.demote(int(generation), who, last_check=unchanged)
+            except Exception as exc:  # noqa: BLE001 - a write that failed: nothing it began counts, and they may ask again
+                return _blocked(CANNOT_RECORD, f"the act could not be recorded: {type(exc).__name__}: {exc}"[:500],
+                                "Nothing counts. Free the folder, then call the tool again: the person agrees again.")
+    except WorkspaceRefused:
+        return _blocked(BUSY, "another operation is running on this folder, so nothing ran or was recorded", again)
 
 
 def act_main() -> int:

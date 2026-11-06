@@ -56,6 +56,7 @@ from g6.metaharness.schema import (
     SCHEMA,
     SELECTED,
     STANDARD_CHANGED,
+    WORKFLOW_CHANGED,
     WORKFLOW_INVALID,
     Profile,
     Proposal,
@@ -399,14 +400,23 @@ class MetaHarness:
 
     # --- the loop -----------------------------------------------------------------------------------------------
     @_serialized
-    def confirm(self, accepted_by: str, *, initial: Profile | Mapping[str, Any] | None = None) -> dict[str, Any]:
-        """A person confirms the standard, the capabilities and the held-out provenance; the workflow is frozen."""
+    def confirm(self, accepted_by: str, *, initial: Profile | Mapping[str, Any] | None = None,
+                workflow_digest: str | None = None) -> dict[str, Any]:
+        """A person confirms the standard, the capabilities and the held-out provenance; the workflow is frozen.
+        ``workflow_digest``: the digest the person agreed to in a dialog. It is checked here, holding the workspace's lock
+        and before anything is written, and it is the digest recorded, so a workflow that changed after the person's
+        agreement is not confirmed (``WORKFLOW_CHANGED``)."""
         refused = self._refusal(need_confirmed=False)
         if refused:
             return refused
         if not accepted_by.strip() or is_automated(accepted_by):
             return _blocked(APPROVAL_REQUIRED, "a person must confirm the workflow (no empty or auto: name)")
         digest_now, judging = self.workflow.digest(), judging_sha256()
+        if workflow_digest is not None and digest_now != workflow_digest:
+            return _blocked(WORKFLOW_CHANGED, "the workflow changed after the person agreed: its digest is not the one they "
+                            "read, so nothing was confirmed", "No consent was applied. Inspect the workflow "
+                            "(metaharness_inspect), then ask about the digest that stands.", consent_status="workflow_changed")
+        digest_now = digest_now if workflow_digest is None else workflow_digest
         vault = self.workflow.held_out_vault
         if vault is not None:
             changed = self._vault_changed()

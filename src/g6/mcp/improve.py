@@ -8,9 +8,12 @@ process of its own, which outlives the session that asked, and refuses when a ru
 domain in the folder or the count of stops cannot be read there. This module never runs the domain's code: only the runner
 it starts does, and the dialog names it.
 **Enrol, resume and demote** are a person's too, asked the same way, with the same allow rule and no other way to agree: the
-dialog names the folder, the Python file by digest and what the act does, and binds to a digest of all it shows
-(``g6.metaharness.runner.person_terms``). The act then runs in a process like the runner's, so an enrolment freezes what a
-tick on that interpreter compares, and it records nothing if any of it moved meanwhile.
+dialog names the folder, the Python file by digest and what the act does. Each act makes its binding once, from one read
+of all its dialog shows and it stands on (``g6.metaharness.runner.person_terms``, ``_terms`` for a start), and its dialog
+is written from that binding alone (``g6.mcp.consent.question``), so every field it binds is shown. The binding travels
+with the act, which reads it again holding the folder's lock, immediately before it runs or records anything, and runs
+only the bytes it names. An act runs in a process like the runner's, so an enrolment freezes what a tick on that
+interpreter compares, and it records nothing if any of it moved meanwhile.
 An agreement binds what the dialog showed: if any of it moved while the dialog was up, nothing starts and the person is
 asked again. The start records the settings it agreed to, and the runner holds to them on every restart, so a changed
 settings file needs a new agreement even with no stop in between. It never moves or deletes a ``STOP`` file. It records the
@@ -43,6 +46,7 @@ from typing import Any
 from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, is_allowed
 from g6.core.ledger import LedgerError, digest as digest_of
 from g6.core.storage import g6_home
+from g6.mcp.consent import question as _question
 from g6.metaharness.api import _blocked, _envelope
 from g6.self_maintenance import digest
 from g6.self_maintenance.envelope import (
@@ -184,43 +188,64 @@ def _cannot_start(root: Path) -> dict | None:
     return None
 
 
-def _terms(root: Path, settings: dict[str, Any], standing: dict[str, Any], stops: int) -> str:
-    """A digest of all a dialog shows or stands on: the whole settings file, the Python file, who enrolled it, any stop in
-    place as ``stop_to_lift`` reads it, which is ``standing``, the count of stops, and any pause. Any write to the stop
-    changes that. So does a stop that died between its two writes, which only the count shows."""
-    log = _log(root)
-    return digest_of({"settings": settings, "domain_file": file_digest(settings.get("domain_file")),
-                      "enrolled": log.enrolled(), "stop": standing, "stops": stops, "paused": log.paused()})
+#: The fields of a start's binding that the start records, and the ``STOP`` file's, as ``stop_to_lift`` names them.
+SETTINGS_DIGEST = "Settings digest"
+STOPS_COUNTED = "Stops counted"
+LIFTS = {"lifted": "STOP file SHA-256", "lifted_bytes": "STOP file bytes", "lifted_mtime_ns": "STOP file modified (ns)"}
 
 
-def asked(folder: str) -> tuple[Path, str, str] | dict:
-    """What the person reads before the runner starts, the folder it is about, and the terms that binds them to; a
-    blocked reply when it cannot start, so no dialog is shown for nothing. The terms are read before the question, so a
-    change between the two asks again rather than starting on what was not read."""
+def _terms(root: Path) -> dict[str, Any]:
+    """The binding of a start: all its dialog shows and the start stands on, read once, as the fields the dialog shows
+    (``g6.mcp.consent.question``). That is the folder, the Python file by path and digest, the enrolment on record, each
+    provider's allowance, the interpreter, the whole settings file by digest, the count of stops and the count the last
+    start saw, any stop in place with the ``STOP`` file it would lift (``stop_to_lift``), and any pause. Any write to the
+    stop changes it, and so does a stop that died between its two writes, which only the count shows."""
+    settings, log, stops = read_settings(root), _log(root), stops_asked(root)
+    enrolled = (log.enrolled() if log is not None else None) or {}
+    python = _pinned_python(settings)
+    bound: dict[str, Any] = {
+        "Folder": str(root), "Domain": str(enrolled.get("domain", "its domain")),
+        "Python file": str(settings.get("domain_file")), "Python file SHA-256": file_digest(settings.get("domain_file")),
+        "Enrolled by": f"{enrolled.get('by')} (the name they gave)", "Enrolment on record": digest_of(enrolled),
+        "Use": "; ".join(f"{w.provider}: {w.allowance:g} a week{' (an estimate)' if w.estimated else ''}, keeping "
+                         f"{w.reserve_share:.0%} for you until the week's last day" for w in windows_from(settings)),
+        "Runs on": python or ("the Python of this server, so any edit to that install stops its ticks until a person "
+                              "enrols again"),
+        SETTINGS_DIGEST: digest_of(settings), STOPS_COUNTED: stops,
+        "Stops the last start counted": ((log.started() if log is not None else None) or {}).get("stops", 0)}
+    why, standing = stop_reason(root), stop_to_lift(root)
+    if why:
+        bound["Stop now in place"] = why
+    bound |= {LIFTS[name]: value for name, value in standing.items()}
+    paused = log.paused() if log is not None else ""
+    if paused:
+        bound["Paused because"] = paused
+    return bound
+
+
+def asked(folder: str) -> tuple[Path, str, dict[str, Any]] | dict:
+    """What the person reads before the runner starts, the folder it is about, and the binding it is built from
+    (``_terms``); a blocked reply when it cannot start, so no dialog is shown for nothing. The dialog is built from that
+    one read, so what the person reads is what the start stands on."""
     root = _root(folder)
     cannot = _cannot_start(root)
     if cannot is not None:
         return cannot
-    settings, log, stops = read_settings(root), _log(root), stops_asked(root)
-    terms = _terms(root, settings, stop_to_lift(root), stops)
-    enrolled = log.enrolled()
-    use = [f"{w.provider}: {w.allowance:g} a week{' (an estimate)' if w.estimated else ''}, keeping {w.reserve_share:.0%} for "
-           "you until the week's last day" for w in windows_from(settings)]
-    python = _pinned_python(settings)
-    question = [f"Start G6's self-improvement loop on {enrolled.get('domain', 'its domain')}?", f"Folder: {root}",
-                f"Python file: {settings.get('domain_file')}, as enrolled by {enrolled['by']} (the name they gave).", *use,
-                f"It runs on {python}." if python else ("It runs on the Python of this server, so any edit to that install "
-                                                        "stops its ticks until a person enrols again."),
-                f"Settings digest: {digest_of(settings)}.", RUNS]
-    if stop_reason(root):
-        question.append(f"Starting lifts the stop now in place ({stop_reason(root)}). Its file stays, and any write to it after "
-                        "that stops the loop again.")
-    elif stops > (log.started() or {}).get("stops", 0):
-        question.append(f"A stop was asked for since the last start and no STOP file stands for it: {STOPS_FILE} in the folder "
-                        "says why. Starting goes past it.")
-    if log.paused():
-        question.append(f"The loop is paused, so it will spend nothing until you lift that: {log.paused()}"[:300])
-    return root, "\n".join([*question, NAME]), terms
+    try:
+        bound = _terms(root)
+    except (ValueError, LedgerError) as exc:
+        return _blocked(RECORDS_UNREADABLE, f"the loop's records cannot be trusted: {exc}"[:400],
+                        "A person inspects the folder; nothing was started.")
+    said = [RUNS]
+    if "Stop now in place" in bound:
+        said.append("Starting lifts the stop now in place. Its file stays, and any write to it after that stops the loop "
+                    "again.")
+    elif bound[STOPS_COUNTED] > bound["Stops the last start counted"]:
+        said.append(f"A stop was asked for since the last start and no STOP file stands for it: {STOPS_FILE} in the folder "
+                    "says why. Starting goes past it.")
+    if "Paused because" in bound:
+        said.append("The loop is paused, so it will spend nothing until you lift that.")
+    return root, _question(f"Start G6's self-improvement loop on {bound['Domain']}?", bound, said, close=NAME), bound
 
 
 def _spawn(root: Path, settings: dict[str, Any]) -> Any:
@@ -273,24 +298,35 @@ def _watch(root: Path, process: Any, since: datetime) -> dict:
                      running=False, folder=str(root), next_action="Read g6_improve_status in a minute.")
 
 
-def start(root: Path, who: str, shown: str | None = None) -> dict:
-    """Record who started it and start the runner. What the person read may have moved while the dialog was up, so
-    ``shown``, the terms ``asked`` gave, must still be what stands, and a change asks them again. The start records what
-    it stands on, so a restart holds to the same settings and any stop since closes it. It lifts only the ``STOP`` file
-    those terms cover, by recording it: any other stop stands, and nothing starts."""
+def _not_what_was_read(root: Path) -> dict:
+    return _blocked(TERMS_CHANGED, "what the person read is no longer what would start, so nothing was started", ASK_AGAIN,
+                    running=False, folder=str(root))
+
+
+def start(root: Path, who: str, shown: dict[str, Any] | None = None) -> dict:
+    """Record who started it and start the runner, on the binding the person agreed to: ``shown``, which ``asked`` built
+    the dialog from, or with none (a Python caller, with no dialog), what stands now, recorded as read. What the person
+    read may have moved while the dialog was up, so the start reads it again before it waits for the folder's lock, and
+    again holding the lock, immediately before it records, and any difference asks them again. It records the binding's settings digest, count of stops and ``STOP`` file, never ones
+    read afresh, so a restart holds to what was agreed and any stop since closes it. It lifts only the ``STOP`` file the
+    binding names, by recording it: any other stop stands, and nothing starts."""
     cannot = _cannot_start(root)
     if cannot is not None:
         return cannot
-    settings, stops, agreed = read_settings(root), stops_asked(root), stop_to_lift(root)
     try:
-        if stops < 0:
+        now = _terms(root)
+        if shown is not None and now != shown:
+            return _not_what_was_read(root)
+        bound = now if shown is None else shown
+        if bound[STOPS_COUNTED] < 0:
             raise OSError(f"{STOPS_FILE} cannot be read")      # a restart would read two unreadable counts as one
-        if shown is not None and _terms(root, settings, agreed, stops) != shown:
-            return _blocked(TERMS_CHANGED, "what the person read is no longer what would start, so nothing was started",
-                            ASK_AGAIN, running=False, folder=str(root))
         with Coordination(root / ".tick").mutex():
-            CycleLog(root / CYCLE_LOG).start(who, at=datetime.now().astimezone().isoformat(), settings=digest_of(settings),
-                                             stops=stops, **agreed)
+            settings = read_settings(root)
+            if digest_of(settings) != bound[SETTINGS_DIGEST] or (shown is not None and _terms(root) != bound):
+                return _not_what_was_read(root)
+            CycleLog(root / CYCLE_LOG).start(who, at=datetime.now().astimezone().isoformat(), settings=bound[SETTINGS_DIGEST],
+                                             stops=bound[STOPS_COUNTED],
+                                             **{name: bound[label] for name, label in LIFTS.items() if label in bound})
         why = stop_reason(root)
         if why:
             record_stop(root, why, at=datetime.now().astimezone().isoformat())
@@ -342,68 +378,65 @@ def _cannot_act(act_name: str, root: Path, generation: int | None) -> dict | Non
     return None
 
 
-def asked_act(act_name: str, folder: str, generation: int | None = None) -> tuple[Path, str, str] | dict:
-    """What the person reads before ``act_name`` (``enrol``, ``resume`` or ``demote``), the folder, and the digest that
-    binds the two (``g6.metaharness.runner.person_terms``); a blocked reply when it cannot be put to them."""
-    from g6.metaharness.runner import held, person_terms
-    from g6.metaharness.shadow import lineage
+#: COPY: What each person's act does, said in its dialog after the fields it binds.
+DOES = {
+    "enrol": ["The Python file runs on this computer as you: now, to read what it declares, and in every tick once the loop "
+              "is started.",
+              "Enrolling freezes what judges this domain as the file declares it now: its judge, its cases and its held-out "
+              "split. Every change the loop tries is measured against them, and only a new enrolment changes them. It "
+              "starts nothing: g6_improve_start asks for that."],
+    "resume": ["Lifting it lets the ticks run again within the pacing rule, from the generation that stands. A stop in "
+               "place stays: only g6_improve_start lifts one.",
+               "The Python file runs on this computer as you, to read what it declares."],
+    "demote": ["The loop goes back to the profile of the generation named above and runs on from there; the change can be "
+               "proposed again.",
+               "The Python file runs on this computer as you, to read what it declares."],
+}
+
+
+def asked_act(act_name: str, folder: str, generation: int | None = None) -> tuple[Path, str, dict[str, Any]] | dict:
+    """What the person reads before ``act_name`` (``enrol``, ``resume`` or ``demote``), the folder, and the binding it is
+    built from (``g6.metaharness.runner.person_terms``), read once; a blocked reply when it cannot be put to them. The
+    folder is read again before the dialog is shown, and a binding that moved meanwhile asks nothing."""
+    from g6.metaharness.runner import person_terms
 
     root = _root(folder)
     cannot = _cannot_act(act_name, root, generation)
     if cannot is not None:
         return cannot
-    shown = person_terms(act_name, root, generation=generation)
-    settings, log = read_settings(root), _log(root)
-    path, python = settings.get("domain_file"), _pinned_python(settings)
-    runs = f"It runs on {python}." if python else "It runs on the Python of this server."
-    if act_name == "enrol":
-        before = log.enrolled() if log is not None else None
-        question = ["Enrol a domain for G6's self-improvement loop?", f"Folder: {root}",
-                    f"Python file: {path} (sha256 {file_digest(path)}). It runs on this computer as you: now, to read what "
-                    "it declares, and in every tick once the loop is started.",
-                    *([f"It replaces the enrolment by {before['by']} (the name they gave)."] if before else []),
-                    "Enrolling freezes what judges this domain as the file declares it now: its judge, its cases and its "
-                    "held-out split. Every change the loop tries is measured against them, and only a new enrolment "
-                    "changes them. It starts nothing: g6_improve_start asks for that.",
-                    runs, f"Settings digest: {digest_of(settings)}."]
-    else:
-        enrolled = log.enrolled()
-        domain = enrolled.get("domain", "its domain")
-        file = (f"Python file: {path}, as enrolled by {enrolled['by']} (the name they gave). It runs on this computer as "
-                f"you, to read what it declares. {runs}")
-        if act_name == "resume":
-            question = [f"Lift the pause on G6's self-improvement loop on {domain}?", f"Folder: {root}",
-                        f"It is paused because: {held(log)}"[:600],
-                        "Lifting it lets the ticks run again within the pacing rule, from the generation that stands. A "
-                        "stop in place stays: only g6_improve_start lifts one.", file]
-        else:
-            head = lineage(root / "workspace")["recent"][-1]
-            question = [f"Take generation {generation} of G6's self-improvement loop on {domain} back?", f"Folder: {root}",
-                        f"Generation {generation}: {head.get('change', '')}; measured {head.get('measured', {})}"[:600],
-                        f"The loop goes back to the profile of generation {head.get('parent')} and runs on from there; the "
-                        "change can be proposed again.", file]
-    return root, "\n".join([*question, NAME_RECORDED]), shown
+    try:
+        bound = person_terms(act_name, root, generation=generation)
+        asks = {"enrol": "Enrol a domain for G6's self-improvement loop?",
+                "resume": f"Lift the pause on G6's self-improvement loop on {bound.get('Domain')}?",
+                "demote": f"Take generation {generation} of G6's self-improvement loop on {bound.get('Domain')} back?"}
+        shown = _question(asks[act_name], bound, DOES[act_name], close=NAME_RECORDED)
+        if person_terms(act_name, root, generation=generation) != bound:
+            return _blocked(TERMS_CHANGED, "the folder changed while its question was being read, so nothing was asked or "
+                            "recorded", CHANGED_SINCE, folder=str(root))
+    except (ValueError, LedgerError) as exc:
+        return _blocked(RECORDS_UNREADABLE, f"the loop's records cannot be trusted: {exc}"[:400],
+                        "A person inspects the folder; nothing was asked or recorded.")
+    return root, shown, bound
 
 
-def act(act_name: str, root: Path, who: str, shown: str, generation: int | None = None) -> dict:
-    """Do what the person agreed to, if what they read still stands: in a process like the runner's (``_run_act``), which
-    checks it again under the folder's lock. The Python file's digest is read before the check, so the bytes that run are
-    the ones the person was shown, or none."""
-    from g6.metaharness.runner import person_terms
+def act(act_name: str, root: Path, who: str, shown: dict[str, Any], generation: int | None = None) -> dict:
+    """Do what the person agreed to, on the binding their dialog was built from (``shown``), if it still stands: in a
+    process like the runner's (``_run_act``), which reads it again under the folder's lock before it runs or records
+    anything, and runs only the bytes it names."""
+    from g6.metaharness.runner import SETTINGS_DIGEST as BOUND_SETTINGS, person_terms
 
     cannot = _cannot_act(act_name, root, generation)
     if cannot is not None:
         return cannot
     try:
         settings = read_settings(root)
-        pinned = file_digest(settings.get("domain_file"))
-        if person_terms(act_name, root, generation=generation) != shown:
+        if (not isinstance(shown, dict) or digest_of(settings) != shown.get(BOUND_SETTINGS)
+                or person_terms(act_name, root, generation=generation) != shown):
             return _blocked(TERMS_CHANGED, "what the person read is no longer what stands, so nothing ran or was recorded",
                             CHANGED_SINCE, folder=str(root))
     except (ValueError, LedgerError) as exc:
         return _blocked(RECORDS_UNREADABLE, f"the loop's records cannot be trusted: {exc}"[:400], CHANGED_SINCE)
-    request = {"act": act_name, "folder": str(root), "who": who, "shown": shown, "generation": generation,
-               "settings": digest_of(settings), "domain_file": pinned}
+    request = {"act": act_name, "folder": str(root), "who": who, "binding": shown, "generation": generation}
     return {**_run_act(root, settings, request), "by": who}
 
 
@@ -422,22 +455,36 @@ def _run_act(root: Path, settings: dict[str, Any], request: dict[str, Any]) -> d
     except OSError as exc:
         return _blocked(ACT_FAILED, f"the act could not be started: {type(exc).__name__}: {exc}"[:500],
                         "Nothing was recorded.", folder=str(root))
-    return _read_act(process.returncode, out, err)
+    return _read_act(process.returncode, out, err, act_name=request.get("act"))
 
 
-def _read_act(code: int | None, out: str, err: str = "") -> dict:
-    """The act's reply, or a failure: a reply that does not read, or claims more than a qualified draft, is not taken."""
+#: What each person's act replies when it did what it was asked, and nothing else does.
+ACT_DONE = {"enrol": "G6_E_LOOP_ENROLLED", "resume": "G6_E_LOOP_RESUMED", "demote": "G6_E_LOOP_DEMOTED"}
+
+
+def _read_act(code: int | None, out: str, err: str = "", *, act_name: str | None = None) -> dict:
+    """The one reader of a person's act as its process ended (``g6.metaharness.runner.act_main``). It did what it was
+    asked only on exit status 0 with a qualified draft whose code is that act's own (``ACT_DONE``; any of them when no act
+    is named). It refused only on exit status 1 with a blocked reply that has a G6 code, which is passed on as it is.
+    Anything else is ``ACT_FAILED`` and names the exit status and the reply's state: a reply that does not read, one that
+    claims more than a qualified draft, a success with a failing status, and a status never seen before."""
     lines = [line for line in (out or "").splitlines() if line.strip()]
     try:
         reply = json.loads(lines[-1]) if lines else None
     except ValueError:
         reply = None
-    if (not isinstance(reply, dict) or not isinstance(reply.get("warning_card"), dict)
-            or reply.get("completion_state") not in ("qualified-draft", "blocked-escalated")):
-        return _blocked(ACT_FAILED, f"the act ended with exit code {code} and no reply G6 could read, so nothing it did is "
-                        f"claimed: {(err or out or '')[-300:]}"[:500], "g6_improve_status says what the folder's records "
-                        "hold.")
-    return reply
+    state = reply.get("completion_state") if isinstance(reply, dict) else None
+    card = reply.get("warning_card") if isinstance(reply, dict) else None
+    said = card.get("code") if isinstance(card, dict) else None
+    done = set(ACT_DONE.values()) if act_name is None else {ACT_DONE.get(act_name)}
+    if code == 0 and state == "qualified-draft" and said in done:
+        return reply
+    if code == 1 and state == "blocked-escalated" and isinstance(said, str) and said.startswith("G6_E_"):
+        return reply
+    return _blocked(ACT_FAILED, f"the act ended with exit status {code!r} and a reply of state {state!r} and code "
+                    f"{said!r}, which is neither the act done nor its refusal, so nothing it did is claimed: "
+                    f"{(err or out or '')[-300:]}"[:500], "g6_improve_status says what the folder's records hold.",
+                    exit_status=code, reply_state=state)
 
 
 def stop(folder: str, reason: str = "") -> dict:

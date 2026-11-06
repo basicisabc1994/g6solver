@@ -567,6 +567,27 @@ def must_stop(log: CycleLog) -> str:
         f"tick {c['tick']} {c['outcome']} ({str(c.get('reason', ''))[:160]})" for c in streak)
 
 
+_holding = threading.local()
+
+
+@contextmanager
+def folder_lock(root: str | Path) -> Iterator[None]:
+    """The folder's lock (its ``.tick`` mutex), taken once by a thread however often it asks: a person's act holds it from
+    its last check of what the person read, through the domain's code it runs, to its write, and the loop's own
+    operations inside that take it too. ``WorkspaceRefused`` while another holds it."""
+    key = str(Path(root).resolve())
+    held = _holding.__dict__.setdefault("roots", set())
+    if key in held:
+        yield
+        return
+    with Coordination(Path(key) / ".tick").mutex():
+        held.add(key)
+        try:
+            yield
+        finally:
+            held.discard(key)
+
+
 def _exclusive(method: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
     """One operation at a time per folder, on what is written and not on what this handle last read: a restart can
     overlap a tick that is still running, and a person's process is not the loop's. The lock is the operating system's,
@@ -575,7 +596,7 @@ def _exclusive(method: Callable[..., dict[str, Any]]) -> Callable[..., dict[str,
     @wraps(method)
     def invoke(self: ShadowLoop, *args: Any, **kwargs: Any) -> dict[str, Any]:
         try:
-            with Coordination(self.root / ".tick").mutex():
+            with folder_lock(self.root):
                 self.log.reload()
                 if self.mh is not None:
                     self.mh.refresh()

@@ -208,6 +208,8 @@ class Surface:
 
     @_surface_operation
     def confirm(self, workflow: str, workflow_digest: str, *, answer: str | None) -> dict[str, Any]:
+        """``workflow_digest``: the digest the person agreed to, which the harness checks again holding the workspace's
+        lock, immediately before it records, and records."""
         mh = self.harness(workflow)
         if isinstance(mh, dict):
             return mh
@@ -216,7 +218,7 @@ class Surface:
         if not answer or not answer.strip():
             return _blocked(APPROVAL_REQUIRED, "no person confirmed: a name comes only from the client's dialog",
                             in_the_dialog("metaharness_confirm"))
-        return as_json(mh.confirm(answer.strip()))
+        return as_json(mh.confirm(answer.strip(), workflow_digest=workflow_digest))
 
     @_surface_operation
     def propose_code(self, workflow: str, files: dict[str, str], *, hypothesis: str, session: str) -> dict[str, Any]:

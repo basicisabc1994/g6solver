@@ -645,8 +645,9 @@ either file, so neither
 can reach `person_free_adoption_outside_shadow`. Enrolling pins the domain file's digest, so an edit is a changed frozen
 item: `g6_improve_start`, a restart and lifting a pause each refuse it before it can run, and what runs is the bytes that
 were checked. The pin holds that file, not what it imports. Then a person enrols it with `g6_improve_enrol`, in the client's
-dialog, which names the folder and the file by digest. The enrolment runs on the interpreter the runner uses, and records
-nothing if what the person read moved meanwhile. `g6_improve_start` then starts the runner; lifting a pause is
+dialog, which names the folder and the file by digest. The enrolment runs on the interpreter the runner uses. Like a resume
+or a demotion, it runs only the bytes its dialog named, and reads all its dialog showed again holding the folder's lock,
+before it runs or records anything: if any of it moved meanwhile, nothing runs and nothing is recorded. `g6_improve_start` then starts the runner; lifting a pause is
 `g6_improve_resume`, asked the same way. There is no terminal fallback (the owner's standing rule): the command line's `enrol`,
 `resume` and `demote` record nothing and say where each is done.
 
