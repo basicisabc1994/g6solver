@@ -649,7 +649,7 @@ def test_both_controls_decide_a_seen_failure_by_the_one_rule_and_nothing_else_de
 
 # --- an exit status is a number that was seen (replay cohort, repair 2, review 2's finding 4) ------------------------------------
 @pytest.mark.parametrize(("value", "code"), [
-    ("0", 0), ("1", 1), ("2", 2), ("124", 124), ("255", 255), (0, 0), (5, 5),
+    ("0", 0), ("1", 1), ("2", 2), ("124", 124), ("255", 255), (0, 0), (5, 5), ("124\n", 124), (" 1 ", 1),
     ("", None), (" ", None), (None, None), ("abc", None), ("1.0", None), ("-1", None), ("256", None), ("1\n2", None),
     ("１", None), (True, None), (False, None), (-1, None), (256, None), (1.0, None), ([1], None),
 ])

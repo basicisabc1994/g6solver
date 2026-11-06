@@ -411,12 +411,13 @@ def seen(done: Any, read: Callable[[bytes], Any] | None = None) -> Seen:
 
 def exit_status(value: Any) -> int | None:
     """The one reader of an exit status a script wrote (replay cohort, repair 2): an integer from 0 to 255, given as an int or as
-    the decimal digits a shell writes (``exit=$?``); None for anything else (missing, empty, not a number, out of range, a bool),
-    so a run whose exit status was not written is not seen to end, never known."""
+    the decimal digits a shell writes (``exit=$?``), with the line's own white space around them; None for anything else
+    (missing, empty, not a number, out of range, a bool), so a run whose exit status was not written is not seen to end, never
+    known."""
     if isinstance(value, bool):
         return None
-    if isinstance(value, str) and re.fullmatch("[0-9]{1,3}", value):
-        value = int(value)
+    if isinstance(value, str) and re.fullmatch("[0-9]{1,3}", value.strip()):
+        value = int(value.strip())
     return value if isinstance(value, int) and 0 <= value <= 255 else None
 
 
