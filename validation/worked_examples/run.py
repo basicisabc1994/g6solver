@@ -1086,17 +1086,17 @@ def r3_caps(model: str, *, spent: float, fable_left: int) -> tuple[float, float]
 def _r3_made(rows: Iterable[Mapping[str, Any]], root: Path) -> dict[tuple[str, str, str, int], tuple[str, str]]:
     """Each round 3 run whose agent started, by (model, task, arm, repeat): its name and how it ended, as its folder under the archive
     ``root`` says (``wecommon.ending``): a host run's ending file, which a stop before the index's end of the run leaves too. The
-    newest start of a key is its run. The one rule ``r3_done`` (the runner's refusal) and ``r3_made`` (the loop's recovery) read."""
+    newest start of a key is its run. The one rule ``r3_done`` (the runner's refusal) and ``r3_made`` (the loop's recovery) read.
+    Of an index row only the run it starts is read; every fact of the key is the run's own (``wecommon.run_facts``), so a run
+    whose starts disagree, which has none, blocks no run and is recovered as none (study follow-up review 2, finding 8)."""
     rows = list(rows)
     done = {}
-    for r in rows:
-        if not (r.get("event") == "started" and r.get("kind") == "run" and r.get("arm")):
-            continue
-        facts = c.run_facts(root, str(r["run"]), rows)      # the one source of the run's facts, from these rows of the index
+    for name in dict.fromkeys(str(r["run"]) for r in rows if r.get("event") == "started" and r.get("kind") == "run"):
+        facts = c.run_facts(root, name, rows)      # the one source of the run's facts, from these rows of the index
         end = facts.ending if facts is not None else None
-        if end and end.get("agent_started") and end.get("status") and facts.repeat is not None:   # its repeat is the facts':
-            done[(str(r.get("model")), str(r.get("task")), str(r.get("arm")), facts.repeat)] = (facts.name,      # none blocks
-                                                                                                 str(end["status"]))   # no repeat
+        if end and facts.kind == "run" and facts.arm and end.get("agent_started") and end.get("status") \
+                and facts.repeat is not None:      # a run whose start names no repeat blocks no repeat
+            done[(facts.model, facts.task, facts.arm, facts.repeat)] = (facts.name, str(end["status"]))
     return done
 
 
@@ -4035,7 +4035,8 @@ def main(argv: list[str] | None = None) -> int:
         sched = r3_schedule(load_tasks())
         print(json.dumps({"spent_usd": c.spent(rows), "stop_usd": R3_CAP_USD,
                           "runs": [{"model": m, "task": t, "arm": a, "repeat": r, "ended": done.get((m, t, a, r))}
-                                   for m, t, a, r in sched]}, indent=1))
+                                   for m, t, a, r in sched],
+                          "conflicting_starts": c.conflicting(rows)}, indent=1))     # runs with no facts (follow-up review 2, 8)
         return 0
     if args.command == "base":
         print(json.dumps(build_base(archive, args.ref, args.claude or default_claude(), variant=variant), indent=1))

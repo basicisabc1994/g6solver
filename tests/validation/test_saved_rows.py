@@ -198,6 +198,7 @@ def test_a_row_kept_under_the_keys_name_in_another_case_bars_it_as_the_file_it_i
 
 def test_the_writer_never_writes_over_another_runs_row_and_replaces_a_torn_one(tmp_path):
     archive, run, row = _run(tmp_path)
+    row = {**row, c.MADE_UNDER: c.run_facts(archive, run.rel).ending_sha256}      # as loop.one writes it (follow-up review 2, 1)
     _, other, other_row = _run(tmp_path, arm="A")
     folder = tmp_path / c.SAVED
     folder.mkdir()

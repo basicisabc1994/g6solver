@@ -488,6 +488,13 @@ AFTER = "failed_after_ending.json"
 #: What every saved verdict records (``loop.one``'s row, ``loop.rescore``'s amended one): the digest of the ending it was made
 #: under (``ending_sha256``), so a verdict saved under another ending is void (``verdict``).
 MADE_UNDER = "ending_sha256"
+#: Where a run's ending is read from (``run_facts``): its ending's own files (``ENDING``, and ``AFTER`` beside it), else a
+#: container run's own record (``run.json``), else the index's end of it. Whatever the source, the bytes it was read from have
+#: one digest (``_digest``), so a verdict binds its run's whole ending (study follow-up review 2, finding 1).
+ENDING_FROM = (ENDING, "run.json", "index")
+#: What a run's start says of it that is a fact of the run (``run_facts``): a name two starts give that differ in any of these is
+#: no run (``conflicting``; study follow-up review 2, finding 8).
+START_FACTS = ("kind", "task", "arm", "repeat", "model", "executor")
 
 
 #: Arms whose run keeps a Claude Code baseline, its first patch, and is admitted only while it has it (arm K3; ``run``'s
@@ -505,11 +512,14 @@ class RunFacts:
     task: str
     executor: str                        # "host" or "container", as its start says
     ending: Mapping[str, Any] | None     # how it ended (``run_facts``); None: no ending on record
-    ending_sha256: str | None            # the digest of its ending's files (``ENDING``, ``AFTER``); None when it has neither
+    ending_sha256: str | None            # the digest of what its ending was read from, whatever it is (``_digest``); None for nothing
     kept: Mapping[str, str]              # each patch a capture kept (``FIRST_PATCH``: K3's baseline), by the digest recorded then
     folder: Path
     repeat: int | None = None            # as its start names it; None for a start that names none (every round 3 run's names one)
     cost_usd: float | None = None        # what its end in the index says it cost; None while no end is there
+    ending_from: str = ""                # where its ending was read from (``ENDING_FROM``); "" for no ending
+    model: str = ""                      # as its start names it
+    kind: str = ""                       # as its start names it: "run" for a run of a bug
 
 
 def run_facts(archive: Archive | Path, name: str, rows: Iterable[Mapping[str, Any]] | None = None) -> RunFacts | None:
@@ -518,16 +528,19 @@ def run_facts(archive: Archive | Path, name: str, rows: Iterable[Mapping[str, An
     ``run.r3_done``, ``compare.saved``, ``loop.one``, ``loop.rescore`` and the reviewer cases' export. A run is found only by a
     start in the index (``rows``, read now when not given) whose name is exactly ``name``: no other name, and no row a caller
     holds, says anything of it, and a name no start has (an alias such as ``a/../a``, or none) gives None, which is never
-    admitted. Its ending: its ending file (``ENDING``), "error" when a failure was recorded after an ending that would be scored
-    (``AFTER``), while one with no verdict to give stays as it is ("limited", "refused", K3's "no_first_patch"); a host run with
-    no ending file has none; any other run's is its own record in its folder (``run.json``), else the index's end of it. The
-    ending's files are read once, and their digest is taken from the same bytes."""
+    admitted; so does a name two starts give that differ in any fact a start gives (``START_FACTS``): one run has one set of
+    facts, and such a name has none (study follow-up review 2, finding 8). Its ending: its ending file (``ENDING``), "error" when a
+    failure was recorded after an ending that would be scored (``AFTER``), while one with no verdict to give stays as it is
+    ("limited", "refused", K3's "no_first_patch"); a host run with no ending file has none; any other run's is its own record in
+    its folder (``run.json``), else the index's end of it. What the ending is read from is read once, and its one digest
+    (``_digest``) is taken from the same bytes, whatever the source (finding 1)."""
     archive = archive if isinstance(archive, Archive) else Archive(Path(archive))
     rows = list(archive.rows() if rows is None else rows)
     name = str(name or "")
-    started = next((r for r in rows if r.get("event") == "started" and r.get("run") == name), None) if name else None
-    if started is None:
+    starts = [r for r in rows if r.get("event") == "started" and r.get("run") == name] if name else []
+    if not starts or _disagree(starts):
         return None
+    started = starts[0]
     folder, executor = archive.root / name, "host" if started.get("executor") == "host" else "container"
     files: dict[str, bytes] = {}
     for part in (ENDING, AFTER):
@@ -537,9 +550,7 @@ def run_facts(archive: Archive | Path, name: str, rows: Iterable[Mapping[str, An
             continue
         except OSError as exc:          # there, but not readable: an ending of its own, never taken for none
             files[part] = f"unreadable: {type(exc).__name__}".encode()
-    digest = hashlib.sha256()
-    for part, data in files.items():
-        digest.update(f"{part}\0{len(data)}\0".encode() + data)
+    ending, source, parts = _ending_from(files, executor, folder, rows, name)
     kept: dict[str, str] = {}
     for r in rows:
         if r.get("event") == "kept" and r.get("run") == name and r.get("patch") and r.get("sha256"):
@@ -548,33 +559,81 @@ def run_facts(archive: Archive | Path, name: str, rows: Iterable[Mapping[str, An
     ended = next((r for r in reversed(rows) if r.get("event") == "ended" and r.get("run") == name), None)
     cost = (ended or {}).get("cost_usd")
     return RunFacts(name=name, arm=str(started.get("arm") or ""), task=str(started.get("task") or ""), executor=executor,
-                    ending=_ending_from(files, executor, folder, rows, name),
-                    ending_sha256=digest.hexdigest() if files else None, kept=MappingProxyType(kept), folder=folder,
+                    ending=ending, ending_sha256=_digest(parts), kept=MappingProxyType(kept), folder=folder,
                     repeat=repeat if isinstance(repeat, int) and not isinstance(repeat, bool) else None,
-                    cost_usd=float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else None)
+                    cost_usd=float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else None,
+                    ending_from=source, model=str(started.get("model") or ""), kind=str(started.get("kind") or ""))
+
+
+def _disagree(starts: list[Mapping[str, Any]]) -> bool:
+    """Whether a run's starts differ in a fact a start gives (``START_FACTS``): the one rule ``run_facts`` and ``conflicting`` ask."""
+    return len({tuple(json.dumps(s.get(k), sort_keys=True, default=str) for k in START_FACTS) for s in starts}) > 1
+
+
+def conflicting(rows: Iterable[Mapping[str, Any]]) -> dict[str, str]:
+    """Every run name the index starts more than once with starts that differ in a fact a start gives (``_disagree``), and which
+    facts: such a name has no facts (``run_facts``), so it blocks no run and is recovered as none, and the runner's schedule
+    reports it (study follow-up review 2, finding 8)."""
+    starts: dict[str, list[Mapping[str, Any]]] = collections.defaultdict(list)
+    for r in rows:
+        if r.get("event") == "started" and r.get("run"):
+            starts[str(r["run"])].append(r)
+    return {name: "its starts differ in " + ", ".join(k for k in START_FACTS if len({json.dumps(s.get(k), default=str) for s in got}) > 1)
+            for name, got in starts.items() if _disagree(got)}
 
 
 def _ending_from(files: Mapping[str, bytes], executor: str, folder: Path, rows: list[Mapping[str, Any]],
-                 name: str) -> Mapping[str, Any] | None:
-    """``run_facts``'s ending, from the bytes of the ending's files it read, else the run's own record or its end in the index."""
+                 name: str) -> tuple[Mapping[str, Any] | None, str, list[tuple[str, bytes]]]:
+    """``run_facts``'s ending, where it was read from (``ENDING_FROM``; "" for no ending), and every byte it was read from, in
+    order, so one digest covers whatever the ending was read from (``_digest``; study follow-up review 2, finding 1): the ending's
+    files it read (``ENDING``, ``AFTER``); for a container run with no ending file, its own record as it was read (``run.json``,
+    one that cannot be read included), then the index's end of it when that is the ending (its keys sorted)."""
+    parts = list(files.items())
     if ENDING in files:
         try:
             first = json.loads(files[ENDING].decode("utf-8"))
         except ValueError:
-            return None
+            return None, "", parts
         status = str(first.get("status") or "") if isinstance(first, dict) else ""
         if not status:
-            return None
-        return MappingProxyType({**first, "status": status if status not in SCORED or AFTER not in files else "error"})
+            return None, "", parts
+        return (MappingProxyType({**first, "status": status if status not in SCORED or AFTER not in files else "error"}),
+                ENDING, parts)
     if executor == "host":
-        return None
+        return None, "", parts
+    record = None
     try:
-        record = json.loads((folder / "run.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        record = None
-    if not isinstance(record, dict):
-        record = next((dict(r) for r in reversed(rows) if r.get("event") == "ended" and r.get("run") == name), None)
-    return MappingProxyType(dict(record)) if record and record.get("status") else None
+        data = (folder / "run.json").read_bytes()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:              # there, but not readable: part of what the ending was read from
+        parts.append(("run.json", f"unreadable: {type(exc).__name__}".encode()))
+    else:
+        parts.append(("run.json", data))
+        try:
+            record = json.loads(data.decode("utf-8"))
+        except ValueError:
+            record = None
+    if isinstance(record, dict):        # the run's own record, with a status or none: the index is read only when it is no record
+        if not record.get("status"):
+            return None, "", parts
+        return MappingProxyType(dict(record)), "run.json", parts
+    ended = next((dict(r) for r in reversed(rows) if r.get("event") == "ended" and r.get("run") == name), None)
+    if not (ended and ended.get("status")):
+        return None, "", parts
+    parts.append(("index", json.dumps(ended, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")))
+    return MappingProxyType(ended), "index", parts
+
+
+def _digest(parts: list[tuple[str, bytes]]) -> str | None:
+    """The one digest of a run's ending: of every byte it was read from (``_ending_from``), each part by its name and length, so no
+    two run together; None for an ending read from nothing. For a run's ending files it is the digest it always was."""
+    if not parts:
+        return None
+    digest = hashlib.sha256()
+    for part, data in parts:
+        digest.update(f"{part}\0{len(data)}\0".encode() + data)
+    return digest.hexdigest()
 
 
 def ending(root: Path | Archive, name: str) -> Mapping[str, Any] | None:
@@ -584,8 +643,9 @@ def ending(root: Path | Archive, name: str) -> Mapping[str, Any] | None:
 
 
 def ending_sha256(root: Path | Archive, name: str) -> str | None:
-    """The digest of run ``name``'s ending's files, as ``run_facts`` reads them, so a failure recorded after the ending changes it.
-    None for a run whose folder holds neither (its ending is its own record), and for a name no start has."""
+    """The one digest of what run ``name``'s ending is read from, as ``run_facts`` reads it, whatever it is (``_digest``): its
+    ending's files, its own record or its end in the index, so any change to the ending changes it (a failure recorded after the
+    ending among them). None for a run with no ending to read, and for a name no start has."""
     facts = run_facts(root, name)
     return facts.ending_sha256 if facts is not None else None
 
@@ -779,7 +839,7 @@ def judge(facts: RunFacts | None, kept: Mapping[str, Any] | None, *, amendment: 
         return None
     if not on_patch(facts.ending):
         return False
-    if kept.get(MADE_UNDER) != facts.ending_sha256:
+    if not _made_under(facts, kept):
         return None
     got = kept.get("amended_passes" if amendment is not None else "passes")
     if amendment is None and kept.get("failing") is None:
@@ -787,9 +847,19 @@ def judge(facts: RunFacts | None, kept: Mapping[str, Any] | None, *, amendment: 
     return got if isinstance(got, bool) else None
 
 
+def _made_under(facts: RunFacts, kept: Mapping[str, Any]) -> bool:
+    """Whether a saved verdict was made under the ending its run has now, the one rule ``judge`` and ``_stands`` read it by: it
+    records that ending's digest (``MADE_UNDER``), whatever the ending was read from (study follow-up review 2, finding 1). A row
+    kept before an ending read from a run's own record or the index had a digest records none, and is read as it was read when it
+    was kept: it stands while the run's ending is still read from there. The writer keeps no verdict without its ending's digest
+    (``keep``), so every verdict kept from now on is bound to the ending's bytes."""
+    said = kept.get(MADE_UNDER)
+    return said == facts.ending_sha256 or (said is None and facts.ending_from in ENDING_FROM[1:])
+
+
 def _stands(facts: RunFacts | None, kept: Mapping[str, Any] | None, amendment: str | None = None, why: str | None = None) -> bool:
     return (facts is not None and not (_why_not(facts, facts.name) if why is None else why) and _own(facts, kept, amendment)
-            and kept.get(MADE_UNDER) == facts.ending_sha256)
+            and _made_under(facts, kept))
 
 
 def verdict(root: Path | Archive, name: str, kept: Mapping[str, Any] | None, *, amendment: str | None = None) -> bool | None:
@@ -1052,7 +1122,8 @@ def keep(root: Path | Archive, row: Mapping[str, Any], *, amended: bool = False,
     (``_found``), so another run's row is never written over (a torn one is replaced); for a row the reader would refuse beside
     the folder's other files, by its own rule (``_unique``: one file a run, one run a key, so one run is never written under two
     names; study follow-up review 1, finding 7); and, last, for a run whose ending is not the one the verdict was made under
-    (``MADE_UNDER``), its digest read after every other check (finding 6)."""
+    (``MADE_UNDER``), its digest read after every other check (finding 6), whatever the ending is read from, so a verdict that names
+    no digest is never kept (study follow-up review 2, finding 1)."""
     archive = root if isinstance(root, Archive) else Archive(Path(root))
     name = row.get("run") if isinstance(row.get("run"), str) else ""
     label = AMENDED if amended else SAVED
@@ -1086,7 +1157,7 @@ def keep(root: Path | Archive, row: Mapping[str, Any], *, amended: bool = False,
         barred = Shelf(rows=(), found=tuple(_unique([*others, mine]))).bars(mine.key, amended=amended)
         if barred:                           # the folder, with this row written, would give its run no row
             raise ArchiveError(f"no row of {name!r} is written: {barred}, as the rows' reader refuses it")
-        if row.get(MADE_UNDER) != ending_sha256(archive, name):    # read now, after every check: a change voids the verdict
+        if row.get(MADE_UNDER) != ending_sha256(archive, name):    # read now, after every check, from any source: a change voids it
             raise ArchiveError(f"no row of {name!r} is written: its ending changed since its verdict was made (study review 4, 7)")
         return path
 

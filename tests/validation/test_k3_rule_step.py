@@ -321,7 +321,8 @@ def test_a_stopped_k3_run_is_saved_and_read_as_k2s_with_the_same_ending_and_chec
     theirs, *_ = _run(monkeypatch, tmp_path, "K2", **k2)
     assert ours["status"] == theirs["status"] == status and we.scored_run(ctx.archive, ours["run"])
     rows = [_row_of(monkeypatch, ctx.archive.root, ours, "K3"), _row_of(monkeypatch, ctx.archive.root, theirs, "K2")]
-    assert [{k: v for k, v in row.items() if k not in ("arm", "run", "cost_usd")} for row in rows] == [
+    assert all(row[we.c.MADE_UNDER] for row in rows)      # each bound to its own run's ending (study follow-up review 2, 1)
+    assert [{k: v for k, v in row.items() if k not in ("arm", "run", "cost_usd", we.c.MADE_UNDER)} for row in rows] == [
         {"task": task.id, "repeat": 1, "status": status, "why": None, "passes": False, "failing": None, "tests": []}] * 2
     got = compare.saved(ctx.archive.root)
     assert got[("K3", task.id, 1)] == got[("K2", task.id, 1)] and got[("K3", task.id, 1)]["maintainers"] is False

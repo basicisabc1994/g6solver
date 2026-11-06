@@ -630,11 +630,17 @@ def finished(archive, task="bug", arm="A", **start):
     return run
 
 
+def made(archive, run, **row):
+    """A row as ``loop.one`` makes it, with the digest of the ending its verdict is made under, which the writer keeps no verdict
+    without, whatever the ending is read from (study follow-up review 2, finding 1)."""
+    return {"run": run.rel, **row, c.MADE_UNDER: c.run_facts(archive, run.rel).ending_sha256}
+
+
 def test_finding_2_a_reviews_staging_file_cannot_overwrite_a_run_row(tmp_path):
     archive = c.Archive(tmp_path)
     run = archive.start("run", "bug", arm="A", repeat=1)
     run.finish({"agent_started": True}, "finished")
-    row = c.keep(archive, {"run": run.rel, "passes": True, "failing": 0})
+    row = c.keep(archive, made(archive, run, passes=True, failing=0))
     before = row.read_bytes()
     store = c.beside(archive, fr.FOLDER)
     store.mkdir()
@@ -677,7 +683,7 @@ def test_no_store_writer_puts_a_file_with_a_second_name_in_place(tmp_path, monke
                                                  ask=lambda *a, **kw: ({"verdict": "none", "rule": "r", "why": "", "test": "x",
                                                                         "error": ""}, None, None),
                                                  run=lambda *a, **kw: pytest.fail("no patch runs once the record is refused")),
-        "row": lambda: c.keep(archive, {"run": run.rel, "passes": True, "failing": 0}),
+        "row": lambda: c.keep(archive, made(archive, run, passes=True, failing=0)),
         "cegis": lambda: c.write_whole(lambda: c.beside(archive, "cegis.json"), b"{}"),
     }
     _linked_temp(monkeypatch, alias)
@@ -934,7 +940,7 @@ def test_finding_7_keep_refuses_a_second_file_for_the_same_run(tmp_path):
     archive = c.Archive(tmp_path)
     run = archive.start("run", "bug", arm="A", repeat=1)
     run.finish({"agent_started": True}, "finished")
-    row = {"run": run.rel, "passes": True, "failing": 0}
+    row = made(archive, run, passes=True, failing=0)
     c.keep(archive, row, file="first.json")
     assert len(c.shelf(archive, lambda task: None).rows) == 1
     try:
@@ -948,15 +954,15 @@ def test_keep_refuses_what_its_reader_would_bar_and_writes_what_it_would_read(tm
     archive = c.Archive(tmp_path)
     first = finished(archive, "bug", "A", repeat=1)
     again = finished(archive, "bug", "A", repeat=1)          # a second run of the same key
-    c.keep(archive, {"run": first.rel, "passes": True, "failing": 0}, file="first.json")
+    c.keep(archive, made(archive, first, passes=True, failing=0), file="first.json")
     with pytest.raises(c.ArchiveError, match="runs' rows hold its key"):
-        c.keep(archive, {"run": again.rel, "passes": True, "failing": 0})
+        c.keep(archive, made(archive, again, passes=True, failing=0))
     other = finished(archive, "bug", "A", repeat=2)
     (tmp_path / c.SAVED / "torn.json").write_bytes(b'{"run": "' + other.rel.encode())   # torn: bars nothing, as the reader reads it
-    assert c.keep(archive, {"run": other.rel, "passes": False, "failing": 1}).name == "A-bug-2.json"
+    assert c.keep(archive, made(archive, other, passes=False, failing=1)).name == "A-bug-2.json"
     assert {s.file for s in c.shelf(archive, lambda task: None).rows} == {"first.json", "A-bug-2.json"}
-    assert c.keep(archive, {"run": first.rel, "passes": False, "failing": 1}, file="first.json").name == "first.json"
-    amended = c.keep(archive, {"run": first.rel, "passes": True, "amended_passes": True}, amended=True, file="first.json")
+    assert c.keep(archive, made(archive, first, passes=False, failing=1), file="first.json").name == "first.json"
+    amended = c.keep(archive, made(archive, first, passes=True, amended_passes=True), amended=True, file="first.json")
     assert amended.parent.name == c.AMENDED      # the amended folder is its own: a row of the run in the rows' folder bars nothing
 
 
@@ -970,7 +976,7 @@ def test_the_rows_writer_and_reader_share_one_rule_for_one_file_a_run():
 def test_a_stop_while_a_row_is_written_leaves_no_row_and_a_restart_writes_it(tmp_path, monkeypatch):
     archive = c.Archive(tmp_path)
     run = finished(archive, "bug", "A", repeat=1)
-    row = {"run": run.rel, "passes": True, "failing": 0}
+    row = made(archive, run, passes=True, failing=0)
     with monkeypatch.context() as patch:
         patch.setattr(c.os, "replace", lambda *a: (_ for _ in ()).throw(_Stop()))
         with pytest.raises(_Stop):
