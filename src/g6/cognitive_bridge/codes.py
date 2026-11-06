@@ -5,7 +5,8 @@ A refusal is ``blocked-escalated`` and says which of these it is, in ``code`` an
 refusals reach ``g6_invoke`` with their card, so the door shows the same code. Every other result is
 ``qualified-draft`` (:func:`settled`). ``tests/cognitive_bridge/test_refusal_inventory.py`` parses the package and
 fails on any other place that writes a state; ``tests/cognitive_bridge/test_block_refusal_codes.py`` pins each code,
-and the skill names each one.
+and the skill names each one. :func:`only_fields` is the one rule for what a collaborator's answer may carry: its
+format's fields and no claim of a state (``tests/cognitive_bridge/test_credit_inventory.py``).
 """
 from __future__ import annotations
 
@@ -96,6 +97,43 @@ RESERVED: tuple[str, ...] = tuple(dict.fromkeys(("completion_state", "code", "wa
                                                  VERIFIED_FLAG)))
 #: What :func:`refusal` itself writes; any other reserved field in a refusal handed back is a forgery.
 _MADE = ("completion_state", "code", "warning_card")
+#: The fields :func:`refusal` and :func:`settled` write beside a format's own: a format's answer may carry these too.
+MADE_FIELDS = (*_MADE, "reason")
+
+
+def claims(value: Any, *, _in_card: bool = False, _at: str = "") -> list[str]:
+    """Where ``value`` claims a reliability state the bridge did not decide: a field G6 reads as a state other than a
+    ``completion_state`` of one of :data:`STATES`, or G6's ``verified`` flag anywhere but a warning card, where it may
+    only be false (INV-ENV-2). Each place is named by its path; none is an empty list."""
+    found: list[str] = []
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            at = f"{_at}.{key}" if _at else str(key)
+            if key == VERIFIED_FLAG and not (_in_card and item is False):
+                found.append(at)
+            elif key in STATE_FIELDS and (key != "completion_state" or item not in STATES):
+                found.append(at)
+            found += claims(item, _in_card=_in_card or key == "warning_card", _at=at)
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            found += claims(item, _in_card=_in_card, _at=f"{_at}[{index}]")
+    return found
+
+
+def only_fields(value: Any, *, allowed: tuple[str, ...], required: tuple[str, ...] = (),
+                where: str) -> Mapping[str, Any]:
+    """``value`` when it is a mapping with every ``required`` field, no field but ``allowed`` and no claim anywhere in it
+    (:func:`claims`), else ``ValueError``: what the bridge credits from a collaborator, and republishes, carries only
+    its format's fields, and none of them claims a state the bridge did not decide."""
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{where} is a mapping of its format's fields")
+    missing, extra = sorted(set(required) - set(value)), sorted(set(value) - set(allowed), key=str)
+    if missing or extra:
+        raise ValueError(f"{where} has only its format's fields: missing {missing}, not in the format {extra}")
+    found = claims(value)
+    if found:
+        raise ValueError(f"{where} claims a state the bridge did not decide: {', '.join(found)}")
+    return value
 
 
 def _no_reserved(values: Mapping[str, Any], where: str) -> None:
@@ -150,7 +188,7 @@ def settled(refused: Mapping[str, Any] | None, *, draft_card: tuple[str, str] | 
 
 __all__ = ["ADAPTATION_REFUSED", "APPROVAL_REQUIRED", "ASSURANCE_BLOCKED", "CODES", "COMPILE_BLOCKED",
            "DOSSIER_BLOCKED", "EVIDENCE_CONTESTED", "EVIDENCE_NOT_RECONCILED", "EVIDENCE_REFUTED",
-           "EVIDENCE_UNDETERMINED", "EXECUTION_INCOMPLETE", "EXECUTION_NOT_APPROVED", "INPUT", "MODEL_MISSING",
-           "NOT_PROMOTED", "NO_PROBE", "OBLIGATION_NOT_PLANNED", "PLAN_TAMPERED", "PREREQUISITE_UNMET",
-           "RESERVED", "SELECTION_INCOMPLETE", "STATES", "STATE_FIELDS", "STEP_FAILED", "VERIFIED_FLAG", "refusal",
-           "settled"]
+           "EVIDENCE_UNDETERMINED", "EXECUTION_INCOMPLETE", "EXECUTION_NOT_APPROVED", "INPUT", "MADE_FIELDS",
+           "MODEL_MISSING", "NOT_PROMOTED", "NO_PROBE", "OBLIGATION_NOT_PLANNED", "PLAN_TAMPERED", "PREREQUISITE_UNMET",
+           "RESERVED", "SELECTION_INCOMPLETE", "STATES", "STATE_FIELDS", "STEP_FAILED", "VERIFIED_FLAG", "claims",
+           "only_fields", "refusal", "settled"]

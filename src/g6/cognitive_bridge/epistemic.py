@@ -15,14 +15,16 @@ evidence. No score averaging.
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, Sequence
+from dataclasses import asdict
+from typing import Any, Callable, Mapping, Sequence
 
 from g6.core.evidence import EvidenceRecord
 from g6.epistemic_integrity import adjudicator
 from g6.invariants import ERROR_CODE_PATTERN
 
-from .codes import (EVIDENCE_CONTESTED, EVIDENCE_NOT_RECONCILED, EVIDENCE_REFUTED, EVIDENCE_UNDETERMINED, refusal,
-                    settled)
+from .assurance import canonical_json, sha256
+from .codes import (EVIDENCE_CONTESTED, EVIDENCE_NOT_RECONCILED, EVIDENCE_REFUTED, EVIDENCE_UNDETERMINED, MADE_FIELDS,
+                    STATES, only_fields, refusal, settled)
 from .snapshot import fresh, record, snapshot
 
 HEX64 = re.compile("[0-9a-f]{64}\\Z")
@@ -34,6 +36,11 @@ _STATUS = {"ASSERTED": ("consistent_with_admitted_evidence", None), "CONTESTED":
            "REFUTED": ("refuted", EVIDENCE_REFUTED), "UNVERIFIABLE": ("undetermined", EVIDENCE_UNDETERMINED)}
 #: ``adjudicate_claim``'s dispositions that let a passing status stand; BLOCK, ASK and any other refuse.
 _PASSING = ("ALLOW", "ALLOW_WITH_LABEL")
+#: A reconciliation report's own fields (beside the state, code, reason and card ``codes.settled`` writes): what
+#: ``CrossMethodConflictGate.reconcile`` writes, and all a report may carry. ``subject_sha256`` names the assertions it
+#: reconciled (:func:`assertions_sha256`).
+REPORT_FIELDS = ("subject_sha256", "conflicts", "unadmitted_evidence_refs", "repeated_source_refs", "scoped_findings",
+                 "limitations")
 
 
 @record
@@ -54,6 +61,29 @@ class ScopedAssertion:
             raise ValueError("claim's logical scope must be digest-bound")
         if self.stance not in ("supports", "refutes", "unknown"):
             raise ValueError("unsupported assertion stance")
+
+
+def assertions_sha256(assertions: Sequence[ScopedAssertion]) -> str:
+    """The digest of an assertion set (each assertion's every field, in any order, repeats kept). A report names it as
+    its ``subject_sha256``, and an assessment credits a report only for the assertions submitted to that assessment."""
+    return sha256(canonical_json(sorted(canonical_json(asdict(a)).decode() for a in assertions)))
+
+
+def checked_report(report: Any) -> Mapping[str, Any]:
+    """A reconciliation report as the bridge takes it from a gate: only its format's fields (:data:`REPORT_FIELDS`), no
+    claim of a state anywhere in it (``codes.only_fields``) and a ``completion_state`` of the bridge's two states."""
+    return only_fields(report, allowed=REPORT_FIELDS + MADE_FIELDS, required=("completion_state",),
+                       where="a conflict report")
+
+
+def findings_state(report: Mapping[str, Any]) -> str:
+    """The state a report's own fields give, by the rule ``reconcile`` decides by: ``blocked-escalated`` when an
+    assertion was not admitted, there is no finding, or a finding is not ``qualified-draft``; else ``qualified-draft``."""
+    findings = report.get("scoped_findings", ())
+    unsettled = (not isinstance(findings, (list, tuple)) or not findings
+                 or bool(report.get("unadmitted_evidence_refs"))
+                 or any(not isinstance(f, Mapping) or f.get("completion_state") != STATES[0] for f in findings))
+    return STATES[unsettled]  # STATES is (qualified-draft, blocked-escalated)
 
 
 class CrossMethodConflictGate:
@@ -115,6 +145,7 @@ class CrossMethodConflictGate:
         why = ([f"{len(refused)} assertion(s) not admitted"] if refused else []) + unsettled + (
             [] if groups else ["no admitted assertion"])
         return settled(refusal(EVIDENCE_NOT_RECONCILED, "; ".join(why)) if why else None,
+                       subject_sha256=assertions_sha256(assertions),
                        conflicts=conflicts, unadmitted_evidence_refs=refused,
                        repeated_source_refs=duplicate_sources,
                        scoped_findings=findings,
@@ -125,4 +156,5 @@ class CrossMethodConflictGate:
                                     "judgment."])
 
 
-__all__ = ["ScopedAssertion", "CrossMethodConflictGate"]
+__all__ = ["REPORT_FIELDS", "ScopedAssertion", "CrossMethodConflictGate", "assertions_sha256", "checked_report",
+           "findings_state"]

@@ -69,6 +69,7 @@ DATA_WALKERS = {
     ("snapshot.py", "returned", "check"),            # calls the bridge's own check on the fresh copy
     ("mixed_methods.py", "_no_bare_verified", "value"),  # walks the door's own copy of a reply
     ("xai.py", "_native", "value"),                  # reads a numpy scalar's Python value
+    ("codes.py", "claims", "value"),                 # walks a snapshot the bridge holds, to find a claim in it
 }
 
 

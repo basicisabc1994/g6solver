@@ -9,6 +9,12 @@ step upgrades the result to G6's `verified` label.
 What runs is what was compiled: each selected model is a deep copy pinned by its digest, the plan's steps are pinned
 too, and execution refuses when either no longer matches. What an assessment credits is what this orchestrator ran: its
 own record of each run, step by step through G6's door, never a caller's run result or label.
+
+Credit binds its subject. A dossier is credited only for the evidence submitted to that assessment, and a
+reconciliation only for the assertions submitted to it, each by the digest it names; a selection is taken only when
+each row is a variant given, eligible under the context given, and the rows together fit its budget. What an evaluator,
+a gate or a selector answers carries only its format's fields and claims no state (``codes.only_fields``), so what this
+module republishes from them is what was checked (``tests/cognitive_bridge/test_credit_inventory.py``).
 """
 from __future__ import annotations
 
@@ -20,28 +26,38 @@ from typing import Any, Iterable, Mapping, Sequence
 from .adaptation import detect_failure_modes
 from .assurance import (CandidateDossier, DomainStandard, EvidenceArtifact,
                         FrozenVerifier, InProcessAssuranceEvaluator,
-                        ProfessionalAttestation, canonical_json, sha256)
-from .codes import (ASSURANCE_BLOCKED, COMPILE_BLOCKED, EXECUTION_NOT_APPROVED, NOT_PROMOTED, PLAN_TAMPERED, STATES,
+                        ProfessionalAttestation, canonical_json, evidence_sha256, sha256)
+from .codes import (ASSURANCE_BLOCKED, COMPILE_BLOCKED, EXECUTION_NOT_APPROVED, NOT_PROMOTED, PLAN_TAMPERED,
                     refusal, settled)
-from .epistemic import CrossMethodConflictGate, ScopedAssertion
+from .epistemic import CrossMethodConflictGate, ScopedAssertion, assertions_sha256, checked_report, findings_state
 from .metacognition import (MethodVariant, MetacognitiveMethodSelector,
                             ProblemSignature, SelectionDecision, checked_selection)
 from .mixed_methods import (ENGINE_SPECS, ClaimIR, MethodPlan, MethodRouter, MixedMethodExecutor, step_digest)
 from .snapshot import fresh, record, returned, snapshot
 
 
-def _dossier(dossier: Any) -> CandidateDossier:
-    """An evaluator's answer as the assessment uses it (a ``snapshot.returned`` check): an intact CandidateDossier."""
+def _dossier(dossier: Any, subject: str) -> tuple[CandidateDossier, str]:
+    """An evaluator's answer as the assessment uses it (a ``snapshot.returned`` check): an intact CandidateDossier
+    (which carries only a dossier's fields, no claim, and the state its blockers give: ``CandidateDossier`` checks
+    itself), and why it is not credited (``""`` when it is): it is credited only when it is for the evidence submitted,
+    by that evidence's digest (``subject``)."""
     if type(dossier) is not CandidateDossier or not dossier.intact():
         raise ValueError("an evaluator returns an intact CandidateDossier")
-    return dossier
+    bound = dossier.payload["subject_sha256"] == subject
+    return dossier, "" if bound else "the dossier is not for the evidence submitted to this assessment"
 
 
-def _reconciled(report: Any) -> Mapping[str, Any]:
-    """A conflict gate's answer as the assessment uses it (a ``snapshot.returned`` check): a report with a state."""
-    if not isinstance(report, Mapping) or report.get("completion_state") not in STATES:
-        raise ValueError("a conflict gate returns a report with a completion_state")
-    return report
+def _reconciled(report: Any, subject: str) -> tuple[Mapping[str, Any], str]:
+    """A conflict gate's answer as the assessment uses it (a ``snapshot.returned`` check): a report with only a report's
+    fields, no claim and one of the bridge's two states (``epistemic.checked_report``), and why it is not credited
+    (``""`` when it is): it is credited only when it is for the assertions submitted, by their digest (``subject``), and
+    its state is the one its own findings give (``epistemic.findings_state``)."""
+    report = checked_report(report)
+    if report.get("subject_sha256") != subject:
+        return report, "the reconciliation is not for the assertions submitted to this assessment"
+    if report["completion_state"] != findings_state(report):
+        return report, "the reconciliation's state is not the one its findings give"
+    return report, ""
 
 
 def _plan_digest(plan: MethodPlan) -> str:
@@ -124,7 +140,8 @@ class CognitiveAssuranceOrchestrator:
         # Existing G6 method schemas, not a new collection of arbitrary tools.
         selection = returned(self.selector.select(fresh(context), fresh(variants),
                                                   required_methods=fresh(sorted(requested)),
-                                                  max_optional=fresh(max_supplemental)), checked_selection, variants)
+                                                  max_optional=fresh(max_supplemental)), checked_selection, variants,
+                             context, sorted(requested))
         models: dict[str, dict[str, Any]] = {}
         model_hashes: dict[str, str] = {}
         for row in selection.ordered_variants:
@@ -241,36 +258,43 @@ class CognitiveAssuranceOrchestrator:
         for item in artifacts.values():
             if item.claim_id != compiled.original_claim.id:
                 raise ValueError("evidence belongs to a different claim")
-        dossier = returned(evaluator.evaluate(standard=fresh(standard), artifacts=fresh(artifacts),
-                                              verifiers=fresh(verifiers), documentation=fresh(documentation),
-                                              candidate_actor=fresh(candidate_actor), attestation=fresh(attestation)),
-                           _dossier)
+        # Credit binds its subject: the dossier is credited only for the evidence submitted here, by its digest.
+        evidence = evidence_sha256(standard=standard, artifacts=artifacts, verifiers=verifiers,
+                                   documentation=documentation, candidate_actor=candidate_actor)
+        dossier, dossier_uncredited = returned(
+            evaluator.evaluate(standard=fresh(standard), artifacts=fresh(artifacts), verifiers=fresh(verifiers),
+                               documentation=fresh(documentation), candidate_actor=fresh(candidate_actor),
+                               attestation=fresh(attestation)), _dossier, evidence)
         # Whether the compiled steps ran is read from this orchestrator's own record, never from the caller's label.
         executed = self._executed(compiled, run_result)
         backend_ok = executed is not None and self._every_step_ran(compiled, executed)
         # A cross-engine disagreement is an adjudication obligation, not a
         # scalar to average away. Without an outside admission gate, submitted
-        # assertions block rather than lending support to the dossier.
-        conflict_report = None
+        # assertions block rather than lending support to the dossier. A report is credited only for the assertions
+        # submitted here, by their digest, and only in the state its own findings give.
+        conflict_report, report_uncredited = None, ""
         if scoped_assertions:
-            conflict_report = returned((epistemic_gate or CrossMethodConflictGate()).reconcile(
-                fresh(scoped_assertions)), _reconciled)
-        epistemic_ok = conflict_report is None or conflict_report["completion_state"] == "qualified-draft"
+            conflict_report, report_uncredited = returned((epistemic_gate or CrossMethodConflictGate()).reconcile(
+                fresh(scoped_assertions)), _reconciled, assertions_sha256(scoped_assertions))
+        epistemic_ok = conflict_report is None or (not report_uncredited
+                                                   and conflict_report["completion_state"] == "qualified-draft")
         faults = detect_failure_modes(dossier)
         # The decision rests on the standard's digest, so it is read again after use: the standard the evaluator
         # evaluated, and the standard now, are the one compiled.
         same_standard = (dossier.payload.get("standard_digest") == compiled.standard_digest
                          and standard.digest == compiled.standard_digest)
-        passed = (backend_ok and not uncovered and epistemic_ok and same_standard
+        passed = (backend_ok and not uncovered and epistemic_ok and same_standard and not dossier_uncredited
                   and dossier.payload["completion_state"] == "qualified-draft")
         warning = "Independent external custody and G6 door replay are NOT established here."
         # The state is completion_state alone (never a second state field); the card says why, with a stable code.
         why =(([f"the compiled plan has no step for the standard's mandatory {', '.join(uncovered)}"] if uncovered
                 else [])
                + ([] if same_standard else ["the standard evaluated is not the standard compiled"])
+               + ([dossier_uncredited] if dossier_uncredited else [])
                + (["no run of this compiled plan by this orchestrator matches the run result"] if executed is None
                   else ["a compiled step did not run through G6's door as compiled"] if not backend_ok else [])
-               + (["the cross-method assertions were not reconciled"] if not epistemic_ok else [])
+               + ([report_uncredited] if report_uncredited
+                  else ["the cross-method assertions were not reconciled"] if not epistemic_ok else [])
                + list(dossier.payload["blockers"]))
         fields = {
             "evidence": [{"source": f"dossier:{dossier.content_sha256}",

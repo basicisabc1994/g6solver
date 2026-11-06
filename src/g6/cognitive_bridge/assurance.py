@@ -14,7 +14,7 @@ import re
 from dataclasses import field, fields
 from typing import Any, Mapping, Protocol
 
-from .codes import DOSSIER_BLOCKED, refusal, settled
+from .codes import DOSSIER_BLOCKED, MADE_FIELDS, STATES, only_fields, refusal, settled
 from .snapshot import fresh, record, returned, snapshot
 
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
@@ -23,6 +23,14 @@ DOCUMENT_FIELDS = (
     "objective_and_scope", "methodology", "standards_and_sources", "data_provenance",
     "assumptions", "uncertainty_and_limitations", "counterexamples_and_refutations",
     "reproduction_instructions", "exceptions_and_unresolved_items",
+)
+#: A dossier's own fields (its payload, beside the state, code, reason and card ``codes.settled`` writes): what
+#: ``InProcessAssuranceEvaluator.evaluate`` writes, and all a dossier may carry. ``subject_sha256`` names the evidence
+#: it assessed (:func:`evidence_sha256`).
+PAYLOAD_FIELDS = (
+    "schema", "kind", "scope_decision", "evaluator_id", "candidate_actor", "standard", "standard_digest",
+    "subject_sha256", "checks", "documentary_sections", "missing_documentation", "professional_review", "blockers",
+    "metrics", "promotion_authority", "limitations",
 )
 
 
@@ -182,8 +190,18 @@ class ReviewAuthenticator(Protocol):
 
 @record
 class CandidateDossier:
+    """An evaluator's dossier: only its format's fields (:data:`PAYLOAD_FIELDS`), no claim of a state anywhere in it
+    (``codes.only_fields``), and the state its blockers give, checked when it is made, whoever makes it."""
     payload: dict[str, Any]
     content_sha256: str
+
+    def __post_init__(self) -> None:
+        payload = only_fields(self.payload, allowed=PAYLOAD_FIELDS + MADE_FIELDS,
+                              required=PAYLOAD_FIELDS + ("completion_state",), where="a dossier")
+        blockers = payload["blockers"]
+        # STATES is (qualified-draft, blocked-escalated): the second when there is any blocker
+        if not isinstance(blockers, tuple) or payload["completion_state"] != STATES[bool(blockers)]:
+            raise ValueError("a dossier's state is the one its blockers give: blocked when it has any")
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "CandidateDossier":
@@ -195,6 +213,24 @@ class CandidateDossier:
 
     def to_dict(self) -> dict[str, Any]:
         return {**self.payload, "content_sha256": self.content_sha256}
+
+
+def _evidence(*, standard: DomainStandard, artifacts: Mapping[str, EvidenceArtifact],
+              verifiers: Mapping[str, FrozenVerifier], documentation: Mapping[str, str],
+              candidate_actor: str) -> dict[str, Any]:
+    """What a dossier assesses: the standard, each artifact's full manifest (its id, kind, producer, source reference,
+    claim id, digest and length), the checkers, the documentation and the producer."""
+    return {"standard": standard.digest,
+            "artifacts": {k: x.manifest() for k, x in sorted(artifacts.items())},
+            "verifiers": {k: v.manifest() for k, v in sorted(verifiers.items())},
+            "documentation": {k: documentation.get(k, "") for k in DOCUMENT_FIELDS},
+            "candidate_actor": candidate_actor}
+
+
+def evidence_sha256(**evidence: Any) -> str:
+    """The digest of the evidence a dossier assesses (:func:`_evidence`'s fields, by keyword). A dossier names it as its
+    ``subject_sha256``, and an assessment credits a dossier only for the evidence submitted to that assessment."""
+    return sha256(canonical_json(_evidence(**evidence)))
 
 
 def _verdict(result: Any) -> bool | None:
@@ -228,15 +264,12 @@ class InProcessAssuranceEvaluator:
     def review_scope(self, *, standard: DomainStandard, artifacts: Mapping[str, EvidenceArtifact],
                      verifiers: Mapping[str, FrozenVerifier], documentation: Mapping[str, str],
                      candidate_actor: str) -> str:
-        """What an authenticated review attests: the standard, each artifact's full manifest (its id, kind, producer,
-        source reference, claim id, digest and length), the checkers, the documentation and the two identities. A
-        change to any of them is a different scope, so an attestation of one never covers another."""
+        """What an authenticated review attests: the evidence a dossier assesses (:func:`_evidence`: the standard, each
+        artifact's full manifest, the checkers, the documentation and the producer) and the evaluator. A change to any
+        of them is a different scope, so an attestation of one never covers another."""
         return sha256(canonical_json({
-            "standard": standard.digest,
-            "artifacts": {k: x.manifest() for k, x in sorted(artifacts.items())},
-            "verifiers": {k: v.manifest() for k, v in sorted(verifiers.items())},
-            "documentation": {k: documentation.get(k, "") for k in DOCUMENT_FIELDS},
-            "candidate_actor": candidate_actor,
+            **_evidence(standard=standard, artifacts=artifacts, verifiers=verifiers, documentation=documentation,
+                        candidate_actor=candidate_actor),
             "evaluator_id": self.evaluator_id,
         }))
 
@@ -253,6 +286,9 @@ class InProcessAssuranceEvaluator:
         standard, artifacts, verifiers, documentation, attestation = snapshot(
             (standard, artifacts, verifiers, documentation, attestation))
         pinned = standard.digest
+        # What this dossier is about, named by digest when the snapshot is taken (its subject_sha256).
+        subject = evidence_sha256(standard=standard, artifacts=artifacts, verifiers=verifiers,
+                                  documentation=documentation, candidate_actor=candidate_actor)
         if set(artifacts) - {c.id for c in standard.criteria}:
             raise ValueError("artifact supplied for undeclared criterion")
         if set(verifiers) - {c.verifier_id for c in standard.criteria}:
@@ -351,6 +387,7 @@ class InProcessAssuranceEvaluator:
             evaluator_id=self.evaluator_id,
             candidate_actor=candidate_actor,
             standard=standard.manifest(), standard_digest=standard.digest,
+            subject_sha256=subject,
             checks=checks,
             documentary_sections={k: documentation.get(k, "") for k in DOCUMENT_FIELDS},
             missing_documentation=documentary_gaps,
@@ -379,4 +416,4 @@ class InProcessAssuranceEvaluator:
 
 __all__ = ["Criterion", "DomainStandard", "EvidenceArtifact", "FrozenVerifier",
            "ProfessionalAttestation", "CandidateDossier", "InProcessAssuranceEvaluator",
-           "DOCUMENT_FIELDS", "FORMAT", "canonical_json", "sha256"]
+           "DOCUMENT_FIELDS", "FORMAT", "PAYLOAD_FIELDS", "canonical_json", "evidence_sha256", "sha256"]

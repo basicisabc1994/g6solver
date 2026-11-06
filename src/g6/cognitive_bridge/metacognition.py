@@ -16,13 +16,17 @@ from dataclasses import asdict
 from typing import Any, Callable, Mapping, Sequence
 
 from .assurance import canonical_json, is_risk, sha256
-from .codes import MODEL_MISSING, OBLIGATION_NOT_PLANNED, SELECTION_INCOMPLETE, refusal, settled
+from .codes import MODEL_MISSING, OBLIGATION_NOT_PLANNED, SELECTION_INCOMPLETE, only_fields, refusal, settled
 from .mixed_methods import ENGINE_SPECS, ENGINE_OP_VARIANTS, ClaimIR, MethodRouter, MethodPlan
 from .snapshot import fresh, record, returned, snapshot
 
 CAPABILITIES = frozenset(ENGINE_SPECS)
 #: The splits a trial can come from (``EvaluatedTrial.split``); a selector learns from the ones its ``learn_from`` names.
 SPLITS = ("training", "heldout", "shadow")
+#: A selection row's fields: what ``MetacognitiveMethodSelector`` writes for a chosen variant, and all a row may carry.
+ROW_FIELDS = ("variant_id", "kind", "representation", "method", "engine", "op", "expected_cost", "training_cases",
+              "repeated_trials", "historical_resolutions", "critical_regressions", "smoothed_success_proxy",
+              "exploration_bonus", "ranking_score", "admitted_trial_ids", "ranking_note", "obligation")
 
 
 @record
@@ -48,6 +52,18 @@ class ProblemSignature:
     def risk_tier(self) -> str:
         """G6's ``risk_tier`` for this task: ``R0`` to ``R3``."""
         return f"R{self.risk}"
+
+
+def _eligible(variant: MethodVariant, context: ProblemSignature) -> bool:
+    """The one rule for a variant a task can use: it costs no more than the task's budget, and every evidence it expects
+    is available. The selector ranks only these, and a selection is taken only when each of its rows is one."""
+    return variant.estimated_cost <= context.budget and all(name in context.available_evidence
+                                                            for name in variant.expects)
+
+
+def _fits(cost: float, remaining: float) -> bool:
+    """The one rule for affording a cost from what is left of a budget (to 1e-12)."""
+    return cost <= remaining + 1e-12
 
 
 @record
@@ -157,6 +173,11 @@ class SelectionDecision:
         "Claims remain candidate hypotheses until independently evidenced and promoted by G6.",
     )
 
+    def __post_init__(self) -> None:
+        # Whoever makes a decision (a selector, a replace(), a caller), each row has only a row's fields and no claim.
+        for row in self.ordered_variants:
+            only_fields(row, allowed=ROW_FIELDS, required=ROW_FIELDS, where="a selection row")
+
     @property
     def completion_state(self) -> str:
         return settled(self.refused)["completion_state"]
@@ -264,8 +285,7 @@ class MetacognitiveMethodSelector:
             raise ValueError("required methods must be explicit known G6 capabilities or methods a variant names")
         if len({v.id for v in variants}) != len(variants):
             raise ValueError("duplicate candidate method variant ids")
-        options = [v for v in variants if v.estimated_cost <= context.budget
-                   and all(name in context.available_evidence for name in v.expects)]
+        options = [v for v in variants if _eligible(v, context)]
         scored = [self._score(v, context) for v in options]
         if len(variants) > 100:
             raise ValueError("method selector cap: at most 100 explicit variants")
@@ -295,7 +315,7 @@ class MetacognitiveMethodSelector:
                         best = (utility, -spent, key[2], list(accumulated))
                     return
                 for option in pools[i]:
-                    if option["expected_cost"] <= remaining_budget + 1e-12:
+                    if _fits(option["expected_cost"], remaining_budget):
                         search(i + 1, remaining_budget - option["expected_cost"],
                                accumulated + [option], utility + option["ranking_score"],
                                spent + option["expected_cost"])
@@ -339,18 +359,36 @@ class MetacognitiveMethodSelector:
                                  sha256(canonical_json(policy)), refused)
 
 
-def checked_selection(decision: Any, variants: Sequence[MethodVariant]) -> SelectionDecision:
-    """A selector's answer as the planner and the orchestrator use it (a ``snapshot.returned`` check): a
-    SelectionDecision whose every row names one of the ``variants`` the selector was handed and says that variant's
-    kind, method, engine and op."""
+def checked_selection(decision: Any, variants: Sequence[MethodVariant], context: ProblemSignature,
+                      required: Sequence[str]) -> SelectionDecision:
+    """A selector's answer as the planner and the orchestrator use it (a ``snapshot.returned`` check), bound to what
+    the selector was handed: a SelectionDecision (whose rows carry only a row's fields) for the ``required`` methods,
+    refused exactly when one is missing and, when none is, meeting each with one mandatory row; whose every row names
+    one of the ``variants``, says that variant's kind, method, representation, engine, op and cost, is eligible under
+    the ``context`` (:func:`_eligible`) and is a mandatory or supplemental obligation; and whose rows together fit the
+    context's budget (:func:`_fits`, row by row, as the selector spends it)."""
     if type(decision) is not SelectionDecision:
         raise ValueError("a method selector returns a SelectionDecision")
+    needs = sorted(dict.fromkeys(required))
+    if sorted(decision.requirements) != needs or (decision.refused is None) == bool(decision.missing):
+        raise ValueError("a selection is for the methods it was handed, and refused exactly when one is missing")
+    mandatory = sorted(row["method"] for row in decision.ordered_variants if row["obligation"] == "mandatory")
+    if not decision.missing and mandatory != needs:
+        raise ValueError("a complete selection meets each required method with one mandatory variant")
     given = {v.id: v for v in variants}
+    remaining = context.budget
     for row in decision.ordered_variants:
-        variant = given.get(row.get("variant_id")) if isinstance(row, Mapping) else None
-        if variant is None or (row.get("kind"), row.get("method"), row.get("engine"), row.get("op")) != (
-                variant.kind, variant.method, variant.engine, variant.op):
+        variant = given.get(row["variant_id"])
+        if variant is None or (row["kind"], row["method"], row["representation"], row["engine"], row["op"],
+                               row["expected_cost"]) != (variant.kind, variant.method, variant.representation,
+                                                         variant.engine, variant.op, variant.estimated_cost):
             raise ValueError("a selection row does not name a variant the selector was given, as it was given")
+        if not _eligible(variant, context) or row["obligation"] not in ("mandatory", "supplemental"):
+            raise ValueError(f"the selection row for {variant.id!r} is not an obligation this context can meet: its "
+                             "cost exceeds the budget or an evidence it expects is not available")
+        if not _fits(variant.estimated_cost, remaining):
+            raise ValueError("the selected variants together cost more than the context's budget")
+        remaining -= variant.estimated_cost
     return decision
 
 
@@ -375,7 +413,8 @@ class MetacognitivePlanner:
             return refusal(OBLIGATION_NOT_PLANNED, "professional requirements not present in canonical claim obligations",
                            missing=sorted(required - requested), plan=planned.to_dict())
         decision = returned(self.selector.select(fresh(context), fresh(variants),
-                                                 required_methods=fresh(required_methods)), checked_selection, variants)
+                                                 required_methods=fresh(required_methods)), checked_selection, variants,
+                            context, required_methods)
         if planned.missing:
             return refusal(MODEL_MISSING, "typed models missing", selection=decision.to_dict(), plan=planned.to_dict())
         return settled(decision.refused, selection=decision.to_dict(), plan=planned.to_dict(),
