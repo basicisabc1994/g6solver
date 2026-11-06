@@ -14,7 +14,8 @@ from g6.metaharness import reflex
 from g6.metaharness.lessons import FAILED, HELD, OPEN
 from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
-from g6.metaharness.tick_rca import CAUSES, TickDiagnosis, TickRecord, analysis_is_the_constraint, scored, tick_rca
+from g6.metaharness.tick_rca import (CAUSES, DOMAIN_SCHEME, TickDiagnosis, TickRecord, analysis_is_the_constraint, scored,
+                                     tick_rca)
 from g6.self_maintenance.pacing import ProviderWindow
 
 STAGE3 = json.loads((Path(__file__).parent / "fixtures" / "stage3_tick.json").read_text(encoding="utf-8"))
@@ -54,7 +55,7 @@ def _record(*, wins=(), losses=(), ties=(), both_wrong=(), tuning_failed=(), lab
     labels = labels or {}
     return TickRecord(outcome=outcome, labels=labels, tuning_failed=tuple(tuning_failed), held_out=tuple(held_out),
                       races=tuple(races), candidates=tuple({"candidate": f"c{i}", "fields": list(f)} for i, f in enumerate(fields)),
-                      power={"gain_0.10": power}, enrolment={"method": "e1", "cut": "e1", "domain": "e1"})
+                      power={"gain_0.10": power}, enrolment={"method": "e1", "cut": "e1", "domain": f"{DOMAIN_SCHEME}:e1"})
 
 
 def _labelled(prefix, label, count):
@@ -119,7 +120,7 @@ def test_no_held_out_evaluation_names_no_cause_that_needs_one():
 
 
 def test_the_next_tick_scores_each_cause_as_a_prediction():
-    before = tick_rca(TickRecord.from_dict(STAGE3))
+    before = tick_rca(TickRecord.from_dict({**STAGE3, "enrolment": {"domain": f"{DOMAIN_SCHEME}:stage3"}}))
     labels = {**_labelled("r", "right", 6), **_labelled("w", "wrong", 6)}
     better = _record(wins=["r0", "r1", "w0", "w1"], losses=["r2"], labels=labels, races=[_race(("a", 20, 1, None))],
                      fields=[("retries",)])
@@ -137,11 +138,14 @@ def test_a_cause_the_next_tick_cannot_measure_stays_open():
 
 
 def test_a_remedy_for_a_person_left_unapplied_is_not_the_analysis_failing():
-    before = tick_rca(TickRecord.from_dict(STAGE3))
-    same_enrolment = TickRecord.from_dict(STAGE3)
+    first = {**STAGE3, "enrolment": {"domain": f"{DOMAIN_SCHEME}:v1"}}
+    before = tick_rca(TickRecord.from_dict(first))
+    same_enrolment = TickRecord.from_dict(first)
     assert dict(scored(before, same_enrolment))["edit_space_short"] == OPEN     # nobody gave the domain a new action
-    enrolled_again = TickRecord.from_dict({**STAGE3, "enrolment": {"domain": "v2"}})
+    enrolled_again = TickRecord.from_dict({**STAGE3, "enrolment": {"domain": f"{DOMAIN_SCHEME}:v2"}})
     assert dict(scored(before, enrolled_again))["edit_space_short"] == FAILED   # a new version, and still only wording
+    # the fixture's own tick predates the parts: its domain part shows nothing a person did
+    assert dict(scored(tick_rca(TickRecord.from_dict(STAGE3)), enrolled_again))["edit_space_short"] == OPEN
 
 
 def test_a_diagnosis_kept_in_a_row_reads_back_as_the_same_predictions():

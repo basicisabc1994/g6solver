@@ -47,6 +47,10 @@ WHO = dict.fromkeys(("threshold_move", "split_mix_skew", "race_noise", "edit_spa
 #: one of these has changed, and a change to another part says nothing of it.
 APPLIED_BY = {"threshold_move": ("method",), "split_mix_skew": ("cut",), "race_noise": ("method", "cut"),
               "edit_space_short": ("domain",), "gate_underpowered": ("cut",)}
+#: How ``loop._profile_space`` begins a ``domain`` part it rendered whole, and one it could not. Only two parts in
+#: ``DOMAIN_SCHEME`` can show that a person changed the domain: one written unknown, by an older fingerprint, or not at all
+#: shows nothing, as a remedy nobody can be shown to have applied tells nothing.
+DOMAIN_SCHEME, DOMAIN_UNKNOWN = "canonical-1", "unknown"
 _PLACES = 9      # a measure is compared at this many decimal places, so a share of exactly 25 points is 25 points
 
 
@@ -57,7 +61,8 @@ class TickRecord:
     ``races``: each race's ``winner`` and ``ranking`` rows (``candidate``, ``wins``, ``losses``, ``n``, ``dropped_at_block``,
     ``net_by_block``). ``candidates``: each raced candidate's changed ``fields``. ``power``: the held-out report's, by gain.
     ``enrolment``: the digest of each part of what a person decides (``method``; ``cut``; ``domain``, what a profile may
-    express), each moving only when they change it, so a person's remedy counts as applied once its part has (``APPLIED_BY``)."""
+    express, in ``DOMAIN_SCHEME`` or unknown), each moving only when they change it, so a person's remedy counts as applied
+    once its part has (``APPLIED_BY``)."""
 
     outcome: str
     labels: Mapping[str, str] = field(default_factory=dict)
@@ -250,14 +255,23 @@ def _measured(code: str, record: TickRecord) -> tuple[float | None, dict[str, An
     return (None if value is None else round(value, _PLACES)), evidence
 
 
+def _shown_changed(part: str, before: Mapping[str, str], now: Mapping[str, str]) -> bool:
+    """Whether ``part`` of what a person decides differs between two enrolments. A ``domain`` part shows it only when both
+    are in ``DOMAIN_SCHEME``: the fingerprint could not render one written unknown, and one written otherwise is not its."""
+    was, is_now = before.get(part), now.get(part)
+    if part == "domain" and not all(str(v).startswith(f"{DOMAIN_SCHEME}:") for v in (was, is_now)):
+        return False
+    return was != is_now
+
+
 def scored(before: TickDiagnosis, now: TickRecord) -> list[tuple[str, str]]:
     """Each cause of ``before`` scored on a later tick, ``now``: ``held`` when its measure is back across its line, ``failed``
     when it is not, and ``open`` when ``now`` cannot measure it or a person's remedy was not applied (nothing a person decides
-    has changed), as a remedy nobody applied tells nothing of the analysis."""
+    is shown to have changed), as a remedy nobody applied tells nothing of the analysis."""
     out = []
     for cause in before.causes:
         parts = APPLIED_BY.get(cause.code, ())
-        if cause.who == "person" and all(now.enrolment.get(p) == before.enrolment.get(p) for p in parts):
+        if cause.who == "person" and not any(_shown_changed(p, before.enrolment, now.enrolment) for p in parts):
             out.append((cause.code, OPEN))
             continue
         value, _ = _measured(cause.code, now)
@@ -272,4 +286,5 @@ def analysis_is_the_constraint(history: Sequence[Sequence[str]]) -> bool:
     return len(decided) >= 2 and decided[-1] and decided[-2]
 
 
-__all__ = ["CAUSES", "TickCause", "TickDiagnosis", "TickRecord", "WORDING", "analysis_is_the_constraint", "scored", "tick_rca"]
+__all__ = ["CAUSES", "DOMAIN_SCHEME", "DOMAIN_UNKNOWN", "TickCause", "TickDiagnosis", "TickRecord", "WORDING",
+           "analysis_is_the_constraint", "scored", "tick_rca"]

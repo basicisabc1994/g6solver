@@ -35,14 +35,15 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from functools import wraps
+from functools import partial, wraps
 from pathlib import Path
+from types import FunctionType, MethodType
 from typing import Any
 
 import g6
 from g6.core import stop
 from g6.core.adaptation_gate import is_automated
-from g6.core.ledger import LedgerError, digest
+from g6.core.ledger import LedgerError, canonical, digest
 from g6.core.llm import _WAITS, DEFAULT_MAX_TOKENS, LLMError
 from g6.core.model_calls import counting
 from g6.integrity import build_manifest, in_cache, manifest_sha256
@@ -67,7 +68,7 @@ from g6.metaharness.domain import (
 from g6.metaharness import reflex
 from g6.metaharness.failure_strategy import FailureTraceStrategy
 from g6.metaharness.method import Method, tune
-from g6.metaharness.tick_rca import TickDiagnosis, TickRecord, scored, tick_rca
+from g6.metaharness.tick_rca import DOMAIN_SCHEME, DOMAIN_UNKNOWN, TickDiagnosis, TickRecord, scored, tick_rca
 from g6.metaharness.monitor import MIN_PAIRS
 from g6.metaharness.propose import DevRunner, ProposerView
 from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, SuiteCase, Workflow, default_objectives
@@ -517,24 +518,64 @@ def _importable_caches(root: Path) -> dict[str, str]:
     return found
 
 
-def _profile_space(name: str, run: Execution) -> str:
-    """The digest of what a profile may express in a domain: the values each field may take, as a set, and the checks and
-    steps it may switch on, each by what it does (a check's code, a step's op and the source of what it runs), so the same
-    edits in another order are the same domain and an action replaced under its own name is a new one."""
-    def does(fn: Callable[..., Any]) -> str:
-        fn = inspect.unwrap(fn)
+def _rendered(thing: Any, unknown: list[str], within: tuple[int, ...] = ()) -> Any:
+    """``thing`` as plain JSON that is the same exactly when what it holds is, so a fingerprint never guesses what code does
+    from how it prints. A JSON value is itself, its keys in any order. A function is its module, name and its own source
+    (a wrapper's, not what it wraps), with what it closes over, its defaults and its keyword defaults, each rendered so; a
+    ``functools.partial`` is its function and arguments; a bound method is its function and its object; a container met again
+    inside itself is where it was first met. Anything else (an object, a class, a module, a set, bytes, a number that is not
+    finite, a key that is not text), and a function whose source cannot be read or whose cell is not yet bound, is named in
+    ``unknown`` and stands only as its type, so the fingerprint it is in is unknown and is never read as the same or as
+    changed. ``within`` holds the containers above this one."""
+    if thing is None or isinstance(thing, (bool, int, str)) or (isinstance(thing, float) and math.isfinite(thing)):
+        return thing
+    if id(thing) in within:
+        return ["again", within.index(id(thing))]
+    inner = (*within, id(thing))
+    if isinstance(thing, (list, tuple)):
+        return [_rendered(item, unknown, inner) for item in thing]
+    if isinstance(thing, dict) and all(isinstance(key, str) for key in thing):
+        return {key: _rendered(value, unknown, inner) for key, value in thing.items()}
+    if isinstance(thing, partial):
+        return ["partial", *(_rendered(part, unknown, inner) for part in (thing.func, thing.args, thing.keywords))]
+    if isinstance(thing, MethodType):
+        return ["method", _rendered(thing.__func__, unknown, inner), _rendered(thing.__self__, unknown, inner)]
+    if isinstance(thing, FunctionType):
         try:
-            text = inspect.getsource(fn)
-        except (OSError, TypeError):      # no source to read (a built-in, a callable object): its name stands for it
-            text = ""
-        return f"{getattr(fn, '__module__', '')}.{getattr(fn, '__qualname__', type(fn).__qualname__)}\n{text}"
+            source = inspect.getsource(thing.__code__)
+            captured = inspect.getclosurevars(thing).nonlocals
+        except Exception:  # noqa: BLE001 - whatever stops the reading (no file, a cell not yet bound) leaves it unknown
+            pass
+        else:
+            return ["function", f"{thing.__module__}.{thing.__qualname__}", source,
+                    *(_rendered(part, unknown, inner) for part in (captured, thing.__defaults__, thing.__kwdefaults__))]
+    kind = f"{type(thing).__module__}.{type(thing).__qualname__}"
+    unknown.append(kind)
+    return ["unknown", kind]
 
-    return digest({"domain": name, "models": sorted(run.models),
-                   "space": {k: sorted({repr(v) for v in values}) for k, values in sorted(run.space.space.items())},
-                   "optional_checks": {k: check.code_sha() for k, check in sorted(run.optional_checks.items())},
-                   "pipeline_steps": {k: [step.component, step.op, step.authority, step.effect, step.mandatory,
-                                          hashlib.sha256(does(step.run).encode("utf-8", "backslashreplace")).hexdigest()]
-                                      for k, step in sorted(run.pipeline_steps.items())}})
+
+def _profile_space(name: str, run: Execution) -> str:
+    """The fingerprint of what a profile may express in a domain, ``tick_rca``'s ``domain`` part: each value a field may take,
+    as a set, the executor that runs a profile, and each check and step a profile may switch on, by every field it is declared
+    with, the code it runs and what that code captures (``_rendered``). So the same edits in another order, or a value with
+    its keys in another order, are the same domain, and an action replaced or given other settings under its own name is a
+    new one. Anything it cannot render makes it ``DOMAIN_UNKNOWN``, which shows no change. The digest after the scheme still
+    covers what did render, so what is frozen at enrolment sees a change there. What a step reads from its module's globals
+    is not rendered, so a change there shows nothing here: a domain's file is frozen whole as ``domain_file`` when a runner
+    opened one, and G6's own code as the envelope."""
+    unknown: list[str] = []
+
+    def declared(thing: Any) -> Any:                  # a check or a step: every field of G6's own frozen dataclass
+        if not dataclasses.is_dataclass(thing) or isinstance(thing, type):
+            return _rendered(thing, unknown)
+        return {f.name: _rendered(getattr(thing, f.name), unknown) for f in dataclasses.fields(thing)}
+
+    found = digest({"domain": name, "models": sorted(run.models), "factory": _rendered(run.factory, unknown),
+                    "space": {k: sorted({canonical(_rendered(v, unknown)) for v in values})
+                              for k, values in sorted(run.space.space.items())},
+                    "optional_checks": {k: declared(check) for k, check in sorted(run.optional_checks.items())},
+                    "pipeline_steps": {k: declared(step) for k, step in sorted(run.pipeline_steps.items())}})
+    return f"{DOMAIN_UNKNOWN if unknown else DOMAIN_SCHEME}:{found}"
 
 
 def _writable(value: Any) -> Any:
