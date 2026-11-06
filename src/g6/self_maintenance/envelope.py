@@ -41,7 +41,7 @@ import json
 import os
 import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -52,6 +52,7 @@ from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import ChainLedger, LedgerError, digest
 from g6.core.storage import plain_file
 from g6.workspace._coordination import Coordination
+from g6.workspace._envelope import BUSY as HELD_BY_ANOTHER
 from g6.workspace._envelope import WorkspaceRefused
 
 STOP_FILE = "STOP"
@@ -281,11 +282,13 @@ class Stop:
 @dataclass(frozen=True)
 class StopSeen:
     """One reading of all that says whether a stop was asked for: the ``STOP`` file (``None`` with none), its modification
-    time, taken before its bytes, and the journal of stops, ``stops.log`` (empty with none)."""
+    time, taken before its bytes, and the journal of stops, ``stops.log`` (empty with none), with the identity of the file
+    its bytes were read from (``None`` with none), which a start checks is the file it flushed (``flush_journal``)."""
 
     stop: bytes | None = None
     stop_mtime_ns: int | None = None
     journal: bytes = b""
+    journal_file: tuple[int, int] | None = field(default=None, compare=False)
 
     def lift(self) -> dict[str, Any]:
         """The ``STOP`` file as it stands, for a start to record what a person agreed to lift; nothing with no file. No start
@@ -345,23 +348,39 @@ READ_TRIES = 3
 
 
 def _absent(path: Path, root: Path) -> bool:
-    """Whether a file the open could not find is truly absent: the nearest folder above it that exists, up to the loop's
-    folder, is a directory that can be listed. A path under a regular file is not absent (Windows reports it not found)."""
+    """Whether a file the open could not find is truly absent, decided from the entries themselves by ``lstat``, which
+    follows no link: nothing at all is at the path, so a link, a junction or any other reparse point there, broken or not,
+    is an entry and never absence; and the nearest entry above it, up to the loop's folder, is a folder that can be listed.
+    An entry above that cannot be listed, a broken junction among them, shows no absence, nor does a path under a regular
+    file (Windows reports it not found), nor an entry that cannot be looked at."""
+    try:
+        os.lstat(path)
+        return False                     # an entry is there, whatever it is: a read of it that failed is no absence
+    except FileNotFoundError:
+        pass
+    except Exception:  # noqa: BLE001 - an entry that cannot be looked at, for any reason, does not show absence
+        return False
     folder = path.parent
     while True:
         try:
-            with os.scandir(folder):
-                return True
+            os.lstat(folder)
         except FileNotFoundError:
             if folder == root or folder == folder.parent:
                 return False
             folder = folder.parent
-        except Exception:  # noqa: BLE001 - a folder that cannot be listed, for any reason, does not show absence
+            continue
+        except Exception:  # noqa: BLE001 - as above
+            return False
+        try:
+            with os.scandir(folder):
+                return True
+        except Exception:  # noqa: BLE001 - a folder that is there but cannot be listed, for any reason, shows nothing
             return False
 
 
-def _read_file(path: Path, root: Path, *, timed: bool = False) -> tuple[bytes, int | None] | None:
-    """A file's bytes, and with ``timed`` its modification time taken before them, or ``None`` when it is absent: absent
+def _read_file(path: Path, root: Path, *, timed: bool = False) -> tuple[bytes, int | None, tuple[int, int]] | None:
+    """A file's bytes, with ``timed`` its modification time taken before them, and the file's identity (its volume and
+    file id, from the handle the bytes were read through), or ``None`` when it is absent (``_absent``): absent
     only when the open itself fails with not-found and the folder above is a readable directory. The bytes are read from
     one open handle, whose file is known by the handle itself (``fstat``: on Windows its volume and file index), and they
     stand only when that very file is what stands at the path once they are read, a regular file under this one name and no
@@ -395,7 +414,7 @@ def _read_file(path: Path, root: Path, *, timed: bool = False) -> tuple[bytes, i
         read = (opened.st_dev, opened.st_ino)
         if (opened.st_ino and read == (kept.st_dev, kept.st_ino) == (now.st_dev, now.st_ino)
                 and opened.st_size == len(data) == now.st_size):
-            return data, written
+            return data, written, read
     raise StopUnreadable(f"{name} changed each time it was read")
 
 
@@ -464,7 +483,8 @@ def stop_in_force(root: str | Path, *, known: tuple[str, Mapping[str, Any] | Non
     except Exception as exc:  # noqa: BLE001 - as above
         unread["records"] = _unread(exc)
     records = held[0] if held is not None else b""
-    seen = StopSeen(*(stop or (None, None)), (journal or (b"",))[0])   # what could be read: ``unread`` says what could not
+    seen = StopSeen(*(stop[:2] if stop else (None, None)), journal[0] if journal else b"",   # what could be read:
+                    journal[2] if journal else None)                                          # ``unread`` says the rest
     why = ""
     if not unread:
         try:
@@ -551,23 +571,33 @@ def _durably(path: Path, text: str) -> None:
         os.fsync(kept.fileno())
 
 
-def flush_journal(root: str | Path, seen: StopSeen) -> None:
-    """Flush the journal of stops to disk through a handle of the caller's own, writing no byte, when ``seen``, a reading's,
-    holds any of it: a flush is the file's, whoever wrote it, so every line that reading saw is on disk once this returns.
+@contextlib.contextmanager
+def flush_journal(root: str | Path, seen: StopSeen) -> Iterator[tuple[int, int] | None]:
+    """Flush the journal of stops to disk through a handle of the caller's own, writing no byte, and hold that handle open
+    until the caller is done, yielding the flushed file's identity (its volume and file id; ``None`` when ``seen``, a
+    reading's, found no journal, and nothing is opened). A start binds that identity with the bytes: the readings it stands
+    on must be of this very file, or it writes no row (``g6.mcp.improve.start``). Held open, the file keeps its id from any
+    other, and on Windows it cannot be renamed or removed until it is let go. A flush is the file's, whoever wrote it, so
+    every line in it when this flushes is on disk.
     A stop that waited ``STOP_WAIT`` for ``stop_lock`` writes its line without it, and that line can be read before its own
     flush is done, so a start flushes the journal before its row binds it (``g6.mcp.improve.start``). Journal lines carry
     no token of their own, so a line a crash took back could be written again, the same bytes, by a later stop, and a start
-    that bound it would not see that stop. A journal nothing may open to write, a read-only one among them, is skipped:
-    no stop can be writing a line to it now, since a stop opens it as this does, and a read-only journal refuses no start.
-    Any other failure raises, and nothing starts."""
-    if not seen.journal:
+    that bound it would not see that stop. A journal nothing may open to write, a read-only one among them, is held open
+    to read and not flushed: no stop can be writing a line to it now, since a stop opens it as this does, and a read-only
+    journal refuses no start. Any other failure raises, and nothing starts."""
+    if seen.journal_file is None:
+        yield None
         return
+    path, binary = Path(root) / STOPS_FILE, getattr(os, "O_BINARY", 0)
     try:
-        handle = os.open(Path(root) / STOPS_FILE, os.O_WRONLY | getattr(os, "O_BINARY", 0))
+        handle, writable = os.open(path, os.O_WRONLY | binary), True
     except PermissionError:
-        return
+        handle, writable = os.open(path, os.O_RDONLY | binary), False
     try:
-        os.fsync(handle)
+        if writable:
+            os.fsync(handle)
+        opened = os.fstat(handle)
+        yield opened.st_dev, opened.st_ino
     finally:
         os.close(handle)
 
@@ -644,27 +674,47 @@ def record_stop(root: str | Path, reason: str, *, at: str) -> str:
             log = CycleLog(path)
             if log.start_in_force():
                 log.stop(reason, at=at)
-    except WorkspaceRefused:
-        return "the records are held by a tick, so the stop is not noted in them"
+    except WorkspaceRefused as exc:
+        if exc.code == HELD_BY_ANOTHER:
+            return "the records are held by a tick, so the stop is not noted in them"
+        return f"the records' lock cannot be taken, so the stop is not noted in them ({exc.code})"
     except Exception as exc:  # noqa: BLE001 - whatever keeps the note from being made is said, never raised
-        return f"the records cannot be read, so the stop is not noted in them ({type(exc).__name__})"
+        return f"the records or their lock cannot be read, so the stop is not noted in them ({type(exc).__name__})"
     return ""
 
 
-def runner_lock(root: str | Path) -> ContextManager[None]:
-    """The lock a runner holds for its whole life; a second runner on the folder is refused it."""
-    return Coordination(Path(root) / RUNNER_LOCK).mutex()
+def runner_lock(root: str | Path, wait: float | None = None) -> ContextManager[None]:
+    """The lock a runner holds for its whole life; a second runner on the folder is refused it. Only its holder writes the
+    folder's page and heartbeat (``g6.metaharness.runner._ending``, ``beat_holding``)."""
+    return Coordination(Path(root) / RUNNER_LOCK).mutex(wait=wait)
 
 
 def runner_alive(root: str | Path) -> bool:
-    """Whether a runner holds this folder. A folder no runner ever held has no lock to look at, so nothing is written."""
-    if not (Path(root) / RUNNER_LOCK / "mutex").is_file():
+    """Whether a runner holds this folder: only the lock's refusal for another holder says one does. A folder no runner
+    ever held has no lock to look at, absent by the reading's own rule (``_absent``), so nothing is written. A lock that is
+    there and cannot be tried, for any other reason, raises: nothing then says whether a runner holds it."""
+    root = Path(root)
+    if _absent(root / RUNNER_LOCK / "mutex", root):
         return False
     try:
-        with Coordination(Path(root) / RUNNER_LOCK).mutex(wait=0):
+        with Coordination(root / RUNNER_LOCK).mutex(wait=0):
             return False
-    except WorkspaceRefused:
+    except WorkspaceRefused as exc:
+        if exc.code == HELD_BY_ANOTHER:
+            return True
+        raise
+
+
+def beat_holding(root: str | Path, **fields: Any) -> bool:
+    """Write the heartbeat holding the runner lock for that moment, so no beat lands on a live runner's: only the lock's
+    holder writes the folder's heartbeat. Nothing is written, and ``False`` is returned, when another holds the lock or it
+    cannot be taken, however that fails: a beat missed, never an error."""
+    try:
+        with runner_lock(root, wait=0):
+            beat(root, **fields)
         return True
+    except Exception:  # noqa: BLE001 - a beat this process cannot write as the lock's holder is a beat missed
+        return False
 
 
 def beat(root: str | Path, **fields: Any) -> None:
@@ -693,7 +743,8 @@ def heartbeat(root: str | Path) -> dict | None:
 
 __all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY",
            "REFUSED_FILE", "RUNNER_LOCK", "STOPPED", "STOPS_FILE", "STOP_FILE", "STOP_LOCK", "STOP_UNREADABLE", "Stop",
-           "StopSeen", "StopUnreadable", "TICK_BUDGET_SPENT", "ask_to_stop", "beat", "file_digest", "flush_journal",
+           "StopSeen", "StopUnreadable", "TICK_BUDGET_SPENT", "ask_to_stop", "beat", "beat_holding", "file_digest",
+           "flush_journal",
            "heartbeat",
            "note_refusal", "record_stop", "refused_requests", "stop_in_force", "stop_lock", "stop_seen",
            "stop_standing", "runner_alive", "runner_lock", "stop_reason", "stop_to_lift", "stops_asked"]

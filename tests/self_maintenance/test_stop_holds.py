@@ -916,7 +916,7 @@ STOP_PATHS = {"g6/self_maintenance/envelope.py": ["_absent", "_read_file", "_par
                                                   "stop_to_lift", "stops_asked"],
               "g6/metaharness/loop.py": ["_reloaded", "_stop", "_halted", "_cut_off", "lost_cycle"],
               "g6/mcp/improve.py": ["start", "stop", "asked", "_cannot_start", "_revoke", "_settings", "_refusal", "_failed",
-                                    "_dialog", "_terms", "_watch"],
+                                    "_dialog", "_terms", "_watch", "status", "_unread_status", "_running"],
               "g6/metaharness/runner.py": ["run", "_ending", "_folder_page", "_plain_page", "_gated", "_end", "_pages",
                                            "step"]}
 
@@ -1235,18 +1235,19 @@ def test_every_statement_of_the_dialog_and_the_start_runs_inside_the_one_handler
     import inspect
     import textwrap
 
-    def outside(source: str) -> list[str]:
+    def outside(source: str, maker: str = "return _failed(") -> list[str]:
         body = ast.parse(textwrap.dedent(source)).body[0].body
         body = body[1:] if isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) else body
         tries = [node for node in body if isinstance(node, ast.Try)]
         assert len(tries) == 1 and body[-1] is tries[0], "one handler, and nothing after it"
         [handler] = tries[0].handlers
         assert isinstance(handler.type, ast.Name) and handler.type.id == "Exception"
-        assert [ast.unparse(part)[:15] for part in handler.body] == ["return _failed("]
+        assert [ast.unparse(part)[:len(maker)] for part in handler.body] == [maker]
         return [ast.unparse(node) for node in body[:-1]                     # nothing before it touches a file
                 if {ast.unparse(call.func) for call in ast.walk(node) if isinstance(call, ast.Call)} - {"Path"}]
 
     assert outside(inspect.getsource(improve.asked)) == [] and outside(inspect.getsource(improve.start)) == []
+    assert outside(inspect.getsource(improve.status), "return _unread_status(") == []     # status, the follow-up's review 2
     old = ("def f(root):\n    if not (root / 'settings.json').is_file():\n        return 1\n    try:\n        pass\n"
            "    except Exception:\n        return _failed(root, None)\n")
     assert outside(old) == ["if not (root / 'settings.json').is_file():\n    return 1"]   # the old shape, it finds

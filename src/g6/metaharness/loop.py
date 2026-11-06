@@ -95,6 +95,7 @@ from g6.self_maintenance.envelope import (
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
 from g6.self_maintenance.usage import limit_ends, read_stops, refused_by, telling_stops
 from g6.workspace._coordination import Coordination
+from g6.workspace._envelope import BUSY as HELD_BY_ANOTHER
 from g6.workspace._envelope import WorkspaceRefused
 
 NOT_ENROLLED = "G6_E_LOOP_NOT_ENROLLED"
@@ -578,7 +579,8 @@ def _reloaded(loop: ShadowLoop) -> dict[str, Any] | None:
 def _exclusive(method: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
     """One operation at a time per folder, on what is written and not on what this handle last read: a restart can
     overlap a tick that is still running, and a person's process is not the loop's. The lock is the operating system's,
-    so it dies with its process, and a refusal is a reply, never a raised error. Records the stop decision stands on that
+    so it dies with its process, and its refusal for another holder is a reply, never a raised error; a lock that cannot be
+    taken for any other reason raises what kept it, never another operation. Records the stop decision stands on that
     do not read are that decision's to say: a stop in force, ``STOP_UNREADABLE``, as every reader says it."""
 
     @wraps(method)
@@ -591,7 +593,9 @@ def _exclusive(method: Callable[..., dict[str, Any]]) -> Callable[..., dict[str,
                 if self.mh is not None:
                     self.mh.refresh()
                 return method(self, *args, **kwargs)
-        except WorkspaceRefused:
+        except WorkspaceRefused as exc:
+            if exc.code != HELD_BY_ANOTHER:
+                raise              # a lock that could not be taken for what it is, or a refusal of another kind: no holder
             return _blocked(BUSY, "another operation is running on this folder; this one did nothing")
         except LedgerError as exc:
             reply = _blocked(RECORDS_UNREADABLE, f"the loop's records cannot be trusted: {exc}"[:400],
@@ -611,6 +615,7 @@ class ShadowLoop:
                  domain_file: str | Path | None = None) -> None:
         self.domain, self.settings, self._now, self.domain_file, self._read_now = domain, settings, now, domain_file, read_now
         self.beat_fields: dict[str, Any] = {}     # what a runner adds to every heartbeat
+        self.beats = True                         # a person's command sets it false: only the runner lock's holder beats
         self.lost_cycles = 0                      # cycles in a row the log would not take: it cannot hold this count
         self.cannot_record = ""                   # why this process spends no more, set at MAX_FAILED_CYCLES of those
         self._on_record: tuple[str, dict | None, str] | None = None   # the records' identity, their start, and its revocation
@@ -916,6 +921,8 @@ class ShadowLoop:
                          quiet=self.log.quiet_streak(), last_at=cycles[-1].get("at", "") if cycles else "")
 
     def _beat(self, state: str, code: str, **said: Any) -> None:
+        if not self.beats:
+            return
         beat(self.root, **{**self.beat_fields, **said}, domain=self.domain.name, at=self._now().isoformat(),
              tick=len(self.log.cycles()), state=state, code=code)
 

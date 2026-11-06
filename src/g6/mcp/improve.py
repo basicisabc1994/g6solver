@@ -384,17 +384,19 @@ def start(root: Path, who: str, shown: str | None = None) -> dict:
                 return _refusal(root, reading, TERMS_CHANGED, "what the person read is no longer what would start, so "
                                 "nothing was started", ASK_AGAIN, running=False, folder=str(root))
             writer = CycleLog(root / CYCLE_LOG)
-            flush_journal(root, reading.seen)    # every line the row binds is on disk before the row stands on it
-            held = stop_in_force(root)           # once the writer has opened the records and the journal is on disk
-            if held.code == STOP_UNREADABLE or held.records != reading.records:   # not the approved bytes: no row
-                return _refusal(root, held, TERMS_CHANGED, MOVED, ASK_AGAIN, running=False, folder=str(root))
-            try:
-                writer.start(who, at=datetime.now().astimezone().isoformat(), settings=digest_of(settings),
-                             **reading.seen.binding())
-            except BaseException:                # every way out of the append: whatever landed starts nothing
-                if stop_in_force(root).records != reading.records:
-                    _revoke(root, writer)
-                raise
+            with flush_journal(root, reading.seen) as flushed:   # on disk, and held open until the row is written
+                held = stop_in_force(root)       # once the writer has opened the records and the journal is on disk
+                if (held.code == STOP_UNREADABLE or held.records != reading.records   # not the approved bytes, or
+                        or flushed is not None                                    # bound lines in a file other than the
+                        and not reading.seen.journal_file == flushed == held.seen.journal_file):   # one flushed and held
+                    return _refusal(root, held, TERMS_CHANGED, MOVED, ASK_AGAIN, running=False, folder=str(root))
+                try:
+                    writer.start(who, at=datetime.now().astimezone().isoformat(), settings=digest_of(settings),
+                                 **reading.seen.binding())
+                except BaseException:            # every way out of the append: whatever landed starts nothing
+                    if stop_in_force(root).records != reading.records:
+                        _revoke(root, writer)
+                    raise
             if not _appended_onto(stop_in_force(root), reading):
                 _revoke(root, writer)            # the row did not land on the approved records: it starts nothing
                 return _refusal(root, stop_in_force(root), TERMS_CHANGED, MOVED, ASK_AGAIN, running=False,
@@ -419,14 +421,25 @@ def stop(folder: str, reason: str = "") -> dict:
         why = ask_to_stop(root, reason)
     except Exception as exc:  # noqa: BLE001 - a stop that could not be written says so, whatever stopped it
         return _blocked(STOP_FAILED, f"the stop could not be written: {type(exc).__name__}: {exc}"[:400],
-                        running=runner_alive(root), folder=str(root))
+                        running=_running(root)[0], folder=str(root))
     record_stop(root, why, at=datetime.now().astimezone().isoformat())
-    running = runner_alive(root)
-    said = ("the runner has been asked to stop and is still alive: it ends once it sees the STOP file, at its next model "
+    running, unread = _running(root)
+    said = (f"the STOP file is in place, and whether a runner is alive cannot be read ({unread}): one alive ends once it "
+            "sees the STOP file" if running is None else
+            "the runner has been asked to stop and is still alive: it ends once it sees the STOP file, at its next model "
             "call, or within a minute while it waits" if running else "the STOP file is in place and no runner is alive")
-    return _envelope("qualified-draft", STOP_ASKED, said, running=running, stopped=not running, stop=why, folder=str(root),
-                     next_action="g6_improve_status says when it has gone." if running else
-                     "g6_improve_start starts it again, and lifts the stop once the person agrees.")
+    return _envelope("qualified-draft", STOP_ASKED, said, running=running, stopped=running is False, stop=why,
+                     folder=str(root), next_action="g6_improve_start starts it again, and lifts the stop once the person "
+                     "agrees." if running is False else "g6_improve_status says when it has gone.")
+
+
+def _running(root: Path) -> tuple[bool | None, str]:
+    """Whether a runner is alive on ``root``, or ``None`` and why when its lock cannot be tried: that is never read as a
+    runner alive, nor as none (``runner_alive``)."""
+    try:
+        return runner_alive(root), ""
+    except Exception as exc:  # noqa: BLE001 - a lock that cannot be tried says nothing either way
+        return None, f"{type(exc).__name__}: {exc}"[:200]
 
 
 def _shown(cycle: dict[str, Any]) -> dict[str, Any]:
@@ -435,43 +448,66 @@ def _shown(cycle: dict[str, Any]) -> dict[str, Any]:
 
 
 def status(folder: str) -> dict:
-    """Where the loop stands, from its files. It writes nothing, and a record that does not read is said, not raised."""
-    from g6.metaharness.loop import STATUS_LINE
-    from g6.metaharness.shadow import lineage
-
-    root = _root(folder)
-    if not _is_a_loop(root):
-        return _not_a_loop(root)
-    beat, running = heartbeat(root) or {}, runner_alive(root)
-    halted = stop_in_force(root)           # the one reading: the stop's files and the records, which status opens no more of
-    cycles, paused, started, seen, unreadable = [], "", None, 0, ""
-    log = halted.log
-    if log is not None:
-        cycles, paused, started, seen = log.cycles(), log.paused(), log.started(), log.generation()
-    elif "records" in halted.unread:
-        unreadable = f"the loop's records cannot be read or cannot be trusted: {halted.reason}"[:400]
+    """Where the loop stands, from its files. It writes nothing. The stop comes first: once the folder is found, the one
+    reading (``stop_in_force``) is taken before anything else status reads, and every reply reports it. Every statement
+    that touches a file runs inside its one handler, so whatever else cannot be read or used, however it fails, a field of
+    the records among them, is said beside the stop (``_unread_status``), never raised."""
+    root, halted = Path(folder), None      # the folder as given, for a reply before it is found
     try:
-        generations = lineage(root / "workspace", last=RECENT)
-    except LedgerError as exc:
-        generations = {"current": None, "recent": []}
-        unreadable = unreadable or f"the chain of generations cannot be trusted: {exc}"[:400]
-    if generations["current"] is not None and seen > generations["current"]:
-        unreadable = unreadable or f"the log saw generation {seen} and the chain of adoptions is at {generations['current']}"
-    held = beat.get("pause") if (beat.get("pause") or {}).get("code") != PAUSED else None
-    pause = ({"code": PAUSED, "reason": paused} if paused else
-             {"code": RECORDS_UNREADABLE, "reason": unreadable} if unreadable else held)
-    named = [c for c in cycles if c.get("constraint")]
-    page = digest.latest(root)
-    return _envelope("qualified-draft", STATUS, f"a runner is {'alive' if running else 'not alive'} on {root}",
-                     running=running, folder=str(root), last_heartbeat=beat or None,
-                     use=beat.get("use", []), use_as_of=beat.get("at", ""),
-                     constraint={"name": named[-1]["constraint"], "basis": named[-1].get("basis", ""),
-                                 "tick": named[-1]["tick"]} if named else None,
-                     last_cycle=_shown(cycles[-1]) if cycles else None, cycles=len(cycles), pause=pause,
-                     stop=halted.reason, stop_code=halted.code, started=started, generation=generations["current"],
-                     lineage=generations["recent"],
-                     digest={"path": str(page), "text": page.read_text(encoding="utf-8")} if page else None,
-                     g6_status=STATUS_LINE)
+        from g6.metaharness.loop import STATUS_LINE
+        from g6.metaharness.shadow import lineage
+
+        root = _root(folder)
+        if not _is_a_loop(root):
+            return _not_a_loop(root)
+        halted = stop_in_force(root)       # first: the one reading of the stop's files and the records, opened no more
+        beat, running = heartbeat(root) or {}, runner_alive(root)
+        cycles, paused, started, seen, unreadable = [], "", None, 0, ""
+        log = halted.log
+        if log is not None:
+            cycles, paused, started, seen = log.cycles(), log.paused(), log.started(), log.generation()
+        elif "records" in halted.unread:
+            unreadable = f"the loop's records cannot be read or cannot be trusted: {halted.reason}"[:400]
+        try:
+            generations = lineage(root / "workspace", last=RECENT)
+        except LedgerError as exc:
+            generations = {"current": None, "recent": []}
+            unreadable = unreadable or f"the chain of generations cannot be trusted: {exc}"[:400]
+        if generations["current"] is not None and seen > generations["current"]:
+            unreadable = unreadable or f"the log saw generation {seen} and the chain of adoptions is at {generations['current']}"
+        held = beat.get("pause") if (beat.get("pause") or {}).get("code") != PAUSED else None
+        pause = ({"code": PAUSED, "reason": paused} if paused else
+                 {"code": RECORDS_UNREADABLE, "reason": unreadable} if unreadable else held)
+        named = [c for c in cycles if c.get("constraint")]
+        page = digest.latest(root)
+        return _envelope("qualified-draft", STATUS, f"a runner is {'alive' if running else 'not alive'} on {root}",
+                         running=running, folder=str(root), last_heartbeat=beat or None,
+                         use=beat.get("use", []), use_as_of=beat.get("at", ""),
+                         constraint={"name": named[-1]["constraint"], "basis": named[-1].get("basis", ""),
+                                     "tick": named[-1]["tick"]} if named else None,
+                         last_cycle=_shown(cycles[-1]) if cycles else None, cycles=len(cycles), pause=pause,
+                         stop=halted.reason, stop_code=halted.code, started=started, generation=generations["current"],
+                         lineage=generations["recent"],
+                         digest={"path": str(page), "text": page.read_text(encoding="utf-8")} if page else None,
+                         g6_status=STATUS_LINE)
+    except Exception as exc:  # noqa: BLE001 - whatever status cannot read or use past the stop is said, never raised
+        return _unread_status(root, halted, exc)
+
+
+def _unread_status(root: Path, halted: Stop | None, exc: Exception) -> dict:
+    """Status when something it reads past the stop cannot be read or used, however that failed: the stop, from the one
+    reading (taken now when none was yet), and what could not be read, said as records that cannot be trusted
+    (``RECORDS_UNREADABLE``); nothing else is guessed, whether a runner is alive among it (``None``)."""
+    halted = stop_in_force(root) if halted is None else halted
+    why = f"status could not read all it reports past the stop: {type(exc).__name__}: {exc}"[:400]
+    try:
+        from g6.metaharness.loop import STATUS_LINE as said
+    except Exception:  # noqa: BLE001 - the status line is the loop's; with no loop to import, none is said
+        said = ""
+    return _envelope("qualified-draft", STATUS, f"the stop on {root} is read; the rest could not all be read",
+                     running=None, folder=str(root), last_heartbeat=None, use=[], use_as_of="", constraint=None,
+                     last_cycle=None, cycles=None, pause={"code": RECORDS_UNREADABLE, "reason": why}, stop=halted.reason,
+                     stop_code=halted.code, started=None, generation=None, lineage=[], digest=None, g6_status=said)
 
 
 __all__ = ["NOT_ASKED", "asked", "refused", "start", "status", "stop"]
