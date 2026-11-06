@@ -219,10 +219,9 @@ def review_bug(ctx: we.Context, root: Path, task: we.Task, rows: Sequence[Mappin
         raw = (root / str(row["run"]) / "final.patch").read_bytes()    # one read: these bytes are run and named, nothing else
         sha = hashlib.sha256(raw).hexdigest()
         base = now = None
-        if found.get("test"):
-            copy = root / "critic_packs" / f"{uuid.uuid4().hex}.patch"
-            copy.parent.mkdir(parents=True, exist_ok=True)
-            copy.write_bytes(raw)
+        if found.get("test"):          # the patch's copy, made where nothing else can be (study follow-up review 3, finding 3)
+            folder = c.fresh(root / "critic_packs")
+            copy = c.created(folder / "candidate.patch", raw)
             try:
                 base, now = run(ctx, task, found["test"], copy)
             except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
@@ -231,6 +230,8 @@ def review_bug(ctx: we.Context, root: Path, task: we.Task, rows: Sequence[Mappin
                 continue
             finally:
                 copy.unlink(missing_ok=True)
+                with contextlib.suppress(OSError):
+                    folder.rmdir()
         got.append(_keep(root, row, verdict(found, base, now), started, sha, ins=ins))
     return got
 

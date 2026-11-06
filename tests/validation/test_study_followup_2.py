@@ -372,18 +372,18 @@ def test_finding_4_a_stop_between_any_two_steps_of_a_proposal_never_asks_for_a_s
     """The review's case is "after the commit": the harness committed, and nothing else done. A stop in the record's own write
     leaves nothing recorded and nothing committed, so a restart proposes again, once; after it, never."""
     harness, generated, committed = proposing
-    real_commit, real_text = loop.commit, Path.write_text
+    real_commit, real_created = loop.commit, c.created
 
-    def write_text(self, *a, **kw):
-        if self.parent == harness:
+    def created(path, *a, **kw):     # the harness file is made by ``wecommon.created`` (study follow-up review 3, finding 3)
+        if path.parent == harness:
             raise _Stop()
-        return real_text(self, *a, **kw)
+        return real_created(path, *a, **kw)
 
     with monkeypatch.context() as patch:
         if at == "the record":
             patch.setattr(c.os, "replace", lambda *a: (_ for _ in ()).throw(_Stop()))
         elif at == "the harness file":
-            patch.setattr(Path, "write_text", write_text)
+            patch.setattr(c, "created", created)
         elif at == "the commit":
             patch.setattr(loop, "commit", lambda path, message: (_ for _ in ()).throw(_Stop()))
         else:

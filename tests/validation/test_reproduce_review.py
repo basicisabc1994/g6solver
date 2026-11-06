@@ -8,6 +8,7 @@ import io
 import itertools
 import json
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -176,8 +177,13 @@ def _frozen_calls(sha):
             ["exec", "-i", "-u", "root", name, "sh", "-c",
              'mkdir -p "$(dirname "/opt/we/critic/test_critic.py")" && cat > "/opt/we/critic/test_critic.py" && chmod 644 '
              '"/opt/we/critic/test_critic.py"'],
-            ["cp", f"<tmp>/round3/critic_packs/held-{sha}-{os.getpid()}.patch", f"{name}:/tmp/we.patch"],   # the bytes read
-            ["rm", "-f", name]]
+            ["cp", f"<tmp>/round3/critic_packs/<fresh>/held-{sha}.patch", f"{name}:/tmp/we.patch"],   # the bytes read, in a
+            ["rm", "-f", name]]                     # folder made fresh for them (study follow-up review 3, finding 3)
+
+
+def _fresh(calls):
+    """The calls with the name of each folder made fresh for a private copy (``wecommon.fresh``) written as ``<fresh>``."""
+    return [[re.sub(r"(critic_packs/)[0-9a-f]{32}(/held-)", r"\1<fresh>\2", a) for a in call] for call in calls]
 
 
 def test_the_frozen_review_is_byte_for_byte_what_it_was(tmp_path, monkeypatch, capsys):
@@ -190,8 +196,8 @@ def test_the_frozen_review_is_byte_for_byte_what_it_was(tmp_path, monkeypatch, c
             FROZEN_SAVED.format(run="run/L91").replace("\n", os.linesep).encode("utf-8"),
         "loop/final_review/5da3889b34525a0b01340507a691e293618f811c696fdbf2ecc19cfd13a2151e.json":
             FROZEN_SAVED.format(run="run/A1").replace("\n", os.linesep).encode("utf-8")}
-    assert got["calls"] == [*_frozen_calls("59c01c68c0d0ca432c95f3c694d7f370bde83265b81007d1979ccfaf6fef7ca1"),
-                            *_frozen_calls("5da3889b34525a0b01340507a691e293618f811c696fdbf2ecc19cfd13a2151e")]
+    assert _fresh(got["calls"]) == [*_frozen_calls("59c01c68c0d0ca432c95f3c694d7f370bde83265b81007d1979ccfaf6fef7ca1"),
+                                    *_frozen_calls("5da3889b34525a0b01340507a691e293618f811c696fdbf2ecc19cfd13a2151e")]
     assert got["scripts"] == ["git apply --binary --whitespace=nowarn /tmp/we.patch"] * 2
     issue = "review {}\n\na title\n\nthe issue\n\nthe thread"
     assert critic.seen == [{"candidate.patch": "patch two", "critic_prompt.md": we.PATCH_CRITIC, "parent/src/app.py": "print('parent')\n",

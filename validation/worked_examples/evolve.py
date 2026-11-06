@@ -247,8 +247,9 @@ class Training:
                 raise ValueError(f"evolve_{arm}.json records no harness to commit, and {path.name} is not committed as it is: "
                                  "nothing is proposed again")
         elif not (path.is_file() and path.read_bytes() == harness.encode("utf-8") and self.committed(path)):
-            path.parent.mkdir(exist_ok=True)
-            path.write_text(harness, "utf-8", newline="\n")
+            if not (path.is_file() and path.read_bytes() == harness.encode("utf-8")):     # its bytes are not there yet: made where
+                path.parent.mkdir(exist_ok=True)       # nothing else can be, so a file already there is refused, never written
+                c.created(path, harness.encode("utf-8"))     # over or through (study follow-up review 3, finding 3)
             loop.commit(path, f"worked examples round 3: harness candidate {arm}, proposed by G6")
         return {**entry, "outcome": "to run"}
 

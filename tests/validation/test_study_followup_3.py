@@ -9,6 +9,8 @@ and the classes they belong to, each removed at its root with an inventory built
 2. A file's name in a patch is the one git's own reader gives (finding 5; own_parser_for_foreign_format): ``layers`` reads no
    name itself. Finding 2 (identity_from_rendering: one edit read differently under different context) is offered, not repaired:
    every root repair changes a behaviour earlier repairs pinned, and the archive holds no parent for 32 of the 34 bugs.
+3. A file G6 writes that the one writer of store files does not guard is made where nothing else can be (finding 3;
+   guard_covers_less_than_it_guards): created exclusively, in a folder made fresh for it (``wecommon.created``, ``fresh``).
 
 Fakes only: no Docker, no model, no network; git is run only to read a patch (``git apply --numstat``)."""
 from __future__ import annotations
@@ -16,6 +18,7 @@ from __future__ import annotations
 import ast
 import builtins
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -30,7 +33,9 @@ ROOT = Path(__file__).resolve().parents[2]
 STUDY = ROOT / "validation" / "worked_examples"
 sys.path.insert(0, str(STUDY))
 
+import final_review as fr  # noqa: E402
 import layers  # noqa: E402
+import loop  # noqa: E402
 import run as we  # noqa: E402
 import wecommon as c  # noqa: E402
 
@@ -413,3 +418,189 @@ def test_every_reader_of_a_patchs_file_names_is_listed_and_layers_asks_git_alone
     for (module, name), calls in found.items():
         assert bool(calls & OWN_READERS) is (module == "product_review"), (module, name)
     assert found[("layers", "named")] & BY_GIT and "named" in found[("layers", "change")]
+
+
+# --- 3: a file G6 writes beside the store writer is made where nothing else can be ---------------------------------------------
+def test_finding_3_the_private_review_copy_cannot_overwrite_a_saved_run_row(tmp_path):
+    archive = c.Archive(tmp_path)
+    run = archive.start("run", "bug", arm="A", repeat=1)
+    run.finish({"agent_started": True}, "finished")
+    row = c.keep(archive, {"run": run.rel, "passes": True, "failing": 0, c.MADE_UNDER: c.ending_sha256(archive, run.rel)})
+    before = row.read_bytes()
+    patch = tmp_path / "candidate.patch"
+    raw = b"diff --git a/api.py b/api.py\n--- a/api.py\n+++ b/api.py\n@@ -1 +1 @@\n-x = 0\n+x = 1\n"
+    patch.write_bytes(raw)
+    sha = hashlib.sha256(raw).hexdigest()
+    staging = tmp_path / "critic_packs" / f"held-{sha}-{os.getpid()}.patch"
+    staging.parent.mkdir()
+    os.link(row, staging)
+    assert os.path.samefile(staging, row)
+    held = []
+    try:
+        with fr.held(SimpleNamespace(archive=archive), patch) as (own, got):
+            held.append((own.read_bytes(), got, os.path.samefile(own, row)))
+    except (ValueError, OSError, c.ArchiveError):
+        pass  # refusing the alias made in advance also keeps the verdict
+    assert row.read_bytes() == before, "private review copy overwrote the saved row through its staging hard link"
+    assert c.shelf(archive, lambda task: None).get(("A", "bug", 1)).passes is True
+    assert held == [(raw, sha, False)]                     # its own copy, of the bytes read, in a file no other name holds
+    assert [p.name for p in (tmp_path / "critic_packs").iterdir()] == [staging.name]      # its own folder went with it
+
+
+def test_a_file_g6_makes_is_refused_where_anything_is_already_there_and_nothing_is_written_through(tmp_path):
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(b"another file's bytes")
+    folder = c.fresh(tmp_path / "packs")
+    assert folder.parent == tmp_path / "packs" and not list(folder.iterdir())
+    os.link(outside, folder / "taken")
+    with pytest.raises(c.ArchiveError, match="exists"):
+        c.created(folder / "taken", b"new")
+    assert outside.read_bytes() == b"another file's bytes"
+    assert c.created(folder / "text.txt", "a\nb").read_bytes() == "a\nb".replace("\n", os.linesep).encode()   # as write_text
+    archive = c.Archive(tmp_path / "archive")
+    run = archive.start("run", "bug", arm="A", repeat=1)
+    os.link(outside, run.path / "final.patch")
+    with pytest.raises(c.ArchiveError, match="exists"):
+        run.write("final.patch", b"candidate")
+    assert outside.read_bytes() == b"another file's bytes"
+
+
+def test_the_index_is_never_appended_to_through_a_second_name(tmp_path):
+    archive = c.Archive(tmp_path)
+    archive.start("run", "bug", arm="A", repeat=1)
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(archive.index.read_bytes())
+    archive.index.unlink()
+    os.link(outside, archive.index)
+    before = outside.read_bytes()
+    with pytest.raises(c.ArchiveError, match="second name"):
+        archive.append({"event": "note"})
+    assert outside.read_bytes() == before
+
+
+def test_a_harness_file_already_there_is_refused_never_written_over(tmp_path, monkeypatch):
+    harness = tmp_path / "harness"
+    harness.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"another file's bytes")
+    os.link(outside, harness / "G1.txt")
+    monkeypatch.setattr(we, "HARNESS", harness)
+    monkeypatch.setattr(loop, "spent", lambda root: 0.0)
+    monkeypatch.setattr(loop.distill, "distill", lambda *a, **kw: ("a candidate text", []))
+    monkeypatch.setattr(loop, "commit", lambda *a: pytest.fail("nothing is committed once the file is refused"))
+    gens = loop.Generations.__new__(loop.Generations)
+    gens.root, gens.best, gens.best_text, gens.best_arm, gens.caller, gens.notes, gens.n, gens.misses = \
+        tmp_path / "archive", [], "", "L9", None, [], 1, 0
+    with pytest.raises(c.ArchiveError, match="exists"):
+        gens.distilled(harness / "G1.txt")
+    assert outside.read_bytes() == b"another file's bytes"
+
+
+#: Every write of a file in the modules that keep a store beside the saved rows, by module and function, from the code: each call
+#: of the one writer of store files (``write_whole``), of the maker of every other file (``created``, ``fresh``, and a run's own
+#: ``RunFolder.write``) and of every write primitive; and how what it writes is guarded. Kinds: "store writer"; "created" (made
+#: exclusively, in a folder made fresh for it or a run's own); "made" (the maker itself: ``open`` "xb", ``mkdir`` with no
+#: exist_ok); "lock" (made exclusively, or opened only to be locked); "index" (appended to, refused with a second name); "sync"
+#: and "read" (opened, never written); "no file" (``str.replace``, ``copy.copy``, ``dataclasses.replace``, a tar read).
+GUARDS = {
+    ("evolve", "Training.proposed"): ("created", ["created", "write", "write", "write_whole"]),
+    ("evolve", "train"): ("store writer", ["write_whole"]),
+    ("final_review", "_review"): ("created", ["created", "created", "created", "created", "open", "write_text"]),
+    ("final_review", "_step"): ("created", ["created", "created", "created", "created", "open", "write_text"]),
+    ("final_review", "held"): ("created", ["created", "fresh"]),
+    ("final_review", "keep"): ("store writer", ["write_whole"]),
+    ("loop", "Generations.distilled"): ("created", ["created", "write"]),
+    ("loop", "main"): ("store writer", ["write_whole"]),
+    ("product_review", "read_at"): ("no file", ["replace", "replace"]),
+    ("replay3", "main"): ("lock", ["one_runner"]),
+    ("replay3", "one_runner"): ("lock", ["open", "write"]),
+    ("replay3", "review_bug"): ("created", ["created", "fresh", "write_whole"]),
+    ("replay3", "run_on"): ("no file", ["copy"]),
+    ("wecommon", "Archive.append"): ("index", ["open", "open", "truncate", "write", "write"]),
+    ("wecommon", "Redactor.__call__"): ("no file", ["replace"]),
+    ("wecommon", "RunFolder.write"): ("created", ["created"]),
+    ("wecommon", "RunFolder.write_json"): ("created", ["write"]),
+    ("wecommon", "_locked"): ("lock", ["open"]),
+    ("wecommon", "_unique"): ("no file", ["replace", "replace"]),
+    ("wecommon", "created"): ("made", ["open", "replace", "write"]),
+    ("wecommon", "durable"): ("sync", ["open"]),
+    ("wecommon", "fresh"): ("made", []),
+    ("wecommon", "keep"): ("store writer", ["write_whole"]),
+    ("wecommon", "sha256_file"): ("read", ["open"]),
+    ("wecommon", "write_whole"): ("store writer", ["fdopen", "mkstemp", "replace", "replace", "write"]),
+}
+PRIMITIVES = {"write_text", "write_bytes", "write", "replace", "rename", "link", "hardlink_to", "symlink_to", "mkstemp", "dump",
+              "copy", "copy2", "copyfile", "copytree", "move", "truncate", "open", "fdopen", "touch"}
+MAKERS = {"write_whole", "created", "fresh", "one_runner"}
+
+
+def _writes() -> dict[tuple[str, str], list[str]]:
+    """Every write primitive and every call of a maker of files, in every module that defines or calls a store's writer or checker
+    (``beside``, ``keep``, ``write_whole``), by the function it is in, from the code; a maker that calls none has no calls."""
+    found: dict[tuple[str, str], list[str]] = {}
+    for path in sorted(STUDY.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        names = {_called(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)} | \
+            {n.name for n in ast.walk(tree) if isinstance(n, FUNCS)}
+        if not names & {"beside", "keep", "write_whole"}:
+            continue
+
+        def walk(node, where):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (*FUNCS, ast.ClassDef)):
+                    inner = f"{where}.{child.name}" if where else child.name
+                    if isinstance(child, FUNCS) and child.name in MAKERS:
+                        found.setdefault((path.stem, inner), [])
+                    walk(child, inner)
+                    continue
+                if isinstance(child, ast.Call) and _called(child.func) in PRIMITIVES | MAKERS:
+                    found.setdefault((path.stem, where), []).append(_called(child.func))
+                walk(child, where)
+
+        walk(tree, "")
+    return {k: sorted(v) for k, v in found.items()}
+
+
+def _mode(call) -> str:
+    """The mode an ``open`` call names (``open(path, "xb")`` or ``path.open("a+b")``), "" for none."""
+    return next((a.value for a in call.args if isinstance(a, ast.Constant) and isinstance(a.value, str)), "") or next(
+        (k.value.value for k in call.keywords if k.arg == "mode" and isinstance(k.value, ast.Constant)), "")
+
+
+def test_every_file_g6_writes_beside_the_store_writer_is_made_where_nothing_else_can_be():
+    """The write inventory, from the code: no write is excused by what it is for. Each is the one writer of store files, or made by
+    ``created`` (``open`` "xb", in a folder ``fresh`` makes with no exist_ok, a critic's pack made the same way, or a run's own
+    folder), or one of the files that cannot be made fresh, each with its own guard: the replay's lock (O_EXCL) and the index's
+    (opened only to be locked), the index itself (refused with a second name), a file synced or read. A file-writing primitive
+    (``write_bytes``, ``copyfile`` and the like) is nowhere; ``write_text`` only writes a file its function claimed by
+    ``created`` on an earlier line (a critic pack's issue, whose line is kept as it was)."""
+    assert _writes() == {k: v[1] for k, v in GUARDS.items()}
+    assert not {p for k, v in _writes().items() for p in v} & {"write_bytes", "copyfile", "copy2", "copytree", "move", "dump",
+                                                                "touch", "link", "hardlink_to", "symlink_to", "rename"}
+    fns = {(module, name): fn for module in {m for m, _ in GUARDS} for name, fn in _functions(module).items()}
+    for key in GUARDS:
+        fn = fns[(key[0], key[1].split(".")[-1])]
+        calls = [n for n in ast.walk(fn) if isinstance(n, ast.Call)]
+        claims = {(ast.unparse(n.args[0]), n.lineno) for n in calls if _called(n.func) == "created"}
+        for n in calls:
+            if _called(n.func) == "write_text":
+                target = ast.unparse(n.func.value)
+                assert any(path == target and line < n.lineno for path, line in claims), (key, ast.unparse(n))
+    opens = {key: [n for n in ast.walk(fns[(key[0], key[1].split(".")[-1])]) if isinstance(n, ast.Call) and _called(n.func) == "open"]
+             for key in GUARDS}
+    assert [_mode(n) for n in opens[("wecommon", "created")]] == ["xb"]
+    fresh = fns[("wecommon", "fresh")]
+    mkdirs = [n for n in ast.walk(fresh) if isinstance(n, ast.Call) and _called(n.func) == "mkdir"]
+    assert any(not n.keywords for n in mkdirs) and "secrets.token_hex" in ast.unparse(fresh)
+    for key in (("final_review", "_review"), ("final_review", "_step")):      # the pack: made with no exist_ok
+        assert "pack.mkdir(parents=True)" in {ast.unparse(n) for n in ast.walk(fns[key]) if isinstance(n, ast.Call)}
+    for key in (("final_review", "held"), ("replay3", "review_bug")):
+        assert {"fresh", "created"} <= {_called(n.func) for n in ast.walk(fns[key]) if isinstance(n, ast.Call)}
+    assert "created" in {_called(n.func) for n in ast.walk(fns[("wecommon", "write")]) if isinstance(n, ast.Call)}
+    assert [_mode(n) for n in opens[("wecommon", "_locked")]] == ["a+b"]
+    assert not [n for n in ast.walk(fns[("wecommon", "_locked")]) if isinstance(n, ast.Call) and _called(n.func) == "write"]
+    assert sorted(_mode(n) for n in opens[("wecommon", "Archive.append")]) == ["a+b", "xb"]
+    assert "st_nlink" in ast.unparse(fns[("wecommon", "append")])
+    assert "O_EXCL" in ast.unparse(fns[("replay3", "one_runner")])
+    assert [_mode(n) for n in opens[("wecommon", "durable")]] == ["r+b"]
+    assert [_mode(n) for n in opens[("wecommon", "sha256_file")]] == ["rb"]

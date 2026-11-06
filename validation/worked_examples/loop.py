@@ -247,7 +247,7 @@ class Generations:
             self.misses += 1
             return False
         we.HARNESS.mkdir(exist_ok=True)
-        path.write_text(text + "\n", "utf-8", newline="\n")
+        c.created(path, (text + "\n").encode("utf-8"))      # made where nothing else can be (study follow-up review 3, finding 3)
         commit(path, f"worked examples round 3: harness generation {self.n}")
         return True
 

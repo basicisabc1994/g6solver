@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import stat
 import tempfile
 import time
@@ -303,14 +304,15 @@ class RunFolder:
     ending_rule: Callable[[str], str] | None = field(default=None, repr=False, compare=False)
 
     def write(self, name: str, data: str | bytes) -> Path:
+        """A file of the run's own, in the folder made for it alone (``Archive.start``), made where nothing else can be
+        (``created``): refused if anything is there by that name (study follow-up review 3, finding 3)."""
         target = self.path / name
-        if target.exists():
+        if os.path.lexists(target):
             raise ArchiveError(f"{self.rel}/{name} exists")
         target.parent.mkdir(parents=True, exist_ok=True)
         if isinstance(data, str):
             data = self.archive.redact(data).encode("utf-8")
-        target.write_bytes(data)
-        return target
+        return created(target, data)
 
     def write_json(self, name: str, obj: Any) -> Path:
         return self.write(name, json.dumps(obj, indent=1, ensure_ascii=False, default=str))
@@ -398,10 +400,14 @@ class Archive:
         a write cut short (the bytes after the index's last "\\n") is first moved, exactly, to a side file beside the index
         (``runs.jsonl.torn-<UTC stamp>``, never written over), and the index cut back to its last "\\n": so the row is never
         joined to a torn one, and the torn bytes are kept, not lost. A newline alone would not do: the torn line would then end
-        with one and, by ``rows``'s rule, be an error."""
+        with one and, by ``rows``'s rule, be an error. The index is the one file G6 appends to, so it cannot be made fresh as every
+        other file it writes is (``created``): it is refused (``ArchiveError``), and nothing appended, while it is a link or has a
+        second name (a hard link), so no row is ever appended to another file (study follow-up review 3, finding 3)."""
         self.root.mkdir(parents=True, exist_ok=True)
         line = (json.dumps(dict(row), ensure_ascii=False) + "\n").encode("utf-8")
         with _locked(self.index), open(self.index, "a+b") as stream:
+            if os.fstat(stream.fileno()).st_nlink != 1 or linked(os.lstat(self.index)):
+                raise ArchiveError(f"{self.index.name} is a link or has a second name: no row is appended to another file")
             stream.seek(0)
             data = stream.read()
             tail = data[data.rfind(b"\n") + 1:]
@@ -1126,6 +1132,31 @@ def write_whole(where: Callable[[], Path], data: bytes | str) -> Path:
             os.unlink(part)
         raise
     return dest
+
+
+def created(path: Path, data: bytes | str) -> Path:
+    """A file G6 writes that the one writer of store files (``write_whole``) does not guard, made where nothing else can be
+    (study follow-up review 3, finding 3): created exclusively (``open`` "xb": O_CREAT|O_EXCL, so a file, a link or a file with
+    a second name already there is refused, never written over or through), in a folder of its own made fresh for it (``fresh``,
+    or a run's own, ``Archive.start``). Text is written as ``Path.write_text`` writes it (UTF-8, each "\\n" the platform's line
+    end), so a file kept as text has the bytes it always had. Refused (``ArchiveError``) if anything is there."""
+    if isinstance(data, str):
+        data = data.replace("\n", os.linesep).encode("utf-8")
+    try:
+        with open(path, "xb") as stream:
+            stream.write(data)
+    except FileExistsError:
+        raise ArchiveError(f"{path.name} exists: a file G6 makes is never written over or through") from None
+    return path
+
+
+def fresh(parent: Path) -> Path:
+    """A folder made for one use below ``parent``: a name no one can predict (``secrets``), made exclusively (``mkdir`` with no
+    ``exist_ok``), so nothing in it was put there before (``created``)."""
+    parent.mkdir(parents=True, exist_ok=True)
+    folder = parent / secrets.token_hex(16)
+    folder.mkdir()
+    return folder
 
 
 def keep(root: Path | Archive, row: Mapping[str, Any], *, amended: bool = False, file: str | None = None) -> Path:

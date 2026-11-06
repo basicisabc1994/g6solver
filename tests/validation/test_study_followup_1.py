@@ -762,24 +762,24 @@ def test_evolves_own_files_are_written_by_the_one_writer(tmp_path, monkeypatch):
 
 
 #: Every write in the modules that keep a store beside the saved rows, by module and function, as the code reads now: what it
-#: writes, and why it is not a store's file. Only ``wecommon.write_whole`` makes, syncs and replaces a store's file.
+#: writes. Only ``wecommon.write_whole`` makes, syncs and replaces a store's file, and every other file is made where nothing else
+#: can be, by ``wecommon.created`` (study follow-up review 3, finding 3: no write is excused by what it is for; how each is guarded
+#: is checked in tests/validation/test_study_followup_3.py).
 WRITES = {
-    ("evolve", "Training.proposed"): ["write", "write", "write_text"],     # the distill run's folder; the harness file, in git
-    ("final_review", "held"): ["write_bytes"],                             # the critic's private copy, in critic_packs
-    ("final_review", "_review"): ["open", "write_bytes", "copyfile", "write_text", "write_text"],   # the critic's pack
-    ("final_review", "_step"): ["open", "write_bytes", "copyfile", "write_text", "write_text"],     # the critic's pack
-    ("loop", "Generations.distilled"): ["write", "write_text"],            # the distill run's folder; the harness file, in git
+    ("evolve", "Training.proposed"): ["write", "write"],                   # RunFolder.write: the distill run's own folder
+    ("final_review", "_review"): ["open", "write_text"],     # tarfile.open: a read; its pack's files by ``created``, its issue
+    ("final_review", "_step"): ["open", "write_text"],       # claimed by ``created``, then written
+    ("loop", "Generations.distilled"): ["write"],                          # RunFolder.write: the distill run's own folder
     ("product_review", "read_at"): ["replace", "replace"],                 # str.replace: no file
     ("replay3", "run_on"): ["copy"],                                       # copy.copy of a context: no file
-    ("replay3", "review_bug"): ["write_bytes"],                            # the patch's copy, in critic_packs
     ("replay3", "one_runner"): ["open", "write"],                          # the replay's lock: O_CREAT|O_EXCL, never replaced
     ("wecommon", "sha256_file"): ["open"],                                 # read
     ("wecommon", "Redactor.__call__"): ["replace"],                        # str.replace: no file
-    ("wecommon", "RunFolder.write"): ["write_bytes"],                      # a run's own folder, never a store
-    ("wecommon", "RunFolder.write_json"): ["write"],                       # RunFolder.write: the run's own folder
-    ("wecommon", "_locked"): ["open"],                                     # the index's lock
-    ("wecommon", "Archive.append"): ["open", "open", "write", "write", "truncate"],    # the index, and its torn tail moved aside
+    ("wecommon", "RunFolder.write_json"): ["write"],                       # RunFolder.write: ``created``, in the run's own folder
+    ("wecommon", "_locked"): ["open"],                                     # the index's lock, opened only to be locked
+    ("wecommon", "Archive.append"): ["open", "open", "write", "write", "truncate"],    # the index (one name), its torn tail "xb"
     ("wecommon", "_unique"): ["replace", "replace"],                       # dataclasses.replace: no file
+    ("wecommon", "created"): ["open", "replace", "write"],                 # "xb": made exclusively; str.replace of line ends
     ("wecommon", "durable"): ["open"],                                     # r+b, for fsync only
     ("wecommon", "write_whole"): ["replace", "mkstemp", "fdopen", "write", "replace"],     # str.replace of line ends; os.replace
 }

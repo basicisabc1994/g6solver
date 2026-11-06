@@ -20,7 +20,6 @@ import contextlib
 import hashlib
 import io
 import json
-import os
 import shutil
 import subprocess
 import tarfile
@@ -120,16 +119,18 @@ def said(found: Mapping[str, Any], failing: Iterable[str]) -> str:
 def held(ctx: we.Context, patch: Path) -> Any:
     """``patch`` read once, as a private copy beside the reviewers' packs, and the digest of its bytes: a reviewer reads those
     bytes, its test runs on them, and the review is kept by that digest (``keep``), whatever the patch file holds by then (study
-    review 3, finding 11). The copy is removed after."""
+    review 3, finding 11). The copy is made where nothing else can be (``wecommon.created``, in a folder made fresh for it), never
+    at a name another file can hold first (study follow-up review 3, finding 3). The copy and its folder are removed after."""
     raw = patch.read_bytes()
     sha = hashlib.sha256(raw).hexdigest()
-    own = ctx.archive.root / "critic_packs" / f"held-{sha}-{os.getpid()}.patch"
-    own.parent.mkdir(parents=True, exist_ok=True)
-    own.write_bytes(raw)
+    folder = c.fresh(ctx.archive.root / "critic_packs")
+    own = c.created(folder / f"held-{sha}.patch", raw)
     try:
         yield own, sha
     finally:
         own.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            folder.rmdir()
 
 
 def review(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str) -> dict[str, Any]:
@@ -152,7 +153,7 @@ def _review(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str) 
         we.checked(ctx.docker("run", "-d", "--name", name, "--label", "g6we=1", "--network", "none", *we.SECURITY, "-u", we.USER,
                               "-e", f"HOME={we.HOME}", "-w", task.repo, image, "tail", "-f", "/dev/null", timeout=600),
                    "review container")
-        pack.mkdir(parents=True)
+        pack.mkdir(parents=True)        # made fresh: no exist_ok, and every file in it made where nothing else can be (``created``)
         tree = we.completed(ctx.docker("exec", "-u", we.USER, "-w", task.repo, name, "git", "archive", "--format=tar", task.parent,
                                        timeout=300), "the parent's tree")
         with tarfile.open(fileobj=io.BytesIO(tree.stdout)) as tar:
@@ -160,10 +161,11 @@ def _review(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str) 
                 if member.isfile():
                     dest = pack / "parent" / member.name
                     dest.parent.mkdir(parents=True, exist_ok=True)
-                    dest.write_bytes(tar.extractfile(member).read())
-        shutil.copyfile(patch, pack / "candidate.patch")
+                    c.created(dest, tar.extractfile(member).read())
+        c.created(pack / "candidate.patch", patch.read_bytes())
+        c.created(pack / "issue.txt", b"")         # its name claimed exclusively, in the fresh pack, before its text is written
         (pack / "issue.txt").write_text(f"{proof}\n\n{title}\n\n{text}", encoding="utf-8")
-        (pack / "critic_prompt.md").write_text(we.critic_text(ctx.arm), encoding="utf-8")
+        c.created(pack / "critic_prompt.md", we.critic_text(ctx.arm))
         found = we.critic_report((ctx.critic or we.run_codex)(pack), proof=proof)
         if found["test"]:
             we.write_in(ctx.docker, name, f"{we.CRITIC_AT}/test_critic.py", found["test"] + "\n", user="root")
@@ -252,7 +254,7 @@ def _step(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, pr
     asking = False
     try:
         container(ctx, task, name)
-        pack.mkdir(parents=True)
+        pack.mkdir(parents=True)        # made fresh: no exist_ok, and every file in it made where nothing else can be (``created``)
         tree = we.completed(ctx.docker("exec", "-u", we.USER, "-w", task.repo, name, "git", "archive", "--format=tar", task.parent,
                                        timeout=300), "the parent's tree")
         with tarfile.open(fileobj=io.BytesIO(tree.stdout)) as tar:
@@ -260,11 +262,12 @@ def _step(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, pr
                 if member.isfile():
                     dest = pack / "parent" / member.name
                     dest.parent.mkdir(parents=True, exist_ok=True)
-                    dest.write_bytes(tar.extractfile(member).read())
+                    c.created(dest, tar.extractfile(member).read())
         if candidate:
-            shutil.copyfile(patch, pack / "candidate.patch")
+            c.created(pack / "candidate.patch", patch.read_bytes())
+        c.created(pack / "issue.txt", b"")         # its name claimed exclusively, in the fresh pack, before its text is written
         (pack / "issue.txt").write_text(f"{proof}\n\n{title}\n\n{text}", encoding="utf-8")
-        (pack / "critic_prompt.md").write_text(prompt, encoding="utf-8")
+        c.created(pack / "critic_prompt.md", prompt)
         asking = True
         reply = (ctx.critic or codex)(pack)
         asking = False
