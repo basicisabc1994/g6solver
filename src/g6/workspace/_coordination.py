@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import contextlib
+import errno
+import functools
 import hashlib
 import hmac
 import json
@@ -96,6 +98,70 @@ def _open_mutex(path: Path) -> int:
         raise
 
 
+#: The only errors a try that does not wait gives for a lock another holds: on Windows, LockFileEx's ERROR_LOCK_VIOLATION
+#: (its C runtime's ``msvcrt.locking`` gives a held lock and a denied access the same errno, so Windows' own code decides);
+#: on POSIX, flock's EWOULDBLOCK (EAGAIN), and EACCES where Python builds flock on fcntl, whose F_SETLK gives either.
+#: Anything else is a lock that could not be taken, never another holder (``another_holds``).
+HELD_WINDOWS = frozenset({33})
+HELD_POSIX = frozenset({errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES})
+
+
+def another_holds(error: BaseException, *, windows: bool = os.name == "nt") -> bool:
+    """Whether ``error``, from a try for the lock that did not wait, is the lock's own contention: one of the errors named
+    above, and nothing else, whatever it is."""
+    if not isinstance(error, OSError):
+        return False
+    return getattr(error, "winerror", None) in HELD_WINDOWS if windows else error.errno in HELD_POSIX
+
+
+@functools.cache
+def _windows_locks() -> tuple[Any, Any, Any]:
+    """LockFileEx, UnlockFileEx and their OVERLAPPED, from kernel32, set up once."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Overlapped(ctypes.Structure):
+        _fields_ = [("internal", ctypes.c_void_p), ("internal_high", ctypes.c_void_p), ("offset", wintypes.DWORD),
+                    ("offset_high", wintypes.DWORD), ("event", wintypes.HANDLE)]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    lock, unlock = kernel.LockFileEx, kernel.UnlockFileEx
+    lock.argtypes = (wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD,
+                     ctypes.POINTER(Overlapped))
+    unlock.argtypes = (wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(Overlapped))
+    lock.restype = unlock.restype = wintypes.BOOL
+    return lock, unlock, Overlapped
+
+
+def _lock_once(handle: int) -> None:
+    """Take the exclusive lock on the first byte of ``handle``'s file without waiting, or raise what the operating system
+    said: on Windows as its own code (``ctypes.WinError``), so ``another_holds`` can tell a held lock from anything else."""
+    if os.name == "nt":
+        import ctypes
+        import msvcrt
+
+        lock, _, overlapped = _windows_locks()
+        if not lock(msvcrt.get_osfhandle(handle), 0x2 | 0x1, 0, 1, 0, ctypes.byref(overlapped())):   # exclusive, at once
+            raise ctypes.WinError(ctypes.get_last_error())
+    else:
+        import fcntl
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock(handle: int) -> None:
+    """Let go of the lock ``_lock_once`` took, or raise what kept it."""
+    if os.name == "nt":
+        import ctypes
+        import msvcrt
+
+        _, unlock, overlapped = _windows_locks()
+        if not unlock(msvcrt.get_osfhandle(handle), 0, 1, 0, ctypes.byref(overlapped())):
+            raise ctypes.WinError(ctypes.get_last_error())
+    else:
+        import fcntl
+        fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 class Coordination:
     """The mutex, the locks and the log of one workspace's bookkeeping folder."""
 
@@ -111,7 +177,8 @@ class Coordination:
     @contextlib.contextmanager
     def mutex(self, wait: float | None = None) -> Iterator[None]:
         """Hold an OS lock; age never permits takeover, and death releases the handle's lock. ``wait``: the seconds to try
-        for, by default ``MUTEX_WAIT``; with 0 a lock another holds is refused at once."""
+        for, by default ``MUTEX_WAIT``; with 0 a lock another holds is refused at once. Only another holder's lock is
+        ``BUSY`` (``another_holds``): a try that fails for any other reason raises what failed, as it is."""
         folder = bookkeeping_path(self._folder, create=True)
         path = bookkeeping_path(folder, "mutex")
         handle = _open_mutex(path)
@@ -124,16 +191,12 @@ class Coordination:
             deadline = time.monotonic() + (MUTEX_WAIT if wait is None else wait)
             while True:
                 try:
-                    if os.name == "nt":
-                        import msvcrt
-                        os.lseek(handle, 0, os.SEEK_SET)
-                        msvcrt.locking(handle, msvcrt.LK_NBLCK, 1)
-                    else:
-                        import fcntl
-                        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    _lock_once(handle)
                     locked = True
                     break
-                except OSError:
+                except OSError as exc:
+                    if not another_holds(exc):
+                        raise                    # a lock that could not be taken for what it is: never another holder's
                     if time.monotonic() >= deadline:
                         raise WorkspaceRefused(BUSY, "another writer holds the workspace mutex; nothing was written") from None
                     time.sleep(0.01)
@@ -145,15 +208,11 @@ class Coordination:
         except PathRefused as exc:
             raise WorkspaceRefused(BUSY, exc.reason) from None
         finally:
-            if locked:
-                if os.name == "nt":
-                    import msvcrt
-                    os.lseek(handle, 0, os.SEEK_SET)
-                    msvcrt.locking(handle, msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(handle, fcntl.LOCK_UN)
-            os.close(handle)  # persistent file: never unlink a successor's mutex
+            try:
+                if locked:
+                    _unlock(handle)
+            finally:
+                os.close(handle)  # persistent file: never unlink a successor's mutex
 
     # --- locks --------------------------------------------------------------------------------------------------------
 

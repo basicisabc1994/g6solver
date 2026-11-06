@@ -78,8 +78,8 @@ from g6.self_maintenance.envelope import (
     STOPPED,
     Stop,
     beat,
+    beat_holding,
     record_stop,
-    runner_alive,
     runner_lock,
     stop_in_force,
 )
@@ -102,6 +102,12 @@ NOT_A_FOLDER = "G6_E_LOOP_NOT_A_FOLDER"
 RUNNER_ALIVE = "G6_E_LOOP_RUNNER_ALIVE"
 #: The stops a run ends on, each noted in the records as it ends (``_ending``): this folder's, and this process's own.
 ENDING_STOPS = (*FOLDER_STOPS, CANNOT_RECORD)
+#: How a run stands to its folder's runner lock as it ends, which alone says whether its ending writes the folder's page
+#: and terminal heartbeat (``_ending``): the lock's holder does (``HOLDS``), and so does a run whose try for the lock failed
+#: for any reason but another holder (``UNTAKEN``), whose ending is its own since no holder can be shown. A run another
+#: holder refused, one that has let the lock go, and one with no folder write neither (``NOT_HELD``).
+HOLDS, UNTAKEN, NOT_HELD = "holds the runner lock", "could not take the runner lock", "does not hold the runner lock"
+WRITES = (HOLDS, UNTAKEN)
 #: What a tick is refused for that passes on its own: anything else with no cycle waits for a person.
 _WAITS = (BUDGET_WAIT, BUSY, *FOLDER_STOPS, stop.STOPPED)
 #: What a domain file may set beside its domain and proposer.
@@ -196,8 +202,8 @@ class Runner:
     def _end(self, now: datetime, halted: Stop) -> None:
         """The run's end on the reading that ended it, through the one ending every exit takes (``_ending``): the stop in
         the records, the last page and the heartbeat, all with that reading's code and reason, never a tick's before it."""
-        _ending(self.loop.root, halted.code, halted.reason, now, status=0, state="stopped",
-                fields=lambda: self._fields(now), page=lambda: self._pages(now, halted.reason))
+        _ending(self.loop.root, halted.code, halted.reason, now, status=0, state="stopped", lock=HOLDS,  # a Runner runs only
+                fields=lambda: self._fields(now), page=lambda: self._pages(now, halted.reason))   # on a lock held (``run``)
 
     def _fields(self, now: datetime) -> dict[str, Any]:
         """What a heartbeat of this run says beside its state and code."""
@@ -385,8 +391,8 @@ def _not_started(root: Path) -> str:
     return _gate(root, read_settings(root))[1]
 
 
-def _ending(root: Path, code: str, why: str, at: datetime, *, status: int = 1, state: str = "not-running",
-            fields: Callable[[], dict[str, Any]] = dict, page: Callable[[], None] | None = None, mine: bool = True,
+def _ending(root: Path, code: str, why: str, at: datetime, *, lock: str, status: int = 1, state: str = "not-running",
+            fields: Callable[[], dict[str, Any]] = dict, page: Callable[[], None] | None = None,
             reading: Stop | None = None) -> int:
     """The one way a run ends, whatever ended it: a stop at the preflight, the gate, a stop a pass read, this process's own
     cannot-record stop, a folder that cannot be opened or held, or anything that raised before the hand-off to ``Runner``.
@@ -395,15 +401,17 @@ def _ending(root: Path, code: str, why: str, at: datetime, *, status: int = 1, s
     made or written, however it fails, a page that says only how the run ended and its code (``_plain_page``), never the
     old page left standing; what cannot be written even so, the heartbeat says (``page_not_written``). Only then the
     terminal heartbeat with the code and the reason of the reading that ended the run, never a tick's before it. Nothing
-    here raises, so nothing keeps a stop from ending the run. ``mine``: whether this process may write the folder's page
-    and heartbeat at all, which a runner refused the lock another runner holds may not, nor one with no folder.
-    ``status``: the exit status; a refusal is also said on standard error."""
+    here raises, so nothing keeps a stop from ending the run. ``lock``: how this run stands to the runner lock, which alone
+    says whether it writes the page and the heartbeat at all (``WRITES``): only the lock's holder does, or a run that could
+    not take it for any reason but another holder; one another runner refused, one that let it go and one with no folder
+    write neither, and say how they ended on standard error alone. ``status``: the exit status; a refusal is also said on
+    standard error."""
     said: dict[str, Any] = {"reason": why}
     if code in ENDING_STOPS:
         unnoted = record_stop(root, why, at=at.isoformat())
         if unnoted:
             said["not_noted"] = unnoted
-    if mine:
+    if lock in WRITES:
         try:
             (page or (lambda: _folder_page(root, reading, at, why)))()
         except Exception as exc:  # noqa: BLE001 - a page that cannot be made, however, is the plain page instead
@@ -411,7 +419,6 @@ def _ending(root: Path, code: str, why: str, at: datetime, *, status: int = 1, s
                 digest.write(root, at.date(), _plain_page(at.date(), code, why, exc))
             except Exception as again:  # noqa: BLE001 - a page that cannot be written never keeps a run from ending
                 said["page_not_written"] = f"the day's page could not be written ({type(again).__name__})"
-    if mine:
         try:
             told = {"pid": os.getpid(), "in_job": _in_job(), **fields()}
         except Exception:  # noqa: BLE001 - what cannot be said beside the code is left out, never the code
@@ -470,44 +477,59 @@ def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable
     source (``_launch_risk``), which refuses it once the folder is open, so its records say why. A stop in force, of any
     kind, ends it first, before its settings or anything else is read. Every way out goes through ``_ending``, with the
     day's page, an exception at any step before the hand-off to ``Runner`` included; a run handed to ``Runner`` ends
-    through it too. Only the runner lock's own refusal for another holder is another runner, which owns the page and the
-    heartbeat: a lock that cannot be taken for what it is, and anything after it is held, the loop's opening included, is
-    this runner's own ending."""
+    through it too. Only the runner lock's holder writes the folder's page and heartbeat (``_ending``'s ``lock``): the
+    preflight's reading comes first, and its stop ends the run once the lock is held; a starting beat is written only
+    holding the lock for that moment (``beat_holding``); and an ending is made inside the lock, never once it is let go.
+    Only the runner lock's own refusal for another holder is another runner, which owns the page and the heartbeat, so this
+    one writes neither: a lock that cannot be taken for any other reason, and anything after it is held, the loop's opening
+    included, is this runner's own ending."""
     if not root.is_dir():                   # no folder: nothing to note and no page or heartbeat to write in it
-        return _ending(root, NOT_A_FOLDER, f"{root} is not a folder", now(), mine=False)
+        return _ending(root, NOT_A_FOLDER, f"{root} is not a folder", now(), lock=NOT_HELD)
     reading = stop_in_force(root)           # the preflight takes the one reading every reader takes, before anything else
-    if reading:
-        stopped = reading.code == STOPPED
-        by_file = stopped and bool(reading.seen.by_file(reading.start))
-        why = (reading.reason if by_file else f"a stop is in force, so nothing ran ({reading.reason}): only a new "
-               "g6_improve_start undoes that"[:400] if stopped else f"{reading.reason}, so nothing ran"[:500])
-        return _ending(root, reading.code, why, now(), status=0 if by_file else 1,
-                       state="stopped" if stopped else "not-running", reading=reading)
+    taken = False
     try:
-        if not runner_alive(root):          # before the lock, so a run that dies at once still leaves word that it ran
-            beat(root, state="starting", pid=os.getpid(), in_job=_in_job(), at=now().isoformat())
+        beat_holding(root, state="starting", pid=os.getpid(), in_job=_in_job(), at=now().isoformat())  # word, early
         with contextlib.ExitStack() as held:
             try:
                 held.enter_context(runner_lock(root))
             except WorkspaceRefused as exc:  # only the lock's own refusal, and only for another holder, is another runner
                 if exc.code == HELD_BY_ANOTHER:  # the live runner owns the page and the heartbeat: this one writes neither
-                    return _ending(root, RUNNER_ALIVE, "A runner is already alive on this folder; this one did nothing.",
-                                   now(), mine=False)
+                    code, why, status, _ = (_stopped(reading) if reading else (
+                        RUNNER_ALIVE, "A runner is already alive on this folder; this one did nothing.", 1, ""))
+                    return _ending(root, code, why, now(), status=status, lock=NOT_HELD)
                 return _ending(root, CANNOT_OPEN, f"The runner's lock could not be taken: {exc}"[:500], now(),
-                               reading=reading)
-            settings = read_settings(root)
-            code, why, reading = _gated(root, settings)
-            if code:
-                return _ending(root, code, why, now(), reading=reading)
-            loop, reader = open_loop(root, now=now, pinned=_pinned(reading), settings=settings)
-            if unsafe:
-                return _ending(root, CACHED_BYTECODE, unsafe[:500], now(), reading=reading)
-            return Runner(loop, now=now, sleep=sleep, reader=reader).run()
-    except DomainChanged as exc:
-        return _ending(root, FROZEN_CHANGED, str(exc)[:500], now(), reading=reading)
-    except Exception as exc:  # noqa: BLE001 - the folder or the person's own code: say why, and leave word
-        return _ending(root, CANNOT_OPEN, f"The loop could not be opened: {type(exc).__name__}: {exc}"[:500], now(),
-                       reading=reading)
+                               lock=UNTAKEN, reading=reading)
+            taken = True
+            try:
+                if reading:                 # a stop at the preflight ends the run first, now as the lock's holder
+                    code, why, status, state = _stopped(reading)
+                    return _ending(root, code, why, now(), status=status, state=state, lock=HOLDS, reading=reading)
+                settings = read_settings(root)
+                code, why, reading = _gated(root, settings)
+                if code:
+                    return _ending(root, code, why, now(), lock=HOLDS, reading=reading)
+                loop, reader = open_loop(root, now=now, pinned=_pinned(reading), settings=settings)
+                if unsafe:
+                    return _ending(root, CACHED_BYTECODE, unsafe[:500], now(), lock=HOLDS, reading=reading)
+                return Runner(loop, now=now, sleep=sleep, reader=reader).run()
+            except DomainChanged as exc:
+                return _ending(root, FROZEN_CHANGED, str(exc)[:500], now(), lock=HOLDS, reading=reading)
+            except Exception as exc:  # noqa: BLE001 - the folder or the person's own code: say why, and leave word
+                return _ending(root, CANNOT_OPEN, f"The loop could not be opened: {type(exc).__name__}: {exc}"[:500],
+                               now(), lock=HOLDS, reading=reading)
+    except Exception as exc:  # noqa: BLE001 - the lock could not be taken, or let go: this runner's own, said
+        return _ending(root, CANNOT_OPEN, f"The runner's lock could not be {'let go' if taken else 'taken'}: "
+                       f"{type(exc).__name__}: {exc}"[:500], now(), lock=NOT_HELD if taken else UNTAKEN, reading=reading)
+
+
+def _stopped(reading: Stop) -> tuple[str, str, int, str]:
+    """How a run ends on a stop in force at its preflight: the code, why, the exit status and the state. A STOP file a
+    person wrote ends it as asked (status 0); any other stop in force is a refusal."""
+    stopped = reading.code == STOPPED
+    by_file = stopped and bool(reading.seen.by_file(reading.start))
+    why = (reading.reason if by_file else f"a stop is in force, so nothing ran ({reading.reason}): only a new "
+           "g6_improve_start undoes that"[:400] if stopped else f"{reading.reason}, so nothing ran"[:500])
+    return reading.code, why, 0 if by_file else 1, "stopped" if stopped else "not-running"
 
 
 def _at_a_terminal() -> bool:
@@ -527,6 +549,7 @@ def _person(root: Path, who: str, verb: str, pinned: str | None = None) -> Shado
     except DomainChanged as exc:
         print(f"{exc}: nothing was recorded.", file=sys.stderr)
         return None
+    loop.beats = False                      # only the runner lock's holder writes the heartbeat, and a person's is not it
     print(f"Domain: {loop.domain.name}. Folder: {root}. Name given: {who}, recorded as given and not authenticated.")
     if input(f"Type the domain's name to {verb}: ").strip() != loop.domain.name:
         print("That is not the domain's name: nothing was recorded.", file=sys.stderr)
