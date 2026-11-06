@@ -243,7 +243,7 @@ def test_the_copy_reads_nothing_and_is_made_from_the_read_alone():
             elif callee in functions:        # a function of the module, or a method of its own (``Seen.masked``)
                 todo.append(callee)
             assert callee not in READS, f"{name} reads ({ast.unparse(call)})"
-    assert used == {"_decoded", "name_line", "shown_name", "_normal", "_cut_lines", "_bytes_line"}, used
+    assert used == {"_decoded", "shown_name", "_normal", "_cut_lines", "_bytes_line", "now_line"}, used
     for name in used - {"_decoded", "_normal", "_cut_lines"}:      # the name and bytes rules read nothing either
         assert not {_callee(call) for _, call in _own_calls(_functions(repo_tests)[name])} & READS
 
@@ -412,9 +412,8 @@ def test_a_name_that_is_not_utf8_is_text_in_the_patch_and_the_copy_and_two_such_
                 _unlink_folder(where / "linked")
         for text in (read.text, copy.text, copy.masked):
             text.encode("utf-8")                       # text, which a lone surrogate is not
-        shown = ("linked/" if case == "unread" else "") + "odd-�.py"
-        assert f"\\ G6: the name {shown} shows here only in part; its bytes have SHA-256" in read.text
-        assert f"\\ G6: the name {shown} shows here only in part; its bytes have SHA-256" in copy.masked
+            # the name's byte, as git's quoting names it (review-maskfu1: the quoting replaced the line naming the bytes)
+            assert f"odd-\\{ord(byte) - 0xDC00:03o}.py" in text and "odd-�.py" not in text
         texts.append(read.text)
         copies.append(copy.masked)
     assert texts[0] != texts[1] and copies[0] != copies[1]
@@ -437,7 +436,7 @@ def test_a_round_on_a_name_that_is_not_utf8_keeps_its_patch_and_a_read_after_a_r
     finally:
         _unlink_folder(repo / "linked")
     assert kept == again.text.encode("utf-8") and reviews[0]["patch"] == digest(again.text)
-    assert "\\ G6: the name linked/odd-�.txt shows here only in part" in again.text
+    assert '\\ G6: "linked/odd-\\377.txt" is not read' in again.text
 
 
 # --- check_then_act_race: the base the reviewer is shown is the base the patch is known by -----------------------------------

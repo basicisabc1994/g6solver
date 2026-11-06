@@ -552,10 +552,11 @@ def _pack(change: repo_tests.Change, shown: Shown, task: str, proof: str) -> str
     return _cut(head, list(shown.parents), len(head) <= MAX_PACK_CHARS)
 
 
-def _sent_head(patch: str, task: str, proof: str) -> str:
-    """The start of the pack as it is sent, what a review must read whole: the issue as ``_seen`` masks it, alone, then
-    ``patch``, the patch as ``_shown`` masks it."""
-    return f"{_seen(_issue(task, proof)).masked()}\n\ncandidate.patch:\n{patch}"
+def _sent_head(patch: str, task: str, token: str) -> str:
+    """The start of the pack as it is sent, what a review must read whole: the issue, the task in it as ``_seen`` masks it,
+    alone (G6's own lines, the token a reply must quote among them, are put around it after), then ``patch``, the patch as
+    ``_shown`` masks it."""
+    return f"{_issue(_seen(task).masked(), token)}\n\ncandidate.patch:\n{patch}"
 
 
 #: The unchanged lines the reviewer's copy of a patch shows on each side of a change: as many as git's diff shows by default.
@@ -565,8 +566,9 @@ CONTEXT = 3
 @dataclass(frozen=True)
 class Shown:
     """A patch as the reviewer reads it (``_shown``): ``text`` before any mask, ``masked`` as it is sent, ``hidden``, whether
-    a mask ran over two or more of its lines that are shown, so the reviewer did not read them whole, and ``parents`` and
-    ``masked_parents``, the base commit's text of each file the patch changes that the base holds, unmasked and as sent."""
+    a mask fell on a name it shows or ran over two or more of its lines that are shown, so the reviewer did not read it whole
+    (``_hides``), and ``parents`` and ``masked_parents``, the base commit's text of each file the patch changes that the base
+    holds, unmasked and as sent."""
     text: str
     masked: str
     hidden: bool
@@ -647,6 +649,21 @@ def _seen(text: str | None, limit: int | None = None) -> Seen:
     return Seen(rows, cuts, alike)
 
 
+def _found(text: str) -> bool:
+    """Whether the scrubber finds a value anywhere in ``text`` (``_seen``'s one rule)."""
+    return any(_seen(text).cuts)
+
+
+def _hides(marks: Iterable[tuple[Any, int]], names: int = 0) -> bool:
+    """The one rule for whether masking left the reviewer short of reading the task or the patch whole (``HIDDEN``): a mask
+    over any part of a name shown (``names``, how many shown names are masked), or one value masked on two or more lines
+    shown (``marks``: each value masked, with the line it is masked on)."""
+    lines: dict[Any, set[int]] = {}
+    for value, line in marks:
+        lines.setdefault(value, set()).add(line)
+    return names > 0 or any(len(at) >= 2 for at in lines.values())
+
+
 def _range(start: int, stop: int) -> str:
     """One side of a hunk's head, as a unified diff writes it: its first line and how many follow, or the line before an
     empty side."""
@@ -668,23 +685,28 @@ def _masked(line: str, cuts: Iterable[tuple[int, int]]) -> str:
     return "".join(kept) + line[at:]
 
 
-def _modes(one: repo_tests.FileRead) -> list[str]:
-    """The lines that say what ``one``'s mode is, where it is in the patch: git's own words where the mode changed, a file
-    was removed or a link added; G6's where a tracked file keeps a mode other than a plain file's, as git's patch names it."""
+def _modes(one: repo_tests.FileRead, name: str) -> str:
+    """The lines that say what ``one``'s mode is, where it is in the patch, ``name`` its name as shown: git's own words where
+    the mode changed, a file was removed or a link added; G6's where a tracked file keeps a mode other than a plain file's,
+    as git's patch names it."""
     old, now = one.modes
     if one.added:
-        return [f"new file mode {now}\n"] if now else []
+        return f"new file mode {now}\n" if now else ""
     if old and now == repo_tests.NO_MODE:
-        return [f"deleted file mode {old}\n"]
+        return f"deleted file mode {old}\n"
     if old and now and old != now:
-        return [f"old mode {old}\n", f"new mode {now}\n"]
-    return [f"\\ G6: {_name(one.rel)} keeps mode {old}\n"] if old and old == now and old != "100644" else []
+        return f"old mode {old}\nnew mode {now}\n"
+    return f"\\ G6: {name} keeps mode {old}\n" if old and old == now and old != "100644" else ""
 
 
-def _name(rel: str) -> str:
-    """A path as a reader is shown it, as what the patch is known by names it (``repo_tests.shown_name``): its bytes, as git
-    gave them, through the one decoder."""
-    return repo_tests.shown_name(rel)
+def _name(rel: str, prefix: str = "") -> str:
+    """A path as a reader is shown it, as what the patch is known by names it (``repo_tests.shown_name``): one line, quoted
+    as git quotes a name where it must be, ``prefix`` inside the quotes."""
+    return repo_tests.shown_name(rel, prefix)
+
+
+#: The prefixes a name is shown with: none (G6's own lines), and the two sides of a header, as git's patch puts them.
+_PREFIXES = ("", "a/", "b/")
 
 
 def _shown(change: repo_tests.Change, read: repo_tests.DiffRead) -> Shown:
@@ -697,33 +719,41 @@ def _shown(change: repo_tests.Change, read: repo_tests.DiffRead) -> Shown:
     masked where the scrubber found a value in it; an unchanged line, where it found one in either text; and any line, the
     base's own included, where it found a value of one line in a line of the same file, at the base or now, with the same
     words but for the spaces around them, so a value found beside its name stays masked on a line that moved or was indented
-    away from it. A value hides lines (``hidden``) only where it covers two or more lines the copy shows. What the patch is
-    known by is shown: each file's lines, its mode where it is in the patch (``_modes``), a link by the path it names, and the
-    line naming the bytes where the text shown is not them, as in ``read.text``: a byte that is not UTF-8 is shown as one
-    U+FFFD of its own, and a name that is not UTF-8 is followed by the line naming its bytes (``repo_tests.name_line``). A
-    file G6 left unread is named, with why, and never read. G6's own lines are scrubbed one by one."""
-    plain, masked, parents, masked_parents, covers = [], [], [], [], {}
+    away from it. What the patch is known by is shown: each file's lines, its mode where it is in the patch (``_modes``), a
+    link by the path it names, and the line naming the bytes where the text shown is not them, as in ``read.text`` (a byte
+    that is not UTF-8 is shown as one U+FFFD of its own). A file G6 left unread is named, with why, and never read.
 
-    def own(line: str) -> None:
+    Only the files' text and their names are scrubbed. Each name is shown as ``repo_tests.shown_name`` quotes it, one line;
+    where the scrubber finds a value in it, as git gave it or as quoted (an escape can part a value from its key), it is
+    ``MASK`` wherever it is shown. G6's own lines (headers, hunk heads, modes, digests) are made from the names as they are
+    sent and added after masking, so nothing in a name can mask them. Each mask is kept for the one rule (``_hides``): the
+    copy is ``hidden`` where a mask fell on a name, or one value is masked on two or more of the lines it shows."""
+    plain, masked, parents, masked_parents, marks, names = [], [], [], [], [], 0
+
+    def own(line: str, sent: str | None = None) -> None:     # a line G6 writes, never scrubbed; ``sent`` with names masked
         plain.append(line)
-        masked.append(_seen(line).masked())
+        masked.append(line if sent is None else sent)
 
     for n, one in enumerate(read.files):
-        name = _name(one.rel)
-        for line in _modes(one):
-            own(line)
+        shown = tuple(_name(one.rel, prefix) for prefix in _PREFIXES)
+        sent = (MASK,) * len(_PREFIXES) if _found(one.rel) or any(_found(name) for name in shown) else shown
+        names += sent != shown
+
+        def say(make: Callable[[str, str, str], str]) -> None:
+            """A line G6 writes that names this file, as shown and as sent (``make``: the line, from the name, then its
+            name after ``a/`` and after ``b/``)."""
+            own(make(*shown), make(*sent))
+
+        say(lambda name, a, b: _modes(one, name))
         if one.unread:
-            own(f"--- a/{name}\n")
-            own(f"+++ b/{name}\n")
-            own(f"\\ G6: {name} leads out of the repository, or lies below a link that does, so G6 did not read it\n")
-            own(repo_tests.name_line(one.rel))
+            say(lambda name, a, b: f"--- {a}\n+++ {b}\n\\ G6: {name} leads out of the repository, or lies below a link that"
+                                   " does, so G6 did not read it\n")
             continue
         if isinstance(one.old, repo_tests.RepoRefused):      # a base the read could not read is never shown as none
             raise one.old
         raw = one.old
         old = None if raw is None else repo_tests._decoded(raw)
-        own(f"--- {'/dev/null' if old is None else 'a/' + name}\n")
-        own(f"+++ {'/dev/null' if one.new is None else 'b/' + name}\n")
+        say(lambda name, a, b: f"--- {'/dev/null' if old is None else a}\n+++ {'/dev/null' if one.new is None else b}\n")
         sides = [_seen(old), _seen(one.new, one.limit)]
         alike = {words: [*sides[0].alike.get(words, ()), *sides[1].alike.get(words, ())]
                  for words in {*sides[0].alike, *sides[1].alike}}
@@ -749,39 +779,36 @@ def _shown(change: repo_tests.Change, read: repo_tests.DiffRead) -> Shown:
                     for i in range(lo, hi):
                         cuts = cuts_of(sides[side].rows[i], [*numbered(side, i),
                                                              *(numbered(0, i1 + i - j1) if tag == "equal" else ())])
-                        for _, _, value in cuts:
-                            if value is not None:
-                                covers.setdefault(value, set()).add(len(plain))
-                        line, line_masked = shown_line(mark, sides[side].rows[i], cuts)
-                        plain.append(line)
-                        masked.append(line_masked)
+                        # each mask on the line, for the one rule: a value by its number; one alike, as its own
+                        marks.extend((value or ("alike", len(plain), a, b), len(plain)) for a, b, value in cuts)
+                        own(*shown_line(mark, sides[side].rows[i], cuts))
         if raw is not None:      # where the base's text shown is not its bytes, by the rule the file as it stands has
-            own(repo_tests._bytes_line(raw, repo_tests._normal(old), f"{name} at the base"))
-        if one.note:
-            own(one.note)
-        own(repo_tests.name_line(one.rel))
+            say(lambda name, a, b: repo_tests._bytes_line(raw, repo_tests._normal(old), f"{name} at the base"))
+        say(lambda name, a, b: repo_tests.now_line(one, name))
         if old is not None:
-            parents.append(f"parent/{name}:\n" + "".join(sides[0].rows))
-            masked_parents.append(_seen(f"parent/{name}:\n").masked() + "".join(
+            parents.append(f"parent/{shown[0]}:\n" + "".join(sides[0].rows))
+            masked_parents.append(f"parent/{sent[0]}:\n" + "".join(
                 shown_line("", row, cuts_of(row, cuts))[1].replace("\n\\ No newline at end of file\n", "")
                 for row, cuts in zip(sides[0].rows, sides[0].cuts)))
-    hidden = any(len(lines) >= 2 for lines in covers.values())
-    return Shown("".join(plain), "".join(masked), hidden, tuple(parents), tuple(masked_parents))
+    return Shown("".join(plain), "".join(masked), _hides(marks, names), tuple(parents), tuple(masked_parents))
+
+
+def _remasked(part: str) -> str:
+    """A parent file's part as sent, cut, with its text masked again where the cut falls (``_cut``): its first line, G6's
+    ``parent/`` line, is kept as it is."""
+    head, newline, rest = part.partition("\n")
+    return head + newline + _seen(rest).masked()
 
 
 def _masked_pack(change: repo_tests.Change, shown: Shown, task: str, proof: str) -> tuple[str, bool]:
-    """The pack as it is sent, and whether a mask ran over two or more shown lines of the task or the patch, the parts a
-    review must read whole. What looks like a secret is masked in each part alone (the issue, the patch, each parent file),
-    each by ``_seen``'s one rule, so a rule that reads on to the end never reads from one part into the next; the patch and
-    the parent files as ``_shown`` masks them, from ``change``'s one read."""
-    issue = _seen(_issue(task, proof))
-    lines: dict[int, int] = {}
-    for row_cuts in issue.cuts:
-        for number in {number for _, _, number in row_cuts}:
-            lines[number] = lines.get(number, 0) + 1
-    hidden = shown.hidden or any(count >= 2 for count in lines.values())
+    """The pack as it is sent, and whether masking left the reviewer short of reading the task or the patch whole, the parts
+    a review must read whole (``_hides``, the one rule for both). What looks like a secret is masked in each part alone (the
+    task, the patch, each parent file), each by ``_seen``'s one rule, so a rule that reads on to the end never reads from one
+    part into the next; the patch and the parent files as ``_shown`` masks them, from ``change``'s one read."""
+    task_seen = _seen(task)
+    hidden = shown.hidden or _hides((number, row) for row, cuts in enumerate(task_seen.cuts) for _, _, number in cuts)
     return _cut(_sent_head(shown.masked, task, proof), list(shown.masked_parents), _read_whole(shown.masked, task),
-                lambda part: _seen(part).masked()), hidden
+                _remasked), hidden
 
 
 def critic_file(n: int) -> str:

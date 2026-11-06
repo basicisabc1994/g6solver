@@ -788,13 +788,15 @@ def test_the_reviewer_is_shown_text_through_one_decoder_and_one_masking_rule_alo
     ``_seen``'s, by ``secret_spans``, alone (``mask_paths`` then takes home folders out of a test's output, which is no
     secret's mask); decoding of what is shown is ``repo_tests._decoded``'s alone. ``_listing`` decodes git's own fields and
     names (shown only through ``repo_tests.shown_name``, which ``_name`` is, and which what the patch is known by names them
-    by too), and ``diff_read`` decodes git's patch for what the patch is known by, never shown."""
+    by too: git's quoting, which decodes nothing, review-maskfu1), and ``diff_read`` decodes git's patch for what the patch is
+    known by, never shown."""
     import ast
     import inspect
 
     watched, found = {"scrub", "secret_spans", "_decoded", "decode", "mask_paths"}, set()
     path = {"diff_read", "found", "named", "unread", "_listing", "blob_bytes", "_decoded", "_normal", "_cut_lines",
-            "_bytes_line", "_read_inside", "_link_inside", "_where", "_leads_out", "shown_name", "name_line"}
+            "_bytes_line", "_read_inside", "_link_inside", "_where", "_leads_out", "shown_name", "name_line", "_octal",
+            "now_line", "_part", "_part_line", "_link_line"}
     for module, only in ((loop, None), (repo_tests, path)):
         for node in ast.walk(ast.parse(inspect.getsource(module))):
             if isinstance(node, ast.FunctionDef) and (only is None or node.name in only):
@@ -802,7 +804,7 @@ def test_the_reviewer_is_shown_text_through_one_decoder_and_one_masking_rule_alo
                     name = call.func.attr if isinstance(call.func, ast.Attribute) else getattr(call.func, "id", "")
                     if name in watched:
                         found.add((module.__name__.rsplit(".", 1)[1], node.name, name))
-    assert found == {("completion_loop", "_seen", "secret_spans"), ("repo_tests", "shown_name", "_decoded"),
+    assert found == {("completion_loop", "_seen", "secret_spans"),
                      ("completion_loop", "_shown", "_decoded"), ("completion_loop", "_unrun", "mask_paths"),
                      ("repo_tests", "_decoded", "decode"), ("repo_tests", "_listing", "decode"),
                      ("repo_tests", "diff_read", "decode"), ("repo_tests", "diff_read", "_decoded"),
