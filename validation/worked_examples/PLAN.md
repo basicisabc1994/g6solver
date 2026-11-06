@@ -3304,3 +3304,45 @@ re-scored.
 
 **Not changed.** The frozen comparison rule and every earlier registration stand as written, and no earlier result is
 re-scored.
+
+## 2026-11-07 (early morning): slice 1's controls on observed results, and two rulings, before any cohort run
+
+**What changed** (`claude/replay-cohort` fdd95c6, after slice 1's first review).
+- Slice 1's first independent review found 11 defects in the replay harness. All 11 reproduced, and they were repaired at six
+  roots, each with a test that failed first. Four touched admission:
+  - a control read a missing test result as a failure;
+  - admission trusted a caller's flag;
+  - admission checked one of the two image ids.
+- Under the repaired rules, slice 1's control records could not admit any bug. They held:
+  - no per-test outcome for the empty patch;
+  - no record that the kept patch was read;
+  - no image ids per control.
+  So the four controls ran again on real containers for all 56 development and selection bugs, counting only observed
+  results.
+
+**Ruled, 2026-11-07, before any run reads a cohort.**
+1. **What counts as a failing test.** A fail-to-pass test counts as failing, at the base or on the empty patch, on either of
+   two kinds of evidence:
+   - a failure in its own test result;
+   - pytest's own report naming a failed collection of the module that holds the test, when the gold run on the same two
+     image ids saw that test pass.
+   One function decides this for both controls. Anything else is unknown, and an unknown control excludes the bug.
+   - **Why:** pytest reports the collection error itself, so the result is observed, not missing. The gold run in the same
+     images rules out the environment as the cause. And maintainers' tests importing what the fix adds is the usual shape of
+     such a bug.
+2. **A base run that timed out with no per-test result is unknown.** So tenacity-660 is excluded. This replaces how slice 1
+   admitted it, where its base at the oracle's time limit counted as every one of its tests failing.
+
+**Result.**
+- **Counts:**
+  - development: 35 of 35 usable (`development-b5b14ae81db0`);
+  - selection: 20 of 21 usable, with tenacity-660 excluded (`selection-7f68ad0e3101`); pydantic-settings-1089 stays in
+    development;
+  - final: unchanged, with 83 bugs by name and image only and strix-1116 excluded (`final-6ac8cc5298e7`).
+- Every usable bug passed all four controls on observed results, with the known patch's round trip byte for byte.
+- 30 of the 56 trees track an executable file; the harness now carries the mode, and every round trip held.
+- **Admitted only under ruling 1:** starlette-3166 and setuptools-5362 (development), opentelemetry-python-5823 and pip-14218
+  (selection). Each cohort's results are reported with and without them, as with the 11 bugs a symbolic link had excluded.
+
+**Not changed.** The frozen comparison rule and every earlier registration stand as written, and no earlier result is
+re-scored.
