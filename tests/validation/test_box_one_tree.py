@@ -916,6 +916,20 @@ def test_review_2_finding_2_a_partial_pull_settled_after_a_restart_never_says_no
     assert "only in part" in text and "kept, as the command left them: src/by_box.py" in text and "not kept: src/mod.py" in text
 
 
+@pytest.mark.parametrize("kept", ["all", "part"])
+def test_an_outcome_kept_in_the_calls_state_tells_the_whole_count_where_its_names_are_cut_short(kept):
+    came, missed = [f"f{i:03}.py" for i in range(250)], [f"g{i:03}.py" for i in range(230)]
+    got = box.Pulled(kept, came, missed if kept == "part" else [], "why")
+    entry = got.entry()
+    assert len(entry["changed"]) <= 200 and entry["count"] == 250, entry["count"]       # the state keeps a bounded list
+    again = box.Pulled.of(entry)
+    for text in (box.told(got, call=1), box.told(again, call=1)):
+        if kept == "all":
+            assert "came back now, before this command: 250 names changed" in text, text
+        else:
+            assert "f019.py, and 230 more; not kept: " in text and "g019.py, and 210 more" in text, text
+
+
 def _pull_with_outcome(monkeypatch, tmp_path, kept: str, path: str):
     """One call whose pull ends ``kept`` (``box.ALL``, ``PART`` or ``NONE``), made by the call itself (``path`` "direct") or, the box
     ended at the pull, by the next call's settlement ("settled"). Its reply's text, and the call's entry in the box's state."""

@@ -1172,8 +1172,8 @@ def read_state(path: Path) -> dict[str, Any] | None:
         if "pending" in x and not _is_pending(x["pending"]):
             raise Refused(f"the box's state {path} gives call {x['call']} a pull's intent that is not its names with the marks "
                           "it was changing each between")
-        if x["phase"] == "setting back" and not (x.get("kept") in (PART, NONE) and _names(x.get("changed"))
-                                                 and (x.get("missed") is None or _names(x.get("missed")))):
+        if x["phase"] == "setting back" and not (x.get("kept") in (PART, NONE)
+                                                 and all(x.get(k) is None or _names(x.get(k)) for k in ("changed", "missed"))):
             raise Refused(f"the box's state {path} gives call {x['call']} a reset with no outcome of the pull before it")
     return got
 
@@ -1211,23 +1211,33 @@ class Pulled(NamedTuple):
     """The outcome of a pull (``pulled``), the one type the direct call and settlement both read and keep in the call's state
     (``entry``, ``of``): ``kept`` is ALL, PART or NONE; ``changed``, the names that came back as the command left them (with
     PART, None when the workspace could not be read after the failure); ``missed``, those it changed that did not (PART), None
-    when not known (NONE, or PART unread); ``why``, why not ALL."""
+    when not known (NONE, or PART unread); ``why``, why not ALL; ``counts``, how many of each there are, where the call's state
+    keeps the names cut short (``entry``), else the lists' own lengths."""
     kept: str
     changed: list[str] | None
     missed: list[str] | None
     why: str = ""
+    counts: tuple[int | None, int | None] = (None, None)
+
+    def total(self, which: int) -> int | None:
+        """How many names came back (0) or did not (1): the count kept with them, else the list's own length."""
+        names = (self.changed, self.missed)[which]
+        given = self.counts[which]
+        return given if isinstance(given, int) and not isinstance(given, bool) else None if names is None else len(names)
 
     def entry(self) -> dict[str, Any]:
-        """The outcome as the call's state keeps it."""
-        came = self.changed or []
-        return {"kept": self.kept, "changed": came[:200], "count": len(came),
-                "missed": None if self.missed is None else self.missed[:200], "error": self.why[:2000],
-                "in_part": self.kept == PART}
+        """The outcome as the call's state keeps it: at most 200 names of each, with how many there are."""
+        return {"kept": self.kept, "changed": None if self.changed is None else self.changed[:200], "count": self.total(0),
+                "missed": None if self.missed is None else self.missed[:200], "missed_count": self.total(1),
+                "error": self.why[:2000], "in_part": self.kept == PART}
 
     @classmethod
     def of(cls, entry: Mapping[str, Any]) -> Pulled:
         """The outcome a call's state keeps (``entry``)."""
-        return cls(entry.get("kept", NONE), list(entry.get("changed") or []), entry.get("missed"), entry.get("error") or "")
+        def names(key: str) -> list[str] | None:
+            return list(entry[key]) if _names(entry.get(key)) else None
+        return cls(entry.get("kept", NONE), names("changed"), names("missed"), entry.get("error") or "",
+                   (entry.get("count"), entry.get("missed_count")))
 
 
 def pulled(got: list[str] | BaseException) -> Pulled:
@@ -1253,12 +1263,14 @@ TOLD = {
 NEVER_RAN = "the box's last call (call {n}) ended before its command ran, so that command never ran{after}."
 
 
-def _listed(names: list[str] | None) -> str:
+def _listed(names: list[str] | None, total: int | None) -> str:
+    """At most 20 of ``names``, and how many more of ``total`` there are."""
     if names is None:
         return "not known: the working folder could not be read after the failure"
     if not names:
         return "none"
-    return ", ".join(names[:20]) + (f", and {len(names) - 20} more" if len(names) > 20 else "")
+    total = len(names) if total is None else total
+    return ", ".join(names[:20]) + (f", and {total - 20} more" if total > 20 else "")
 
 
 def told(got: Pulled, *, call: int | None = None, after: str = "") -> str:
@@ -1267,8 +1279,8 @@ def told(got: Pulled, *, call: int | None = None, after: str = "") -> str:
     what = ("what the command changed in files" if call is None else
             f"the box's last call (call {call}) had ended before what its command changed in files came back; it")
     return TOLD[got.kept].format(what=what, when="" if call is None else " now, before this command", why=got.why,
-                                 count=len(got.changed or []), changed=_listed(got.changed), missed=_listed(got.missed),
-                                 after=f": {after}" if after else "")
+                                 count=got.total(0) or 0, changed=_listed(got.changed, got.total(0)),
+                                 missed=_listed(got.missed, got.total(1)), after=f": {after}" if after else "")
 
 
 def _settled_note(last: Mapping[str, Any]) -> str:
