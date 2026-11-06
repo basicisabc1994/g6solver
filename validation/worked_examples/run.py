@@ -1271,11 +1271,19 @@ try:
     from _pytest.junitxml import mangle_test_address
 except Exception:  # a pytest without it: no junit key to show beside a node id
     mangle_test_address = None
-try:
-    _out = open(os.environ["WE_REPORT"], "w", encoding="utf-8")
-except Exception:
-    _out = None
-_whole = _out is not None
+_out, _whole = None, False
+
+
+def pytest_configure(config):
+    """The report is opened by the one process that sees every test's report: pytest itself, or pytest-xdist's controller,
+    to which each worker sends its reports. A worker writes nothing, so no two processes write the one file."""
+    global _out, _whole
+    if hasattr(config, "workerinput"):
+        return
+    try:
+        _out, _whole = open(os.environ["WE_REPORT"], "w", encoding="utf-8"), True
+    except Exception:
+        _out, _whole = None, False
 
 
 def _write(entry):
@@ -1288,18 +1296,30 @@ def _write(entry):
 
 
 def pytest_collectreport(report):
-    if report.failed:
-        _write({"collect_error": report.nodeid})
+    global _whole
+    try:
+        failed, node = report.failed, report.nodeid
+    except Exception:  # a report it cannot read: never raised into pytest, and the session's end is then not written
+        _whole = False
+        return
+    if failed:
+        _write({"collect_error": node})
 
 
 def pytest_runtest_logreport(report):
+    global _whole
     key = None
     try:
         names = mangle_test_address(report.nodeid)
         key = ".".join(names[:-1]) + "::" + names[-1]
     except Exception:
         pass
-    _write({"node": report.nodeid, "when": report.when, "outcome": report.outcome, "junit": key})
+    try:
+        entry = {"node": report.nodeid, "when": report.when, "outcome": report.outcome, "junit": key}
+    except Exception:  # as above
+        _whole = False
+        return
+    _write(entry)
 
 
 def pytest_sessionfinish(session, exitstatus):

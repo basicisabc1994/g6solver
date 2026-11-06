@@ -512,7 +512,8 @@ def _plugin_run(project: Path, plugins: Path, tmp_path: Path, *args: str):
     return done_, report, junit
 
 
-def test_the_report_plugin_gives_each_tests_outcome_by_node_id_as_junit_takes_it_with_its_junit_key_beside(tmp_path):
+def test_the_report_plugin_gives_pytests_own_node_ids_and_the_junit_key_pytest_itself_computes(tmp_path):
+    """Each test's outcome by its node id, as junit takes it, with its junit key beside it for display (replay cohort, repair 3)."""
     project, plugins = tmp_path / "project", tmp_path / "plugins"
     (project / "tests").mkdir(parents=True)
     plugins.mkdir()
@@ -539,6 +540,61 @@ def test_the_report_plugin_gives_each_tests_outcome_by_node_id_as_junit_takes_it
                      "test_xfail": "skipped", "test_xpass_strict": "failed", "test_xpass": "passed"}, kinds
     assert got["tests"]["tests/test_old.py::TestOld::test_ok"] == "passed"
     assert shown["tests/test_old.py::test_p[2]"] == "tests.test_old::test_p[2]"
+
+
+def _plugin_process(monkeypatch, report: Path):
+    """The report plugin as one pytest process loads it (``-p we_report``), its file ``report``."""
+    import types
+    monkeypatch.setenv("WE_REPORT", str(report))
+    module = types.ModuleType("we_report")
+    exec(compile(we.REPORT_PLUGIN, "we_report.py", "exec"), module.__dict__)
+    return module
+
+
+def _logged(node: str, when: str, outcome: str):
+    return SimpleNamespace(nodeid=node, when=when, outcome=outcome, failed=outcome == "failed")
+
+
+def test_under_pytest_xdist_only_the_controller_writes_the_report_so_it_is_read_whole(monkeypatch, tmp_path):
+    """pytest-xdist loads the plugin in its controller and in each worker; each worker sends its reports to the controller's
+    hooks. Found by the controls' rerun (replay cohort, repair 3): four bugs' runs under xdist kept a report two processes had
+    written, which the reader refused."""
+    report = tmp_path / "report.jsonl"
+    controller = _plugin_process(monkeypatch, report)
+    getattr(controller, "pytest_configure", lambda config: None)(SimpleNamespace())
+    workers = {}
+    for wid in ("gw0", "gw1"):
+        workers[wid] = _plugin_process(monkeypatch, report)
+        getattr(workers[wid], "pytest_configure", lambda config: None)(SimpleNamespace(workerinput={"workerid": wid}))
+    ran = {"gw0": [("t.py::a", "setup", "passed"), ("t.py::a", "call", "failed"), ("t.py::a", "teardown", "passed")],
+           "gw1": [("t.py::b", "call", "passed")]}
+    try:
+        for wid, worker in workers.items():      # each worker runs its own tests; the controller is sent every report
+            for node, when, outcome in ran[wid]:
+                worker.pytest_runtest_logreport(_logged(node, when, outcome))
+                controller.pytest_runtest_logreport(_logged(node, when, outcome))
+            worker.pytest_sessionfinish(None, 1)
+        controller.pytest_sessionfinish(None, 1)
+    finally:
+        for plugin in (*workers.values(), controller):
+            if getattr(plugin, "_out", None) is not None:
+                plugin._out.close()
+    got = we.read_report(report.read_bytes())
+    assert got is not None and got["tests"] == {"t.py::a": "failed", "t.py::b": "passed"}, report.read_bytes()
+
+
+def test_a_report_the_plugin_cannot_read_is_never_raised_into_pytest_and_leaves_the_report_unread(monkeypatch, tmp_path):
+    report = tmp_path / "report.jsonl"
+    plugin = _plugin_process(monkeypatch, report)
+    getattr(plugin, "pytest_configure", lambda config: None)(SimpleNamespace())
+    try:
+        plugin.pytest_runtest_logreport(_logged("t.py::a", "call", "passed"))
+        plugin.pytest_runtest_logreport(SimpleNamespace(nodeid="t.py::b", when="call"))        # no outcome
+        plugin.pytest_collectreport(SimpleNamespace(nodeid="t.py"))                             # no failed
+        plugin.pytest_sessionfinish(None, 0)
+    finally:
+        plugin._out.close()
+    assert we.read_report(report.read_bytes()) is None, report.read_bytes()
 
 
 @pytest.mark.parametrize(("lines", "why"), [
