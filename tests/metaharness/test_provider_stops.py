@@ -943,7 +943,8 @@ def test_ref1_on_the_loops_own_requests_one_identity_is_one_input_and_one_input_
 
 def test_ref1_every_way_a_request_can_leave_passes_the_one_check():
     """The places in the code that let a request out, read from the code: each goes through ``_Requests.admit``. A new one
-    has to be added here, and to the check, on purpose."""
+    has to be added here, and to the check, on purpose. Changed on purpose (the refusals follow-up): a call's beginning is
+    ``_Requests.begin``, which admits nothing and opens the call's book in the one record."""
     import ast
     import inspect
 
@@ -968,8 +969,9 @@ def test_ref1_every_way_a_request_can_leave_passes_the_one_check():
         return found
 
     assert callers(loop_module, {"admit", "take", "sending"}) == {
-        ("_Requests.take", "admit"), ("_Gate.sending", "admit"), ("_Counted.complete", "admit"),
+        ("_Requests.take", "admit"), ("_Gate.sending", "admit"), ("_Requests.begin", "admit"),
         ("_Counted.complete.resend", "take"), ("_Counted.complete.next_request", "take"), ("_Resends.append", "take")}
+    assert callers(loop_module, {"begin"}) == {("_Counted.complete", "begin")}
     assert callers(usage, {"sending", "_sending"}) == {
         ("_sending", "sending"), ("WatchedClaude._command", "_sending"), ("WatchedClaude._launch", "_sending"),
         ("WatchedCodex._command", "_sending")}
@@ -988,9 +990,12 @@ def test_ref1_every_way_a_request_can_leave_passes_the_one_check():
                 if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr in ("admit", "take") \
                         and "requests" in ast.unparse(call.func.value):
                     sites.setdefault(node.name, []).append({k.arg for k in call.keywords})
-    assert sites.pop("complete") == [{"generation"}]
     assert all(keywords & {"identity", "identify"} for found in sites.values() for keywords in found) and \
         set(sites) == {"next_request", "resend", "sending"}, sites
+    begin = next(node for node in ast.walk(ast.parse(inspect.getsource(loop_module))) if isinstance(node, ast.FunctionDef)
+                 and node.name == "begin")
+    assert [{k.arg for k in call.keywords} for call in own_calls(begin) if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute) and call.func.attr == "admit"] == [{"generation", "live", "owner"}]
 
 # Review 2 of this change: each send is one record, made once it may leave and kept until its own outcome is read --------
 
@@ -1357,7 +1362,9 @@ def test_ref2_13_a_send_is_known_by_its_bytes_as_they_are_once_it_has_waited(mon
 
 def test_ref2_the_request_path_keeps_no_per_send_state_but_each_sends_record():
     """Built from the code: everything the loop's request path writes per request. Any variable rebound, any attribute set,
-    and any container written there that is not a send's record, its list of records, or the tick's own latches, fails."""
+    and any container written there that is not the one record of sends (``_RECORD``) or a tick's own latches, fails.
+    Changed on purpose (the refusals follow-up): a call keeps no list of its sends or its notes of its own; both are the
+    record's, in the call's book, so a nested call and the call around it read the same ones."""
     import ast
     import inspect
 
@@ -1397,16 +1404,19 @@ def test_ref2_the_request_path_keeps_no_per_send_state_but_each_sends_record():
         assert rebinding == [] and len(names) == len(set(names)), names    # nothing rebound: each name is set once
     _, attributes, calls, _ = writes(tree)
     assert attributes == ["unseen"]                                          # the tick's latch, and nothing else
-    assert set(calls) == {"sends.append", "boundaries.append"}               # the call's records, and the notes it saw
-    for method in (loop_module._Requests.admit, loop_module._Requests.release, loop_module._Requests.at_a_refusal,
-                   loop_module._Requests.met_a_limit, loop_module._Requests.provider_said, loop_module._Requests.take):
+    assert set(calls) == set()                                               # what it let out is the record's
+    record = {"_RECORD.out[]", "_RECORD.taken[]", "_RECORD.books[]", "notes", "settled"}     # the record's own containers
+    requests = loop_module._Requests
+    for method in (requests.admit, requests.release, requests.at_a_refusal, requests.met_a_limit, requests.provider_said,
+                   requests.take, requests.begin, requests.noted, requests.settle, requests.close, requests._reset,
+                   requests._full):
         _, attributes, calls, rebinding = writes(source(method))
-        assert rebinding == [] and set(attributes) <= {*loop_module._Requests.TICK_STATE, "self.in_flight[]"}, method.__name__
-        assert set(calls) <= {"self.refused.add", "self.in_flight.setdefault", "self.in_flight.setdefault(known, []).append"}, \
-            method.__name__
+        assert rebinding == [] and set(attributes) <= {*requests.TICK_STATE, *record}, (method.__name__, attributes)
+        assert set(calls) <= {"meter.refused.add", "_RECORD.out.setdefault", "_RECORD.out.setdefault(known, []).append",
+                              "book.sends.append", "_RECORD.books.pop"}, (method.__name__, calls)
     for method in (loop_module._Gate.sending, loop_module._Gate.told, loop_module._Gate.done):
         _, attributes, calls, _ = writes(source(method))
-        assert attributes == [] and calls == (["self.sends.append"] if method.__name__ == "sending" else [])
+        assert attributes == [] and calls == []
     for func in (usage._sending, usage._forget, usage._stopped, usage._released):
         _, attributes, calls, rebinding = writes(source(func))
         assert rebinding == [] and set(attributes) <= {"_SENT[]"} and set(calls) <= {"_SENT.pop", "opened.append"}
@@ -1525,7 +1535,9 @@ def test_ref3_2_a_file_changed_as_admission_takes_its_lock_is_the_send_it_record
 
 
 def test_ref3_2_everything_admission_decides_on_is_read_inside_its_lock():
-    """Built from the code: in ``_Requests.admit`` nothing that decides is read outside ``with self._lock``."""
+    """Built from the code: in ``_Requests.admit`` nothing that decides is read outside ``with self._lock``. Changed on purpose
+    (the refusals follow-up): admission decides for every meter around the send, so what it reads is each meter's and each
+    call's, and the record's, and the calls around the send are read inside the lock too."""
     import ast
     import inspect
 
@@ -1539,7 +1551,10 @@ def test_ref3_2_everything_admission_decides_on_is_read_inside_its_lock():
     assert len(locked) == 1
     inside = set(map(id, ast.walk(locked[0])))
     decides = ("self.halted", "self.refused", "self.refusal", "self.limited", "self.in_flight", "self.sent", "self.limit",
-               "self.ends", "self.unseen", "self.generation", "identify", "live", "self._out_elsewhere")
+               "self.ends", "self.unseen", "self.generation", "identify", "live", "self._out_elsewhere",
+               "_ACTIVE", "_RECORD", "_AROUND", "calls", "meters", "meter.halted", "meter.on_record", "meter.refused",
+               "meter.refusal", "meter.limited", "meter.limit", "meter.generation", "meter._full", "call.generation",
+               "call.meter", "call.live")
     outside = [ast.unparse(node) for node in ast.walk(admit) if id(node) not in inside
                and isinstance(node, ast.Attribute | ast.Name) and ast.unparse(node) in decides]
     assert outside == [], outside

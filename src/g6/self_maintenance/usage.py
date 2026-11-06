@@ -351,8 +351,10 @@ def request_identity(argv: Sequence[str], stdin: str, root: str | Path | None) -
 class Send:
     """One send, as the loop let it out: made once, after any wait, and never changed. ``identity``: what left, read from its
     bytes at that moment; ``watched``: whether its caller reads its program's output itself, so only that decides for it;
-    ``owner``: the call that made it, and ``thread`` where; ``generation``: the tick; ``sender``: the caller that sent it;
-    ``places``: what it was charged as it was let out, set once, so no call charges it again."""
+    ``owner``: the innermost metered call it was made in, and ``thread`` where; ``generation``: the tick; ``sender``: the
+    caller that sent it; ``places``: what it was charged on each meter as it was let out, set once, so no call charges it
+    again; ``charged``: each meter it took those places on, with the tick it took them under, which is where what the
+    provider says of it goes."""
 
     identity: str | None
     watched: bool
@@ -361,6 +363,7 @@ class Send:
     thread: int
     sender: Any = None
     places: int = 0
+    charged: tuple[tuple[Any, int], ...] = ()
 
 
 @contextmanager
@@ -368,7 +371,9 @@ def telling_stops(gate: Gate) -> Iterator[None]:
     """Inside, a watched caller asks ``gate`` before its program starts (``sending``), which hands back the send's record or
     raises to keep it in; a stop it reads goes to ``gate`` under that record before anything else sees it (``told``); and the
     record is released by its own outcome (``done``). What any of these raises is what stops the request, so a wrapper between
-    it and the loop cannot take a refusal or a limit for a failed request and send it again."""
+    it and the loop cannot take a refusal or a limit for a failed request and send it again. A call nested in another sets its
+    own gate here, and the loop's admission behind every gate is one and the same, which lets the send in for every meter
+    around it, so the innermost gate stands for them all."""
     token = _TELL.set(gate)
     try:
         yield

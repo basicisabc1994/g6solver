@@ -147,12 +147,23 @@ class CycleLog:
     def stop(self, reason: str, **fields: Any) -> dict:
         return self._append("stopped", {"reason": reason, **fields})
 
-    def limit(self, provider: str, until: str) -> dict:
-        return self._append("limited", {"provider": provider, "until": until})
+    def limit(self, provider: str, until: str, tick: str = "") -> dict:
+        """A limit a provider stated, and the tick that met it (``tick``), when one did."""
+        return self._append("limited", {"provider": provider, "until": until, **({"tick": tick} if tick else {})})
 
     def limits(self) -> dict[str, datetime]:
-        """When each provider's latest limit ends, so that a restart waits it out. No cycle: it never counts in a streak."""
-        return {body["provider"]: datetime.fromisoformat(body["until"]) for kind, body in self._rows() if kind == "limited"}
+        """When each provider's latest limit ends, so that a restart waits it out. A tick writes every limit it met, in the
+        order it met them, which need not be the order they end in, and each stands until the furthest of them ends; a later
+        row of another tick, or of none, replaces them. No cycle: it never counts in a streak."""
+        found: dict[str, tuple[str, datetime]] = {}
+        for kind, body in self._rows():
+            if kind == "limited":
+                tick, until = body.get("tick") or "", datetime.fromisoformat(body["until"])
+                held = found.get(body["provider"])
+                if tick and held is not None and held[0] == tick:
+                    until = max(until, held[1])
+                found[body["provider"]] = (tick, until)
+        return {provider: until for provider, (_, until) in found.items()}
 
     def start_in_force(self) -> bool:
         """Whether a person's start stands: of the starts and stops on record, the last is a start."""
