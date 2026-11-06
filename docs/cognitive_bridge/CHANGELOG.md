@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.6 — 2026-11-06: follow-up review 1 repairs
+
+- Credit binds its subject. A dossier names the evidence it assessed by digest (`subject_sha256`, from `assurance.evidence_sha256`), and an assessment credits it only for the evidence submitted to that assessment; a reconciliation names its assertions the same way (`epistemic.assertions_sha256`) and is credited only for the assertions submitted, and only in the state its own findings give. A method selection is taken only when it is for the methods handed, is refused exactly when one is missing, meets each with one mandatory row, and each row is a variant given, as given (its cost included), eligible under the context given, with the rows together inside its budget.
+- What a collaborator answers carries only its format's fields and claims no state (`codes.only_fields`): a dossier, a reconciliation report or a selection row with `reliability_label`, a `verified` flag outside a warning card, or a field its format does not define, is refused, so no assessment, compilation or plan republishes one. A dossier's state is the one its blockers give.
+- An inventory test lists, from the code, every check a collaborator's answer goes through and plants each answer with those claims through the public call that takes it.
+
 ## v0.2.5 — 2026-11-06: review 4 repairs
 
 - What a collaborator returns is checked where it is used: every collaborator (a model, proposer, selector, updater, predictor, tool, checker, evaluator, conflict gate, admission or review callback, black box) is handed only fresh copies (`snapshot.fresh`), and its answer is taken as a fresh copy the moment it returns and checked against what was checked (`snapshot.returned`) or taken as a verdict by identity (`is True`). The agent runs the validated candidate the selection names, refuses a posterior that breaks the rule priors follow, and uses beliefs only under the digest taken when they were checked. An inventory test lists every call of a collaborator from the code with what is done with its answer. Found by it: a black box could add held-out rows to the rows a surrogate is fitted on.
