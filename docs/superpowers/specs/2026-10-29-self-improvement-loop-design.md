@@ -738,7 +738,10 @@ reading it stands on: `G6_E_LOOP_STOP_UNREADABLE` whenever that reading could no
 code, and either way any stop in force is named (`stop_code`); a test lists every return of the dialog and the start from
 the code and finds no refusal made anywhere else. Every statement of the dialog and the start that touches a file runs
 inside its one handler, which a test also checks from the code, and the settings are read and checked by one function,
-whose failures, however they fail, are settings to fix. A tick keeps the start it parsed against the digest of the very bytes it parsed, taken in
+whose failures, however they fail, are settings to fix. The stop is made the same way: one handler, with only the folder
+as given outside it, and a check of whether a folder is a loop's that cannot be made, however it fails, never keeps the
+stop from being written there; a folder that cannot be found, or a stop that cannot be written, says so
+(`G6_E_LOOP_STOP_FAILED`). A tick keeps the start it parsed against the digest of the very bytes it parsed, taken in
 the same reading, and parses again only when the bytes read before a request differ. A dialog's terms carry its reading's
 whole digest and the settings, and the dialog is shown only if all it stands on, checked again once it is made, gives the
 same terms. A start records and runs on the settings it read before its locks, which the terms must match, so a file
@@ -761,10 +764,31 @@ on approved bytes. A reading once the row is written must find those bytes with 
 out of the append, an exception included, anything else that landed is revoked by a stop row (a `STOP` file when even that
 will not take); nothing is spawned.
 
+**Where a row ends, and in what words.** The records, the journal, the `STOP` file and the log of refusals hold to one rule
+for where a row ends: at its newline, or, for a last row with none, at the end of the file, which is how the ledger reads its
+own file. So every append starts on a fresh line: a last row with no newline, which the ledger accepts and a dialog can show,
+is ended before the next row is added, and a start's check of what landed holds to the same rule, so its row is never
+joined onto the approved last row. The ledger itself is bound and unchanged; its writer ends the last row before each
+append. Every write on a stop path makes bytes of text by one rule that cannot fail, UTF-8 with what it cannot carry (a lone
+surrogate) spelled out with a backslash, so no caller's reason keeps a stop, its row, a refusal or a heartbeat from being
+written, and every reader reads plain UTF-8 back. Tests list, from the code, every write in the envelope and every place
+text becomes bytes on a stop path.
+
 **One ending for the runner.** Every way a run ends goes through one function: a stop at the preflight, the gate, a stop a
 pass reads, this process's own cannot-record stop, a folder that cannot be opened or held, or anything raised before the
 hand-off to the running loop. A stop is noted in the records by a writer that never raises (what it could not note, the
-heartbeat says), then the day's page is written, the running loop's own or one from the reading of the folder; a page that
+heartbeat says). A stop in force only because a file cannot be read is gone with the repair of that file, and a row the
+records would not take, or that a tick holding them kept out, was never there, so such a stop is also written through the
+stop's own writer, which needs no tick lock, naming the code that ended the run (what it could not write, the heartbeat
+says: `stop_not_written`). A tick's guard, its cut-off at a model call and a start that a stop met once its row was
+written do the same. So a start ended on a stop stays ended until a person starts again through the dialog, whatever
+became of the stopped row and once the file is repaired. A stop asked for needs nothing more, since it stands in the
+stop's own readable files or on record, nor does the runner's own cannot-record stop, written through the same writer
+when it was made; and records that show the start already ended on record need nothing either, so ending again on a folder
+that stays unreadable adds no line once its start is ended. What this cannot cover: an ending that dies before its first
+write lands, with the file repaired before any restart; an ending whose writes, the row, the journal and the `STOP` file,
+all fail; and a `STOP` file a person wrote, whose row could not be written, removed by hand. A test lists every way a
+start ends on a stop from the code. Then the day's page is written, the running loop's own or one from the reading of the folder; a page that
 cannot be made from the records gives way to a plain one that says how the run ended and its code, never the old page left
 standing, and a page that cannot be written even so is said in the heartbeat (`page_not_written`). Only then comes the
 terminal heartbeat, with the code and reason of the reading that ended the run. A test lists every way `run` and a pass
