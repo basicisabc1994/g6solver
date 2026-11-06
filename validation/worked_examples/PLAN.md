@@ -3271,3 +3271,36 @@ run on the host executor:
 
 **Not changed.** The frozen comparison rule and every earlier registration stand as written, and no earlier result is
 re-scored.
+
+## 2026-11-06 (evening): slice 1's controls, and three rulings, before any cohort run
+
+**What slice 1 did** (`claude/replay-cohort` 29deb47, from host-k3 754513c).
+- The two host-executor defects from the K3 pilot are fixed, each with a test that failed first:
+  - a file a command writes, edits or removes inside the box now reaches the kept patch; on click-3769 and black-5148 the
+    kept patch equals the known patch byte for byte, where at 754513c it held only the Write tool's file;
+  - an empty patch is never clean: the four review loops take their status from one rule, and a tree with no change is
+    `no_patch`.
+- The controls ran on real containers for the development and selection cohorts:
+  - development: 31 of 35 bugs usable;
+  - selection: 14 of 21 usable, with pydantic-settings-1089 moved to development because the K3 pilot's analysis read its
+    issue;
+  - final: 84 bugs by name and image only; none is usable until its controls run before the final measurement.
+- Every usable bug passed all four controls, the known patch's round trip byte for byte.
+
+**Ruled, 2026-11-06 (evening), before any run reads a cohort.**
+1. **Symbolic links are a defect, repaired before the cohorts' runs.** 11 bugs (4 development, 7 selection) were excluded for
+   one reason: their trees hold a symbolic link, and the host executor refuses any link when it copies the tree out. It did
+   so at 754513c too, so these bugs could never have run there. A user's repository with a link would be refused the same
+   way, so this is the instrument's defect, not a property of the bugs.
+   - The repair keeps one executor: on the host, a link is held as git holds it when links cannot be made (a file holding its
+     target, mode 120000), and inside the container it is a link again.
+   - The 11 re-enter only after all four controls pass on the repaired executor. Each cohort's results are reported with and
+     without them.
+2. **A final-cohort bug anyone working on G6 has seen any part of is excluded.** Its issue, tests and fix must stay unread
+   until the final measurement. strix-1116 is excluded on this rule: while looking for the audit's combined file, the slice 1
+   builder saw one summary line of its issue, recorded in its manifest entry. The final cohort is now 83 bugs.
+3. **aiobotocore-1704 stays in the final cohort.** It failed validation in stage 2; its controls decide, as every other bug's
+   do.
+
+**Not changed.** The frozen comparison rule and every earlier registration stand as written, and no earlier result is
+re-scored.
