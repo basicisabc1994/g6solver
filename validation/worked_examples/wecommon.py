@@ -1170,7 +1170,9 @@ def keep(root: Path | Archive, row: Mapping[str, Any], *, amended: bool = False,
     the folder's other files, by its own rule (``_unique``: one file a run, one run a key, so one run is never written under two
     names; study follow-up review 1, finding 7); and, last, for a run whose ending is not the one the verdict was made under
     (``MADE_UNDER``), its digest read after every other check (finding 6), whatever the ending is read from, so a verdict that names
-    no digest is never kept (study follow-up review 2, finding 1)."""
+    no digest is never kept (study follow-up review 2, finding 1). No two absent facts are a match: a run with no ending, whose
+    digest is absent, has no new row whatever the row says (study follow-up review 3, finding 6), and nor has a start that names
+    no arm and task, or no repeat. Rows kept before are read as they were (``_made_under``)."""
     archive = root if isinstance(root, Archive) else Archive(Path(root))
     name = row.get("run") if isinstance(row.get("run"), str) else ""
     label = AMENDED if amended else SAVED
@@ -1185,7 +1187,8 @@ def keep(root: Path | Archive, row: Mapping[str, Any], *, amended: bool = False,
 
         facts = facts_of(name)
         wrong = (f"{name!r} is no run the archive started" if facts is None
-                 else disagrees(facts, row) or ("its run's start names no repeat" if facts.repeat is None else ""))
+                 else ("its run's start names no arm and task" if not (facts.arm and facts.task) else "")   # no two absences
+                 or disagrees(facts, row) or ("its run's start names no repeat" if facts.repeat is None else ""))     # match
         if wrong:
             raise ArchiveError(f"no row of {name!r} is written: {wrong}")
         folder = _folders(archive)[1 if amended else 0]     # refused when the two are one folder (study review 3, finding 14)
@@ -1204,7 +1207,10 @@ def keep(root: Path | Archive, row: Mapping[str, Any], *, amended: bool = False,
         barred = Shelf(rows=(), found=tuple(_unique([*others, mine]))).bars(mine.key, amended=amended)
         if barred:                           # the folder, with this row written, would give its run no row
             raise ArchiveError(f"no row of {name!r} is written: {barred}, as the rows' reader refuses it")
-        if row.get(MADE_UNDER) != ending_sha256(archive, name):    # read now, after every check, from any source: a change voids it
+        made, now = row.get(MADE_UNDER), ending_sha256(archive, name)    # read now, after every check, from any source
+        if now is None:                  # no ending is no value: two absent digests are never a match (study follow-up review 3, 6)
+            raise ArchiveError(f"no row of {name!r} is written: its run has no ending, so no verdict of it is bound to one")
+        if made != now:                  # a change voids it
             raise ArchiveError(f"no row of {name!r} is written: its ending changed since its verdict was made (study review 4, 7)")
         return path
 

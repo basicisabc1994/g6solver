@@ -11,6 +11,7 @@ and the classes they belong to, each removed at its root with an inventory built
    every root repair changes a behaviour earlier repairs pinned, and the archive holds no parent for 32 of the 34 bugs.
 3. A file G6 writes that the one writer of store files does not guard is made where nothing else can be (finding 3;
    guard_covers_less_than_it_guards): created exclusively, in a folder made fresh for it (``wecommon.created``, ``fresh``).
+4. No ending is no value (finding 6; boundary_case): no comparison in the rows' writer counts two absent facts as a match.
 
 Fakes only: no Docker, no model, no network; git is run only to read a patch (``git apply --numstat``)."""
 from __future__ import annotations
@@ -604,3 +605,73 @@ def test_every_file_g6_writes_beside_the_store_writer_is_made_where_nothing_else
     assert "O_EXCL" in ast.unparse(fns[("replay3", "one_runner")])
     assert [_mode(n) for n in opens[("wecommon", "durable")]] == ["r+b"]
     assert [_mode(n) for n in opens[("wecommon", "sha256_file")]] == ["rb"]
+
+
+# --- 4: no ending is no value ---------------------------------------------------------------------------------------------------
+def test_finding_6_no_ending_cannot_authorize_a_new_row_without_a_digest(tmp_path):
+    archive = c.Archive(tmp_path)
+    run = archive.start("run", "bug", arm="A", repeat=1)
+    facts = c.run_facts(archive, run.rel)
+    assert facts.ending is None and facts.ending_sha256 is None
+    row = {"run": run.rel, "passes": True, "failing": 0, c.MADE_UNDER: facts.ending_sha256}
+    assert c.verdict(archive, run.rel, row) is None
+    with pytest.raises(c.ArchiveError):
+        c.keep(archive, row)
+    assert not (tmp_path / c.SAVED / "A-bug-1.json").exists()
+
+
+#: Every comparison in the rows' writer (``keep``, the run's attributions it checks, ``disagrees``, and the one writer of store
+#: files, ``write_whole``), from the code: whether two facts that may both be absent are compared, and what keeps two absences from
+#: being a match. "presence": it tests a fact's presence itself; "present": one side is never absent; "guarded": both may be
+#: absent, and the writer refuses an absent one before it compares.
+COMPARISONS = {
+    ("keep", "run not in read"): "presence",
+    ("keep", "facts is None"): "presence",
+    ("keep", "facts.repeat is None"): "presence",
+    ("keep", "held.run != facts.name"): "present: a run's facts always name it",
+    ("keep", "os.path.normcase(p.name) != os.path.normcase(dest)"): "present: two file names",
+    ("keep", "now is None"): "presence",
+    ("keep", "made != now"): "guarded: a run with no ending's digest (now is None) is refused first",
+    ("disagrees", "key in row"): "presence",
+    ("disagrees", "str(row.get(key) or '') != getattr(facts, key)"): "guarded: a start that names no arm and task is refused first",
+    ("disagrees", "'repeat' in row"): "presence",
+    ("disagrees", "said != facts.repeat"): "guarded: a start that names no repeat is refused",
+    ("disagrees", "facts.repeat is not None"): "presence",
+    ("write_whole", "os.path.normcase(os.fspath(where())) != os.path.normcase(os.fspath(dest))"): "present: two paths",
+    ("write_whole", "os.lstat(path).st_nlink != 1"): "present: a count",
+}
+
+
+def test_no_comparison_in_the_rows_writer_counts_two_absent_facts_as_a_match(tmp_path):
+    fns = _functions("wecommon")
+    found = {(name, ast.unparse(n)) for name in ("keep", "disagrees", "write_whole") for n in ast.walk(fns[name])
+             if isinstance(n, ast.Compare)}
+    assert found == set(COMPARISONS), sorted(found ^ set(COMPARISONS))
+    archive = c.Archive(tmp_path)
+    cases = {
+        "made != now": (archive.start("run", "bug", arm="A", repeat=1), {c.MADE_UNDER: None}),
+        "str(row.get(key) or '') != getattr(facts, key)": (archive.start("run", "bug", repeat=2), {"arm": None}),
+        "said != facts.repeat": (archive.start("run", "bug", arm="A"), {"repeat": None}),
+    }
+    assert set(cases) == {text for (_, text), how in COMPARISONS.items() if how.startswith("guarded")}
+    for text, (run, said) in cases.items():
+        if text != "made != now":
+            run.finish({"agent_started": True}, "finished")
+        row = {"run": run.rel, "passes": True, "failing": 0, c.MADE_UNDER: c.ending_sha256(archive, run.rel), **said}
+        with pytest.raises(c.ArchiveError):
+            c.keep(archive, row)
+    assert not (tmp_path / c.SAVED).exists() or not [p for p in (tmp_path / c.SAVED).rglob("*") if p.is_file()]
+
+
+def test_a_row_kept_before_with_no_digest_is_read_as_it_was(tmp_path, monkeypatch):
+    """The PLAN of 2026-11-07: rows kept before a digest was kept with them are read as they were; only new rows need one."""
+    monkeypatch.setattr(we, "amendment", lambda task: None)
+    archive = c.Archive(tmp_path)
+    run = archive.start("run", "bug", arm="A", repeat=1)
+    run.finish({"agent_started": True}, "finished")
+    old = {"arm": "A", "task": "bug", "repeat": 1, "run": run.rel, "status": "finished", "passes": True, "failing": 0}
+    (tmp_path / c.SAVED).mkdir()
+    (tmp_path / c.SAVED / "A-bug-1.json").write_text(json.dumps(old), "utf-8")
+    assert c.verdict(archive, run.rel, old) is True and c.shelf(archive, we.amendment).get(("A", "bug", 1)).passes is True
+    with pytest.raises(c.ArchiveError, match="ending changed"):
+        c.keep(archive, {**old, "passes": False})
