@@ -212,8 +212,8 @@ def review_bug(ctx: we.Context, root: Path, task: we.Task, rows: Sequence[Mappin
         if no_answer(found):        # no review: asked again next run, kept by the patch's bytes as they stand
             sha = hashlib.sha256((root / str(rows[0]["run"]) / "final.patch").read_bytes()).hexdigest()
             return [_keep(root, rows[0], verdict(found, None, None), started, sha, ins=ins)]
-        saved.parent.mkdir(parents=True, exist_ok=True)
-        fr.write_whole(saved, json.dumps({"task": task.id, "instruction": ins.digest, "found": found}, indent=1))
+        c.write_whole(lambda: fr._another_bug(bug_record(root, task.id, ins), task.id),     # the one writer of store files
+                      json.dumps({"task": task.id, "instruction": ins.digest, "found": found}, indent=1).encode("utf-8"))
     for row in rows:
         started = time.monotonic()
         raw = (root / str(row["run"]) / "final.patch").read_bytes()    # one read: these bytes are run and named, nothing else

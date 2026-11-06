@@ -225,7 +225,8 @@ class Training:
         path.parent.mkdir(exist_ok=True)
         path.write_text(json.dumps({**self.text, field: text}, indent=1) + "\n", "utf-8", newline="\n")
         loop.commit(path, f"worked examples round 3: harness candidate {arm}, proposed by G6")
-        spec.write_text(json.dumps({k: entry[k] for k in ("operator", "field", "text", "decision")}, indent=1), "utf-8")
+        c.write_whole(lambda: c.beside(self.root, f"evolve_{arm}.json"),       # the one writer of store files
+                      json.dumps({k: entry[k] for k in ("operator", "field", "text", "decision")}, indent=1).encode("utf-8"))
         return {**entry, "outcome": "to run"}
 
     def evaluate(self, sketch: Any, controls: Any, inputs: Any) -> list[list[dict[str, bool]]]:
@@ -264,7 +265,7 @@ def train(root: Path, g6: str, tasks: Sequence[str], parent: str, caller: Any, *
     out = {"parent": parent, "best": runner.best, "stopped": runner.stopped, "cegis": said, "candidates": runner.made,
            "records": {"failed": sum(r["kind"] == "failed" for r in runner.rows),
                        "near_miss": sum(r["kind"] == "near_miss" for r in runner.rows)}}
-    c.beside(root, "evolve.json").write_text(json.dumps(out, indent=1, default=str), "utf-8")
+    c.write_whole(lambda: c.beside(root, "evolve.json"), json.dumps(out, indent=1, default=str).encode("utf-8"))
     return out
 
 

@@ -298,9 +298,9 @@ def main(argv: list[str] | None = None) -> None:
     best = [one(root, args.g6, "E", t, r) for t in train for r in (1, 2)]
     caller = distill.Metered(distill.llm.AnthropicCaller(distill.MODEL, api_key=we.read_key()))
     result, best_arm, best = generations(root, args.g6, train, "E", we.ADDENDUM_D, best, caller)
-    c.beside(root, "cegis.json").write_text(json.dumps(
+    c.write_whole(lambda: c.beside(root, "cegis.json"), json.dumps(      # the one writer of store files
         {"status": result.status, "iterations": result.iterations, "counterexamples": result.counterexamples,
-         "boundary": result.boundary, "reason": result.reason, "best": best_arm}, indent=1, default=str), "utf-8")
+         "boundary": result.boundary, "reason": result.reason, "best": best_arm}, indent=1, default=str).encode("utf-8"))
     print(f"== best {best_arm}: train {score(best):.2f}", flush=True)
     if best_arm != "E":
         repeats = range(1, we.R3_HELD_REPEATS + 1)

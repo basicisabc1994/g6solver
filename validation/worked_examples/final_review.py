@@ -360,13 +360,15 @@ def saved(root: Path, row: Mapping[str, Any], folder: str = FOLDER) -> dict[str,
     return of_bug(read(path), row.get("task")) if path else None
 
 
-def _another_bug(path: Path | None, task: Any) -> None:
+def _another_bug(path: Path | None, task: Any) -> Path | None:
     """A patch whose review is kept for another bug cannot have one of its own here, as reviews are kept by digest alone: refused
-    (``replay_compare.patches`` refuses the same patch on two bugs), never written over."""
+    (``replay_compare.patches`` refuses the same patch on two bugs), never written over. Returns ``path``, so a writer can ask it
+    as its destination's check (``wecommon.write_whole``)."""
     held = read(path) if path is not None else None
     if held is not None and held.get("task") not in (None, task):
         raise ValueError(f"the patch {path.stem[:12]} is on two bugs, {held.get('task')} and {task}, and a review is saved by its "
                          "digest alone")
+    return path
 
 
 def read(path: Path) -> dict[str, Any] | None:
@@ -399,27 +401,18 @@ def said_of(root: Path, row: Mapping[str, Any], folder: str = FOLDER) -> str | N
 
 
 def keep(root: Path, row: Mapping[str, Any], found: Mapping[str, Any], folder: str = FOLDER, *, sha: str | None = None) -> None:
-    """Save a review under the digest of the bytes its reviewer read, whole or not at all: it is written beside its place and moved
-    there, so a run cut short leaves no half record. The digest is ``sha``, else the review's own (``patch_sha256``, which
-    ``review``, ``reproduce_review`` and the product's review give), on every path, the frozen one included; a review with neither
-    is refused (ValueError), as the patch file as it stands now may hold bytes no reviewer read (study review 3, finding 11)."""
+    """Save a review under the digest of the bytes its reviewer read, whole or not at all, by the one writer of store files
+    (``wecommon.write_whole``), its destination checked by ``beside`` and refused if it holds another bug's review, before anything
+    is made and again just before the replace (study follow-up review 1, finding 2). The digest is ``sha``, else the review's own
+    (``patch_sha256``, which ``review``, ``reproduce_review`` and the product's review give), on every path, the frozen one
+    included; a review with neither is refused (ValueError), as the patch file as it stands now may hold bytes no reviewer read
+    (study review 3, finding 11)."""
     sha = sha or found.get("patch_sha256")
     if not isinstance(sha, str) or not sha:
         raise ValueError("a review is kept only under the digest of the bytes its reviewer read, and this one names none")
     found = {k: v for k, v in found.items() if k != "patch_sha256"}     # the digest names the file: the record is as it was
-    path = c.beside(root, folder, f"{sha}.json")
-    _another_bug(path, row["task"])
-    path.parent.mkdir(exist_ok=True)
-    c.beside(root, folder, path.name)          # again just before the write: no folder below the store moved since
-    write_whole(path, json.dumps({"task": row["task"], "first_seen_in": row.get("run"), **found}, indent=1))
-
-
-def write_whole(path: Path, text: str) -> None:
-    """``text`` saved at ``path`` whole or not at all: written beside it and moved there, so a write cut short leaves no half
-    file. The one way the replays save a record."""
-    part = path.with_name(f"{path.name}.{os.getpid()}.part")     # draws no uuid: the frozen review's proofs stay as they were
-    part.write_text(text, "utf-8")
-    part.replace(path)
+    c.write_whole(lambda: _another_bug(c.beside(root, folder, f"{sha}.json"), row["task"]),
+                  json.dumps({"task": row["task"], "first_seen_in": row.get("run"), **found}, indent=1).encode("utf-8"))
 
 
 def waiting(root: Path, tasks: Sequence[str], folder: str = FOLDER) -> list[dict[str, Any]]:

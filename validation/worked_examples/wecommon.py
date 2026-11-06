@@ -1007,50 +1007,87 @@ def durable(path: Path) -> None:
         os.fsync(stream.fileno())
 
 
-def _whole(path: Path, data: bytes) -> None:
-    """``data`` at ``path``, whole or not at all: written to a file of its own in the same folder (a name no reader looks for), flushed
-    to the disk, then put in place by ``os.replace``, so a stop leaves the file as it was or as it is now, never cut short."""
-    handle, part = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".part")
+def write_whole(where: Callable[[], Path], data: bytes) -> Path:
+    """The one writer of every store file (study follow-up review 1, finding 2): a saved row (``keep``) and every store kept beside
+    the rows (``beside``: the reviews, the replays' records, the training's own files). ``where`` names the destination and checks
+    it (for a store, ``beside``; for a row, ``keep``'s reading of the folder and of the run's ending), and it is asked twice: before
+    anything is made, and again just before the replace, so what it checks is what holds when the file is put in place. ``data``
+    goes to a temporary file made exclusively in the destination's folder (``tempfile.mkstemp``: ``O_CREAT|O_EXCL``, a name no one
+    can predict, so no file made there in advance is written through), flushed and synced to the disk, and is put in place by
+    ``os.replace`` only while neither it nor the destination has a second name (a hard link: a file with another name is another
+    file's too, and is never put in place or replaced). A stop at any step leaves the destination as it was, or whole, and no
+    temporary file behind. Returns the destination."""
+    dest = where()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    handle, part = tempfile.mkstemp(dir=dest.parent, prefix=f".{dest.name}.", suffix=".part")
     try:
         with os.fdopen(handle, "wb") as stream:
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(part, path)
+        if os.path.normcase(os.fspath(where())) != os.path.normcase(os.fspath(dest)):
+            raise ArchiveError(f"{dest.name}: its destination moved while it was written; nothing is put in place")
+        for path, what in ((part, "its temporary file"), (dest, "its destination")):
+            if os.path.lexists(path) and os.lstat(path).st_nlink != 1:
+                raise ArchiveError(f"{dest.name}: {what} has a second name (a hard link), so it is another file's too: "
+                                   "nothing is put in place")
+        os.replace(part, dest)
     except BaseException:
         with suppress(OSError):
             os.unlink(part)
         raise
+    return dest
 
 
 def keep(root: Path | Archive, row: Mapping[str, Any], *, amended: bool = False, file: str | None = None) -> Path:
     """The one writer of the saved rows: ``loop.one``'s row, or ``loop.rescore``'s amended one (``amended``), written whole or not at
-    all (``_whole``), in the file its run's row is kept in already (``file``), else under the name its run's start gives
-    (``saved_name``). It is refused (``ArchiveError``), and nothing is written, for a row that names no run the index started, of a
-    start that names no repeat, or that says of its run what the run's facts do not; and for a file there that holds another run's
-    row, read again here, just before the write, so another run's row is never written over. A torn file there is replaced."""
+    all by the one writer of store files (``write_whole``), in the file its run's row is kept in already (``file``), else under the
+    name its run's start gives (``saved_name``). It decides as the rows' reader does (``shelf``), at the moment it writes: every
+    check is made when ``write_whole`` asks, before it makes anything and again just before the replace. It is refused
+    (``ArchiveError``), and nothing is written, for a row that names no run the index started, of a start that names no repeat, or
+    that says of its run what the run's facts do not; for a file there that holds another run's row, read by the reader's own rule
+    (``_found``), so another run's row is never written over (a torn one is replaced); for a row the reader would refuse beside
+    the folder's other files, by its own rule (``_unique``: one file a run, one run a key, so one run is never written under two
+    names; study follow-up review 1, finding 7); and, last, for a run whose ending is not the one the verdict was made under
+    (``MADE_UNDER``), its digest read after every other check (finding 6)."""
     archive = root if isinstance(root, Archive) else Archive(Path(root))
     name = row.get("run") if isinstance(row.get("run"), str) else ""
-    facts = run_facts(archive, name) if name else None
-    wrong = (f"{name!r} is no run the archive started" if facts is None
-             else disagrees(facts, row) or ("its run's start names no repeat" if facts.repeat is None else ""))
-    if wrong:
-        raise ArchiveError(f"no row of {name!r} is written: {wrong}")
-    folder = _folders(archive)[1 if amended else 0]     # refused when the two are one folder (study review 3, finding 14)
-    file = file or saved_name(facts.arm, facts.task, facts.repeat)
-    if not row_file(file):               # the reader's own rule (study review 4, finding 9)
-        raise ValueError(f"{file!r} is no saved row's name")
-    if row.get(MADE_UNDER) != facts.ending_sha256:      # the ending the verdict was made under, read again here: a change voids it
-        raise ArchiveError(f"no row of {name!r} is written: its ending changed since its verdict was made (study review 4, 7)")
-    path = folder / file
-    if os.path.lexists(path):           # read again by the reader's own rule (``_found``), just before the write
-        held, _ = _found(archive, AMENDED if amended else SAVED, path, lambda name: run_facts(archive, name) if name else None)
-        if not held.torn and (held.why or held.run != facts.name):     # a torn one is replaced; any other is never written over
-            raise ArchiveError(f"{path.name} holds no row of {facts.name}'s own: "
-                               + (held.why or f"it is the row of {held.run!r}, another run's") + "; it is never written over")
-    folder.mkdir(parents=True, exist_ok=True)
-    _whole(path, json.dumps(dict(row), indent=1).encode("utf-8"))
-    return path
+    label = AMENDED if amended else SAVED
+
+    def where() -> Path:
+        index, read = archive.rows(), {}
+
+        def facts_of(run: str) -> RunFacts | None:
+            if run not in read:
+                read[run] = run_facts(archive, run, index) if run else None
+            return read[run]
+
+        facts = facts_of(name)
+        wrong = (f"{name!r} is no run the archive started" if facts is None
+                 else disagrees(facts, row) or ("its run's start names no repeat" if facts.repeat is None else ""))
+        if wrong:
+            raise ArchiveError(f"no row of {name!r} is written: {wrong}")
+        folder = _folders(archive)[1 if amended else 0]     # refused when the two are one folder (study review 3, finding 14)
+        dest = file or saved_name(facts.arm, facts.task, facts.repeat)
+        if not row_file(dest):               # the reader's own rule (study review 4, finding 9)
+            raise ValueError(f"{dest!r} is no saved row's name")
+        path = folder / dest
+        if os.path.lexists(path):            # read by the reader's own rule (``_found``)
+            held, _ = _found(archive, label, path, facts_of)
+            if not held.torn and (held.why or held.run != facts.name):     # a torn one is replaced; any other is never written over
+                raise ArchiveError(f"{path.name} holds no row of {facts.name}'s own: "
+                                   + (held.why or f"it is the row of {held.run!r}, another run's") + "; it is never written over")
+        others = [_found(archive, label, p, facts_of)[0] for p in sorted(folder.glob("*.json"))
+                  if row_file(p.name) and os.path.normcase(p.name) != os.path.normcase(dest)] if folder.is_dir() else []
+        mine = Found(label, dest, facts.name, (facts.arm, facts.task, facts.repeat))
+        barred = Shelf(rows=(), found=tuple(_unique([*others, mine]))).bars(mine.key, amended=amended)
+        if barred:                           # the folder, with this row written, would give its run no row
+            raise ArchiveError(f"no row of {name!r} is written: {barred}, as the rows' reader refuses it")
+        if row.get(MADE_UNDER) != ending_sha256(archive, name):    # read now, after every check: a change voids the verdict
+            raise ArchiveError(f"no row of {name!r} is written: its ending changed since its verdict was made (study review 4, 7)")
+        return path
+
+    return write_whole(where, json.dumps(dict(row), indent=1).encode("utf-8"))
 
 
 def numstat_names(out: bytes) -> list[str]:
