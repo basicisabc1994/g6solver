@@ -18,7 +18,7 @@ from g6.core.door import SENSITIVE_ENV, allowed_sensitive, invoke_checked
 from .assurance import canonical_json, sha256
 from .codes import (APPROVAL_REQUIRED, EXECUTION_INCOMPLETE, MODEL_MISSING, PLAN_TAMPERED, PREREQUISITE_UNMET,
                     STEP_FAILED, VERIFIED_FLAG, refusal, settled)
-from .snapshot import record, snapshot
+from .snapshot import fresh, record, returned, snapshot, text
 
 # Every name resolves to an existing G6 component and a fixed, documented op.
 # Models are declarative data, never arbitrary modules, code or pickle paths.
@@ -337,7 +337,7 @@ class LLMClaimCompiler:
                            "max_claims": self.max_claims}, ensure_ascii=False)
         if len(user) > 15000:
             raise ValueError("question and context exceed prompt cap")
-        raw = self.llm.complete(system, user, max_tokens=2200)
+        raw = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=2200), text)
         if len(raw) > 18000:
             raise ValueError("model output exceeded cap")
         doc = json.loads(raw)

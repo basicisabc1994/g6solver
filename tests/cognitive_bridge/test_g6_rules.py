@@ -67,7 +67,8 @@ def test_assertions_without_a_gate_are_judged_not_a_name_error():
     assertion = ScopedAssertion("claim-1", "truth", PIN, "supports", "formal", "source1", "receipt1")
     report = _assess(orchestrator, compiled, scoped_assertions=[assertion])
     assert report["completion_state"] == "blocked-escalated"
-    assert report["epistemic_reconciliation"]["unadmitted_evidence_refs"] == ["source1"]
+    # the gate's report is used as the checked snapshot taken when it returned (review 4): its lists are tuples
+    assert list(report["epistemic_reconciliation"]["unadmitted_evidence_refs"]) == ["source1"]
     json.dumps(report)  # the report is plain data
     assert canonical_json(report["dossier"])
     assert report["warning_card"]["code"] == "G6_E_COGNITIVE_ASSURANCE_BLOCKED"

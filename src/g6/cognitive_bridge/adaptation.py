@@ -26,7 +26,7 @@ from g6.reasoning import sign_test_p
 
 from .assurance import CandidateDossier
 from .codes import ADAPTATION_REFUSED, refusal, settled
-from .snapshot import record, snapshot
+from .snapshot import fresh, record, snapshot
 
 HEX = re.compile(r"^[0-9a-f]{64}$")
 
@@ -296,22 +296,23 @@ class AdaptationPromotionGate:
             violations.append("promotion measurements must come from held-out cases")
         if any(x.case_id in {c.case_id for c in controls} for x in pairs):
             violations.append("controls and held-out measurements overlap")
+        # Each admission hook is handed a copy, so what it admits is what is counted, whatever it does to its copy.
         if self.admit_pair is not None:
             for x in pairs:
                 try:
-                    accepted = self.admit_pair(x)
+                    accepted = self.admit_pair(fresh(x)) is True
                 except Exception:
                     accepted = False
-                if accepted is not True:
+                if not accepted:
                     violations.append(f"evaluator did not authenticate paired trial {x.case_id}")
                     break
         if self.admit_control is not None:
             for x in controls:
                 try:
-                    accepted = self.admit_control(x)
+                    accepted = self.admit_control(fresh(x)) is True
                 except Exception:
                     accepted = False
-                if accepted is not True:
+                if not accepted:
                     violations.append(f"evaluator did not authenticate control {x.case_id}")
                     break
         types = {x.category for x in controls}

@@ -18,7 +18,7 @@ from typing import Any, Callable, Mapping, Sequence
 from .assurance import canonical_json, is_risk, sha256
 from .codes import MODEL_MISSING, OBLIGATION_NOT_PLANNED, SELECTION_INCOMPLETE, refusal, settled
 from .mixed_methods import ENGINE_SPECS, ENGINE_OP_VARIANTS, ClaimIR, MethodRouter, MethodPlan
-from .snapshot import record, snapshot
+from .snapshot import fresh, record, returned, snapshot
 
 CAPABILITIES = frozenset(ENGINE_SPECS)
 #: The splits a trial can come from (``EvaluatedTrial.split``); a selector learns from the ones its ``learn_from`` names.
@@ -207,10 +207,10 @@ class MetacognitiveMethodSelector:
                 self.rejected_trials += 1
                 continue
             try:
-                allowed = admit_trial(t)
+                allowed = admit_trial(fresh(t)) is True  # the hook is handed a copy: what it admits is what is kept
             except Exception:
                 allowed = False
-            if allowed is not True:
+            if not allowed:
                 self.rejected_trials += 1
                 continue
             clean.append(t)
@@ -339,6 +339,21 @@ class MetacognitiveMethodSelector:
                                  sha256(canonical_json(policy)), refused)
 
 
+def checked_selection(decision: Any, variants: Sequence[MethodVariant]) -> SelectionDecision:
+    """A selector's answer as the planner and the orchestrator use it (a ``snapshot.returned`` check): a
+    SelectionDecision whose every row names one of the ``variants`` the selector was handed and says that variant's
+    kind, method, engine and op."""
+    if type(decision) is not SelectionDecision:
+        raise ValueError("a method selector returns a SelectionDecision")
+    given = {v.id: v for v in variants}
+    for row in decision.ordered_variants:
+        variant = given.get(row.get("variant_id")) if isinstance(row, Mapping) else None
+        if variant is None or (row.get("kind"), row.get("method"), row.get("engine"), row.get("op")) != (
+                variant.kind, variant.method, variant.engine, variant.op):
+            raise ValueError("a selection row does not name a variant the selector was given, as it was given")
+    return decision
+
+
 class MetacognitivePlanner:
     """Join selection with G6's existing canonical, allowlisted MethodRouter.
 
@@ -359,7 +374,8 @@ class MetacognitivePlanner:
         if not required.issubset(requested):
             return refusal(OBLIGATION_NOT_PLANNED, "professional requirements not present in canonical claim obligations",
                            missing=sorted(required - requested), plan=planned.to_dict())
-        decision = self.selector.select(context, variants, required_methods=required_methods)
+        decision = returned(self.selector.select(fresh(context), fresh(variants),
+                                                 required_methods=fresh(required_methods)), checked_selection, variants)
         if planned.missing:
             return refusal(MODEL_MISSING, "typed models missing", selection=decision.to_dict(), plan=planned.to_dict())
         return settled(decision.refused, selection=decision.to_dict(), plan=planned.to_dict(),

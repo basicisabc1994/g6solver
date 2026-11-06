@@ -12,7 +12,7 @@ from dataclasses import asdict
 from typing import Any, Mapping, Sequence
 
 from .mixed_methods import ENGINE_SPECS
-from .snapshot import record, snapshot
+from .snapshot import fresh, record, returned, snapshot, text
 
 
 @record
@@ -82,7 +82,7 @@ class LLMMetacognitiveCritic:
                            "max_items": self.max_items}, ensure_ascii=False, allow_nan=False)
         if len(user) > 25000:
             raise ValueError("critique prompt cap exceeded")
-        response = self.llm.complete(system, user, max_tokens=2600)
+        response = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=2600), text)
         if len(response) > 20000:
             raise ValueError("critique response exceeded bound")
         doc = json.loads(response)

@@ -7,7 +7,13 @@ not independently established. Every result is at most qualified-draft.
 
 Every tool step goes through G6's checked door (``g6.core.door.invoke_checked``) and is credited only when the door's
 reply says ``ok``; ``tests/cognitive_bridge/test_step_inventory.py`` lists every call of a tool or step in the package
-and allows only the door.
+and allows only the door. The agent's history is written only from such a step (:func:`_credited`).
+
+The proposer, selector, updater and tools are the caller's code. Each is handed a fresh copy of what the agent checked
+(``snapshot.fresh``), never the agent's own; what each returns is taken as a fresh copy the moment it returns and checked
+against what was checked (``snapshot.returned``): a proposal is Probe records, a selection names one of the validated
+candidates and the agent runs that candidate itself, and a posterior is a belief for every hypothesis by the rule priors
+follow. The beliefs an update uses are the ones checked, by their digest.
 """
 from __future__ import annotations
 
@@ -20,8 +26,9 @@ from returns.result import Failure, Success
 
 from g6.core import door
 
+from .assurance import canonical_json, sha256
 from .codes import NO_PROBE, STEP_FAILED, refusal, settled
-from .snapshot import record, snapshot
+from .snapshot import FrozenMap, fresh, record, returned, snapshot, text
 
 
 @record
@@ -72,18 +79,23 @@ class Updater(Protocol):
     def update(self, beliefs: Mapping[str, float], probe: Probe, positive: bool) -> dict[str, float]: ...
 
 
+def _beliefs(beliefs: dict[str, float]) -> dict[str, float]:
+    """The one rule for a belief map, whoever made it (the caller's priors, an updater's posterior): every belief
+    finite in [0, 1], and their sum one, with no implicit normalisation."""
+    if any(not math.isfinite(v) or v < 0 or v > 1 for v in beliefs.values()):
+        raise ValueError("all hypothesis probabilities must be finite in [0,1]")
+    if not math.isclose(sum(beliefs.values()), 1.0, abs_tol=1e-10, rel_tol=0.0):
+        raise ValueError("beliefs must sum to one; no implicit normalisation")
+    return beliefs
+
+
 def check_beliefs(hypotheses: Sequence[Hypothesis]) -> dict[str, float]:
     if not 2 <= len(hypotheses) <= 32:
         raise ValueError("supply 2–32 competing hypotheses")
     ids = [h.id for h in hypotheses]
     if any(not h.id or not h.statement for h in hypotheses) or len(set(ids)) != len(ids):
         raise ValueError("hypothesis IDs must be nonempty and unique; statements nonempty")
-    beliefs = {h.id: float(h.prior) for h in hypotheses}
-    if any(not math.isfinite(v) or v < 0 or v > 1 for v in beliefs.values()):
-        raise ValueError("all hypothesis probabilities must be finite in [0,1]")
-    if not math.isclose(sum(beliefs.values()), 1.0, abs_tol=1e-10, rel_tol=0.0):
-        raise ValueError("priors must sum to one; no implicit normalisation")
-    return beliefs
+    return _beliefs({h.id: float(h.prior) for h in hypotheses})
 
 
 def _validate_probe(probe: Probe, beliefs: Mapping[str, float]) -> None:
@@ -195,7 +207,7 @@ class LLMProposer:
             "allowed_tools": [{"name": t.name, "cost": t.cost,
                                "assumed_match_probability": t.assumed_match_probability} for t in self.tools.values()],
             "max_probes": self.max_probes}, ensure_ascii=False)
-        raw = self.llm.complete(system, user, max_tokens=1500)
+        raw = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=1500), text)
         if len(raw) > 12000:
             raise ValueError("model proposal exceeded output size cap")
         data = json.loads(raw)
@@ -228,6 +240,19 @@ class LLMProposer:
         return probes
 
 
+def _scores(predictions: Any, count: int) -> tuple[float, ...]:
+    """A predictor's answer as the selector uses it: one finite number for each of the ``count`` feature rows."""
+    if not isinstance(predictions, tuple) or len(predictions) != count:
+        raise ValueError("model returned incorrect number of experiment scores")
+    try:
+        scores = tuple(float(score) for score in predictions)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("model emitted a score that is not a number") from exc
+    if not all(math.isfinite(score) for score in scores):
+        raise ValueError("model emitted non-finite score")
+    return scores
+
+
 class MLAcquisitionSelector:
     """Drop-in quantitative ML experiment selector; trained predictor supplied by caller.
 
@@ -247,15 +272,10 @@ class MLAcquisitionSelector:
         viable = [(p, ig) for p, ig in viable if ig >= self.min_gain]
         if not viable:
             return []
-        features = [[ig, p.cost, p.novelty, p.assumed_match_probability] for p, ig in viable]
-        predictions = list(self.predictor.predict(features))
-        if len(predictions) != len(viable):
-            raise ValueError("model returned incorrect number of experiment scores")
+        features = tuple((ig, p.cost, p.novelty, p.assumed_match_probability) for p, ig in viable)
+        predictions = returned(self.predictor.predict(fresh(features)), _scores, len(viable))
         result = []
         for (p, ig), score in zip(viable, predictions):
-            score = float(score)
-            if not math.isfinite(score):
-                raise ValueError("model emitted non-finite score")
             result.append({"id": p.id, "expected_information_bits": ig, "score": score,
                            "cost": p.cost, "novelty_preference": p.novelty,
                            "selector": "caller_supplied_quantitative_ml"})
@@ -273,12 +293,75 @@ class _ToolDoor:
     def invoke(self, name: str, op: str, params: Mapping[str, Any] | None = None, *, block_sensitive: bool = False,
                llm: Any = None) -> Any:
         try:
-            observation = self.tool.call(params["question"], dict(params["arguments"]))
+            observation = returned(self.tool.call(fresh(params["question"]), fresh(params["arguments"])), _observed)
         except Exception as exc:  # the tool is the caller's code: anything it raises is a failed step
             return Failure(f"[{STEP_FAILED}] {self.tool.name}: {type(exc).__name__}: {exc}")
-        if not isinstance(observation, Observation):
-            return Failure(f"[{STEP_FAILED}] {self.tool.name}: tool must return an Observation")
         return Success({"completion_state": "qualified-draft", "observation": asdict(observation)})
+
+
+def _observed(observation: Any) -> Observation:
+    """A tool's answer as the door is handed it: an Observation record."""
+    if type(observation) is not Observation:
+        raise TypeError("tool must return an Observation")
+    return observation
+
+
+def _proposed(proposals: Any) -> tuple[Probe, ...]:
+    """A proposer's answer as the agent uses it: Probe records (that type, not a subclass) with distinct ids."""
+    if not isinstance(proposals, tuple) or any(type(p) is not Probe for p in proposals):
+        raise ValueError("a proposer proposes Probe records")
+    if len({p.id for p in proposals}) != len(proposals):
+        # the ranking names a probe by its id: two probes under one id could rank one and run the other
+        raise ValueError("duplicate probe ids in one proposal")
+    return proposals
+
+
+def _selection(ranking: Any, candidates: tuple[Probe, ...]) -> tuple[Mapping[str, Any], Probe] | None:
+    """A selector's answer, checked against the validated candidates: None when it ranks nothing, else its first row
+    and the validated candidate that row names (that very record, by identity: never a probe the selector made, and
+    never one the selector was handed, which is a copy)."""
+    if not isinstance(ranking, tuple) or any(not isinstance(row, Mapping) for row in ranking):
+        raise ValueError("a selector ranks probes as a list of rows")
+    if not ranking:
+        return None
+    row = ranking[0]
+    named = [p for p in candidates if p.id == row.get("id")]
+    if len(named) != 1:
+        raise ValueError("the selector chose a probe that is not one of the validated candidates")
+    bits = row.get("expected_information_bits")
+    if type(bits) not in (int, float) or not math.isfinite(bits) or bits < 0:
+        raise ValueError("the selector's chosen row needs a finite, nonnegative expected_information_bits")
+    return row, named[0]
+
+
+def _posterior(posterior: Any, prior: Mapping[str, float]) -> FrozenMap:
+    """An updater's answer, checked as the prior was: a belief for every hypothesis and no other, each a number, by the
+    one rule for beliefs (:func:`_beliefs`)."""
+    if not isinstance(posterior, Mapping) or set(posterior) != set(prior):
+        raise ValueError("an updater returns a belief for every hypothesis and no other")
+    if any(type(v) not in (int, float) for v in posterior.values()):
+        raise ValueError("an updater's beliefs are numbers")
+    return snapshot(_beliefs({h: float(posterior[h]) for h in prior}))
+
+
+def _digest(beliefs: Mapping[str, float]) -> str:
+    return sha256(canonical_json(beliefs))
+
+
+def _prior(beliefs: FrozenMap, checked: str) -> FrozenMap:
+    """The beliefs, where they are used, as they were checked: refused when their digest is no longer the one taken
+    when they were checked (a write past every view)."""
+    if _digest(beliefs) != checked:
+        raise ValueError("the beliefs changed after they were checked")
+    return beliefs
+
+
+def _credited(reply: Mapping[str, Any], entry: Mapping[str, Any]) -> FrozenMap:
+    """The one writer of the agent's history: an entry for a tool step whose reply from G6's door said ``ok``, with
+    that reply's ``request_id``. Anything else is refused."""
+    if reply.get("ok") is not True:
+        raise ValueError("only a tool step G6's door passed enters the history")
+    return snapshot({**entry, "request_id": reply.get("request_id", "")})
 
 
 class CognitiveAgent:
@@ -314,28 +397,28 @@ class CognitiveAgent:
         if not 1 <= max_steps <= 20 or not math.isfinite(budget) or budget < 0:
             raise ValueError("invalid step or budget limit")
         hypotheses = snapshot(hypotheses)
-        beliefs = check_beliefs(hypotheses)
-        initial = dict(beliefs)
+        # What the agent checked is held here only, with the digest taken when it was checked; a collaborator is handed
+        # a fresh copy of it, and what a collaborator returns is a fresh copy checked against it (snapshot.returned).
+        beliefs = snapshot(check_beliefs(hypotheses))
+        checked = _digest(beliefs)
+        initial = beliefs
         seen: set[str] = set()
-        history: list[dict] = []
+        history: list[FrozenMap] = []  # written only by _credited, from a tool step G6's door passed
         remaining = float(budget)
         refused: dict[str, Any] | None = None
         for step in range(max_steps):
             # Proposer is advisory; calls to actual tools occur only here.
-            current_hypotheses = [replace(h, prior=beliefs[h.id]) for h in hypotheses]
-            proposals = snapshot(self.proposer.propose(objective, current_hypotheses, history))
-            if any(not isinstance(p, Probe) for p in proposals):
-                raise ValueError("a proposer proposes Probe records")
-            if len({p.id for p in proposals}) != len(proposals):
-                # the ranking names a probe by its id: two probes under one id could rank one and run the other
-                raise ValueError("duplicate probe ids in one proposal")
-            candidates = [p for p in proposals if p.id not in seen and p.tool in self.tools]
+            shown = _prior(beliefs, checked)
+            current = tuple(replace(h, prior=shown[h.id]) for h in hypotheses)
+            proposals = returned(self.proposer.propose(fresh(objective), fresh(current), fresh(history)), _proposed)
+            candidates = tuple(p for p in proposals if p.id not in seen and p.tool in self.tools)
             for p in candidates:
                 _validate_probe(p, beliefs)
-            ranked = self.selector.rank(beliefs, candidates, remaining)
-            if not ranked:
+            selection = returned(self.selector.rank(fresh(_prior(beliefs, checked)), fresh(candidates),
+                                                    fresh(remaining)), _selection, candidates)
+            if selection is None:
                 break
-            chosen = next(p for p in candidates if p.id == ranked[0]["id"])
+            row, chosen = selection
             tool = self.tools[chosen.tool]
             # Tool metadata is always owned by the caller, regardless of proposer.
             if chosen.cost != tool.cost or chosen.assumed_match_probability != tool.assumed_match_probability:
@@ -356,19 +439,21 @@ class CognitiveAgent:
             if observation.measured_utility is not None:
                 if not observation.evaluator_ref or not math.isfinite(float(observation.measured_utility)):
                     raise ValueError("measured utility requires a finite score and evaluator provenance")
-            before = dict(beliefs)
-            beliefs = self.updater.update(beliefs, chosen, observation.positive)
+            prior = _prior(beliefs, checked)  # the update uses the beliefs as checked, by their digest
+            posterior = returned(self.updater.update(fresh(prior), fresh(chosen), fresh(observation.positive)),
+                                 _posterior, prior)
             remaining -= chosen.cost
             seen.add(chosen.id)
-            history.append({"step": step + 1, "probe_id": chosen.id, "question": chosen.question,
-                            "tool": chosen.tool, "observation": observation.positive,
-                            "source_ref": observation.source_ref, "notes": observation.notes,
-                            "assumed_match_probability": chosen.assumed_match_probability,
-                            "cost": chosen.cost, "novelty_preference": chosen.novelty,
-                            "measured_utility": observation.measured_utility,
-                            "evaluator_ref": observation.evaluator_ref,
-                            "expected_information_bits": ranked[0]["expected_information_bits"],
-                            "prior": before, "posterior": dict(beliefs)})
+            history.append(_credited(reply, {
+                "step": step + 1, "probe_id": chosen.id, "question": chosen.question, "tool": chosen.tool,
+                "observation": observation.positive, "source_ref": observation.source_ref, "notes": observation.notes,
+                "assumed_match_probability": chosen.assumed_match_probability, "cost": chosen.cost,
+                "novelty_preference": chosen.novelty, "measured_utility": observation.measured_utility,
+                "evaluator_ref": observation.evaluator_ref,
+                "expected_information_bits": row["expected_information_bits"], "prior": prior,
+                "posterior": posterior}))
+            beliefs, checked = posterior, _digest(posterior)
+        # A credited result counts only the steps in the history, each one a step G6's door passed.
         if refused is None and not history:
             refused = refusal(NO_PROBE, "no executable discriminating probe")
         return settled(
@@ -377,7 +462,7 @@ class CognitiveAgent:
                          else "no further affordable discriminating probe" if history
                          else "no executable discriminating probe"),
             objective=objective,
-            initial_beliefs=initial, posterior=beliefs, history=history,
+            initial_beliefs=initial, posterior=beliefs, history=list(history),
             remaining_budget=remaining, limitations=[
                 "The hypotheses must be mutually exclusive and exhaustive within the model.",
                 "Probe predictions and likelihoods are assumptions, not independently measured facts.",
@@ -412,7 +497,7 @@ class LLMIdeaGenerator:
         )
         user = json.dumps({"objective": objective[:2000], "observations": list(observations)[-6:],
                            "max_ideas": self.max_ideas})
-        raw = self.llm.complete(system, user, max_tokens=1200)
+        raw = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=1200), text)
         if len(raw) > 12000:
             raise ValueError("idea proposal exceeded output cap")
         doc = json.loads(raw)

@@ -23,7 +23,7 @@ from g6.invariants import ERROR_CODE_PATTERN
 
 from .codes import (EVIDENCE_CONTESTED, EVIDENCE_NOT_RECONCILED, EVIDENCE_REFUTED, EVIDENCE_UNDETERMINED, refusal,
                     settled)
-from .snapshot import record, snapshot
+from .snapshot import fresh, record, snapshot
 
 HEX64 = re.compile("[0-9a-f]{64}\\Z")
 #: An assertion's stance as an evidence record states it (``g6.core.evidence.EvidenceStance``).
@@ -75,7 +75,7 @@ class CrossMethodConflictGate:
             admitted = False
             if self.admit_assertion is not None:
                 try:
-                    admitted = self.admit_assertion(row) is True
+                    admitted = self.admit_assertion(fresh(row)) is True  # a copy: what it admits is what is used
                 except Exception:
                     admitted = False
             if not admitted:

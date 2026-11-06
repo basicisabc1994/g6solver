@@ -15,7 +15,7 @@ from dataclasses import field, fields
 from typing import Any, Mapping, Protocol
 
 from .codes import DOSSIER_BLOCKED, refusal, settled
-from .snapshot import record, snapshot
+from .snapshot import fresh, record, returned, snapshot
 
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 FORMAT = "g6.cognitive_assurance.dossier/1"
@@ -197,12 +197,17 @@ class CandidateDossier:
         return {**self.payload, "content_sha256": self.content_sha256}
 
 
+def _verdict(result: Any) -> bool | None:
+    """A checker's answer as the evaluator uses it (a ``snapshot.returned`` check): True or False, else None."""
+    return result if type(result) is bool else None
+
+
 def _test(checker: FrozenVerifier, content: bytes) -> tuple[bool, str]:
     try:
-        result = checker.check(content)
+        result = returned(checker.check(fresh(content)), _verdict)
     except Exception as exc:
         return False, f"verifier exception {type(exc).__name__}"
-    if type(result) is not bool:
+    if result is None:
         return False, "verifier did not return a boolean"
     return result, "boolean result"
 
@@ -245,7 +250,8 @@ class InProcessAssuranceEvaluator:
             raise ValueError("producer and evaluator must have distinct identities")
         # One snapshot, taken before anything is checked: the checks, the dossier and the review scope all read it,
         # never the caller's mappings; the standard's digest is read again after use (a change would block).
-        standard, artifacts, verifiers, documentation = snapshot((standard, artifacts, verifiers, documentation))
+        standard, artifacts, verifiers, documentation, attestation = snapshot(
+            (standard, artifacts, verifiers, documentation, attestation))
         pinned = standard.digest
         if set(artifacts) - {c.id for c in standard.criteria}:
             raise ValueError("artifact supplied for undeclared criterion")
@@ -320,7 +326,7 @@ class InProcessAssuranceEvaluator:
                 if (attestation.scope_sha256 == evidence_scope
                         and attestation.reviewer_id not in (candidate_actor, self.evaluator_id)):
                     try:
-                        authentic = self.reviewer_authenticator(attestation) is True
+                        authentic = self.reviewer_authenticator(fresh(attestation)) is True
                     except Exception:
                         authentic = False
                     if authentic:

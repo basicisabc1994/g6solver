@@ -18,16 +18,30 @@ from dataclasses import asdict
 from typing import Any, Iterable, Mapping, Sequence
 
 from .adaptation import detect_failure_modes
-from .assurance import (DomainStandard, EvidenceArtifact,
+from .assurance import (CandidateDossier, DomainStandard, EvidenceArtifact,
                         FrozenVerifier, InProcessAssuranceEvaluator,
                         ProfessionalAttestation, canonical_json, sha256)
-from .codes import (ASSURANCE_BLOCKED, COMPILE_BLOCKED, EXECUTION_NOT_APPROVED, NOT_PROMOTED, PLAN_TAMPERED, refusal,
-                    settled)
+from .codes import (ASSURANCE_BLOCKED, COMPILE_BLOCKED, EXECUTION_NOT_APPROVED, NOT_PROMOTED, PLAN_TAMPERED, STATES,
+                    refusal, settled)
 from .epistemic import CrossMethodConflictGate, ScopedAssertion
 from .metacognition import (MethodVariant, MetacognitiveMethodSelector,
-                            ProblemSignature, SelectionDecision)
+                            ProblemSignature, SelectionDecision, checked_selection)
 from .mixed_methods import (ENGINE_SPECS, ClaimIR, MethodPlan, MethodRouter, MixedMethodExecutor, step_digest)
-from .snapshot import record, snapshot
+from .snapshot import fresh, record, returned, snapshot
+
+
+def _dossier(dossier: Any) -> CandidateDossier:
+    """An evaluator's answer as the assessment uses it (a ``snapshot.returned`` check): an intact CandidateDossier."""
+    if type(dossier) is not CandidateDossier or not dossier.intact():
+        raise ValueError("an evaluator returns an intact CandidateDossier")
+    return dossier
+
+
+def _reconciled(report: Any) -> Mapping[str, Any]:
+    """A conflict gate's answer as the assessment uses it (a ``snapshot.returned`` check): a report with a state."""
+    if not isinstance(report, Mapping) or report.get("completion_state") not in STATES:
+        raise ValueError("a conflict gate returns a report with a completion_state")
+    return report
 
 
 def _plan_digest(plan: MethodPlan) -> str:
@@ -108,8 +122,9 @@ class CognitiveAssuranceOrchestrator:
         if not requested:
             raise ValueError("claim requires at least one method")
         # Existing G6 method schemas, not a new collection of arbitrary tools.
-        selection = self.selector.select(context, variants, required_methods=sorted(requested),
-                                         max_optional=max_supplemental)
+        selection = returned(self.selector.select(fresh(context), fresh(variants),
+                                                  required_methods=fresh(sorted(requested)),
+                                                  max_optional=fresh(max_supplemental)), checked_selection, variants)
         models: dict[str, dict[str, Any]] = {}
         model_hashes: dict[str, str] = {}
         for row in selection.ordered_variants:
@@ -226,9 +241,10 @@ class CognitiveAssuranceOrchestrator:
         for item in artifacts.values():
             if item.claim_id != compiled.original_claim.id:
                 raise ValueError("evidence belongs to a different claim")
-        dossier = evaluator.evaluate(standard=standard, artifacts=artifacts, verifiers=verifiers,
-                                     documentation=documentation, candidate_actor=candidate_actor,
-                                     attestation=attestation)
+        dossier = returned(evaluator.evaluate(standard=fresh(standard), artifacts=fresh(artifacts),
+                                              verifiers=fresh(verifiers), documentation=fresh(documentation),
+                                              candidate_actor=fresh(candidate_actor), attestation=fresh(attestation)),
+                           _dossier)
         # Whether the compiled steps ran is read from this orchestrator's own record, never from the caller's label.
         executed = self._executed(compiled, run_result)
         backend_ok = executed is not None and self._every_step_ran(compiled, executed)
@@ -237,7 +253,8 @@ class CognitiveAssuranceOrchestrator:
         # assertions block rather than lending support to the dossier.
         conflict_report = None
         if scoped_assertions:
-            conflict_report = (epistemic_gate or CrossMethodConflictGate()).reconcile(scoped_assertions)
+            conflict_report = returned((epistemic_gate or CrossMethodConflictGate()).reconcile(
+                fresh(scoped_assertions)), _reconciled)
         epistemic_ok = conflict_report is None or conflict_report["completion_state"] == "qualified-draft"
         faults = detect_failure_modes(dossier)
         # The decision rests on the standard's digest, so it is read again after use: the standard the evaluator

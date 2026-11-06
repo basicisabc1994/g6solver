@@ -12,7 +12,7 @@ import struct
 from dataclasses import asdict
 from typing import Any, Mapping, Sequence
 
-from .snapshot import record
+from .snapshot import fresh, record, returned
 
 
 def _native(value: Any) -> Any:
@@ -135,6 +135,14 @@ def extract_tree(estimator: Any, feature_names: Sequence[str] | None = None,
     return ExplicitTree(names, visit(0), task, provenance)
 
 
+def _predictions(rows: Any, count: int) -> tuple[Any, ...]:
+    """A black box's answer as the surrogate uses it (a ``snapshot.returned`` check): one prediction for each of the
+    ``count`` rows it was handed."""
+    if not isinstance(rows, tuple) or len(rows) != count:
+        raise ValueError("black-box predictor returned mismatched rows")
+    return rows
+
+
 def distill_blackbox(blackbox: Any, X_train: Sequence[Sequence[float]],
                      X_holdout: Sequence[Sequence[float]], feature_names: Sequence[str],
                      *, task: str = "classification", max_depth: int = 3,
@@ -152,8 +160,9 @@ def distill_blackbox(blackbox: Any, X_train: Sequence[Sequence[float]],
     names = _distinct_names(feature_names)
     if not 1 <= len(names) <= 100:
         raise ValueError("invalid feature names")
-    train = [tuple(_float32(x) for x in row) for row in X_train]
-    holdout = [tuple(_float32(x) for x in row) for row in X_holdout]
+    # Tuples: the black box is handed fresh copies, so the rows checked here are the rows fitted and scored.
+    train = tuple(tuple(_float32(x) for x in row) for row in X_train)
+    holdout = tuple(tuple(_float32(x) for x in row) for row in X_holdout)
     if len(train) < 10 or len(holdout) < 5:
         raise ValueError("need at least 10 training and 5 independent held-out rows")
     if any(len(row) != len(names) for row in train + holdout):
@@ -166,10 +175,8 @@ def distill_blackbox(blackbox: Any, X_train: Sequence[Sequence[float]],
         raise ImportError("scikit-learn is not installed: pip install 'g6[ml] @ "
                           "git+https://github.com/basicisabc1994/g6solver'") from exc
 
-    observed_train = list(blackbox.predict(train))
-    observed_holdout = [_native(x) for x in blackbox.predict(holdout)]
-    if len(observed_train) != len(train) or len(observed_holdout) != len(holdout):
-        raise ValueError("black-box predictor returned mismatched rows")
+    observed_train = returned(blackbox.predict(fresh(train)), _predictions, len(train))
+    observed_holdout = returned(blackbox.predict(fresh(holdout)), _predictions, len(holdout))
     cls = DecisionTreeClassifier if task == "classification" else DecisionTreeRegressor
     tree = cls(max_depth=max_depth, min_samples_leaf=min_samples_leaf, random_state=seed)
     tree.fit(train, observed_train)
