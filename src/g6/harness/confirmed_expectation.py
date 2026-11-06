@@ -21,18 +21,26 @@ any other, counts only with a negative control and a receipt on the artefact it 
 tentative model of intent: a model's hypothesis is refused, never frozen. A later answer that contradicts an accepted
 expectation is refused as an addition; it starts a superseding standard, which names the one it replaces, so every
 piece of evidence issued under the old standard's hash no longer counts under the new one.
+
+A question and a confirmed answer are frozen records of what the person was shown and answered. The scenario (the
+arguments, keyword arguments and outcomes) and the compiled check are kept as the JSON text G6's rule for a binding's
+literal allows (``verification_templates.literal_problem``: JSON data only, no bytes, tuple or set), taken when the
+record is made; each read gives a fresh copy, so nothing a caller changes afterwards, in the objects it passed or in
+those it read, rewrites what was confirmed. "Contradicts" is decided by the answer itself, the compiled scenario and
+its outcome: the same answer to a question with another citation is the same answer, and is held once.
 """
 from __future__ import annotations
 
+import json
 import re
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from g6.core.ledger import digest
 from g6.evidence.certificate import Check, Control, MissionFacts
 from g6.harness.patch_review import NORMATIVE
-from g6.harness.verification_templates import ExampleBindings, TemplateInstance, instance_digest
+from g6.harness.verification_templates import ExampleBindings, TemplateInstance, instance_digest, literal_problem
 
 PERSON_CONFIRMED = "person_confirmed"
 #: The answers that confirm nothing (the design's behaviour form, 3.2 step 2), besides a decline or cancel.
@@ -59,40 +67,92 @@ def normative(provenance: str) -> bool:
     return provenance in NORMATIVE
 
 
+class _Frozen:
+    """A field kept as the JSON text of its value when the record is made, and read back as a fresh copy (the module
+    docstring). ``default`` makes a left-out field that value; ``dump`` and ``load`` write and read a value that is not
+    plain JSON data (the compiled check), and plain JSON data is held to G6's rule for a binding's literal."""
+
+    def __init__(self, *, default: Callable[[], Any] | None = None, dump: Callable[[Any], str] | None = None,
+                 load: Callable[[str], Any] | None = None) -> None:
+        self._default, self._dump, self._load = default, dump, load
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self._name, self._slot = name, f"_frozen_{name}"
+
+    def __get__(self, obj: object, owner: type | None = None) -> Any:
+        if obj is None:   # the class's own default: none for a field that has to be given
+            if self._default is None:
+                raise AttributeError(self._name)
+            return None
+        text = obj.__dict__[self._slot]
+        return self._load(text) if self._load else json.loads(text)
+
+    def __set__(self, obj: object, value: Any) -> None:
+        if value is None and self._default is not None:
+            value = self._default()
+        if self._dump is not None:
+            text = self._dump(value)
+        else:
+            if isinstance(value, Mapping) and not isinstance(value, dict):
+                value = dict(value)
+            problem = literal_problem(value)
+            if problem:
+                raise ValueError(f"{self._name}: {problem}")
+            text = json.dumps(value, ensure_ascii=True, allow_nan=False)
+        obj.__dict__[self._slot] = text
+
+
+def _instance_text(value: Any) -> str:
+    """The compiled check as JSON text: a template instance whose bindings are JSON data, never anything else."""
+    if not isinstance(value, TemplateInstance):
+        raise TypeError("a confirmed expectation's check is a template instance")
+    problem = literal_problem(value.bindings)
+    if problem:
+        raise ValueError(f"instance: {problem}")
+    return value.model_dump_json()
+
+
 @dataclass(frozen=True)
 class Question:
-    """One behaviour question, as the person is shown it."""
+    """One behaviour question, as the person is shown it: a frozen record (the module docstring)."""
 
     requirement_id: str
     function: str
-    args: list
+    args: list = _Frozen()
     #: Each competing outcome, by its label: exactly one of ``returns``, ``raises`` or ``effect``, as example.v1 states it.
-    outcomes: Mapping[str, Mapping[str, Any]]
+    outcomes: Mapping[str, Mapping[str, Any]] = _Frozen()
     scope: str
     cited: str
     baseline_sha256: str
-    kwargs: Mapping[str, Any] = field(default_factory=dict)
+    kwargs: Mapping[str, Any] = _Frozen(default=dict)
     intent: Literal["change", "preserve"] = "change"
 
     def __post_init__(self) -> None:
         if not _HEX64.match(str(self.baseline_sha256)):
             raise ValueError("baseline_sha256 must be the sha256 hex digest of the artefact the question is asked about")
-        if len(self.outcomes) < 2 or any(label in NOT_CONFIRMING for label in self.outcomes):
+        outcomes = self.outcomes
+        if (not isinstance(outcomes, dict) or len(outcomes) < 2
+                or any(label in NOT_CONFIRMING for label in outcomes)):
             raise ValueError("a question shows at least two competing outcomes, none named like a non-answer")
-        for label, outcome in self.outcomes.items():   # each outcome is an example.v1 case, checked before it is shown
+        for label, outcome in outcomes.items():   # each outcome is an example.v1 case, checked before it is shown
+            if not isinstance(outcome, dict):
+                raise ValueError("each outcome states returns, raises or effect")
             ExampleBindings.model_validate({"function": self.function, "cases": [self._case(label, outcome)]})
+        if not isinstance(self.kwargs, dict):
+            raise ValueError("kwargs maps each parameter's name to its value")
         if not str(self.scope).strip() or not str(self.cited).strip():
             raise ValueError("a question names its scope and the task's citation")
 
     def _case(self, label: str, outcome: Mapping[str, Any] | None = None) -> dict:
-        return {"args": list(self.args), **({"kwargs": dict(self.kwargs)} if self.kwargs else {}),
-                **dict(self.outcomes[label] if outcome is None else outcome)}
+        kwargs = self.kwargs
+        return {"args": self.args, **({"kwargs": kwargs} if kwargs else {}),
+                **(self.outcomes[label] if outcome is None else dict(outcome))}
 
     def to_dict(self) -> dict:
-        return {"requirement_id": self.requirement_id, "function": self.function, "args": list(self.args),
-                "kwargs": dict(self.kwargs), "outcomes": {k: dict(v) for k, v in self.outcomes.items()},
-                "options": list(NOT_CONFIRMING), "scope": self.scope, "cited": self.cited,
-                "baseline_sha256": self.baseline_sha256, "intent": self.intent}
+        return {"requirement_id": self.requirement_id, "function": self.function, "args": self.args,
+                "kwargs": self.kwargs, "outcomes": self.outcomes, "options": list(NOT_CONFIRMING),
+                "scope": self.scope, "cited": self.cited, "baseline_sha256": self.baseline_sha256,
+                "intent": self.intent}
 
     @property
     def sha256(self) -> str:
@@ -101,12 +161,13 @@ class Question:
 
     @property
     def options_sha256(self) -> str:
-        return digest({"outcomes": {k: dict(v) for k, v in self.outcomes.items()}, "options": list(NOT_CONFIRMING)})
+        return digest({"outcomes": self.outcomes, "options": list(NOT_CONFIRMING)})
 
 
 @dataclass(frozen=True)
 class ConfirmedExpectation:
-    """A person's confirmed answer: one example.v1 check, bound to the question it answers and the artefact."""
+    """A person's confirmed answer: one example.v1 check, bound to the question it answers and the artefact. A frozen
+    record: its check is kept as it was compiled when the person answered (the module docstring)."""
 
     expectation_id: str
     requirement_id: str
@@ -115,7 +176,7 @@ class ConfirmedExpectation:
     answer: str
     artefact_sha256: str
     scope: str
-    instance: TemplateInstance
+    instance: TemplateInstance = _Frozen(dump=_instance_text, load=TemplateInstance.model_validate_json)
     answered_by: str
     provenance: str = PERSON_CONFIRMED
 
@@ -168,9 +229,15 @@ def confirm(question: Question, answer: str, *, answered_by: str) -> ConfirmedEx
 
 def _scenario(one: ConfirmedExpectation) -> str:
     """What a case asks, without its answer: the function and its arguments."""
-    case = dict(one.instance.bindings["cases"][0])
-    return digest({"function": one.instance.bindings["function"], "args": case.get("args", []),
-                   "kwargs": case.get("kwargs", {})})
+    bindings = one.instance.bindings
+    case = bindings["cases"][0]
+    return digest({"function": bindings["function"], "args": case.get("args", []), "kwargs": case.get("kwargs", {})})
+
+
+def _answer(one: ConfirmedExpectation) -> str:
+    """The answer itself: the compiled scenario and its outcome (the check's bindings), whatever citation the question
+    that asked it carried."""
+    return digest(one.instance.bindings)
 
 
 @dataclass(frozen=True)
@@ -209,16 +276,18 @@ class ExpectationStandard:
         return tuple(one.expectation_id for one in self.expectations)
 
     def contradicted_by(self, new: ConfirmedExpectation) -> tuple[str, ...]:
-        """The accepted expectations ``new`` contradicts: the same scenario, another answer."""
+        """The accepted expectations ``new`` contradicts: the same scenario, another outcome (``_answer``). The same
+        answer under another citation contradicts nothing."""
         return tuple(one.expectation_id for one in self.expectations
-                     if _scenario(one) == _scenario(new) and one.check_sha256 != new.check_sha256)
+                     if _scenario(one) == _scenario(new) and _answer(one) != _answer(new))
 
     def with_expectation(self, new: ConfirmedExpectation) -> ExpectationStandard:
-        """The next revision with ``new`` added; ``ContradictsStandard`` when it contradicts one already accepted."""
+        """The next revision with ``new`` added; ``ContradictsStandard`` when it contradicts one already accepted; this
+        standard when it already holds the same answer (under any citation)."""
         contradicted = self.contradicted_by(new)
         if contradicted:
             raise ContradictsStandard(contradicted)
-        if new.expectation_id in self.predicates:
+        if any(_answer(one) == _answer(new) for one in self.expectations):
             return self
         return ExpectationStandard((*self.expectations, new), self.revision + 1, self.sha256, ())
 
