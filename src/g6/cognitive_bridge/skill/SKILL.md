@@ -72,20 +72,24 @@ Composed (Python only):
 
 - `MixedMethodExecutor` runs an approved plan's steps through G6's checked door (`g6.core.door.invoke_checked`, the
   call `g6.invoke` makes): a sensitive op runs only when the person allowed it (`allow=` or `G6_MCP_SENSITIVE`), and
-  a component's own `verified` is held at `qualified-draft` with the door's card. A step whose answer carries a
-  `reliability_label`, a `verified` flag outside a warning card, a nested result outside the bridge's format, or an
-  object that is not plain data or a bridge record is `G6_E_COGNITIVE_STEP_FAILED`, the reason naming each place.
+  a component's own `verified` is held at `qualified-draft` with the door's card. A step whose answer is not plain
+  JSON data, or carries a `reliability_label`, a `verified` flag outside a warning card or a nested result outside the
+  bridge's format, is `G6_E_COGNITIVE_STEP_FAILED`, the reason naming each place.
   It checks the plan against the canonical routing, refuses an edited one (`G6_E_COGNITIVE_PLAN_TAMPERED`) and runs nothing unless `approved=True`
   (`G6_E_COGNITIVE_APPROVAL_REQUIRED`; `"false"`, `1` or any other value is not approval).
 - `CognitiveAgent` makes each observation a tool step through the same door, credited only when the door's reply
   says `ok`; `allow=` is the person's allow, as the executor takes it.
-- What the bridge checks and then uses is a snapshot taken when it is accepted (`g6.cognitive_bridge.snapshot`):
-  every record is immutable all the way down, a plan, a model, a checker's controls and a probe's predictions
-  among them, so a caller who keeps the list or dict it passed in changes nothing here; what it hands back is
-  never a live view. An assessment reads the standard's digest again after the evaluator used it.
+- Everything a caller or a collaborator hands the bridge is taken once, where it enters, as plain JSON data
+  (`g6.cognitive_bridge.snapshot.plain`, a round trip through its canonical encoder): a set, a subclass, an object, a
+  key that is not text or a number that is not finite is refused under `G6_E_COGNITIVE_BRIDGE_INPUT` with its path,
+  and an identity is text. Every record is immutable all the way down and shares nothing with what the caller keeps.
+  An assessment reads the standard's digest again after the evaluator used it.
 - `CognitiveAssuranceOrchestrator` joins the selector, the router, the executor and `InProcessAssuranceEvaluator`:
   compile, execute with approval, then assess the produced bytes against the standard's criteria. A compilation's
   state is its selection's verdict: a blocked selection never runs or is credited, whatever its `refused` field says.
+  Execution and assessment take only a compilation this orchestrator issued, and credit only a dossier or a
+  reconciliation the evaluator or gate they called issued (the digest of every field, held in memory): one built by
+  hand, edited or made by another instance is refused.
 - The cross-method conflict gate reads stance and lineage by `epistemic_integrity`'s rules: one source repeated is
   one lineage, and each proposition's status (contested, refuted, undetermined) is `adjudicate_claim`'s; a BLOCK or
   ASK disposition, or a failure it triggered, refuses whatever the status says.
