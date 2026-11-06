@@ -717,9 +717,11 @@ lists, from the code, every place G6 joins a path to these files or opens the re
 or the question of whether a folder is a loop at all. Each file is read from one open handle, and its bytes stand only when
 the file that handle holds, known by the handle itself (on Windows its volume and file index), is the regular file that
 stands at the path once they are read, with as many bytes as were read; a file replaced or changed while it was read is
-read again. A file is absent only when its open fails with not-found and the folder above it is a directory that can be
-listed, so a path under a regular file, which Windows reports as not found, is unreadable, as is a file that is a link or
-kept changing while it was read. A stop stands when the `STOP` file is not the one the last start lifted, when the journal's bytes are not the
+read again. A file is absent only when its open fails with not-found and absence is decided from the entries themselves,
+by `lstat`, which follows no link: nothing at all is at the path, and the nearest entry above it is a folder that can be
+listed. So a link, a junction or any other reparse point at the path, broken or not, is unreadable, as is a broken one
+above it, an entry that cannot be looked at, a path under a regular file, which Windows reports as not found, and a file
+that is a link or kept changing while it was read. A stop stands when the `STOP` file is not the one the last start lifted, when the journal's bytes are not the
 ones it bound (bytes decide, never a count of lines, so a line a crash cut short is a stop), when a stop on record follows
 that start, which it revokes until a person starts again, and with no start on record, when the journal holds any bytes at
 all. Anything it cannot read or use, any of the three files, records that do not check out, or a start's lift fields of the
@@ -745,7 +747,12 @@ lock and the stop lock it checks everything again on a fresh reading and refuses
 showed, then writes its row; the stop lock is the one a stop's writer holds until its journal line and its `STOP` file are both on disk,
 and a start refused there writes nothing. A stop that waited a second for that lock writes without it (the owner's
 ruling), and its journal line can be read before its own flush is done, so the start flushes the journal to disk itself,
-through a handle of its own, before its row binds it: no start lifts a line the disk may yet lose. Journal lines carry no
+through a handle of its own, before its row binds it: no start lifts a line the disk may yet lose. It keeps that handle
+open until its row is written and binds the file's identity (its volume and file id) with its bytes: when the reading
+the start's terms stand on found a journal, that reading, the file it flushed and the reading it checks before its row
+must all be that one file, or it writes nothing. A reading that found none binds the empty journal, so a journal made
+after it is a stop that stands, and the start says so. Held open, the file keeps its id, and on Windows it cannot be renamed or removed until the start lets go,
+so a journal renamed away and made again with the same bytes, never flushed, is never bound. Journal lines carry no
 token, so a line a crash took back could be written again, the same bytes, by a later stop that the start's binding would
 then not see. The row goes onto the approved reading itself: once the writer has opened the records and the journal is
 flushed, a reading must be exactly the approved one before anything is appended,
@@ -761,10 +768,20 @@ heartbeat says), then the day's page is written, the running loop's own or one f
 cannot be made from the records gives way to a plain one that says how the run ended and its code, never the old page left
 standing, and a page that cannot be written even so is said in the heartbeat (`page_not_written`). Only then comes the
 terminal heartbeat, with the code and reason of the reading that ended the run. A test lists every way `run` and a pass
-return, and that every exception before the hand-off ends there too. Only the runner lock's own refusal for another holder
-is another runner, and that runner writes no page and no heartbeat over the live one's; a lock that cannot be taken for
-what it is, a link among them, and anything that fails once the lock is held, the loop's opening included, is this
-runner's own ending (`G6_E_LOOP_CANNOT_OPEN`).
+return, and that every exception before the hand-off ends there too. Only the runner lock's holder writes the folder's
+page and heartbeat: the preflight's reading comes first, and a stop it finds ends the run once the lock is held; the
+starting heartbeat is written holding the lock for that moment; every ending is made inside the lock, never once it is let
+go; and a person's command at a terminal writes no heartbeat. A test lists every page and heartbeat write from the code.
+Only the lock's own contention is another runner, and that runner writes no page and no heartbeat over the live one's: on
+Windows the lock is taken with LockFileEx, whose ERROR_LOCK_VIOLATION alone is another holder (the C runtime gives a held
+lock and a denied access one errno), and on POSIX flock's EWOULDBLOCK (EAGAIN), or EACCES where Python builds flock on
+fcntl. A lock that cannot be taken for any other reason, an I/O error, a denied access or an error never seen, a link
+among them, raises as it is and is this runner's own ending (`G6_E_LOOP_CANNOT_OPEN`) with its page and heartbeat, since
+no holder can be shown; so is anything that fails once the lock is held, the loop's opening included. Whether a runner is
+alive is never read from a lock that cannot be tried: a start refuses, a stop says it cannot be read, and status says so
+beside the stop. Status takes the one reading first and reports the stop in every reply; everything else it reads runs
+inside its one handler, and what cannot be read or used, a record's field among them, is said beside the stop, never
+raised.
 
 An agreement binds what the dialog showed: the settings, the Python file, who enrolled it, the stop state as that one reading
 saw it, and any pause. If any of that moves while the dialog is open, nothing starts and the person is asked again. A stop that
