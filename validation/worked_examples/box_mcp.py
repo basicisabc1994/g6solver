@@ -409,14 +409,39 @@ def seen(done: Any, read: Callable[[bytes], Any] | None = None) -> Seen:
     return Seen(UNKNOWN, f"the call itself returned {code}: {said}", code, output)
 
 
-def tests_seen(body: Mapping[str, Any] | None, tests: Iterable[str]) -> dict[str, Any]:
+def _run_seen(body: Any) -> bool:
+    """Whether a test run was observed: its call seen to pass, its exit and its report came back (``tests_seen``'s first rules)."""
+    return (isinstance(body, Mapping) and body.get("patch_applied") is not False and body.get("call") == PASSED
+            and body.get("pytest_exit") is not None and isinstance(body.get("results"), Mapping)
+            and bool(body.get("report", bool(body.get("results")))))
+
+
+def _collect_failed(test: str, body: Mapping[str, Any], gold: Mapping[str, Any] | None) -> bool:
+    """Whether pytest's own report shows ``test`` failing at collection in ``body``'s run (coordinator's ruling, 2026-11-06): the
+    run's report names a failed collection (``collect_errors``, node ids as pytest gives them) whose node id, with "::", begins
+    the test's own node id, which only ``gold`` (the gold patch's run, on the same image ids, ``cohorts.control_why``) can give,
+    as pytest's report of it (``nodes``), and that run, observed, saw the test pass. Anything else is no failure: a collection
+    error in a module that holds no such test, a gold run that errors or holds no result for it, or a test whose module pytest's
+    own report does not tie to the error."""
+    errors = body.get("collect_errors")
+    nodes = gold.get("nodes") if isinstance(gold, Mapping) else None
+    if not (isinstance(errors, list) and isinstance(nodes, Mapping) and _run_seen(gold) and gold["results"].get(test) == "passed"):
+        return False
+    node = nodes.get(test)
+    return isinstance(node, str) and any(isinstance(e, str) and e and node.startswith(e + "::") for e in errors)
+
+
+def tests_seen(body: Mapping[str, Any] | None, tests: Iterable[str], *, seen_passing_in: Mapping[str, Any] | None = None
+               ) -> dict[str, Any]:
     """The one reader of a test report (a ``run._oracle_run`` body: its pytest call's state, its exit, whether its report came
     back, its results), over ``tests``: PASSED when the run was observed and every one of them was seen to pass; FAILED when the
     run was observed and at least one was seen to fail (failed or error); else UNKNOWN, with why. The run is not observed when
     its patch did not apply, its call was not seen to pass (``seen``) or its call's own result was never recorded, no exit
     status came back, or no report came back (a timeout with no result among them); a test the report does not hold, or holds
-    as skipped, is a missing result: never a pass and never a failure. Returns the state, why, and how many tests were seen to
-    pass, seen to fail, and not seen."""
+    as skipped, is a missing result: never a pass and never a failure. ``seen_passing_in``: the base's reading only, the gold
+    patch's run on the same image ids; a test the base's report does not hold is seen to fail when pytest's own report shows its
+    module failing to collect there and that run saw it pass (``_collect_failed``). Returns the state, why, and how many tests
+    were seen to pass, seen to fail, and not seen."""
     names = sorted(set(tests))
     body = body if isinstance(body, Mapping) else {}
     results = body.get("results")
@@ -439,7 +464,8 @@ def tests_seen(body: Mapping[str, Any] | None, tests: Iterable[str]) -> dict[str
         return unknown("the tests ran out of time (exit 124) with no report" if str(exit_).strip() == "124" else
                        f"no test report came back (exit {exit_})")
     passed = sum(results.get(t) == "passed" for t in names)
-    failed = sum(results.get(t) in ("failed", "error") for t in names)
+    failed = sum(results.get(t) in ("failed", "error") or (t not in results and seen_passing_in is not None
+                                                            and _collect_failed(t, body, seen_passing_in)) for t in names)
     counts = {"tests": len(names), "passed": passed, "failed": failed, "unknown": len(names) - passed - failed}
     if passed == len(names):
         return {"state": PASSED, "why": "", **counts}

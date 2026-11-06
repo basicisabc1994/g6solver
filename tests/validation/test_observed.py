@@ -247,6 +247,135 @@ def test_the_round_trip_compares_bytes_it_read_never_a_capture_that_failed(tmp_p
         assert (run.path / "final.patch").read_bytes() == kept
 
 
+# --- a base's collection error, by the coordinator's ruling (2026-11-06) -----------------------------------------------------------
+#: A base whose run errors collecting the module that holds the fail-to-pass test (pytest's own report: a failed collection's node
+#: id), and a gold patch's run, on the same image ids, whose own report gives that test's node id below that module and saw it pass.
+NEW, OLD = "tests.test_new::test_bug", "tests.test_old::test_ok"
+ERRED = body({"::tests.test_new": "error", OLD: "passed"}, exit="2", nodes={OLD: "tests/test_old.py::test_ok"},
+             collect_errors=["tests/test_new.py"])
+GOLD_RUN = body({NEW: "passed", OLD: "passed"}, exit="0",
+                nodes={NEW: "tests/test_new.py::test_bug", OLD: "tests/test_old.py::test_ok"}, collect_errors=[])
+
+
+def test_a_base_collection_error_of_the_fail_to_pass_tests_module_is_seen_failing_when_the_gold_run_saw_it_pass():
+    got = box.tests_seen(ERRED, [NEW], seen_passing_in=GOLD_RUN)
+    assert got["state"] == F and got["failed"] == 1, got
+    assert box.tests_seen(ERRED, [NEW])["state"] == U, "without the gold run's report, a missing result stays unknown"
+
+
+@pytest.mark.parametrize(("base", "gold", "why"), [
+    ({**ERRED, "collect_errors": ["tests/test_other.py"]}, GOLD_RUN, "a module that holds no fail-to-pass test"),
+    (ERRED, {**GOLD_RUN, "results": {NEW: "error", OLD: "passed"}}, "the gold run errors too"),
+    (ERRED, {**GOLD_RUN, "results": {OLD: "passed"}}, "the gold run has no result for it"),
+    (ERRED, {**GOLD_RUN, "nodes": {OLD: "tests/test_old.py::test_ok"}}, "the gold run's report gives no node id for it"),
+    ({k: v for k, v in ERRED.items() if k != "collect_errors"}, GOLD_RUN, "the base's own report names no collection error: "
+                                                                          "only its junit rendering does"),
+    ({**ERRED, "collect_errors": ["tests/test_new"]}, GOLD_RUN, "an error whose node id is not the module the test is below"),
+    ({**ERRED, "collect_errors": "tests/test_new.py"}, GOLD_RUN, "a report that is not a list of node ids"),
+    ({**ERRED, "results": {OLD: "passed"}, "collect_errors": ["tests/test_old.py"]}, GOLD_RUN,
+     "an error in the module of a pass-to-pass test only"),
+])
+def test_a_collection_error_stays_unknown_unless_pytests_own_report_puts_the_test_below_it_and_the_gold_run_saw_it_pass(base,
+                                                                                                                       gold, why):
+    assert box.tests_seen(base, [NEW], seen_passing_in=gold)["state"] == U, why
+
+
+def _erred_record(gold_images=None, empty=None):
+    ids = {"task_image_id": ORACLE, "oracle_image_id": ORACLE}
+    lists = {"fail_to_pass": [NEW], "pass_to_pass": [OLD]}
+    return {"failed": "", "why": "",
+            "validate": {"images": dict(ids), **lists, "base": we.observed(ERRED, [NEW]), "fixed": we.observed(GOLD_RUN, [NEW, OLD])},
+            "selfcheck": {"images": dict(gold_images or ids), "gold": we.observed(GOLD_RUN, [NEW, OLD]),
+                          "empty": we.observed(empty or ERRED, [NEW, OLD])},
+            "round_trip": {**TRIP, "images": dict(ids)}, "images_after": dict(ids)}
+
+
+def test_the_base_control_reads_the_gold_run_of_the_same_image_ids_and_the_empty_patch_control_is_unchanged():
+    ids = {"task_image_id": ORACLE, "oracle_image_id": ORACLE}
+    record = _erred_record(empty=body({NEW: "failed", OLD: "passed"}))
+    assert cohorts.control_why(record, "base") == "" and cohorts.admit(record, ids) == ""
+    other = {"task_image_id": ORACLE, "oracle_image_id": "sha256:" + "9" * 64}
+    assert cohorts.control_why(_erred_record(gold_images=other, empty=body({NEW: "failed", OLD: "passed"})), "base") != ""
+    record = _erred_record()                   # the empty patch's run has the same collection error: unchanged, not seen failing
+    assert cohorts.control_why(record, "base") == ""
+    assert cohorts.admit(record, ids).startswith("empty patch: not seen to fail"), cohorts.admit(record, ids)
+
+
+def test_the_controls_judge_the_base_once_the_gold_patch_has_run(monkeypatch, tmp_path):
+    got = controls(monkeypatch, tmp_path, base=ERRED, fixed=GOLD_RUN, gold=GOLD_RUN, empty=body({NEW: "failed", OLD: "passed"}))
+    assert got["failed"] == "" and cohorts.admit(got, {"task_image_id": ORACLE, "oracle_image_id": ORACLE}) == "", got
+    got = controls(monkeypatch, tmp_path / "2", base=ERRED, fixed=GOLD_RUN, gold=GOLD_RUN, empty=ERRED)
+    assert got["failed"] == "empty patch", got
+
+
+# --- pytest's own report, which the controls' oracle runs keep ---------------------------------------------------------------------
+class ReportDocker(OracleDocker):
+    """A check container as ``OracleDocker``, which also takes the report plugin's file and hands back its report."""
+
+    def __init__(self, report_lines: bytes | None, **kw) -> None:
+        super().__init__(b"exit=2\n", 0, JUNIT)
+        self.report_lines, self.scripts, self.written = report_lines, [], {}
+
+    def __call__(self, *args, input=None, timeout=None, env=None):
+        if args[0] == "exec" and input is not None:
+            self.written[args[-1].split('cat > "', 1)[1].split('"', 1)[0]] = input
+            return done(0)
+        if args[0] == "cp" and args[1].endswith(we.REPORT_IN):
+            if self.report_lines is None:
+                return done(1, b"", b"Error: no such file")
+            Path(args[2]).write_bytes(self.report_lines)
+            return done(0)
+        return super().__call__(*args, input=input, timeout=timeout, env=env)
+
+    def sh(self, ctr, script, *a, **kw):
+        self.scripts.append(script)
+        return super().sh(ctr, script, *a, **kw)
+
+
+def test_an_oracle_run_asked_for_pytests_own_report_keeps_each_tests_node_id_and_each_failed_collection(tmp_path):
+    lines = b"".join(json.dumps(x).encode() + b"\n" for x in (
+        {"collect_error": "tests/test_new.py"}, {"node": "tests/test_old.py::test_ok", "junit": OLD},
+        {"node": "tests/test_old.py::test_ok", "junit": OLD}))
+    task = SimpleNamespace(id="toy-1", repo="/w/toy", test_modules=["t.py"])
+    docker = ReportDocker(lines)
+    got = we._oracle_run(SimpleNamespace(docker=docker, g6={"commit": "0" * 40}, variant=we.ROUND3), task, label="base", report=True)
+    assert got["collect_errors"] == ["tests/test_new.py"] and got["nodes"] == {OLD: "tests/test_old.py::test_ok"}
+    assert docker.written[we.PLUGIN_AT] == we.REPORT_PLUGIN.encode() and "-p we_report" in docker.scripts[-1]
+    assert we.observed(got, [NEW, OLD])["nodes"] == {OLD: "tests/test_old.py::test_ok"}
+    lost = we._oracle_run(SimpleNamespace(docker=ReportDocker(None), g6={"commit": "0" * 40}, variant=we.ROUND3), task,
+                          label="base", report=True)
+    assert lost["collect_errors"] is None and lost["nodes"] is None          # not recorded: the rule cannot apply
+    plain = we._oracle_run(SimpleNamespace(docker=OracleDocker(b"exit=1\n", 0, JUNIT), g6={"commit": "0" * 40},
+                                           variant=we.ROUND3), task, label="base")
+    assert "nodes" not in plain and "collect_errors" not in plain            # the study's own runs are as they were
+
+
+def test_the_report_plugin_gives_pytests_own_node_ids_and_the_junit_key_pytest_itself_computes(tmp_path):
+    project, plugins = tmp_path / "project", tmp_path / "plugins"
+    (project / "tests").mkdir(parents=True)
+    plugins.mkdir()
+    (project / "tests" / "__init__.py").write_text("", encoding="utf-8")
+    (project / "tests" / "test_new.py").write_text("from nowhere_at_all import thing\n\ndef test_bug():\n    pass\n",
+                                                    encoding="utf-8")
+    (project / "tests" / "test_old.py").write_text("class TestOld:\n    def test_ok(self):\n        pass\n\n"
+                                                    "import pytest\n\n@pytest.mark.parametrize('x', [1, 2])\n"
+                                                    "def test_p(x):\n    pass\n", encoding="utf-8")
+    (plugins / "we_report.py").write_text(we.REPORT_PLUGIN, encoding="utf-8")
+    report, junit = tmp_path / "report.jsonl", tmp_path / "junit.xml"
+    import os
+    done_ = __import__("subprocess").run(                  # the other module's tests run too, so one report holds both kinds
+        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-p", "we_report", "-q", f"--junitxml={junit}",
+         "-o", "junit_family=xunit2", "--continue-on-collection-errors", "tests"], cwd=project, capture_output=True, timeout=120,
+        env={**os.environ, "PYTHONPATH": str(plugins), "WE_REPORT": str(report)})
+    assert done_.returncode == 1, done_.stdout
+    got = we.read_report(report.read_bytes())
+    assert got["collect_errors"] == ["tests/test_new.py"], got
+    keys = we.parse_junit(junit.read_text(encoding="utf-8"))
+    assert {k for k in keys if keys[k] == "passed"} == set(got["nodes"]), (keys, got)     # the same tests, keyed as junit keys them
+    assert got["nodes"]["tests.test_old.TestOld::test_ok"] == "tests/test_old.py::TestOld::test_ok"
+    assert got["nodes"]["tests.test_old::test_p[2]"] == "tests/test_old.py::test_p[2]"
+
+
 # --- finding 8: the call phases are a closed set -----------------------------------------------------------------------------------
 def test_finding_8_an_unknown_phase_refuses_instead_of_discarding_the_call(tmp_path):
     ws = tmp_path / "ws"
@@ -309,7 +438,7 @@ def test_no_phase_outside_the_closed_set_is_ever_written(tmp_path):
 #: ``read_probes``), or a test report's results or exit taken from a body (``"results"``, ``"pytest_exit"``).
 ATTRS, RAW, KEYS = {"returncode", "stdout", "stderr"}, {"out", "err", "parse_junit", "read_probes"}, {"results", "pytest_exit"}
 #: The one reader, and the ``read`` each consumer hands it to take its answer from a call's output.
-READERS = {("box_mcp.py", "seen"), ("box_mcp.py", "tests_seen")}
+READERS = {("box_mcp.py", "seen"), ("box_mcp.py", "tests_seen"), ("box_mcp.py", "_run_seen"), ("box_mcp.py", "_collect_failed")}
 #: Where the controls, the probe and the call phases start, and the host run, which the round trip reads only by its record's
 #: status, its ``final_patch_read`` and the kept patch ``keep_final`` read: a boundary the walk below does not cross.
 ROOTS = {("cohorts.py", n) for n in ("main", "controls", "manifest", "admit", "round_trip", "known_patch", "image_ids")} | \

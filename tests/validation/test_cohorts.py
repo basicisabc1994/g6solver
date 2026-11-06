@@ -194,12 +194,12 @@ def _controls(monkeypatch, tmp_path, *, f2p=("t",), gold=True, empty=False, tree
     task = SimpleNamespace(id="bug-1")
     lists = {"fail_to_pass": list(f2p), "pass_to_pass": []}
 
-    def validate(ctx_, task_):
+    def validate(ctx_, task_, **kw):          # kw: report=True, pytest's own report, as the controls ask
         run = archive.start("validate", task_.id)
         run.finish({"ok": bool(f2p), **lists, "oracle_image_id": "sha256:o", "base": _seen({"t": "failed"}),
                     "fixed": _seen({"t": "passed"}, "0"), "why": "" if f2p else "nothing"}, "finished")
 
-    def selfcheck(ctx_, task_):
+    def selfcheck(ctx_, task_, **kw):
         run = archive.start("selfcheck", task_.id)
         run.write("gold.patch", b"gold")
         run.finish({"ok": gold and not empty, "gold": {"observed": _seen({"t": "passed" if gold else "failed"})},

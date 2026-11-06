@@ -1205,12 +1205,81 @@ while [ $# -gt 1 ]; do st=$1; p=$2; shift 2
   case "$st" in D) rm -f -- "$p" ;; *) mkdir -p -- "$(dirname -- "$p")"; cp -- "/oracle/fixed/$p" "$p" ;; esac
 done"""
 JUNIT_IN = "/tmp/we-junit.xml"
+#: pytest's own report, for the cohort controls' oracle runs (coordinator's ruling, 2026-11-06): a plugin given to pytest with
+#: ``-p`` writes, from pytest's own report objects, each test's node id with the junit key pytest's junitxml itself computes for
+#: it (``mangle_test_address``), and each failed collection's node id, one JSON object a line. Passive: it changes no outcome,
+#: and one it cannot write is left out.
+PLUGIN_DIR = "/tmp/we-plugin"
+PLUGIN_AT = f"{PLUGIN_DIR}/we_report.py"
+REPORT_IN = "/tmp/we-report.jsonl"
+REPORT_PLUGIN = '''"""pytest's own reports, as JSON lines in $WE_REPORT (the replay cohort's oracle runs)."""
+import json
+import os
+
+try:
+    from _pytest.junitxml import mangle_test_address
+except Exception:  # a pytest without it: node ids only, no junit key, so no test is tied to them
+    mangle_test_address = None
+try:
+    _out = open(os.environ["WE_REPORT"], "w", encoding="utf-8")
+except Exception:
+    _out = None
 
 
-def pytest_script(modules: Sequence[str], timeout_s: int = 1800) -> str:
+def _write(entry):
+    try:
+        _out.write(json.dumps(entry) + "\\n")
+        _out.flush()
+    except Exception:
+        pass
+
+
+def pytest_collectreport(report):
+    if report.failed:
+        _write({"collect_error": report.nodeid})
+
+
+def pytest_runtest_logreport(report):
+    if report.when == "call" or (report.when == "setup" and not report.passed):
+        key = None
+        try:
+            names = mangle_test_address(report.nodeid)
+            key = ".".join(names[:-1]) + "::" + names[-1]
+        except Exception:
+            pass
+        _write({"node": report.nodeid, "junit": key})
+'''
+
+
+def pytest_script(modules: Sequence[str], timeout_s: int = 1800, *, report: bool = False) -> str:
+    """The oracle's pytest run of ``modules``; ``report``: with pytest's own report as well (``REPORT_PLUGIN``)."""
     files = " ".join(f'"{m}"' for m in modules)
-    return (f'rm -f {JUNIT_IN}; timeout {timeout_s} .venv/bin/python -m pytest -p no:cacheprovider -q -rN '
+    if not report:
+        return (f'rm -f {JUNIT_IN}; timeout {timeout_s} .venv/bin/python -m pytest -p no:cacheprovider -q -rN '
+                f'--junitxml={JUNIT_IN} -o junit_family=xunit2 {files} > /tmp/we-pytest.txt 2>&1; echo "exit=$?"')
+    return (f'rm -f {JUNIT_IN} {REPORT_IN}; PYTHONPATH="{PLUGIN_DIR}${{PYTHONPATH:+:$PYTHONPATH}}" WE_REPORT={REPORT_IN} '
+            f'timeout {timeout_s} .venv/bin/python -m pytest -p no:cacheprovider -p we_report -q -rN '
             f'--junitxml={JUNIT_IN} -o junit_family=xunit2 {files} > /tmp/we-pytest.txt 2>&1; echo "exit=$?"')
+
+
+def read_report(data: bytes) -> dict[str, Any] | None:
+    """``REPORT_PLUGIN``'s lines: each test's node id by its junit key (``nodes``) and each failed collection's node id
+    (``collect_errors``); None when any line is not one the plugin writes, so nothing is read from a torn or foreign report."""
+    nodes: dict[str, str] = {}
+    errors: list[str] = []
+    try:
+        for line in data.decode("utf-8").splitlines():
+            entry = json.loads(line)
+            if set(entry) == {"collect_error"} and isinstance(entry["collect_error"], str):
+                errors.append(entry["collect_error"])
+            elif set(entry) == {"node", "junit"} and isinstance(entry["node"], str) and isinstance(entry["junit"], (str, type(None))):
+                if entry["junit"] is not None:
+                    nodes[entry["junit"]] = entry["node"]
+            else:
+                return None
+    except (UnicodeDecodeError, ValueError, TypeError):
+        return None
+    return {"nodes": nodes, "collect_errors": errors}
 
 
 def pytest_exit(output: bytes) -> str | None:
@@ -3427,12 +3496,13 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
 # --- validation, the independent check and replays ------------------------------------------------------------------------
 def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: bool = False, tests: bool = True,
                 extra: Mapping[str, Path] | None = None, modules: Sequence[str] | None = None,
-                folder: c.RunFolder | None = None, label: str = "", amended: bool = False) -> dict[str, Any]:
+                folder: c.RunFolder | None = None, label: str = "", amended: bool = False, report: bool = False) -> dict[str, Any]:
     """In a fresh container from the oracle image, with no network: the code (the parent's, the maintainers' fix or
     a patch), the maintainers' test files when ``tests``, the bug's amendment when ``amended``, extra files, then
     pytest on ``modules``. Every step's result is read by the one reader (``box_mcp.seen``): the body keeps the pytest call's
     state (``call``, with ``call_why``), its exit (``pytest_exit``), whether its report came back (``report``) and the results,
-    which ``box_mcp.tests_seen`` reads."""
+    which ``box_mcp.tests_seen`` reads. ``report``: pytest's own report too (``REPORT_PLUGIN``): ``nodes`` and
+    ``collect_errors``, each None when the report did not come back or could not be read."""
     _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     name = f"g6we-check-{uuid.uuid4().hex[:10]}"
     body: dict[str, Any] = {"label": label}
@@ -3460,12 +3530,18 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
                     "the amendment")
         for dest, src in (extra or {}).items():
             checked(ctx.docker("cp", str(src), f"{name}:{task.repo}/{dest}", timeout=300), f"copy {dest}")
-        ran = box_mcp.seen(ctx.docker.sh(name, pytest_script(modules or task.test_modules), workdir=task.repo, timeout=2400),
-                           pytest_exit)
+        if report:
+            write_in(ctx.docker, name, PLUGIN_AT, REPORT_PLUGIN)
+        ran = box_mcp.seen(ctx.docker.sh(name, pytest_script(modules or task.test_modules, report=report), workdir=task.repo,
+                                         timeout=2400), pytest_exit)
         body.update(call=ran.state, call_why=ran.why, pytest_exit=ran.answer)
         if folder is not None:
             copy_out(ctx.docker, name, "/tmp/we-pytest.txt", folder.path / f"{label}-pytest.txt")
         with tempfile.TemporaryDirectory(prefix="g6we-") as tmp:
+            if report:
+                own = Path(tmp) / "report.jsonl"
+                got = read_report(own.read_bytes()) if copy_out(ctx.docker, name, REPORT_IN, own) and own.is_file() else None
+                body.update(got or {"nodes": None, "collect_errors": None})
             junit = Path(tmp) / "junit.xml"
             body["report"], body["results"] = copy_out(ctx.docker, name, JUNIT_IN, junit), {}
             if body["report"]:
@@ -3478,12 +3554,14 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
     return body
 
 
-def validate(ctx: Context, task: Task) -> dict[str, Any]:
+def validate(ctx: Context, task: Task, *, report: bool = False) -> dict[str, Any]:
+    """The lists every check scores against, from the base and the maintainers' fix. ``report``: each run keeps pytest's own
+    report too (``_oracle_run``), as the cohort controls ask."""
     run = ctx.archive.start("validate", task.id, g6_commit=ctx.g6.get("commit"))
     _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     oracle_id = checked(ctx.docker("image", "inspect", oracle, "--format", "{{.Id}}"), "the oracle image")
-    base = _oracle_run(ctx, task, folder=run, label="base")
-    fixed = _oracle_run(ctx, task, fix=True, folder=run, label="fixed")
+    base = _oracle_run(ctx, task, folder=run, label="base", report=report)
+    fixed = _oracle_run(ctx, task, fix=True, folder=run, label="fixed", report=report)
     f2p, p2p = fail_to_pass(base.get("results") or {}, fixed.get("results") or {})
     record = {"oracle_image_id": oracle_id, "base": base, "fixed": fixed, "fail_to_pass": f2p, "pass_to_pass": p2p,
               "modules": task.test_modules,
@@ -3584,9 +3662,10 @@ def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool
                          "finished")
 
 
-def selfcheck(ctx: Context, task: Task) -> dict[str, Any]:
+def selfcheck(ctx: Context, task: Task, *, report: bool = False) -> dict[str, Any]:
     """The independent check's own control (no model): the maintainers' fix, given as if it were the agent's patch,
-    must pass it, and an empty patch must fail it. A check that cannot tell them apart says nothing about a run."""
+    must pass it, and an empty patch must fail it. A check that cannot tell them apart says nothing about a run. ``report``:
+    each run keeps pytest's own report too (``_oracle_run``), as the cohort controls ask."""
     v = latest(ctx.archive, "validate", task.id)
     if v is None:
         raise SystemExit("validate the task first")
@@ -3602,7 +3681,7 @@ def selfcheck(ctx: Context, task: Task) -> dict[str, Any]:
     empty.write_bytes(b"")
     rows = {}
     for label, patch in (("gold", gold), ("empty", empty)):
-        body = _oracle_run(ctx, task, patch=patch, folder=folder, label=label)
+        body = _oracle_run(ctx, task, patch=patch, folder=folder, label=label, report=report)
         rows[label] = {"patch_applied": body.get("patch_applied", True), **verdict(body.get("results") or {}, f2p, p2p),
                        "seen": box_mcp.tests_seen(body, [*f2p, *p2p]), "observed": observed(body, [*f2p, *p2p])}
     # seen, not inferred: the fix seen to pass every test on the lists, and the empty patch seen to fail one (``tests_seen``)
@@ -3617,8 +3696,15 @@ def observed(body: Mapping[str, Any] | None, tests: Iterable[str]) -> dict[str, 
     holds (a test it does not hold is absent, as in the report)."""
     body = body or {}
     names, results = set(tests), body.get("results") or {}
+    own = {}                          # pytest's own report, when the run kept one: these tests' node ids, every failed collection
+    if "nodes" in body:
+        nodes = body["nodes"]
+        own["nodes"] = {t: nodes[t] for t in sorted(names) if t in nodes} if isinstance(nodes, Mapping) else None
+    if "collect_errors" in body:
+        own["collect_errors"] = body["collect_errors"]
     return {**{k: body[k] for k in ("call", "call_why", "pytest_exit", "patch_applied") if k in body},
-            "report": bool(body.get("report", bool(results))), "results": {t: results[t] for t in sorted(names) if t in results}}
+            "report": bool(body.get("report", bool(results))), "results": {t: results[t] for t in sorted(names) if t in results},
+            **own}
 
 
 G6_REPLAY = """import json, sys
