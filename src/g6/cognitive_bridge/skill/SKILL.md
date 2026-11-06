@@ -73,9 +73,9 @@ Composed (Python only):
 - `MixedMethodExecutor` runs an approved plan's steps through G6's checked door (`g6.core.door.invoke_checked`, the
   call `g6.invoke` makes): a sensitive op runs only when the person allowed it (`allow=` or `G6_MCP_SENSITIVE`), and
   a component's own `verified` is held at `qualified-draft` with the door's card. A step whose answer carries a
-  `reliability_label`, a `verified` flag outside a warning card, or a nested result outside the bridge's format is
-  `G6_E_COGNITIVE_STEP_FAILED`, the reason naming each place. It checks the plan against the canonical routing,
-  refuses an edited one (`G6_E_COGNITIVE_PLAN_TAMPERED`) and runs nothing unless `approved=True`
+  `reliability_label`, a `verified` flag outside a warning card, a nested result outside the bridge's format, or an
+  object that is not plain data or a bridge record is `G6_E_COGNITIVE_STEP_FAILED`, the reason naming each place.
+  It checks the plan against the canonical routing, refuses an edited one (`G6_E_COGNITIVE_PLAN_TAMPERED`) and runs nothing unless `approved=True`
   (`G6_E_COGNITIVE_APPROVAL_REQUIRED`; `"false"`, `1` or any other value is not approval).
 - `CognitiveAgent` makes each observation a tool step through the same door, credited only when the door's reply
   says `ok`; `allow=` is the person's allow, as the executor takes it.
@@ -84,7 +84,8 @@ Composed (Python only):
   among them, so a caller who keeps the list or dict it passed in changes nothing here; what it hands back is
   never a live view. An assessment reads the standard's digest again after the evaluator used it.
 - `CognitiveAssuranceOrchestrator` joins the selector, the router, the executor and `InProcessAssuranceEvaluator`:
-  compile, execute with approval, then assess the produced bytes against the standard's criteria.
+  compile, execute with approval, then assess the produced bytes against the standard's criteria. A compilation's
+  state is its selection's verdict: a blocked selection never runs or is credited, whatever its `refused` field says.
 - The cross-method conflict gate reads stance and lineage by `epistemic_integrity`'s rules: one source repeated is
   one lineage, and each proposition's status (contested, refuted, undetermined) is `adjudicate_claim`'s; a BLOCK or
   ASK disposition, or a failure it triggered, refuses whatever the status says.

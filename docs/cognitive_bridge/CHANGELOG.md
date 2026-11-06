@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.8 — 2026-11-07: follow-up review 3 repairs
+
+- The claim rule (`codes.claims`) reads all of a value or refuses it. It takes text, bytes, numbers, flags and `None` as leaves by their exact type (`codes.LEAVES`), opens a mapping (its keys and its values, each read as a value), a sequence, a set and a bridge record (`codes.OPENED`), and refuses every other object, its path and type named: a `deque` or a plain dataclass in a tool's answer, or a record used as a mapping's key, is no longer passed unread. One classifier (`codes._read_as`) decides how a value is read. G6's routed components answer with plain JSON data, which the rule takes.
+- A compilation's state is its selection's verdict and its plan's, decided in one place (`orchestration.compilation_gaps`) that `execute`, `assess` and `to_dict` all read; a blocked selection never runs and is never credited, whatever a caller sets in `refused`. A `CompiledResearch` whose `refused` is not exactly the refusal that place gives is refused as it is made, and only a `CompiledResearch` is executed or assessed.
+- Inventory tests list every kind the rule accepts or opens and plant a claim inside each, inside a key and inside the kinds it refuses, at every place the rule guards.
+
 ## v0.2.7 — 2026-11-06: follow-up review 2 repairs
 
 - One rule for a claim of a state, at any depth (`codes.claims`): every mapping, sequence, set and record in a value is read, and a `reliability_label` anywhere, a `verified` flag anywhere but false directly inside a warning card, a nested result outside the makers' format, or anything nested deeper than 64 levels is refused. It is applied to every collaborator's answer as it returns and to what its check makes of it (`snapshot.returned`; a model's reply is read as JSON by its check, `snapshot.json_reply`), to every tool's answer as G6's door hands it on, and by `codes.refusal` and `codes.settled` to every result they return. Every result the package writes leaves through them.
