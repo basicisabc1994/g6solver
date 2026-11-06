@@ -351,7 +351,8 @@ def request_identity(argv: Sequence[str], stdin: str, root: str | Path | None) -
 class Send:
     """One send, as the loop let it out: made once, after any wait, and never changed. ``identity``: what left, read from its
     bytes at that moment; ``watched``: whether its caller reads its program's output itself, so only that decides for it;
-    ``owner``: the call that made it, and ``thread`` where; ``generation``: the tick; ``sender``: the caller that sent it."""
+    ``owner``: the call that made it, and ``thread`` where; ``generation``: the tick; ``sender``: the caller that sent it;
+    ``places``: what it was charged as it was let out, set once, so no call charges it again."""
 
     identity: str | None
     watched: bool
@@ -359,6 +360,7 @@ class Send:
     generation: int
     thread: int
     sender: Any = None
+    places: int = 0
 
 
 @contextmanager

@@ -973,6 +973,24 @@ def test_ref1_every_way_a_request_can_leave_passes_the_one_check():
     assert callers(usage, {"sending", "_sending"}) == {
         ("_sending", "sending"), ("WatchedClaude._command", "_sending"), ("WatchedClaude._launch", "_sending"),
         ("WatchedCodex._command", "_sending")}
+    # every place a send leaves carries what it sends; only a call's beginning, where nothing is sent, carries nothing
+    sites = {}
+
+    def own_calls(node):
+        for child in ast.iter_child_nodes(node):
+            if not isinstance(child, ast.FunctionDef):
+                yield child
+                yield from own_calls(child)
+
+    for node in ast.walk(ast.parse(inspect.getsource(loop_module))):
+        if isinstance(node, ast.FunctionDef):
+            for call in own_calls(node):
+                if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr in ("admit", "take") \
+                        and "requests" in ast.unparse(call.func.value):
+                    sites.setdefault(node.name, []).append({k.arg for k in call.keywords})
+    assert sites.pop("complete") == [{"generation"}]
+    assert all(keywords & {"identity", "identify"} for found in sites.values() for keywords in found) and \
+        set(sites) == {"next_request", "resend", "sending"}, sites
 
 # Review 2 of this change: each send is one record, made once it may leave and kept until its own outcome is read --------
 
@@ -1370,9 +1388,16 @@ def test_ref2_the_request_path_keeps_no_per_send_state_but_each_sends_record():
         indent = len(text) - len(text.lstrip())
         return ast.parse("\n".join(line[indent:] for line in text.splitlines()))
 
-    names, attributes, calls, rebinding = writes(source(loop_module._Counted.complete))
-    assert rebinding == [] and len(names) == len(set(names))                 # nothing rebound: each name is set once
-    assert attributes == ["unseen"] and calls == ["sends.append"]            # the tick's latch, and the call's records
+    tree = source(loop_module._Counted.complete)
+    complete = tree.body[0]
+    for scope in [complete, *(node for node in complete.body if isinstance(node, ast.FunctionDef))]:
+        own = ast.Module(body=[statement for statement in scope.body if not isinstance(statement, ast.FunctionDef)],
+                         type_ignores=[])
+        names, _, _, rebinding = writes(own)
+        assert rebinding == [] and len(names) == len(set(names)), names    # nothing rebound: each name is set once
+    _, attributes, calls, _ = writes(tree)
+    assert attributes == ["unseen"]                                          # the tick's latch, and nothing else
+    assert set(calls) == {"sends.append", "boundaries.append"}               # the call's records, and the notes it saw
     for method in (loop_module._Requests.admit, loop_module._Requests.release, loop_module._Requests.at_a_refusal,
                    loop_module._Requests.met_a_limit, loop_module._Requests.provider_said, loop_module._Requests.take):
         _, attributes, calls, rebinding = writes(source(method))
@@ -1385,3 +1410,287 @@ def test_ref2_the_request_path_keeps_no_per_send_state_but_each_sends_record():
     for func in (usage._sending, usage._forget, usage._stopped, usage._released):
         _, attributes, calls, rebinding = writes(source(func))
         assert rebinding == [] and set(attributes) <= {"_SENT[]"} and set(calls) <= {"_SENT.pop", "opened.append"}
+
+# Review 3 of this change: admission is one step under its lock, a resend is a send, and a send is charged once ------------
+
+def test_ref3_1_a_refusal_after_a_torn_row_stands_on_its_own_line_and_a_restart_reads_it(tmp_path):
+    loop, domain, caller = _between_ticks(tmp_path)
+    (loop.root / REFUSED_FILE).write_bytes(b"a" * 23)                       # a crash cut a row short
+    with pytest.raises(LLMError, match=MODEL_REFUSED):
+        caller.complete("system", "same request")
+    rows = (loop.root / REFUSED_FILE).read_bytes().split(b"\n")
+    assert rows[0] == b"a" * 23 and rows[1].startswith(_request_digest("system", "same request").encode())
+    restarted = _restarted(tmp_path, domain)
+    before = len(domain.llm.calls)
+    with pytest.raises(LLMError, match="G6_E_LOOP_CLASSIFIER_STOP"):
+        restarted.workflow.models["local"].caller.complete("system", "same request")
+    assert len(domain.llm.calls) == before
+
+
+def test_ref3_1_every_whole_row_reads_around_a_torn_one(tmp_path):
+    first, second = "1" * 64, "2" * 64
+    assert note_refusal(tmp_path, first, "said")
+    with open(tmp_path / REFUSED_FILE, "ab") as cut:
+        cut.write(b"3" * 30)
+    assert note_refusal(tmp_path, second, "said")
+    assert refused_requests(tmp_path) == {first, second}
+
+
+def _stops_at_the_lock(requests, write):
+    """``requests``' lock, with ``write`` done by another hand just as admission takes it: once, the first time it has
+    something to write (it says so by what it returns)."""
+    real = requests._lock
+
+    class AtTheBoundary:
+        done = False
+
+        def __enter__(self):
+            if not AtTheBoundary.done and write():
+                AtTheBoundary.done = True
+            return real.__enter__()
+
+        def __exit__(self, *args):
+            return real.__exit__(*args)
+
+    return AtTheBoundary()
+
+
+def test_ref3_2_a_stop_written_as_admission_takes_its_lock_keeps_the_send_in(tmp_path, monkeypatch):
+    from g6.self_maintenance.envelope import ask_to_stop
+
+    """The stop is written just as the host program's own admission takes the lock, once its input is written."""
+    requests = _Requests(halted=_stop_file_halt(tmp_path))
+    monkeypatch.setattr(ClaudeCodeCaller, "locate", lambda self: "fake-claude")
+    sent, real_command, written = [], ClaudeCodeCaller._command, []
+
+    def command(self, *args):
+        found = real_command(self, *args)
+        written.append(True)
+        return found
+
+    monkeypatch.setattr(ClaudeCodeCaller, "_command", command)
+    monkeypatch.setattr(host_models, "_run", lambda argv, stdin, *rest: sent.append(stdin) or
+                        (0, json.dumps({"type": "result", "is_error": False, "result": "an answer"}), ""))
+    caller = _Counted(ClaudeCodeCaller(), requests)
+    monkeypatch.setattr(requests, "_lock", _stops_at_the_lock(requests, lambda: written and ask_to_stop(tmp_path, "at the lock")))
+    with pytest.raises(LLMError, match="G6_E_LOOP_STOPPED"):
+        caller.complete("system", "request")
+    assert sent == []
+
+
+def test_ref3_2_a_stop_written_while_admission_reads_the_bytes_keeps_the_send_in(tmp_path, monkeypatch):
+    from g6.self_maintenance.envelope import ask_to_stop
+
+    requests = _Requests(halted=_stop_file_halt(tmp_path))
+    monkeypatch.setattr(ClaudeCodeCaller, "locate", lambda self: "fake-claude")
+    real_identity, sent = usage.request_identity, []
+
+    def identity(argv, stdin, root):
+        found = real_identity(argv, stdin, root)
+        ask_to_stop(tmp_path, "while the bytes were read")
+        return found
+
+    monkeypatch.setattr(usage, "request_identity", identity)
+    monkeypatch.setattr(host_models, "_run", lambda argv, stdin, *rest: sent.append(stdin) or
+                        (0, json.dumps({"type": "result", "is_error": False, "result": "an answer"}), ""))
+    with pytest.raises(LLMError, match="G6_E_LOOP_STOPPED"):
+        _Counted(ClaudeCodeCaller(), requests).complete("system", "request")
+    assert sent == []
+
+
+def test_ref3_2_a_file_changed_as_admission_takes_its_lock_is_the_send_it_records(monkeypatch):
+    """The first send's system file is changed just as its admission takes the lock: what it records, what was refused and
+    what left are those changed bytes, so the second send, of the same bytes, never leaves."""
+    requests = _Requests()
+    monkeypatch.setattr(ClaudeCodeCaller, "locate", lambda self: "fake-claude")
+    real_command, written, sent = ClaudeCodeCaller._command, [], []
+
+    def command(self, program, system, user, work, files):
+        found = real_command(self, program, system, user, work, files)
+        written.append(files / "system_prompt.md")             # the program's input file, written, not yet admitted
+        return found
+
+    def run(argv, stdin, cwd, files, *rest):
+        sent.append(usage.request_identity(argv, stdin, files.parent))
+        return 1, json.dumps({"type": "result", "is_error": True, "stop_reason": "refusal", "result": ""}), ""
+
+    monkeypatch.setattr(ClaudeCodeCaller, "_command", command)
+    monkeypatch.setattr(host_models, "_run", run)
+    caller = _Counted(ClaudeCodeCaller(), requests)
+    monkeypatch.setattr(requests, "_lock", _stops_at_the_lock(requests, lambda: written and written[0].write_text(
+        "changed system", encoding="utf-8")))
+    for system in ("original system", "changed system"):
+        _quietly(caller.complete, system, "same user")
+    assert len(sent) == 1 and requests.refused == {sent[0]}
+
+
+def test_ref3_2_everything_admission_decides_on_is_read_inside_its_lock():
+    """Built from the code: in ``_Requests.admit`` nothing that decides is read outside ``with self._lock``."""
+    import ast
+    import inspect
+
+    from g6.metaharness import loop as loop_module
+
+    text = inspect.getsource(loop_module._Requests.admit)
+    indent = len(text) - len(text.lstrip())
+    admit = ast.parse("\n".join(line[indent:] for line in text.splitlines())).body[0]
+    locked = [node for node in ast.walk(admit) if isinstance(node, ast.With)
+              and ast.unparse(node.items[0].context_expr) == "self._lock"]
+    assert len(locked) == 1
+    inside = set(map(id, ast.walk(locked[0])))
+    decides = ("self.halted", "self.refused", "self.refusal", "self.limited", "self.in_flight", "self.sent", "self.limit",
+               "self.ends", "self.unseen", "self.generation", "identify", "live", "self._out_elsewhere")
+    outside = [ast.unparse(node) for node in ast.walk(admit) if id(node) not in inside
+               and isinstance(node, ast.Attribute | ast.Name) and ast.unparse(node) in decides]
+    assert outside == [], outside
+    assert all(id(node) in inside for node in ast.walk(admit) if isinstance(node, ast.Return))
+
+
+class _BusyOnce:
+    """An HTTP endpoint that is busy on the first request, asking for a resend, and answers after."""
+
+    def __init__(self, monkeypatch, during=lambda: None) -> None:
+        import io
+        import urllib.error
+        from types import SimpleNamespace
+
+        from g6.core import llm
+
+        self.sent = []
+
+        def open_request(request, timeout):
+            self.sent.append(request.data)
+            if len(self.sent) == 1:
+                during()
+                raise urllib.error.HTTPError(request.full_url, 503, "busy", {"Retry-After": "0"}, io.BytesIO(b"busy"))
+            return io.BytesIO(b'{"choices":[{"message":{"content":"an answer"}}]}')
+
+        monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: SimpleNamespace(open=open_request))
+        monkeypatch.setattr(llm, "_sleep", lambda seconds: None)
+
+
+def _http_caller():
+    from g6.core.llm import OpenAICompatibleCaller
+
+    return OpenAICompatibleCaller("fake-model", base_url="http://fake.invalid", api_key=None)
+
+
+def test_ref3_3_a_resend_is_checked_against_what_was_refused_as_any_send_is(monkeypatch):
+    requests = _Requests()
+
+    def refuse(system, user):
+        raise LLMError(f"{MODEL_REFUSED}: refused")
+
+    child = _Counted(FakeLLM(refuse), requests)
+    endpoint = _BusyOnce(monkeypatch, during=lambda: _quietly(child.complete, "system", "request"))
+    with pytest.raises(LLMError, match="G6_E_LOOP_CLASSIFIER_STOP"):
+        _Counted(_http_caller(), requests).complete("system", "request")
+    assert len(endpoint.sent) == 1
+
+
+def test_ref3_3_a_resend_is_a_send_with_its_own_record_and_place(monkeypatch):
+    endpoint = _BusyOnce(monkeypatch)
+    requests = _Requests()
+    requests.open(5)
+    assert _Counted(_http_caller(), requests).complete("system", "request") == "an answer"
+    assert len(endpoint.sent) == 2 == requests.sent and not requests.in_flight
+
+
+def test_ref3_4_a_nested_metered_child_takes_one_place_under_a_reservation_of_two():
+    requests = _Requests()
+    requests.open(2)
+    child_backend = FakeLLM(default="child answer")
+    child = _Counted(child_backend, requests)
+    parent_backend = FakeLLM(lambda system, user: child.complete("child system", "child request"))
+    assert _Counted(parent_backend, requests).complete("parent system", "parent request") == "child answer"
+    assert len(parent_backend.calls) == len(child_backend.calls) == 1 and requests.sent == 2
+
+
+def test_ref3_4_a_nested_child_on_other_requests_is_counted_by_each(tmp_path):
+    """Two loops' meters are two counts: each charges what went out under it."""
+    outer, inner = _Requests(), _Requests()
+    outer.open(5)
+    inner.open(5)
+    child = _Counted(FakeLLM(default="child answer"), inner)
+    assert _Counted(FakeLLM(lambda system, user: child.complete("c", "c")), outer).complete("p", "p") == "child answer"
+    assert outer.sent == 2 and inner.sent == 1
+
+
+def test_ref3_6_a_parent_charges_nothing_again_for_a_nested_host_send_and_each_send_once(monkeypatch):
+    requests = _Requests()
+    requests.open(2)
+    monkeypatch.setattr(ClaudeCodeCaller, "locate", lambda self: "fake-claude")
+    caller = _Counted(ClaudeCodeCaller(), requests)
+    sent = []
+
+    def run(argv, stdin, cwd, files, *rest):
+        sent.append(stdin)
+        if stdin == "parent":
+            assert caller.complete("system", "child") == "an answer"
+        return 0, json.dumps({"type": "result", "is_error": False, "result": "an answer"}), ""
+
+    monkeypatch.setattr(host_models, "_run", run)
+    assert caller.complete("system", "parent") == "an answer"
+    assert sent == ["parent", "child"] and requests.sent == 2
+
+
+def test_ref3_6_a_childs_totals_with_no_boundary_are_still_charged_once():
+    from g6.core import model_calls
+
+    class Child(FakeLLM):
+        def complete(self, system, user, *, max_tokens=1024):
+            text = super().complete(system, user, max_tokens=max_tokens)
+            model_calls.note_child_model_calls(scoped=2, process=2)
+            return text
+
+    requests = _Requests()
+    requests.open(10)
+    assert _Counted(Child(default="an answer"), requests).complete("system", "user") == "an answer"
+    assert requests.sent == 3
+
+@pytest.mark.parametrize("meanwhile", ["refusal", "limit", "closed", "returned"])
+def test_ref3_2_what_happens_while_a_request_waits_for_the_admission_lock_decides_for_it(meanwhile):
+    """Where earlier reviews held a request inside its stop read, admission now reads the stop under its lock, so the place to
+    hold it is the lock itself: whatever is latched, closed or returned before it gets the lock keeps it in."""
+    at_the_lock, go, outcome = threading.Event(), threading.Event(), []
+    backend = FakeLLM(default="an answer")
+    requests = _Requests()
+    requests.open(10)
+    real = requests._lock
+
+    class Held:
+        def __enter__(self):
+            if threading.current_thread().name == "held" and not go.is_set():
+                at_the_lock.set()
+                assert go.wait(5)
+            return real.__enter__()
+
+        def __exit__(self, *args):
+            return real.__exit__(*args)
+
+    requests._lock = Held()
+    kept = {}
+
+    class Later:
+        """Answers, and sends once more on a thread of its own with the call's context, as a wrapper may."""
+
+        def complete(self, system, user, *, max_tokens=1024):
+            answer, context = backend.complete(system, user), __import__("contextvars").copy_context()
+            kept["thread"] = threading.Thread(target=lambda: outcome.append(_quietly(context.run, backend.complete, "s", "u")),
+                                              name="held")
+            kept["thread"].start()
+            assert at_the_lock.wait(5)
+            if meanwhile == "refusal":
+                with pytest.raises(_Refused):
+                    requests.at_a_refusal(f"{MODEL_REFUSED}: refused", "c" * 64)
+            elif meanwhile == "limit":
+                with pytest.raises(_AtLimit):
+                    requests.met_a_limit(NOW, f"{RATE_LIMITED}: a limit")
+            elif meanwhile == "closed":
+                requests.close()
+            return answer
+
+    _quietly(_Counted(Later(), requests).complete, "system", "asked")
+    go.set()
+    kept["thread"].join(5)
+    assert backend.calls == [("system", "asked")] and isinstance(outcome[0], BaseException)

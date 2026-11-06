@@ -450,16 +450,26 @@ def test_a_week_resolved_by_another_process_while_this_one_checks_is_booked_once
 
 
 def test_a_request_waiting_on_the_stop_when_its_tick_closes_sends_nothing():
+    """Changed on purpose (review 3 of claude/refusals-recorded): admission reads the stop inside its lock, so nothing can end
+    the tick while a request reads it. The late request is held where it would take that lock instead, and the call returns
+    and the tick closes meanwhile: it still sends nothing."""
     reading, release, failures = threading.Event(), threading.Event(), []
     backend = FakeLLM(default="answer")
-
-    def halted():
-        if threading.current_thread().name == "late":
-            reading.set()
-            assert release.wait(5)
-
-    requests = _Requests(halted=halted)
+    requests = _Requests()
     requests.open(2)
+    real = requests._lock
+
+    class HeldAtTheLock:
+        def __enter__(self):
+            if threading.current_thread().name == "late":
+                reading.set()
+                assert release.wait(5)
+            return real.__enter__()
+
+        def __exit__(self, *args):
+            return real.__exit__(*args)
+
+    requests._lock = HeldAtTheLock()
 
     class SendsLater:
         def complete(self, system, user, *, max_tokens=1024):

@@ -21,6 +21,7 @@ established.
 """
 from __future__ import annotations
 
+import contextvars
 import dataclasses
 import hashlib
 import importlib.machinery
@@ -235,9 +236,12 @@ def _sender(counted: Any, asked: str) -> tuple[Any, str]:
     both for each built-in caller. With no object between the note and ``counted``, a plain function noted it, or another thread
     did, and the stack cannot say: then it is what ``counted`` holds, as declared. Where no frame names that text it stays
     ``asked``, and what a caller of a known type does to the text below those frames cannot be seen. A host caller is known by
-    what its program is started with, at the step that starts it (``usage.request_identity``), and not by this digest."""
-    frame = sys._getframe(2)
-    while frame is not None and "self" not in frame.f_locals:
+    what its program is started with, at the step that starts it (``usage.request_identity``), and not by this digest. This
+    module's own frames on the way (the observer, the resend gate) are passed over, up to ``counted``'s own call."""
+    frame = sys._getframe(1)
+    while frame is not None and not (frame.f_code is _Counted.complete.__code__ and frame.f_locals.get("self") is counted):
+        if frame.f_globals.get("__name__") != __name__ and "self" in frame.f_locals:
+            break
         frame = frame.f_back
     found = frame.f_locals["self"] if frame is not None else counted
     while frame is not None and frame.f_locals.get("self") is found:
@@ -307,51 +311,48 @@ class _Requests:
     def admit(self, wait: float = 0.0, *, places: int = 0, generation: int | None = None,
               live: Callable[[], bool] = lambda: True, identity: str | None = None, owner: object = None,
               identify: Callable[[], str] | None = None, watched: bool = False, sender: Any = None) -> Send | None:
-        """The one check on what may leave: refuse what is stopped, refused or past the limit, take ``places`` in ``sent`` in
-        that same step, and hand back the send's record. ``wait``: the seconds a server asked for before this one goes out.
-        ``generation``: the tick the request's call began in, and ``live`` whether that call is still running, both checked
-        again under the lock, as the stop is read outside it and the call can return, and its tick close, while it is read.
-        ``identity``, or ``identify`` to read it from the bytes as they are now: what is about to be sent, never sent again
-        once refused, held while an identical send of another call is out, and read again, with the stop, after each wait.
-        With neither, nothing is sent here, and no record is made."""
+        """The one check on what may leave, as one step under the lock: everything it decides on is read there, the bytes the
+        send will carry, then the stop, the latches and what was refused, and the send's record is made there, before the lock
+        is let go; nothing read before it decides anything. It refuses what is stopped, refused or past the limit, and takes
+        ``places`` in ``sent`` in that same step. ``wait``: the seconds a server asked for before this one goes out.
+        ``generation``: the tick the request's call began in, and ``live`` whether that call is still running. ``identity``, or
+        ``identify`` to read it from the bytes as they are now: what is about to be sent, never sent again once refused, and
+        held while an identical send of another call is out; after each wait all of it is read again. With neither, nothing is
+        sent here, and no record is made."""
         here = threading.get_ident()
-        while True:
-            if self.refusal is not None:
-                raise _Refused(self.refusal["said"])
-            if self.limited is not None:
-                raise _AtLimit(*self.limited)
-            stopped = self.halted()
-            if stopped is not None:
-                if self.limit != math.inf:
-                    raise stopped
-                raise LLMError(f"{stopped.code}: {stopped.said}")
-            known = identify() if identify is not None else identity
-            with self._lock:
-                if self.refusal is not None:              # one may have come while the stop was being read
+        with self._lock:
+            while True:
+                known = identify() if identify is not None else identity
+                stopped = self.halted()
+                if stopped is not None:
+                    if self.limit != math.inf:
+                        raise stopped
+                    raise LLMError(f"{stopped.code}: {stopped.said}")
+                if self.refusal is not None:
                     raise _Refused(self.refusal["said"])
-                if self.limited is not None:              # and a limit, met by another of the tick's requests
+                if self.limited is not None:
                     raise _AtLimit(*self.limited)
                 if (generation is not None and generation != self.generation) or not live():
                     raise LLMError(f"{TICK_BUDGET_SPENT}: this request came after its call returned, so nothing reserved "
                                    "covers it")
                 if known is not None and self._out_elsewhere(known, owner, here):
-                    self._settled.wait(1.0)               # an identical send is out: what becomes of it decides, and then
-                    continue                              # the stop and the bytes are read again
+                    self._settled.wait(1.0)               # an identical send is out: what becomes of it decides
+                    continue
                 if self.unseen or self.sent + places > self.limit or (places == 0 and self.sent >= self.limit):
                     self.stopped = f"this tick has sent {self.sent} of the {self.limit:g} it reserved"
-                elif self.ends is not None and self.now() + timedelta(seconds=wait) >= self.ends:
+                    break
+                if self.ends is not None and self.now() + timedelta(seconds=wait) >= self.ends:
                     self.stopped = f"this tick's week ended at {self.ends.isoformat()} and nothing is reserved in the new one"
-                else:
-                    self.sent += places                   # a place first, so a wrapper that keeps trying stops at the limit
-                    if known is not None and known in self.refused:
-                        raise LLMError(f"{CLASSIFIER_STOP}: this request was refused once, and nothing sends it again")
-                    if known is None:
-                        return None
-                    record = Send(known, watched, owner, self.generation, here, sender)
-                    self.in_flight.setdefault(known, []).append(record)
-                    return record
-            raise LLMError(f"{TICK_BUDGET_SPENT}: {self.stopped}")
-
+                    break
+                self.sent += places                       # a place first, so a wrapper that keeps trying stops at the limit
+                if known is not None and known in self.refused:
+                    raise LLMError(f"{CLASSIFIER_STOP}: this request was refused once, and nothing sends it again")
+                if known is None:
+                    return None
+                record = Send(known, watched, owner, self.generation, here, sender, places)
+                self.in_flight.setdefault(known, []).append(record)
+                return record
+        raise LLMError(f"{TICK_BUDGET_SPENT}: {self.stopped}")
     def take(self, wait: float = 0.0, *, generation: int | None = None, live: Callable[[], bool] = lambda: True,
              identity: str | None = None, owner: object = None, identify: Callable[[], str] | None = None,
              watched: bool = False, sender: Any = None) -> Send | None:
@@ -500,6 +501,17 @@ class _Gate:
         self.requests.release(record)
 
 
+#: The metered calls open in this context, innermost last, each with the requests it charges.
+_ACTIVE: contextvars.ContextVar[tuple[tuple[object, Any], ...]] = contextvars.ContextVar("g6_metered_calls", default=())
+
+
+def _innermost_elsewhere(owner: object, requests: Any) -> bool:
+    """Whether a metered call nested in the one ``owner`` names, on the same requests, is open here: its own observer sees the
+    same note, and it alone lets that send out."""
+    open_calls = _ACTIVE.get()
+    return bool(open_calls) and open_calls[-1][0] is not owner and open_calls[-1][1] is requests
+
+
 def _raised_by(failed: BaseException, sends: Sequence[Send]) -> Send | None:
     """The send whose failure ``failed`` is, read from its own frames: the innermost frame on its way out, or on the way out of
     what it was raised from, of a caller this call let a send out for, with what it was given to send where its caller is
@@ -559,14 +571,18 @@ class _Counted:
 
     def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
         generation, owner, ended = self.requests.generation, object(), threading.Event()
-        self.requests.admit(generation=generation)
+        self.requests.admit(generation=generation)                 # the call begins: no send of its own here
         asked = _request_digest(system, user)
         sends: list[Send] = []                # this call's sends, each its own record, in the order they were let out
+        boundaries: list[None] = []           # each note this call's scope saw, whichever call let its send out
 
         def live() -> bool:
             return not ended.is_set()
 
         def next_request() -> None:
+            boundaries.append(None)
+            if _innermost_elsewhere(owner, self.requests):
+                return                        # a call nested in this one lets that send out: one send, one place
             sender, identity = _sender(self, asked)
             self.requests.from_sender(sender)
             read_stops(sender)
@@ -575,7 +591,9 @@ class _Counted:
                                                 sender=sender))
 
         def resend(wait: float = 0.0) -> None:
-            self.requests.take(wait, generation=generation, live=live, owner=owner)
+            sender, identity = _sender(self, asked)        # a resend is a send: what it sends again is checked again
+            sends.append(self.requests.take(wait, generation=generation, live=live, identity=identity, owner=owner,
+                                            sender=sender))
 
         def limited(wait: dict[str, Any]) -> None:
             hint = float(wait.get("retry_after_s") or 0.0)
@@ -584,12 +602,14 @@ class _Counted:
 
         def finish(latched: bool) -> None:
             ended.set()
+            _ACTIVE.reset(active)
             self.requests.release(owner)
-            # a child's totals have no boundary; one that took its place and is not yet noted gives none back
-            self.requests.count(max(noted() - len(sends), 0))
+            # only a child's totals have no boundary: every note with one took its place once, by whichever call let it out
+            self.requests.count(max(noted() - len(boundaries), 0))
             if latched:                               # what the tick latched decides, unless the process is going down
                 self.requests.recheck(generation)
 
+        active = _ACTIVE.set((*_ACTIVE.get(), (owner, self.requests)))
         with (counting(before_call=next_request) as noted, _gating_resends(resend, limited),
               telling_stops(_Gate(self.requests, generation, live, owner, sends))):
             try:

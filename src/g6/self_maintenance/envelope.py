@@ -295,11 +295,18 @@ def note_refusal(root: str | Path, request: str, said: str) -> bool:
     """Keep what a classifier or a permission refused, first and in a file no lock stands in front of, because a refused
     request is never sent again whether or not its cycle reaches the log, or a tick is open at all. ``request``: a digest, never
     its text. It is on the disk before this returns ``True``. What was said is kept as UTF-8 with any lone surrogate kept as it
-    is, so it is written and read back exactly. One that cannot be written raises nothing and returns ``False``: the caller
+    is, so it is written and read back exactly. Each row stands on a line of its own: after a row a crash cut short, the new one
+    begins with a line break, in the same write. One that cannot be written raises nothing and returns ``False``: the caller
     decides what this process does, since only it still holds the refusal."""
     try:
-        with open(Path(root) / REFUSED_FILE, "a", encoding="utf-8", errors="surrogatepass") as kept:
-            kept.write(f"{request} {' '.join(said.split())}\n")
+        row = f"{request} {' '.join(said.split())}\n".encode("utf-8", "surrogatepass")
+        with open(Path(root) / REFUSED_FILE, "a+b") as kept:
+            kept.seek(0, os.SEEK_END)
+            if kept.tell():
+                kept.seek(-1, os.SEEK_END)
+                row = (b"" if kept.read(1) == b"\n" else b"\n") + row
+            kept.seek(0, os.SEEK_END)
+            kept.write(row)
             kept.flush()
             os.fsync(kept.fileno())
     except (OSError, ValueError):
@@ -308,8 +315,9 @@ def note_refusal(root: str | Path, request: str, said: str) -> bool:
 
 
 def refused_requests(root: str | Path) -> set[str]:
-    """The digest of each request ``note_refusal`` kept. A line a crash cut short is no digest. A file that cannot be read
-    raises as records that do not check out do, since nothing could then say what must not be sent."""
+    """The digest of each request ``note_refusal`` kept, from every whole row, before and after any row a crash cut short,
+    which is no digest. A file that cannot be read raises as records that do not check out do, since nothing could then say
+    what must not be sent."""
     try:
         held = (Path(root) / REFUSED_FILE).read_bytes()
     except FileNotFoundError:
