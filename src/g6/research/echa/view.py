@@ -14,8 +14,9 @@ The view is bound to its subject's bytes: a certificate for other bytes than the
 as the subject's. Check the body with ``g6.evidence.verify`` first; the view reads, it does not vouch.
 
 ECHA's own records are retired as a source of evidence. ``source_record`` gives one as the mapping table reads it, with
-only what ECHA holds: its artefact, standard and check only through a custody binding, and no control G6 generated in
-the issuer's ledger, no author or producer, no environment and no ledger position, so the mapping refuses every one.
+only what ECHA holds: its artefact, standard and check only through a custody binding (one that does not read as one is
+handed on as it is, and the mapping refuses it), and no control G6 generated in the issuer's ledger, no author or
+producer, no environment and no ledger position, so the mapping refuses every one.
 """
 from __future__ import annotations
 

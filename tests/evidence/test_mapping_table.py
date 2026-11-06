@@ -131,7 +131,7 @@ def rec(**over) -> m.SourceRecord:
 
 
 def codes(record: m.SourceRecord) -> list[str]:
-    return [code for code, _ in m.problems(record, artefact_sha256=A, standard_sha256=STANDARD, predicates=(P,))]
+    return [code for code, _ in m.problems(record, facts=facts(), artifact=Artifact(A, "agent", 1))]
 
 
 def test_a_complete_record_is_promoted_and_the_issuer_counts_it():
@@ -167,7 +167,7 @@ def test_a_complete_record_is_promoted_and_the_issuer_counts_it():
 def test_a_record_that_lacks_a_part_is_refused_with_the_code_that_names_it(over, code):
     assert codes(rec(**over)) == [code]
     with pytest.raises(m.PromotionRefused) as refused:
-        m.promote(rec(**over), artefact_sha256=A, standard_sha256=STANDARD, predicates=(P,))
+        m.promote(rec(**over), facts=facts(), artifact=Artifact(A, "agent", 1))
     assert [c for c, _ in refused.value.codes] == [code] and code in str(refused.value)
     out = m.issue_records(facts(), Artifact(A, "agent", 1), [rec(**over)])
     assert out.promoted == () and [c for c, _ in out.refused[0][1]] == [code]

@@ -22,7 +22,12 @@ G6 0.3 (slice 2) closes the two places where this rule differed from the issuer'
 Every part a record is about (its artefact, standard and predicate) is read through ``custody.about``: from its
 custody binding when it has one. A record whose own standard or predicate is not its binding's counts for nothing,
 and the reason names the part (``G6_E_EVIDENCE_BINDING_STANDARD``, ``G6_E_EVIDENCE_BINDING_PREDICATE``), so a bound
-receipt cannot be retargeted to another standard or predicate by its fields; its control likewise.
+receipt cannot be retargeted to another standard or predicate by its fields; its control likewise. A record whose
+binding does not read as one counts for nothing (``G6_E_EVIDENCE_BINDING_UNREADABLE``), never as a record with none.
+
+An evaluator is compared by its bytes (``custody.evaluator_of``), never by its label: a control activates a check only
+when both name one evaluator digest, and distinct evaluators, for independence and for error bounds, are distinct
+digests. Records with no binding name only declared labels, compared as declared.
 
 This rule is research analysis, never a requirement's status: the issuer decides that, and ECHA shows it as it is
 (``view.certificate_view``).
@@ -32,7 +37,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .custody import about
+from .custody import about, evaluator_of
 from .records import ClaimRecord, EvidenceRecord
 
 EXECUTABLE = ("FORMAL_CHECK", "INDEPENDENT_EXECUTABLE", "PARTIAL_FALSIFIER")
@@ -47,8 +52,9 @@ def subject_artefact(claim: ClaimRecord) -> str | None:
 
 def _control_holds(ledger: Any, rec: EvidenceRecord, contaminated: set) -> bool:
     """Whether the check's negative control is in the ledger, is one, failed on its injected defect, concerns the same
-    standard and predicate as the check (each read through its custody binding, which it agrees with), and was not
-    taken against a compromised fixture."""
+    standard and predicate as the check (each read through its custody binding, which it agrees with), was taken by
+    the same evaluator, compared by its bytes (``evaluator_of``), and was not taken against a compromised fixture.
+    ``rec`` is a cited check, whose own binding ``evaluate_claim`` has read already."""
     if not rec.negative_control_ref:
         return False
     try:
@@ -58,7 +64,7 @@ def _control_holds(ledger: Any, rec: EvidenceRecord, contaminated: set) -> bool:
     (of_control, control_refused), (of_check, _) = about(control), about(rec)
     return (not control_refused and control.purpose == "negative_control" and control.result == "fail"
             and of_control.standard == of_check.standard and control.fixture_version not in contaminated
-            and of_control.predicates == of_check.predicates and control.oracle_version == rec.oracle_version
+            and of_control.predicates == of_check.predicates and evaluator_of(control) == evaluator_of(rec)
             and control.oracle_category in EXECUTABLE)
 
 
@@ -117,14 +123,15 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
     refuting = [r for r in active if r.result == "fail"]
     passing = [r for r in active if r.result == "pass"]
     groups = {r.independence_group for r in passing if r.independent}
-    # Two labels over one oracle are one voice: groups count only as far as there are distinct oracles behind them.
-    voices = min(len(groups), len({r.oracle_version for r in passing if r.independent}))
+    # Two groups over one evaluator are one voice: groups count only as far as there are distinct evaluators behind
+    # them, each named by its bytes when it has them (evaluator_of), never by a label
+    voices = min(len(groups), len({evaluator_of(r) for r in passing if r.independent}))
     unexplained = [r.evidence_id for r in cited if r.oracle_category in EXECUTABLE and r.result == "fail"
                    and r.evidence_id in structural]
-    bounds: dict[tuple[str, str], float] = {}
+    bounds: dict[tuple[tuple[str, str], str], float] = {}
     for rec in active:
         if rec.oracle_error_bound is not None:
-            key = (rec.oracle_version, rec.independence_group)
+            key = (evaluator_of(rec), rec.independence_group)
             bounds[key] = max(bounds.get(key, 0.0), float(rec.oracle_error_bound))
     identified = bool(active) and all(r.oracle_error_bound is not None for r in active)
 

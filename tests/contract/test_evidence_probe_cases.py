@@ -129,10 +129,10 @@ def test_the_mapping_refuses_to_promote_a_formal_check_with_no_negative_control(
     from g6.evidence.mapping import NO_CONTROL, PromotionRefused, issue_records, promote
 
     with pytest.raises(PromotionRefused) as refused:
-        promote(_formal_record(), artefact_sha256=A, standard_sha256=STANDARD, predicates=(P,))
+        promote(_formal_record(), facts=facts(), artifact=Artifact(A, "agent", 1))
     assert [code for code, _ in refused.value.codes] == [NO_CONTROL]
     with pytest.raises(PromotionRefused) as echa:   # ECHA's category maps to the same row rule
-        promote(_formal_record(kind="FORMAL_CHECK"), artefact_sha256=A, standard_sha256=STANDARD, predicates=(P,))
+        promote(_formal_record(kind="FORMAL_CHECK"), facts=facts(), artifact=Artifact(A, "agent", 1))
     assert NO_CONTROL in [code for code, _ in echa.value.codes]
     out = issue_records(facts(), Artifact(A, "agent", 1), [_formal_record()])
     assert out.promoted == () and out.certificate.verified_predicates == ()
@@ -160,7 +160,7 @@ def test_the_patch_review_adapter_never_promotes_a_model_result_or_a_compiled_ch
                                              written=lambda _check: False, environment={"python": "3"})
     from g6.evidence.mapping import NOT_PROMOTED, problems
 
-    assert [problems(r, artefact_sha256=A, standard_sha256=_facts.standard_sha, predicates=(P,))[0][0]
+    assert [problems(r, facts=_facts, artifact=_artefact)[0][0]
             for r in records] == [NOT_PROMOTED]
 
 
@@ -210,9 +210,9 @@ def test_the_mapping_refuses_to_promote_a_record_taken_on_other_bytes():
     from g6.evidence.mapping import OTHER_ARTEFACT, PromotionRefused, issue_records, promote
 
     rec = _formal_record([control()], kind="independent_executable", model_sha256="", certificate="")
-    promote(rec, artefact_sha256=A, standard_sha256=STANDARD, predicates=(P,))   # positive control
+    promote(rec, facts=facts(), artifact=Artifact(A, "agent", 1))   # positive control
     with pytest.raises(PromotionRefused) as refused:
-        promote(rec, artefact_sha256=B, standard_sha256=STANDARD, predicates=(P,))
+        promote(rec, facts=facts(), artifact=Artifact(B, "agent", 1))
     assert [code for code, _ in refused.value.codes] == [OTHER_ARTEFACT]
     out = issue_records(facts(), Artifact(B, "agent", 1), [rec])
     assert out.promoted == () and out.certificate.verified_predicates == ()
@@ -241,9 +241,9 @@ def test_the_patch_review_adapter_binds_every_record_to_the_review_s_own_artefac
                                                check_sha={"tests/test_total.py::test_sum": CODE},
                                                written=lambda _check: False, environment={"python": "3"})
     assert artefact.sha256 == A and [r.artefact_sha256 for r in records] == [A]
-    assert problems(records[0], artefact_sha256=A, standard_sha256=got_facts.standard_sha, predicates=(P,)) == []
-    assert [code for code, _ in problems(records[0], artefact_sha256=B, standard_sha256=got_facts.standard_sha,
-                                         predicates=(P,))] == [OTHER_ARTEFACT]
+    assert problems(records[0], facts=got_facts, artifact=artefact) == []
+    assert [code for code, _ in problems(records[0], facts=got_facts,
+                                         artifact=Artifact(B, artefact.producer, artefact.seq))] == [OTHER_ARTEFACT]
 
 
 def test_a_confirmed_expectation_is_bound_to_the_question_it_answers():

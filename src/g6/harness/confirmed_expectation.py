@@ -28,6 +28,12 @@ literal allows (``verification_templates.literal_problem``: JSON data only, no b
 record is made; each read gives a fresh copy, so nothing a caller changes afterwards, in the objects it passed or in
 those it read, rewrites what was confirmed. "Contradicts" is decided by the answer itself, the compiled scenario and
 its outcome: the same answer to a question with another citation is the same answer, and is held once.
+
+A confirmed answer cannot change the question (review 2's finding 2). The scenario (the function, its arguments and
+keyword arguments; example.v1 has no setup) comes from the question alone, and an answer contributes only its outcome,
+through the outcome fields example.v1 defines (``OUTCOME_FIELDS``: ``returns``, ``raises``, ``effect``). An outcome
+that holds any other key is refused when the question is made, and a confirmed expectation answers a question only
+when its check is that question's scenario with the chosen outcome (``for_question``).
 """
 from __future__ import annotations
 
@@ -40,9 +46,19 @@ from typing import Any, Literal
 from g6.core.ledger import digest
 from g6.evidence.certificate import Check, Control, MissionFacts
 from g6.harness.patch_review import NORMATIVE
-from g6.harness.verification_templates import ExampleBindings, TemplateInstance, instance_digest, literal_problem
+from g6.harness.verification_templates import (
+    Call,
+    ExampleBindings,
+    ExampleCase,
+    TemplateInstance,
+    instance_digest,
+    literal_problem,
+)
 
 PERSON_CONFIRMED = "person_confirmed"
+#: The fields of an example.v1 case that state its outcome, read from the template's own case: every field of a case
+#: that is not its call's (``args``, ``kwargs``). An answer gives these and nothing else.
+OUTCOME_FIELDS = frozenset(ExampleCase.model_fields) - frozenset(Call.model_fields)
 #: The answers that confirm nothing (the design's behaviour form, 3.2 step 2), besides a decline or cancel.
 NOT_CONFIRMING = ("neither", "premise_wrong", "task_already_says", "skip")
 _PERSON = re.compile(r"person:\S.{0,199}\Z")
@@ -137,6 +153,10 @@ class Question:
         for label, outcome in outcomes.items():   # each outcome is an example.v1 case, checked before it is shown
             if not isinstance(outcome, dict):
                 raise ValueError("each outcome states returns, raises or effect")
+            other = sorted(set(outcome) - OUTCOME_FIELDS)
+            if other:   # the scenario is the question's alone: an outcome never restates or replaces it
+                raise ValueError(f"outcome {label!r} holds {', '.join(other)}: an outcome states only "
+                                 f"{', '.join(sorted(OUTCOME_FIELDS))}, and the scenario is the question's")
             ExampleBindings.model_validate({"function": self.function, "cases": [self._case(label, outcome)]})
         if not isinstance(self.kwargs, dict):
             raise ValueError("kwargs maps each parameter's name to its value")
@@ -144,9 +164,12 @@ class Question:
             raise ValueError("a question names its scope and the task's citation")
 
     def _case(self, label: str, outcome: Mapping[str, Any] | None = None) -> dict:
+        """The example.v1 case for ``label``: the question's own scenario, and the outcome's fields (``OUTCOME_FIELDS``
+        only), so nothing in an outcome can replace the scenario."""
+        chosen = self.outcomes[label] if outcome is None else dict(outcome)
         kwargs = self.kwargs
         return {"args": self.args, **({"kwargs": kwargs} if kwargs else {}),
-                **(self.outcomes[label] if outcome is None else dict(outcome))}
+                **{name: value for name, value in chosen.items() if name in OUTCOME_FIELDS}}
 
     def to_dict(self) -> dict:
         return {"requirement_id": self.requirement_id, "function": self.function, "args": self.args,
@@ -201,9 +224,13 @@ class ConfirmedExpectation:
                 "check_sha256": self.check_sha256}
 
     def for_question(self, question: Question) -> ConfirmedExpectation:
-        """This expectation, when ``question`` is the one it answers; a ``ValueError`` for any other question."""
+        """This expectation, when ``question`` is the one it answers and its check is that question's scenario with the
+        chosen outcome; a ``ValueError`` for any other question, or for a check that runs another scenario."""
         if question.sha256 != self.question_sha256:
             raise ValueError("an answer to one question never stands for another question")
+        if self.answer not in question.outcomes or self.instance.bindings != {
+                "function": question.function, "cases": [question._case(self.answer)]}:
+            raise ValueError("its check is not the question's scenario with the chosen outcome")
         return self
 
     def check(self, *, frozen_seq: int, controls: Sequence[Control] = (), positive_seq: int | None = None) -> Check:
@@ -306,5 +333,5 @@ class ExpectationStandard:
                             predicates=self.predicates, standard_predicates=self.predicates)
 
 
-__all__ = ["NORMATIVE", "NOT_CONFIRMING", "PERSON_CONFIRMED", "ConfirmedExpectation", "ContradictsStandard",
-           "ExpectationStandard", "Question", "Unconfirmed", "confirm", "normative"]
+__all__ = ["NORMATIVE", "NOT_CONFIRMING", "OUTCOME_FIELDS", "PERSON_CONFIRMED", "ConfirmedExpectation",
+           "ContradictsStandard", "ExpectationStandard", "Question", "Unconfirmed", "confirm", "normative"]

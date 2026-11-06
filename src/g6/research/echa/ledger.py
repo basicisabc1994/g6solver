@@ -4,7 +4,9 @@
 """The evidence ledger: append-only, content-hashed, and hash-chained (ECHA spec 4; Checkpoint 1 "trace integrity").
 
 The chain itself is product code, ``g6.core.ledger`` (graduated, audit 037). This module adds ECHA's rules: an evidence
-record names a standard that is in the ledger and a negative control that failed; a claim names evidence that is there;
+record's custody binding, when it holds one, reads as one (``G6_E_EVIDENCE_BINDING_UNREADABLE`` otherwise, never read
+as no binding); it names a standard that is in the ledger and a negative control that failed, taken by the same
+evaluator, compared by its bytes (``custody.evaluator_of``); a claim names evidence that is there;
 an episode's body checks out. ``verify`` and ``Ledger.audit`` recompute the chain and re-check every reference, so an
 edited, removed, added or reordered entry is found. A chain cut at its tail is still a consistent chain: only a head
 recorded elsewhere shows it, so ``audit`` takes the head a reviewer kept.
@@ -19,8 +21,9 @@ from pathlib import Path
 from typing import Any
 
 from g6.core.ledger import ChainLedger, LedgerCorrupt, LedgerError
+from g6.evidence.mapping import BINDING_UNREADABLE
 
-from .custody import about
+from .custody import about, evaluator_of
 from .episodes import EpisodeRecord, verify_episode_body
 from .records import UNSEALED, ClaimRecord, EvidenceRecord, StandardRef
 
@@ -41,7 +44,10 @@ def _semantic(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], 
             StandardRef.from_dict(body)
         elif kind == "evidence":
             rec = EvidenceRecord.from_dict(body)
-            parts = about(rec)[0]   # what it is about, read through its custody binding when it has one
+            parts, refused = about(rec)   # what it is about, read through its custody binding when it has one
+            unreadable = [why for code, why in refused if code == BINDING_UNREADABLE]
+            if unreadable:   # what it is about cannot be read, so nothing it names can be checked: never as unbound
+                return [f"evidence {ident}: {BINDING_UNREADABLE}: {unreadable[0]}"]
             if parts.standard not in standards:
                 found.append(f"evidence {ident}: no standard with this standard_sha256 is in the ledger")
             if rec.fixture_version != UNSEALED and rec.fixture_version not in vaults:
@@ -49,12 +55,13 @@ def _semantic(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], 
                              f"first, or say {UNSEALED})")
             if rec.negative_control_ref:
                 control = seen.get(("evidence", rec.negative_control_ref))
-                of_control = about(EvidenceRecord.from_dict(control))[0] if control is not None else None
-                if (control is None or control.get("purpose") != "negative_control" or control.get("result") != "fail"
+                held = EvidenceRecord.from_dict(control) if control is not None else None
+                of_control = about(held)[0] if held is not None else None
+                if (held is None or held.purpose != "negative_control" or held.result != "fail"
                         or of_control.standard != parts.standard
                         or of_control.predicates != parts.predicates
-                        or control.get("oracle_version") != rec.oracle_version
-                        or control.get("oracle_category") in NOT_A_CONTROL):
+                        or evaluator_of(held) != evaluator_of(rec)   # one evaluator, by its bytes
+                        or held.oracle_category in NOT_A_CONTROL):
                     found.append(f"evidence {ident}: negative_control_ref {rec.negative_control_ref!r} must name an "
                                  f"earlier negative_control record, for the same standard, predicate and oracle, by an "
                                  f"executable check, that failed (it rejected its injected defect)")

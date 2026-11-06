@@ -6,78 +6,58 @@ to its artefact, standard and check when the receipt becomes the issuer's; it is
 module writes are partial falsifiers, never independent support, and ECHA's records are not a source of evidence for
 the issuer (``view.source_record``).
 
-``about`` is where ECHA reads what one of its records is about: from its custody binding when ``source_ref`` holds one
-(the binding is the one source, by the mapping's own rule, ``g6.evidence.mapping.bound_parts``), else from the record's
-own fields. A record whose standard or predicate is not its binding's is named with the code for that part, and the
-claim rule counts it for nothing.
+``about`` is where ECHA reads what one of its records is about, through the mapping's one reader
+(``g6.evidence.mapping.read_about``): from its custody binding when ``source_ref`` holds one (read by the mapping's one
+reader of a binding, ``read_binding``), else from the record's own fields. A ``source_ref`` that holds a binding that
+does not read as one is never read as holding none: the record is about nothing and is refused
+(``G6_E_EVIDENCE_BINDING_UNREADABLE``). A record whose standard or predicate is not its binding's is named with the code
+for that part, and the claim rule counts it for nothing.
+
+``evaluator_of`` is the evaluator a record names, compared by bytes: its binding's evaluator digest, the one the
+accessor gives (``About.check_sha``). A record with no binding names only a declared label, which is never the same
+evaluator as one named by its bytes, so a label never lets one evaluator's control activate another's check.
 """
 from __future__ import annotations
 
-import json
-import math
-
-from g6.evidence.mapping import About, CheckBinding, bound_parts
+from g6.evidence.mapping import BINDING_UNREADABLE, About, CheckBinding, UnreadableBinding, read_about, read_binding
+from g6.evidence.mapping import strict_json as _strict_json
 
 from .records import EvidenceRecord, canonical, digest
 
 MAX_ARTIFACT_BYTES = 256 * 1024
 MAX_RECEIPT_BYTES = 4096
-_FIELDS = frozenset(CheckBinding.__dataclass_fields__)
 
 
-def binding_of(rec: EvidenceRecord) -> CheckBinding | None:
-    """The custody binding a record's ``source_ref`` holds, as ``checked_evidence`` writes it, read as strictly as a
-    receipt is (a repeated key or a number that is not finite is no binding); None when it holds none."""
-    try:
-        found = json.loads(rec.source_ref, object_pairs_hook=_pairs, parse_constant=_constant, parse_float=_float)
-    except (ValueError, RecursionError):
-        return None
-    if not isinstance(found, dict) or set(found) != _FIELDS:
-        return None
-    try:
-        return CheckBinding(**found)
-    except (TypeError, ValueError):
-        return None
+def binding_of(rec: EvidenceRecord) -> CheckBinding | UnreadableBinding | None:
+    """The custody binding a record's ``source_ref`` holds, as ``checked_evidence`` writes it, by the mapping's one
+    reader (``read_binding``): None when it holds none, an ``UnreadableBinding`` when it holds one that does not read
+    as one (a repeated key, a number that is not finite, a field missing, extra or not valid), never None for that."""
+    return read_binding(rec.source_ref)
 
 
 def about(rec: EvidenceRecord) -> tuple[About, tuple[tuple[str, str], ...]]:
-    """What ``rec`` is about, and each of its fields that disagrees with its custody binding, as (code, why). With no
-    binding, its own standard and predicate, and no artefact ("")."""
-    binding = binding_of(rec)
-    if binding is None:
-        return About(artefact="", standard=rec.standard_sha256, predicates=(rec.predicate_id,), request="", task="",
-                     fixture="", check_id="", check_sha="", environment="", scope=rec.scope), ()
-    parts, found = bound_parts(binding, scope=rec.scope, standard=rec.standard_sha256, predicates=(rec.predicate_id,))
-    return parts, found
+    """What ``rec`` is about, and each of its fields that disagrees with its custody binding, as (code, why), through
+    the mapping's one reader (``read_about``). With no binding, its own standard and predicate, and no artefact ("");
+    with one that does not read as one, nothing, and ``BINDING_UNREADABLE``."""
+    return read_about(binding_of(rec), scope=rec.scope, standard=rec.standard_sha256, predicates=(rec.predicate_id,))
 
 
-def _pairs(pairs):
-    out = {}
-    for key, value in pairs:
-        if key in out:
-            raise ValueError("duplicate JSON key")
-        out[key] = value
-    return out
-
-
-def _constant(value):
-    raise ValueError("nonfinite JSON number")
-
-
-def _float(value):
-    number = float(value)
-    if not math.isfinite(number):
-        raise ValueError("nonfinite JSON number")
-    return number
+def evaluator_of(rec: EvidenceRecord) -> tuple[str, str]:
+    """The evaluator ``rec`` names, as (how it is named, the name): ("sha256", its binding's evaluator digest, the one
+    the accessor gives) for a bound record; ("declared", its oracle label) for a record with no binding, which is never
+    equal to one named by bytes. A ``ValueError`` for a record whose binding does not read as one: it names nothing."""
+    parts, refused = about(rec)
+    if any(code == BINDING_UNREADABLE for code, _ in refused):
+        raise ValueError("a record whose custody binding does not read as one names no evaluator")
+    return ("sha256", parts.check_sha) if parts.check_sha else ("declared", rec.oracle_version)
 
 
 def _decode(raw: bytes, limit: int) -> dict:
     if not isinstance(raw, bytes) or not 0 < len(raw) <= limit:
         raise ValueError("invalid handoff size or byte type")
-    try:
-        found = json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs,
-                           parse_constant=_constant, parse_float=_float)
-    except (UnicodeError, RecursionError) as exc:
+    try:   # read as strictly as a custody binding is: one strict JSON rule (g6.evidence.mapping.strict_json)
+        found = _strict_json(raw.decode("utf-8"))
+    except UnicodeError as exc:
         raise ValueError("invalid UTF-8 JSON object") from exc
     if not isinstance(found, dict):
         raise ValueError("handoff must be a JSON object")  # noqa: TRY004 - one refusal type for untrusted bytes

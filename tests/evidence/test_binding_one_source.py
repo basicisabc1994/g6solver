@@ -154,9 +154,9 @@ def test_echa_refuses_each_part_a_field_retargets_alone_with_the_code_that_names
 def test_a_field_that_repeats_a_bound_part_with_another_value_is_refused_with_the_code_naming_it(field_name, value,
                                                                                                code):
     rec = bound()
-    assert m.problems(rec, artefact_sha256=A, standard_sha256=STANDARD, predicates=("R1", "R2")) == []
+    assert m.problems(rec, facts=facts("R1", "R2"), artifact=Artifact(A, "agent", 1)) == []
     changed = replace(rec, **{field_name: value})
-    found = [c for c, _ in m.problems(changed, artefact_sha256=A, standard_sha256=STANDARD, predicates=("R1", "R2"))]
+    found = [c for c, _ in m.problems(changed, facts=facts("R1", "R2"), artifact=Artifact(A, "agent", 1))]
     assert found and found[0] == code, found
     issued = m.issue_records(facts("R1", "R2"), Artifact(A, "agent", 1), [changed])
     assert issued.promoted == () and code in refused_codes(issued)
@@ -175,7 +175,7 @@ def test_a_binding_replaced_under_its_record_s_fields_is_refused_never_read_from
 
 def test_a_binding_that_does_not_read_as_one_is_refused():
     broken = replace(bound(), binding={"request_id": "request"})   # malformed: a dict where a binding belongs
-    found = [c for c, _ in m.problems(broken, artefact_sha256=A, standard_sha256=STANDARD, predicates=("R1",))]
+    found = [c for c, _ in m.problems(broken, facts=facts(), artifact=Artifact(A, "agent", 1))]
     assert found[0] == m.BINDING_UNREADABLE
     assert m.issue_records(facts(), Artifact(A, "agent", 1), [broken]).certificate.verified_predicates == ()
 
@@ -333,7 +333,7 @@ PLACES: dict[tuple[str, str, str], tuple[str, str]] = {
     ("evidence/mapping.py", "issue_records", "parts"): ("through", THROUGH),
     ("evidence/mapping.py", "_merged", "old"): ("other", ISSUER),
     ("evidence/mapping.py", "_merged", "new"): ("other", ISSUER),
-    ("evidence/mapping.py", "issue_records", "facts"): ("other", ISSUER),
+    ("evidence/mapping.py", "problems", "facts"): ("other", ISSUER),
     ("evidence/mapping.py", "issue_records", "check"): ("other", ISSUER),
     ("evidence/mapping.py", "issue_records", "receipt"): ("other", ISSUER),
     ("harness/requirement_evidence.py", "codes", "check"): ("other", ISSUER),

@@ -121,9 +121,11 @@ def test_the_custody_binding_is_the_one_a_promoted_receipt_is_bound_by():
     from g6.research.echa.records import canonical
 
     assert custody.binding_of(rec(canonical(binding.to_dict()))) == binding
-    # read as strictly as a receipt: a repeated key is no binding (the last one would otherwise win), nor is free text
+    # read as strictly as a receipt: a repeated key is a binding that does not read as one (the last one would
+    # otherwise win), never no binding (repair 2, review 2's finding 3); free text holds none
     doubled = canonical(binding.to_dict())[:-1] + ',"artifact_sha256":"' + "b" * 64 + '"}'
-    assert custody.binding_of(rec(doubled)) is None and custody.binding_of(rec("log:1")) is None
+    assert isinstance(custody.binding_of(rec(doubled)), m.UnreadableBinding)
+    assert custody.binding_of(rec("log:1")) is None
 
 
 def test_echa_s_own_records_are_retired_as_a_source_of_evidence_none_is_promoted(tmp_path):
@@ -133,8 +135,9 @@ def test_echa_s_own_records_are_retired_as_a_source_of_evidence_none_is_promoted
     assert records
     for rec in records:
         source = source_record(rec)
-        found = [code for code, _ in m.problems(source, artefact_sha256=A, standard_sha256=rec.standard_sha256,
-                                                predicates=(rec.predicate_id,))]
+        mission = MissionFacts("1" * 64, rec.standard_sha256, rec.standard_sha256, (rec.predicate_id,),
+                               (rec.predicate_id,))
+        found = [code for code, _ in m.problems(source, facts=mission, artifact=Artifact(A, "agent", 1))]
         assert found, rec.evidence_id
         assert m.NO_CONTROL in found or m.NOT_PROMOTED in found, (rec.evidence_id, found)
 
