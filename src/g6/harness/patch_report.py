@@ -131,6 +131,9 @@ def _issuer(assessment: dict, requirement: object, form: str = "; {}") -> str:
         said = "conflicting evidence, one check for it and one against"
     elif found.get("refute"):
         said = "refuted by " + ", ".join(code(c, 40) for c in found.get("refuted_by") or [])
+    elif not kinds and (found.get("kinds") or {}):   # each check was refused before the issuer saw it
+        said = (f"not counted: the evidence mapping refused each of its checks for a part it lacks "
+                f"({code('assessment.requirement_evidence.refused')})")
     else:
         gap = str(found.get("gap") or "")
         said = "not counted yet: " + next((why for key, why in NOT_COUNTED if key in gap), "no check G6 can count ran")

@@ -200,9 +200,9 @@ recommending a new release.
   fails, it says why and what to try next: root causes, and the G6 components that address them
   ([Tune it to your work](site/docs/metaharness.md)).
 - **A stop switch** (`g6.core.stop`): `G6_STOP`, or a `STOP` file in `$G6_HOME`.
-- **Research** (`g6.research`): ECHA, an audit view over the evidence issuer's records, with no flag; governed
-  adaptation, off unless `G6_ECHA_RESEARCH=1`; and a bridge from missions to evidence certificates (partly ported),
-  off unless `G6_MISSION_BRIDGE=1`. The specifications are in [docs/theory](docs/theory).
+- **Research** (`g6.research`): the evidence kernel, now an audit view over the evidence issuer's records with no
+  flag; governed adaptation, off unless `G6_ECHA_RESEARCH=1`; and a bridge from missions to evidence certificates
+  (partly ported), off unless `G6_MISSION_BRIDGE=1`. The specifications are in [docs/theory](docs/theory).
 
 ## Status of each capability
 
@@ -216,7 +216,7 @@ recommending a new release.
 | Patch review for a coding agent's Python patch (`g6_review_patch`) | `implemented`. Its two studies are registered and have not run |
 | Governed learning: hints credited from paired runs, a promotion gate for harness changes | `implemented`. Earlier self-training benchmark gains are withdrawn pending re-validation |
 | Bundles (11) | `implemented`. Downloads come with the first release; their study has not run (see [Research](site/docs/research.md)) |
-| Research kernel (ECHA's audit view, governed adaptation, the mission bridge) | `wired-but-inert`: ECHA has no flag and no product code calls it; the other two are off unless `G6_ECHA_RESEARCH=1` and `G6_MISSION_BRIDGE=1` |
+| Research kernel (the evidence kernel's audit view, governed adaptation, the mission bridge) | `wired-but-inert`: the evidence kernel has no flag and no product code calls it; the other two are off unless `G6_ECHA_RESEARCH=1` and `G6_MISSION_BRIDGE=1` |
 | G6 helps independent coding agents on held-out tasks | `aspirational`: protocol published, not run |
 | Meta-harness: tune G6 to your own recurring work (`g6.metaharness`) | `implemented`. The studies run with it are on the [Research](site/docs/research.md) page, as a worked example |
 | G6 maintains its own repository through its self-improvement loop | `aspirational`: designed, and being built in the open |

@@ -84,9 +84,9 @@ no block but has MCP tools of its own, below.
 
 Outside the components: `g6.core.stop` (the stop switch), `g6.core.snapshots` (`g6 state`), `g6.integrity` (file
 hashes against a pinned manifest), `g6.triage` (Python error triage) and `g6.operator` (a budgeted loop with a
-simulated executor and an approval queue a person decides). In `g6.research`, ECHA is an audit view over the evidence
-issuer's records, with no flag; governed adaptation is off unless `G6_ECHA_RESEARCH=1`, and the mission bridge unless
-`G6_MISSION_BRIDGE=1`.
+simulated executor and an approval queue a person decides). In `g6.research`, the evidence kernel is an audit view
+over the evidence issuer's records, with no flag; governed adaptation is off unless `G6_ECHA_RESEARCH=1`, and the
+mission bridge unless `G6_MISSION_BRIDGE=1`.
 
 ## Use it from your coding agent (MCP)
 
