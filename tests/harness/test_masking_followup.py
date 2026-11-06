@@ -243,8 +243,8 @@ def test_the_copy_reads_nothing_and_is_made_from_the_read_alone():
             elif callee in functions:        # a function of the module, or a method of its own (``Seen.masked``)
                 todo.append(callee)
             assert callee not in READS, f"{name} reads ({ast.unparse(call)})"
-    assert used == {"_decoded", "name_line", "shown_name", "_normal", "_cut_lines"}, used
-    for name in used - {"_decoded", "_normal", "_cut_lines"}:      # the name rule reads nothing either
+    assert used == {"_decoded", "name_line", "shown_name", "_normal", "_cut_lines", "_bytes_line"}, used
+    for name in used - {"_decoded", "_normal", "_cut_lines"}:      # the name and bytes rules read nothing either
         assert not {_callee(call) for _, call in _own_calls(_functions(repo_tests)[name])} & READS
 
 
@@ -496,6 +496,28 @@ def test_a_base_git_will_not_give_is_named_by_the_patch_and_refuses_the_copy(tmp
     with pytest.raises(repo_tests.RepoRefused) as caught:
         loop._shown(change, read)
     assert caught.value.code == "G6_E_GIT_COMMAND_FAILED"
+
+
+def test_two_bases_the_patch_tells_apart_by_their_line_endings_are_shown_apart(tmp_path):
+    """one_fact_two_rules, found walking the class list over ``_shown``: whether the text shown of a file is its bytes is one
+    fact, decided for the file as it stands by ``_bytes_line`` over the text with ``_normal``'s line endings, and was decided
+    for the base by another rule (its bytes against the text before the endings were made newlines), which a carriage
+    return the patch holds passed. The base has the one rule now."""
+    reads, copies = [], []
+    for number, before in enumerate((b"a = 0\r\nb = 0\n", b"a = 0\nb = 0\n")):
+        repo = make_repo(tmp_path / f"case-{number}")
+        (repo / "calc.py").write_bytes(before)
+        git(repo, "add", "calc.py")
+        git(repo, "commit", "-qm", "base")
+        (repo / "calc.py").write_bytes(b"a = 0\nb = 1\n")
+        change = repo_tests.change(repo)
+        read = repo_tests.diff_read(change)
+        reads.append(read.text)
+        copies.append(loop._shown(change, read).masked)
+    assert reads[0] != reads[1]
+    assert copies[0] != copies[1], "the copy shows alike two bases the patch tells apart"
+    named = hashlib.sha256(b"a = 0\r\nb = 0\n").hexdigest()
+    assert f"\\ G6: calc.py at the base shows here only in part; its bytes have SHA-256 {named}\n" in copies[0]
 
 
 def test_the_patch_names_the_base_the_copy_shows_and_a_base_unchanged_is_the_same_patch(tmp_path):

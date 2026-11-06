@@ -48,7 +48,6 @@ from __future__ import annotations
 
 import bisect
 import difflib
-import hashlib
 import json
 import os
 import re
@@ -756,8 +755,8 @@ def _shown(change: repo_tests.Change, read: repo_tests.DiffRead) -> Shown:
                         line, line_masked = shown_line(mark, sides[side].rows[i], cuts)
                         plain.append(line)
                         masked.append(line_masked)
-        if raw is not None and old.encode("utf-8") != raw:      # bytes the one decoder could not show as they are
-            own(f"\\ G6: {name} at the base shows here only in part; its bytes have SHA-256 {hashlib.sha256(raw).hexdigest()}\n")
+        if raw is not None:      # where the base's text shown is not its bytes, by the rule the file as it stands has
+            own(repo_tests._bytes_line(raw, repo_tests._normal(old), f"{name} at the base"))
         if one.note:
             own(one.note)
         own(repo_tests.name_line(one.rel))
