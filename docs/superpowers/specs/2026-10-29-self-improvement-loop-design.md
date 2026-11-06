@@ -614,14 +614,28 @@ cognitive work, with programming as the first toy model. So P2 was built first a
   **The freeze's threat model is honest drift (the owner's ruling, 2026-11-05).** A candidate cannot write the judge's
   files: proposers edit a view and candidates run confined. What the freeze guards against is a person or another process
   editing what judges in ordinary ways during a cycle, not code written to evade the check. So a person declares as a root
-  every folder the judge reads or loads code from. What cannot be read is never a digest: one reader takes every byte the
-  freeze stands on, and any failure, a locked file, a folder that cannot be listed, a file gone mid-listing or an error of
-  any other kind, makes the reading unreadable, which refuses enrolment (`G6_E_LOOP_JUDGE_UNPINNED`) and every cycle and
-  adoption as a frozen change while it stands. Under `__pycache__` only a bytecode cache named for an interpreter
-  (`<name>.<tag>.pyc`) is left out; every other file there is pinned. A declared root is checked as given, so one that is
+  every folder the judge reads or loads code from. What cannot be read is never a digest: one reader
+  (`g6/core/reading.py`) takes every byte the freeze stands on and lists every folder it stands on, the sealed split's
+  (`g6/core/vault.py`), G6's own code and the judging code the harness pins (`g6.integrity.build_manifest`), and the
+  roots', and any failure, a locked file, a file another process holds without sharing, a folder that cannot be listed, a
+  file gone mid-listing or an error of any other kind, raises. The freeze's reading has one boundary that makes anything
+  else that keeps it from being made, a domain's own code raising included, unreadable too, and a test built from the code
+  lists every read and listing the freeze reaches and finds none outside the reader. An unreadable reading refuses
+  enrolment (`G6_E_LOOP_JUDGE_UNPINNED`) and every tick and adoption as a frozen change naming what could not be read,
+  while it stands; nothing raises past them, so a cycle's last check keeps every status the cycle held, a safety stop
+  among them. A folder under a judge's root that cannot be listed is in reach of the loop's folder as a link there would
+  be, so the loop is not built on it and writes nothing, and the walk keeps every link it found past it. Under
+  `__pycache__` only the cache the interpreter writes for a source file under the root is left out, by its own rule: the
+  name `importlib.util.cache_from_source` gives at each optimisation level, in the `__pycache__` beside the source, the
+  same whatever cache prefix the reading process has; every other file there is pinned, a file shaped like a cache with
+  no source and another interpreter's cache among them. Every name the file system gives is pinned, one that is no text (a
+  lone surrogate, as Windows allows) included. A declared root is checked as given, so one that is
   itself a link or junction refuses. Left out, as limits and not findings: a module imported from an archive outside the
   roots, a file run with `runpy` outside them, a plugin loaded with `importlib.util` outside them and kept out of
-  `sys.modules`, and a timestamp-valid bytecode cache replaced by hand (the
+  `sys.modules`, a named (alternate data) stream of a file under a root, which ordinary reading never reaches and only
+  code that spells its name does, while Windows and sync tools write named streams on files nobody changes (the owner's
+  freeze threat model, follow-up review 1), a step's source text that `inspect` cannot read, which it cannot tell from
+  none at all (a step's file under a root is pinned by its bytes), and a timestamp-valid bytecode cache replaced by hand (the
   runner runs with `-B` and a fresh cache prefix, so a cache under a root is not what it loads), as well as an edit in the
   moment after the last read and before the write, bytes changed and put back between the two reads, and state that lives
   in no file: a module's globals or a class's attributes changed as it runs, a closure's cells, a callable object's
