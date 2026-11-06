@@ -495,14 +495,15 @@ def multi_step(one) -> bool:
 
 class TemplateInstance(BaseModel):
     """A template instance: ``{id, template, requirement_id, intent, bindings}``, and where the bindings came from
-    (``provenance``: a request's are ``stated``; only G6's own code sets ``model_hypothesis``)."""
+    (``provenance``: a request's are ``stated``; only G6's own code sets ``model_hypothesis``, or ``person_confirmed``
+    for the one example.v1 check a person's confirmed answer compiles into, ``g6.harness.confirmed_expectation``)."""
     model_config = ConfigDict(extra="forbid")
     id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$")
     template: str = Field(min_length=1, max_length=100)
     requirement_id: str = Field(min_length=1, max_length=200)
     intent: Literal["preserve", "change"]
     bindings: dict[str, Any]
-    provenance: Literal["stated", "model_hypothesis"] = "stated"
+    provenance: Literal["stated", "model_hypothesis", "person_confirmed"] = "stated"
 
 
 # --- the tree under review, read from files only ------------------------------------------------------------------------
