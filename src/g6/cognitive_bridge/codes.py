@@ -9,15 +9,18 @@ and the skill names each one.
 
 :func:`claims` is the one rule for a claim of a state, at any depth of a value: no ``reliability_label``, no
 ``verified`` but false directly inside a warning card, and every nested result in the makers' format
-(:func:`result_faults`, the one check of that format). It is applied to every collaborator's answer as it returns
-(``snapshot.returned``), to every tool's answer the door hands on, and by both makers to what they return
-(``tests/cognitive_bridge/test_claim_inventory.py``). :func:`only_fields` adds a format's fields to it. :func:`affirmed`
-is the one reading of a yes: ``True`` and nothing else (``tests/cognitive_bridge/test_approval_inventory.py``).
+(:func:`result_faults`, the one check of that format). It reads all of a value or refuses it: it takes the leaves it
+lists (:data:`LEAVES`), opens the kinds it lists (:data:`OPENED`, and a bridge record) with a mapping's keys read as
+values, and refuses every other object (``tests/cognitive_bridge/test_claim_kinds.py``). It is applied to every
+collaborator's answer as it returns (``snapshot.returned``), to every tool's answer the door hands on, and by both
+makers to what they return (``tests/cognitive_bridge/test_claim_inventory.py``). :func:`only_fields` adds a format's
+fields to it. :func:`affirmed` is the one reading of a yes: ``True`` and nothing else
+(``tests/cognitive_bridge/test_approval_inventory.py``).
 """
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping, Set
+from collections.abc import Mapping, Sequence, Set
 from typing import Any
 
 from g6.core.door import said_state
@@ -110,6 +113,31 @@ MADE_FIELDS = (*_MADE, "reason")
 
 #: How deep :func:`claims` reads a value; anything nested deeper is a place it did not read, so it is refused.
 DEPTH = 64
+#: What :func:`claims` takes as a leaf, by the value's exact type (never a subclass): text, bytes, a number, a flag and
+#: None. Nothing in a leaf is read, and nothing in one can claim a state.
+LEAVES: tuple[type, ...] = (str, bytes, int, float, bool, type(None))
+#: What :func:`claims` opens, beside a bridge record (``snapshot.record``, read field by field): a mapping (its keys
+#: and its values, each read as a value), a sequence and a set (a frozenset is one), item by item. Text and bytes are
+#: leaves, never opened as their characters. Every other object is refused.
+OPENED: tuple[type, ...] = (Mapping, Sequence, Set)
+
+
+def _read_as(value: Any) -> str:
+    """How :func:`claims` reads ``value``, the one place that says it: ``"leaf"`` (one of :data:`LEAVES`, by its exact
+    type), ``"record"`` (a bridge record, a dataclass marked by ``snapshot.record``), the name of the :data:`OPENED`
+    kind it is, or ``""``: anything else, which the rule does not read and so refuses."""
+    if type(value) in LEAVES:
+        return "leaf"
+    if getattr(type(value), "__snapshot_record__", False) and dataclasses.is_dataclass(value):
+        return "record"
+    if isinstance(value, (str, bytes)):
+        return ""  # a subclass of text or bytes is not a leaf, and is not read as its characters
+    return next((kind.__name__ for kind in OPENED if isinstance(value, kind)), "")
+
+
+def _named(value: Any) -> str:
+    """The type of ``value``, as a refusal names it."""
+    return f"{type(value).__module__}.{type(value).__qualname__}"
 
 
 def _claims_nothing(card: Mapping[str, Any] | None) -> bool:
@@ -145,39 +173,51 @@ def result_faults(result: Mapping[str, Any]) -> list[str]:
 
 
 def claims(value: Any, *, _card: bool = False, _at: str = "", _depth: int = 0) -> list[str]:
-    """Where ``value`` claims a reliability state the bridge did not decide, each place named by its path; none is an
-    empty list. Every mapping, sequence, set and record (field by field) in it is read: a field G6 reads as a state
-    other than ``completion_state`` (``reliability_label``) anywhere; G6's ``verified`` flag anywhere but directly
-    inside a warning card, where it may only be false (INV-ENV-2); and a mapping that carries ``completion_state``
-    that is not a result in the makers' format (:func:`result_faults`). A value nested deeper than :data:`DEPTH` is
-    not read, and is named as a claim."""
+    """Where ``value`` claims a reliability state the bridge did not decide, or holds what this rule does not read,
+    each place named by its path; none is an empty list. It reads all of ``value``, or refuses: a leaf
+    (:data:`LEAVES`) is read as itself; a mapping (each key and each value, read as values), a sequence, a set and a
+    bridge record (field by field) are opened (:data:`OPENED`); every other object is named, with its type, as a place
+    the rule did not read (:func:`_read_as` decides which). What it finds: a field G6 reads as a state other than
+    ``completion_state`` (``reliability_label``) anywhere; G6's ``verified`` flag anywhere but directly inside a
+    warning card, where it may only be false (INV-ENV-2); and a mapping that carries ``completion_state`` that is not
+    a result in the makers' format (:func:`result_faults`). A value nested deeper than :data:`DEPTH` is not read, and
+    is named as a claim."""
     where = _at or "the value"
     if _depth > DEPTH:
         return [f"{where} (nested deeper than {DEPTH} levels)"]
-    if getattr(type(value), "__snapshot_record__", False):
-        value = {field.name: getattr(value, field.name) for field in dataclasses.fields(value)}
+    how = _read_as(value)
+    if how == "leaf":
+        return []
+    if not how:
+        return [f"{where} (a {_named(value)}, which the rule does not read)"]
+    if how == "record":
+        value, how = {field.name: getattr(value, field.name) for field in dataclasses.fields(value)}, "Mapping"
     found: list[str] = []
-    if isinstance(value, Mapping):
+    if how == "Mapping":
         if "completion_state" in value:
             found += [f"{where}: {fault}" for fault in result_faults(value)]
         for key, item in value.items():
-            at = f"{_at}.{key}" if _at else str(key)
-            if key == VERIFIED_FLAG and not (_card and item is False):
+            named = _read_as(key) == "leaf"  # a key's name is read only when it is a leaf; any key is read as a value
+            at = (f"{_at}.{key}" if _at else str(key)) if named else f"{_at}.<{_named(key)} key>".lstrip(".")
+            if named and key == VERIFIED_FLAG and not (_card and item is False):
                 found.append(at)
-            elif key in STATE_FIELDS and key != "completion_state":
+            elif named and key in STATE_FIELDS and key != "completion_state":
                 found.append(at)
-            found += claims(item, _card=key == "warning_card", _at=at, _depth=_depth + 1)
-    elif isinstance(value, (list, tuple, Set)):
+            found += claims(key, _at=f"{at} (the key)", _depth=_depth + 1)
+            found += claims(item, _card=named and key == "warning_card", _at=at, _depth=_depth + 1)
+    else:
         for index, item in enumerate(value):
             found += claims(item, _at=f"{_at}[{index}]", _depth=_depth + 1)
     return found
 
 
 def unclaimed(value: Any, *, where: str) -> Any:
-    """``value`` when it claims no state (:func:`claims`), else ``ValueError`` naming each place it does."""
+    """``value`` when it claims no state and holds nothing the rule does not read (:func:`claims`), else
+    ``ValueError`` naming each place."""
     found = claims(value)
     if found:
-        raise ValueError(f"{where} claims a state the bridge did not decide: {'; '.join(found)[:600]}")
+        raise ValueError(f"{where} claims a state the bridge did not decide, or holds what its claim rule does not "
+                         f"read: {'; '.join(found)[:600]}")
     return value
 
 
@@ -254,7 +294,8 @@ def settled(refused: Mapping[str, Any] | None, *, draft_card: tuple[str, str] | 
 
 __all__ = ["ADAPTATION_REFUSED", "APPROVAL_REQUIRED", "ASSURANCE_BLOCKED", "CODES", "COMPILE_BLOCKED", "DEPTH",
            "DOSSIER_BLOCKED", "EVIDENCE_CONTESTED", "EVIDENCE_NOT_RECONCILED", "EVIDENCE_REFUTED",
-           "EVIDENCE_UNDETERMINED", "EXECUTION_INCOMPLETE", "EXECUTION_NOT_APPROVED", "INPUT", "MADE_FIELDS",
-           "MODEL_MISSING", "NOT_PROMOTED", "NO_PROBE", "OBLIGATION_NOT_PLANNED", "PLAN_TAMPERED", "PREREQUISITE_UNMET",
+           "EVIDENCE_UNDETERMINED", "EXECUTION_INCOMPLETE", "EXECUTION_NOT_APPROVED", "INPUT", "LEAVES", "MADE_FIELDS",
+           "MODEL_MISSING", "NOT_PROMOTED", "NO_PROBE", "OBLIGATION_NOT_PLANNED", "OPENED", "PLAN_TAMPERED",
+           "PREREQUISITE_UNMET",
            "RESERVED", "SELECTION_INCOMPLETE", "STATES", "STATE_FIELDS", "STEP_FAILED", "VERIFIED_FLAG", "affirmed",
            "claims", "only_fields", "refusal", "result_faults", "settled", "unclaimed"]

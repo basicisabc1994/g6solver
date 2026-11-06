@@ -7,7 +7,9 @@ then check the produced bytes against frozen professional criteria. Neither
 step upgrades the result to G6's `verified` label.
 
 What runs is what was compiled: each selected model is a deep copy pinned by its digest, the plan's steps are pinned
-too, and execution refuses when either no longer matches. What an assessment credits is what this orchestrator ran: its
+too, and execution refuses when either no longer matches. A compilation's state is its selection's verdict and its
+plan's, decided in one place (:func:`compilation_gaps`) that execution and assessment both read; its ``refused`` field
+is exactly the refusal that place gives, or the compilation is not made. What an assessment credits is what this orchestrator ran: its
 own record of each run, step by step through G6's door, never a caller's run result or label.
 
 Credit binds its subject. A dossier is credited only for the evidence submitted to that assessment, and a
@@ -28,7 +30,7 @@ from .adaptation import detect_failure_modes
 from .assurance import (CandidateDossier, DomainStandard, EvidenceArtifact,
                         FrozenVerifier, InProcessAssuranceEvaluator,
                         ProfessionalAttestation, canonical_json, evidence_sha256, sha256)
-from .codes import (ASSURANCE_BLOCKED, COMPILE_BLOCKED, EXECUTION_NOT_APPROVED, NOT_PROMOTED, PLAN_TAMPERED,
+from .codes import (ASSURANCE_BLOCKED, COMPILE_BLOCKED, EXECUTION_NOT_APPROVED, NOT_PROMOTED, PLAN_TAMPERED, STATES,
                     affirmed, refusal, settled)
 from .epistemic import CrossMethodConflictGate, ScopedAssertion, assertions_sha256, checked_report, findings_state
 from .metacognition import (MethodVariant, MetacognitiveMethodSelector,
@@ -65,6 +67,19 @@ def _plan_digest(plan: MethodPlan) -> str:
     return sha256(canonical_json([asdict(step) for step in plan.steps]))
 
 
+def compilation_gaps(decision: SelectionDecision, plan: MethodPlan) -> list[str]:
+    """Why a compilation of the selection ``decision`` into ``plan`` may not run, or ``[]`` when it may: the one place
+    a compilation's state is decided. A selection blocked by its own verdict, or missing a method, blocks it; so does
+    an evidence need with no typed model. A compilation's ``refused`` is the refusal these give, and nothing else."""
+    blocked = decision.completion_state != STATES[0] or decision.missing
+    return ([f"no selected variant for {', '.join(decision.missing) or 'a mandatory method'}"] if blocked else []) + (
+        [f"no typed model for {', '.join(m['method'] for m in plan.missing)}"] if plan.missing else [])
+
+
+def _refusal_for(gaps: Sequence[str]) -> Mapping[str, Any] | None:
+    return refusal(COMPILE_BLOCKED, "; ".join(gaps)) if gaps else None
+
+
 def _claims_digest(claims: Sequence[ClaimIR]) -> str:
     """The identity of the claims a run is for (each one's id, statement, evidence needs, sources and origin)."""
     return sha256(canonical_json([{"id": c.id, "statement": c.statement, "evidence_needs": list(c.evidence_needs),
@@ -79,12 +94,23 @@ class CompiledResearch:
     standard_digest: str
     context: ProblemSignature
     selected_model_hashes: Mapping[str, str]
-    refused: Mapping[str, Any] | None  # the refusal (codes.refusal) when a mandatory method is not fully planned
+    refused: Mapping[str, Any] | None  # the refusal its selection and plan give (compilation_gaps), or None
     plan_digest: str = ""               # the steps as compiled; execution refuses when they no longer match
+
+    def __post_init__(self) -> None:
+        # Whoever makes a compilation (compile(), a replace(), a caller), its refusal is the one its selection and plan
+        # give, exactly: a blocked selection with no refusal, or a refusal of a qualified one, is not a compilation.
+        if type(self.decision) is not SelectionDecision or type(self.executable_plan) is not MethodPlan:
+            raise TypeError("a compilation holds a SelectionDecision and a MethodPlan")
+        if self.refused != snapshot(_refusal_for(compilation_gaps(self.decision, self.executable_plan))):
+            raise ValueError("a compilation is refused exactly as its selection and plan give (compilation_gaps): "
+                             "its refused field is not that refusal")
 
     @property
     def completion_state(self) -> str:
-        return settled(self.refused)["completion_state"]
+        """The compilation's state: its selection's verdict and its plan's (:func:`compilation_gaps`), never its own
+        ``refused`` field."""
+        return STATES[bool(compilation_gaps(self.decision, self.executable_plan))]
 
     def changed_since_compiled(self, plan: MethodPlan | None = None) -> str:
         """Why ``plan`` (the executable plan, or a frozen copy of it about to run) no longer matches what was compiled
@@ -108,7 +134,8 @@ class CompiledResearch:
         return "" if steps and steps == self.plan_digest else "the compiled steps no longer match their pin"
 
     def to_dict(self) -> dict[str, Any]:
-        return settled(self.refused, claim_id=self.original_claim.id,
+        return settled(_refusal_for(compilation_gaps(self.decision, self.executable_plan)),
+                       claim_id=self.original_claim.id,
                        risk_tier=self.context.risk_tier,
                        standard_digest=self.standard_digest,
                        metacognitive_selection=self.decision.to_dict(),
@@ -179,16 +206,16 @@ class CognitiveAssuranceOrchestrator:
                             evidence_needs=tuple(claim.evidence_needs), models=models,
                             source_refs=claim.source_refs, origin=claim.origin)
         plan = MethodRouter().plan([new_claim])
-        gaps = ([f"no selected variant for {', '.join(selection.missing)}"] if selection.missing else []) + (
-            [f"no typed model for {', '.join(m['method'] for m in plan.missing)}"] if plan.missing else [])
         return CompiledResearch(claim, plan, selection, standard.digest, context, model_hashes,
-                                refusal(COMPILE_BLOCKED, "; ".join(gaps)) if gaps else None, _plan_digest(plan))
+                                _refusal_for(compilation_gaps(selection, plan)), _plan_digest(plan))
 
     def execute(self, compiled: CompiledResearch, *, approved: bool = False,
                 allow: Iterable[str] = ()) -> dict[str, Any]:
         """Run the approved plan through G6's checked door; ``approved`` is ``True`` and nothing else
-        (``codes.affirmed``), and ``allow`` is the person's allow for a sensitive op."""
-        if not affirmed(approved) or self.registry is None or compiled.completion_state != "qualified-draft":
+        (``codes.affirmed``), and ``allow`` is the person's allow for a sensitive op. Only a CompiledResearch runs, and
+        only when its state (its selection's verdict, :func:`compilation_gaps`) is ``qualified-draft``."""
+        if (not affirmed(approved) or self.registry is None or type(compiled) is not CompiledResearch
+                or compiled.completion_state != "qualified-draft"):
             return refusal(EXECUTION_NOT_APPROVED, "approved, fully specified plan and connected G6 registry required")
         # Snapshot, then check, then run: the plan is a record (immutable all the way down), checked against the pins,
         # and that same plan runs (the executor checks it again against the canonical routing).
@@ -252,6 +279,10 @@ class CognitiveAssuranceOrchestrator:
         # One snapshot of everything the assessment checks and then uses, taken before any check.
         compiled, standard, run_result, verifiers, artifacts, documentation, scoped_assertions = snapshot(
             (compiled, standard, run_result, verifiers, artifacts, documentation, scoped_assertions))
+        if type(compiled) is not CompiledResearch:
+            raise ValueError("an assessment is of a CompiledResearch: its state is its selection's verdict")
+        # The compilation's state, read where it is decided (compilation_gaps), as execute reads it.
+        blocked_by = compilation_gaps(compiled.decision, compiled.executable_plan)
         if standard.digest != compiled.standard_digest:
             raise ValueError("standard changed since the plan was compiled")
         # The compiled plan is the caller's object: what it covers is read again here, not taken from compile().
@@ -285,12 +316,13 @@ class CognitiveAssuranceOrchestrator:
         # evaluated, and the standard now, are the one compiled.
         same_standard = (dossier.payload.get("standard_digest") == compiled.standard_digest
                          and standard.digest == compiled.standard_digest)
-        passed = (backend_ok and not uncovered and epistemic_ok and same_standard and not dossier_uncredited
-                  and dossier.payload["completion_state"] == "qualified-draft")
+        passed = (not blocked_by and backend_ok and not uncovered and epistemic_ok and same_standard
+                  and not dossier_uncredited and dossier.payload["completion_state"] == "qualified-draft")
         warning = "Independent external custody and G6 door replay are NOT established here."
         # The state is completion_state alone (never a second state field); the card says why, with a stable code.
-        why =(([f"the compiled plan has no step for the standard's mandatory {', '.join(uncovered)}"] if uncovered
-                else [])
+        why =(([f"the compilation is blocked: {'; '.join(blocked_by)}"] if blocked_by else [])
+               + ([f"the compiled plan has no step for the standard's mandatory {', '.join(uncovered)}"] if uncovered
+                  else [])
                + ([] if same_standard else ["the standard evaluated is not the standard compiled"])
                + ([dossier_uncredited] if dossier_uncredited else [])
                + (["no run of this compiled plan by this orchestrator matches the run result"] if executed is None
