@@ -102,15 +102,17 @@ LOOP_LIMITS = ("- This loop has been measured on seven training bugs only.",
 
 
 #: Why the evidence issuer does not count a requirement yet, by the first code its gap names (``g6.evidence``'s words).
-NOT_COUNTED = (("control_after_receipt", "its negative control, the run at the base commit, came after the pass"),
+#: A later failure or unknown result is named before an earlier pass that came before its control.
+NOT_COUNTED = (("advisory_check_failed", "a run of its check failed, and nothing showed the check passes on code "
+                                         "known to be right, so the failure is a caveat, not a refutation"),
+               ("check_result_unknown", "a run of its check gave no result"),
                ("self_authored", "the patch's author wrote the check"),
                ("frozen_after_artifact", "the check is new with the patch"),
                ("evidence_kind", "no check of a kind that can count ran"),
                ("no_negative_control", "no run showed the check can fail"),
                ("not_in_ledger", "a record is not in G6's ledger"),
                ("receipt_for_other_bytes", "a result was taken on other bytes"),
-               ("advisory_check_failed", "a check failed that was not first shown able to fail"),
-               ("check_result_unknown", "a check gave no result"))
+               ("control_after_receipt", "its negative control, the run at the base commit, came after the pass"))
 
 
 def _issuer(assessment: dict, requirement: object, form: str = "; {}") -> str:
@@ -131,6 +133,8 @@ def _issuer(assessment: dict, requirement: object, form: str = "; {}") -> str:
         said = "conflicting evidence, one check for it and one against"
     elif found.get("refute"):
         said = "refuted by " + ", ".join(code(c, 40) for c in found.get("refuted_by") or [])
+    elif found.get("not_counted"):   # G6's own words for what the review ran, from requirement_evidence
+        said = "not counted: " + str(found["not_counted"])
     elif not kinds and (found.get("kinds") or {}):   # each check was refused before the issuer saw it
         said = (f"not counted: the evidence mapping refused each of its checks for a part it lacks "
                 f"({code('assessment.requirement_evidence.refused')})")

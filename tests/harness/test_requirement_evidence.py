@@ -105,10 +105,11 @@ def test_each_requirement_carries_the_issuer_s_statement_beside_the_review_s_own
     assert evidence["authority"] == "g6.evidence.certificate" and evidence["refused"] == []
     for found in evidence["requirements"]:
         assert found["kinds"] == {ADD if found["requirement"] == "R1" else NEGATIVE: "independent_executable"}
-        # the control (the run at the base commit) ran after the pass it would back: the issuer does not count it yet
-        assert found["checked"] is False and found["support"] is False and "control_after_receipt" in found["gap"]
+        # the check ran again on the patch after its control (the run at the base commit): the issuer counts it
+        assert found["checked"] is True and found["support"] is True and found["gap"] == ""
     body = evidence["certificate"]
-    assert body["state"] == "qualified-draft" and body["artifact_sha"] == assessment["scope"]["artifact_digest"]
+    assert body["state"] == "verified" and body["artifact_sha"] == assessment["scope"]["artifact_digest"]
+    assert got["completion_state"] == "qualified-draft"   # the issuer's state is a state; the review's label stands
     # the certificate is the issuer's: decided again from what it records, only the bytes (not at hand) differ
     assert verify(body, b"") == ["the artifact bytes are not the ones the certificate was issued for"]
 
@@ -176,8 +177,7 @@ def test_the_report_shows_each_requirement_s_evidence_kind_and_the_issuer_s_stat
     shown = report.split("## Demonstrated on the stated checks", 1)[1].split("##", 1)[0]
     for ident in ("R1", "R2"):
         line = next(line for line in _lines(shown) if f"`{ident}`" in line)
-        assert "`independent_executable`" in line and "the evidence issuer: not counted yet" in line, line
-        assert "came after the pass" in line, line
+        assert "`independent_executable`" in line and "the evidence issuer: checked" in line, line
     assert len(_lines(report)) <= patch_report.MAX_LINES + 2
     words = set(re.findall(r"[a-z]+", report.lower()))
     assert not words & set(BANNED), words & set(BANNED)

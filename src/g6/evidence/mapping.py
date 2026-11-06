@@ -152,9 +152,12 @@ MAPPING: dict[str, Row] = {row.kind: row for row in (
         "the review's artifact digest of the working tree", "none: the check is the repository's test code",
         "the SHA-256 of the review's assessed requirements", "the pytest node id and the SHA-256 of its file",
         "the SHA-256 of the review's environment record",
-        "for a requirement that asks for new behaviour, the check failing on the base commit's code, which G6 runs",
+        "for a requirement that asks for new behaviour, the check failing on the base commit's code, which G6 runs; for "
+        "one that keeps behaviour, none in a review (the base commit is its known-good reference, not a control), so "
+        "it is not counted",
         "the repository's test when its file exists unchanged at the base commit; a file the patch adds or changes "
-        "is the patch author's, so a partial falsifier", _ORDER + "; the base-commit run is recorded when it ran",
+        "is the patch author's, so a partial falsifier", _ORDER + "; the base-commit run is recorded when it ran, and "
+        "each check it failed runs again on the patch after it, the receipt its control came before",
         _BELNAP),
     Row("derived", "patch_review", "", "the review's artifact digest", "none", "none: it names no requirement",
         "the test file", "the review's environment record", "the run at the base commit, for the outcome only",

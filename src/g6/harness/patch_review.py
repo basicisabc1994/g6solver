@@ -105,6 +105,11 @@ is a ``check_error`` (a mutant: not run), never ``not_refuted`` or a counterexam
 Every reply carries ``assessment.completion``, built from what ran; with no proposed checks, no template instance and
 no search setting, every decided field is as before.
 
+Last, each stated check of a requirement for new behaviour that passed on the patch and failed at the base commit runs
+once more on the patch (``_run_again``), so the evidence issuer has a pass that its control, the run at the base commit,
+came before (``assessment.requirement_evidence``). That run decides no field; it and its test receipt are recorded
+there, never in ``scope.checks_run`` or ``scope.receipts``.
+
 Every in-place run asks for a test receipt (``repo_tests.run(..., receipt=True)``): the scope lists each id, and the
 coding gate, which this review builds bound to its own snapshot digest (never a digest from the request), counts a
 run as G6-observed only when its store holds that receipt for that digest (status ``matched``).
@@ -1113,6 +1118,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             unknowns.append(f"the proposer's {found['stage']} stage failed, so what it would have proposed is "
                             f"missing: {found['reason']}"[:400])
 
+    # G6 0.3: after the run at the base commit (each check's control), the checks it killed run again on the patch, so
+    # the issuer has a receipt its control came before; last, so it takes no time from anything that decides a field
+    again = _run_again(root, change, stated, norm, verdicts, runs, deadline, artifact, roots)
     final = repo_tests.snapshot(root)
     if repo_tests._moved(before, final):   # review I2: a folder G6 did not hash on one side is not a change
         reason("integrity", "repository_changed_during_review", "the working tree changed while G6 reviewed it")
@@ -1190,7 +1198,34 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                   counts={"template_instances": len(instances), "proposed_checks": len(proposed),
                           "model_calls": proposals.calls if proposals else 0}, roots=roots,
                   stopped=stopped, proposer=proposals,
-                  issuer_inputs={"check_sha": _check_shas(Path(root), evaluated), "written": authored})
+                  issuer_inputs={"check_sha": _check_shas(Path(root), evaluated), "written": authored, "again": again})
+
+
+def _run_again(root, change, stated, norm, verdicts, runs, deadline, artifact, roots=()) -> dict:
+    """The stated checks of a requirement for new behaviour that passed on the patch and failed in the run at the base
+    commit, run again on the patch after that run (G6 0.3): the issuer counts a pass only once its control, the run at
+    the base commit, came first, and the stated checks' first run came before it. This run is recorded in
+    ``assessment.requirement_evidence`` only, never in ``scope.checks_run`` or the envelope's evidence, so it changes no
+    decided field; G6's own failure to make it, or a result it cannot read, says why and counts nothing. {} when no
+    check qualifies (the run at the base commit did not happen, or killed no check)."""
+    at_base = next((run.get("outcomes") or {} for run in runs if run.get("check") == AT_BASE), {})
+    ids = [check for check in dict.fromkeys(norm[raw] for req in stated if req.kind != "preserve" for raw in req.checks)
+           if verdicts.get(check, {}).get("verdict") == "passed" and at_base.get(check) == "failed"]
+    if not ids:
+        return {}
+    if _left(deadline) < 1:
+        return {"checks": ids, "why": "the time budget was spent before they could run again"}
+    try:
+        ran = _confined(_execute(root, ids, timeout_s=max(1, _left(deadline)), **_rooted(roots)))
+    except Exception as exc:   # G6's own work: this run decides no field, so it never fails the review
+        return {"checks": ids, "why": f"G6 could not run them again ({type(exc).__name__})"}
+    if _loaded_elsewhere(change, ran) or (ran.get("source_before") and ran["source_before"] != artifact):
+        return {"checks": ids, "why": "the run again is not read: it loaded code from outside the tree, or began on "
+                                      "another working tree"}
+    if ran.get("verdict") not in repo_tests.RAN:
+        return {"checks": ids, "why": f"the run again gave no result ({ran.get('verdict')})"}
+    return {"checks": ids, "verdicts": {check: found["verdict"] for check, found in _verdicts(ids, ran).items()},
+            "receipt": ran.get("receipt", ""), "seconds": ran.get("seconds", 0.0)}
 
 
 def _check_shas(root: Path, evaluated: list[dict]) -> dict[str, str]:
