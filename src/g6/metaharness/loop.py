@@ -94,9 +94,11 @@ from g6.self_maintenance.envelope import (
     Stop,
     ask_to_stop,
     beat,
+    end_start,
     note_refusal,
     refused_requests,
     stop_in_force,
+    writable,
 )
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
 from g6.self_maintenance.usage import limit_ends, read_stops, refused_by, telling_stops
@@ -227,11 +229,12 @@ class _AtLimit(BaseException):
 
 class _Halted(BaseException):
     """A stop, met at a model call, on its way out of the tick as ``_AtLimit`` is, and for the same reason: nothing from the
-    run it cut off is written, so an evaluation it cut off is not one of the split's five."""
+    run it cut off is written, so an evaluation it cut off is not one of the split's five. ``reading``: this folder's
+    reading that halted it (``stop_in_force``), or ``None`` for a stop of another kind."""
 
-    def __init__(self, code: str, said: str) -> None:
+    def __init__(self, code: str, said: str, reading: Stop | None = None) -> None:
         super().__init__(said)
-        self.code, self.said = code, said
+        self.code, self.said, self.reading = code, said, reading
 
 
 class _Refused(BaseException):
@@ -670,16 +673,10 @@ def _profile_space(name: str, run: Execution) -> str:
                                       for k, step in sorted(run.pipeline_steps.items())}})
 
 
-def _writable(value: Any) -> Any:
-    """``value`` with every string, keys too, made writable as UTF-8: what cannot be (a lone surrogate) is spelled out with
-    a backslash, so a row that repeats a domain's labels or an error's words can always be written."""
-    if isinstance(value, str):
-        return value.encode("utf-8", "backslashreplace").decode("utf-8")
-    if isinstance(value, Mapping):
-        return {_writable(k): _writable(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_writable(v) for v in value]
-    return value
+#: ``value`` with every string, keys too, made writable as UTF-8: the envelope's one rule for text a row repeats
+#: (``g6.self_maintenance.envelope.writable``), so a row that repeats a domain's labels or an error's words can always be
+#: written.
+_writable = writable
 
 
 def _judge_digest(judge: Judge | None, roots: Sequence[Path] | None = None) -> str:
@@ -902,13 +899,15 @@ def _differs(now: Mapping[str, str], breached: bool, recorded: Mapping[str, str]
 def _reloaded(loop: ShadowLoop) -> dict[str, Any] | None:
     """The tick's writer read again, or the reply when it cannot be: whatever the reload fails with, the stop reading says
     what it is, a stop in force (``STOP_UNREADABLE``) when the records do not read, and records that read but do not follow
-    from what this handle held, ``LedgerError``, which ``_exclusive`` answers as records that cannot be trusted."""
+    from what this handle held, ``LedgerError``, which ``_exclusive`` answers as records that cannot be trusted. That stop,
+    the tick's guard, ends the start durably (``end_start``), as every ending on a stop does."""
     try:
         loop.log.reload()
     except Exception as exc:  # noqa: BLE001 - any failure of the reload is the reading's to say, never an escape
         halted = stop_in_force(loop.root)
         if halted.code != STOP_UNREADABLE:
             raise LedgerError(f"{type(exc).__name__}: {exc}") from exc
+        end_start(loop.root, halted.code, halted.reason, halted)
         reply = _blocked(STOP_UNREADABLE, halted.reason[:400], "A person makes the loop's records readable; a new "
                          "g6_improve_start lets it run again.")
         loop._beat(reply["completion_state"], STOP_UNREADABLE, reason=reply["message"])
@@ -1047,7 +1046,7 @@ class ShadowLoop:
         """What stops a tick between two requests: this folder's stop, or G6's own."""
         found = self._stop()
         if found:
-            return _Halted(found.code, found.reason)
+            return _Halted(found.code, found.reason, found)
         engaged = stop.engaged()
         return _Halted(stop.STOPPED, f"G6 is stopped: {engaged}") if engaged is not None else None
 
@@ -1153,9 +1152,13 @@ class ShadowLoop:
         return None
 
     def _refused(self) -> dict[str, Any] | None:
-        """Why this tick is not a cycle. Each is a wait or a refusal: none spends, and none is a failed cycle."""
+        """Why this tick is not a cycle. Each is a wait or a refusal: none spends, and none is a failed cycle. This folder's
+        stop, the tick's guard, ends the start it was run on durably (``end_start``), as its cut-off and the runner's ending
+        do."""
         halted = self._halted()
         if halted is not None:
+            if halted.code in FOLDER_STOPS:
+                end_start(self.root, halted.code, halted.said, halted.reading)
             return _blocked(halted.code, halted.said, "Remove the STOP file to resume." if halted.code == STOPPED else
                             "A person makes the stop's files readable; a new g6_improve_start lets it run again."
                             if halted.code == STOP_UNREADABLE else "A person frees the log, then starts the loop again with "
@@ -1433,15 +1436,17 @@ class ShadowLoop:
 
     def _cut_off(self, halted: _Halted, charged: float) -> dict[str, Any]:
         """A stop met at a model call: say what it cut off, and note this folder's stop in the records, which this tick
-        holds, so no one else can. The file is what stops the loop, so a note that cannot be written changes nothing."""
+        holds, so no one else can, and through the stop's own writer beside it (``end_start``), so the start it cut off
+        stays ended whatever became of that note or of a file that could not be read."""
         dropped = (", and the held-out evaluation under way was dropped, so none of the split's five was spent"
                    if self.evaluating else "")
         if halted.code in FOLDER_STOPS:
             try:
                 self.log.stop(halted.said, at=self._now().isoformat(),
                               cut_off={"charged": charged, "evaluation": self.evaluating})
-            except Exception:  # noqa: BLE001 - a note that cannot be written, for any reason, changes nothing
+            except Exception:  # noqa: BLE001 - a note that cannot be written, for any reason: end_start covers what it must
                 pass
+            end_start(self.root, halted.code, halted.said, halted.reading)
         return _blocked(halted.code, f"a stop ended this tick at a model call after {charged:g} requests{dropped}: {halted.said}",
                         "A new g6_improve_start lets it run again." if halted.code in FOLDER_STOPS else
                         "Whoever engaged the stop releases it.", charged=charged)

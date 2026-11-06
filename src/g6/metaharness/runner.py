@@ -79,9 +79,11 @@ from g6.self_maintenance.envelope import (
     Stop,
     beat,
     beat_holding,
+    end_start,
     record_stop,
     runner_lock,
     stop_in_force,
+    writable,
 )
 from g6.self_maintenance.pacing import SETTINGS_FILE, read_settings, windows_from
 from g6.self_maintenance.usage import AccountReader
@@ -203,7 +205,8 @@ class Runner:
         """The run's end on the reading that ended it, through the one ending every exit takes (``_ending``): the stop in
         the records, the last page and the heartbeat, all with that reading's code and reason, never a tick's before it."""
         _ending(self.loop.root, halted.code, halted.reason, now, status=0, state="stopped", lock=HOLDS,  # a Runner runs only
-                fields=lambda: self._fields(now), page=lambda: self._pages(now, halted.reason))   # on a lock held (``run``)
+                fields=lambda: self._fields(now), page=lambda: self._pages(now, halted.reason),   # on a lock held (``run``)
+                reading=halted)
 
     def _fields(self, now: datetime) -> dict[str, Any]:
         """What a heartbeat of this run says beside its state and code."""
@@ -396,7 +399,10 @@ def _ending(root: Path, code: str, why: str, at: datetime, *, lock: str, status:
             reading: Stop | None = None) -> int:
     """The one way a run ends, whatever ended it: a stop at the preflight, the gate, a stop a pass read, this process's own
     cannot-record stop, a folder that cannot be opened or held, or anything that raised before the hand-off to ``Runner``.
-    A stop is noted in the records (``record_stop``, which never raises; what it could not note, the heartbeat says). Then
+    A stop is noted in the records (``record_stop``, which never raises; what it could not note, the heartbeat says), and
+    written through the stop's own writer beside that note (``end_start``, which never raises either and needs no tick
+    lock), so the start it ended stays ended whatever became of the note or of a file that could not be read; ``reading``
+    is what that decides on, and what it could not write the heartbeat says (``stop_not_written``). Then
     the day's page, a running loop's own (``page``) or else the one ``reading`` gives of the folder, or, when that cannot be
     made or written, however it fails, a page that says only how the run ended and its code (``_plain_page``), never the
     old page left standing; what cannot be written even so, the heartbeat says (``page_not_written``). Only then the
@@ -411,6 +417,9 @@ def _ending(root: Path, code: str, why: str, at: datetime, *, lock: str, status:
         unnoted = record_stop(root, why, at=at.isoformat())
         if unnoted:
             said["not_noted"] = unnoted
+        unwritten = end_start(root, code, why, reading)
+        if unwritten:
+            said["stop_not_written"] = unwritten
     if lock in WRITES:
         try:
             (page or (lambda: _folder_page(root, reading, at, why)))()
@@ -428,7 +437,7 @@ def _ending(root: Path, code: str, why: str, at: datetime, *, lock: str, status:
         except Exception:  # noqa: BLE001 - a heartbeat that cannot be written leaves the last one: the run still ends
             pass
     if status:
-        print(why, file=sys.stderr)
+        print(writable(why), file=sys.stderr)           # as every write on a stop path makes bytes of text (``utf8``)
     return status
 
 
@@ -496,7 +505,7 @@ def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable
                 if exc.code == HELD_BY_ANOTHER:  # the live runner owns the page and the heartbeat: this one writes neither
                     code, why, status, _ = (_stopped(reading) if reading else (
                         RUNNER_ALIVE, "A runner is already alive on this folder; this one did nothing.", 1, ""))
-                    return _ending(root, code, why, now(), status=status, lock=NOT_HELD)
+                    return _ending(root, code, why, now(), status=status, lock=NOT_HELD, reading=reading)
                 return _ending(root, CANNOT_OPEN, f"The runner's lock could not be taken: {exc}"[:500], now(),
                                lock=UNTAKEN, reading=reading)
             taken = True
