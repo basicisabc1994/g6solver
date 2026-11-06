@@ -1483,15 +1483,19 @@ def claude_args(model: str = c.MODEL, cap_usd: float = c.RUN_CAP_USD) -> list[st
 
 def read_stream(lines: Iterable[bytes], tally: c.Tally, *, deadline: float, write: Callable[[str], None],
                 clock: Callable[[], float] = time.monotonic, stop_usd: float = c.RUN_STOP_USD) -> str:
-    """Feed the stream to ``tally`` until it ends ("") or a cap is reached ("timeout", "cap_turns", "cap_cost")."""
+    """Feed the stream to ``tally`` until it ends ("") or a cap is reached ("timeout", "cap_turns", "cap_cost"). A stream that could
+    not be read to its end ends "error": its reader posts its own failure, never the end's sentinel (study follow-up review 2,
+    finding 6)."""
     q: queue.Queue = queue.Queue()
 
     def pump() -> None:
         try:
             for line in lines:
                 q.put(line)
-        finally:
-            q.put(None)
+        except BaseException as exc:        # a reader that fails is a failure, never the stream's end
+            q.put(exc)
+            return
+        q.put(None)
 
     threading.Thread(target=pump, daemon=True).start()
     while True:
@@ -1504,6 +1508,8 @@ def read_stream(lines: Iterable[bytes], tally: c.Tally, *, deadline: float, writ
             continue
         if line is None:
             return ""
+        if isinstance(line, BaseException):
+            return "error"
         text = line.decode("utf-8", errors="replace").rstrip("\r\n")
         write(text)
         try:
@@ -1516,6 +1522,24 @@ def read_stream(lines: Iterable[bytes], tally: c.Tally, *, deadline: float, writ
             return "cap_turns"
         if tally.cost_usd > stop_usd:
             return "cap_cost"
+
+
+def read_all(stream: Any, into: list) -> None:
+    """A background reader of a process's other output (its stderr), read to its end into ``into``: what it read, or the failure
+    that stopped it, kept as the reading's own end, never taken for an empty output (``unread``; study follow-up review 2, finding
+    6). A process with no such pipe has nothing to read."""
+    try:
+        into.append(stream.read() or b"" if stream is not None else b"")
+    except BaseException as exc:            # noqa: BLE001 - kept, and read by ``unread``
+        into.append(exc)
+
+
+def unread(drain: threading.Thread, read: list, *, seconds: float = 30.0) -> str:
+    """How a background reader (``read_all``) ended, once it is waited for: "error" when it did not read its output to its end
+    (it failed, or it still reads once ``seconds`` are over), else "". A session's ending is folded with it (``run_ending``), so a
+    session whose output was not read is never clean."""
+    drain.join(timeout=seconds)
+    return "error" if drain.is_alive() or any(isinstance(x, BaseException) for x in read) else ""
 
 
 def status_of(stop: str, tally: Any) -> str:
@@ -2166,7 +2190,7 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         proc = tree.proc
         with (dog.watching(end) if dog is not None else contextlib.nullcontext()):    # K3: the run's watchdog ends it too
-            drain = threading.Thread(target=lambda: errors.append(proc.stderr.read() or b""), daemon=True)
+            drain = threading.Thread(target=read_all, args=(proc.stderr, errors), daemon=True)
             drain.start()
             stream = open(run.fresh_path(name), "w", encoding="utf-8", newline="\n")
             until = time.monotonic() + seconds
@@ -2186,14 +2210,16 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
             code = proc.wait(timeout=60)
         if writer is not None:
             writer.join(timeout=30)
-    drain.join(timeout=30)
-    stem, said = Path(name).stem, b"".join(errors).decode("utf-8", errors="replace")
+    lost = unread(drain, errors)         # its stderr not read to its end: no clean session (study follow-up review 2, finding 6)
+    stem, said = Path(name).stem, b"".join(x for x in errors if isinstance(x, bytes)).decode("utf-8", errors="replace")
     run.write(c.NDJSON["stderr"].format(stem=stem), said)
     run.write_json(f"{stem}_exit.json", {"exit_code": code, "ended_by_g6": by_g6, "not_ended": left})
     facts = host_facts(run.path / name, ctx.model)
     limit = facts["limit"] if facts["limit"] is not None else next((x for x in map(limit_of, c.stream_lines(said)) if x is not None),
                                                                    None)
     ended, why = host_ending(stop, facts, code=code, limit=limit, by_g6=by_g6, left=left)    # its own stop, exit and result
+    why = why if ended or not lost else "its stderr could not be read to its end"
+    ended = run_ending(ended, lost)
     if ended in ("refused", "limited"):
         run.write(f"{stem}_{'refused' if ended == 'refused' else 'limit'}.txt", why)
     if ended and not c.on_patch({"status": ended}):    # a session that did not end cleanly ends its run: the run's ending, before
@@ -3371,8 +3397,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             proc = ctx.docker.popen(*docker_args, env=ctx.client_env(key))
             record["agent_started"] = True
             errors: list[bytes] = []
-            drain = threading.Thread(target=lambda: errors.append(proc.stderr.read() or b"") if proc.stderr else None,
-                                     daemon=True)
+            drain = threading.Thread(target=read_all, args=(proc.stderr, errors), daemon=True)
             drain.start()
             stream = open(run.fresh_path(c.NDJSON["stream"]), "w", encoding="utf-8", newline="\n")
             ended = "error"          # a stream that could not be read is no clean end
@@ -3389,12 +3414,12 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                     ctx.docker.sh(agent, KILL_AGENT, user="root", timeout=60)
                     proc.kill()
                 code = proc.wait(timeout=60)
-            ended = session_ending(ended, code, tally.result, ended_by_g6=by_g6)     # every arm's first session, by the one rule
+            ended = run_ending(session_ending(ended, code, tally.result, ended_by_g6=by_g6),   # every arm's first session, by the
+                               unread(drain, errors))      # one rule, and its stderr read to its end (follow-up review 2, 6)
             first_code = None if ended else 0     # its exit as that rule read it, as on the host
             if dog is not None:
                 dog.end("first session")
-            drain.join(timeout=30)
-            run.write("stderr.txt", b"".join(errors).decode("utf-8", errors="replace"))
+            run.write("stderr.txt", b"".join(x for x in errors if isinstance(x, bytes)).decode("utf-8", errors="replace"))
             if critic_led and not dry:   # a K arm's first session ends by the one rule each session of its loop ends by
                 got = step_ending(ended, tally.result, first_code)
                 ended = "" if got == "finished" else got
