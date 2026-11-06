@@ -142,6 +142,7 @@ NDJSON = {
     "numbered_stream": "{tag}_stream_{n}.jsonl",    # a repair's session, or a scout's or a critic's second
     "stderr": "{stem}_stderr.txt",                  # a host session's standard error, beside its stream (``run.host_session``)
     "cases": "cases.jsonl",                         # the reviewer cases ``export_reviewer_cases`` writes
+    "report": "we-report.jsonl",                    # pytest's own report, by the cohort controls' plugin (``run.REPORT_PLUGIN``)
 }
 
 

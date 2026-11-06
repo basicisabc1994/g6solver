@@ -1211,7 +1211,7 @@ JUNIT_IN = "/tmp/we-junit.xml"
 #: and one it cannot write is left out.
 PLUGIN_DIR = "/tmp/we-plugin"
 PLUGIN_AT = f"{PLUGIN_DIR}/we_report.py"
-REPORT_IN = "/tmp/we-report.jsonl"
+REPORT_IN = f"/tmp/{c.NDJSON['report']}"
 REPORT_PLUGIN = '''"""pytest's own reports, as JSON lines in $WE_REPORT (the replay cohort's oracle runs)."""
 import json
 import os
@@ -1263,12 +1263,15 @@ def pytest_script(modules: Sequence[str], timeout_s: int = 1800, *, report: bool
 
 
 def read_report(data: bytes) -> dict[str, Any] | None:
-    """``REPORT_PLUGIN``'s lines: each test's node id by its junit key (``nodes``) and each failed collection's node id
-    (``collect_errors``); None when any line is not one the plugin writes, so nothing is read from a torn or foreign report."""
+    """``REPORT_PLUGIN``'s lines (its file is ``wecommon.NDJSON``'s "report"), framed as every such file is (``stream_lines``: at
+    "\\n" alone, the end after the last one no line): each test's node id by its junit key (``nodes``) and each failed
+    collection's node id (``collect_errors``); None when any line is not one the plugin writes, so nothing is read from a torn
+    or foreign report."""
     nodes: dict[str, str] = {}
     errors: list[str] = []
     try:
-        for line in data.decode("utf-8").splitlines():
+        lines = c.stream_lines(data.decode("utf-8"))
+        for line in lines[:-1] if lines[-1] == "" else lines:
             entry = json.loads(line)
             if set(entry) == {"collect_error"} and isinstance(entry["collect_error"], str):
                 errors.append(entry["collect_error"])
@@ -3541,7 +3544,7 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
             copy_out(ctx.docker, name, "/tmp/we-pytest.txt", folder.path / f"{label}-pytest.txt")
         with tempfile.TemporaryDirectory(prefix="g6we-") as tmp:
             if report:
-                own = Path(tmp) / "report.jsonl"
+                own = Path(tmp) / c.NDJSON["report"]
                 got = read_report(own.read_bytes()) if copy_out(ctx.docker, name, REPORT_IN, own) and own.is_file() else None
                 body.update(got or {"nodes": None, "collect_errors": None})
             junit = Path(tmp) / "junit.xml"

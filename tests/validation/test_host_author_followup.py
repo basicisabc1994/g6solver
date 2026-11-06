@@ -174,11 +174,21 @@ def _observed(tmp_path, capsys, monkeypatch):
     return observe.observe_run(tmp_path)["tool_use"]["tool_search"], 2
 
 
+def _report(tmp_path, capsys, monkeypatch):
+    """pytest's own report as the cohort controls' plugin writes it (``run.REPORT_PLUGIN``), copied out of the check container and
+    read by ``read_report`` (replay cohort, repair 2): each failed collection and each test's node id by its junit key."""
+    rows = [{"collect_error": f"tests/test_{HOSTILE}.py"}, {"node": f"tests/test_a.py::test_{HOSTILE}", "junit": f"tests.test_a::{HOSTILE}"},
+            {"node": "tests/test_a.py::test_b", "junit": None}, {"collect_error": "tests/test_c.py"}]
+    got = we.read_report(_ndjson(tmp_path / c.NDJSON["report"], rows).read_bytes())
+    return got, {"nodes": {f"tests.test_a::{HOSTILE}": f"tests/test_a.py::test_{HOSTILE}"},
+                 "collect_errors": [f"tests/test_{HOSTILE}.py", "tests/test_c.py"]}
+
+
 #: Each reader of a file ``wecommon.NDJSON`` names, by (module, function), with its case above.
 READERS = {("wecommon.py", "Archive.rows"): _index_rows, ("export_reviewer_cases.py", "_checks"): _index_checks,
            ("distill.py", "main_row"): _ledger, ("run.py", "egress"): _egress, ("run.py", "host_facts"): _host_facts,
            ("run.py", "_run_task"): _host_stream, ("run.py", "host_session"): _host_stderr, ("run.py", "progress"): _progress,
-           ("run.py", "main"): _rounds_command, ("observe.py", "observe_run"): _observed}
+           ("run.py", "main"): _rounds_command, ("observe.py", "observe_run"): _observed, ("run.py", "read_report"): _report}
 
 
 @pytest.mark.parametrize("reader", sorted(READERS), ids=lambda r: f"{r[0]}:{r[1]}")
@@ -228,6 +238,10 @@ NDJSON_USES = {
     ("run.py", "modelcheck", "egress"): [("egress", HANDED)],
     ("run.py", "progress", "stream"): [(None, "the run's stream, read with read_stream when it is a file, " + HANDED)],
     ("run.py", "main", "stream"): [("read_stream", "read")],
+    ("run.py", "<module>", "report"): [(None, "where the cohort controls' report plugin writes pytest's own report, in the check "
+                                              "container (WE_REPORT)")],
+    ("run.py", "_oracle_run", "report"): [(None, "pytest's own report, copied out of the check container here and read by "
+                                                 "read_report with stream_lines, " + HANDED)],
 }
 
 
