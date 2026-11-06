@@ -52,8 +52,10 @@ from g6.self_maintenance.envelope import (
     CycleLog,
     Stop,
     ask_to_stop,
+    end_start,
     file_digest,
     flush_journal,
+    fresh_line,
     heartbeat,
     record_stop,
     runner_alive,
@@ -329,10 +331,12 @@ def _watch(root: Path, process: Any, since: datetime) -> dict:
 
 
 def _appended_onto(landed: Stop, approved: Stop) -> bool:
-    """Whether the records as they stand now are the approved reading's bytes, exactly, and one row after them."""
-    added = landed.records[len(approved.records):]
-    return ("records" not in landed.unread and landed.records.startswith(approved.records)
-            and added.endswith(b"\n") and added.count(b"\n") == 1)
+    """Whether the records as they stand now are the approved reading's bytes, exactly, and one row after them, started on
+    a fresh line by the one rule its writer holds to (``fresh_line``)."""
+    added, ending = landed.records[len(approved.records):], fresh_line(approved.records)
+    row = added[len(ending):]
+    return ("records" not in landed.unread and landed.records.startswith(approved.records) and added.startswith(ending)
+            and row.endswith(b"\n") and row.count(b"\n") == 1)
 
 
 def _revoke(root: Path, writer: CycleLog) -> None:
@@ -404,6 +408,7 @@ def start(root: Path, who: str, shown: str | None = None) -> dict:
         halted = stop_in_force(root)
         if halted:
             record_stop(root, halted.reason, at=datetime.now().astimezone().isoformat())
+            end_start(root, halted.code, halted.reason, halted)      # a stop a repair can lift, written beside the note
             return _refusal(root, halted, START_STOPPED, f"a stop arrived while the start was being recorded, so nothing "
                             f"was started: {halted.reason}"[:500], NOT_ASKED, running=False, folder=str(root))
         spawned = datetime.now().astimezone()              # before the spawn: a runner can beat before this process looks
@@ -412,25 +417,38 @@ def start(root: Path, who: str, shown: str | None = None) -> dict:
         return _failed(root, exc)
 
 
-def stop(folder: str, reason: str = "") -> dict:
-    """Write the stop and say whether the runner has gone."""
-    root = _root(folder)
-    if not _is_a_loop(root):
-        return _not_a_loop(root)
+def _looped(root: Path) -> bool:
+    """Whether a stop is written in ``root``: a loop's folder (``_is_a_loop``), or one where that cannot be told, however the
+    check fails, since a check that cannot be made never keeps a stop from being written."""
     try:
+        return _is_a_loop(root)
+    except Exception:  # noqa: BLE001 - a folder that cannot be checked may be a loop's: the stop is written there
+        return True
+
+
+def stop(folder: str, reason: str = "") -> dict:
+    """Write the stop and say whether the runner has gone. Every statement that touches a file runs inside its one handler,
+    as in the dialog and the start, and a check that cannot be made never keeps the stop from being written: a folder whose
+    check fails is taken for a loop's (``_looped``). A folder that cannot be found, or a stop that cannot be written, says
+    so (``STOP_FAILED``)."""
+    root = Path(folder)                     # the folder as given, for a reply before it is found
+    try:
+        root = _root(folder)
+        if not _looped(root):
+            return _not_a_loop(root)
         why = ask_to_stop(root, reason)
+        record_stop(root, why, at=datetime.now().astimezone().isoformat())
+        running, unread = _running(root)
+        said = (f"the STOP file is in place, and whether a runner is alive cannot be read ({unread}): one alive ends once it "
+                "sees the STOP file" if running is None else
+                "the runner has been asked to stop and is still alive: it ends once it sees the STOP file, at its next model "
+                "call, or within a minute while it waits" if running else "the STOP file is in place and no runner is alive")
+        return _envelope("qualified-draft", STOP_ASKED, said, running=running, stopped=running is False, stop=why,
+                         folder=str(root), next_action="g6_improve_start starts it again, and lifts the stop once the "
+                         "person agrees." if running is False else "g6_improve_status says when it has gone.")
     except Exception as exc:  # noqa: BLE001 - a stop that could not be written says so, whatever stopped it
         return _blocked(STOP_FAILED, f"the stop could not be written: {type(exc).__name__}: {exc}"[:400],
                         running=_running(root)[0], folder=str(root))
-    record_stop(root, why, at=datetime.now().astimezone().isoformat())
-    running, unread = _running(root)
-    said = (f"the STOP file is in place, and whether a runner is alive cannot be read ({unread}): one alive ends once it "
-            "sees the STOP file" if running is None else
-            "the runner has been asked to stop and is still alive: it ends once it sees the STOP file, at its next model "
-            "call, or within a minute while it waits" if running else "the STOP file is in place and no runner is alive")
-    return _envelope("qualified-draft", STOP_ASKED, said, running=running, stopped=running is False, stop=why,
-                     folder=str(root), next_action="g6_improve_start starts it again, and lifts the stop once the person "
-                     "agrees." if running is False else "g6_improve_status says when it has gone.")
 
 
 def _running(root: Path) -> tuple[bool | None, str]:

@@ -913,10 +913,10 @@ def test_a_crash_right_after_the_append_leaves_a_start_only_on_the_approved_byte
 #: Every stop path: no handler in these may name a list narrower than ``Exception``, unless a try around it does.
 STOP_PATHS = {"g6/self_maintenance/envelope.py": ["_absent", "_read_file", "_parsed", "_start_of", "stop_in_force",
                                                   "record_stop", "ask_to_stop", "stop_seen", "stop_reason", "stop_standing",
-                                                  "stop_to_lift", "stops_asked"],
-              "g6/metaharness/loop.py": ["_reloaded", "_stop", "_halted", "_cut_off", "lost_cycle"],
+                                                  "stop_to_lift", "stops_asked", "end_start"],
+              "g6/metaharness/loop.py": ["_reloaded", "_stop", "_halted", "_cut_off", "lost_cycle", "_refused"],
               "g6/mcp/improve.py": ["start", "stop", "asked", "_cannot_start", "_revoke", "_settings", "_refusal", "_failed",
-                                    "_dialog", "_terms", "_watch", "status", "_unread_status", "_running"],
+                                    "_dialog", "_terms", "_watch", "status", "_unread_status", "_running", "_looped"],
               "g6/metaharness/runner.py": ["run", "_ending", "_folder_page", "_plain_page", "_gated", "_end", "_pages",
                                            "step"]}
 
@@ -1248,6 +1248,7 @@ def test_every_statement_of_the_dialog_and_the_start_runs_inside_the_one_handler
 
     assert outside(inspect.getsource(improve.asked)) == [] and outside(inspect.getsource(improve.start)) == []
     assert outside(inspect.getsource(improve.status), "return _unread_status(") == []     # status, the follow-up's review 2
+    assert outside(inspect.getsource(improve.stop), "return _blocked(STOP_FAILED") == []  # the stop, the follow-up's review 3
     old = ("def f(root):\n    if not (root / 'settings.json').is_file():\n        return 1\n    try:\n        pass\n"
            "    except Exception:\n        return _failed(root, None)\n")
     assert outside(old) == ["if not (root / 'settings.json').is_file():\n    return 1"]   # the old shape, it finds

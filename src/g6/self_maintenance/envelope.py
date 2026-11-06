@@ -24,6 +24,13 @@ of ``stops.log`` by digest, so bytes decide, a line cut short included. Anything
 records path that is not a file, a chain that does not check out, a start's lift fields of the wrong shape, is never a
 value or a raised error: it is a stop in force, ``G6_E_LOOP_STOP_UNREADABLE``, for every reader alike.
 
+**Rows, words and endings.** Every file of rows here, the records, the journal, the ``STOP`` file and the log of refusals,
+holds to one rule for where a row ends (``fresh_line``): at its newline, or at the end of the file for a last row with none,
+as the ledger reads its own file, so every append starts on a fresh line. Every write makes bytes of text by one rule that
+cannot fail (``utf8``), so no caller's words keep a stop from being written. And every way a start ends on a stop, a tick's
+guard, its cut-off, the runner's ending and a start a stop met, calls ``end_start``: a stop in force only because a file
+cannot be read is written through ``ask_to_stop`` beside the stopped row, so the repair of that file brings no start back.
+
 **Is a runner alive?** A runner holds an operating-system lock for as long as it lives, so one that crashed, or a machine
 that rebooted, never reads as alive, and no process number can be mistaken for it. Looking writes nothing.
 
@@ -131,6 +138,35 @@ def _on_a_clock(text: Any) -> bool:
         return False
 
 
+def utf8(text: str) -> bytes:
+    """Text as the bytes every write here makes of it, by one rule that cannot fail: UTF-8, with what UTF-8 cannot carry (a
+    lone surrogate) spelled out with a backslash. So no caller's words keep a stop, its row or a heartbeat from being
+    written, and every reader reads back plain UTF-8."""
+    return text.encode("utf-8", "backslashreplace")
+
+
+def writable(value: Any) -> Any:
+    """``value`` with every string, keys too, as ``utf8`` writes it, for a row or a heartbeat written as JSON: what UTF-8
+    cannot carry is spelled out with a backslash, so a row that repeats a caller's reason, a domain's labels or an error's
+    words can always be written."""
+    if isinstance(value, str):
+        return utf8(value).decode("utf-8")
+    if isinstance(value, Mapping):
+        return {writable(k): writable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [writable(v) for v in value]
+    return value
+
+
+def fresh_line(held: bytes) -> bytes:
+    """Where a row ends, the one rule for the records, the journal of stops and every file of rows here: at its newline, or,
+    for a last row with none (a crash cut it short, or a hand wrote it so), at the end of the file, as the ledger reads its
+    own file. So every append starts on a fresh line, and this is what it writes first: ``b"\\n"`` after ``held`` when its
+    last row has no newline, and nothing for an empty file or a last row that ends in LF or CRLF. No row is ever joined onto
+    the one before it."""
+    return b"\n" if held and not held.endswith(b"\n") else b""
+
+
 class CycleLog:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -149,6 +185,9 @@ class CycleLog:
         return [(e["kind"], e["body"]) for e in self._chain.entries()]
 
     def _append(self, kind: str, body: dict) -> dict:
+        """Every row this writes: on a fresh line (``fresh_line``), so a last row the file holds with no newline is ended
+        before the ledger adds its own, which it writes whole with its newline."""
+        _durably(self.path, "", make=False)
         self._chain.append(kind, str(len(self._rows()) + 1), body)
         return body
 
@@ -198,7 +237,8 @@ class CycleLog:
         return next((body for kind, body in reversed(self._rows()) if kind == "started"), None)
 
     def stop(self, reason: str, **fields: Any) -> dict:
-        return self._append("stopped", {"reason": reason, **fields})
+        """A stopped row, as ``utf8`` writes text (``writable``): no reason a stop carries keeps the row from being written."""
+        return self._append("stopped", writable({"reason": reason, **fields}))
 
     def limit(self, provider: str, until: str) -> dict:
         return self._append("limited", {"provider": provider, "until": until})
@@ -563,12 +603,27 @@ def stops_asked(root: str | Path) -> int:
     return found.seen.journal.count(b"\n")
 
 
-def _durably(path: Path, text: str) -> None:
-    """Add ``text`` to ``path`` and flush it to disk before returning, so nothing reads or acts on a stop the disk lacks."""
-    with open(path, "a", encoding="utf-8") as kept:
-        kept.write(text)
-        kept.flush()
-        os.fsync(kept.fileno())
+def _durably(path: Path, text: str, *, make: bool = True) -> None:
+    """Add ``text`` to ``path`` as rows of their own, on a fresh line (``fresh_line``) and as ``utf8`` writes it, and flush
+    it to disk before returning, so nothing reads or acts on a stop the disk lacks. The one way a row is added to a file
+    here: the journal of stops, the ``STOP`` file, the log of refusals, and before each of the records' rows, the end of the
+    last one (``CycleLog._append``). ``make``: whether a file not there is made; when it is not, a missing file has no row
+    to end and nothing is written."""
+    try:
+        kept = open(path, "a+b" if make else "r+b")
+    except FileNotFoundError:
+        if make:
+            raise
+        return
+    with kept:
+        end = kept.seek(0, os.SEEK_END)
+        kept.seek(max(end - 1, 0))
+        added = fresh_line(kept.read(1)) + utf8(text)
+        if added:
+            kept.seek(0, os.SEEK_END)
+            kept.write(added)
+            kept.flush()
+            os.fsync(kept.fileno())
 
 
 @contextlib.contextmanager
@@ -620,7 +675,8 @@ def ask_to_stop(root: str | Path, reason: str = "") -> str:
     may yet lose. A start holds that lock only while it reads the stop state and writes its row, so a stop waits for it
     ``STOP_WAIT`` at most, and a stop that cannot have it writes all the same: a stop never fails for a lock. A line
     written so can be read before it is on disk, so a start flushes the journal itself before its row binds it
-    (``flush_journal``)."""
+    (``flush_journal``). Both are rows of their own whatever the file ended with, and in whatever words the caller gave
+    (``_durably``), so nothing a caller wrote keeps a stop from being written."""
     said = " ".join(reason.split()) or "stopped through g6_improve_stop"
     with contextlib.ExitStack() as held:
         try:
@@ -638,10 +694,11 @@ def ask_to_stop(root: str | Path, reason: str = "") -> str:
 def note_refusal(root: str | Path, request: str, said: str) -> None:
     """Keep what a classifier or a permission refused, first and in a file no lock stands in front of, because a refused
     request is never sent again whether or not its cycle reaches the log. ``request``: a digest, never its text. One that
-    cannot be written is left: this process still holds it, and the cycle may yet be written."""
+    cannot be written is left: this process still holds it, and the cycle may yet be written. It is a row like any other
+    (``_durably``): on a fresh line, so no digest is joined onto a line a crash cut short, and in whatever words it was
+    refused."""
     try:
-        with open(Path(root) / REFUSED_FILE, "a", encoding="utf-8") as kept:
-            kept.write(f"{request} {' '.join(said.split())}\n")
+        _durably(Path(root) / REFUSED_FILE, f"{request} {' '.join(said.split())}\n")
     except OSError:
         pass
 
@@ -683,6 +740,33 @@ def record_stop(root: str | Path, reason: str, *, at: str) -> str:
     return ""
 
 
+def end_start(root: str | Path, code: str, why: str, reading: Stop | None = None) -> str:
+    """End, durably, a start that a stop ended, when nothing else would: a stop through the stop's own writer
+    (``ask_to_stop``, which needs no tick lock), naming ``code``, written beside any stopped row and whatever became of it.
+    Every way a start ends on a stop calls this. A stop in force only because a file cannot be read (``STOP_UNREADABLE``)
+    is gone with the repair of that file, and a row the records would not take, or a tick held them for, was never there:
+    so that one is written, and a later reading is stopped until a person starts again through the dialog. Any other needs
+    nothing more: a stop asked for stands in the stop's own readable files or on record, and this process's own
+    (``CANNOT_RECORD``) was written through this same writer when it was made (``ShadowLoop.lost_cycle``). ``reading``: the
+    one the ending stands on. Records it could parse that show no start left to end, none on record or one a stop on
+    record already ended, need nothing either, so ending again on a folder that stays unreadable adds no line once its
+    start is ended on record. It never raises: it returns why the stop could not be written (``""`` when it was, or none
+    was needed)."""
+    if code != STOP_UNREADABLE:
+        return ""
+    try:
+        start, revoked = _start_of(reading.log) if reading is not None and reading.log is not None else ({}, "")
+    except Exception:  # noqa: BLE001 - records whose start cannot be read cannot show it ended: the stop is written
+        start, revoked = {}, ""
+    if start is None or revoked:
+        return ""
+    try:
+        ask_to_stop(root, f"{code}: {why}")
+    except Exception as exc:  # noqa: BLE001 - whatever keeps the stop from being written is said, never raised
+        return f"the stop could not be written to {STOP_FILE} ({type(exc).__name__})"
+    return ""
+
+
 def runner_lock(root: str | Path, wait: float | None = None) -> ContextManager[None]:
     """The lock a runner holds for its whole life; a second runner on the folder is refused it. Only its holder writes the
     folder's page and heartbeat (``g6.metaharness.runner._ending``, ``beat_holding``)."""
@@ -719,11 +803,12 @@ def beat_holding(root: str | Path, **fields: Any) -> bool:
 
 def beat(root: str | Path, **fields: Any) -> None:
     """Write the heartbeat: a reader sees the last whole one, never half of a new one. On Windows a reader holding the
-    file refuses the swap for as long as it reads, so the swap is tried a few times, and past that this beat is missed."""
+    file refuses the swap for as long as it reads, so the swap is tried a few times, and past that this beat is missed. Its
+    text is written as ``utf8`` writes it (``writable``), so no reason it carries keeps it from being written."""
     path = Path(root) / HEARTBEAT_FILE
     spare = path.with_suffix(".tmp")
     try:
-        spare.write_text(json.dumps(fields, sort_keys=True, ensure_ascii=False), encoding="utf-8")
+        spare.write_bytes(utf8(json.dumps(writable(fields), sort_keys=True, ensure_ascii=False)))
         for _ in range(BEAT_TRIES):
             try:
                 os.replace(spare, path)
@@ -743,8 +828,9 @@ def heartbeat(root: str | Path) -> dict | None:
 
 __all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY",
            "REFUSED_FILE", "RUNNER_LOCK", "STOPPED", "STOPS_FILE", "STOP_FILE", "STOP_LOCK", "STOP_UNREADABLE", "Stop",
-           "StopSeen", "StopUnreadable", "TICK_BUDGET_SPENT", "ask_to_stop", "beat", "beat_holding", "file_digest",
-           "flush_journal",
+           "StopSeen", "StopUnreadable", "TICK_BUDGET_SPENT", "ask_to_stop", "beat", "beat_holding", "end_start",
+           "file_digest", "flush_journal", "fresh_line",
            "heartbeat",
            "note_refusal", "record_stop", "refused_requests", "stop_in_force", "stop_lock", "stop_seen",
-           "stop_standing", "runner_alive", "runner_lock", "stop_reason", "stop_to_lift", "stops_asked"]
+           "stop_standing", "runner_alive", "runner_lock", "stop_reason", "stop_to_lift", "stops_asked", "utf8",
+           "writable"]
