@@ -2,11 +2,14 @@
 """The box (PLAN.md, 2026-11-04): the one tool the host's Claude Code has for running anything, an MCP server on standard input
 and output (newline-delimited JSON-RPC 2.0). Claude Code reads and edits the workspace, a folder on the host; each call of ``run``
 first mirrors the workspace into the bug's container (``mirror``), then runs the command there, as the container's user, in the
-repository. The container has no network, and the subscription's sign-in never enters it.
+repository, then brings what the command changed in files back into the workspace (``pull``), so the call ends with one tree in
+both places (replay cohort, 2026-11-06). The container has no network, and the subscription's sign-in never enters it.
 
-``python -I box_mcp.py --container NAME --repo PATH_IN_CONTAINER --workspace HOST_DIR --user USER --timeout SECONDS --docker EXE``
+``python -I box_mcp.py --container NAME --repo PATH_IN_CONTAINER --workspace HOST_DIR --user USER --timeout SECONDS --docker EXE
+[--state FILE]``
 
-Only the standard library, so ``-I`` holds.
+``--state``: a file outside the workspace where each call's phase is kept (``write_state``), so a call ended before its pull is
+found and settled by the runner (``settle``). Only the standard library, so ``-I`` holds.
 """
 from __future__ import annotations
 
@@ -17,12 +20,13 @@ import json
 import os
 import re
 import secrets
+import shutil
 import stat
 import subprocess
 import sys
 import tarfile
-from collections.abc import Callable, Iterable, Iterator
-from pathlib import Path
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO
 
 KEPT = (".git", ".venv")    # the container's own, at any depth, as the export's ``--exclude`` leaves them: never sent, never touched
@@ -38,9 +42,10 @@ SHELL = 'printf "%s\\n" "$0"; exec sh -c "$1"'
 TOOL = {"name": "run",
         "description": ("Run a shell command in the repository's test environment: a container holding the repository with its "
                         ".venv and its git history, and no network. Your working folder is mirrored into it before each "
-                        "command, so the command sees your latest edits; what a command changes in files is not kept, so make "
-                        "every change with your own editing tools, and a process a command leaves running is stopped before the "
-                        "next mirror. Returns the exit code and the last 20000 characters of the command's combined output."),
+                        "command, so the command sees your latest edits, and when the command ends what it changed in files "
+                        "comes back into your working folder, so a file a command writes, edits or removes is part of your "
+                        "change. A process a command leaves running is stopped when the command ends. Returns the exit code and "
+                        "the last 20000 characters of the command's combined output."),
         "inputSchema": {"type": "object", "properties": {"command": {"type": "string", "description": "The shell command (sh -c)."}},
                         "required": ["command"]}}
 
@@ -201,11 +206,40 @@ for here, subdirs, names in os.walk(repo, topdown=False):
 print(json.dumps({"written": written, "removed": removed}))
 '''
 
+#: The container's tree, as the one export to the host makes it: run in the repository as the container's user, every plain file
+#: and folder but ``.git`` and ``.venv`` at any depth (GNU tar's exclusions match any name part). ``run.workspace_from`` takes the
+#: parent's tree out with it, and ``PULL`` a command's tree after the command.
+EXPORT = ("tar", "-c", "--exclude=.git", "--exclude=.venv", ".")
+
+#: Run in the container as root, ``python3 -I -c PULL REPO USER``, once a command has ended: every process of USER is stopped
+#: (``STOP``), so nothing the command left running changes a file after the export reads it, then the export (``EXPORT``) runs as
+#: USER in the repository and writes the tar on standard output.
+PULL = r'''import os, signal, sys, time
+try:
+    import pwd
+except ImportError:          # not a POSIX system: the script's own tests, on the host
+    pwd = None
+''' + STOP + r'''
+repo, user = os.path.abspath(sys.argv[1]), sys.argv[2]
+ids = (pwd.getpwnam(user).pw_uid, pwd.getpwnam(user).pw_gid) if pwd else None
+if ids:
+    if ids[0] in (0, os.geteuid()):
+        sys.exit("refused: the pull stops another user's processes, never its own")
+    stop(ids[0])
+    os.setgroups([])
+    os.setgid(ids[1])
+    os.setuid(ids[0])
+os.chdir(repo)
+sys.stdout.flush()
+os.execvp(''' + repr(EXPORT[0]) + ", " + repr(list(EXPORT)) + r''')
+'''
+
 
 class Refused(RuntimeError):
     """A workspace that cannot be sent: a link, a junction or another reparse point, an entry that is not inside it, a name the
     container cannot hold or the host cannot hold as named, a tree changed while it was packed, or anything that could not be
-    packed."""
+    packed. And a container's tree that cannot be brought back (``bring_in``): an entry the workspace cannot hold as it is, or a
+    workspace that is not, after it, exactly that tree."""
 
 
 class BoxError(RuntimeError):
@@ -385,6 +419,245 @@ def mirror(workspace: Path, docker: Callable[..., Any], *, container: str, repo:
     return _text(done.stdout).strip()
 
 
+FOLDER = "/"          # what a folder holds in a tree's map (``tree_map``), where a file holds its SHA-256 in hex
+
+
+def tree_map(workspace: Path, repo: str = "") -> dict[str, str]:
+    """The workspace's tree as a map: each entry's name relative to it with ``/``, to its file's SHA-256 in hex, or ``FOLDER``. It
+    is read as ``pack`` reads it (``_tree``): the root and every entry checked, and anything that could not be packed refuses it."""
+    given = Path(workspace)
+    _root(given)
+    try:
+        return {rel: FOLDER if data is None else hashlib.sha256(data).hexdigest() for _, rel, _, data in _tree(given.resolve(), repo)}
+    except Refused:
+        raise
+    except (OSError, ValueError) as exc:
+        raise Refused(f"the workspace could not be read: {type(exc).__name__}: {exc}") from exc
+
+
+def written(dest: Path, members: Iterable[tarfile.TarInfo]) -> None:
+    """Each member of an export brought into ``dest`` is what was written: there under its exact name in its folder's listing, and,
+    for a file, a file no other member is (by device and inode, which NTFS gives too). Raises ``Refused`` at the first that is not,
+    so a short-name alias, a name in another case or any other collision is never taken for the member."""
+    listed: dict[Path, set[str]] = {}
+    held: dict[tuple[int, int], str] = {}
+    for member in members:
+        parts = PurePosixPath(member.name).parts
+        if not parts:
+            continue
+        path = Path(dest).joinpath(*parts)
+        if parts[-1] not in listed.setdefault(path.parent, set(os.listdir(path.parent))):
+            raise Refused(f"{member.name!r} is not there under its own name: the host gave it another's")
+        if member.isfile():
+            st = os.lstat(path)
+            if (st.st_dev, st.st_ino) in held:
+                raise Refused(f"{member.name!r} and {held[(st.st_dev, st.st_ino)]!r} are one file on the host")
+            held[(st.st_dev, st.st_ino)] = member.name
+
+
+def export_members(tar: tarfile.TarFile) -> dict[str, tarfile.TarInfo]:
+    """The one rule for a tree that comes out of the container (``EXPORT``), into an empty workspace (``run.workspace_from``) or over
+    one after a command (``pull``): each member by its name relative to the repository with ``/``, the export's own ``./`` taken
+    off (the root itself is no member). Only plain files and folders: an absolute name, a ``..`` part, a link, a hard link, a
+    device, a ``.git`` or ``.venv`` part, a name the host cannot hold as named (``_holdable``), or two names the host reads as one
+    (differing only in case) refuses the whole tree (``Refused``), before anything is written."""
+    found: dict[str, tarfile.TarInfo] = {}
+    seen: dict[str, str] = {}
+    for member in tar.getmembers():
+        parts = PurePosixPath(member.name).parts
+        if (member.name.startswith(("/", "\\")) or ".." in parts or not (member.isfile() or member.isdir())
+                or set(parts) & set(KEPT)):
+            raise Refused(f"the container's tree holds {member.name!r}, which the host cannot hold as a plain file or folder "
+                          "inside the workspace")
+        if not parts:
+            continue
+        rel = "/".join(parts)
+        _holdable(rel, "")
+        if rel.casefold() in seen:
+            raise Refused(f"the container's tree holds {member.name!r} and {seen[rel.casefold()]!r}, which the host holds as one name")
+        seen[rel.casefold()] = member.name
+        found[rel] = member
+    return found
+
+
+def _write_new(path: Path, data: bytes) -> None:
+    """A file made fresh, exclusively, with ``data``: never written through a name that is there."""
+    with open(path, "xb") as f:
+        f.write(data)
+
+
+def bring_in(workspace: Path, data: bytes, repo: str = "", before: Mapping[str, str] | None = None) -> list[str]:
+    """The container's tree (``data``, an ``EXPORT`` tar) made the workspace's, and the names it changed there, sorted. Every member
+    is checked first (``export_members``) and the workspace read as ``pack`` reads it, so a tree that cannot be held writes
+    nothing. ``before``: the tree the container was given before the command (``tree_map``, as the call's state keeps it). Then
+    each name takes the container's side where the workspace still holds what the container was given, and keeps the workspace's
+    where the workspace changed since, so nothing written in the workspace after the mirror is lost; with no ``before`` (an empty
+    workspace, ``run.workspace_from``) the container's tree is taken whole. Removals go first, deepest first, then folders,
+    shallowest first, then files in the export's own order, each changed file made fresh (``_write_new``), never written
+    through, so a name that is another file's short-name alias meets that file and refuses the tree. Last, the workspace is read
+    again: every member is there under its exact name and no two files are one (``written``), and the tree is exactly the one
+    decided, else ``Refused``."""
+    root = Path(workspace)
+    _root(root)
+    base = root.resolve()
+    try:
+        tar = tarfile.open(fileobj=io.BytesIO(data))
+        members = export_members(tar)
+        theirs = {rel: None if m.isdir() else tar.extractfile(m).read() for rel, m in members.items()}
+    except tarfile.TarError as exc:
+        raise Refused(f"the container's tree could not be read: {type(exc).__name__}: {exc}") from exc
+    marks = {rel: FOLDER if body is None else hashlib.sha256(body).hexdigest() for rel, body in theirs.items()}
+    now = tree_map(root, repo)
+    if before is None:
+        target = dict(marks)
+    else:
+        target = {}
+        for rel in {*before, *marks, *now}:
+            side = marks.get(rel) if now.get(rel) == before.get(rel) else now.get(rel)
+            if side is not None:
+                target[rel] = side
+    for rel in list(target):                    # every folder a file is in is a folder of the tree
+        parts = rel.split("/")
+        for i in range(1, len(parts)):
+            parent = "/".join(parts[:i])
+            if target.get(parent, FOLDER) != FOLDER:
+                raise Refused(f"{rel!r} would be inside {parent!r}, a file: the container's and the workspace's changes clash")
+            target[parent] = FOLDER
+    changed = []
+    try:
+        for rel in sorted(now, key=lambda r: (-r.count("/"), r)):
+            if target.get(rel) == now[rel] or (rel in target and FOLDER not in (target[rel], now[rel])):
+                continue                        # the same, or a file changed in place: made fresh below
+            path = base.joinpath(*rel.split("/"))
+            if not os.path.lexists(path):
+                continue                        # gone already with its folder
+            if now[rel] == FOLDER:
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+            changed.append(rel)
+        order = {rel: i for i, rel in enumerate(members)}      # files in the export's own order, as an extraction writes them
+        for rel in sorted(target, key=lambda r: (target[r] != FOLDER, r.count("/") if target[r] == FOLDER else order.get(r, -1), r)):
+            if target[rel] == now.get(rel):
+                continue
+            path = base.joinpath(*rel.split("/"))
+            if target[rel] == FOLDER:
+                os.mkdir(path)
+            else:
+                if now.get(rel) not in (None, FOLDER):
+                    os.remove(path)             # the old file's name is removed and the new one made fresh, never written through
+                _write_new(path, theirs[rel])
+            changed.append(rel)
+        written(base, [m for rel, m in members.items() if target.get(rel) == marks[rel]])
+        after = tree_map(root, repo)
+    except Refused:
+        raise
+    except (OSError, ValueError) as exc:
+        raise Refused(f"the container's tree could not be written into the workspace: {type(exc).__name__}: {exc}") from exc
+    if after != target:
+        wrong = sorted(set(after.items()) ^ set(target.items()))[:5]
+        raise Refused(f"the workspace is not the tree decided after the container's tree was brought in: {wrong}")
+    return sorted(set(changed))
+
+
+def pull(workspace: Path, docker: Callable[..., Any], *, container: str, repo: str, user: str, timeout: float,
+         state: Path | None = None, call_no: int = 0, before: Mapping[str, str] | None = None) -> list[str]:
+    """What a command changed in files, brought from the container into the workspace: ``PULL`` (as root: the user's processes
+    stopped, then the export), then ``bring_in``, three-way from ``before``. With ``state``, the call's phase "pulling" is kept
+    there (``write_state``) before anything is written, so a box ended in the middle of it is found and settled (``settle``). A
+    docker step that fails raises ``BoxError``; a tree that cannot be held, ``Refused``. Returns the names it changed."""
+    done = docker("exec", "-u", "root", container, "python3", "-I", "-c", PULL, repo, user, timeout=timeout)
+    if done.returncode != 0:
+        raise BoxError(f"the pull failed ({done.returncode}): {_text(done.stderr).strip()[-2000:]}")
+    if state is not None:
+        write_state(state, {"call": call_no, "phase": "pulling"})
+    return bring_in(workspace, done.stdout or b"", repo, before)
+
+
+def set_back(workspace: Path, docker: Callable[..., Any], **where: Any) -> str:
+    """The container set to the workspace again (``mirror``) after a pull that could not be made, so the two hold one tree: "" when
+    it was, else why not."""
+    try:
+        mirror(workspace, docker, **where)
+    except (Refused, BoxError, OSError, subprocess.SubprocessError) as exc:
+        return f"{type(exc).__name__}: {exc}"[:2000]
+    return ""
+
+
+def read_state(path: Path) -> dict[str, Any] | None:
+    """The box's state file (``write_state``), or None when there is none. One that cannot be read as the box writes it refuses
+    (``Refused``): what a call left in the container is then not known, and nothing may guess it."""
+    try:
+        raw = Path(path).read_bytes()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise Refused(f"the box's state {path} could not be read: {exc}") from exc
+    try:
+        got = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise Refused(f"the box's state {path} cannot be read: {exc}") from exc
+    calls = got.get("calls") if isinstance(got, dict) else None
+    if not isinstance(calls, list) or not all(isinstance(x, dict) and isinstance(x.get("call"), int) and isinstance(x.get("phase"), str)
+                                              for x in calls):
+        raise Refused(f"the box's state {path} is not a list of calls with their phases")
+    return got
+
+
+def write_state(path: Path, entry: Mapping[str, Any]) -> None:
+    """One call's phase kept in the box's state file, a file outside the workspace: merged into that call's entry, or a new entry
+    for a new call. Written whole to a file of its own beside it, flushed to disk, then put in its place in one step
+    (``os.replace``), so a reader finds the state before or after the write, never part of it. A settled call keeps no map."""
+    state = read_state(path) or {"calls": []}
+    calls = state["calls"]
+    if calls and calls[-1]["call"] == entry["call"]:
+        calls[-1] = {**calls[-1], **entry}
+    else:
+        calls.append(dict(entry))
+    if calls[-1]["phase"] not in ("mirrored", "pulling"):
+        calls[-1].pop("before", None)
+    temp = Path(path).with_name(Path(path).name + f".{os.getpid()}.tmp")
+    with open(temp, "wb") as f:
+        f.write(json.dumps(state, indent=1, sort_keys=True).encode("utf-8"))
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(temp, path)
+
+
+def _changes(changed: list[str]) -> dict[str, Any]:
+    return {"changed": changed[:200], "count": len(changed)}
+
+
+def settle(workspace: Path, docker: Callable[..., Any], *, state: Path, container: str, repo: str, user: str,
+           timeout: float) -> dict[str, Any] | None:
+    """A call the box did not finish, finished by the runner once the session has ended (``run._run_task``'s ``turn``), before the
+    workspace is mirrored again. None when the last call in the box's state is settled, set back or not settled, or there is no
+    state. A call left "mirrored" or "pulling" (its command may have changed the container, and its pull may have written part of
+    the workspace) is pulled now, three-way from the tree the call mirrored, so what the command changed is kept and what the
+    workspace changed after it is not written over; a tree that cannot be held is "not settled", with why, and the mirror after
+    this sets the container to the workspace. A state that cannot be read refuses (``read_state``)."""
+    calls = (read_state(state) or {"calls": []})["calls"]
+    last = calls[-1] if calls else None
+    if last is None or last["phase"] not in ("mirrored", "pulling"):
+        return None
+    n, before = last["call"], last.get("before")
+    if not isinstance(before, dict):
+        raise Refused(f"the box's state {state} gives call {n} no tree it was mirrored from")
+    try:
+        changed = pull(workspace, docker, container=container, repo=repo, user=user, timeout=timeout, state=state, call_no=n,
+                       before=before)
+    except Refused as exc:
+        entry = {"call": n, "phase": "not settled", "by": "runner", "error": str(exc)[:2000]}
+    else:
+        entry = {"call": n, "phase": "settled", "by": "runner", **_changes(changed)}
+    write_state(state, entry)
+    return {k: v for k, v in entry.items()}
+
+
+BACK = ("what the command changed in files could not be brought back into your working folder ({why}), so none of it is kept: "
+        "{after}. Make the change with your own editing tools.")
+
+
 def run_command(command: str, docker: Callable[..., Any], *, container: str, repo: str, user: str, timeout: float) -> tuple[int, str]:
     """The command in the container, as ``user`` in ``repo``, stopped there (with its children) at ``timeout`` seconds, behind a
     start line (``START``) with a nonce chosen for this call, which the container's shell prints before the command runs: its exit
@@ -408,9 +681,13 @@ def _result(text: str, *, error: bool = False) -> dict[str, Any]:
 
 
 def call(opts: Any, params: dict[str, Any], docker: Callable[..., Any]) -> dict[str, Any]:
-    """One ``tools/call``: the mirror, then the command. A docker failure is a tool error: a mirror that failed, and a reply without
-    the call's start line, whatever its exit code (``run_command``); so is a docker client ended by a signal (a return code below 0,
-    or none), which gives no exit of the command's."""
+    """One ``tools/call``: the mirror, the command, then the pull, so the call ends with one tree in the workspace and the
+    container. A docker failure is a tool error: a mirror that failed, and a reply without the call's start line, whatever its exit
+    code (``run_command``); so is a docker client ended by a signal (a return code below 0, or none), which gives no exit of the
+    command's. Once the mirror is made, the pull is made whatever the command returned: a command that ran in part changed files
+    too. A pull that cannot be made is a tool error after the command's output, which says so, and the container is set back to
+    the workspace (``set_back``), so no change is dropped without the agent being told. With ``opts.state`` each phase is kept
+    (``write_state``): "mirrored" with the tree the container was given, "pulling", then "settled", "set back" or "not settled"."""
     arguments = params.get("arguments") or {}
     if params.get("name") != "run":
         return _result(f"there is no tool {params.get('name')!r}; the one tool is run", error=True)
@@ -418,14 +695,48 @@ def call(opts: Any, params: dict[str, Any], docker: Callable[..., Any]) -> dict[
     if not isinstance(command, str) or not command.strip():
         return _result("run needs a command: a string that is not empty", error=True)
     where = {"container": opts.container, "repo": opts.repo, "user": opts.user, "timeout": float(opts.timeout)}
+    workspace, state = Path(opts.workspace), getattr(opts, "state", None)
+    state = Path(state) if state else None
     try:
-        mirror(Path(opts.workspace), docker, **where)
-        code, text = run_command(command, docker, **where)
+        mirror(workspace, docker, **where)
     except Refused as exc:
         return _result(f"nothing was mirrored or run: {exc}", error=True)
     except (BoxError, OSError, subprocess.SubprocessError) as exc:
         return _result(f"{type(exc).__name__}: {exc}", error=True)
-    return _result(text, error=code is None or code < 0)
+    try:
+        before = tree_map(workspace, opts.repo)
+        calls = (read_state(state) or {"calls": []})["calls"] if state is not None else []
+        n = (calls[-1]["call"] + 1) if calls else 1
+        if state is not None:
+            write_state(state, {"call": n, "phase": "mirrored", "by": "box", "before": before})
+    except (Refused, OSError) as exc:
+        return _result(f"the workspace was mirrored and no command was run: the box could not keep its state: {exc}", error=True)
+    try:
+        code, text = run_command(command, docker, **where)
+        failed = code is None or code < 0
+    except (BoxError, OSError, subprocess.SubprocessError) as exc:
+        text, failed = f"{type(exc).__name__}: {exc}", True
+    try:
+        changed = pull(workspace, docker, **where, state=state, call_no=n, before=before)
+    except (Refused, BoxError, OSError, subprocess.SubprocessError) as exc:
+        why = str(exc) if isinstance(exc, Refused) else f"{type(exc).__name__}: {exc}"
+        left = set_back(workspace, docker, **where)
+        after = ("the container was set back to your working folder" if not left else
+                 f"the container could not be set back to your working folder ({left}), and is set back before your next command")
+        entry: dict[str, Any] = {"call": n, "phase": "set back" if not left else "not settled", "error": why[:2000]}
+        try:
+            if state is not None:
+                write_state(state, entry)
+        except (Refused, OSError) as exc2:
+            after += f"; the box could not keep its state ({exc2})"
+        return _result(f"{text}\n\n{BACK.format(why=why, after=after)}", error=True)
+    try:
+        if state is not None:
+            write_state(state, {"call": n, "phase": "settled", **_changes(changed)})
+    except (Refused, OSError) as exc:
+        return _result(f"{text}\n\nwhat the command changed in files is in your working folder, but the box could not keep its "
+                       f"state: {exc}", error=True)
+    return _result(text, error=failed)
 
 
 def serve(stdin: BinaryIO, stdout: BinaryIO, opts: Any, docker: Callable[..., Any]) -> None:
@@ -460,12 +771,18 @@ def docker_runner(exe: str, runner: Callable[..., Any] = subprocess.run) -> Call
     return docker
 
 
-def main(argv: list[str] | None = None) -> int:
+def options(argv: list[str] | None = None) -> argparse.Namespace:
+    """The box's options, from its command line as the run's MCP configuration gives it (``run.host_files``)."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     for flag in ("--container", "--repo", "--workspace", "--user", "--docker"):
         ap.add_argument(flag, required=True)
     ap.add_argument("--timeout", type=float, required=True)
-    opts = ap.parse_args(argv)
+    ap.add_argument("--state", default=None)
+    return ap.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    opts = options(argv)
     serve(sys.stdin.buffer, sys.stdout.buffer, opts, docker_runner(opts.docker))
     return 0
 

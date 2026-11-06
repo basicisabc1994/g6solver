@@ -44,7 +44,7 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 import copy
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlsplit
@@ -1927,67 +1927,53 @@ def host_workspace(ctx: Context, tag: str) -> Path:
 
 def workspace_from(ctx: Context, task: Task, agent: str, dest: Path) -> int:
     """The parent's tree, from the agent's container into ``dest`` on the host, where the host's Claude Code works on it: no
-    ``.git`` and no ``.venv``, which stay in the container. Only plain files and folders come out: an absolute name, a ``..`` part,
-    a link, a device, or a name the host cannot hold as it is (two differing only in case, or one Windows would refuse or change)
-    refuses the whole tree before anything is written. Then, in the empty ``dest``, each member is checked against what was
-    written: it is there under its exact name, and no two files are one file (the same device and inode, which NTFS gives too),
-    so a short-name alias or any other collision refuses the whole tree, and ``dest`` is left empty, before the agent starts.
-    First of all, ``dest`` itself must be a path the host holds as named, by the box's one check (``box_mcp.root_named``), so
-    nothing is exported into ``workspace`` for ``workspace.``. Returns how many files came out."""
+    ``.git`` and no ``.venv``, which stay in the container. It comes out by the one export (``box_mcp.EXPORT``) and goes in by the
+    one rule every tree from the container is brought into the workspace by, a command's after each call of the box among them
+    (``box_mcp.bring_in``): only plain files and folders come out, and an absolute name, a ``..`` part, a link, a device, or a
+    name the host cannot hold as it is (two differing only in case, or one Windows would refuse or change) refuses the whole
+    tree before anything is written. Then each member is checked against what was written: it is there under its exact name,
+    and no two files are one file (the same device and inode, which NTFS gives too), so a short-name alias or any other
+    collision refuses the whole tree, and ``dest`` is left empty, before the agent starts. First of all, ``dest`` itself must be
+    a path the host holds as named, by the box's one check (``box_mcp.root_named``), so nothing is exported into ``workspace``
+    for ``workspace.``. Returns how many files came out."""
     box_mcp.root_named(dest)
-    done = ctx.docker("exec", "-u", USER, "-w", task.repo, agent, "tar", "-c", "--exclude=.git", "--exclude=.venv", ".",
-                      timeout=900)
+    done = ctx.docker("exec", "-u", USER, "-w", task.repo, agent, *box_mcp.EXPORT, timeout=900)
     if done.returncode != 0:
         raise RuntimeError(f"the workspace's export failed ({done.returncode}): {err(done)[-600:]}")
-    seen: set[str] = set()
-    with tarfile.open(fileobj=io.BytesIO(done.stdout)) as tar:
-        members = tar.getmembers()
-        for member in members:
-            parts = PurePosixPath(member.name).parts
-            key = "/".join(parts).casefold()
-            if (member.name.startswith(("/", "\\")) or ".." in parts or not (member.isfile() or member.isdir())
-                    or box_mcp.unsafe_part(parts) is not None or (key in seen and key)):
-                raise RuntimeError(f"the workspace's export holds {member.name!r}, which the host cannot hold as a plain file or "
-                                   "folder inside the workspace")
-            seen.add(key)
-        try:
-            tar.extractall(dest, members=members, **({"filter": "data"} if hasattr(tarfile, "data_filter") else {}))
-            written(dest, members)
-        except (OSError, RuntimeError, tarfile.TarError) as exc:
-            for child in Path(dest).iterdir():
-                if child.is_dir() and not child.is_symlink():
-                    shutil.rmtree(child)
-                else:
-                    child.unlink()
-            raise RuntimeError(f"the workspace's export was refused, and nothing of it kept: {exc}") from exc
-    return sum(member.isfile() for member in members)
+    try:
+        with tarfile.open(fileobj=io.BytesIO(done.stdout)) as tar:
+            members = box_mcp.export_members(tar)
+    except (box_mcp.Refused, tarfile.TarError) as exc:
+        raise RuntimeError(f"the workspace's export was refused, and nothing of it written: {exc}") from exc
+    try:
+        box_mcp.bring_in(dest, done.stdout)
+    except box_mcp.Refused as exc:
+        for child in Path(dest).iterdir():
+            if child.is_dir() and not child.is_symlink():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+        raise RuntimeError(f"the workspace's export was refused, and nothing of it kept: {exc}") from exc
+    return sum(member.isfile() for member in members.values())
 
 
-def written(dest: Path, members: Sequence[tarfile.TarInfo]) -> None:
-    """Each member of an export extracted into ``dest`` is what was written: there under its exact name in its folder's listing,
-    and, for a file, a file no other member is (by device and inode). Raises ``RuntimeError`` at the first that is not."""
-    listed: dict[Path, set[str]] = {}
-    held: dict[tuple[int, int], str] = {}
-    for member in members:
-        parts = PurePosixPath(member.name).parts
-        if not parts:
-            continue
-        path = Path(dest).joinpath(*parts)
-        if parts[-1] not in listed.setdefault(path.parent, set(os.listdir(path.parent))):
-            raise RuntimeError(f"{member.name!r} is not there under its own name: the host gave it another's")
-        if member.isfile():
-            st = os.lstat(path)
-            if (st.st_dev, st.st_ino) in held:
-                raise RuntimeError(f"{member.name!r} and {held[(st.st_dev, st.st_ino)]!r} are one file on the host")
-            held[(st.st_dev, st.st_ino)] = member.name
+#: The one check of a tree brought into the workspace, by its exact names and its files' identities: the box's.
+written = box_mcp.written
+
+
+def box_state_of(workspace: Path) -> Path:
+    """The box's state file for the run whose workspace is ``workspace``: beside it, outside it, so the agent's tools never reach it
+    and no mirror or pull reads it (``box_mcp.write_state``)."""
+    return workspace.parent / f"{workspace.name}.box.json"
 
 
 def host_files(ctx: Context, run: Any, task: Task, agent: str, workspace: Path) -> tuple[Path, Path]:
-    """The host session's MCP configuration, the box and nothing else, and its settings (``HOST_SETTINGS``), in the run's folder."""
+    """The host session's MCP configuration, the box and nothing else, and its settings (``HOST_SETTINGS``), in the run's folder.
+    The box keeps each call's phase in its state file (``box_state_of``), where the runner finds a call it did not finish."""
     exe = getattr(ctx.docker, "exe", "docker")
     box = {"command": sys.executable, "args": ["-I", str(HERE / "box_mcp.py"), "--container", agent, "--repo", task.repo,
                                                "--workspace", str(workspace), "--user", USER, "--timeout", str(BOX_TIMEOUT_S),
-                                               "--docker", shutil.which(exe) or exe]}
+                                               "--docker", shutil.which(exe) or exe, "--state", str(box_state_of(workspace))]}
     return run.write_json("host_mcp.json", {"mcpServers": {"box": box}}), run.write_json("host_settings.json", HOST_SETTINGS)
 
 
@@ -3161,9 +3147,11 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
 
         def turn(note: str, name: str, resume: str = "", watchdog: Watchdog | None = None) -> str:
             """A host session, then its tree into the container before anything reads it there; how it ended (``host_session``,
-            which writes the run's ending when it is not clean, before this mirror). No session starts once the run's clock is
-            spent: that is the run's "timeout", its ending at once. ``watchdog``: K3's, for a resumed session, as the container's
-            resumed sessions are given it (``run_session``)."""
+            which writes the run's ending when it is not clean, before this mirror). Before the mirror, a call of the box the
+            session ended before its pull is settled (``box_mcp.settle``), so what its command changed is in the workspace the
+            mirror sends, and what was settled is recorded (``box_settled``); a box state that cannot be read fails the run. No
+            session starts once the run's clock is spent: that is the run's "timeout", its ending at once. ``watchdog``: K3's, for
+            a resumed session, as the container's resumed sessions are given it (``run_session``)."""
             left = c.WALL_CLOCK_S - (time.monotonic() - started)
             if left <= 0:
                 run.end("timeout")
@@ -3182,6 +3170,10 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                 record["why"] = (run.path / f"{Path(name).stem}_refused.txt").read_text(encoding="utf-8")
             if ended == "limited" and "limit" not in record:
                 record["limit"] = {"stream": name, "resets": (run.path / f"{Path(name).stem}_limit.txt").read_text(encoding="utf-8")}
+            settled = box_mcp.settle(workspace, ctx.docker, state=box_state_of(workspace), container=agent, repo=task.repo,
+                                     user=USER, timeout=BOX_TIMEOUT_S)
+            if settled is not None:
+                record["box_settled"] = [*record.get("box_settled", []), {**settled, "session": name}]
             box_mcp.mirror(workspace, ctx.docker, container=agent, repo=task.repo, user=USER, timeout=BOX_TIMEOUT_S)
             return ended
 
@@ -3283,8 +3275,12 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             record.update(executor="host", subscription_usd_estimate=record["agent_usd"], cost_usd=0.0)
             run.end(record["status_detail"])     # the run's ending, decided: before the final mirror and the patch's capture
         run.write("final_report.txt", str(result.get("result") or ""))
-        if host:   # the agent's tree is the workspace: into the container again, over whatever a review's test left there
+        if host:   # the agent's tree is the workspace, with every command's changes (``box_mcp.call``, ``turn``): into the
+            # container again, over whatever a review's test left there; and the box's record of its calls kept in the run's folder
             box_mcp.mirror(workspace, ctx.docker, container=agent, repo=task.repo, user=USER, timeout=BOX_TIMEOUT_S)
+            calls = box_mcp.read_state(box_state_of(workspace))
+            if calls is not None:
+                run.write_json("box_calls.json", calls)
         ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/final.patch"), workdir=task.repo, timeout=600)
         final = run.fresh_path("final.patch")
         if not copy_out(ctx.docker, agent, f"{WE}/final.patch", final):
@@ -3352,6 +3348,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             ctx.docker("network", "rm", net, timeout=120)
         if workspace is not None:
             shutil.rmtree(workspace, ignore_errors=True)
+            for left in box_state_of(workspace).parent.glob(f"{box_state_of(workspace).name}*"):
+                left.unlink(missing_ok=True)       # the box's state and any write of it it did not finish
     return finish(status)
 
 

@@ -381,6 +381,8 @@ def test_the_box_answers_initialize_lists_one_tool_and_runs_a_command_after_the_
         calls.append((args, merged))
         if box.MIRROR in args:
             return ok(b'{"written": 1, "removed": 0}')
+        if box.PULL in args:                     # the container after the command: what the mirror gave it, unchanged
+            return ok(export_of(ws))
         return ok(args[-2].encode() + b"\n" + b"x" * 25000 + b"END", code=3)     # the call's start line, as its shell prints it
 
     replies = _session(box, ws, docker,
@@ -400,10 +402,11 @@ def test_the_box_answers_initialize_lists_one_tool_and_runs_a_command_after_the_
     assert result["isError"] is False and text.startswith("exit code 3") and text.endswith("END")
     assert len(text.split("\n", 1)[1]) == 20000
     assert replies[3]["result"] == {}
-    (mirror, _), (command, merged) = calls
+    (mirror, _), (command, merged), (pull, _) = calls          # and after the command, the pull (replay cohort, 2026-11-06)
     assert mirror[:9] == ("exec", "-i", "-u", "root", "ctr", "python3", "-I", "-c", box.MIRROR) and mirror[9:] == ("/w/r", "tester")
     assert command[:6] == ("exec", "-u", "tester", "-w", "/w/r", "ctr") and command[-5:-2] == ("sh", "-c", box.SHELL) and merged
     assert command[-2].startswith(box.START + " ") and command[-1] == "pytest -q"
+    assert pull == ("exec", "-u", "root", "ctr", "python3", "-I", "-c", box.PULL, "/w/r", "tester")
 
 
 @pytest.mark.parametrize("failure", ["mirror", "exec", "raises"])
@@ -1138,6 +1141,8 @@ def test_a_reply_without_the_calls_own_start_line_is_a_tool_error_whatever_its_e
         def reply(*args, **kw):
             if box.MIRROR in args:
                 return ok(b"{}")
+            if box.PULL in args:                 # the container after the command, unchanged (replay cohort, 2026-11-06)
+                return ok(export_of(ws))
             starts.append(args[-2])
             return ok(head(args[-2]) + b"Error response from daemon: No such container: ctr\n", code=code)
         return reply

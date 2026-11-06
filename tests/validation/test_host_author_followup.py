@@ -551,8 +551,8 @@ def test_follow_up_review_1_finding_2_a_docker_endpoint_with_no_user_or_password
 
 # --- 4. a pack is checked whole before anything is sent (review 4, findings 2 and 6) -------------------------------------------
 def _mirror_docker(repo: Path, prefix: str = ""):
-    """A docker that runs the real MIRROR on a local folder (after ``prefix``, a fake of the container's file system), and
-    answers a command with the call's own start line."""
+    """A docker that runs the real MIRROR on a local folder (after ``prefix``, a fake of the container's file system), answers a
+    command with the call's own start line, and the pull after it with the folder's export (replay cohort, 2026-11-06)."""
     calls = []
 
     def docker(*args, input=None, timeout=None, merged=False):
@@ -560,6 +560,8 @@ def _mirror_docker(repo: Path, prefix: str = ""):
         if box.MIRROR in args:
             return subprocess.run([sys.executable, "-I", "-c", prefix + box.MIRROR, str(repo), "tester"], input=input,
                                   capture_output=True, timeout=30)
+        if box.PULL in args:
+            return helpers.ok(helpers.export_of(repo))
         return helpers.ok(args[-2].encode() + b"\nran\n")
     return docker, calls
 
@@ -757,8 +759,9 @@ def test_a_name_part_the_host_holds_as_named_is_sent(rel):
 def _call_on(ws: Path) -> tuple[dict, list]:
     sent = []
     opts = SimpleNamespace(container="ctr", repo="/w/r", workspace=str(ws), user="tester", timeout=30.0)
-    got = box.call(opts, {"name": "run", "arguments": {"command": "true"}},
-                   lambda *a, **kw: (sent.append(a), helpers.ok(a[-2].encode() + b"\nran\n"))[1])
+    got = box.call(opts, {"name": "run", "arguments": {"command": "true"}},     # the pull after the command: the container unchanged
+                   lambda *a, **kw: (sent.append(a), helpers.ok(helpers.export_of(ws)) if box.PULL in a else
+                                     helpers.ok(a[-2].encode() + b"\nran\n"))[1])
     return got, sent
 
 
@@ -842,7 +845,7 @@ def test_a_root_with_ordinary_parts_a_leading_dot_and_a_space_inside_packs_as_be
     ws = tmp_path / ".box" / "a b" / "ws"
     helpers.write(ws, {"a.py": "x\n"})
     got, sent = _call_on(ws)
-    assert got["isError"] is False and len(sent) == 2
+    assert got["isError"] is False and len(sent) == 3 and box.PULL in sent[-1]       # the mirror, the command, the pull
     assert tarfile.open(fileobj=io.BytesIO(box.pack(ws))).getnames() == ["a.py"]
 
 
@@ -857,6 +860,6 @@ def test_an_unchanged_tree_with_ordinary_names_packs_and_mirrors_as_before(tmp_p
     opts = SimpleNamespace(container="ctr", repo="/w/repo", workspace=str(ws), user="tester", timeout=30.0)
     got = box.call(opts, {"name": "run", "arguments": {"command": "pytest -q"}}, docker)
     assert got["isError"] is False and got["content"][0]["text"] == "exit code 0\nran\n"
-    assert [box.MIRROR in a for a in calls] == [True, False]
+    assert [box.MIRROR in a for a in calls] == [True, False, False] and box.PULL in calls[2]     # then the pull, which changes nothing
     assert (repo / "a.py").read_text() == "new\n" and (repo / "sub" / "deep" / "c.py").read_text() == "c\n"
     assert not (repo / "gone.py").exists() and (repo / ".git" / "HEAD").read_text() == "ref\n"
