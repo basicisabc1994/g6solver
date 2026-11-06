@@ -428,7 +428,8 @@ def summary(record: Mapping[str, Any]) -> dict[str, Any]:
     record's first failure as the controls named it; and the record itself by run and SHA-256 (``latest_controls``), so the
     outcomes the manifest decided on are pinned."""
     v, s, rt = (_part(record, k) for k in ("validate", "selfcheck", "round_trip"))
-    f2p, p2p = list(v.get("fail_to_pass") or []), list(v.get("pass_to_pass") or [])
+    f2p, p2p = ([x for x in lists if isinstance(x, str)] if isinstance(lists, list) else []
+                for lists in (v.get("fail_to_pass"), v.get("pass_to_pass")))      # a record's lists, read, never trusted
     return {"failed": record.get("failed", ""), "why": record.get("why", ""), "record": record.get("record"),
             "validate": {"run": v.get("run"), "images": v.get("images"), "fail_to_pass": len(f2p), "pass_to_pass": len(p2p),
                          "base": box_mcp.tests_seen(v.get("base"), f2p), "fixed": box_mcp.tests_seen(v.get("fixed"), f2p)},

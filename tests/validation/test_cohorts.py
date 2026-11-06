@@ -316,6 +316,19 @@ def test_a_record_that_cannot_be_read_as_the_controls_write_it_is_never_admitted
     assert cohorts.admit(record, IDS) != ""
 
 
+def test_a_manifest_over_a_record_in_slice_1s_form_excludes_the_bug_and_names_what_was_never_recorded():
+    bug = cohorts.SELECTION[0]
+    old = {"failed": "", "why": "", "images": IDS, "validate": {"run": "validate/x/1", "ok": True, "fail_to_pass": 7,
+                                                                "pass_to_pass": 3, "oracle_image_id": IDS["oracle_image_id"],
+                                                                "base_fails": True},
+           "selfcheck": {"run": "selfcheck/x/1", "gold": {"passes": True, "failing": 0}, "empty": {"passes": False, "failing": 7}},
+           "round_trip": {"holds": True, "status": "finished", "same_bytes": True}}
+    body = cohorts.manifest("selection", _images([bug]), {bug: old})
+    assert body["usable"] == [] and body["excluded"][0]["why"] == \
+        "base: the lists the maintainers' tests are scored by were never recorded"
+    assert body["bugs"][0]["controls"]["validate"]["base"]["state"] == "unknown"
+
+
 def test_each_control_record_carries_both_ids_it_ran_on_read_before_it_and_again_after_the_last(monkeypatch, tmp_path):
     moved = {**IDS, "task_image_id": "sha256:" + "9" * 64}
     got, _ = _controls(monkeypatch, tmp_path, ids=[IDS, IDS, IDS, moved])
