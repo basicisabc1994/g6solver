@@ -18,7 +18,7 @@ from g6.core.door import SENSITIVE_ENV, allowed_sensitive, invoke_checked
 from .assurance import canonical_json, sha256
 from .codes import (APPROVAL_REQUIRED, EXECUTION_INCOMPLETE, MODEL_MISSING, PLAN_TAMPERED, PREREQUISITE_UNMET,
                     STEP_FAILED, affirmed, claims, refusal, settled, unclaimed)
-from .snapshot import fresh, json_reply, record, returned, snapshot
+from .snapshot import fresh, json_reply, plain, record, returned, snapshot, text
 
 # Every name resolves to an existing G6 component and a fixed, documented op.
 # Models are declarative data, never arbitrary modules, code or pickle paths.
@@ -134,7 +134,7 @@ class MethodRouter:
     Missing declarative models are listed, never filled with guessed data.
     """
     def plan(self, claims: Sequence[ClaimIR]) -> MethodPlan:
-        claims = snapshot(claims)
+        claims = snapshot(claims, where="claims")
         if not claims or len(claims) > 20:
             raise ValueError("supply 1–20 typed claims")
         seen: set[str] = set()
@@ -159,7 +159,7 @@ class MethodRouter:
                     raise ValueError(f"unsupported evidence method {need!r}")
                 entry = ENGINE_SPECS[need]
                 given = claim.models.get(need)
-                if not isinstance(given, Mapping):
+                if not isinstance(given, dict):
                     missing.append({"claim": claim.id, "method": need, "reason": "no typed model supplied"})
                     continue
                 if not set(given).issubset(entry["allowed"]):
@@ -214,27 +214,32 @@ class MixedMethodExecutor:
     """
     def __init__(self, registry: RegistryLike, *, allow: Iterable[str] = ()) -> None:
         self.registry = registry
-        self.allow = snapshot(frozenset(allow))
+        self.allow = snapshot(allow, where="allow")
 
     def _invoke(self, step: MethodStep, params: dict[str, Any]) -> dict[str, Any]:
         how = (f"Allow it in your own code with MixedMethodExecutor(registry, allow=('{step.component}.{step.op}',)), "
                f"or list {step.component}.{step.op} (or {step.component}) in {SENSITIVE_ENV} where you start G6.")
-        return invoke_checked(step.component, step.op, params, allow=allowed_sensitive() | self.allow,
+        return invoke_checked(step.component, step.op, params, allow=allowed_sensitive() | frozenset(self.allow),
                               how_to_allow=how, registry=self.registry)
 
     def _run(self, step: MethodStep, params: bytes, head: dict[str, Any]) -> dict[str, Any]:
         """One validated step through G6's door. A step the door refused, or did not pass, is the bridge's own
-        ``STEP_FAILED`` refusal, and keeps the door's own card whole under ``door``. So is a step whose answer, as the
-        door hands it on, claims a state anywhere outside the door's card (``codes.claims``: a ``reliability_label``, a
-        ``verified`` flag, even one the door turned false, outside a warning card, or a nested result outside the
-        makers' format): the step fails with its code, and the reason names each place; that answer is not kept."""
+        ``STEP_FAILED`` refusal, and keeps the door's own card whole under ``door``. The tool's answer, as the door
+        hands it on, is taken as plain data (``snapshot.plain``): an answer that is not, or that claims a state
+        anywhere outside the door's card (``codes.claims``: a ``reliability_label``, a ``verified`` flag, even one the
+        door turned false, outside a warning card, or a nested result outside the makers' format), fails the step with
+        its code, the reason naming each place; that answer is not kept."""
         try:
             reply = self._invoke(step, json.loads(params))  # a fresh copy of the bytes that were checked
             card, request_id = reply["warning_card"], reply["request_id"]
             door = {"warning_card": dict(card), "request_id": request_id}
             if "result" not in reply:  # refused, or failed, before any answer: the door's error and card say why
                 return refusal(STEP_FAILED, str(reply["error"]), door=door, request_id=request_id, **head)
-            response = reply["result"]
+            try:
+                response = plain(reply["result"], where=f"{step.component}.{step.op}'s answer")
+            except ValueError as exc:
+                return refusal(STEP_FAILED, f"{step.component}.{step.op}: its answer is not kept: {exc}", door=door,
+                               request_id=request_id, **head)
             if not isinstance(response, dict):
                 raise ValueError("registry did not return an evidence envelope")
             claimed = claims(response)
@@ -259,7 +264,7 @@ class MixedMethodExecutor:
         try:
             # Snapshot, then check, then run: the plan is a record (immutable all the way down, so nothing here aliases
             # the caller's data), checked against the canonical routing of its own claims; its steps run from bytes.
-            plan = snapshot(plan)
+            plan = snapshot(plan, where="plan")
             if not isinstance(plan, MethodPlan):
                 raise TypeError("an executed plan is a MethodPlan record")
             canonical = MethodRouter().plan(plan.claims)
@@ -309,11 +314,13 @@ class LLMClaimCompiler:
     to invent source evidence, select an executable tool, or operate the registry.
     """
     def __init__(self, llm: Any, *, max_claims: int = 5) -> None:
-        if not 1 <= max_claims <= 10:
+        self.llm, self.max_claims = llm, snapshot(max_claims, where="max_claims")
+        if not 1 <= self.max_claims <= 10:
             raise ValueError("max_claims must be 1–10")
-        self.llm, self.max_claims = llm, snapshot(max_claims)
 
     def draft(self, question: str, context: Sequence[Mapping[str, Any]] = ()) -> MethodPlan:
+        question = text(question, where="question")
+        context = snapshot(context, where="context")
         if not 1 <= len(question) <= 3000:
             raise ValueError("question size invalid")
         system = (

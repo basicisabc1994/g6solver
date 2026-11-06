@@ -225,14 +225,16 @@ def test_returned_applies_the_rule_to_the_answer_and_to_what_its_check_makes_of_
     body = _function("snapshot.py", "returned")
     ruled = [ast.unparse(c.args[0]) for c in _calls(body, "unclaimed")]
     assert len(ruled) == 2, f"returned applies the rule {len(ruled)} times: {ruled}"
-    # behaviourally: a claim at any depth, in a record's field, a tuple or a set, or in what a check parses
-    for value in ({"a": {"b": [{"verified": True}]}}, (Probe("p", {"reliability_label": "verified"}, "t", {"A": True},
-                                                              .8),),
-                  frozenset({snapshot.FrozenMap({"verified": True})}),
-                  Observation(True, "s", notes={"x": [{"verified": True}]}),
-                  {"r": {"completion_state": "blocked-escalated", "code": "G6_E_REVIEW_UNREGISTERED"}}):
+    # behaviourally: a claim at any depth, in a record's field, a tuple or a set, or in what a check parses. Since
+    # follow-up 2 of PR #8 a claim in a record's text field, and a set, are refused where they are made or taken.
+    for make in (lambda: {"a": {"b": [{"verified": True}]}},
+                 lambda: (Probe("p", {"reliability_label": "verified"}, "t", {"A": True}, .8),),
+                 lambda: (Probe("p", "q", "t", {"A": True}, .8, arguments={"reliability_label": "verified"}),),
+                 lambda: frozenset({snapshot.FrozenMap({"verified": True})}),
+                 lambda: Observation(True, "s", notes={"x": [{"verified": True}]}),
+                 lambda: {"r": {"completion_state": "blocked-escalated", "code": "G6_E_REVIEW_UNREGISTERED"}}):
         with pytest.raises(ValueError):
-            snapshot.returned(value, _as_given)
+            snapshot.returned(make(), _as_given)
     with pytest.raises(ValueError):
         snapshot.returned('{"k": {"verified": true}}', snapshot.json_reply, 100)
     assert snapshot.returned({"a": [{"warning_card": warning_card(codes.INPUT, "m")}]}, _as_given)
@@ -399,8 +401,10 @@ def test_no_claim_planted_in_a_door_reply_reaches_the_agents_history(mark, monke
 
 
 #: What a result carries beside its state: plain fields, a nested list of mappings, a record and a nested refusal.
+#: A maker's fields: plain data, a record as the JSON the bridge publishes it as (``asdict``: since follow-up 2 of PR #8
+#: a maker's output holds JSON alone, and a record in it is refused), and a nested refusal.
 FIELDS = {"detail": {"rows": [{"a": "x", "b": [1, 2]}], "note": "n"},
-          "probe": Probe("p", "q", "t", {"A": True}, .8, arguments={"k": [1]}),
+          "probe": dataclasses.asdict(Probe("p", "q", "t", {"A": True}, .8, arguments={"k": [1]})),
           "inner": codes.refusal(codes.INPUT, "an inner refusal")}
 
 

@@ -335,8 +335,11 @@ def test_only_true_approves_execution(research_case, entry, approval):
         out = MixedMethodExecutor(Registry()).execute(c["compiled"].executable_plan, approved=approval)
         refused = codes.APPROVAL_REQUIRED
     else:
+        # since follow-up 2 of PR #8 an orchestrator runs only a compilation it issued: this one compiles its own
         orch = CognitiveAssuranceOrchestrator(MetacognitiveMethodSelector(), registry=Registry())
-        out = orch.execute(c["compiled"], approved=approval)
+        compiled = orch.compile(claim=c["claim"], context=c["context"], standard=c["standard"],
+                                variants=[c["variant"]], variant_models={"v": {"formula": "A", "premises": ["A"]}})
+        out = orch.execute(compiled, approved=approval)
         refused = codes.EXECUTION_NOT_APPROVED
     if approval is True:
         assert calls == [("formal", "check_validity")] and out["completion_state"] == "qualified-draft"

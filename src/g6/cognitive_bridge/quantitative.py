@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from typing import Any, Sequence
 
+from .snapshot import snapshot, text
+
 #: Exactly the features passed to MLAcquisitionSelector.predict(...).
 ACQUISITION_FEATURES = ("expected_information_bits", "cost", "novelty_preference",
                         "assumed_match_probability")
@@ -19,6 +21,7 @@ def evaluated_trace_rows(history: Sequence[dict[str, Any]]) -> list[dict[str, fl
     Absent or non-finite evidence refuses the whole export rather than inventing
     a success target from the LLM's opinion or its own Bayesian posterior.
     """
+    history = snapshot(history, where="history")
     if not history:
         raise ValueError("no observed research episodes")
     result = []
@@ -41,6 +44,9 @@ def sklearn_payload(history: Sequence[dict[str, Any]], *, seed: int = 7,
     discards each fitted model; in-memory MLAcquisitionSelector takes a model
     trained and held by an explicitly trusted Python caller instead.
     """
+    history = snapshot(history, where="history")
+    seed = snapshot(seed, where="seed")
+    estimator = text(estimator, where="estimator")
     return {"op": "fit_eval", "rows": evaluated_trace_rows(history),
             "target": UTILITY_TARGET, "features": list(ACQUISITION_FEATURES),
             "task": "regression", "seed": seed, "estimator": estimator}

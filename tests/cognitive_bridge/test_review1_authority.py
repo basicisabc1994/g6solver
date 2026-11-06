@@ -74,7 +74,9 @@ def test_class_walk_a_hand_built_plan_without_the_standards_mandatory_method_is_
     swapped = replace(c["compiled"], executable_plan=graph_only, selected_model_hashes={}, **pins)
     c["orchestrator"].registry = Registry()
     run = c["orchestrator"].execute(swapped, approved=True)
-    assert run["completion_state"] == "qualified-draft"
+    # since follow-up 2 of PR #8 a compilation edited through replace() is not one the orchestrator issued: it no
+    # longer runs at all
+    assert run["completion_state"] == "blocked-escalated"
     out = c["orchestrator"].assess(
         swapped, standard=c["standard"], run_result=run, evaluator=c["evaluator"], verifiers=c["verifiers"],
         artifacts=c["artifacts"], documentation=c["documentation"], candidate_actor=c["candidate_actor"])

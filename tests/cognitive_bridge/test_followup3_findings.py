@@ -57,7 +57,8 @@ def test_finding_1_tool_claim_in_foreign_container_is_not_credited(container):
         "tool's unread container retained verified=True and was credited as a completed step"
     step = out["steps"][0]
     assert step["code"] == codes.STEP_FAILED and "result" not in step
-    named = "answer[0].verified" if container == "sequence" else "ForeignRecord"
+    # since follow-up 2 of PR #8 a deque is refused as a deque, where it enters, before anything in it is read
+    named = "answer: a collections.deque is not JSON data" if container == "sequence" else "ForeignRecord"
     assert named in step["reason"], step["reason"]
 
 
@@ -72,7 +73,8 @@ def test_finding_2_record_used_as_mapping_key_cannot_smuggle_a_state():
         assert next(iter(out["steps"][0]["result"]["answer"])).verified is True
     assert out["completion_state"] == "blocked-escalated", \
         "a recognized snapshot record in a mapping key retained verified=True and the step was credited"
-    assert out["steps"][0]["code"] == codes.STEP_FAILED and "verified" in out["steps"][0]["reason"]
+    # since follow-up 2 of PR #8 a key that is not text is refused as what it is, where it enters
+    assert out["steps"][0]["code"] == codes.STEP_FAILED and "ClaimInKey key is not text" in out["steps"][0]["reason"]
 
 
 # --- Finding 3: a compilation's state is its selection's verdict -----------------------------------------------------

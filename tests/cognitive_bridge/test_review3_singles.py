@@ -74,11 +74,13 @@ class _Named:
 
 @pytest.mark.parametrize("names", [[1, "1"], [True, "True"], [_Named("age"), "age"]], ids=["int", "bool", "str-like"])
 def test_names_that_read_alike_as_strings_are_refused_in_export_and_surrogate(names):
+    # since follow-up 2 of PR #8 an object that only reads as text is refused where it enters, as not JSON data
+    refused = "not JSON data" if isinstance(names[0], _Named) else "unique"
     estimator = SimpleNamespace(n_features_in_=2, n_outputs_=1, tree_=SimpleNamespace())
-    with pytest.raises(ValueError, match="unique"):
+    with pytest.raises(ValueError, match=refused):
         extract_tree(estimator, names)
     rows = [[float(i), float(i % 3)] for i in range(20)]
-    with pytest.raises(ValueError, match="unique"):
+    with pytest.raises(ValueError, match=refused):
         distill_blackbox(None, rows[:12], rows[12:], names)
 
 

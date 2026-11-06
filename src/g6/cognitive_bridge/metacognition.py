@@ -18,7 +18,7 @@ from typing import Any, Callable, Mapping, Sequence
 from .assurance import canonical_json, is_risk, sha256
 from .codes import MODEL_MISSING, OBLIGATION_NOT_PLANNED, SELECTION_INCOMPLETE, affirmed, only_fields, refusal, settled
 from .mixed_methods import ENGINE_SPECS, ENGINE_OP_VARIANTS, ClaimIR, MethodRouter, MethodPlan
-from .snapshot import fresh, record, returned, snapshot
+from .snapshot import fresh, issue, record, returned, snapshot
 
 CAPABILITIES = frozenset(ENGINE_SPECS)
 #: The splits a trial can come from (``EvaluatedTrial.split``); a selector learns from the ones its ``learn_from`` names.
@@ -157,6 +157,12 @@ class EvaluatedTrial:
             raise ValueError("a variant digest is a 64-digit SHA-256 of the variant's definition")
 
 
+def _incomplete(missing: Sequence[str]) -> Mapping[str, Any] | None:
+    """The refusal of a selection that misses the mandatory methods ``missing``, or None when it misses none: the one
+    rule for a selection's ``refused`` field."""
+    return refusal(SELECTION_INCOMPLETE, "no affordable variant covers: " + ", ".join(missing)) if missing else None
+
+
 @record
 class SelectionDecision:
     ordered_variants: tuple[dict[str, Any], ...]
@@ -174,9 +180,13 @@ class SelectionDecision:
     )
 
     def __post_init__(self) -> None:
-        # Whoever makes a decision (a selector, a replace(), a caller), each row has only a row's fields and no claim.
+        # Whoever makes a decision (a selector, a replace(), a caller), each row has only a row's fields and no claim,
+        # and it is refused exactly as its missing methods give (_incomplete): the two never disagree.
         for row in self.ordered_variants:
             only_fields(row, allowed=ROW_FIELDS, required=ROW_FIELDS, where="a selection row")
+        if self.refused != snapshot(_incomplete(self.missing)):
+            raise ValueError("a selection is refused exactly when a method is missing (SELECTION_INCOMPLETE naming "
+                             "them): its refused field is not that refusal")
 
     @property
     def completion_state(self) -> str:
@@ -207,20 +217,22 @@ class MetacognitiveMethodSelector:
                  exploration_weight: float = 0.15,
                  seed: int = 0,
                  learn_from: Sequence[str] = ("heldout", "shadow")):
-        if not math.isfinite(exploration_weight) or not 0 <= exploration_weight <= 1:
+        trials = snapshot(trials, where="trials")
+        self.exploration_weight = snapshot(exploration_weight, where="exploration_weight")
+        self.seed = snapshot(seed, where="seed")
+        learn_from = snapshot(learn_from, where="learn_from")
+        if not math.isfinite(self.exploration_weight) or not 0 <= self.exploration_weight <= 1:
             raise ValueError("exploration weight invalid")
         learn = tuple(dict.fromkeys(learn_from))
         if not learn or set(learn) - set(SPLITS):
             raise ValueError(f"learn_from names the splits to learn from, among {', '.join(SPLITS)}")
         self.trials: tuple[EvaluatedTrial, ...] = ()
         self.rejected_trials = 0
-        self.exploration_weight = snapshot(exploration_weight)
-        self.seed = snapshot(seed)
         self.admit_trial = admit_trial
         self.learn_from = snapshot(learn)
         clean: list[EvaluatedTrial] = []
         seen: set[str] = set()
-        for t in snapshot(trials):
+        for t in trials:
             # A replayed record must be in a split it learns from, and cannot
             # duplicate a previous trial id. The trusted admission hook
             # MUST check signature, frozen suite, evaluator and data access.
@@ -275,7 +287,10 @@ class MetacognitiveMethodSelector:
     def select(self, context: ProblemSignature, variants: Sequence[MethodVariant],
                *, required_methods: Sequence[str],
                max_optional: int = 0) -> SelectionDecision:
-        context, variants, required_methods = snapshot((context, variants, required_methods))
+        context = snapshot(context, where="context")
+        variants = snapshot(variants, where="variants")
+        required_methods = snapshot(required_methods, where="required_methods")
+        max_optional = snapshot(max_optional, where="max_optional")
         if max_optional < 0 or max_optional > 10:
             raise ValueError("max optional methods invalid")
         required = tuple(dict.fromkeys(required_methods))
@@ -352,11 +367,9 @@ class MetacognitiveMethodSelector:
                   "trials": sorted(t.trial_id for t in self.trials),
                   "required": list(required), "context": asdict(context),
                   "candidate_ids": sorted(v.id for v in variants)}
-        refused = (refusal(SELECTION_INCOMPLETE, "no affordable variant covers: " + ", ".join(missing))
-                   if missing else None)
-        return SelectionDecision(tuple(selected), required, tuple(missing),
-                                 self.rejected_trials, len(self.trials),
-                                 sha256(canonical_json(policy)), refused)
+        return issue(self, SelectionDecision(tuple(selected), required, tuple(missing),
+                                             self.rejected_trials, len(self.trials),
+                                             sha256(canonical_json(policy)), _incomplete(missing)))
 
 
 def checked_selection(decision: Any, variants: Sequence[MethodVariant], context: ProblemSignature,
@@ -370,8 +383,8 @@ def checked_selection(decision: Any, variants: Sequence[MethodVariant], context:
     if type(decision) is not SelectionDecision:
         raise ValueError("a method selector returns a SelectionDecision")
     needs = sorted(dict.fromkeys(required))
-    if sorted(decision.requirements) != needs or (decision.refused is None) == bool(decision.missing):
-        raise ValueError("a selection is for the methods it was handed, and refused exactly when one is missing")
+    if sorted(decision.requirements) != needs:  # refused exactly when one is missing: the record's own rule
+        raise ValueError("a selection is for the methods it was handed")
     mandatory = sorted(row["method"] for row in decision.ordered_variants if row["obligation"] == "mandatory")
     if not decision.missing and mandatory != needs:
         raise ValueError("a complete selection meets each required method with one mandatory variant")
@@ -405,7 +418,10 @@ class MetacognitivePlanner:
     def plan(self, claims: Sequence[ClaimIR], context: ProblemSignature,
              variants: Sequence[MethodVariant], *,
              required_methods: Sequence[str]) -> dict[str, Any]:
-        claims, context, variants, required_methods = snapshot((claims, context, variants, required_methods))
+        claims = snapshot(claims, where="claims")
+        context = snapshot(context, where="context")
+        variants = snapshot(variants, where="variants")
+        required_methods = snapshot(required_methods, where="required_methods")
         planned: MethodPlan = MethodRouter().plan(claims)
         required = set(required_methods)
         requested = {need for claim in claims for need in claim.evidence_needs}

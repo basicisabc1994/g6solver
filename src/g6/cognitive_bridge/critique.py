@@ -13,7 +13,7 @@ from typing import Any, Mapping, Sequence
 
 from .codes import settled
 from .mixed_methods import ENGINE_SPECS
-from .snapshot import fresh, json_reply, record, returned, snapshot
+from .snapshot import fresh, json_reply, record, returned, snapshot, text
 
 
 @record
@@ -56,12 +56,15 @@ class CritiqueReport:
 class LLMMetacognitiveCritic:
     """Bounded JSON-only critical inquiry, compatible with G6 core.llm.LLMCaller."""
     def __init__(self, llm: Any, *, max_items: int = 6) -> None:
-        if not 1 <= max_items <= 12:
+        self.llm, self.max_items = llm, snapshot(max_items, where="max_items")
+        if not 1 <= self.max_items <= 12:
             raise ValueError("max items must be 1..12")
-        self.llm, self.max_items = llm, snapshot(max_items)
 
     def propose(self, objective: str, model_summary: str,
                 evidence_summary: Sequence[Mapping[str, Any]] = ()) -> CritiqueReport:
+        objective = text(objective, where="objective")
+        model_summary = text(model_summary, where="model_summary")
+        evidence_summary = snapshot(evidence_summary, where="evidence_summary")
         if not objective or not 1 <= len(objective) <= 3000 or len(model_summary) > 12000:
             raise ValueError("objective/model too large or missing")
         system = (

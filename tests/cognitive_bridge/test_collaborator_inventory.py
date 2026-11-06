@@ -53,8 +53,7 @@ EXPECTED = sorted([
     ("metacognition.py", "MetacognitiveMethodSelector.__init__", "admit_trial", "affirmed"),
     ("metacognition.py", "MetacognitivePlanner.plan", "self.selector.select", "returned(checked_selection)"),
     ("mixed_methods.py", "LLMClaimCompiler.draft", "self.llm.complete", "returned(json_reply)"),
-    ("orchestration.py", "CognitiveAssuranceOrchestrator.assess",
-     "(epistemic_gate or CrossMethodConflictGate()).reconcile", "returned(_reconciled)"),
+    ("orchestration.py", "CognitiveAssuranceOrchestrator.assess", "gate.reconcile", "returned(_reconciled)"),
     ("orchestration.py", "CognitiveAssuranceOrchestrator.assess", "evaluator.evaluate", "returned(_dossier)"),
     ("orchestration.py", "CognitiveAssuranceOrchestrator.compile", "self.selector.select",
      "returned(checked_selection)"),
@@ -65,11 +64,13 @@ EXPECTED = sorted([
 #: Parameters typed as code that are not a caller's code: the functions that walk a value to copy or read it once, and
 #: the one place a check is called (each check is the bridge's own function: test_every_check_is_the_bridges_own).
 DATA_WALKERS = {
-    ("snapshot.py", "_freeze", "value"),             # the snapshot itself: it reads a caller's value once, to copy it
-    ("snapshot.py", "returned", "check"),            # calls the bridge's own check on the fresh copy
     ("xai.py", "_native", "value"),                  # reads a numpy scalar's Python value
     ("codes.py", "claims", "value"),                 # walks a snapshot the bridge holds, to find a claim in it
 }
+#: The boundary itself (follow-up 2 of PR #8): every function in it reads a caller's or a collaborator's value once, to
+#: take it as plain data, or reads a maker by its identity in the record of what it issued; ``returned`` calls the
+#: bridge's own check on the fresh copy. Nothing in it calls a collaborator.
+BOUNDARY_MODULE = "snapshot.py"
 
 
 def _modules():
@@ -90,7 +91,7 @@ def _checks() -> frozenset[str]:
 def _kept_by_reference() -> frozenset[str]:
     """The attributes a class keeps by reference: every store in an ``__init__`` that is neither a snapshot nor the
     object's own state (``test_snapshot_inventory``'s rule, which names each one as a collaborator)."""
-    return frozenset(a for _, _, a, v in _stores.stores() if not (_stores._calls(v, "snapshot") or _stores._own_state(v)))
+    return frozenset(a for _, _, a, v in _stores.stores() if not (_stores.taken(v) or _stores._own_state(v)))
 
 
 def _top(node: ast.AST | None) -> set[str]:
@@ -163,7 +164,8 @@ def _code_names(module, functions, kept, code_types, checks):
         params = [*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs]
         params += [p for p in (function.args.vararg, function.args.kwarg) if p is not None]
         for param in params:
-            if (module, function.name, param.arg) in DATA_WALKERS or function.name in checks:
+            if (module, function.name, param.arg) in DATA_WALKERS or function.name in checks or (
+                    module == BOUNDARY_MODULE):
                 continue
             if _top(param.annotation) & code_types or param.arg in kept:
                 names.add(param.arg)
@@ -288,6 +290,8 @@ def test_a_kept_collaborator_is_handed_on_only_to_the_door_or_the_executor():
                 continue
             if isinstance(up, ast.Call) and ast.unparse(up.func) == "MixedMethodExecutor" and up.args[0] is node:
                 continue
+            if isinstance(up, ast.Call) and ast.unparse(up.func) == "issued" and up.args[0] is node:
+                continue  # read by its identity in the record of what it issued (snapshot.issued), never called
             bad.append(f"{module}:{node.lineno} {ast.unparse(up)[:100]}")
     assert bad == [], "a kept collaborator handed on: " + "; ".join(bad)
 
@@ -469,8 +473,7 @@ SCENARIOS = {
             ProblemSignature("review", "logic", "validity", 1, 2), [_variant()], required_methods=("formal",)),
     ("mixed_methods.py", "LLMClaimCompiler.draft", "self.llm.complete"):
         lambda log, f: LLMClaimCompiler(_model(log, _claims_reply())).draft("Does A entail A?"),
-    ("orchestration.py", "CognitiveAssuranceOrchestrator.assess",
-     "(epistemic_gate or CrossMethodConflictGate()).reconcile"):
+    ("orchestration.py", "CognitiveAssuranceOrchestrator.assess", "gate.reconcile"):
         lambda log, f: _assess(f["case3"], epistemic_gate=_SpyGate(log), scoped_assertions=[
             ScopedAssertion("claim", "truth", "a" * 64, "supports", "formal", "source1", "sig1")]),
     ("orchestration.py", "CognitiveAssuranceOrchestrator.assess", "evaluator.evaluate"):

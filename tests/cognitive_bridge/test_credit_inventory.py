@@ -324,19 +324,22 @@ def _evidence(case3, **change):
 @pytest.mark.parametrize("member", ["content", "source_ref", "verifier", "documentation", "candidate"])
 def test_a_dossier_is_credited_only_for_the_evidence_it_assessed(case3, member):
     other = _evidence(case3, member=member)
-    cached = InProcessAssuranceEvaluator(evaluator_id="outside").evaluate(**other)
-    assert cached.payload["completion_state"] == "qualified-draft"
 
     class Cached(InProcessAssuranceEvaluator):
         def evaluate(self, **kwargs):
             return cached
 
+    # since follow-up 2 of PR #8 a dossier is credited only from the evaluator that issued it: the cached one is
+    # issued by the very evaluator the assessment calls, so what this tests is the subject alone
+    evaluator = Cached(evaluator_id="outside")
+    cached = InProcessAssuranceEvaluator.evaluate(evaluator, **other)
+    assert cached.payload["completion_state"] == "qualified-draft"
     run = case3["orchestrator"].execute(case3["compiled"], approved=True)
     assess = case3["orchestrator"].assess
-    own = assess(case3["compiled"], run_result=run, evaluator=Cached(evaluator_id="outside"), **other)
+    own = assess(case3["compiled"], run_result=run, evaluator=evaluator, **other)
     assert own["completion_state"] == "qualified-draft", "the dossier is not credited even for its own evidence"
     submitted = _evidence(case3)
-    out = assess(case3["compiled"], run_result=run, evaluator=Cached(evaluator_id="outside"), **submitted)
+    out = assess(case3["compiled"], run_result=run, evaluator=evaluator, **submitted)
     assert out["completion_state"] == "blocked-escalated", f"a dossier for other {member} was credited"
     assert "not for the evidence submitted" in out["reason"]
 
@@ -352,18 +355,20 @@ def _assertions():
                          ids=["a subset", "a superset", "another"])
 def test_a_reconciliation_is_credited_only_for_the_assertions_it_reconciled(case3, cached_for, submitted):
     rows = dict(zip(("one", "two", "against"), _assertions()))
-    gate = CrossMethodConflictGate(admit_assertion=lambda a: True)
-    cached = gate.reconcile([rows[k] for k in cached_for.split(",")])
-    assert cached["completion_state"] == "qualified-draft"
 
     class Cached(CrossMethodConflictGate):
         def reconcile(self, assertions):
             return cached
 
+    # since follow-up 2 of PR #8 a report is credited only from the gate that issued it: the cached one is issued by
+    # the very gate the assessment calls, so what this tests is the subject alone
+    gate = Cached(admit_assertion=lambda a: True)
+    cached = CrossMethodConflictGate.reconcile(gate, [rows[k] for k in cached_for.split(",")])
+    assert cached["completion_state"] == "qualified-draft"
     assess = _case(case3)
     assert assess(scoped_assertions=[rows[k] for k in reversed(cached_for.split(","))],
-                  epistemic_gate=Cached())["completion_state"] == "qualified-draft", "not credited for its own set"
-    out = assess(scoped_assertions=[rows[k] for k in submitted.split(",")], epistemic_gate=Cached())
+                  epistemic_gate=gate)["completion_state"] == "qualified-draft", "not credited for its own set"
+    out = assess(scoped_assertions=[rows[k] for k in submitted.split(",")], epistemic_gate=gate)
     assert out["completion_state"] == "blocked-escalated", f"a report for {cached_for} was credited for {submitted}"
     assert "not for the assertions submitted" in out["reason"]
 
@@ -389,7 +394,15 @@ def test_a_selection_is_taken_only_when_eligible_under_the_context_it_is_for(cas
     elif member == "portfolio":  # each row affordable alone, the two together not (the member a per-row check misses)
         variants, required = _two_methods(), ["formal", "graph"]
         context = replace(context, budget=1.5)
-    decision = MetacognitiveMethodSelector().select(eligible, variants, required_methods=required)
+
+    class Cached(MetacognitiveMethodSelector):
+        def select(self, *args, **kwargs):
+            return decision
+
+    # since follow-up 2 of PR #8 a selection is taken only from the selector that issued it: the cached one is
+    # issued by the very selector compile calls, so what this tests is its eligibility alone
+    selector = Cached()
+    decision = MetacognitiveMethodSelector.select(selector, eligible, variants, required_methods=required)
     assert not decision.missing
     if member in ("cost", "obligation", "variant"):
         row = dict(decision.ordered_variants[0])
@@ -400,19 +413,17 @@ def test_a_selection_is_taken_only_when_eligible_under_the_context_it_is_for(cas
         decision = replace(decision, ordered_variants=())
     elif member == "requirements":  # a selection for other methods than the ones handed
         decision = replace(decision, requirements=("graph",))
-    elif member == "refused":  # says a method is missing, and is not refused
-        decision = replace(decision, missing=("formal",))
-
-    class Cached:
-        def select(self, *args, **kwargs):
-            return decision
+    elif member == "refused":  # says a method is missing, and is not refused: since follow-up 2 of PR #8 a decision
+        with pytest.raises(ValueError, match="refused exactly"):  # like that is refused as it is made
+            replace(decision, missing=("formal",))
+        return
 
     def plan(where):  # the planner only advises, and still takes no selection that is not for its context
-        return MetacognitivePlanner(Cached()).plan([ClaimIR("claim", "A entails A", tuple(required), {
+        return MetacognitivePlanner(selector).plan([ClaimIR("claim", "A entails A", tuple(required), {
             "formal": {"formula": "A"}})], where, variants, required_methods=required)
 
     def compile_(where):
-        return CognitiveAssuranceOrchestrator(Cached()).compile(
+        return CognitiveAssuranceOrchestrator(selector).compile(
             claim=ClaimIR("claim", "A entails A", tuple(required), {}), context=where,
             standard=case3["standard"], variants=variants,
             variant_models={"v": {"formula": "A", "premises": ["A"]}, "f": {"formula": "A", "premises": ["A"]},

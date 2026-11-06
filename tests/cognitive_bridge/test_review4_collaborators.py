@@ -18,6 +18,7 @@ from g6.cognitive_bridge import (
     InformationGainSelector, LLMClaimCompiler, LLMIdeaGenerator, LLMMetacognitiveCritic, LLMProposer,
     MetacognitiveMethodSelector, MetacognitivePlanner, MethodVariant, MLAcquisitionSelector, Observation, Probe, ProblemSignature, ScopedAssertion, StaticProposer, ToolSpec, distill_blackbox,
 )
+from g6.cognitive_bridge import codes
 from g6.core import door
 
 
@@ -291,7 +292,8 @@ _VALID = {"proposer": '{"probes": []}', "ideas": '{"ideas": []}', "critic": '{"c
 @pytest.mark.parametrize("kind", ["bytes", "none", "a-mapping"])
 def test_a_models_reply_is_text_or_refused(user, kind):
     reply = {"bytes": _VALID[user].encode(), "none": None, "a-mapping": {"probes": []}}[kind]
-    with pytest.raises(ValueError, match="text"):
+    # since follow-up 2 of PR #8 a reply in bytes is refused where it returns, as what is not JSON data
+    with pytest.raises(ValueError, match="text|not JSON data"):
         _USERS[user](_llm(reply))
     _USERS[user](_llm(_VALID[user]))  # the same reply as text is used
 
@@ -309,8 +311,12 @@ def test_a_predictors_scores_are_held_as_returned_and_checked():
             return self.value(rows)
 
     beliefs = {"A": .5, "B": .5}
-    ranked = MLAcquisitionSelector(Scores(lambda rows: numpy.array([.25] * len(rows)))).rank(beliefs, [_probe()], 1)
+    ranked = MLAcquisitionSelector(Scores(lambda rows: [.25] * len(rows))).rank(beliefs, [_probe()], 1)
     assert ranked[0]["score"] == .25 and type(ranked[0]["score"]) is float
+    # since follow-up 2 of PR #8 a numpy array is not plain JSON data: it is refused where it returns, with its code
+    with pytest.raises(ValueError) as refused:
+        MLAcquisitionSelector(Scores(lambda rows: numpy.array([.25] * len(rows)))).rank(beliefs, [_probe()], 1)
+    assert refused.value.code == codes.INPUT and "numpy.ndarray" in str(refused.value)
     for wrong in (lambda rows: (x for x in [.1] * len(rows)), lambda rows: [.1, .2], lambda rows: [math.inf],
                   lambda rows: [[.1, .2]]):
         with pytest.raises((ValueError, TypeError)):

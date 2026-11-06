@@ -43,6 +43,7 @@ class FailureModeFinding:
 
 
 def detect_failure_modes(dossier: CandidateDossier) -> tuple[FailureModeFinding, ...]:
+    dossier = snapshot(dossier, where="dossier")
     if not dossier.intact():
         raise ValueError("dossier content digest mismatch")
     out = []
@@ -74,6 +75,8 @@ class CompositionalFailureModel:
     """Links observed defects to hypotheses about guards; never conflates them."""
     def map(self, findings: Sequence[FailureModeFinding],
             proposals: Sequence[MitigationHypothesis]) -> dict[str, Any]:
+        findings = snapshot(findings, where="findings")
+        proposals = snapshot(proposals, where="proposals")
         codes = {x.code for x in findings}
         edges = []
         unresolved = []
@@ -260,18 +263,23 @@ class AdaptationPromotionGate:
                  admit_control: Callable[[ControlTrial], bool] | None = None,
                  min_cases: int = 20, min_discordant: int = 6,
                  alpha: float = 0.05, max_evaluations: int = 5):
-        if not 1 <= min_cases <= 100000 or not 1 <= min_discordant <= min_cases:
-            raise ValueError("invalid minimum sample sizes")
-        if not 0 < alpha < 1 or not 1 <= max_evaluations <= 100:
-            raise ValueError("invalid multiplicity policy")
         self.admit_pair, self.admit_control = admit_pair, admit_control
-        self.min_cases, self.min_discordant = snapshot(min_cases), snapshot(min_discordant)
-        self.alpha, self.max_evaluations = snapshot(alpha), snapshot(max_evaluations)
+        self.min_cases = snapshot(min_cases, where="min_cases")
+        self.min_discordant = snapshot(min_discordant, where="min_discordant")
+        self.alpha = snapshot(alpha, where="alpha")
+        self.max_evaluations = snapshot(max_evaluations, where="max_evaluations")
+        if not 1 <= self.min_cases <= 100000 or not 1 <= self.min_discordant <= self.min_cases:
+            raise ValueError("invalid minimum sample sizes")
+        if not 0 < self.alpha < 1 or not 1 <= self.max_evaluations <= 100:
+            raise ValueError("invalid multiplicity policy")
 
     def assess(self, change: GuardChange, pairs: Sequence[PairedTrial],
                controls: Sequence[ControlTrial], *, detected_failures: Sequence[str]) -> dict[str, Any]:
-        # One snapshot, taken before anything is checked: what is admitted is what is counted.
-        change, pairs, controls, detected_failures = snapshot((change, pairs, controls, detected_failures))
+        # Everything is taken where it enters, before anything is checked: what is admitted is what is counted.
+        change = snapshot(change, where="change")
+        pairs = snapshot(pairs, where="pairs")
+        controls = snapshot(controls, where="controls")
+        detected_failures = snapshot(detected_failures, where="detected_failures")
         violations: list[str] = []
         if change.candidate_actor == change.evaluator_actor:
             violations.append("candidate and evaluator are not independent")

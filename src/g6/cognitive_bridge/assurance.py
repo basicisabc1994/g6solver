@@ -9,13 +9,12 @@ writable scope. An unkeyed digest detects edits, not malicious reissuance.
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from dataclasses import field, fields
 from typing import Any, Mapping, Protocol
 
 from .codes import DOSSIER_BLOCKED, MADE_FIELDS, STATES, affirmed, only_fields, refusal, settled
-from .snapshot import fresh, record, returned, snapshot
+from .snapshot import canonical_json, fresh, issue, plain, record, returned, snapshot, text
 
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 FORMAT = "g6.cognitive_assurance.dossier/1"
@@ -36,12 +35,6 @@ PAYLOAD_FIELDS = (
 
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
-
-
-def canonical_json(value: Any) -> bytes:
-    """Reject NaNs, objects, and noncanonical numerics instead of stringifying them."""
-    return json.dumps(value, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=True, allow_nan=False).encode("utf-8")
 
 
 def is_risk(value: Any) -> bool:
@@ -206,6 +199,7 @@ class CandidateDossier:
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "CandidateDossier":
+        payload = plain(payload, where="a dossier's payload")
         return cls(payload, sha256(canonical_json(payload)))
 
     def intact(self) -> bool:
@@ -257,9 +251,9 @@ class InProcessAssuranceEvaluator:
     need an evaluator outside this process, which this class does not provide.
     """
     def __init__(self, *, evaluator_id: str, reviewer_authenticator: ReviewAuthenticator | None = None):
-        if not evaluator_id:
+        self.evaluator_id = text(evaluator_id, where="evaluator_id, the evaluator's identity")
+        if not self.evaluator_id:
             raise ValueError("named evaluator required")
-        self.evaluator_id = snapshot(evaluator_id)
         self.reviewer_authenticator = reviewer_authenticator
 
     def review_scope(self, *, standard: DomainStandard, artifacts: Mapping[str, EvidenceArtifact],
@@ -268,6 +262,11 @@ class InProcessAssuranceEvaluator:
         """What an authenticated review attests: the evidence a dossier assesses (:func:`_evidence`: the standard, each
         artifact's full manifest, the checkers, the documentation and the producer) and the evaluator. A change to any
         of them is a different scope, so an attestation of one never covers another."""
+        standard = snapshot(standard, where="standard")
+        artifacts = snapshot(artifacts, where="artifacts")
+        verifiers = snapshot(verifiers, where="verifiers")
+        documentation = snapshot(documentation, where="documentation")
+        candidate_actor = text(candidate_actor, where="candidate_actor, the producer")
         return sha256(canonical_json({
             **_evidence(standard=standard, artifacts=artifacts, verifiers=verifiers, documentation=documentation,
                         candidate_actor=candidate_actor),
@@ -280,12 +279,17 @@ class InProcessAssuranceEvaluator:
                  documentation: Mapping[str, str],
                  candidate_actor: str,
                  attestation: ProfessionalAttestation | None = None) -> CandidateDossier:
+        # Everything is taken where it enters, before anything is checked: plain data, records made again, identities
+        # as text. The checks, the dossier and the review scope all read what was taken, never the caller's values; the
+        # standard's digest is read again after use (a change would block).
+        standard = snapshot(standard, where="standard")
+        artifacts = snapshot(artifacts, where="artifacts")
+        verifiers = snapshot(verifiers, where="verifiers")
+        documentation = snapshot(documentation, where="documentation")
+        candidate_actor = text(candidate_actor, where="candidate_actor, the producer")
+        attestation = snapshot(attestation, where="attestation")
         if not candidate_actor or candidate_actor == self.evaluator_id:
             raise ValueError("producer and evaluator must have distinct identities")
-        # One snapshot, taken before anything is checked: the checks, the dossier and the review scope all read it,
-        # never the caller's mappings; the standard's digest is read again after use (a change would block).
-        standard, artifacts, verifiers, documentation, attestation = snapshot(
-            (standard, artifacts, verifiers, documentation, attestation))
         pinned = standard.digest
         # What this dossier is about, named by digest when the snapshot is taken (its subject_sha256).
         subject = evidence_sha256(standard=standard, artifacts=artifacts, verifiers=verifiers,
@@ -412,7 +416,7 @@ class InProcessAssuranceEvaluator:
                 "An assurance dossier is not professional accreditation, an audit opinion, or a result G6 promoted.",
             ],
         )
-        return CandidateDossier.from_payload(payload)
+        return issue(self, CandidateDossier.from_payload(payload))
 
 
 __all__ = ["Criterion", "DomainStandard", "EvidenceArtifact", "FrozenVerifier",

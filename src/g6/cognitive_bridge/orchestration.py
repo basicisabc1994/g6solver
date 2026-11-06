@@ -12,6 +12,12 @@ plan's, decided in one place (:func:`compilation_gaps`) that execution and asses
 is exactly the refusal that place gives, or the compilation is not made. What an assessment credits is what this orchestrator ran: its
 own record of each run, step by step through G6's door, never a caller's run result or label.
 
+The orchestrator honours only records it, its selector, its evaluator and its gate made: ``compile`` records the
+digest of each compilation it returns (``snapshot.issue``, over every field, its context included) and takes a
+selection only when its selector issued it; ``execute`` and ``assess`` take a compilation only when this orchestrator
+issued it, and ``assess`` credits a dossier or a reconciliation only when the evaluator or gate it called issued it
+(``snapshot.issued``). Everything a caller hands in is taken as plain data where it enters (``snapshot``).
+
 Credit binds its subject. A dossier is credited only for the evidence submitted to that assessment, and a
 reconciliation only for the assertions submitted to it, each by the digest it names; a selection is taken only when
 each row is a variant given, eligible under the context given, and the rows together fit its budget. What an evaluator,
@@ -36,7 +42,7 @@ from .epistemic import CrossMethodConflictGate, ScopedAssertion, assertions_sha2
 from .metacognition import (MethodVariant, MetacognitiveMethodSelector,
                             ProblemSignature, SelectionDecision, checked_selection)
 from .mixed_methods import (ENGINE_SPECS, ClaimIR, MethodPlan, MethodRouter, MixedMethodExecutor, step_digest)
-from .snapshot import fresh, record, returned, snapshot
+from .snapshot import fresh, issue, issued, plain, record, returned, snapshot, text
 
 
 def _dossier(dossier: Any, subject: str) -> tuple[CandidateDossier, str]:
@@ -102,9 +108,10 @@ class CompiledResearch:
         # give, exactly: a blocked selection with no refusal, or a refusal of a qualified one, is not a compilation.
         if type(self.decision) is not SelectionDecision or type(self.executable_plan) is not MethodPlan:
             raise TypeError("a compilation holds a SelectionDecision and a MethodPlan")
-        if self.refused != snapshot(_refusal_for(compilation_gaps(self.decision, self.executable_plan))):
-            raise ValueError("a compilation is refused exactly as its selection and plan give (compilation_gaps): "
-                             "its refused field is not that refusal")
+        gaps = compilation_gaps(self.decision, self.executable_plan)
+        if self.refused != snapshot(_refusal_for(gaps)):
+            raise ValueError(f"a compilation is refused exactly as its selection and plan give (compilation_gaps: "
+                             f"{'; '.join(gaps) or 'none'}): its refused field is not that refusal")
 
     @property
     def completion_state(self) -> str:
@@ -115,7 +122,7 @@ class CompiledResearch:
     def changed_since_compiled(self, plan: MethodPlan | None = None) -> str:
         """Why ``plan`` (the executable plan, or a frozen copy of it about to run) no longer matches what was compiled
         and pinned (a selected model's digest, the steps' digest), or ``""`` when it still does."""
-        plan = self.executable_plan if plan is None else plan
+        plan = snapshot(self.executable_plan if plan is None else plan, where="plan")
         models = {need: model for claim in plan.claims for need, model in claim.models.items()}
         for row in self.decision.ordered_variants:
             pin = self.selected_model_hashes.get(row["variant_id"])
@@ -156,7 +163,12 @@ class CognitiveAssuranceOrchestrator:
                 standard: DomainStandard, variants: Sequence[MethodVariant],
                 variant_models: Mapping[str, Mapping[str, Any]],
                 max_supplemental: int = 0) -> CompiledResearch:
-        claim, context, standard, variants = snapshot((claim, context, standard, variants))
+        claim = snapshot(claim, where="claim")
+        context = snapshot(context, where="context")
+        standard = snapshot(standard, where="standard")
+        variants = snapshot(variants, where="variants")
+        variant_models = snapshot(variant_models, where="variant_models")
+        max_supplemental = snapshot(max_supplemental, where="max_supplemental")
         if context.risk < standard.risk or context.domain != standard.id:
             raise ValueError("the problem context cannot weaken its standard's risk tier or domain")
         mandatory = {m for criterion in standard.criteria for m in criterion.required_methods}
@@ -170,6 +182,9 @@ class CognitiveAssuranceOrchestrator:
                                                   required_methods=fresh(sorted(requested)),
                                                   max_optional=fresh(max_supplemental)), checked_selection, variants,
                              context, sorted(requested))
+        if not issued(self.selector, selection):
+            raise ValueError("the selection is not one this selector issued: a selection is taken only from the "
+                             "selector that made it")
         models: dict[str, dict[str, Any]] = {}
         model_hashes: dict[str, str] = {}
         for row in selection.ordered_variants:
@@ -181,7 +196,7 @@ class CognitiveAssuranceOrchestrator:
             method = row["method"]
             vid = row["variant_id"]
             source = variant_models.get(vid)
-            if not isinstance(source, Mapping):
+            if not isinstance(source, dict):
                 continue
             # A method's chosen representation becomes declarative, reviewed
             # input to the canonical router; no arbitrary generated code. It is
@@ -206,28 +221,32 @@ class CognitiveAssuranceOrchestrator:
                             evidence_needs=tuple(claim.evidence_needs), models=models,
                             source_refs=claim.source_refs, origin=claim.origin)
         plan = MethodRouter().plan([new_claim])
-        return CompiledResearch(claim, plan, selection, standard.digest, context, model_hashes,
-                                _refusal_for(compilation_gaps(selection, plan)), _plan_digest(plan))
+        return issue(self, CompiledResearch(claim, plan, selection, standard.digest, context, model_hashes,
+                                            _refusal_for(compilation_gaps(selection, plan)), _plan_digest(plan)))
 
     def execute(self, compiled: CompiledResearch, *, approved: bool = False,
                 allow: Iterable[str] = ()) -> dict[str, Any]:
         """Run the approved plan through G6's checked door; ``approved`` is ``True`` and nothing else
-        (``codes.affirmed``), and ``allow`` is the person's allow for a sensitive op. Only a CompiledResearch runs, and
+        (``codes.affirmed``), and ``allow`` is the person's allow for a sensitive op. Only a compilation this
+        orchestrator issued runs (``snapshot.issued``: not one a caller built, edited or another instance made), and
         only when its state (its selection's verdict, :func:`compilation_gaps`) is ``qualified-draft``."""
+        try:
+            compiled = snapshot(compiled, where="compiled")  # made again: what is checked is what runs
+            allow = snapshot(allow, where="allow")
+        except ValueError as exc:
+            return refusal(EXECUTION_NOT_APPROVED, f"the compilation cannot be taken: {exc}", steps=[],
+                           method_execution_coverage=0.0)
         if (not affirmed(approved) or self.registry is None or type(compiled) is not CompiledResearch
                 or compiled.completion_state != "qualified-draft"):
             return refusal(EXECUTION_NOT_APPROVED, "approved, fully specified plan and connected G6 registry required")
-        # Snapshot, then check, then run: the plan is a record (immutable all the way down), checked against the pins,
-        # and that same plan runs (the executor checks it again against the canonical routing).
-        try:
-            plan = snapshot(compiled.executable_plan)
-            if not isinstance(plan, MethodPlan):
-                raise TypeError("a compiled plan is a MethodPlan record")
-        except (TypeError, ValueError) as exc:
-            return refusal(PLAN_TAMPERED, str(exc), steps=[], method_execution_coverage=0.0)
+        plan = compiled.executable_plan
         changed = compiled.changed_since_compiled(plan)
         if changed:
             return refusal(PLAN_TAMPERED, changed, steps=[], method_execution_coverage=0.0)
+        if not issued(self, compiled):
+            return refusal(EXECUTION_NOT_APPROVED, "the compilation is not one this orchestrator compiled: built by "
+                                                   "hand, edited, or made by another instance", steps=[],
+                           method_execution_coverage=0.0)
         out = MixedMethodExecutor(self.registry, allow=allow).execute(plan, approved=True)
         result = {**out, "selection_policy_digest": compiled.decision.policy_digest,
                   "standard_digest": compiled.standard_digest,
@@ -239,7 +258,7 @@ class CognitiveAssuranceOrchestrator:
     def _executed(self, compiled: CompiledResearch, run_result: Mapping[str, Any]) -> dict[str, Any] | None:
         """This orchestrator's own record of the run ``run_result`` names, when it ran this compiled plan for the
         claim the compiled research names, and the caller's copy is that record unchanged; else None."""
-        record = self._runs.get(str(run_result.get("run_id", ""))) if isinstance(run_result, Mapping) else None
+        record = self._runs.get(str(run_result.get("run_id", ""))) if isinstance(run_result, dict) else None
         if record is None or record[0] != compiled.plan_digest or compiled.changed_since_compiled():
             return None
         try:
@@ -252,7 +271,7 @@ class CognitiveAssuranceOrchestrator:
     @staticmethod
     def _every_step_ran(compiled: CompiledResearch, executed: Mapping[str, Any]) -> bool:
         """Each compiled step ran through G6's door as compiled (the same step digest) and came back qualified."""
-        ran = {step.get("id"): step for step in executed.get("steps", []) if isinstance(step, Mapping)}
+        ran = {step.get("id"): step for step in executed.get("steps", []) if isinstance(step, dict)}
         return (executed.get("completion_state") == "qualified-draft" and bool(compiled.executable_plan.steps)
                 and all(ran.get(step.id, {}).get("completion_state") == "qualified-draft"
                         and ran[step.id].get("step_digest") == step_digest(step)
@@ -261,9 +280,12 @@ class CognitiveAssuranceOrchestrator:
     @staticmethod
     def execution_artifact(run_result: Mapping[str, Any], *, actor: str,
                            claim_id: str) -> EvidenceArtifact:
+        run_result = plain(run_result, where="run_result")
+        actor = text(actor, where="actor, the producer")
+        claim_id = text(claim_id, where="claim_id")
         if not actor or not claim_id:
             raise ValueError("actor and claim must be supplied")
-        payload = canonical_json(dict(run_result))
+        payload = canonical_json(run_result)
         return EvidenceArtifact(id=f"execution:{claim_id}", content=payload, kind="report",
                                 claimed_by=actor, source_ref=f"g6:execution:{sha256(payload)}",
                                 claim_id=claim_id)
@@ -276,11 +298,29 @@ class CognitiveAssuranceOrchestrator:
                attestation: ProfessionalAttestation | None = None,
                scoped_assertions: Sequence[ScopedAssertion] = (),
                epistemic_gate: CrossMethodConflictGate | None = None) -> dict[str, Any]:
-        # One snapshot of everything the assessment checks and then uses, taken before any check.
-        compiled, standard, run_result, verifiers, artifacts, documentation, scoped_assertions = snapshot(
-            (compiled, standard, run_result, verifiers, artifacts, documentation, scoped_assertions))
+        # Everything the assessment checks and then uses is taken where it enters, before any check: plain data,
+        # records made again, the producer as text. A compilation that cannot be taken is not one this orchestrator
+        # issued, and is refused as one.
+        try:
+            compiled = snapshot(compiled, where="compiled")
+        except ValueError as exc:
+            return refusal(ASSURANCE_BLOCKED, f"the compilation cannot be taken: {exc}", evidence=[],
+                           request_id=uuid.uuid4().hex[:12], run_id="", method_results={})
+        standard = snapshot(standard, where="standard")
+        run_result = snapshot(run_result, where="run_result")
+        verifiers = snapshot(verifiers, where="verifiers")
+        artifacts = snapshot(artifacts, where="artifacts")
+        documentation = snapshot(documentation, where="documentation")
+        candidate_actor = text(candidate_actor, where="candidate_actor, the producer")
+        attestation = snapshot(attestation, where="attestation")
+        scoped_assertions = snapshot(scoped_assertions, where="scoped_assertions")
         if type(compiled) is not CompiledResearch:
             raise ValueError("an assessment is of a CompiledResearch: its state is its selection's verdict")
+        if not issued(self, compiled):
+            return refusal(ASSURANCE_BLOCKED, "the compilation is not one this orchestrator compiled: built by hand, "
+                                              "edited, or made by another instance",
+                           evidence=[], request_id=uuid.uuid4().hex[:12], run_id="", method_results={})
+        gate = epistemic_gate or CrossMethodConflictGate()
         # The compilation's state, read where it is decided (compilation_gaps), as execute reads it.
         blocked_by = compilation_gaps(compiled.decision, compiled.executable_plan)
         if standard.digest != compiled.standard_digest:
@@ -298,6 +338,8 @@ class CognitiveAssuranceOrchestrator:
             evaluator.evaluate(standard=fresh(standard), artifacts=fresh(artifacts), verifiers=fresh(verifiers),
                                documentation=fresh(documentation), candidate_actor=fresh(candidate_actor),
                                attestation=fresh(attestation)), _dossier, evidence)
+        if not dossier_uncredited and not issued(evaluator, dossier):
+            dossier_uncredited = "the dossier is not one this evaluator issued"
         # Whether the compiled steps ran is read from this orchestrator's own record, never from the caller's label.
         executed = self._executed(compiled, run_result)
         backend_ok = executed is not None and self._every_step_ran(compiled, executed)
@@ -307,8 +349,10 @@ class CognitiveAssuranceOrchestrator:
         # submitted here, by their digest, and only in the state its own findings give.
         conflict_report, report_uncredited = None, ""
         if scoped_assertions:
-            conflict_report, report_uncredited = returned((epistemic_gate or CrossMethodConflictGate()).reconcile(
-                fresh(scoped_assertions)), _reconciled, assertions_sha256(scoped_assertions))
+            conflict_report, report_uncredited = returned(gate.reconcile(fresh(scoped_assertions)), _reconciled,
+                                                          assertions_sha256(scoped_assertions))
+            if not report_uncredited and not issued(gate, conflict_report):
+                report_uncredited = "the reconciliation is not one this gate issued"
         epistemic_ok = conflict_report is None or (not report_uncredited
                                                    and conflict_report["completion_state"] == "qualified-draft")
         faults = detect_failure_modes(dossier)

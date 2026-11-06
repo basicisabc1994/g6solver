@@ -13,7 +13,7 @@ from dataclasses import asdict
 from typing import Any, Mapping, Sequence
 
 from .codes import settled
-from .snapshot import fresh, record, returned
+from .snapshot import fresh, record, returned, snapshot, text
 
 
 def _native(value: Any) -> Any:
@@ -50,7 +50,7 @@ class ExplicitTree:
     provenance: str  # tree_transcription | blackbox_surrogate
 
     def _row(self, sample: Mapping[str, Any] | Sequence[Any]) -> list[float]:
-        if isinstance(sample, Mapping):
+        if isinstance(sample, dict):
             values = [sample[name] for name in self.features]
         else:
             values = list(sample)
@@ -59,6 +59,7 @@ class ExplicitTree:
         return [_float32(x) for x in values]
 
     def explain_one(self, sample: Mapping[str, Any] | Sequence[Any]) -> dict[str, Any]:
+        sample = snapshot(sample, where="sample")
         values = self._row(sample)
         node = self.root
         conditions = []
@@ -72,6 +73,7 @@ class ExplicitTree:
                 "caveat": "explains this explicit model's decision, not causality"}
 
     def predict(self, samples: Sequence[Mapping[str, Any] | Sequence[Any]]) -> list[Any]:
+        samples = snapshot(samples, where="samples")
         return [self.explain_one(sample)["prediction"] for sample in samples]
 
     def to_dict(self) -> dict:
@@ -109,6 +111,8 @@ def extract_tree(estimator: Any, feature_names: Sequence[str] | None = None,
     features, no preprocessing pipeline, no missing values. Comparisons first
     cast input values to float32, matching sklearn's tree input convention.
     """
+    feature_names = snapshot(feature_names, where="feature_names")
+    provenance = text(provenance, where="provenance")
     names = _feature_names(estimator, feature_names)
     tree = estimator.tree_
     is_classifier = hasattr(estimator, "classes_")
@@ -154,6 +158,13 @@ def distill_blackbox(blackbox: Any, X_train: Sequence[Sequence[float]],
     The returned rule tree describes approximated *model behaviour*, not
     ground truth or causal influence.
     """
+    X_train = snapshot(X_train, where="X_train")
+    X_holdout = snapshot(X_holdout, where="X_holdout")
+    feature_names = snapshot(feature_names, where="feature_names")
+    task = text(task, where="task")
+    max_depth = snapshot(max_depth, where="max_depth")
+    min_samples_leaf = snapshot(min_samples_leaf, where="min_samples_leaf")
+    seed = snapshot(seed, where="seed")
     if task not in {"classification", "regression"}:
         raise ValueError("task must be classification or regression")
     if not 1 <= max_depth <= 12 or not 1 <= min_samples_leaf <= 1000:

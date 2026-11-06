@@ -25,7 +25,7 @@ from g6.invariants import ERROR_CODE_PATTERN
 from .assurance import canonical_json, sha256
 from .codes import (EVIDENCE_CONTESTED, EVIDENCE_NOT_RECONCILED, EVIDENCE_REFUTED, EVIDENCE_UNDETERMINED, MADE_FIELDS,
                     STATES, affirmed, only_fields, refusal, settled)
-from .snapshot import fresh, record, snapshot
+from .snapshot import fresh, issue, record, snapshot
 
 HEX64 = re.compile("[0-9a-f]{64}\\Z")
 #: An assertion's stance as an evidence record states it (``g6.core.evidence.EvidenceStance``).
@@ -83,7 +83,7 @@ def findings_state(report: Mapping[str, Any]) -> str:
     findings = report.get("scoped_findings", ())
     unsettled = (not isinstance(findings, (list, tuple)) or not findings
                  or bool(report.get("unadmitted_evidence_refs"))
-                 or any(not isinstance(f, Mapping) or f.get("completion_state") != STATES[0] for f in findings))
+                 or any(not isinstance(f, dict) or f.get("completion_state") != STATES[0] for f in findings))
     return STATES[unsettled]  # STATES is (qualified-draft, blocked-escalated)
 
 
@@ -98,7 +98,7 @@ class CrossMethodConflictGate:
         self.admit_assertion = admit_assertion
 
     def reconcile(self, assertions: Sequence[ScopedAssertion]) -> dict[str, Any]:
-        assertions = snapshot(assertions)
+        assertions = snapshot(assertions, where="assertions")
         groups: dict[tuple[str, str, str], list[ScopedAssertion]] = {}
         refused: list[str] = []
         duplicate_sources: list[str] = []
@@ -145,16 +145,16 @@ class CrossMethodConflictGate:
                      if x["completion_state"] != "qualified-draft"]
         why = ([f"{len(refused)} assertion(s) not admitted"] if refused else []) + unsettled + (
             [] if groups else ["no admitted assertion"])
-        return settled(refusal(EVIDENCE_NOT_RECONCILED, "; ".join(why)) if why else None,
-                       subject_sha256=assertions_sha256(assertions),
-                       conflicts=conflicts, unadmitted_evidence_refs=refused,
-                       repeated_source_refs=duplicate_sources,
-                       scoped_findings=findings,
-                       limitations=["Only exact proposition-and-scope identity is compared; differing scopes are "
-                                    "incomparable.",
-                                    "Agreement is neither independent replication nor evidence of truth.",
-                                    "Admissibility depends on an external trusted evaluator, not a field or an LLM "
-                                    "judgment."])
+        return issue(self, settled(refusal(EVIDENCE_NOT_RECONCILED, "; ".join(why)) if why else None,
+                                   subject_sha256=assertions_sha256(assertions),
+                                   conflicts=conflicts, unadmitted_evidence_refs=refused,
+                                   repeated_source_refs=duplicate_sources,
+                                   scoped_findings=findings,
+                                   limitations=["Only exact proposition-and-scope identity is compared; differing "
+                                                "scopes are incomparable.",
+                                                "Agreement is neither independent replication nor evidence of truth.",
+                                                "Admissibility depends on an external trusted evaluator, not a field "
+                                                "or an LLM judgment."]))
 
 
 __all__ = ["REPORT_FIELDS", "ScopedAssertion", "CrossMethodConflictGate", "assertions_sha256", "checked_report",

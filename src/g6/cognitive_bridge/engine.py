@@ -29,7 +29,7 @@ from g6.core import door
 
 from .assurance import canonical_json, sha256
 from .codes import NO_PROBE, STEP_FAILED, affirmed, claims, refusal, settled
-from .snapshot import FrozenMap, fresh, json_reply, record, returned, snapshot
+from .snapshot import FrozenMap, fresh, json_reply, plain, record, returned, snapshot, text
 
 
 @record
@@ -91,6 +91,7 @@ def _beliefs(beliefs: dict[str, float]) -> dict[str, float]:
 
 
 def check_beliefs(hypotheses: Sequence[Hypothesis]) -> dict[str, float]:
+    hypotheses = snapshot(hypotheses, where="hypotheses")
     if not 2 <= len(hypotheses) <= 32:
         raise ValueError("supply 2–32 competing hypotheses")
     ids = [h.id for h in hypotheses]
@@ -125,6 +126,8 @@ def _likelihood(probe: Probe, hypothesis_id: str, positive: bool) -> float:
 
 def expected_information_gain(beliefs: Mapping[str, float], probe: Probe) -> float:
     """Mutual information I(H;O) under an explicitly assumed binary likelihood model."""
+    beliefs = snapshot(beliefs, where="beliefs")
+    probe = snapshot(probe, where="probe")
     _validate_probe(probe, beliefs)
     before = _entropy(list(beliefs.values()))
     after = 0.0
@@ -140,12 +143,15 @@ class InformationGainSelector:
     """Explicit, deterministic selection; novelty only breaks near-ties by default."""
 
     def __init__(self, *, novelty_weight: float = 1e-6, min_gain: float = 1e-9) -> None:
-        self.novelty_weight = snapshot(novelty_weight)
-        self.min_gain = snapshot(min_gain)
-        if not 0 <= novelty_weight <= 1 or not 0 <= min_gain:
+        self.novelty_weight = snapshot(novelty_weight, where="novelty_weight")
+        self.min_gain = snapshot(min_gain, where="min_gain")
+        if not 0 <= self.novelty_weight <= 1 or not 0 <= self.min_gain:
             raise ValueError("invalid selector configuration")
 
     def rank(self, beliefs: Mapping[str, float], probes: Sequence[Probe], budget: float) -> list[dict]:
+        beliefs = snapshot(beliefs, where="beliefs")
+        probes = snapshot(probes, where="probes")
+        budget = snapshot(budget, where="budget")
         if not math.isfinite(budget) or budget < 0:
             raise ValueError("budget must be finite and nonnegative")
         scored = []
@@ -160,6 +166,9 @@ class InformationGainSelector:
 
 class BayesianUpdater:
     def update(self, beliefs: Mapping[str, float], probe: Probe, positive: bool) -> dict[str, float]:
+        beliefs = snapshot(beliefs, where="beliefs")
+        probe = snapshot(probe, where="probe")
+        positive = snapshot(positive, where="positive")
         _validate_probe(probe, beliefs)
         if type(positive) is not bool:
             raise ValueError("the measured outcome must be boolean")
@@ -173,7 +182,7 @@ class BayesianUpdater:
 
 class StaticProposer:
     def __init__(self, probes: Sequence[Probe]) -> None:
-        self.probes = snapshot(probes)
+        self.probes = snapshot(probes, where="probes")
 
     def propose(self, objective: str, hypotheses: Sequence[Hypothesis], history: Sequence[dict]) -> list[Probe]:
         return list(self.probes)
@@ -187,11 +196,15 @@ class LLMProposer:
     """
 
     def __init__(self, llm: Any, tools: Mapping[str, ToolSpec], *, max_probes: int = 8) -> None:
-        if not 1 <= max_probes <= 12:
+        self.llm, self.tools = llm, snapshot(tools, where="tools")
+        self.max_probes = snapshot(max_probes, where="max_probes")
+        if not 1 <= self.max_probes <= 12:
             raise ValueError("max_probes must be 1–12")
-        self.llm, self.tools, self.max_probes = llm, snapshot(tools), snapshot(max_probes)
 
     def propose(self, objective: str, hypotheses: Sequence[Hypothesis], history: Sequence[dict]) -> list[Probe]:
+        objective = text(objective, where="objective")
+        hypotheses = snapshot(hypotheses, where="hypotheses")
+        history = snapshot(history, where="history")
         if not self.tools:
             raise ValueError("LLM proposer needs at least one explicitly permitted tool")
         system = (
@@ -261,9 +274,12 @@ class MLAcquisitionSelector:
 
     def __init__(self, predictor: Any, *, min_gain: float = 1e-9):
         self.predictor = predictor
-        self.min_gain = snapshot(min_gain)
+        self.min_gain = snapshot(min_gain, where="min_gain")
 
     def rank(self, beliefs: Mapping[str, float], probes: Sequence[Probe], budget: float) -> list[dict]:
+        beliefs = snapshot(beliefs, where="beliefs")
+        probes = snapshot(probes, where="probes")
+        budget = snapshot(budget, where="budget")
         if not math.isfinite(budget) or budget < 0:
             raise ValueError("invalid budget")
         viable = [(p, expected_information_gain(beliefs, p)) for p in probes if p.cost <= budget]
@@ -318,7 +334,7 @@ def _selection(ranking: Any, candidates: tuple[Probe, ...]) -> tuple[Mapping[str
     """A selector's answer, checked against the validated candidates: None when it ranks nothing, else its first row
     and the validated candidate that row names (that very record, by identity: never a probe the selector made, and
     never one the selector was handed, which is a copy)."""
-    if not isinstance(ranking, tuple) or any(not isinstance(row, Mapping) for row in ranking):
+    if not isinstance(ranking, tuple) or any(not isinstance(row, dict) for row in ranking):
         raise ValueError("a selector ranks probes as a list of rows")
     if not ranking:
         return None
@@ -335,7 +351,7 @@ def _selection(ranking: Any, candidates: tuple[Probe, ...]) -> tuple[Mapping[str
 def _posterior(posterior: Any, prior: Mapping[str, float]) -> FrozenMap:
     """An updater's answer, checked as the prior was: a belief for every hypothesis and no other, each a number, by the
     one rule for beliefs (:func:`_beliefs`)."""
-    if not isinstance(posterior, Mapping) or set(posterior) != set(prior):
+    if not isinstance(posterior, dict) or set(posterior) != set(prior):
         raise ValueError("an updater returns a belief for every hypothesis and no other")
     if any(type(v) not in (int, float) for v in posterior.values()):
         raise ValueError("an updater's beliefs are numbers")
@@ -373,34 +389,40 @@ class CognitiveAgent:
     def __init__(self, proposer: Proposer, tools: Mapping[str, ToolSpec],
                  selector: Selector | None = None, updater: Updater | None = None, *,
                  allow: Iterable[str] = ()) -> None:
-        self.proposer, self.tools = proposer, snapshot(tools)
+        self.proposer, self.tools = proposer, snapshot(tools, where="tools")
         self.selector = selector or InformationGainSelector()
         self.updater = updater or BayesianUpdater()
-        self.allow = snapshot(frozenset(allow))
+        self.allow = snapshot(allow, where="allow")
 
     def _observe(self, tool: ToolSpec, probe: Probe) -> tuple[Observation | None, dict[str, Any], str]:
         """One tool step through G6's door: the observation, when the door's reply says ``ok`` and the tool's answer,
-        as the door hands it on, claims no state (``codes.claims``); the reply; and why it is not used (``""`` when it
-        is)."""
+        as the door hands it on, is plain data (``snapshot.plain``) that claims no state (``codes.claims``); the reply;
+        and why it is not used (``""`` when it is)."""
         reply = door.invoke_checked(
             f"tool:{tool.name}", "observe", {"question": probe.question, "arguments": dict(probe.arguments)},
-            allow=door.allowed_sensitive() | self.allow, registry=_ToolDoor(tool),
+            allow=door.allowed_sensitive() | frozenset(self.allow), registry=_ToolDoor(tool),
             how_to_allow=f"Allow it in your own code with CognitiveAgent(..., allow=('tool:{tool.name}',)).")
         if not affirmed(reply.get("ok")):
             return None, reply, str(reply.get("error") or f"{tool.name}: G6's door did not pass the tool step")
-        result = reply.get("result")
-        claimed = claims(result) if isinstance(result, Mapping) else ["the door's copy is not a mapping"]
+        try:
+            result = plain(reply.get("result"), where=f"{tool.name}'s answer")
+        except ValueError as exc:
+            return None, reply, f"{tool.name}'s answer is not kept: {exc}"
+        claimed = claims(result) if isinstance(result, dict) else ["the door's copy is not a mapping"]
         if claimed:
             return None, reply, f"{tool.name}'s answer claims a state the bridge did not decide: {'; '.join(claimed)}"
         answer = result.get("observation")
-        if not isinstance(answer, Mapping):
+        if not isinstance(answer, dict):
             return None, reply, f"{tool.name}: G6's door handed on no observation"
         return Observation(**answer), reply, ""
 
     def run(self, objective: str, hypotheses: Sequence[Hypothesis], *, budget: float, max_steps: int = 3) -> dict:
+        objective = text(objective, where="objective")
+        hypotheses = snapshot(hypotheses, where="hypotheses")
+        budget = snapshot(budget, where="budget")
+        max_steps = snapshot(max_steps, where="max_steps")
         if not 1 <= max_steps <= 20 or not math.isfinite(budget) or budget < 0:
             raise ValueError("invalid step or budget limit")
-        hypotheses = snapshot(hypotheses)
         # What the agent checked is held here only, with the digest taken when it was checked; a collaborator is handed
         # a fresh copy of it, and what a collaborator returns is a fresh copy checked against it (snapshot.returned).
         beliefs = snapshot(check_beliefs(hypotheses))
@@ -486,11 +508,13 @@ class LLMIdeaGenerator:
     """Generate non-obvious hypotheses; require outside review before belief-model insertion."""
 
     def __init__(self, llm: Any, *, max_ideas: int = 5):
-        if not 1 <= max_ideas <= 10:
+        self.llm, self.max_ideas = llm, snapshot(max_ideas, where="max_ideas")
+        if not 1 <= self.max_ideas <= 10:
             raise ValueError("max_ideas must be 1–10")
-        self.llm, self.max_ideas = llm, snapshot(max_ideas)
 
     def generate(self, objective: str, observations: Sequence[dict]) -> list[IdeaHypothesis]:
+        objective = text(objective, where="objective")
+        observations = snapshot(observations, where="observations")
         system = (
             "Propose falsifiable, non-obvious research hypotheses by transferring specific mechanisms "
             "across domains, looking for neglected constraints and contradictions. Return ONLY JSON "

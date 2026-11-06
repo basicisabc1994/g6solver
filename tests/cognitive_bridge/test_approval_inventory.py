@@ -166,8 +166,13 @@ def _approved_executor(value, f):
 def _approved_orchestrator(value, f):
     c = f["case3"]
     registry = _Registry()
-    out = CognitiveAssuranceOrchestrator(MetacognitiveMethodSelector(), registry=registry).execute(
-        c["compiled"], approved=value)
+    # since follow-up 2 of PR #8 an orchestrator runs only a compilation it issued: this one compiles its own
+    orch = CognitiveAssuranceOrchestrator(MetacognitiveMethodSelector(), registry=registry)
+    compiled = orch.compile(claim=c["compiled"].original_claim, context=c["compiled"].context,
+                            standard=c["standard"], variants=[MethodVariant("v", "formal", "SMT", "formal",
+                                                                            "check_validity", 1)],
+                            variant_models={"v": {"formula": "A", "premises": ["A"]}})
+    out = orch.execute(compiled, approved=value)
     return bool(registry.calls) and out["completion_state"] == "qualified-draft"
 
 
