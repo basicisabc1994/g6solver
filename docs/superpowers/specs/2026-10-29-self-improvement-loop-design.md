@@ -870,6 +870,15 @@ that is not a host program has no boundary at its end. Every limit a tick met is
 whatever ended it. Any failure to write a refusal latches the stop, and the log keeps lone surrogates as they are. A test built
 from the code lists what the request path writes per request, and fails on anything that is not a send's record.
 
+**Admission is one step under its lock (2026-11-06, third review).** The stop and the host program's files were still read
+before the admission lock, so a stop written, or a file changed, at that boundary was missed: the same check-then-act a second
+time. Now `admit` takes the lock first, and reads there the bytes the send will carry, the stop, the latches and what was
+refused, decides, and makes the send's record before it lets go; a test built from the code fails on any of those read outside
+the locked block. A `Retry-After` resend is a send like any other, with its own identity checked against what was refused and
+its own record. A send nested in a metered call is let out, and charged, once, by the innermost call on the same meter, and a
+call's end charges only notes that had no boundary at all, a child's totals. Every refusal row in `refused.log` begins on a line
+of its own, after a row a crash cut short too, and the reader keeps every whole row around a torn one.
+
 No failure of the records can undo this. A refused request is kept as it happens, by its identity, in `refused.log`, a file no lock
 stands in front of, flushed to the disk before any other thread can see the refusal and before any record of the tick is written,
 and this process holds it too, for good. A handle reads `refused.log` and the cycles' records as it is built, before its first
