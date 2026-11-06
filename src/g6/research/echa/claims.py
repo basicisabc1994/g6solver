@@ -10,15 +10,34 @@ claim about the cases it covered and never a general one. An independent failure
 about another standard, another predicate or a fixture with a recorded incident does not count. A claim about true
 correctness is not identified unless every active oracle's error is bounded, and the bounds of separate oracles add.
 Everything else is ``inconclusive``, with the reasons.
+
+G6 0.3 (slice 2) closes the two places where this rule differed from the issuer's, ``g6.evidence.certificate``:
+
+- a formal check is active only with a recorded negative control, as every executable check is;
+- a claim is bound to its subject's bytes. A record a custody binding ties to an artefact (``custody.binding_of``)
+  counts only for a claim whose subject names that artefact (``sha256:<hex>``), so it cannot be retargeted to a patch
+  that never ran; a claim that names an artefact counts only records bound to it. A claim and records that name no
+  bytes are read as declared (``subject_bound`` false).
+
+This rule is research analysis, never a requirement's status: the issuer decides that, and ECHA shows it as it is
+(``view.certificate_view``).
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
-from .flag import require_research
+from .custody import binding_of
 from .records import ClaimRecord, EvidenceRecord
 
 EXECUTABLE = ("FORMAL_CHECK", "INDEPENDENT_EXECUTABLE", "PARTIAL_FALSIFIER")
+_SUBJECT = re.compile(r"sha256:([0-9a-f]{64})\Z")
+
+
+def subject_artefact(claim: ClaimRecord) -> str | None:
+    """The artefact a claim's subject names (``sha256:<hex>``), or None when it names no bytes."""
+    found = _SUBJECT.match(claim.subject.strip())
+    return found.group(1) if found else None
 
 
 def _control_holds(ledger: Any, rec: EvidenceRecord, contaminated: set) -> bool:
@@ -42,9 +61,9 @@ def _once(items: list[str], item: str) -> None:
 
 
 def evaluate_claim(ledger: Any, claim_id: str) -> dict:
-    require_research()
     claim = ClaimRecord.from_dict(ledger.get("claim", claim_id))
     contaminated = ledger.contaminated_fixtures()
+    subject = subject_artefact(claim)
     reasons: list[str] = []
     cited: list[EvidenceRecord] = []
     for eid in claim.evidence_ids:
@@ -53,7 +72,13 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
         except (KeyError, ValueError, TypeError):
             _once(reasons, "evidence_not_traceable")
             continue
-        if rec.purpose != "check":
+        binding = binding_of(rec)
+        bound = binding.artifact_sha256 if binding else None
+        if bound is not None and bound != subject:   # evidence on other bytes is never this subject's
+            _once(reasons, "evidence_for_another_subject")
+        elif subject is not None and bound is None:   # a claim about bytes counts only evidence taken on them
+            _once(reasons, "evidence_not_bound_to_subject")
+        elif rec.purpose != "check":
             _once(reasons, "cited_record_is_a_control_not_a_check")
         elif rec.standard_sha256 != claim.standard_sha256:
             _once(reasons, "evidence_for_another_standard")
@@ -72,7 +97,7 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
             if rec.result == "fail":
                 leads.append(rec.evidence_id)
         elif rec.oracle_category in EXECUTABLE and rec.result in ("pass", "fail"):
-            if rec.oracle_category == "FORMAL_CHECK" or _control_holds(ledger, rec, contaminated):
+            if _control_holds(ledger, rec, contaminated):   # a formal check too, as the issuer requires
                 active.append(rec)
             else:
                 structural.append(rec.evidence_id)
@@ -130,7 +155,8 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
 
     roles = {**{r.evidence_id: "active" for r in active}, **{eid: "structural" for eid in structural}}
     return {"claim_id": claim.claim_id, "predicate_id": claim.predicate_id, "scope": claim.scope,
-            "breadth": claim.breadth, "estimand": claim.estimand, "result": result, "reasons": reasons,
+            "subject_bound": subject is not None, "breadth": claim.breadth, "estimand": claim.estimand,
+            "result": result, "reasons": reasons,
             "limits": limits, "independent_groups": voices, "active_evidence": [r.evidence_id for r in active],
             "refuting_evidence": [r.evidence_id for r in refuting], "structural": structural, "leads": leads,
             "identification": "identified" if identified else "not_identified",

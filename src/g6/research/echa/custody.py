@@ -1,41 +1,38 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Bounded research handoff; digests never establish trusted transport custody."""
+"""Bounded research handoff; digests never establish trusted transport custody.
+
+The binding structure, ``CheckBinding``, graduated into the product (``g6.evidence.mapping``), where it binds a receipt
+to its artefact, standard and check when the receipt becomes the issuer's; it is the same class here. The records this
+module writes are partial falsifiers, never independent support, and ECHA's records are not a source of evidence for
+the issuer (``view.source_record``).
+"""
 from __future__ import annotations
 
 import json
 import math
-import re
-from dataclasses import asdict, dataclass
 
-from .flag import require_research
-from .records import EvidenceRecord, canonical, digest, hex64_of
+from g6.evidence.mapping import CheckBinding
+
+from .records import EvidenceRecord, canonical, digest
 
 MAX_ARTIFACT_BYTES = 256 * 1024
 MAX_RECEIPT_BYTES = 4096
+_FIELDS = frozenset(CheckBinding.__dataclass_fields__)
 
 
-@dataclass(frozen=True)
-class CheckBinding:
-    request_id: str
-    task_id: str
-    predicate_id: str
-    artifact_sha256: str
-    standard_sha256: str
-    fixture_sha256: str
-    evaluator_sha256: str
-
-    def __post_init__(self):
-        for name in ("request_id", "task_id", "predicate_id"):
-            value = getattr(self, name)
-            if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", value):
-                raise ValueError(f"invalid {name}")
-        for name in ("artifact_sha256", "standard_sha256", "fixture_sha256", "evaluator_sha256"):
-            value = getattr(self, name)
-            if len(hex64_of(name, value)) != 64:
-                raise ValueError(f"invalid {name}")
-
-    def to_dict(self) -> dict:
-        return asdict(self)
+def binding_of(rec: EvidenceRecord) -> CheckBinding | None:
+    """The custody binding a record's ``source_ref`` holds, as ``checked_evidence`` writes it, read as strictly as a
+    receipt is (a repeated key or a number that is not finite is no binding); None when it holds none."""
+    try:
+        found = json.loads(rec.source_ref, object_pairs_hook=_pairs, parse_constant=_constant, parse_float=_float)
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(found, dict) or set(found) != _FIELDS:
+        return None
+    try:
+        return CheckBinding(**found)
+    except (TypeError, ValueError):
+        return None
 
 
 def _pairs(pairs):
@@ -59,7 +56,6 @@ def _float(value):
 
 
 def _decode(raw: bytes, limit: int) -> dict:
-    require_research()
     if not isinstance(raw, bytes) or not 0 < len(raw) <= limit:
         raise ValueError("invalid handoff size or byte type")
     try:

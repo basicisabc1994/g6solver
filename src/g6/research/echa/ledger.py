@@ -21,7 +21,6 @@ from typing import Any
 from g6.core.ledger import ChainLedger, LedgerCorrupt, LedgerError
 
 from .episodes import EpisodeRecord, verify_episode_body
-from .flag import require_research
 from .records import UNSEALED, ClaimRecord, EvidenceRecord, StandardRef
 
 __all__ = ["CONTAMINATING", "KINDS", "Ledger", "LedgerCorrupt", "LedgerError"]
@@ -87,7 +86,6 @@ class Ledger:
     def __init__(self, path: str | Path | None = None, *, expect_head: str | None = None) -> None:
         """``expect_head``: the head a reviewer kept elsewhere; a ledger whose head differs (entries cut from its tail or
         added to it) does not open. Without one the ledger is unanchored: a clean chain says nothing about its tail."""
-        require_research()
         self._chain = ChainLedger(path, expect_head=expect_head, validate=_semantic)
 
     @property
@@ -97,11 +95,9 @@ class Ledger:
     @classmethod
     def audit(cls, path: str | Path, *, expect_head: str | None = None) -> tuple[str, ...]:
         """What is wrong with a ledger file, without opening it for writing; ``expect_head`` is the head a reviewer kept."""
-        require_research()
         return ChainLedger.audit(path, expect_head=expect_head, validate=_semantic)
 
     def _add(self, kind: str, ident: str, body: dict) -> str:
-        require_research()  # every write checks the flag, including on a ledger built while it was on
         return self._chain.append(kind, ident, body)
 
     def add_standard(self, ref: StandardRef) -> str:

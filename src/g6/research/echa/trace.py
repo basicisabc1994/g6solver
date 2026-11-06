@@ -10,7 +10,6 @@ import hashlib
 from typing import Any
 
 from .claims import evaluate_claim
-from .flag import require_research
 from .records import digest
 
 
@@ -20,7 +19,6 @@ def _body_ok(ledger: Any, kind: str, ident: str) -> bool:
 
 
 def trace_claim(ledger: Any, claim_id: str) -> dict:
-    require_research()
     claim = ledger.get("claim", claim_id)
     problems = list(ledger.verify())
     standard = next((e for e in ledger.entries() if e["kind"] == "standard"
