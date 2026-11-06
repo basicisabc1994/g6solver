@@ -1,0 +1,431 @@
+# SPDX-License-Identifier: Apache-2.0
+"""A result is known only from what was observed (replay cohort, repair 1, review 1's findings 5, 6, 8 and 10; class
+``failure_read_as_success``, met in every round of this harness).
+
+One reader turns a container call's result into three states, ran and passed, ran and failed, and unknown (``box_mcp.seen``),
+and one reader does the same for a test report (``box_mcp.tests_seen``). A missing exit status, a non-zero return from the call
+itself, a missing report, a missing test result or a timeout with no result is unknown: never a pass and never a failure. Every
+consumer reads through them: the patch-size probe (unknown is never clean), the four cohort controls (a control holds only on
+observed results, and an unknown control excludes the bug, naming why) and the box's call phases (a closed set; anything else
+refuses). The inventory test, built from the code, lists every place a container result or a test report is read. Fakes only:
+no docker, no model."""
+from __future__ import annotations
+
+import ast
+import json
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+HERE = ROOT / "validation" / "worked_examples"
+sys.path.insert(0, str(HERE))
+
+import box_mcp as box  # noqa: E402
+import cohorts  # noqa: E402
+import run as we  # noqa: E402
+
+P, F, U = "passed", "failed", "unknown"
+
+
+def done(code, stdout=b"", stderr=b""):
+    return SimpleNamespace(returncode=code, stdout=stdout, stderr=stderr)
+
+
+# --- the reader of a container call --------------------------------------------------------------------------------------------
+def answer(output: bytes):
+    return output.decode().split("answer=", 1)[1].strip() if b"answer=" in output else None
+
+
+@pytest.mark.parametrize(("got", "read", "state"), [
+    (done(0), None, P),
+    (done(1), None, U),                          # a non-zero return from the call itself: docker's, its daemon's or the command's
+    (done(125, b"", b"Error response from daemon"), None, U),
+    (done(None), None, U),                       # no exit status
+    (done(-9), None, U),                         # the client ended by a signal
+    (done(True), None, U),                       # not an exit status at all
+    (SimpleNamespace(stdout=b"x"), None, U),     # nothing that says how it ended
+    (done(0, b"answer=7\n"), answer, P),
+    (done(1, b"answer=7\n"), answer, F),         # the command reached its answer, then returned 1: ran and failed
+    (done(0, b"nothing\n"), answer, U),          # passed, but its answer never came back
+    (done(1, b"nothing\n"), answer, U),
+])
+def test_one_reader_turns_a_container_calls_result_into_three_states(got, read, state):
+    seen = box.seen(got, read)
+    assert seen.state == state, seen
+    assert (seen.why == "") == (state == P)
+    assert seen.answer == ("7" if state != U and read else None)
+
+
+def body(results, *, exit="1", call=P, report=True, **kw):
+    return {"call": call, "pytest_exit": exit, "report": report, "results": results, **kw}
+
+
+@pytest.mark.parametrize(("got", "state", "why"), [
+    (body({"t1": "passed", "t2": "passed"}, exit="0"), P, ""),
+    (body({"t1": "failed", "t2": "passed"}), F, "1 of 2 seen to fail"),
+    (body({"t1": "error", "t2": "passed"}, exit="2"), F, "seen to fail"),
+    (body({"t1": "skipped", "t2": "passed"}, exit="0"), U, "no result"),           # skipped: not run
+    (body({"t2": "passed"}), U, "no result"),                                       # absent from the report
+    (body({"::t": "error"}, exit="2"), U, "no result"),                            # a collection error names no test it holds
+    (body({}, exit="124", report=False), U, "ran out of time"),                     # a timeout with no result
+    (body({}, exit="1", report=False), U, "no test report"),                        # a report that never came back
+    (body({"t1": "failed"}, exit=None), U, "no exit status"),
+    (body({"t1": "failed"}, call=U, call_why="the call itself returned 125"), U, "returned 125"),
+    (body({"t1": "failed"}, call=F), U, "not seen to run"),
+    ({"pytest_exit": "1", "results": {"t1": "failed", "t2": "failed"}}, U, "never recorded"),   # no call recorded
+    ({"patch_applied": False}, U, "did not apply"),
+    (None, U, "never recorded"),
+    (["not", "a", "body"], U, "never recorded"),
+])
+def test_one_reader_turns_a_test_report_into_three_states(got, state, why):
+    seen = box.tests_seen(got, ["t1", "t2"])
+    assert seen["state"] == state and why in seen["why"], seen
+    assert seen["passed"] + seen["failed"] + seen["unknown"] == seen["tests"] == 2
+
+
+# --- finding 5: the patch-size probe ----------------------------------------------------------------------------------------------
+def test_finding_5_a_failed_size_probe_whose_output_holds_a_size_is_unknown_so_arm_r_is_inconclusive_never_clean():
+    class FailedDocker:
+        def sh(self, *args, **kw):
+            return done(1, f"{we.PATCH_BYTES}=123\n".encode(), b"failed\n")
+
+    result = we.review_once(SimpleNamespace(docker=FailedDocker(), arm="R"), SimpleNamespace(repo="/w/toy"),
+                            SimpleNamespace(write_json=lambda *args: None), "ctr", [], "", None, 0, 0,
+                            lambda: {"verdict": "none", "test": ""}, base="base")
+    assert result["status"] == "inconclusive"
+
+
+@pytest.mark.parametrize(("got", "size"), [(done(0, f"{we.PATCH_BYTES}=123\n".encode()), 123), (done(0, b"0 lines\n"), None),
+                                           (done(1, f"{we.PATCH_BYTES}=0\n".encode()), None), (done(None), None),
+                                           (done(-15, f"{we.PATCH_BYTES}=5\n".encode()), None)])
+def test_the_size_is_read_only_from_a_call_seen_to_pass_with_its_own_line(got, size):
+    docker = SimpleNamespace(sh=lambda *a, **kw: got)
+    assert we.patch_bytes(SimpleNamespace(docker=docker), SimpleNamespace(repo="/w/r"), "agent", "base") == size
+    assert we.loop_status(we.LOOP_CLEAN, we.patch_bytes(SimpleNamespace(docker=docker), SimpleNamespace(repo="/w/r"), "a", "b")) \
+        == (we.LOOP_CLEAN if size else "inconclusive")
+
+
+# --- findings 6 and 10: the four controls hold only on observed results ----------------------------------------------------------
+ORACLE = "sha256:" + "0" * 64
+GOOD = {"base": body({"t::bug": "failed", "t::ok": "passed"}), "fixed": body({"t::bug": "passed", "t::ok": "passed"}, exit="0"),
+        "gold": body({"t::bug": "passed", "t::ok": "passed"}, exit="0"), "empty": body({"t::bug": "failed", "t::ok": "passed"})}
+TRIP = {"holds": True, "status": "finished", "error": None, "kept_read": True, "known_bytes": 10, "known_sha256": "k" * 64,
+        "kept_bytes": 10, "kept_sha256": "k" * 64, "same_bytes": True}
+
+
+def controls(monkeypatch, tmp_path, **bodies):
+    """``cohorts.controls`` with each oracle run answered from ``bodies`` (``GOOD``'s by default) and a round trip that holds."""
+    task = SimpleNamespace(id="toy-1", test_modules=["test_toy.py"])
+    archive = we.c.Archive(tmp_path / "controls")
+    given = {**GOOD, **bodies}
+
+    class Docker:
+        def __call__(self, *args, **kw):
+            return done(0, ORACLE.encode() if args[:2] == ("image", "inspect") else b"gold")
+
+    def oracle(ctx, task, *, patch=None, fix=False, label="", **kw):
+        return dict(given[label])
+
+    trip = bodies.pop("trip", TRIP) if "trip" in bodies else TRIP
+    monkeypatch.setattr(we, "_oracle_run", oracle)
+    monkeypatch.setattr(cohorts, "recorded_tree", lambda *args: "upstream-tree")
+    monkeypatch.setattr(cohorts, "round_trip", lambda *args: dict(trip))
+    ctx = SimpleNamespace(archive=archive, docker=Docker(), g6=cohorts.g6_for(), variant=we.ROUND3)
+    return cohorts.controls(ctx, task, None)
+
+
+def test_finding_6_an_empty_patch_whose_tests_never_ran_is_not_seen_failing_and_excludes_the_bug(monkeypatch, tmp_path):
+    got = controls(monkeypatch, tmp_path, empty={"results": {}, "pytest_exit": None})          # the review's body, as given
+    assert got["failed"] == "empty patch" and "never recorded" in got["why"], got
+    assert cohorts.admit(got, {"task_image_id": ORACLE, "oracle_image_id": ORACLE}).startswith("empty patch: ")
+    got = controls(monkeypatch, tmp_path / "2", empty=body({}, exit=None, call=U, report=False,      # as the oracle run keeps it
+                                                           call_why="its answer's own line did not come back (exit 0)"))
+    assert got["failed"] == "empty patch" and "not seen to run" in got["why"], got
+
+
+def test_finding_10_a_base_with_no_result_and_no_timeout_is_not_a_seen_failure_and_excludes_the_bug(monkeypatch, tmp_path):
+    got = controls(monkeypatch, tmp_path, base={"results": {}, "pytest_exit": None})
+    assert got["failed"] == "base" and "never recorded" in got["why"], got
+    got = controls(monkeypatch, tmp_path / "2", base=body({}, exit=None, call=U, call_why="no exit status came back"))
+    assert got["failed"] == "base" and "not seen to run" in got["why"], got
+
+
+@pytest.mark.parametrize(("bodies", "failed", "why"), [
+    ({"base": body({}, exit="124", report=False)}, "base", "ran out of time"),         # tenacity-660's base, as recorded
+    ({"base": body({}, report=False)}, "base", "no test report"),
+    ({"base": body({"t::bug": "failed"}, call=U, call_why="the call itself returned 125")}, "base", "returned 125"),
+    ({"base": body({"::t": "error", "t::ok": "passed"}, exit="2")}, "base", "no result"),     # its module failed to collect
+    ({"fixed": body({"t::bug": "passed", "t::ok": "passed"}, exit=None)}, "base", "the fix was not seen to pass"),
+    ({"fixed": body({"t::bug": "failed", "t::ok": "passed"})}, "base", "no test fails on the parent's code"),
+    ({"gold": body({"t::bug": "skipped", "t::ok": "passed"}, exit="0")}, "gold patch", "no result"),
+    ({"gold": body({"t::bug": "passed", "t::ok": "passed"}, exit="0", report=False)}, "gold patch", "no test report"),
+    ({"gold": {"patch_applied": False, "apply_error": "does not apply"}}, "gold patch", "did not apply"),
+    ({"empty": body({}, exit="124", report=False)}, "empty patch", "ran out of time"),
+    ({"empty": body({"t::bug": "passed", "t::ok": "passed"}, exit="0")}, "empty patch", "not seen to fail"),
+    ({"trip": {**TRIP, "kept_read": False, "kept_sha256": None}}, "round trip", "was not read"),
+    ({"trip": {**TRIP, "kept_sha256": "x" * 64}}, "round trip", "byte for byte"),
+    ({"trip": {"holds": False, "status": None, "error": "RuntimeError: the known patch could not be copied out"}}, "round trip",
+     "could not be copied out"),
+])
+def test_a_control_holds_only_on_observed_results_and_an_unknown_one_excludes_the_bug_naming_why(monkeypatch, tmp_path, bodies,
+                                                                                                    failed, why):
+    got = controls(monkeypatch, tmp_path, **bodies)
+    assert got["failed"] == failed and why in got["why"], got
+    assert cohorts.admit(got, {"task_image_id": ORACLE, "oracle_image_id": ORACLE}).startswith(failed + ": ")
+
+
+def test_a_bug_whose_four_controls_were_observed_to_hold_is_admitted(monkeypatch, tmp_path):
+    got = controls(monkeypatch, tmp_path)
+    assert got["failed"] == "" and got["why"] == "", got
+    assert got["validate"]["base"]["results"] == {"t::bug": "failed"}                   # the outcome as observed, kept
+    assert cohorts.admit(got, {"task_image_id": ORACLE, "oracle_image_id": ORACLE}) == ""
+
+
+# --- the oracle run keeps what it observed -------------------------------------------------------------------------------------
+JUNIT = (b'<testsuites><testsuite><testcase classname="t" name="bug"><failure/></testcase>'
+         b'<testcase classname="t" name="ok"/></testsuite></testsuites>')
+
+
+class OracleDocker:
+    """A check container: the pytest call answers ``said`` with ``code``, and the report's copy writes ``report`` (None: it fails)."""
+
+    def __init__(self, said: bytes, code, report: bytes | None) -> None:
+        self.said, self.code, self.report = said, code, report
+
+    def __call__(self, *args, input=None, timeout=None, env=None):
+        if args[0] == "cp" and args[1].endswith(we.JUNIT_IN):
+            if self.report is None:
+                return done(1, b"", b"Error: no such file")
+            Path(args[2]).write_bytes(self.report)
+        return done(0)
+
+    def sh(self, ctr, script, *a, **kw):
+        return done(self.code, self.said) if "pytest" in script else done(0)
+
+
+@pytest.mark.parametrize(("said", "code", "report", "call", "exit", "seen"), [
+    (b"exit=1\n", 0, JUNIT, P, "1", F),
+    (b"exit=1\n", 137, JUNIT, F, "1", U),             # the call itself returned 137 after its exit line: not observed
+    (b"", 125, None, U, None, U),                     # docker's own failure: no exit line, no report
+    (b"exit=124\n", 0, None, P, "124", U),            # a timeout with no result
+    (b"exit=1\n", 0, None, P, "1", U),                # a report that never came back
+    (b"exit=1\n", 0, b"<testsuites><broken", P, "1", U),     # a report that cannot be read is no report
+])
+def test_the_oracle_run_keeps_its_calls_state_its_exit_and_whether_its_report_came_back(tmp_path, said, code, report, call, exit,
+                                                                                       seen):
+    task = SimpleNamespace(id="toy-1", repo="/w/toy", test_modules=["t.py"])
+    ctx = SimpleNamespace(docker=OracleDocker(said, code, report), g6={"commit": "0" * 40}, variant=we.ROUND3)
+    got = we._oracle_run(ctx, task, label="base")
+    assert (got["call"], got["pytest_exit"], got["report"]) == (call, exit, report is not None and b"broken" not in report), got
+    assert box.tests_seen(got, ["t::bug", "t::ok"])["state"] == seen
+    assert we.observed(got, ["t::bug"]) == {"call": call, "call_why": got["call_why"], "pytest_exit": exit,
+                                            "report": got["report"], "results": {"t::bug": "failed"} if got["report"] else {}}
+
+
+def test_the_round_trip_compares_bytes_it_read_never_a_capture_that_failed(tmp_path):
+    class CaptureDocker:
+        def __init__(self, capture_code, copies):
+            self.capture_code, self.copies = capture_code, copies
+
+        def sh(self, *a, **kw):
+            return done(self.capture_code)
+
+        def __call__(self, *args, **kw):
+            if args[0] == "cp" and self.copies:
+                Path(args[2]).write_bytes(b"partial")
+                return done(0)
+            return done(1)
+
+    for code, copies, read, kept in ((0, True, True, b"partial"), (1, True, False, b""), (0, False, False, b""),
+                                     (None, True, False, b"")):
+        run = we.c.Archive(tmp_path / f"a{code}{copies}").start("run", "toy-1")
+        ctx = SimpleNamespace(docker=CaptureDocker(code, copies))
+        assert we.keep_final(ctx, SimpleNamespace(repo="/w/toy"), "agent", "base", run) is read
+        assert (run.path / "final.patch").read_bytes() == kept
+
+
+# --- finding 8: the call phases are a closed set -----------------------------------------------------------------------------------
+def test_finding_8_an_unknown_phase_refuses_instead_of_discarding_the_call(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"calls": [{"call": 1, "phase": "unknown-phase", "before": {}}]}))
+    with pytest.raises(box.Refused, match="unknown-phase"):
+        box.settle(ws, lambda *args, **kw: pytest.fail("unknown state must not run a container step"), state=state,
+                   container="ctr", repo="/w/toy", user="tester", timeout=30)
+    opts = SimpleNamespace(container="ctr", repo="/w/toy", workspace=str(ws), user="tester", timeout=30.0, state=str(state))
+    got = box.call(opts, {"name": "run", "arguments": {"command": "true"}}, lambda *a, **kw: pytest.fail("nothing may run"))
+    assert got["isError"] is True and "unknown-phase" in got["content"][0]["text"], got
+
+
+@pytest.mark.parametrize("calls", [
+    [{"call": 1, "phase": "Settled"}],
+    [{"call": 1, "phase": ""}],
+    [{"call": 1, "phase": "settled"}, {"call": 2, "phase": "mirroring"}],
+    [{"call": 1, "phase": "mirrored"}],                                      # unfinished, with no tree it was mirrored from
+    [{"call": 1, "phase": "pulling", "before": {"a": "not a mark"}}],
+])
+def test_a_state_with_a_phase_outside_the_closed_set_or_an_unfinished_call_without_its_tree_refuses(tmp_path, calls):
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"calls": calls}))
+    with pytest.raises(box.Refused):
+        box.read_state(state)
+
+
+@pytest.mark.parametrize("phase", ["settled", "set back", "not settled"])
+def test_a_finished_call_is_never_settled_again(tmp_path, phase):
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"calls": [{"call": 1, "phase": phase}]}))
+    assert box.settle(tmp_path, lambda *a, **kw: pytest.fail("no step"), state=state, container="c", repo="/r", user="u",
+                      timeout=1) is None
+
+
+def test_no_phase_outside_the_closed_set_is_ever_written(tmp_path):
+    with pytest.raises(ValueError):
+        box.write_state(tmp_path / "state.json", {"call": 1, "phase": "unknown-phase"})
+    assert not (tmp_path / "state.json").exists()
+    written = set()
+    for name in ("box_mcp.py", "run.py"):
+        for node in ast.walk(ast.parse((HERE / name).read_text("utf-8"))):
+            if isinstance(node, ast.Dict):
+                for key, value in zip(node.keys, node.values):
+                    if isinstance(key, ast.Constant) and key.value == "phase":
+                        if isinstance(value, ast.Constant):
+                            written.add(value.value)
+                        elif isinstance(value, ast.IfExp):
+                            written |= {v.value for v in (value.body, value.orelse) if isinstance(v, ast.Constant)}
+                        else:
+                            pytest.fail(f"{name} line {node.lineno}: a phase that is no constant of the set")
+    assert written and written <= set(box.PHASES), sorted(written - set(box.PHASES))
+    assert box.UNFINISHED == ("mirrored", "pulling") and set(box.UNFINISHED) < set(box.PHASES)
+
+
+# --- the inventory: every place a container result or a test report is read --------------------------------------------------------
+#: What is a read: an exit code or an output taken from a call's result (``.returncode``, ``.stdout``, ``.stderr``, but
+#: ``sys``'s own streams), the runner's raw readers of a result (``out``, ``err``), a test report's parse (``parse_junit``,
+#: ``read_probes``), or a test report's results or exit taken from a body (``"results"``, ``"pytest_exit"``).
+ATTRS, RAW, KEYS = {"returncode", "stdout", "stderr"}, {"out", "err", "parse_junit", "read_probes"}, {"results", "pytest_exit"}
+#: The one reader, and the ``read`` each consumer hands it to take its answer from a call's output.
+READERS = {("box_mcp.py", "seen"), ("box_mcp.py", "tests_seen")}
+#: Where the controls, the probe and the call phases start, and the host run, which the round trip reads only by its record's
+#: status, its ``final_patch_read`` and the kept patch ``keep_final`` read: a boundary the walk below does not cross.
+ROOTS = {("cohorts.py", n) for n in ("main", "controls", "manifest", "admit", "round_trip", "known_patch", "image_ids")} | \
+        {("run.py", n) for n in ("patch_bytes", "keep_final", "workspace_from")} | {("box_mcp.py", n) for n in ("call", "settle", "serve")}
+BOUNDARY = {("run.py", "_run_task")}
+#: Inside the controls, the probe and the call phases: the places that read a test report's results other than the reader, each
+#: with why it is not a verdict the reader should give.
+INSIDE = {
+    ("run.py", "_oracle_run", "parse_junit()"): "the producer: the report parsed into the body tests_seen reads",
+    ("run.py", "_oracle_run", "[results]"): "the producer: the body's results set from the report it read",
+    ("run.py", "observed", "[results]"): "a copy of the body for the record, which tests_seen reads again",
+    ("run.py", "validate", "[results]"): "the lists every check scores against (fail_to_pass), frozen; the base control reads "
+                                         "the base's outcome through tests_seen",
+    ("run.py", "selfcheck", "[results]"): "verdict's passes and failing, kept as before beside tests_seen's reading, which ok "
+                                          "and the controls read",
+}
+_STUDY = "the study's arms (sessions, scouts, critics, probe sets, key checks, images): read by no control, probe or call phase"
+#: Outside them, every function that reads a result or a report, with why: a new one fails until it is named here.
+OUTSIDE = {
+    "_run_task": "the host run: the round trip reads its status, final_patch_read and keep_final's bytes; " + _STUDY,
+    "amend": "the amended tests' own controls, scored by the frozen rule", "brief": "a printed summary",
+    "build": "an image build, before any control", "build_base": "an image build, before any control",
+    "check": "the independent check that scores a run: no report raises, a timeout is the patch's failure by the frozen rule",
+    "contains_required": "a local git call, no container's", "err": "the raw reader, used only outside", "g6replay": _STUDY,
+    "git_commit": "a local git call, no container's", "hook_selftest": _STUDY, "host_session": "a host session's stderr",
+    "host_session.lines": "a host session's stream", "kept": _STUDY, "key_check": _STUDY, "modelcheck": _STUDY,
+    "out": "the raw reader, used only outside", "probe_gate": _STUDY, "read_issue": "the issue, from GitHub, no container's",
+    "read_probes": _STUDY, "read_thread.api": "the issue's thread, from GitHub, no container's",
+    "read_tree": "upstream's tree, from GitHub, no container's", "refusal": _STUDY, "repair_loop.check": _STUDY,
+    "repair_loop.state": _STUDY, "reviews_until_clean.shown": _STUDY, "reviews_with_bug_test.tree": _STUDY, "run_codex": _STUDY,
+    "run_critic": _STUDY, "run_scout": _STUDY, "run_session": _STUDY, "run_set": _STUDY,
+}
+
+
+def _functions(name: str) -> dict[str, ast.AST]:
+    """Each function of a module, top-level, nested or a method, by its qualified name."""
+    found: dict[str, ast.AST] = {}
+
+    def visit(node: ast.AST, where: list[str]) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if not isinstance(child, ast.ClassDef):
+                    found[".".join([*where, child.name])] = child
+                visit(child, [*where, child.name])
+            else:
+                visit(child, where)
+    visit(ast.parse((HERE / name).read_text("utf-8")), [])
+    return found
+
+
+def _reads(fn: ast.AST) -> set[str]:
+    """The reads in a function's own body, its lambdas' among them (a nested function is its own)."""
+    found: set[str] = set()
+
+    def visit(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if isinstance(child, ast.Attribute) and child.attr in ATTRS and not (
+                    isinstance(child.value, ast.Name) and child.value.id == "sys"):
+                found.add("." + child.attr)
+            elif isinstance(child, ast.Call):
+                name = child.func.attr if isinstance(child.func, ast.Attribute) else getattr(child.func, "id", "")
+                const = child.args[1].value if len(child.args) > 1 and isinstance(child.args[1], ast.Constant) else None
+                if name in RAW:
+                    found.add(name + "()")
+                elif name == "get" and child.args and isinstance(child.args[0], ast.Constant) and child.args[0].value in KEYS:
+                    found.add(f"[{child.args[0].value}]")
+                elif name == "getattr" and const in ATTRS:          # the same read, by name
+                    found.add("." + const)
+            elif isinstance(child, ast.Subscript) and isinstance(child.slice, ast.Constant) and child.slice.value in KEYS:
+                found.add(f"[{child.slice.value}]")
+            visit(child)
+    visit(fn)
+    return found
+
+
+ALIASES = {"we": "run.py", "box": "box_mcp.py", "box_mcp": "box_mcp.py", "cohorts": "cohorts.py"}
+
+
+def _scope(functions: dict[tuple[str, str], ast.AST]) -> set[tuple[str, str]]:
+    """Every function the roots reach by calls, in the three modules, a nested function with the function it is in, stopping at
+    the boundary."""
+    seen: set[tuple[str, str]] = set()
+    todo = [r for r in ROOTS if r in functions]
+    while todo:
+        key = todo.pop()
+        if key in seen or key in BOUNDARY:
+            continue
+        seen.add(key)
+        file, name = key
+        todo += [k for k in functions if k[0] == file and k[1].startswith(name + ".")]
+        for node in ast.walk(functions[key]):
+            if isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name):
+                    todo.append((file, node.func.id))
+                elif isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+                    todo.append((ALIASES.get(node.func.value.id, file), node.func.attr))
+            elif isinstance(node, ast.Name) and (file, node.id) in functions:      # a function handed on, as ``seen``'s read
+                todo.append((file, node.id))
+        todo = [k for k in todo if k in functions]
+    return seen
+
+
+def test_every_place_a_container_result_or_a_test_report_is_read_is_listed_and_inside_the_controls_only_the_reader_reads():
+    functions = {(file, name): fn for file in ("box_mcp.py", "cohorts.py", "run.py") for name, fn in _functions(file).items()}
+    sites = {(file, name, kind) for (file, name), fn in functions.items() for kind in _reads(fn)}
+    scope = _scope(functions)
+    assert {("run.py", "patch_bytes"), ("run.py", "_oracle_run"), ("run.py", "validate"), ("run.py", "selfcheck"),
+            ("run.py", "checked"), ("run.py", "copy_out"), ("cohorts.py", "control_why"), ("box_mcp.py", "mirror"),
+            ("box_mcp.py", "pull"), ("box_mcp.py", "run_command"), ("box_mcp.py", "read_state")} <= scope
+    inside = {s for s in sites if s[:2] in scope and s[:2] not in READERS}
+    assert inside == set(INSIDE), ("a read inside the controls, the probe or the call phases not through the reader",
+                                   sorted(inside - set(INSIDE)), sorted(set(INSIDE) - inside))
+    outside = {name for file, name, _ in sites if (file, name) not in scope and (file, name) not in READERS}
+    assert {file for file, name, _ in sites if (file, name) not in scope and (file, name) not in READERS} <= {"run.py"}
+    assert outside == set(OUTSIDE), (sorted(outside - set(OUTSIDE)), sorted(set(OUTSIDE) - outside))
+    assert not set(OUTSIDE) & {name for file, name in scope if file == "run.py"}
+    assert {(f, n) for f, n, _ in sites} >= READERS

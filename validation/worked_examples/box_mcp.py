@@ -14,7 +14,11 @@ target, and two trees compare a link by its target and kind (``_mark``), never b
 [--state FILE]``
 
 ``--state``: a file outside the workspace where each call's phase is kept (``write_state``), so a call ended before its pull is
-found and settled by the runner (``settle``). Only the standard library, so ``-I`` holds.
+found and settled (``settle``), by the next call before it mirrors anything and by the runner after the session. Only the
+standard library, so ``-I`` holds.
+
+It also holds the one reader of a container call's result and of a test report (``seen``, ``tests_seen``: passed, failed or
+unknown, and unknown is never either), which the runner and the cohort controls import (replay cohort, repair 1).
 """
 from __future__ import annotations
 
@@ -32,7 +36,7 @@ import sys
 import tarfile
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path, PurePosixPath
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, NamedTuple
 
 KEPT = (".git", ".venv")    # the container's own, at any depth, as the export's ``--exclude`` leaves them: never sent, never touched
 NAME_MAX = 255              # the bytes one part of a name may have on the container's Linux file systems
@@ -90,11 +94,16 @@ def stop(uid):
 #: USER is stopped (``STOP``); then the repository's root must be a folder of its own, not a link, and its real path, resolved once,
 #: the path it was given, so no ancestor is a link or a junction; every member is checked (a plain file, a folder or a symbolic
 #: link, each named once, and each inside a folder the tar holds, so nothing is made through a link or a file), and no folder
-#: holding ``.git`` or ``.venv`` at any depth may be removed, all before anything changes. Then what is new or changed is
+#: holding ``.git`` or ``.venv`` at any depth may be removed, all before anything changes. No path operation reaches through a
+#: link at any depth: each name's path is used only once every folder above it is read, by lstat from the root down, as a folder
+#: of its own (``inside``, ``path_of``), and a name below a link or a file is not in the repository's tree; the tree is walked
+#: by lstat (``below``), a link or anything but a folder of its own an entry never walked into. Then what is new or changed is
 #: written: never through a name already there, which is removed (a folder, a link, another name of a file) and the file or link
-#: made fresh, exclusively, keeping a replaced file's mode and owner; a link already there with the same target is left as it is;
-#: what the tar does not hold removed (a link by itself, never what it points to), ``.git`` and ``.venv`` left as they are, and
-#: what it made given to USER. A link's target is its text: never read, followed or checked. Prints what it wrote and removed.
+#: made fresh, exclusively, keeping a replaced file's owner, and its mode when the executable bit is the tar's; a file's mode is
+#: its tar member's, git's 0755 or 0644, so the executable bit is carried; a file with the same bytes whose executable bit
+#: differs has its mode set on itself; a link already there with the same target is left as it is; what the tar does not hold
+#: removed (a link by itself, never what it points to), ``.git`` and ``.venv`` left as they are, and what it made given to USER.
+#: A link's target is its text: never read, followed or checked. Prints what it wrote and removed.
 MIRROR = r'''import io, json, os, shutil, signal, stat, sys, tarfile, time
 try:
     import pwd
@@ -149,11 +158,40 @@ written = removed = 0
 
 
 def at(name):
-    return os.path.join(repo, *name.split("/"))
+    return os.path.join(repo, *name.split("/")) if name else repo
+
+
+def inside(name):
+    """Whether each folder above ``name`` is a folder of its own, read by lstat from the repository's root down (``kind``) and
+    stopping at the first that is not, so nothing below a link, a file or anything else is ever read: such a name is not in the
+    repository's tree."""
+    parts = name.split("/")
+    return all(kind(at("/".join(parts[:i])))[0] == "dir" for i in range(1, len(parts)))
+
+
+def path_of(name):
+    """``name``'s path in the container, once each folder above it is a folder of its own (``inside``); else the mirror refuses,
+    so no path operation reaches through a link at any depth."""
+    if not inside(name):
+        sys.exit("refused: " + repr(name) + " is below a link or a file in the repository")
+    return at(name)
+
+
+def below(name):
+    """Every entry below the folder ``name`` ("" for the repository's root), deepest first, each with its kind by lstat
+    (``kind``): a link, or anything but a folder of its own, is an entry never walked into, as are ``.git`` and ``.venv``."""
+    found = []
+    for n in sorted(os.listdir(path_of(name))):
+        child = name + "/" + n if name else n
+        held = kind(at(child))[0]
+        if held == "dir" and n not in kept:
+            found.extend(below(child))
+        found.append((child, held))
+    return found
 
 
 for name in [*files, *links]:
-    if kind(at(name))[0] == "dir" and any(kept & {*subdirs, *names} for _, subdirs, names in os.walk(at(name))):
+    if inside(name) and kind(at(name))[0] == "dir" and any(kept & set(rel.split("/")) for rel, _ in below(name)):
         sys.exit("refused: " + repr(name) + " would replace a folder holding .git or .venv")
 
 
@@ -167,6 +205,15 @@ def clear(path):
 def own(path):
     if ids:
         os.chown(path, *ids)
+
+
+def setmode(fd, mode):
+    if hasattr(os, "fchmod"):  # not on the host's own tests on Windows, whose files hold no executable bit
+        os.fchmod(fd, mode)
+
+
+def git_mode(member):
+    return 0o755 if member.mode & stat.S_IXUSR else 0o644
 
 
 def excl(path, flags):
@@ -183,7 +230,7 @@ def fresh(path, data, mode, owner):
         with f:
             if owner:
                 os.fchown(f.fileno(), *owner)
-                os.fchmod(f.fileno(), mode)
+            setmode(f.fileno(), mode)
             f.write(data)
         return
     sys.exit("refused: " + repr(path) + " was held again each time it was cleared")
@@ -202,26 +249,30 @@ def link(path, target):
     sys.exit("refused: " + repr(path) + " was held again each time it was cleared")
 
 
-for name in sorted(dirs):
-    path = at(name)
+for name in sorted(dirs):     # a folder before what is in it: each folder above it is already one of its own
+    path = path_of(name)
     if kind(path)[0] not in (None, "dir"):
         clear(path)
     if kind(path)[0] is None:
         os.mkdir(path, 0o755)
         own(path)
 for name, m in sorted(files.items()):
-    path, data = at(name), tar.extractfile(m).read()
+    path, data, run = path_of(name), tar.extractfile(m).read(), bool(m.mode & stat.S_IXUSR)
     held, st = kind(path)
+    keeps = held == "file" and bool(st.st_mode & stat.S_IXUSR) == run      # the old file's mode, its executable bit the tar's
     if held == "file":
-        with open(path, "rb") as f:
+        with os.fdopen(os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)), "rb") as f:
             if f.read() == data:
+                if not keeps:          # the same bytes, the executable bit changed: set on the file itself
+                    setmode(f.fileno(), git_mode(m))
+                    written += 1
                 continue
     elif held is not None:
         clear(path)
-    fresh(path, data, *((stat.S_IMODE(st.st_mode), (st.st_uid, st.st_gid)) if held == "file" and ids else (0o644, ids)))
+    fresh(path, data, stat.S_IMODE(st.st_mode) if keeps else git_mode(m), (st.st_uid, st.st_gid) if held == "file" and ids else ids)
     written += 1
 for name, target in sorted(links.items()):
-    path = at(name)
+    path = path_of(name)
     held, st = kind(path)
     if held == "other" and stat.S_ISLNK(st.st_mode) and os.readlink(path) == target:
         continue               # the same link: left as it is
@@ -229,17 +280,15 @@ for name, target in sorted(links.items()):
         clear(path)
     link(path, target)
     written += 1
-for here, subdirs, names in os.walk(repo, topdown=False):
-    rel = os.path.relpath(here, repo).replace(os.sep, "/")
-    parts = [] if rel == "." else rel.split("/")
-    if kept & set(parts):
+for rel, held in below(""):    # deepest first: what is in a folder before the folder
+    if kept & set(rel.split("/")):
         continue
-    for n in names + [d for d in subdirs if os.path.islink(os.path.join(here, d))]:
-        if n not in kept and "/".join(parts + [n]) not in files and "/".join(parts + [n]) not in links:
-            os.remove(os.path.join(here, n))
+    if held != "dir":
+        if rel not in files and rel not in links:
+            os.remove(path_of(rel))
             removed += 1
-    if parts and rel not in dirs and not os.listdir(here):
-        os.rmdir(here)
+    elif rel not in dirs and not os.listdir(path_of(rel)):
+        os.rmdir(path_of(rel))
         removed += 1
 print(json.dumps({"written": written, "removed": removed}))
 '''
@@ -250,9 +299,11 @@ print(json.dumps({"written": written, "removed": removed}))
 EXPORT = ("tar", "-c", "--exclude=.git", "--exclude=.venv", ".")
 
 #: Run in the container as root, ``python3 -I -c PULL REPO USER``, once a command has ended: every process of USER is stopped
-#: (``STOP``), so nothing the command left running changes a file after the export reads it, then the export (``EXPORT``) runs as
-#: USER in the repository and writes the tar on standard output.
-PULL = r'''import os, signal, sys, time
+#: (``STOP``), so nothing the command left running changes a file after the export reads it; the repository's root must be a
+#: folder of its own, not a link, reached through no link (its real path, resolved once, the path it was given), as the mirror
+#: checks it; then the export (``EXPORT``) runs as USER in the repository and writes the tar on standard output. GNU tar stores a
+#: link as a link and walks into no link, at any depth.
+PULL = r'''import os, signal, stat, sys, time
 try:
     import pwd
 except ImportError:          # not a POSIX system: the script's own tests, on the host
@@ -264,6 +315,11 @@ if ids:
     if ids[0] in (0, os.geteuid()):
         sys.exit("refused: the pull stops another user's processes, never its own")
     stop(ids[0])
+st = os.lstat(repo)
+if (stat.S_ISLNK(st.st_mode) or getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT or not stat.S_ISDIR(st.st_mode)
+        or os.path.normcase(os.path.realpath(repo)) != os.path.normcase(repo)):
+    sys.exit("refused: the repository's root " + repr(repo) + " is not a folder of its own reached through no link")
+if ids:
     os.setgroups([])
     os.setgid(ids[1])
     os.setuid(ids[0])
@@ -287,6 +343,95 @@ class BoxError(RuntimeError):
 
 def _text(data: bytes | None) -> str:
     return (data or b"").decode("utf-8", errors="replace")
+
+
+# --- the one reader of a container call's result, and of a test report (replay cohort, repair 1) --------------------------------
+#: The three states a container call's result, or a test report, is read as: it ran and passed, it ran and failed, or what it did
+#: is not known. Only what was observed is either of the first two; everything else is UNKNOWN, never a pass and never a failure.
+PASSED, FAILED, UNKNOWN = "passed", "failed", "unknown"
+
+
+class Seen(NamedTuple):
+    """What one container call was seen to do (``seen``): its state, why when it is not PASSED, the exit code that came back (None
+    when none did), its output, and the answer ``read`` took from that output (None when there was none)."""
+    state: str
+    why: str
+    code: int | None
+    output: bytes
+    answer: Any = None
+
+    @property
+    def text(self) -> str:
+        return _text(self.output).strip()
+
+
+def seen(done: Any, read: Callable[[bytes], Any] | None = None) -> Seen:
+    """The one reader of a container call's result, which every consumer imports: the box's own steps, the runner's captures and
+    the patch-size probe (``run.patch_bytes``), the cohort controls (``run._oracle_run``, ``cohorts``) and ``run.checked``.
+    ``done`` is what docker returned (a return code and an output); ``read``, for a call whose answer is a line its command
+    prints, takes that answer from the output, or gives None when it is not there.
+
+    - No return code, or one below 0 (the client ended by a signal): UNKNOWN.
+    - ``read`` given and its answer not in the output: UNKNOWN, whatever the code: the command was not seen to reach its answer.
+    - Code 0: PASSED.
+    - Any other code: FAILED when ``read`` found the answer, so the command itself ran and gave that code; else UNKNOWN, since a
+      non-zero return from the call itself may be docker's, its daemon's or the container's, not the command's."""
+    code = getattr(done, "returncode", None)
+    output = getattr(done, "stdout", None) or b""
+    output = output if isinstance(output, bytes) else str(output).encode("utf-8", "surrogateescape")
+    if not isinstance(code, int) or isinstance(code, bool):
+        return Seen(UNKNOWN, "no exit status came back", None, output)
+    if code < 0:
+        return Seen(UNKNOWN, f"the call was ended by signal {-code}", code, output)
+    answer = read(output) if read is not None else None
+    if read is not None and answer is None:
+        return Seen(UNKNOWN, f"its answer's own line did not come back (exit {code})", code, output)
+    if code == 0:
+        return Seen(PASSED, "", code, output, answer)
+    if read is not None:
+        return Seen(FAILED, f"it ran and exited {code}", code, output, answer)
+    said = (_text(output) + " " + _text(getattr(done, "stderr", None))).strip()[-600:]
+    return Seen(UNKNOWN, f"the call itself returned {code}: {said}", code, output)
+
+
+def tests_seen(body: Mapping[str, Any] | None, tests: Iterable[str]) -> dict[str, Any]:
+    """The one reader of a test report (a ``run._oracle_run`` body: its pytest call's state, its exit, whether its report came
+    back, its results), over ``tests``: PASSED when the run was observed and every one of them was seen to pass; FAILED when the
+    run was observed and at least one was seen to fail (failed or error); else UNKNOWN, with why. The run is not observed when
+    its patch did not apply, its call was not seen to pass (``seen``) or its call's own result was never recorded, no exit
+    status came back, or no report came back (a timeout with no result among them); a test the report does not hold, or holds
+    as skipped, is a missing result: never a pass and never a failure. Returns the state, why, and how many tests were seen to
+    pass, seen to fail, and not seen."""
+    names = sorted(set(tests))
+    body = body if isinstance(body, Mapping) else {}
+    results = body.get("results")
+    exit_ = body.get("pytest_exit")
+    counts = {"tests": len(names), "passed": 0, "failed": 0, "unknown": len(names)}
+
+    def unknown(why: str) -> dict[str, Any]:
+        return {"state": UNKNOWN, "why": why, **counts}
+
+    if not names:
+        return unknown("there is no test to read")
+    if body.get("patch_applied") is False:
+        return unknown("the patch did not apply, so no test ran on it")
+    if body.get("call") != PASSED:
+        return unknown(f"the test call was not seen to run: {body.get('call_why') or body.get('call')}" if "call" in body else
+                       "the test call's own result was never recorded")
+    if exit_ is None:
+        return unknown("no exit status came back: the tests were not seen to end")
+    if not isinstance(results, Mapping) or not body.get("report", bool(results)):
+        return unknown("the tests ran out of time (exit 124) with no report" if str(exit_).strip() == "124" else
+                       f"no test report came back (exit {exit_})")
+    passed = sum(results.get(t) == "passed" for t in names)
+    failed = sum(results.get(t) in ("failed", "error") for t in names)
+    counts = {"tests": len(names), "passed": passed, "failed": failed, "unknown": len(names) - passed - failed}
+    if passed == len(names):
+        return {"state": PASSED, "why": "", **counts}
+    if failed:
+        return {"state": FAILED, "why": f"{failed} of {len(names)} seen to fail", **counts}
+    return unknown(f"none of {len(names)} was seen to fail and {counts['unknown']} have no result in the report "
+                   f"(exit {exit_})")
 
 
 def _plain(path: Path, root: Path) -> os.stat_result:
@@ -382,15 +527,42 @@ def _root(path: Path) -> os.stat_result:
 
 FOLDER = "/"          # what a folder holds in a tree's map (``tree_map``), where a file holds its SHA-256 in hex
 LINK = "@"            # before a link's mark in a tree's map: the SHA-256 of its target, in hex, after it
+EXEC = "x"            # before an executable file's mark in a tree's map: git's mode 100755
+#: git's three modes for what a tree holds but a folder: a file, an executable file and a symbolic link. Every crossing carries
+#: each entry's mode (replay cohort, repair 1): the tar's member mode, the tree map's mark, the workspace's record.
+FILE_MODE, EXEC_MODE, LINK_MODE = "100644", "100755", "120000"
 
 
-def _mark(data: bytes | None, link: bool = False) -> str:
-    """The one rule for what an entry is in a tree's map, on either side: ``FOLDER`` for a folder, a file's SHA-256 in hex, and for
-    a symbolic link ``LINK`` and its target's SHA-256, so a link and a file holding the same bytes differ, and a link is compared by
-    its target and kind, never by what it points to."""
+def _mark(data: bytes | None, link: bool = False, executable: bool = False) -> str:
+    """The one rule for what an entry is in a tree's map, on either side: ``FOLDER`` for a folder, a file's SHA-256 in hex, with
+    ``EXEC`` before it for an executable file, and for a symbolic link ``LINK`` and its target's SHA-256, so a link, an executable
+    and a file holding the same bytes differ, a change of mode alone is a change, and a link is compared by its target and kind,
+    never by what it points to."""
     if data is None:
         return FOLDER
-    return (LINK if link else "") + hashlib.sha256(data).hexdigest()
+    return (LINK if link else EXEC if executable else "") + hashlib.sha256(data).hexdigest()
+
+
+def _marked(data: bytes | None, mode: str | None) -> str:
+    """``_mark`` of an entry by its git mode (None for a folder)."""
+    return _mark(data, mode == LINK_MODE, mode == EXEC_MODE)
+
+
+def _mode_of(mark: str | None) -> str | None:
+    """The git mode a tree map's mark stands for: None for a folder or no entry."""
+    if mark is None or mark == FOLDER:
+        return None
+    return LINK_MODE if mark.startswith(LINK) else EXEC_MODE if mark.startswith(EXEC) else FILE_MODE
+
+
+def _member_mode(member: tarfile.TarInfo) -> str | None:
+    """A tar member's git mode, as git reads a file's: a link 120000, a file whose owner may run it 100755, any other file
+    100644; None for a folder."""
+    if member.isdir():
+        return None
+    if member.issym():
+        return LINK_MODE
+    return EXEC_MODE if member.mode & stat.S_IXUSR else FILE_MODE
 
 
 def _link_target(rel: str, target: bytes) -> str:
@@ -412,74 +584,85 @@ def links_of(workspace: Path) -> Path:
     """The workspace's link record: a file beside it, outside it, so the agent's tools never reach it and no pack reads it as the
     tree's, removed with it at the run's end. It lists which of the workspace's plain files are symbolic links, as git's index
     lists mode 120000 where links cannot be made (``core.symlinks=false``): such a file holds the link's target, and writing it
-    changes the target, as it does in git."""
+    changes the target, as it does in git. It lists too which are executable, as git's index keeps mode 100755 where the file
+    system holds no executable bit (``core.fileMode=false``): writing such a file keeps its mode, as it does in git."""
     base = Path(workspace).resolve()
     return base.parent / f"{base.name}.box.links.json"
 
 
 def _is_mark(mark: Any) -> bool:
     """A mark as ``_mark`` writes one, or None for a name that is not there."""
-    return mark is None or mark == FOLDER or (isinstance(mark, str)
-                                              and re.fullmatch(f"{re.escape(LINK)}?[0-9a-f]{{64}}", mark) is not None)
+    return mark is None or mark == FOLDER or (isinstance(mark, str) and re.fullmatch(
+        f"(?:{re.escape(LINK)}|{re.escape(EXEC)})?[0-9a-f]{{64}}", mark) is not None)
+
+
+def _names(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(x, str) for x in value)
 
 
 def read_links(workspace: Path) -> dict[str, Any]:
-    """The workspace's link record (``links_of``): ``links``, the names of its plain files that are links, and ``pending``, by name,
-    what a pull that may not have ended was changing a link-or-file to (``{"from": mark, "to": mark}``). None there: no link. One
-    that cannot be read as the box writes it refuses (``Refused``): which files are links is then not known, and nothing may
-    guess, since a link read as a file would reach the container as a file."""
+    """The workspace's link record (``links_of``): ``links``, the names of its plain files that are links, ``executable``, the
+    names of those whose mode is 100755, and ``pending``, by name, what a pull that may not have ended was changing a name's
+    mode or link to (``{"from": mark, "to": mark}``). None there: no link and no executable. One that cannot be read as the box
+    writes it refuses (``Refused``): which files are links or executables is then not known, and nothing may guess, since a link
+    read as a file would reach the container as a file, and an executable as a file that cannot be run."""
     path = links_of(workspace)
     try:
         raw = path.read_bytes()
     except FileNotFoundError:
-        return {"links": set(), "pending": {}}
+        return {"links": set(), "executable": set(), "pending": {}}
     except OSError as exc:
         raise Refused(f"the workspace's link record {path.name} could not be read: {exc}") from exc
     try:
         got = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as exc:
         raise Refused(f"the workspace's link record {path.name} cannot be read: {exc}") from exc
-    links, pending = (got.get("links"), got.get("pending")) if isinstance(got, dict) else (None, None)
-    if not (isinstance(links, list) and all(isinstance(x, str) for x in links) and isinstance(pending, dict)
+    links, execs, pending = ((got.get("links"), got.get("executable"), got.get("pending")) if isinstance(got, dict)
+                             else (None, None, None))
+    if not (_names(links) and _names(execs) and isinstance(pending, dict) and not set(links) & set(execs)
             and all(isinstance(v, dict) and set(v) == {"from", "to"} and _is_mark(v["from"]) and _is_mark(v["to"])
                     for v in pending.values())):
-        raise Refused(f"the workspace's link record {path.name} is not a list of links with the changes a pull was making")
-    return {"links": set(links), "pending": pending}
+        raise Refused(f"the workspace's link record {path.name} is not a list of links and of executables with the changes a "
+                      "pull was making")
+    return {"links": set(links), "executable": set(execs), "pending": pending}
 
 
-def write_links(workspace: Path, links: Iterable[str], pending: Mapping[str, Mapping[str, str | None]] | None = None) -> None:
-    """The workspace's link record written whole to a file of its own beside it, flushed to disk, then put in its place in one step
-    (``os.replace``), so a reader finds it before or after the write, never part of it."""
+def write_links(workspace: Path, links: Iterable[str], pending: Mapping[str, Mapping[str, str | None]] | None = None, *,
+                executable: Iterable[str] = ()) -> None:
+    """The workspace's link record, its links and its executables, written whole to a file of its own beside it, flushed to
+    disk, then put in its place in one step (``os.replace``), so a reader finds it before or after the write, never part of it."""
     path = links_of(workspace)
     temp = path.with_name(path.name + f".{os.getpid()}.tmp")
     with open(temp, "wb") as f:
-        f.write(json.dumps({"links": sorted(links), "pending": dict(pending or {})}, indent=1, sort_keys=True).encode("utf-8"))
+        f.write(json.dumps({"links": sorted(links), "executable": sorted(executable), "pending": dict(pending or {})}, indent=1,
+                           sort_keys=True).encode("utf-8"))
         f.flush()
         os.fsync(f.fileno())
     os.replace(temp, path)
 
 
-def _is_link(rel: str, data: bytes, record: Mapping[str, Any]) -> bool:
-    """Whether the workspace's plain file ``rel``, holding ``data``, is a link: by the record (``read_links``). A name a pull was
+def _mode(rel: str, data: bytes, record: Mapping[str, Any]) -> str:
+    """The git mode of the workspace's plain file ``rel``, holding ``data``: by the record (``read_links``). A name a pull was
     changing (``pending``) is what the side its bytes are is: the side it was changing to, or else the side it was changing
     from, so a pull ended after it wrote a name and before it kept the record is read as it left the name. Otherwise, as git
-    reads mode 120000, a listed name is a link, whatever its bytes now are."""
+    reads its index, a name listed as a link is 120000 and one listed as executable 100755, whatever its bytes now are; any
+    other is 100644."""
     change = record["pending"].get(rel)
     if change is not None:
         for side in (change["to"], change["from"]):
-            if side in (_mark(data), _mark(data, True)):
-                return side.startswith(LINK)
-    return rel in record["links"]
+            for mode in (FILE_MODE, EXEC_MODE, LINK_MODE):
+                if side == _marked(data, mode):
+                    return mode
+    return LINK_MODE if rel in record["links"] else EXEC_MODE if rel in record["executable"] else FILE_MODE
 
 
-def _tree(root: Path, repo: str) -> Iterator[tuple[Path, str, os.stat_result, bytes | None, bool]]:
+def _tree(root: Path, repo: str) -> Iterator[tuple[Path, str, os.stat_result, bytes | None, str | None]]:
     """The workspace's entries in the order they are packed. First the root itself is checked (``_root``), so a walk, the re-walk
     among them, reads nothing through a root that became a link. Then each plain file and folder (``_plain``) but ``.git`` and
     ``.venv`` (``KEPT``), its name relative to the workspace with ``/``, checked before it is used to read anything as one the
     host holds as named and the container can hold (``_holdable``), a file's bytes, read as the file that was checked
-    (``_read``), a folder's None, and whether the file is a symbolic link by the workspace's link record (``_is_link``), whose
-    target the container must be able to make (``_link_target``). A folder or a record that cannot be read refuses the
-    workspace."""
+    (``_read``), a folder's None, and the file's git mode by the workspace's link record (``_mode``): a symbolic link's target
+    the container must be able to make (``_link_target``). A folder or a record that cannot be read refuses the workspace."""
     def unreadable(exc: OSError) -> None:
         raise Refused(f"the workspace could not be read: {exc}")
 
@@ -493,26 +676,28 @@ def _tree(root: Path, repo: str) -> Iterator[tuple[Path, str, os.stat_result, by
             _holdable(rel, repo)
             st = _plain(path, root)
             if stat.S_ISDIR(st.st_mode):
-                yield path, rel, st, None, False
+                yield path, rel, st, None, None
                 continue
             data = _read(path, st, rel)
-            link = _is_link(rel, data, record)
-            if link:
+            mode = _mode(rel, data, record)
+            if mode == LINK_MODE:
                 _link_target(rel, data)
-            yield path, rel, st, data, link
+            yield path, rel, st, data, mode
 
 
-def pack(workspace: Path, repo: str = "") -> bytes:
+def pack(workspace: Path, repo: str = "", *, marks: dict[str, str] | None = None) -> bytes:
     """The workspace as a tar, in memory: its plain files and folders, without ``.git`` or ``.venv`` (``KEPT``), each named relative
-    to it with ``/``, every name one the container can hold under ``repo`` (``_holdable``), and each file its link record lists
-    (``_is_link``) as a symbolic link whose target is the file's bytes, never as a file. Anything else refuses the whole
-    workspace (``Refused``), so nothing is sent; so does a workspace that is itself a link, a junction or another reparse point,
-    and a folder that cannot be read, which would otherwise look empty and have its files removed in the container. Each file is
-    read as the file that was checked (``_read``); once the walk is done every folder it went through, the workspace's own
-    included, is checked again (``_same_folder``), and then the whole tree is walked again, its root checked first (``_tree``):
-    its names and each one's mark (``_mark``: what it is, and a file's or a link's SHA-256) must be what was packed, else the
-    workspace changed while it was packed and is refused, so the next call sends it as it is then. Any failure to pack it (a
-    name the tar cannot hold, a read that fails, the tar's own error) refuses it too: nothing is sent or run."""
+    to it with ``/``, every name one the container can hold under ``repo`` (``_holdable``), each file with its git mode by its
+    link record (``_mode``): one the record lists as a link as a symbolic link whose target is the file's bytes, never as a file,
+    one it lists as executable with mode 0755, any other 0644. Anything else refuses the whole workspace (``Refused``), so
+    nothing is sent; so does a workspace that is itself a link, a junction or another reparse point, and a folder that cannot be
+    read, which would otherwise look empty and have its files removed in the container. Each file is read as the file that was
+    checked (``_read``); once the walk is done every folder it went through, the workspace's own included, is checked again
+    (``_same_folder``), and then the whole tree is walked again, its root checked first (``_tree``): its names and each one's
+    mark (``_mark``: what it is, its mode, and a file's or a link's SHA-256) must be what was packed, else the workspace changed
+    while it was packed and is refused, so the next call sends it as it is then. Any failure to pack it (a name the tar cannot
+    hold, a read that fails, the tar's own error) refuses it too: nothing is sent or run. ``marks``: filled with the tree that
+    was packed, as a map (``tree_map``'s form), from the one read that built the tar."""
     given = Path(workspace)
     top = _root(given)
     try:
@@ -521,22 +706,22 @@ def pack(workspace: Path, repo: str = "") -> bytes:
         walked = [(given, top, "the workspace")]
         packed: list[tuple[str, str]] = []
         with tarfile.open(fileobj=out, mode="w", format=tarfile.PAX_FORMAT) as tar:
-            for path, rel, st, data, link in _tree(root, repo):
+            for path, rel, st, data, mode in _tree(root, repo):
                 info = tarfile.TarInfo(rel)
                 if data is None:
                     walked.append((path, st, rel))
                     info.type, info.mode = tarfile.DIRTYPE, 0o755
                     tar.addfile(info)
-                elif link:
+                elif mode == LINK_MODE:
                     info.type, info.linkname, info.mode = tarfile.SYMTYPE, data.decode("utf-8"), 0o777
                     tar.addfile(info)
                 else:
-                    info.size, info.mode = len(data), 0o644
+                    info.size, info.mode = len(data), 0o755 if mode == EXEC_MODE else 0o644
                     tar.addfile(info, io.BytesIO(data))
-                packed.append((rel, _mark(data, link)))
+                packed.append((rel, _marked(data, mode)))
         for path, st, rel in walked:
             _same_folder(path, st, rel)
-        now = [(rel, _mark(data, link)) for _, rel, _, data, link in _tree(root, repo)]
+        now = [(rel, _marked(data, mode)) for _, rel, _, data, mode in _tree(root, repo)]
         if now != packed:
             at = next((i for i, (was, is_) in enumerate(zip(packed, now)) if was != is_), min(len(packed), len(now)))
             raise Refused(f"{(packed if at < len(packed) else now)[at][0]} changed while the workspace was packed: walked again, "
@@ -545,28 +730,34 @@ def pack(workspace: Path, repo: str = "") -> bytes:
         raise
     except (OSError, ValueError, tarfile.TarError) as exc:       # UnicodeError is a ValueError
         raise Refused(f"the workspace could not be packed: {type(exc).__name__}: {exc}") from exc
+    if marks is not None:
+        marks.clear()
+        marks.update(packed)
     return out.getvalue()
 
 
-def mirror(workspace: Path, docker: Callable[..., Any], *, container: str, repo: str, user: str, timeout: float) -> str:
+def mirror(workspace: Path, docker: Callable[..., Any], *, container: str, repo: str, user: str, timeout: float) -> dict[str, str]:
     """The workspace into the container's repository (``MIRROR``, as root). ``docker`` is called as ``run.Docker`` is. A refused
     workspace, a name the container cannot hold under ``repo`` among them, sends nothing and runs nothing (``Refused``); a docker
-    step that fails raises ``BoxError``. Returns what the script printed."""
-    data = pack(workspace, repo)
-    done = docker("exec", "-i", "-u", "root", container, "python3", "-I", "-c", MIRROR, repo, user, input=data, timeout=timeout)
-    if done.returncode != 0:
-        raise BoxError(f"the mirror failed ({done.returncode}): {(_text(done.stdout) + ' ' + _text(done.stderr)).strip()[-2000:]}")
-    return _text(done.stdout).strip()
+    step not seen to pass (``seen``) raises ``BoxError``. Returns the tree it sent, as a map (``tree_map``'s form), from the one
+    read of the workspace that built the tar (``pack``): the baseline of a call's three-way pull, never a second read."""
+    sent: dict[str, str] = {}
+    data = pack(workspace, repo, marks=sent)
+    got = seen(docker("exec", "-i", "-u", "root", container, "python3", "-I", "-c", MIRROR, repo, user, input=data,
+                      timeout=timeout))
+    if got.state != PASSED:
+        raise BoxError(f"the mirror failed ({got.why})")
+    return sent
 
 
 def tree_map(workspace: Path, repo: str = "") -> dict[str, str]:
     """The workspace's tree as a map: each entry's name relative to it with ``/``, to its mark (``_mark``): a file's SHA-256 in hex,
-    ``LINK`` and a link's target's, or ``FOLDER``. It is read as ``pack`` reads it (``_tree``): the root and every entry checked,
-    and anything that could not be packed refuses it."""
+    with ``EXEC`` before it for an executable, ``LINK`` and a link's target's, or ``FOLDER``. It is read as ``pack`` reads it
+    (``_tree``): the root and every entry checked, and anything that could not be packed refuses it."""
     given = Path(workspace)
     _root(given)
     try:
-        return {rel: _mark(data, link) for _, rel, _, data, link in _tree(given.resolve(), repo)}
+        return {rel: _marked(data, mode) for _, rel, _, data, mode in _tree(given.resolve(), repo)}
     except Refused:
         raise
     except (OSError, ValueError) as exc:
@@ -642,21 +833,32 @@ def spare(workspace: Path) -> Path:
     return base.parent / f"{base.name}.box.pull"
 
 
-def _write_new(path: Path, data: bytes, *, over: Path | None = None) -> None:
-    """A file put in place with ``data``, never written through a name that is there. A new one is made fresh, exclusively, so a
-    name that is another file's short-name alias meets that file and fails. ``over``: the file replaces one, so it is made whole,
-    exclusively, in that folder (``spare``), then moved over its name in one step (``os.replace``): a write that fails leaves the
-    old file as it was."""
-    if over is None:
-        with open(path, "xb") as f:
-            f.write(data)
-        return
-    over.mkdir(exist_ok=True)
-    temp = over / f"{secrets.token_hex(8)}.part"
+def _put_new(temp: Path, path: Path) -> None:
+    """``temp``, a whole file, given the name ``path``, which must not be there, in one step that never replaces what holds it: on
+    Windows a rename, which refuses a name that is there (another file's short-name alias or a name in another case among them);
+    elsewhere a second name made for the file, refused the same way, then the first removed."""
+    if os.name == "nt":
+        os.rename(temp, path)
+    else:
+        os.link(temp, path)
+        os.remove(temp)
+
+
+def _write_new(path: Path, data: bytes, *, folder: Path, over: bool = False) -> None:
+    """A file put in place with ``data``, whole, never written through a name that is there: it is made whole, exclusively, in
+    ``folder``, the box's own beside the workspace (``spare``), then put at its name in one step, so a write that fails part way,
+    or a box that ends, leaves at that name what was there before: the old file, or nothing. ``over``: it replaces the file at
+    that name, and is moved over it (``os.replace``); else the name must not be there (``_put_new``), so a name that is another
+    file's short-name alias meets that file and fails."""
+    folder.mkdir(exist_ok=True)
+    temp = folder / f"{secrets.token_hex(8)}.part"
     try:
         with open(temp, "xb") as f:
             f.write(data)
-        os.replace(temp, path)
+        if over:
+            os.replace(temp, path)
+        else:
+            _put_new(temp, path)
     finally:
         if os.path.lexists(temp):
             os.remove(temp)
@@ -668,13 +870,16 @@ def bring_in(workspace: Path, data: bytes, repo: str = "", before: Mapping[str, 
     nothing. ``before``: the tree the container was given before the command (``tree_map``, as the call's state keeps it). Then
     each name takes the container's side where the workspace still holds what the container was given, and keeps the workspace's
     where the workspace changed since, so nothing written in the workspace after the mirror is lost; with no ``before`` (an empty
-    workspace, ``run.workspace_from``) the container's tree is taken whole. Removals go first, deepest first, then folders,
-    shallowest first, then files in the export's own order (``_write_new``): a new file made fresh, exclusively, so a name that
-    is another file's short-name alias meets that file and refuses the tree, and a changed file made whole beside the workspace
-    and moved over the old one, so a write that fails leaves it as it was. A symbolic link is written as git writes one where
-    links cannot be made, a plain file holding its target, and listed in the workspace's link record (``write_links``): before
-    anything is written, every name whose link-or-file the pull changes is kept there as pending, so a pull ended part way is
-    read as it left each name (``_is_link``); once the tree is checked the record is set to the tree's links. Last, the
+    workspace, ``run.workspace_from``) the container's tree is taken whole. Each entry is compared by its mark (``_mark``), its
+    git mode with it, so a change of mode alone is a change. First what a box that ended part way through an earlier pull left
+    in its folder beside the workspace (``spare``) is removed. Removals go first, deepest first, then folders, shallowest first,
+    then files in the export's own order, each made whole beside the workspace and put at its name in one step (``_write_new``):
+    a new file at a name that must not be there, so a name that is another file's short-name alias meets that file and refuses
+    the tree, and a changed file moved over the old one, so a write that fails leaves it as it was. A symbolic link is written
+    as git writes one where links cannot be made, a plain file holding its target, and an executable as git keeps one where the
+    file system holds no executable bit, a plain file; each is listed in the workspace's link record (``write_links``): before
+    anything is written, every name whose mode the pull changes is kept there as pending, so a pull ended part way is read as
+    it left each name (``_mode``); once the tree is checked the record is set to the tree's links and executables. Last, the
     workspace is read again: every member is there under its exact name and no two files are one (``written``), and the tree is
     exactly the one decided. A failure before anything is touched is ``Refused``; one after, ``Partial``: part of the tree is in
     the workspace, and the link record is set to what the workspace then holds."""
@@ -688,7 +893,13 @@ def bring_in(workspace: Path, data: bytes, repo: str = "", before: Mapping[str, 
                   for rel, m in members.items()}
     except tarfile.TarError as exc:
         raise Refused(f"the container's tree could not be read: {type(exc).__name__}: {exc}") from exc
-    marks = {rel: _mark(body, members[rel].issym()) for rel, body in theirs.items()}
+    marks = {rel: _marked(body, _member_mode(members[rel])) for rel, body in theirs.items()}
+    room = spare(base)
+    try:
+        for left in (room.iterdir() if room.is_dir() else ()):     # an earlier pull's file never put at its name: the box's own
+            os.remove(left)
+    except OSError as exc:
+        raise Refused(f"the box's own folder beside the workspace could not be emptied: {exc}") from exc
     record = read_links(base)
     now = tree_map(root, repo)
     if before is None:
@@ -706,23 +917,29 @@ def bring_in(workspace: Path, data: bytes, repo: str = "", before: Mapping[str, 
             if target.get(parent, FOLDER) != FOLDER:
                 raise Refused(f"{rel!r} would be inside {parent!r}, a file or a link: the tree cannot hold it")
             target[parent] = FOLDER
-    linked = {rel for rel, mark in target.items() if mark.startswith(LINK)}
-    current = {rel for rel, mark in now.items() if mark.startswith(LINK)}     # as the record reads the workspace now
+
+    def listed(tree: Mapping[str, str], mode: str) -> set[str]:
+        return {rel for rel, mark in tree.items() if _mode_of(mark) == mode}
+
+    def plain(mark: str | None) -> bool:
+        return _mode_of(mark) in (None, FILE_MODE)
+
     pending = {rel: {"from": now.get(rel), "to": target.get(rel)} for rel in sorted({*now, *target})
-               if now.get(rel) != target.get(rel) and LINK in (str(now.get(rel))[:1], str(target.get(rel))[:1])}
+               if now.get(rel) != target.get(rel) and not (plain(now.get(rel)) and plain(target.get(rel)))}
     changed: list[str] = []                     # each name is listed before it is touched, so a failure after it says "in part"
 
     def failed(why: str) -> Refused:
         if pending:                             # the record set to what the workspace holds now; else its pending stays, read as is
             try:
-                write_links(base, {rel for rel, mark in tree_map(root, repo).items() if mark.startswith(LINK)})
+                held = tree_map(root, repo)
+                write_links(base, listed(held, LINK_MODE), executable=listed(held, EXEC_MODE))
             except (Refused, OSError, ValueError):
                 pass
         return (Partial if changed else Refused)(why)
 
     try:
-        if pending:                             # before anything is written: which names the pull changes a link of, and to what
-            write_links(base, current, pending)
+        if pending:                             # before anything is written: which names the pull changes a mode of, and to what
+            write_links(base, listed(now, LINK_MODE), pending, executable=listed(now, EXEC_MODE))
         for rel in sorted(now, key=lambda r: (-r.count("/"), r)):
             if target.get(rel) == now[rel] or (rel in target and FOLDER not in (target[rel], now[rel])):
                 continue                        # the same, or a file changed in place: put in place whole below
@@ -742,8 +959,10 @@ def bring_in(workspace: Path, data: bytes, repo: str = "", before: Mapping[str, 
             changed.append(rel)
             if target[rel] == FOLDER:
                 os.mkdir(path)
-            else:                               # over an old file: made whole beside the workspace, then moved over it
-                _write_new(path, theirs[rel], over=spare(base) if now.get(rel) not in (None, FOLDER) else None)
+            elif now.get(rel) not in (None, FOLDER) and target[rel].lstrip(LINK + EXEC) == now[rel].lstrip(LINK + EXEC):
+                continue                        # the same bytes in another mode: the record carries the mode
+            else:                               # made whole beside the workspace, then put at its name
+                _write_new(path, theirs[rel], folder=room, over=now.get(rel) not in (None, FOLDER))
         written(base, [m for rel, m in members.items() if target.get(rel) == marks[rel]])
         after = tree_map(root, repo)
     except Refused as exc:
@@ -753,9 +972,10 @@ def bring_in(workspace: Path, data: bytes, repo: str = "", before: Mapping[str, 
     if after != target:
         wrong = sorted(set(after.items()) ^ set(target.items()))[:5]
         raise failed(f"the workspace is not the tree decided after the container's tree was brought in: {wrong}")
-    if pending or record["pending"] or linked != record["links"]:
+    linked, execs = listed(target, LINK_MODE), listed(target, EXEC_MODE)
+    if pending or record["pending"] or linked != record["links"] or execs != record["executable"]:
         try:
-            write_links(base, linked)
+            write_links(base, linked, executable=execs)
         except OSError as exc:
             raise failed(f"the workspace's link record could not be kept: {type(exc).__name__}: {exc}") from exc
     return sorted(set(changed))
@@ -766,13 +986,14 @@ def pull(workspace: Path, docker: Callable[..., Any], *, container: str, repo: s
     """What a command changed in files, brought from the container into the workspace: ``PULL`` (as root: the user's processes
     stopped, then the export), then ``bring_in``, three-way from ``before``. With ``state``, the call's phase "pulling" is kept
     there (``write_state``) before anything is written, so a box ended in the middle of it is found and settled (``settle``). A
-    docker step that fails raises ``BoxError``; a tree that cannot be held, ``Refused``. Returns the names it changed."""
-    done = docker("exec", "-u", "root", container, "python3", "-I", "-c", PULL, repo, user, timeout=timeout)
-    if done.returncode != 0:
-        raise BoxError(f"the pull failed ({done.returncode}): {_text(done.stderr).strip()[-2000:]}")
+    docker step not seen to pass (``seen``) raises ``BoxError``; a tree that cannot be held, ``Refused``. Returns the names it
+    changed."""
+    got = seen(docker("exec", "-u", "root", container, "python3", "-I", "-c", PULL, repo, user, timeout=timeout))
+    if got.state != PASSED:
+        raise BoxError(f"the pull failed ({got.why[:2000]})")
     if state is not None:
         write_state(state, {"call": call_no, "phase": "pulling"})
-    return bring_in(workspace, done.stdout or b"", repo, before)
+    return bring_in(workspace, got.output, repo, before)
 
 
 def set_back(workspace: Path, docker: Callable[..., Any], **where: Any) -> str:
@@ -785,9 +1006,18 @@ def set_back(workspace: Path, docker: Callable[..., Any], **where: Any) -> str:
     return ""
 
 
+#: Every phase a call of the box is kept in (``write_state``), a closed set: "mirrored" (the container given the workspace, the
+#: tree it was given kept) and "pulling" (the command's tree being brought back) are unfinished, and a box that ended in either is
+#: settled before anything is mirrored again (``settle``); "settled", "set back" and "not settled" are finished. Any other phase
+#: refuses (``read_state``, ``write_state``): what that call left in the container is not known.
+UNFINISHED = ("mirrored", "pulling")
+PHASES = (*UNFINISHED, "settled", "set back", "not settled")
+
+
 def read_state(path: Path) -> dict[str, Any] | None:
     """The box's state file (``write_state``), or None when there is none. One that cannot be read as the box writes it refuses
-    (``Refused``): what a call left in the container is then not known, and nothing may guess it."""
+    (``Refused``), a phase outside ``PHASES`` and an unfinished call with no tree it was mirrored from among them: what a call
+    left in the container is then not known, and nothing may guess it."""
     try:
         raw = Path(path).read_bytes()
     except FileNotFoundError:
@@ -802,20 +1032,31 @@ def read_state(path: Path) -> dict[str, Any] | None:
     if not isinstance(calls, list) or not all(isinstance(x, dict) and isinstance(x.get("call"), int) and isinstance(x.get("phase"), str)
                                               for x in calls):
         raise Refused(f"the box's state {path} is not a list of calls with their phases")
+    for x in calls:
+        if x["phase"] not in PHASES:
+            raise Refused(f"the box's state {path} gives call {x['call']} the phase {x['phase']!r}, which is none of the box's "
+                          f"{', '.join(PHASES)}: what it left in the container is not known")
+        before = x.get("before")
+        if x["phase"] in UNFINISHED and not (isinstance(before, dict) and all(isinstance(k, str) and _is_mark(v) and v is not None
+                                                                              for k, v in before.items())):
+            raise Refused(f"the box's state {path} gives call {x['call']} no tree it was mirrored from")
     return got
 
 
 def write_state(path: Path, entry: Mapping[str, Any]) -> None:
     """One call's phase kept in the box's state file, a file outside the workspace: merged into that call's entry, or a new entry
     for a new call. Written whole to a file of its own beside it, flushed to disk, then put in its place in one step
-    (``os.replace``), so a reader finds the state before or after the write, never part of it. A settled call keeps no map."""
+    (``os.replace``), so a reader finds the state before or after the write, never part of it. A finished call keeps no map. A
+    phase outside ``PHASES`` is never written (``ValueError``)."""
+    if entry.get("phase") not in PHASES:
+        raise ValueError(f"no phase {entry.get('phase')!r} of the box's: {', '.join(PHASES)}")
     state = read_state(path) or {"calls": []}
     calls = state["calls"]
     if calls and calls[-1]["call"] == entry["call"]:
         calls[-1] = {**calls[-1], **entry}
     else:
         calls.append(dict(entry))
-    if calls[-1]["phase"] not in ("mirrored", "pulling"):
+    if calls[-1]["phase"] not in UNFINISHED:
         calls[-1].pop("before", None)
     temp = Path(path).with_name(Path(path).name + f".{os.getpid()}.tmp")
     with open(temp, "wb") as f:
@@ -831,19 +1072,19 @@ def _changes(changed: list[str]) -> dict[str, Any]:
 
 def settle(workspace: Path, docker: Callable[..., Any], *, state: Path, container: str, repo: str, user: str,
            timeout: float) -> dict[str, Any] | None:
-    """A call the box did not finish, finished by the runner once the session has ended (``run._run_task``'s ``turn``), before the
-    workspace is mirrored again. None when the last call in the box's state is settled, set back or not settled, or there is no
-    state. A call left "mirrored" or "pulling" (its command may have changed the container, and its pull may have written part of
-    the workspace) is pulled now, three-way from the tree the call mirrored, so what the command changed is kept and what the
-    workspace changed after it is not written over; a tree that cannot be held is "not settled", with why, and the mirror after
-    this sets the container to the workspace. A state that cannot be read refuses (``read_state``)."""
+    """A call the box did not finish, finished before the workspace is mirrored again: by the next call of the box before it
+    mirrors anything (``call``), and by the runner once the session has ended (``run._run_task``'s ``turn``). None when the last
+    call in the box's state is finished, or there is no state. A call left unfinished (``UNFINISHED``: its command may have
+    changed the container, and its pull may have written part of the workspace) is pulled now, three-way from the tree the call
+    mirrored, so what the command changed is kept and what the workspace changed after it is not written over; a tree that cannot
+    be held is "not settled", with why, and the mirror after this sets the container to the workspace. A state that cannot be
+    read, a phase outside ``PHASES`` among it, refuses (``read_state``); so does a docker step not seen to pass (``BoxError``):
+    the call stays unfinished, and nothing may be mirrored over it."""
     calls = (read_state(state) or {"calls": []})["calls"]
     last = calls[-1] if calls else None
-    if last is None or last["phase"] not in ("mirrored", "pulling"):
+    if last is None or last["phase"] not in UNFINISHED:
         return None
-    n, before = last["call"], last.get("before")
-    if not isinstance(before, dict):
-        raise Refused(f"the box's state {state} gives call {n} no tree it was mirrored from")
+    n, before = last["call"], last["before"]
     try:
         changed = pull(workspace, docker, container=container, repo=repo, user=user, timeout=timeout, state=state, call_no=n,
                        before=before)
@@ -857,6 +1098,11 @@ def settle(workspace: Path, docker: Callable[..., Any], *, state: Path, containe
 
 BACK = ("what the command changed in files could not be brought back into your working folder ({why}), so none of it is kept: "
         "{after}. Make the change with your own editing tools.")
+#: Said before a command's output when the box first finished its last call, which had ended before its pull (``settle``).
+SETTLED = ("the box's last call (call {n}) had ended before what its command changed in files came back; it came back now, "
+           "before this command: {count} names changed in your working folder.")
+UNSETTLED = ("the box's last call (call {n}) had ended before what its command changed in files came back, and it could not be "
+             "brought back now ({why}), so none of it is kept. Make that change with your own editing tools.")
 #: A pull that failed after it began to write (``Partial``): part of the command's change is in the working folder.
 PART = ("what the command changed in files was brought back into your working folder only in part ({why}): {after}, as your "
         "working folder now is. Read the files the command was to change before you go on.")
@@ -865,19 +1111,25 @@ PART = ("what the command changed in files was brought back into your working fo
 def run_command(command: str, docker: Callable[..., Any], *, container: str, repo: str, user: str, timeout: float) -> tuple[int, str]:
     """The command in the container, as ``user`` in ``repo``, stopped there (with its children) at ``timeout`` seconds, behind a
     start line (``START``) with a nonce chosen for this call, which the container's shell prints before the command runs: its exit
-    code, and the last ``MAX_OUTPUT`` characters of its combined output, the start line taken out, after a line giving the code. A
-    reply without that line, as a line of its own, raises ``BoxError`` whatever its exit code: the command never ran, and what came
-    back is docker's, its daemon's or the container's."""
+    code, and the last ``MAX_OUTPUT`` characters of its combined output, the start line taken out, after a line giving the code.
+    The reply is read by the one reader (``seen``), the start line, as a line of its own, being the command's answer: a reply
+    without it, or with no exit code, raises ``BoxError`` whatever its exit code: the command never ran, or what it did is not
+    known, and what came back is docker's, its daemon's or the container's."""
     seconds = str(max(1, int(timeout)))
     start = f"{START} {secrets.token_hex(16)}"
-    done = docker("exec", "-u", user, "-w", repo, container, "timeout", "-k", "10", seconds, "sh", "-c", SHELL, start, command,
-                  timeout=timeout + 60, merged=True)
-    said = _text(done.stdout)
-    before, line, after = said.partition(start + "\n")
-    if not line or (before and not before.endswith("\n")):
-        raise BoxError(f"the command never ran: its start line did not come back (exit {done.returncode}): {said.strip()[-2000:]}")
-    note = f" (124 is what the box gives a command it stopped at {seconds} seconds)" if done.returncode == 124 else ""
-    return done.returncode, f"exit code {done.returncode}{note}\n{(before + after)[-MAX_OUTPUT:]}"
+
+    def ran(output: bytes) -> str | None:        # the output without the start line, when the command's own shell printed it
+        before, line, after = _text(output).partition(start + "\n")
+        return None if not line or (before and not before.endswith("\n")) else before + after
+
+    got = seen(docker("exec", "-u", user, "-w", repo, container, "timeout", "-k", "10", seconds, "sh", "-c", SHELL, start, command,
+                      timeout=timeout + 60, merged=True), ran)
+    if got.state == UNKNOWN and (got.code is None or got.code < 0):
+        raise BoxError(f"the command's exit is not known: {got.why}: {got.text[-2000:]}")
+    if got.state == UNKNOWN:
+        raise BoxError(f"the command never ran: its start line did not come back (exit {got.code}): {got.text[-2000:]}")
+    note = f" (124 is what the box gives a command it stopped at {seconds} seconds)" if got.code == 124 else ""
+    return got.code, f"exit code {got.code}{note}\n{got.answer[-MAX_OUTPUT:]}"
 
 
 def _result(text: str, *, error: bool = False) -> dict[str, Any]:
@@ -891,7 +1143,11 @@ def call(opts: Any, params: dict[str, Any], docker: Callable[..., Any]) -> dict[
     command's. Once the mirror is made, the pull is made whatever the command returned: a command that ran in part changed files
     too. A pull that cannot be made is a tool error after the command's output, which says so, and the container is set back to
     the workspace (``set_back``), so no change is dropped without the agent being told. With ``opts.state`` each phase is kept
-    (``write_state``): "mirrored" with the tree the container was given, "pulling", then "settled", "set back" or "not settled"."""
+    (``write_state``): "mirrored" with the tree the container was given, "pulling", then "settled", "set back" or "not settled".
+    One snapshot of a call, settled first: before anything is mirrored, the previous call's state is read and a call it left
+    unfinished is settled (``settle``), so a box ended after a command and started again never mirrors over what the command
+    changed; and the tree the three-way pull starts from is the one the mirror sent, from the one read of the workspace that
+    built it (``mirror``), never a second read, which an edit made after the mirror would be in."""
     arguments = params.get("arguments") or {}
     if params.get("name") != "run":
         return _result(f"there is no tool {params.get('name')!r}; the one tool is run", error=True)
@@ -901,25 +1157,35 @@ def call(opts: Any, params: dict[str, Any], docker: Callable[..., Any]) -> dict[
     where = {"container": opts.container, "repo": opts.repo, "user": opts.user, "timeout": float(opts.timeout)}
     workspace, state = Path(opts.workspace), getattr(opts, "state", None)
     state = Path(state) if state else None
+    note = ""
+    if state is not None:
+        try:
+            last = settle(workspace, docker, state=state, **where)
+        except (Refused, BoxError, OSError, subprocess.SubprocessError) as exc:
+            return _result(f"nothing was mirrored or run: the box's last call ended before it was finished, and it could not be "
+                           f"finished now: {type(exc).__name__}: {exc}", error=True)
+        if last is not None:
+            note = (SETTLED if last["phase"] == "settled" else UNSETTLED).format(
+                n=last["call"], count=last.get("count", 0), why=last.get("error", "")) + "\n\n"
     try:
-        mirror(workspace, docker, **where)
+        before = mirror(workspace, docker, **where)
     except Refused as exc:
-        return _result(f"nothing was mirrored or run: {exc}", error=True)
+        return _result(f"{note}nothing was mirrored or run: {exc}", error=True)
     except (BoxError, OSError, subprocess.SubprocessError) as exc:
-        return _result(f"{type(exc).__name__}: {exc}", error=True)
+        return _result(f"{note}{type(exc).__name__}: {exc}", error=True)
     try:
-        before = tree_map(workspace, opts.repo)
         calls = (read_state(state) or {"calls": []})["calls"] if state is not None else []
         n = (calls[-1]["call"] + 1) if calls else 1
         if state is not None:
             write_state(state, {"call": n, "phase": "mirrored", "by": "box", "before": before})
-    except (Refused, OSError) as exc:
-        return _result(f"the workspace was mirrored and no command was run: the box could not keep its state: {exc}", error=True)
+    except (Refused, OSError, ValueError) as exc:
+        return _result(f"{note}the workspace was mirrored and no command was run: the box could not keep its state: {exc}",
+                       error=True)
     try:
         code, text = run_command(command, docker, **where)
-        failed = code is None or code < 0
+        text, failed = note + text, False
     except (BoxError, OSError, subprocess.SubprocessError) as exc:
-        text, failed = f"{type(exc).__name__}: {exc}", True
+        text, failed = f"{note}{type(exc).__name__}: {exc}", True
     try:
         changed = pull(workspace, docker, **where, state=state, call_no=n, before=before)
     except (Refused, BoxError, OSError, subprocess.SubprocessError) as exc:

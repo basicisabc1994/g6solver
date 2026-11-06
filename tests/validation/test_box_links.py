@@ -331,14 +331,14 @@ def three_changes(docker) -> bytes:
 def test_a_box_ended_while_its_pull_brings_links_back_leaves_each_a_link_in_the_kept_patch(monkeypatch, tmp_path, at):
     real_links, real_write, ran, killed = box.write_links, box._write_new, [], []
 
-    def write_links(workspace, links, pending=None):        # the pull after the command: never the export at the start
+    def write_links(workspace, links, pending=None, **kw):  # the pull after the command: never the export at the start
         if ran and not killed and ((at == "after the record's pending" and pending) or (at == "before the record is kept"
                                                                                        and not pending)):
             killed.append(at)
             if pending:
-                real_links(workspace, links, pending)
+                real_links(workspace, links, pending, **kw)
             raise one_tree.Killed
-        return real_links(workspace, links, pending)
+        return real_links(workspace, links, pending, **kw)
 
     def write_new(path, data, **kw):
         if ran and not killed and at == "after a link's file" and data == b"docs/other.md":
@@ -358,6 +358,18 @@ def test_a_box_ended_while_its_pull_brings_links_back_leaves_each_a_link_in_the_
                          + entry("src/mod.py", b"../tests/test_mod.py", link=True)), got.final
 
 
+def test_a_box_ended_after_a_command_that_changed_links_is_settled_by_the_next_call_first(monkeypatch, tmp_path):
+    got = run_links(monkeypatch, tmp_path, [("s1", [("killed", "three"), ("run", "ls"), ("look", look)])],
+                    commands={"three": three_changes, "ls": lambda docker: b""}, pull_fails=[one_tree.Killed()])
+    assert got.seen["replies"][0] == "killed" and got.seen["replies"][1]["isError"] is False, got.seen["replies"]
+    assert "came back now, before this command" in got.seen["replies"][1]["content"][0]["text"]
+    assert {"CHANGELOG.md", "new", "src/mod.py"} <= got.seen["record"]["links"] and got.seen["record"]["pending"] == {}
+    assert got.docker.sent[-1]["CHANGELOG.md"] == "docs/other.md" and got.docker.sent[-1]["new"] == "docs/notes.md"
+    assert got.record["status"] == "finished" and "box_settled" not in got.record, got.record.get("error")
+    assert got.final == (entry("CHANGELOG.md", b"docs/other.md", link=True) + entry("new", b"docs/notes.md", link=True)
+                         + entry("src/mod.py", b"../tests/test_mod.py", link=True)), got.final
+
+
 def test_a_pull_that_fails_part_way_through_links_sets_the_record_to_what_the_workspace_holds(monkeypatch, tmp_path):
     real_write, ran, writes = box._write_new, [], []
 
@@ -373,7 +385,7 @@ def test_a_pull_that_fails_part_way_through_links_sets_the_record_to_what_the_wo
                     commands={"three": lambda docker: (ran.append(1), three_changes(docker))[1]})
     text = got.seen["replies"][0]["content"][0]["text"]
     assert got.seen["replies"][0]["isError"] is True and "only in part" in text and "set back" in text, text
-    assert got.seen["record"] == {"links": set(LINKS), "pending": {}}, got.seen["record"]
+    assert got.seen["record"] == {"links": set(LINKS), "executable": set(), "pending": {}}, got.seen["record"]
     assert got.seen["files"]["CHANGELOG.md"] == b"docs/other.md" and "new" not in got.seen["files"]
     assert got.docker.sent[-1] == {**LINKS, "CHANGELOG.md": "docs/other.md"}
     assert got.final == entry("CHANGELOG.md", b"docs/other.md", link=True), got.final
@@ -473,9 +485,11 @@ KINDS = {
     ("box_mcp.py", "pack"): "a link's file is sent as a SYMTYPE member with its bytes as the target",
     ("box_mcp.py", "written"): "a link's file is checked by name and file identity, as a file is",
     ("box_mcp.py", "export_members"): "a SYMTYPE member is carried, its target checked (_link_target); a hard link is refused",
+    ("box_mcp.py", "_member_mode"): "a SYMTYPE member is mode 120000, as git reads it; a folder has none, a file 100644 or 100755",
     ("box_mcp.py", "bring_in"): "a SYMTYPE member is written as a plain file holding its target and listed in the record",
     ("MIRROR", "<script>"): "a SYMTYPE member is made a link fresh (never through a name), the same link left; others removed",
     ("MIRROR", "kind"): "a link in the container is 'other': cleared, never written through or walked",
+    ("PULL", "<script>"): "a repository root that is a link, or reached through one, refuses the pull before the export",
     ("run.py", "workspace_from"): "the clean-up of a refused export removes a link itself, never what it points to",
     ("run.py", "_run_task"): "the clean-up of the workspace's siblings removes a link itself, never what it points to",
 }
@@ -511,6 +525,218 @@ def test_every_rule_that_sorts_a_trees_entries_by_kind_is_named_with_how_it_take
              | _kind_places(box.PULL, "PULL")
              | _kind_places((HERE / "run.py").read_text("utf-8"), "run.py", only={"workspace_from", "_run_task"}))
     assert found == set(KINDS), (sorted(found - set(KINDS)), sorted(set(KINDS) - found))
+
+
+# --- no link is followed at any depth (replay cohort, repair 1, review 1's finding 3) ---------------------------------------------
+#: Run before a container script on the host: every path operation it makes is recorded by name, and one that reaches through a
+#: link or junction (an ancestor of its path, inside the repository, a link at that moment), or acts on a link itself in a way
+#: that follows it, prints FOLLOWED. A link is a junction here (``helpers.link``); ``os.symlink``, which this host may not make,
+#: makes a plain file in the link's place, after the same check.
+OBSERVE = r'''import atexit, builtins, os, shutil, stat as _st, sys
+_lstat, _REPO, _SEEN = os.lstat, os.path.abspath(sys.argv[1]), set()
+
+
+def _link(path):
+    try:
+        st = _lstat(path)
+    except OSError:
+        return False
+    return _st.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & _st.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def _through(path):
+    p = os.path.abspath(path)
+    if not p.startswith(_REPO + os.sep):
+        return None
+    parts = os.path.relpath(p, _REPO).split(os.sep)
+    return next((a for a in (os.path.join(_REPO, *parts[:i]) for i in range(1, len(parts))) if _link(a)), None)
+
+
+def _watch(mod, name, itself_ok, at=0):
+    real = getattr(mod, name, None)
+    if real is None:              # not on this host (os.chown on Windows): the script calls it only as root in a container
+        return
+
+    def op(*args, **kw):
+        path = args[at] if len(args) > at else None
+        if isinstance(path, (str, os.PathLike)):
+            _SEEN.add(name)
+            through = _through(path)
+            if through:
+                print("FOLLOWED", name, path, "through", through, file=sys.stderr)
+            elif not itself_ok and _link(path):
+                print("FOLLOWED", name, path, "itself", file=sys.stderr)
+        if name == "symlink":
+            return builtins.open(args[1], "x").close()
+        return real(*args, **kw)
+    setattr(mod, name, op)
+
+
+for _name, _ok in (("lstat", True), ("stat", False), ("open", False), ("listdir", False), ("scandir", False), ("remove", True),
+                   ("unlink", True), ("rmdir", True), ("mkdir", False), ("readlink", True), ("chown", True), ("chmod", False),
+                   ("chdir", False), ("rename", False), ("replace", False)):
+    _watch(os, _name, _ok)
+_watch(os, "symlink", True, at=1)
+_watch(builtins, "open", False)
+_watch(shutil, "rmtree", False)
+_watch(os.path, "realpath", False)
+atexit.register(lambda: print("OPS " + " ".join(sorted(_SEEN)), file=sys.stderr))
+'''
+PATH_FUNCS = {"lstat", "stat", "open", "listdir", "scandir", "walk", "remove", "unlink", "rmdir", "mkdir", "makedirs", "symlink",
+              "readlink", "chown", "lchown", "chmod", "rmtree", "islink", "isdir", "isfile", "exists", "lexists", "realpath", "chdir",
+              "rename", "replace", "link", "execvp"}
+#: Each path operation of the box's two container scripts, by where it is (the script's function, or its own lines), with how it
+#: checks each folder above the name: a new one fails ``test_every_container_path_operation_...`` until it is named here, and
+#: ``test_no_container_path_operation_reaches_through_a_link_at_any_depth`` drives a link at each depth through every one.
+_SAFE = "on a path from path_of: each folder above the name read by lstat, from the root down, as a folder of its own"
+PATH_OPS = {
+    ("MIRROR", "stop", "listdir"): "/proc, not the repository", ("MIRROR", "stop", "open"): "/proc, not the repository",
+    ("MIRROR", "kind", "lstat"): "the name itself, never followed; inside() calls it on each folder from the root down, stopping "
+                                 "at the first that is not a folder of its own, and every other caller holds a path from path_of",
+    ("MIRROR", "<script>", "realpath"): "the repository's root, resolved once with nothing of the user's running: its real path "
+                                        "must be the path it was given, so no folder above it is a link",
+    ("MIRROR", "below", "listdir"): _SAFE + ", and a folder of its own by kind",
+    ("MIRROR", "clear", "rmtree"): "a folder of its own by kind, " + _SAFE + "; rmtree removes a link inside it by itself",
+    ("MIRROR", "clear", "remove"): "the name itself (a link removed by itself, never what it points to), " + _SAFE,
+    ("MIRROR", "own", "chown"): "a folder just made, " + _SAFE,
+    ("MIRROR", "excl", "open"): "O_EXCL: a name that is there fails and is cleared, never written through; " + _SAFE,
+    ("MIRROR", "fresh", "open"): "through excl: " + _SAFE,
+    ("MIRROR", "link", "symlink"): "a name that is there fails and is cleared, never written through; " + _SAFE,
+    ("MIRROR", "link", "chown"): "follow_symlinks=False: the link itself; " + _SAFE,
+    ("MIRROR", "<script>", "open"): "O_NOFOLLOW, only on a regular file with one name by kind; " + _SAFE,
+    ("MIRROR", "<script>", "readlink"): "the link itself, by kind; " + _SAFE,
+    ("MIRROR", "<script>", "mkdir"): _SAFE + ", after its folder was made",
+    ("MIRROR", "<script>", "remove"): "the name itself, as below() listed it; " + _SAFE,
+    ("MIRROR", "<script>", "rmdir"): "a folder of its own, as below() listed it; " + _SAFE,
+    ("MIRROR", "<script>", "listdir"): "a folder of its own, as below() listed it; " + _SAFE,
+    ("PULL", "stop", "listdir"): "/proc, not the repository", ("PULL", "stop", "open"): "/proc, not the repository",
+    ("PULL", "<script>", "lstat"): "the repository's root itself: a folder of its own, not a link",
+    ("PULL", "<script>", "realpath"): "the repository's root: its real path the path it was given, so no folder above it is a link",
+    ("PULL", "<script>", "chdir"): "the root checked just above, with nothing of the user's running",
+    ("PULL", "<script>", "execvp"): "GNU tar from the root: it stores a link as a link and walks into none, at any depth",
+}
+
+
+def _path_ops(source: str, label: str) -> set[tuple[str, str, str]]:
+    """Each (script, function or "<script>", operation) where a container script calls a file system operation of ``os``,
+    ``os.path`` or ``shutil``, or the builtin ``open``."""
+    found: set[tuple[str, str, str]] = set()
+
+    def owner(func: ast.AST) -> str:
+        return ast.unparse(func.value) if isinstance(func, ast.Attribute) else ""
+
+    def visit(node: ast.AST, where: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.FunctionDef):
+                visit(child, child.name)
+                continue
+            if isinstance(child, ast.Call):
+                func = child.func
+                name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+                if (owner(func) in ("os", "os.path", "shutil") and name in PATH_FUNCS) or (isinstance(func, ast.Name)
+                                                                                          and name == "open"):
+                    found.add((label, where, name))
+            visit(child, where)
+    visit(ast.parse(source), "<script>")
+    return found
+
+
+def test_every_container_path_operation_is_named_with_how_it_checks_each_folder_above_the_name():
+    found = _path_ops(box.MIRROR, "MIRROR") | _path_ops(box.PULL, "PULL")
+    assert found == set(PATH_OPS), (sorted(found - set(PATH_OPS)), sorted(set(PATH_OPS) - found))
+
+
+def _tree_of(top: Path) -> dict[str, bytes | None]:
+    return {p.relative_to(top).as_posix(): (None if p.is_dir() else p.read_bytes()) for p in sorted(top.rglob("*"))}
+
+
+#: Depth 0: the name itself is a link; 1: the folder above it; 2: the folder above that. Each case's tar, the container's
+#: links (each to an outside folder whose names tempt every step: a ``.git`` the check before any change would refuse, files the
+#: removal would delete, the same names the tar writes), and the repository after the mirror.
+DEPTHS = {
+    0: ({"a": b"file over a link\n", "l@": b"x"}, {}, ("x/.git/HEAD", "f")),
+    1: ({"a/x": b"under a link\n", "a/y/": None, "a/l@": b"x"}, {"a/": None}, ("x/.git/HEAD", "y/f", "l/f")),
+    2: ({"a/b/x": b"deeper\n", "a/b/l@": b"x"}, {"a/": None, "a/b/": None}, ("b/x/.git/HEAD", "b/l/f", "b/y/f")),
+}
+#: Not driven on this host: ``readlink`` reads a link the container holds, which this host cannot make (a junction is no
+#: S_ISLNK); ``chown`` runs only as root in a container. Both act on a path from path_of, as the inventory names.
+NOT_HERE = {"readlink", "chown"}
+
+
+def _mirror_with_links_at(tmp_path: Path, depth: int):
+    """The real MIRROR, under ``OBSERVE``, over a container folder whose ``a`` is a link to ``outside`` and which holds, the same
+    at every depth, a link the tar does not hold (``gone``), a real folder holding a link (``c/w``), a folder the tar makes a file
+    (``q``), an empty folder (``e``) and a file the tar leaves as it is and one it changes."""
+    files, dirs, tempting = DEPTHS[depth]
+    repo, outside, other = tmp_path / "repo", tmp_path / "outside", tmp_path / "other"
+    helpers.write(outside, {rel: "outside\n" for rel in tempting})
+    helpers.write(other, {"inner/secret.txt": "other\n"})
+    helpers.write(repo, {"same.txt": "same\n", "old.txt": "old\n", "q/inside.txt": "q\n", "c/kept.txt": "c\n"})
+    (repo / "e").mkdir()
+    helpers.link(outside, repo / "a")
+    helpers.link(other, repo / "gone")
+    helpers.link(other, repo / "c" / "w")
+    if depth == 0:
+        helpers.link(other, repo / "l")
+    entries = [*((d.rstrip("/"), "dir", b"") for d in dirs), ("c", "dir", b""), ("c/kept.txt", "file", b"c\n"),
+               ("same.txt", "file", b"same\n"), ("old.txt", "file", b"new\n"), ("q", "file", b"now a file\n"), ("n", "dir", b"")]
+    for rel, data in files.items():           # a pack's names: relative, with no "./"
+        if rel.endswith("/"):
+            entries.append((rel.rstrip("/"), "dir", b""))
+        elif rel.endswith("@"):
+            entries.append((rel[:-1], "sym", data))
+        else:
+            entries.append((rel, "file", data))
+    before = {"outside": _tree_of(outside), "other": _tree_of(other)}
+    done = subprocess.run([sys.executable, "-I", "-c", OBSERVE + box.MIRROR, str(repo), "tester"], input=tar_of(entries),
+                          capture_output=True, timeout=60)
+    return SimpleNamespace(done=done, repo=repo, before=before, outside=outside, other=other,
+                           ops=set(next((line.split()[1:] for line in done.stderr.decode().splitlines() if line.startswith("OPS ")),
+                                        [])))
+
+
+def test_finding_3_the_mirror_never_inspects_a_member_through_an_existing_ancestor_link(tmp_path):
+    tree = one_tree
+    repo, outside, ws = tmp_path / "repo", tmp_path / "outside", tmp_path / "ws"
+    repo.mkdir()
+    (outside / "x" / ".git").mkdir(parents=True)
+    tree.helpers.link(outside, repo / "d")
+    tree.helpers.write(ws, {"d/x": "replacement\n"})
+    done = subprocess.run([sys.executable, "-I", "-c", OBSERVE + box.MIRROR, str(repo), "tester"], input=box.pack(ws),
+                          capture_output=True, timeout=30)
+    assert b"FOLLOWED" not in done.stderr, done.stderr
+    assert done.returncode == 0 and (repo / "d" / "x").read_bytes() == (ws / "d" / "x").read_bytes() and not reparse(repo / "d"), \
+        done.stderr
+    assert (outside / "x" / ".git").is_dir() and not (outside / "x" / "replacement").exists()
+
+
+@pytest.mark.parametrize("depth", sorted(DEPTHS))
+def test_no_container_path_operation_reaches_through_a_link_at_any_depth(tmp_path, depth):
+    got = _mirror_with_links_at(tmp_path, depth)
+    assert b"FOLLOWED" not in got.done.stderr and got.done.returncode == 0, got.done.stderr.decode()
+    assert {"outside": _tree_of(got.outside), "other": _tree_of(got.other)} == got.before, "a target of a link was changed"
+    files, _, _ = DEPTHS[depth]
+    after = _tree_of(got.repo)
+    for rel, data in files.items():
+        assert after[rel.rstrip("/@")] == (b"" if rel.endswith("@") else data), rel     # a link here: a placeholder file
+    assert after["same.txt"] == b"same\n" and after["old.txt"] == b"new\n" and after["q"] == b"now a file\n"
+    assert not any(n in after for n in ("gone", "c/w", "e")) and after["c/kept.txt"] == b"c\n"
+    assert not any(reparse(p) for p in got.repo.rglob("*")), "a link the tar does not hold was left"
+    driven = {op for (script, where, op) in PATH_OPS if script == "MIRROR" and where != "stop"}
+    assert driven - NOT_HERE <= got.ops, ("a path operation no link was driven through", sorted(driven - NOT_HERE - got.ops))
+
+
+def test_the_pull_refuses_a_repository_reached_through_a_link_before_its_export(tmp_path):
+    real, linked = tmp_path / "real", tmp_path / "via"
+    (real / "repo").mkdir(parents=True)
+    helpers.link(real, linked)
+    stub = "import os, sys\nos.execvp = lambda exe, argv: (print('EXPORT', os.getcwd()), sys.exit(0))\n"
+    ok_run = subprocess.run([sys.executable, "-I", "-c", stub + box.PULL, str(real / "repo"), "tester"], capture_output=True,
+                            timeout=30)
+    assert ok_run.returncode == 0 and b"EXPORT" in ok_run.stdout, ok_run.stderr
+    refused = subprocess.run([sys.executable, "-I", "-c", stub + box.PULL, str(linked / "repo"), "tester"], capture_output=True,
+                             timeout=30)
+    assert refused.returncode != 0 and b"EXPORT" not in refused.stdout and b"reached through no link" in refused.stderr
 
 
 # --- real containers: the box's own scripts, git and GNU tar ---------------------------------------------------------------------
@@ -638,7 +864,7 @@ def test_real_a_known_patch_that_adds_changes_and_removes_links_comes_back_byte_
     assert (ws / "broken_moved").read_bytes() == b"no/such/file" and not (ws / "broken").exists()
     assert not (ws / "gone").exists() and not (ws / scripted_session.KNOWN).exists()
     assert record == {"links": set(REAL_LINKS) - {"gone", "tofile", "broken"} | {"new_link", "tolink.txt", "broken_moved"},
-                      "pending": {}}
+                      "executable": set(), "pending": {}}
     box.mirror(ws, real.docker, container=real.name, repo=REPO, user=we.USER, timeout=120)    # the runner's last mirror
     we.checked(real.docker.sh(real.name, we.diff_script(REPO, real.base, "/tmp/final.patch"), timeout=120), "the capture")
     final = real.tmp / "final.patch"

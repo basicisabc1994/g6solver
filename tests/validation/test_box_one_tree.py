@@ -407,7 +407,8 @@ CROSSINGS = {
     ("box_mcp.py", "pull", "bring_in"): "the container's export made the workspace's, checked whole before anything is written",
     ("box_mcp.py", "set_back", "mirror"): "one tree again after a refused pull (test_a_command_that_makes_what_...)",
     ("box_mcp.py", "settle", "pull"): "a call ended before its pull, finished by the runner (test_a_box_ended_between_...)",
-    ("box_mcp.py", "call", "tree_map"): "the tree the call mirrored, kept in its state for the three-way pull",
+    ("box_mcp.py", "call", "settle"): "before the call mirrors anything: a call the box ended before its pull is settled, so no "
+                                      "mirror writes over what its command changed (test_a_stop_and_a_restart_between_...)",
     ("box_mcp.py", "bring_in", "tree_map"): "the workspace read before anything is written, and again to check what was",
     ("box_mcp.py", "bring_in.failed", "tree_map"): "a pull that failed part way through links: its link record set to what the "
                                                    "workspace then holds, which the reply tells the agent to read",
@@ -463,7 +464,7 @@ LINKED = {
     ("box_mcp.py", "pull", "bring_in"): _SWAPPED,
     ("box_mcp.py", "set_back", "mirror"): _SET_BACK,
     ("box_mcp.py", "settle", "pull"): _ENDED,
-    ("box_mcp.py", "call", "tree_map"): _ENDED,
+    ("box_mcp.py", "call", "settle"): "test_a_box_ended_after_a_command_that_changed_links_is_settled_by_the_next_call_first",
     ("box_mcp.py", "bring_in", "tree_map"): _SWAPPED,
     ("box_mcp.py", "bring_in.failed", "tree_map"): "test_a_pull_that_fails_part_way_through_links_sets_the_record_to_what_the_workspace_holds",
     ("run.py", "workspace_from", "bring_in"): _REACH,
@@ -480,3 +481,252 @@ def test_every_place_the_tree_crosses_carries_a_symbolic_link_by_a_named_test():
     tests = {node.name for node in ast.parse(Path(__file__).with_name("test_box_links.py").read_text("utf-8")).body
              if isinstance(node, ast.FunctionDef)}
     assert set(LINKED.values()) <= tests, sorted(set(LINKED.values()) - tests)
+
+
+#: Each crossing above, with the test in ``test_box_modes.py`` that drives an executable file (git's mode 100755) through it and
+#: reads its mode on the other side (replay cohort, repair 1, review 1's finding 2): every place the tree crosses carries each
+#: entry's kind and mode, so a crossing that drops the mode fails that test, and a new crossing fails here until it is named.
+_M_REACH = "test_an_executable_reaches_the_workspace_as_git_holds_it_and_the_container_with_its_mode"
+_M_CHANGED = "test_a_mode_a_command_changes_comes_back_to_the_workspace_and_into_the_kept_patch"
+_M_ENDED = "test_a_box_ended_while_its_pull_brings_a_mode_back_keeps_it_in_the_kept_patch"
+_M_SET_BACK = "test_a_pull_refused_with_modes_in_the_tree_sets_the_container_back_with_its_modes"
+MODED = {
+    ("box_mcp.py", "mirror", "pack"): _M_REACH,
+    ("box_mcp.py", "call", "mirror"): _M_CHANGED,
+    ("box_mcp.py", "call", "run_command"): _M_CHANGED,
+    ("box_mcp.py", "call", "pull"): _M_CHANGED,
+    ("box_mcp.py", "call", "set_back"): _M_SET_BACK,
+    ("box_mcp.py", "call", "settle"): _M_ENDED,
+    ("box_mcp.py", "pull", "bring_in"): _M_CHANGED,
+    ("box_mcp.py", "set_back", "mirror"): _M_SET_BACK,
+    ("box_mcp.py", "settle", "pull"): _M_ENDED,
+    ("box_mcp.py", "bring_in", "tree_map"): _M_CHANGED,
+    ("box_mcp.py", "bring_in.failed", "tree_map"): "test_a_pull_that_fails_part_way_through_modes_sets_the_record_to_what_the_"
+                                                   "workspace_holds",
+    ("run.py", "workspace_from", "bring_in"): _M_REACH,
+    ("run.py", "_run_task", "workspace_from"): _M_REACH,
+    ("run.py", "_run_task.turn", "settle"): _M_ENDED,
+    ("run.py", "_run_task.turn", "mirror"): "test_the_write_tool_writing_an_executables_file_keeps_its_mode",
+    ("run.py", "_run_task", "mirror"): _M_REACH,
+    ("run.py", "_run_task.<lambda>", "pack"): "test_arm_ks_check_that_a_repair_changed_the_tree_sees_a_repair_that_changes_only_a_mode",
+}
+
+
+def test_every_place_the_tree_crosses_carries_each_entrys_mode_by_a_named_test():
+    assert set(MODED) == set(CROSSINGS), (sorted(set(CROSSINGS) - set(MODED)), sorted(set(MODED) - set(CROSSINGS)))
+    tests = {node.name for node in ast.parse(Path(__file__).with_name("test_box_modes.py").read_text("utf-8")).body
+             if isinstance(node, ast.FunctionDef)}
+    assert set(MODED.values()) <= tests, sorted(set(MODED.values()) - tests)
+    assert (box.FILE_MODE, box.EXEC_MODE, box.LINK_MODE) == ("100644", "100755", "120000")
+
+
+# --- one snapshot of a call, settled first (replay cohort, repair 1, review 1's findings 1 and 9) --------------------------------
+def test_finding_1_an_edit_made_after_the_mirrors_snapshot_survives_the_pull(tmp_path):
+    task = SimpleNamespace(name="toy", repo="/w/toy")
+    docker = BoxDocker(tmp_path, task)
+    ws = tmp_path / "ws"
+    helpers.write(ws, {"src/mod.py": "sent\n", "tests/test_mod.py": "pass\n"})
+    docker.commands["true"] = lambda repo: b""
+
+    def interleaving(*args, **kw):
+        done = docker(*args, **kw)
+        if box.MIRROR in args:
+            assert done.returncode == 0
+            (ws / "src/mod.py").write_bytes(b"concurrent workspace edit\n")      # the sent tar is in the container already
+        return done
+
+    for state in (None, tmp_path / "state.json"):
+        (ws / "src/mod.py").write_bytes(b"sent\n")
+        opts = SimpleNamespace(workspace=ws, container="ctr", repo=task.repo, user="tester", timeout=30, state=state)
+        reply = box.call(opts, {"name": "run", "arguments": {"command": "true"}}, interleaving)
+        assert reply["isError"] is False, reply
+        assert (ws / "src/mod.py").read_bytes() == b"concurrent workspace edit\n", state
+    sent = box.read_state(tmp_path / "state.json")["calls"][-1]
+    assert sent["phase"] == "settled"
+
+
+def test_finding_9_a_restarted_box_settles_the_previous_call_before_its_next_mirror(tmp_path):
+    task = SimpleNamespace(name="toy", repo="/w/toy")
+    docker = BoxDocker(tmp_path, task)
+    ws = tmp_path / "ws"
+    helpers.write(ws, {"src/mod.py": "sent\n", "tests/test_mod.py": "pass\n"})
+
+    def edit(repo):
+        (repo / "src/mod.py").write_bytes(b"command edit\n")
+        return b""
+
+    docker.commands.update({"edit": edit, "true": lambda repo: b""})
+    docker.pull_fails.append(Killed())
+    state = tmp_path / "state.json"
+    opts = SimpleNamespace(workspace=ws, container="ctr", repo=task.repo, user="tester", timeout=30, state=state)
+    with pytest.raises(Killed):
+        box.call(opts, {"name": "run", "arguments": {"command": "edit"}}, docker)
+    assert (docker.repo / "src/mod.py").read_bytes() == b"command edit\n"
+    reply = box.call(opts, {"name": "run", "arguments": {"command": "true"}}, docker)
+    assert reply["isError"] is False, reply
+    box.settle(ws, docker, state=state, container="ctr", repo=task.repo, user="tester", timeout=30)
+    assert (ws / "src/mod.py").read_bytes() == b"command edit\n"
+    assert "came back now, before this command" in reply["content"][0]["text"], reply      # and the agent is told
+    assert [c["phase"] for c in box.read_state(state)["calls"]] == ["settled", "settled"]
+
+
+#: The steps of one call, in order, and where the box is ended between two of them: the mirror, the call's state ("mirrored"),
+#: the command, the pull's export, its state ("pulling"), its writes, its state ("settled"); and, for a call that first settles
+#: the one before it, that settling's own last step.
+STOPS = ["after the mirror", "after the mirrored state", "after the command", "after the export", "after the pulling state",
+         "while the pull writes", "before the settled state", "while a previous call is settled"]
+
+
+@pytest.mark.parametrize("restart", ["the next call", "the runner"])
+@pytest.mark.parametrize("at", STOPS)
+def test_a_stop_and_a_restart_between_each_two_steps_of_a_call_loses_no_change(monkeypatch, tmp_path, at, restart):
+    task = SimpleNamespace(name="toy", repo="/w/toy")
+    docker = BoxDocker(tmp_path, task)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    box.bring_in(ws, helpers.export_of(docker.repo))                 # the workspace, as the run's export makes it
+    docker.commands.update({"edit": box_edits, "true": lambda repo: b""})
+    state = tmp_path / "state.json"
+    opts = SimpleNamespace(workspace=ws, container="ctr", repo=task.repo, user="tester", timeout=30, state=state)
+    killed = []
+    real_state, real_run, real_bring, real_write = box.write_state, box.run_command, box.bring_in, box._write_new
+
+    def once(name):
+        if killed:
+            return False
+        killed.append(name)
+        return True
+
+    def write_state(path, entry_):
+        phase = entry_.get("phase")
+        if ((at == "after the mirror" and phase == "mirrored") or (at == "after the export" and phase == "pulling")
+                or (at in ("before the settled state", "while a previous call is settled") and phase == "settled")) and once(at):
+            raise Killed
+        return real_state(path, entry_)
+
+    def run_command(*a, **kw):
+        if at == "after the mirrored state" and once(at):
+            raise Killed
+        return real_run(*a, **kw)
+
+    def bring_in(*a, **kw):
+        if at == "after the pulling state" and once(at):
+            raise Killed
+        return real_bring(*a, **kw)
+
+    def write_new(path, data, **kw):
+        real_write(path, data, **kw)
+        if at == "while the pull writes" and data in (BOX_EDIT, BOX_NEW) and once(at):
+            raise Killed
+
+    monkeypatch.setattr(box, "write_state", write_state)
+    monkeypatch.setattr(box, "run_command", run_command)
+    monkeypatch.setattr(box, "bring_in", bring_in)
+    monkeypatch.setattr(box, "_write_new", write_new)
+    if at in ("after the command", "while a previous call is settled"):
+        docker.pull_fails.append(Killed())
+    with pytest.raises(Killed):
+        box.call(opts, {"name": "run", "arguments": {"command": "edit"}}, docker)
+    if at == "while a previous call is settled":               # the next call settles the first, and is ended doing it
+        with pytest.raises(Killed):
+            box.call(opts, {"name": "run", "arguments": {"command": "true"}}, docker)
+    assert killed == ([] if at == "after the command" else [at]) and not docker.pull_fails
+    later = b"later = 'the Write tool, after the box ended'\n"
+    (ws / "src" / "later.py").write_bytes(later)                # the session goes on writing before the box starts again
+    where = {"container": "ctr", "repo": task.repo, "user": "tester", "timeout": 30.0}
+    if restart == "the next call":
+        reply = box.call(opts, {"name": "run", "arguments": {"command": "true"}}, docker)
+        assert reply["isError"] is False, reply
+    else:                                                       # as the runner's turn does after the session
+        box.settle(ws, docker, state=state, **where)
+        box.mirror(ws, docker, **where)
+    ran = at not in ("after the mirror", "after the mirrored state")
+    assert (ws / "src" / "mod.py").read_bytes() == (BOX_EDIT if ran else docker.base["src/mod.py"])
+    assert ((ws / "src" / "by_box.py").read_bytes() == BOX_NEW) if ran else not (ws / "src" / "by_box.py").exists()
+    assert (ws / "src" / "later.py").read_bytes() == later
+    assert snapshot(ws) == snapshot(docker.repo), "the call did not end with one tree in the workspace and the container"
+    calls = (box.read_state(state) or {"calls": []})["calls"]     # none when the box ended before it kept a call's state
+    assert [c["phase"] for c in calls][-1:] == ([] if not calls else ["settled"])
+    assert calls or (at == "after the mirror" and restart == "the runner")
+
+
+# --- every file is put in place whole (replay cohort, repair 1, review 1's finding 4) ---------------------------------------------
+class FullDisk:
+    """A file opened exclusively whose first write lands three bytes, then fails as a full disk does."""
+
+    def __init__(self, real, path):
+        self.file = real(path, "xb")
+
+    def __enter__(self):
+        return self
+
+    def write(self, data):
+        self.file.write(data[:3])
+        self.file.flush()
+        raise OSError(28, "No space left on device")
+
+    def __exit__(self, *args):
+        self.file.close()
+
+
+def _fill_once(monkeypatch):
+    import builtins
+    real, done = builtins.open, []
+
+    def open_file(path, mode="r", *args, **kw):
+        if mode == "xb" and not done:                # the pull's first file write, wherever it is made
+            done.append(Path(path))
+            return FullDisk(real, path)
+        return real(path, mode, *args, **kw)
+    monkeypatch.setattr(builtins, "open", open_file)
+    return done
+
+
+@pytest.mark.parametrize("existing", [False, True], ids=["a new file", "an existing file"])
+def test_finding_4_a_write_that_fails_part_way_never_puts_a_part_of_a_file_in_its_place(tmp_path, monkeypatch, existing):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    dest = ws / "new.txt"
+    if existing:
+        dest.write_bytes(b"old contents\n")
+    before = box.tree_map(ws)
+    tree = helpers.tar_of([("./", "dir", b""), ("./new.txt", "file", b"complete contents\n")])
+    opened = _fill_once(monkeypatch)
+    with pytest.raises(box.Refused):
+        box.bring_in(ws, tree, before=before)
+    assert opened, "no write was made"
+    assert (dest.read_bytes() == b"old contents\n") if existing else not dest.exists(), "a part of a file was put in its place"
+    assert list(ws.iterdir()) == ([dest] if existing else []) and not list(box.spare(ws).glob("*"))
+    monkeypatch.undo()
+    box.bring_in(ws, tree, before=box.tree_map(ws))           # the next pull puts it in place whole
+    assert dest.read_bytes() == b"complete contents\n"
+
+
+def test_a_box_ended_between_a_new_files_write_and_its_put_leaves_nothing_at_its_name_and_the_next_pull_puts_it(monkeypatch,
+                                                                                                                tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    tree = helpers.tar_of([("./", "dir", b""), ("./new.txt", "file", b"complete contents\n")])
+
+    def ended(temp, path):
+        raise Killed
+
+    monkeypatch.setattr(box, "_put_new", ended)
+    with pytest.raises(Killed):
+        box.bring_in(ws, tree, before={})
+    assert not (ws / "new.txt").exists()
+    monkeypatch.undo()
+    box.bring_in(ws, tree, before={})
+    assert (ws / "new.txt").read_bytes() == b"complete contents\n"
+
+
+def test_a_file_an_ended_pull_left_with_a_second_name_in_the_boxs_own_folder_is_removed_before_the_next_pull(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "a.txt").write_bytes(b"a\n")
+    box.spare(ws).mkdir()
+    os.link(ws / "a.txt", box.spare(ws) / "left.part")          # a box ended between a new file's two names, elsewhere than Windows
+    tree = helpers.tar_of([("./", "dir", b""), ("./a.txt", "file", b"a\n"), ("./b.txt", "file", b"b\n")])
+    box.bring_in(ws, tree, before={"a.txt": box._mark(b"a\n")})
+    assert (ws / "b.txt").read_bytes() == b"b\n" and os.lstat(ws / "a.txt").st_nlink == 1
+    assert not list(box.spare(ws).iterdir())

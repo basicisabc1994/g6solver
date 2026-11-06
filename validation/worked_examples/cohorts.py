@@ -12,7 +12,9 @@ digest, written before any slice run reads it.
 Each development and selection bug passes four controls before it enters a cohort's runs (``controls``): the maintainers' fix
 passes the maintainers' tests and the base commit fails them (``run.validate``), the fix given as a patch passes and an empty
 patch fails (``run.selfcheck``), and a known patch written through the host executor's runner comes back byte for byte in the
-kept patch (``round_trip``). A bug that fails a control is excluded and named, with its reason.
+kept patch (``round_trip``). A bug that fails a control is excluded and named, with its reason. A control holds only on what was
+observed (``box_mcp.tests_seen``; replay cohort, repair 1): a result not known excludes the bug. A manifest admits a bug by one
+rule (``admit``), recomputed from the recorded outcomes on the two image ids each control ran on, never from a ``failed`` flag.
 
 ``python cohorts.py sizes``; ``python cohorts.py controls --cohort development|selection [--only BUG]`` (containers);
 ``python cohorts.py manifest --cohort NAME`` (``docker image inspect`` only, and the saved control records).
@@ -36,6 +38,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[1] / "src"))
 
+import box_mcp  # noqa: E402
 import run as we  # noqa: E402
 import wecommon as c  # noqa: E402
 
@@ -158,13 +161,25 @@ class Floored(we.Docker):
 
 def image_ids(bug: str, docker: Callable[..., Any]) -> dict[str, str | None]:
     """The bug's task and oracle images as ``run.image_names`` names them for ``G6_COMMIT``, each with the id docker holds for it
-    (``docker image inspect``), or None when docker holds none. Nothing else of the image is read."""
+    (``docker image inspect``, read by the one reader, ``box_mcp.seen``: an id only from a call seen to pass), or None when docker
+    holds none or the answer is not known. Nothing else of the image is read."""
     task_image, oracle = we.image_names(type("Named", (), {"id": bug})(), G6_COMMIT, VARIANT)
     ids: dict[str, str | None] = {"task_image": task_image, "oracle_image": oracle}
+
+    def image_id(output: bytes) -> str | None:
+        said = box_mcp._text(output).strip()
+        return said if said.startswith("sha256:") else None
+
     for key, tag in (("task_image_id", task_image), ("oracle_image_id", oracle)):
-        got = docker("image", "inspect", tag, "--format", "{{.Id}}", timeout=120)
-        ids[key] = we.out(got) if got.returncode == 0 and we.out(got).startswith("sha256:") else None
+        got = box_mcp.seen(docker("image", "inspect", tag, "--format", "{{.Id}}", timeout=120), image_id)
+        ids[key] = got.answer if got.state == box_mcp.PASSED else None
     return ids
+
+
+def the_ids(images: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The two image ids of an ``image_ids`` reading (or of a manifest's entry): what a control ran on, and what a bug is admitted
+    on."""
+    return {key: images.get(key) if isinstance(images, Mapping) else None for key in ("task_image_id", "oracle_image_id")}
 
 
 # --- the controls -------------------------------------------------------------------------------------------------------------
@@ -192,16 +207,26 @@ def recorded_tree(study: c.Archive, bug: str) -> str:
     return found
 
 
-def known_patch(ctx: we.Context, task: we.Task, gold: Path, dest: Path) -> bytes:
+#: Git's own listing of the tree it tracks, each entry's mode first (read in the known patch's container, before the fix is
+#: applied): how many are executable (mode 100755), so whether a bug's round trip could depend on the executable bit is known
+#: (replay cohort, repair 1, item 4).
+EXECUTABLES = "git ls-files --stage"
+
+
+def known_patch(ctx: we.Context, task: we.Task, gold: Path, dest: Path, tree: dict[str, Any] | None = None) -> bytes:
     """The known patch: the maintainers' fix (``gold``, as ``selfcheck`` kept it) applied in a fresh container from the bug's task
     image, with no network, and kept by the one capture every run's patch is kept by (``run.diff_script``) against the parent,
-    so it is in the kept patch's own form. Its bytes, also written to ``dest``."""
+    so it is in the kept patch's own form. Its bytes, also written to ``dest``. ``tree``: given how many of the tree's files are
+    executable (``EXECUTABLES``). Every step is read by the one reader (``run.checked``, ``run.copy_out``)."""
     task_image, _ = we.image_names(task, str(ctx.g6["commit"]), ctx.variant)
     name = f"g6we-known-{uuid.uuid4().hex[:10]}"
     try:
         we.checked(ctx.docker("run", "-d", "--name", name, "--label", "g6we=1", "--network", "none", *we.LIMITS, *we.SECURITY,
                               "-u", we.USER, "-e", f"HOME={we.HOME}", "-w", task.repo, task_image, "tail", "-f", "/dev/null",
                               timeout=600), "the known patch's container")
+        if tree is not None:
+            said = we.checked(ctx.docker.sh(name, EXECUTABLES, workdir=task.repo, timeout=300), "the tree's listing")
+            tree["executables"] = sum(line.split(" ", 1)[0] == "100755" for line in said.splitlines())
         we.checked(ctx.docker("cp", str(gold), f"{name}:/tmp/we-gold.patch", timeout=300), "the fix's copy")
         we.checked(ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we-gold.patch", workdir=task.repo, timeout=300),
                    "the fix applied")
@@ -231,8 +256,12 @@ def round_trip(ctx: we.Context, task: we.Task, gold: Path, folder: c.RunFolder, 
     the kept patch. One run of round 3's arm A on the host executor (``run._run_task``), its session scripted with no model
     (``scripted_session``): the run's container, its tree checked against upstream's (``upstream_tree``), the workspace exported,
     the known patch written there and applied by a command inside the box, the runner's own mirrors, settle and capture. Holds
-    when the run finished and its ``final.patch`` is the known patch's bytes, and the known patch holds a change."""
-    known = known_patch(ctx, task, gold, folder.fresh_path("known.patch"))
+    when the run finished, its kept patch was read (``run.keep_final``: the capture and its copy seen to pass) and its
+    ``final.patch`` is the known patch's bytes, and the known patch holds a change: bytes it read, never a capture that failed.
+    It records too how many of the tree's files are executable and whether the known patch names an executable's mode, so a
+    round trip that could depend on the executable bit is known."""
+    tree: dict[str, Any] = {}
+    known = known_patch(ctx, task, gold, folder.fresh_path("known.patch"), tree)
     host = we.Context(archive=ctx.archive, docker=ctx.docker, key_reader=lambda: "",      # the host executor reads no key
                       issue_reader=lambda t: ("the replay cohort's round-trip control",
                                               "No issue is read: a scripted session applies a known patch."),
@@ -240,60 +269,176 @@ def round_trip(ctx: we.Context, task: we.Task, gold: Path, folder: c.RunFolder, 
                       executor="host", starter=scripted_starter(folder.path / "known.patch"))
     record = we._run_task(host, task, dry=False, cap=0.0, stop=0.0)
     kept = ctx.archive.root / str(record.get("run")) / "final.patch"
-    got = kept.read_bytes() if kept.is_file() else None
+    read = record.get("final_patch_read") is True and kept.is_file()
+    got = kept.read_bytes() if read else None
     same = got == known
-    return {"holds": bool(known) and record.get("status") == "finished" and same, "run": record.get("run"),
+    return {"holds": bool(known) and record.get("status") == "finished" and read and same, "run": record.get("run"),
             "status": record.get("status"), "error": record.get("error"), "known_bytes": len(known),
+            "tree_executables": tree.get("executables"), "known_names_an_executable": b" 100755" in known, "kept_read": read,
             "known_sha256": hashlib.sha256(known).hexdigest(), "kept_bytes": None if got is None else len(got),
             "kept_sha256": None if got is None else hashlib.sha256(got).hexdigest(), "same_bytes": same}
 
 
 def controls(ctx: we.Context, task: we.Task, study: c.Archive) -> dict[str, Any]:
-    """The four controls of one bug, in order, each from the step before it: ``run.validate`` (the base fails the maintainers'
-    tests: some fail on the parent's code and pass with the fix, the lists every check scores against), ``run.selfcheck`` (the
-    maintainers' fix, given as a patch, passes every test on those lists; an empty patch is seen failing), then ``round_trip``
-    on selfcheck's own copy of the fix. Returns each result, which control failed first ("" when none did) and why, with the
-    records' run names."""
+    """The four controls of one bug, in order, each from the step before it, each recorded with what it observed and the two image
+    ids docker held for the bug's images just before it ran (``image_ids``): ``run.validate`` (the base: the maintainers' tests
+    on the parent's code, and the lists every check scores against, the tests that fail on the parent's code and pass with the
+    fix and those that pass on both), ``run.selfcheck`` (the maintainers' fix given as a patch, and an empty patch), then
+    ``round_trip`` on selfcheck's own copy of the fix; then the ids are read once more (``images_after``). Each outcome is kept as
+    observed (``run.observed``; the round trip's digests and whether its kept patch was read), never as a verdict, and each
+    control is judged by the one rule a manifest admits a bug by (``control_why``), so the first that does not hold stops the
+    rest, named with why. Returns the record ``admit`` decides on."""
     out: dict[str, Any] = {"failed": "", "why": ""}
+
+    def stops(*names: str) -> bool:
+        for name in names:
+            why = control_why(out, name)
+            if why:
+                out.update(failed=name, why=why[:400])
+                return True
+        return False
+
     try:
+        ids = the_ids(image_ids(task.id, ctx.docker))
         we.validate(ctx, task)
         v = we.latest(ctx.archive, "validate", task.id) or {}
         rec = v.get("record") or {}
-        fixed = (rec.get("fixed") or {}).get("results") or {}
-        out["validate"] = {"run": v.get("run"), "ok": rec.get("ok"), "fail_to_pass": len(rec.get("fail_to_pass") or []),
-                           "pass_to_pass": len(rec.get("pass_to_pass") or []), "oracle_image_id": rec.get("oracle_image_id"),
-                           "base_fails": bool(rec.get("fail_to_pass")),
-                           "fixed_not_passed": sum(status != "passed" for status in fixed.values())}
-        if not out["validate"]["base_fails"]:
-            out.update(failed="validate", why=rec.get("why") or "no test fails on the parent's code and passes with the fix")
+        f2p, p2p = list(rec.get("fail_to_pass") or []), list(rec.get("pass_to_pass") or [])
+        out["validate"] = {"run": v.get("run"), "images": ids, "oracle_image_id": rec.get("oracle_image_id"), "fail_to_pass": f2p,
+                           "pass_to_pass": p2p, "base": we.observed(rec.get("base"), f2p),
+                           "fixed": we.observed(rec.get("fixed"), [*f2p, *p2p])}
+        if stops("base"):
             return out
+        ids = the_ids(image_ids(task.id, ctx.docker))
         we.selfcheck(ctx, task)
         s = we.latest(ctx.archive, "selfcheck", task.id) or {}
         srec = s.get("record") or {}
-        out["selfcheck"] = {"run": s.get("run"), "ok": srec.get("ok"), "gold": srec.get("gold"), "empty": srec.get("empty")}
-        if not (srec.get("gold") or {}).get("passes"):
-            out.update(failed="selfcheck", why="the maintainers' fix, given as a patch, does not pass the maintainers' tests")
-            return out
-        if (srec.get("empty") or {}).get("passes") is not False:
-            out.update(failed="selfcheck", why="an empty patch was not seen failing the maintainers' tests")
+        out["selfcheck"] = {"run": s.get("run"), "images": ids, "gold": (srec.get("gold") or {}).get("observed"),
+                            "empty": (srec.get("empty") or {}).get("observed")}
+        if stops("gold patch", "empty patch"):
             return out
         tree = recorded_tree(study, task.id)
         if not tree:
             out.update(failed="round trip", why="no earlier run recorded upstream's tree for the base commit")
             return out
+        ids = the_ids(image_ids(task.id, ctx.docker))
         folder = ctx.archive.start("roundtrip", task.id, g6_commit=ctx.g6.get("commit"))
         try:
-            out["round_trip"] = round_trip(ctx, task, ctx.archive.root / str(s["run"]) / "gold.patch", folder, tree)
+            got = round_trip(ctx, task, ctx.archive.root / str(s["run"]) / "gold.patch", folder, tree)
         except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
-            out["round_trip"] = {"holds": False, "status": None, "error": f"{type(exc).__name__}: {exc}"[:400]}
+            got = {"holds": False, "status": None, "error": f"{type(exc).__name__}: {exc}"[:400]}
+        out["round_trip"] = {**got, "images": ids}
         folder.finish(out["round_trip"], "finished")
-        got = out["round_trip"]
-        if not got["holds"]:
-            out.update(failed="round trip", why=("the kept patch is not the known patch, byte for byte" if got["status"] == "finished"
-                                                 else got.get("error") or f"the run ended {got['status']}")[:400])
+        if stops("round trip"):
+            return out
+        out["images_after"] = the_ids(image_ids(task.id, ctx.docker))
     except (RuntimeError, OSError, subprocess.SubprocessError, KeyError, SystemExit) as exc:
         out.update(failed=out["failed"] or "a control could not run", why=f"{type(exc).__name__}: {exc}"[:400])
     return out
+
+
+# --- the one rule a bug is admitted by --------------------------------------------------------------------------------------------
+#: The four controls, by the names a record and a manifest give them.
+CONTROLS = ("base", "gold patch", "empty patch", "round trip")
+
+
+def _part(record: Any, key: str) -> Mapping[str, Any]:
+    """A record's part by ``key``, or an empty one when the record or the part is not a mapping: read, never trusted."""
+    got = record.get(key) if isinstance(record, Mapping) else None
+    return got if isinstance(got, Mapping) else {}
+
+
+def control_why(record: Mapping[str, Any], control: str) -> str:
+    """Whether one control holds, recomputed from its record's observed outcomes alone (``box_mcp.tests_seen``): "" when it holds,
+    else why. Never from a ``failed`` flag or a verdict a record carries.
+
+    - base: the fix seen to pass every test on the fail-to-pass list, and the base seen to fail one of them;
+    - gold patch: the maintainers' fix, given as a patch, seen to pass every test on both lists;
+    - empty patch: an empty patch seen to fail one of them;
+    - round trip: the run finished, its kept patch was read, the known patch holds a change and the kept patch's SHA-256 is
+      the known patch's.
+
+    An outcome never recorded, and one not known, does not hold."""
+    v, s, rt = (_part(record, k) for k in ("validate", "selfcheck", "round_trip"))
+    f2p, p2p = v.get("fail_to_pass"), v.get("pass_to_pass")
+    if control != "round trip" and not (isinstance(f2p, list) and isinstance(p2p, list)):
+        return "the lists the maintainers' tests are scored by were never recorded"
+    observed = {"base": v.get("base"), "gold patch": s.get("gold"), "empty patch": s.get("empty")}
+    if control in observed:
+        if not isinstance(observed[control], Mapping) or (control == "base" and not isinstance(v.get("fixed"), Mapping)):
+            return f"the {control}'s outcome was never recorded"
+        if control == "base":
+            if not f2p:
+                return "no test fails on the parent's code and passes with the fix"
+            fixed = box_mcp.tests_seen(v["fixed"], f2p)
+            if fixed["state"] != box_mcp.PASSED:
+                return f"the fix was not seen to pass the tests the base is to fail: {fixed['state']}: {fixed['why']}"
+        tests, want = (f2p, box_mcp.FAILED) if control == "base" else ([*f2p, *p2p], box_mcp.FAILED if control == "empty patch"
+                                                                        else box_mcp.PASSED)
+        got = box_mcp.tests_seen(observed[control], tests)
+        if got["state"] != want:
+            return f"not seen to {'fail' if want == box_mcp.FAILED else 'pass'} the maintainers' tests: {got['state']}: {got['why']}"
+        return ""
+    if control != "round trip":
+        raise ValueError(f"no control {control!r}: {', '.join(CONTROLS)}")
+    if not rt:
+        return "the round trip's outcome was never recorded"
+    if rt.get("status") != "finished":
+        return str(rt.get("error") or f"the run ended {rt.get('status')}")
+    if "kept_read" not in rt:
+        return "whether the kept patch was read was never recorded"
+    if rt["kept_read"] is not True:
+        return "the kept patch was not read: its capture or its copy was not seen to pass"
+    if not rt.get("known_bytes"):
+        return "the known patch holds no change"
+    if not (isinstance(rt.get("known_sha256"), str) and rt.get("kept_sha256") == rt["known_sha256"]):
+        return "the kept patch is not the known patch, byte for byte"
+    return ""
+
+
+def admit(record: Mapping[str, Any] | None, images: Mapping[str, Any]) -> str:
+    """The one rule a bug is admitted by: "" when it is, else why. Each of the four controls recomputed from its recorded outcomes
+    (``control_why``), never from the record's ``failed``; then each control must have run on both of ``images``' ids (a
+    manifest's entry, or ``image_ids`` now), as its record carries them, and the ids read after the controls must be those too.
+    A change to either id is a bug not admitted, so its controls run again (``main``)."""
+    if not record or not isinstance(record, Mapping):
+        return "no control result"
+    for control in CONTROLS:
+        why = control_why(record, control)
+        if why:
+            return f"{control}: {why}"
+    want = the_ids(images)
+    if not all(want.values()):
+        return "docker holds no task or oracle image for it"
+    for step, where in (("the base", "validate"), ("the gold and empty patches", "selfcheck"), ("the round trip", "round_trip")):
+        ran = _part(record, where).get("images")
+        if not isinstance(ran, Mapping) or not all(the_ids(ran).values()):
+            return f"the image ids {step} ran on were never recorded"
+        if the_ids(ran) != want:
+            return f"{step} ran on other images than these: {the_ids(ran)}"
+    after = record.get("images_after")
+    if not isinstance(after, Mapping) or the_ids(after) != want:
+        return f"the images changed while the controls ran, or were not read after them: {the_ids(_part(record, 'images_after'))}"
+    return ""
+
+
+def summary(record: Mapping[str, Any]) -> dict[str, Any]:
+    """What a manifest keeps of a bug's control record: each control's reading by the one reader (``box_mcp.tests_seen``), with
+    how many tests were seen to pass, seen to fail and not seen; the round trip's digests; the ids each control ran on; the
+    record's first failure as the controls named it; and the record itself by run and SHA-256 (``latest_controls``), so the
+    outcomes the manifest decided on are pinned."""
+    v, s, rt = (_part(record, k) for k in ("validate", "selfcheck", "round_trip"))
+    f2p, p2p = list(v.get("fail_to_pass") or []), list(v.get("pass_to_pass") or [])
+    return {"failed": record.get("failed", ""), "why": record.get("why", ""), "record": record.get("record"),
+            "validate": {"run": v.get("run"), "images": v.get("images"), "fail_to_pass": len(f2p), "pass_to_pass": len(p2p),
+                         "base": box_mcp.tests_seen(v.get("base"), f2p), "fixed": box_mcp.tests_seen(v.get("fixed"), f2p)},
+            "selfcheck": {"run": s.get("run"), "images": s.get("images"),
+                          "gold": box_mcp.tests_seen(s.get("gold"), [*f2p, *p2p]),
+                          "empty": box_mcp.tests_seen(s.get("empty"), [*f2p, *p2p])},
+            "round_trip": {k: rt.get(k) for k in ("run", "status", "error", "holds", "kept_read", "known_bytes", "known_sha256",
+                                                  "kept_bytes", "kept_sha256", "same_bytes", "tree_executables",
+                                                  "known_names_an_executable", "images")} if rt else None,
+            "images_after": record.get("images_after")}
 
 
 # --- the manifest ---------------------------------------------------------------------------------------------------------------
@@ -310,11 +455,13 @@ def holds(manifest: Mapping[str, Any]) -> bool:
 
 def manifest(name: str, images: Mapping[str, Mapping[str, Any]], results: Mapping[str, Mapping[str, Any]] | None = None) -> dict[str, Any]:
     """A cohort's manifest: every bug its source names, each with its image names and ids, and, for a controlled cohort, its
-    control results; the bugs left out before the controls, and the bugs a control excluded, each with why; the usable bugs;
-    the sources; and its digest (``digest``). A controlled cohort's bug with no control result, or no image, is excluded and
-    says so. A final-cohort bug is listed with its images only: none is usable until its controls have run, which they do only
-    before the registered final measurement, so each is pending, with whether docker holds its images; one a builder has seen
-    any part of (``FINAL_SEEN``) is excluded instead (``SEEN_WHY``), never pending."""
+    control results (``summary``); the bugs left out before the controls, and the bugs a control excluded, each with why; the
+    usable bugs; the sources; and its digest (``digest``). A controlled cohort's bug is usable only by the one rule (``admit``),
+    recomputed from its recorded outcomes on the two image ids this manifest holds for it, never from a caller's ``failed``; one
+    with no control result, or no image, is excluded and says so. A final-cohort bug is listed with its images only: none is
+    usable until its controls have run, which they do only before the registered final measurement, so each is pending, with
+    whether docker holds its images; one a builder has seen any part of (``FINAL_SEEN``) is excluded instead (``SEEN_WHY``),
+    never pending."""
     names = cohort(name)
     controlled = name in CONTROLLED
     bugs, excluded, pending = [], [], []
@@ -334,13 +481,8 @@ def manifest(name: str, images: Mapping[str, Mapping[str, Any]], results: Mappin
                 pending.append({"id": bug, "why": why or "its images are present; its controls have not run"})
             continue
         got = (results or {}).get(bug)
-        entry["controls"] = dict(got) if got else None
-        if not why and not got:
-            why = "no control result"
-        elif not why and got.get("failed"):
-            why = f"{got['failed']}: {got.get('why') or ''}".strip()
-        elif not why and (got.get("validate") or {}).get("oracle_image_id") != entry.get("oracle_image_id"):
-            why = "the controls ran on another oracle image than docker holds now"
+        entry["controls"] = summary(got) if got and isinstance(got, Mapping) else None
+        why = why or admit(got, entry)
         entry["usable"] = not why
         bugs.append(entry)
         if why:
@@ -349,9 +491,11 @@ def manifest(name: str, images: Mapping[str, Mapping[str, Any]], results: Mappin
             "design": "docs/superpowers/specs/2026-11-06-explicit-models-one-question-design.md, sections 3.6 and 7.1",
             "g6_commit": G6_COMMIT, "variant": VARIANT, "sources": SOURCES[name],
             "left_out": [{"id": bug, "why": why} for bug, why in LEFT_OUT.get(name, {}).items()],
-            "controls": (["the base fails the maintainers' tests (validate)", "the maintainers' fix passes them (selfcheck, as a "
-                          "patch)", "an empty patch fails them (selfcheck)", "a known patch written through the host executor's "
-                          "runner comes back byte for byte in the kept patch (round trip)"] if controlled else
+            "controls": (["the base is seen to fail the maintainers' tests (validate)", "the maintainers' fix, as a patch, is "
+                          "seen to pass them (selfcheck)", "an empty patch is seen to fail them (selfcheck)", "a known patch written "
+                          "through the host executor's runner is read back byte for byte in the kept patch (round trip)",
+                          "each ran on both of the bug's image ids here, read again after them; a result not known is no pass "
+                          "and no failure, and excludes the bug"] if controlled else
                          "none here: the final cohort's issues, tests and fixes stay unread"),
             "bugs": bugs, "excluded": excluded, **({} if controlled else {"pending": pending}),
             "usable": [b["id"] for b in bugs if b["usable"]]}
@@ -359,12 +503,14 @@ def manifest(name: str, images: Mapping[str, Mapping[str, Any]], results: Mappin
 
 
 def latest_controls(archive: c.Archive) -> dict[str, dict[str, Any]]:
-    """Each bug's newest finished control record in the cohort archive (``control`` runs), by bug."""
+    """Each bug's newest finished control record in the cohort archive (``control`` runs), by bug, with the record itself named
+    by its run and the SHA-256 of its file (``record``), which a manifest keeps."""
     found: dict[str, dict[str, Any]] = {}
     for row in archive.rows():
         if row.get("event") == "ended" and str(row.get("run", "")).startswith("control/") and row.get("status") == "finished":
             bug = str(row["run"]).split("/")[1]
-            found[bug] = json.loads((archive.root / row["run"] / "run.json").read_text("utf-8"))
+            raw = (archive.root / row["run"] / "run.json").read_bytes()
+            found[bug] = {**json.loads(raw.decode("utf-8")), "record": {"run": row["run"], "sha256": hashlib.sha256(raw).hexdigest()}}
     return {bug: {k: v for k, v in rec.items() if k not in ("status", "ended_at")} for bug, rec in found.items()}
 
 
@@ -401,9 +547,8 @@ def main(argv: list[str] | None = None) -> int:
         done = latest_controls(archive)
         for bug in [b for b in cohort(args.cohort) if not args.only or b in args.only.split(",")]:
             ids = image_ids(bug, docker)
-            if (bug in done and not done[bug].get("failed")
-                    and (done[bug].get("validate") or {}).get("oracle_image_id") == ids["oracle_image_id"]):
-                print(json.dumps({"bug": bug, "kept": "a finished control record on this oracle image"}), flush=True)
+            if bug in done and not admit(done[bug], ids):     # the one rule, on both ids now: a change to either runs them again
+                print(json.dumps({"bug": bug, "kept": "a control record admitted on both of these image ids"}), flush=True)
                 continue
             folder = archive.start("control", bug, cohort=args.cohort, g6_commit=G6_COMMIT)
             got = controls(ctx, we.task_by_id(bug), study) if ids["task_image_id"] and ids["oracle_image_id"] else {

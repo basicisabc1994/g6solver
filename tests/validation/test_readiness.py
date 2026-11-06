@@ -42,10 +42,23 @@ def _held(bugs):
     return {tag for bug in bugs for tag in cohorts.we.image_names(SimpleNamespace(id=bug), cohorts.G6_COMMIT, cohorts.VARIANT)}
 
 
+def _observed(ids):
+    """A control record whose four controls were observed to hold on ``ids`` (``cohorts.controls``' form): a manifest admits a
+    bug by these outcomes, never by a ``failed`` flag (replay cohort, repair 1)."""
+    def seen(results, exit="1"):
+        return {"call": "passed", "pytest_exit": exit, "report": True, "results": results}
+    return {"failed": "", "why": "",
+            "validate": {"images": ids, "fail_to_pass": ["t"], "pass_to_pass": [], "base": seen({"t": "failed"}),
+                         "fixed": seen({"t": "passed"}, "0")},
+            "selfcheck": {"images": ids, "gold": seen({"t": "passed"}, "0"), "empty": seen({"t": "failed"})},
+            "round_trip": {"status": "finished", "kept_read": True, "known_bytes": 1, "known_sha256": "k" * 64,
+                           "kept_sha256": "k" * 64, "images": ids}, "images_after": ids}
+
+
 def test_the_report_reads_python_docker_memory_images_the_sign_ins_existence_and_the_usable_cases(tmp_path):
     root = tmp_path / "cohorts"
-    body = cohorts.manifest("selection", {b: {"task_image_id": "sha256:t", "oracle_image_id": "sha256:o"} for b in cohorts.SELECTION},
-                            {b: {"failed": "", "validate": {"oracle_image_id": "sha256:o"}} for b in cohorts.SELECTION})
+    ids = {"task_image_id": "sha256:t", "oracle_image_id": "sha256:o"}
+    body = cohorts.manifest("selection", {b: dict(ids) for b in cohorts.SELECTION}, {b: _observed(ids) for b in cohorts.SELECTION})
     cohorts.write_manifest(root, body)
     machine = Machine(held=_held([*cohorts.DEVELOPMENT, *cohorts.SELECTION, *cohorts.FINAL[:6]]))
     seen = []

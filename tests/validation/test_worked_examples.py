@@ -527,15 +527,23 @@ def test_selfcheck_needs_the_fix_to_pass_and_nothing_to_fail(tmp_path, monkeypat
     ctx = _ctx(tmp_path, FakeDocker())
     seen = []
 
+    observed = {"call": "passed", "report": True}           # each run seen to end with its report (replay cohort, repair 1)
+
     def oracle_run(ctx_, task, *, patch=None, folder=None, label="", **_):
         seen.append(label)
         ok = {"t::a": "passed", "t::b": "passed"}
-        return {"results": ok if label == "gold" else {"t::a": "failed", "t::b": "passed"}}
+        return {**observed, "pytest_exit": "0" if label == "gold" else "1",
+                "results": ok if label == "gold" else {"t::a": "failed", "t::b": "passed"}}
 
     monkeypatch.setattr(we, "_oracle_run", oracle_run)
     assert we.selfcheck(ctx, TASK)["ok"] and seen == ["gold", "empty"]
-    monkeypatch.setattr(we, "_oracle_run", lambda *a, **k: {"results": {"t::a": "passed", "t::b": "passed"}})
+    monkeypatch.setattr(we, "_oracle_run", lambda *a, **k: {**observed, "pytest_exit": "0",
+                                                            "results": {"t::a": "passed", "t::b": "passed"}})
     assert not we.selfcheck(ctx, TASK)["ok"]          # a check an empty patch passes shows nothing
+    monkeypatch.setattr(we, "_oracle_run", lambda *a, **k: {"results": {"t::a": "failed", "t::b": "failed"}} if
+                        k.get("label") == "empty" else {**observed, "pytest_exit": "0", "results": {"t::a": "passed",
+                                                                                                    "t::b": "passed"}})
+    assert not we.selfcheck(ctx, TASK)["ok"]          # nor one whose empty patch's run was never seen to end
 
 
 def _amendment(tmp_path, monkeypatch):

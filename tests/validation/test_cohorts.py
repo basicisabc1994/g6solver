@@ -69,9 +69,24 @@ def _images(bugs, *, missing=()):
                   "oracle_image_id": None if bug in missing else "sha256:" + "b" * 64} for bug in bugs}
 
 
-def _passed():
-    return {"failed": "", "why": "", "validate": {"oracle_image_id": "sha256:" + "b" * 64, "base_fails": True},
-            "selfcheck": {"gold": {"passes": True}, "empty": {"passes": False}}, "round_trip": {"holds": True}}
+IDS = {"task_image_id": "sha256:" + "a" * 64, "oracle_image_id": "sha256:" + "b" * 64}
+
+
+def _seen(results, exit="1"):
+    return {"call": "passed", "pytest_exit": exit, "report": True, "results": results}
+
+
+def _passed(ids=IDS):
+    """A control record as ``cohorts.controls`` keeps it: each control's observed outcome and the two ids it ran on."""
+    return {"failed": "", "why": "",
+            "validate": {"run": "validate/x/1", "images": dict(ids), "fail_to_pass": ["t::bug"], "pass_to_pass": ["t::ok"],
+                         "base": _seen({"t::bug": "failed"}), "fixed": _seen({"t::bug": "passed", "t::ok": "passed"}, "0")},
+            "selfcheck": {"run": "selfcheck/x/1", "images": dict(ids), "gold": _seen({"t::bug": "passed", "t::ok": "passed"}, "0"),
+                          "empty": _seen({"t::bug": "failed", "t::ok": "passed"})},
+            "round_trip": {"holds": True, "status": "finished", "error": None, "kept_read": True, "known_bytes": 3,
+                           "known_sha256": "c" * 64, "kept_bytes": 3, "kept_sha256": "c" * 64, "same_bytes": True,
+                           "images": dict(ids)},
+            "images_after": dict(ids)}
 
 
 def test_a_manifest_holds_its_own_digest_and_any_change_to_it_changes_the_digest():
@@ -96,13 +111,16 @@ def test_a_manifest_holds_its_own_digest_and_any_change_to_it_changes_the_digest
 def test_a_bug_with_no_image_no_control_or_a_failed_control_is_excluded_and_named_with_why():
     bugs = cohorts.SELECTION
     results = {bug: _passed() for bug in bugs[2:]}
-    results[bugs[2]] = {**_passed(), "failed": "round trip", "why": "the kept patch is not the known patch, byte for byte"}
-    results[bugs[3]] = {**_passed(), "validate": {"oracle_image_id": "sha256:" + "d" * 64}}
+    results[bugs[2]] = _passed()
+    results[bugs[2]]["round_trip"].update(kept_sha256="d" * 64, same_bytes=False)
+    results[bugs[3]] = _passed()
+    results[bugs[3]]["validate"]["images"]["oracle_image_id"] = "sha256:" + "d" * 64
     body = cohorts.manifest("selection", _images(bugs, missing=(bugs[0],)), results)
     why = {e["id"]: e["why"] for e in body["excluded"]}
     assert why == {bugs[0]: "docker holds no task or oracle image for it", bugs[1]: "no control result",
                    bugs[2]: "round trip: the kept patch is not the known patch, byte for byte",
-                   bugs[3]: "the controls ran on another oracle image than docker holds now"}
+                   bugs[3]: "the base ran on other images than these: {'task_image_id': 'sha256:" + "a" * 64
+                            + "', 'oracle_image_id': 'sha256:" + "d" * 64 + "'}"}
     assert body["usable"] == list(bugs[4:]) and body["left_out"] == [{"id": "pydantic-settings-1089",
                                                                       "why": cohorts.LEFT_OUT["selection"]["pydantic-settings-1089"]}]
 
@@ -145,46 +163,63 @@ def test_the_committed_manifests_hold_their_digests_and_every_usable_bug_passed_
         assert set(body["usable"]) | {e["id"] for e in body["excluded"]} | {p["id"] for p in body.get("pending", [])} == \
             set(cohorts.cohort(name))
         for bug in body["bugs"]:
-            if bug["usable"]:
-                got = bug["controls"]
-                assert got["failed"] == "" and got["validate"]["base_fails"] and got["selfcheck"]["gold"]["passes"]
-                assert got["selfcheck"]["empty"]["passes"] is False and got["round_trip"]["same_bytes"] is True
-                assert got["validate"]["oracle_image_id"] == bug["oracle_image_id"]
+            if bug["usable"]:      # each control seen to hold, on both of the bug's ids (repair 1: observed, never inferred)
+                got, ids = bug["controls"], cohorts.the_ids(bug)
+                assert got["failed"] == "" and got["validate"]["base"]["state"] == "failed"
+                assert got["validate"]["fixed"]["state"] == "passed" and got["selfcheck"]["gold"]["state"] == "passed"
+                assert got["selfcheck"]["empty"]["state"] == "failed" and got["round_trip"]["kept_read"] is True
+                assert got["round_trip"]["kept_sha256"] == got["round_trip"]["known_sha256"] and got["round_trip"]["known_bytes"]
+                assert all(cohorts.the_ids(x) == ids for x in (got["validate"]["images"], got["selfcheck"]["images"],
+                                                              got["round_trip"]["images"], got["images_after"]))
+                assert all(ids.values()) and len(got["record"]["sha256"]) == 64
     assert found["final"][1]["usable"] == [] and all("controls" not in b for b in found["final"][1]["bugs"])
     assert found["final"][1]["excluded"] == [{"id": bug, "why": cohorts.SEEN_WHY} for bug in cohorts.FINAL_SEEN]
 
 
 # --- the controls -----------------------------------------------------------------------------------------------------------
-def _controls(monkeypatch, tmp_path, *, f2p=("t",), gold=True, empty=False, tree="tree", trip=None):
+TRIP = {"holds": True, "status": "finished", "error": None, "kept_read": True, "known_bytes": 4, "known_sha256": "e" * 64,
+        "kept_bytes": 4, "kept_sha256": "e" * 64, "same_bytes": True}
+
+
+def _controls(monkeypatch, tmp_path, *, f2p=("t",), gold=True, empty=False, tree="tree", trip=None, ids=None):
     archive = we.c.Archive(tmp_path / "controls")
-    ctx = SimpleNamespace(archive=archive, g6=cohorts.g6_for(), variant=we.ROUND3, docker=None)
+    readings, asked = list(ids or [IDS] * 4), []
+
+    def docker(*args, **kw):          # each reading of the two ids (``image_ids``) answers from the next of ``readings``
+        asked.append(args)
+        now = readings[(len(asked) - 1) // 2]
+        return SimpleNamespace(returncode=0, stdout=now["task_image_id" if "task" in args[2] else "oracle_image_id"].encode(),
+                               stderr=b"")
+    ctx = SimpleNamespace(archive=archive, g6=cohorts.g6_for(), variant=we.ROUND3, docker=docker)
     task = SimpleNamespace(id="bug-1")
+    lists = {"fail_to_pass": list(f2p), "pass_to_pass": []}
 
     def validate(ctx_, task_):
         run = archive.start("validate", task_.id)
-        run.finish({"ok": bool(f2p), "fail_to_pass": list(f2p), "pass_to_pass": [], "oracle_image_id": "sha256:o",
-                    "fixed": {"results": {"t": "passed"}}, "why": "" if f2p else "nothing"}, "finished")
+        run.finish({"ok": bool(f2p), **lists, "oracle_image_id": "sha256:o", "base": _seen({"t": "failed"}),
+                    "fixed": _seen({"t": "passed"}, "0"), "why": "" if f2p else "nothing"}, "finished")
 
     def selfcheck(ctx_, task_):
         run = archive.start("selfcheck", task_.id)
         run.write("gold.patch", b"gold")
-        run.finish({"ok": gold and not empty, "gold": {"passes": gold}, "empty": {"passes": empty}}, "finished")
+        run.finish({"ok": gold and not empty, "gold": {"observed": _seen({"t": "passed" if gold else "failed"})},
+                    "empty": {"observed": _seen({"t": "passed" if empty else "failed"})}}, "finished")
 
     trips = []
     monkeypatch.setattr(we, "validate", validate)
     monkeypatch.setattr(we, "selfcheck", selfcheck)
     monkeypatch.setattr(cohorts, "recorded_tree", lambda study, bug: tree)
-    monkeypatch.setattr(cohorts, "round_trip", lambda ctx_, task_, g, folder, t: (trips.append((g.read_bytes(), t)), trip or {
-        "holds": True, "status": "finished", "error": None})[1])
+    monkeypatch.setattr(cohorts, "round_trip", lambda ctx_, task_, g, folder, t: (trips.append((g.read_bytes(), t)), trip or TRIP)[1])
     return cohorts.controls(ctx, task, None), trips
 
 
 @pytest.mark.parametrize(("kw", "failed", "why"), [
-    ({"f2p": ()}, "validate", "nothing"),
-    ({"gold": False}, "selfcheck", "the maintainers' fix, given as a patch, does not pass the maintainers' tests"),
-    ({"empty": True}, "selfcheck", "an empty patch was not seen failing the maintainers' tests"),
+    ({"f2p": ()}, "base", "no test fails on the parent's code and passes with the fix"),
+    ({"gold": False}, "gold patch", "not seen to pass the maintainers' tests: failed: 1 of 1 seen to fail"),
+    ({"empty": True}, "empty patch", "not seen to fail the maintainers' tests: passed: "),
     ({"tree": ""}, "round trip", "no earlier run recorded upstream's tree for the base commit"),
-    ({"trip": {"holds": False, "status": "finished"}}, "round trip", "the kept patch is not the known patch, byte for byte"),
+    ({"trip": {**TRIP, "kept_sha256": "f" * 64, "same_bytes": False}}, "round trip",
+     "the kept patch is not the known patch, byte for byte"),
     ({"trip": {"holds": False, "status": "error", "error": "RuntimeError: boom"}}, "round trip", "RuntimeError: boom"),
 ])
 def test_a_bug_that_fails_a_control_is_named_with_the_control_and_why_and_no_later_control_runs(monkeypatch, tmp_path, kw, failed,
@@ -197,8 +232,94 @@ def test_a_bug_that_fails_a_control_is_named_with_the_control_and_why_and_no_lat
 def test_a_bug_that_passes_every_control_has_each_result_and_the_round_trip_reads_selfchecks_own_copy_of_the_fix(monkeypatch,
                                                                                                                   tmp_path):
     got, trips = _controls(monkeypatch, tmp_path)
-    assert got["failed"] == "" and got["validate"]["base_fails"] and got["selfcheck"]["gold"]["passes"]
-    assert got["selfcheck"]["empty"]["passes"] is False and got["round_trip"]["holds"] and trips == [(b"gold", "tree")]
+    assert got["failed"] == "" and cohorts.admit(got, IDS) == "" and trips == [(b"gold", "tree")]
+    assert [cohorts.control_why(got, c) for c in cohorts.CONTROLS] == ["", "", "", ""]
+    assert got["validate"]["base"] == {"call": "passed", "pytest_exit": "1", "report": True, "results": {"t": "failed"}}
+
+
+# --- findings 7 and 11: admission decided from the recorded outcomes, by one rule, on both image ids ------------------------------
+def test_finding_7_a_round_trip_on_an_old_task_image_does_not_admit_its_replacement():
+    bug = cohorts.SELECTION[0]
+    images = {bug: {"task_image_id": "sha256:new-task", "oracle_image_id": "sha256:oracle"}}
+    controls = {bug: {
+        "failed": "", "why": "", "images": {"task_image_id": "sha256:old-task", "oracle_image_id": "sha256:oracle"},
+        "validate": {"base_fails": True, "oracle_image_id": "sha256:oracle"},
+        "selfcheck": {"gold": {"passes": True}, "empty": {"passes": False}},
+        "round_trip": {"holds": True, "same_bytes": True, "status": "finished"},
+    }}
+    manifest = cohorts.manifest("selection", images, controls)
+    assert bug not in manifest["usable"]
+    old = {**IDS, "task_image_id": "sha256:" + "9" * 64}         # every control observed to hold, all on the old task image
+    why = {e["id"]: e["why"] for e in cohorts.manifest("selection", _images([bug]), {bug: _passed(old)})["excluded"]}
+    assert why[bug].startswith("the base ran on other images than these") and "9" * 64 in why[bug]
+    for step in ("validate", "selfcheck", "round_trip"):          # one control on the old task image is enough to exclude
+        record = _passed()
+        record[step]["images"] = dict(old)
+        assert cohorts.admit(record, IDS).endswith(f"ran on other images than these: {old}"), step
+    record = _passed()
+    record["images_after"] = dict(old)                             # the image changed while the controls ran
+    assert cohorts.admit(record, IDS).startswith("the images changed while the controls ran")
+    record = _passed()
+    del record["selfcheck"]["images"]
+    assert cohorts.admit(record, IDS) == "the image ids the gold and empty patches ran on were never recorded"
+
+
+def test_finding_7_a_change_to_either_image_id_runs_the_controls_again_and_only_an_admitted_record_is_kept(monkeypatch, tmp_path):
+    bug = cohorts.SELECTION[0]
+    now = {"task_image": "t", "oracle_image": "o", **IDS}
+    ran = []
+    monkeypatch.setattr(cohorts, "Floored", lambda: SimpleNamespace(waited=0.0))
+    monkeypatch.setattr(cohorts, "image_ids", lambda b, docker: dict(now))
+    monkeypatch.setattr(we, "task_by_id", lambda b: SimpleNamespace(id=b))
+    monkeypatch.setattr(cohorts, "controls", lambda ctx, task, study: (ran.append(task.id), {"failed": "x", "why": "y"})[1])
+    for record, again in ((_passed(), False), (_passed({**IDS, "task_image_id": "sha256:" + "9" * 64}), True),
+                          (_passed({**IDS, "oracle_image_id": "sha256:" + "9" * 64}), True), ({**_passed(), "round_trip": {}}, True)):
+        monkeypatch.setattr(cohorts, "latest_controls", lambda archive, record=record: {bug: record})
+        ran.clear()
+        assert cohorts.main(["controls", "--cohort", "selection", "--only", bug, "--archive", str(tmp_path)]) == 0
+        assert ran == ([bug] if again else []), record
+
+
+def test_finding_11_a_manifest_admits_by_the_recorded_outcomes_and_never_by_a_callers_failed_flag():
+    bug = cohorts.SELECTION[0]
+    images = {bug: {"task_image_id": "sha256:task", "oracle_image_id": "sha256:oracle"}}
+    results = {bug: {"failed": "", "validate": {"oracle_image_id": "sha256:oracle", "base_fails": False},
+                     "selfcheck": {"gold": {"passes": False}, "empty": {"passes": True}},
+                     "round_trip": {"holds": False, "same_bytes": False, "status": "error"}}}
+    assert bug not in cohorts.manifest("selection", images, results)["usable"]
+    contrary = _passed()             # the flag says nothing failed; each outcome as observed says the opposite of what it must
+    contrary["validate"]["base"] = _seen({"t::bug": "passed"}, "0")
+    contrary["selfcheck"]["gold"] = _seen({"t::bug": "failed", "t::ok": "passed"})
+    contrary["selfcheck"]["empty"] = _seen({"t::bug": "passed", "t::ok": "passed"}, "0")
+    contrary["round_trip"].update(kept_read=False, kept_sha256=None)
+    body = cohorts.manifest("selection", _images([bug]), {bug: contrary})
+    assert body["usable"] == [] and body["excluded"][0]["why"].startswith("base: not seen to fail")
+    for control, change in (("gold patch", ("selfcheck", "gold")), ("empty patch", ("selfcheck", "empty"))):
+        record = _passed()
+        record[change[0]][change[1]] = contrary[change[0]][change[1]]
+        assert cohorts.admit(record, IDS).startswith(control + ": not seen to"), control
+    record = _passed()
+    record["round_trip"].update(kept_read=False)
+    assert cohorts.admit(record, IDS) == "round trip: the kept patch was not read: its capture or its copy was not seen to pass"
+    flagged = {**_passed(), "failed": "base", "why": "a caller's word"}     # the flag carries no authority either way
+    assert cohorts.admit(flagged, IDS) == ""
+
+
+@pytest.mark.parametrize("record", [None, {}, {"validate": []}, {"validate": {"fail_to_pass": "t", "pass_to_pass": []}},
+                                    {"validate": {"fail_to_pass": ["t"], "pass_to_pass": [], "base": "failed"}},
+                                    {**_passed(), "round_trip": {"status": "finished", "known_bytes": 3}},
+                                    {**_passed(), "images_after": None}])
+def test_a_record_that_cannot_be_read_as_the_controls_write_it_is_never_admitted(record):
+    assert cohorts.admit(record, IDS) != ""
+
+
+def test_each_control_record_carries_both_ids_it_ran_on_read_before_it_and_again_after_the_last(monkeypatch, tmp_path):
+    moved = {**IDS, "task_image_id": "sha256:" + "9" * 64}
+    got, _ = _controls(monkeypatch, tmp_path, ids=[IDS, IDS, IDS, moved])
+    assert [cohorts.the_ids(got[k]["images"]) for k in ("validate", "selfcheck", "round_trip")] == [IDS, IDS, IDS]
+    assert got["images_after"] == moved and cohorts.admit(got, IDS).startswith("the images changed while the controls ran")
+    got, _ = _controls(monkeypatch, tmp_path / "2", ids=[IDS, moved, moved, moved])
+    assert cohorts.admit(got, IDS) == f"the gold and empty patches ran on other images than these: {moved}"
 
 
 def test_each_container_step_waits_while_memory_is_under_the_floor():

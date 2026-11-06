@@ -814,9 +814,12 @@ def err(cp: Any) -> str:
 
 
 def checked(cp: Any, what: str) -> str:
-    if cp.returncode != 0:
-        raise RuntimeError(f"{what} failed ({cp.returncode}): {(out(cp) + ' ' + err(cp))[-600:]}")
-    return out(cp)
+    """A container step's output, when the one reader (``box_mcp.seen``) saw it pass; else ``RuntimeError``: a step whose result
+    is not known never goes on as if it had passed."""
+    got = box_mcp.seen(cp)
+    if got.state != box_mcp.PASSED:
+        raise RuntimeError(f"{what} failed ({got.why})"[:900])
+    return got.text
 
 
 def write_in(docker: Docker, ctr: str, dest: str, text: str, *, user: str = USER, mode: str = "644") -> None:
@@ -1208,6 +1211,13 @@ def pytest_script(modules: Sequence[str], timeout_s: int = 1800) -> str:
     files = " ".join(f'"{m}"' for m in modules)
     return (f'rm -f {JUNIT_IN}; timeout {timeout_s} .venv/bin/python -m pytest -p no:cacheprovider -q -rN '
             f'--junitxml={JUNIT_IN} -o junit_family=xunit2 {files} > /tmp/we-pytest.txt 2>&1; echo "exit=$?"')
+
+
+def pytest_exit(output: bytes) -> str | None:
+    """pytest's exit as ``pytest_script`` prints it last (``exit=N``), or None when the line is not there: the answer the one
+    reader (``box_mcp.seen``) takes from the call."""
+    said = box_mcp._text(output).strip()
+    return said.rsplit("exit=", 1)[-1] if "exit=" in said else None
 
 
 def parse_junit(text: str) -> dict[str, str]:
@@ -1748,8 +1758,21 @@ def redact_tree(folder: Path, redact: c.Redactor) -> int:
 
 
 def copy_out(docker: Any, ctr: str, src: str, dest: Path) -> bool:
-    cp = docker("cp", f"{ctr}:{src}", str(dest), timeout=900)
-    return cp.returncode == 0 and dest.exists()
+    """Whether ``src`` was copied out of the container to ``dest``: the copy seen to pass (``box_mcp.seen``) and ``dest`` there."""
+    return box_mcp.seen(docker("cp", f"{ctr}:{src}", str(dest), timeout=900)).state == box_mcp.PASSED and dest.exists()
+
+
+def keep_final(ctx: Context, task: Task, agent: str, base: str, run: Any) -> bool:
+    """The run's kept patch, ``final.patch`` in its folder: captured in the agent's container as every capture is
+    (``diff_script``) and copied out, each step read by the one reader (``box_mcp.seen``). True when both were seen to pass, so
+    its bytes are the ones the capture made; else the file is empty, as a capture that failed always left it, and False: what
+    the run left was not read, which the round-trip control reads (``final_patch_read``) and never takes for a kept patch."""
+    final = run.fresh_path("final.patch")
+    captured = box_mcp.seen(ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/final.patch"), workdir=task.repo, timeout=600))
+    if captured.state == box_mcp.PASSED and copy_out(ctx.docker, agent, f"{WE}/final.patch", final):
+        return True
+    final.write_bytes(b"")
+    return False
 
 
 def key_check(ctx: Context, task: Task, image: str, key: str, tag: str, *, net: str = "",
@@ -1938,16 +1961,16 @@ def workspace_from(ctx: Context, task: Task, agent: str, dest: Path) -> int:
     agent starts. First of all, ``dest`` itself must be a path the host holds as named, by the box's one check
     (``box_mcp.root_named``), so nothing is exported into ``workspace`` for ``workspace.``. Returns how many files came out."""
     box_mcp.root_named(dest)
-    done = ctx.docker("exec", "-u", USER, "-w", task.repo, agent, *box_mcp.EXPORT, timeout=900)
-    if done.returncode != 0:
-        raise RuntimeError(f"the workspace's export failed ({done.returncode}): {err(done)[-600:]}")
+    done = box_mcp.seen(ctx.docker("exec", "-u", USER, "-w", task.repo, agent, *box_mcp.EXPORT, timeout=900))
+    if done.state != box_mcp.PASSED:
+        raise RuntimeError(f"the workspace's export failed ({done.why[-600:]})")
     try:
-        with tarfile.open(fileobj=io.BytesIO(done.stdout)) as tar:
+        with tarfile.open(fileobj=io.BytesIO(done.output)) as tar:
             members = box_mcp.export_members(tar)
     except (box_mcp.Refused, tarfile.TarError) as exc:
         raise RuntimeError(f"the workspace's export was refused, and nothing of it written: {exc}") from exc
     try:
-        box_mcp.bring_in(dest, done.stdout)
+        box_mcp.bring_in(dest, done.output)
     except box_mcp.Refused as exc:
         for child in Path(dest).iterdir():
             if child.is_dir() and not child.is_symlink():
@@ -2330,17 +2353,22 @@ PATCH_BYTES = "we-patch-bytes"      # the line ``patch_bytes`` reads its answer 
 def patch_bytes(ctx: Context, task: Task, agent: str, base: str | None) -> int | None:
     """How many bytes the tree's patch against ``base`` has, in the agent's container, made as every capture makes it
     (``diff_script``, new files included): 0 for a tree with no change. None when it could not be read: no base, a docker step
-    that failed or ran out of time, or a reply without the size's own line."""
+    that raised or ran out of time, or a reply the one reader (``box_mcp.seen``) did not see pass, the size's own line in it:
+    a call that returned another code, or none, is not known, whatever its output says."""
     if not base:
         return None
     at = f"{WE}/we-size.patch"
+
+    def size(output: bytes) -> int | None:
+        found = re.findall(rf"^{PATCH_BYTES}=\s*(\d+)\s*$", box_mcp._text(output), re.M)
+        return int(found[-1]) if found else None
+
     try:
-        said = out(ctx.docker.sh(agent, f'{diff_script(task.repo, base, at)}; printf "{PATCH_BYTES}=%s\\n" "$(wc -c < "{at}")"; '
-                                        f'rm -f "{at}"', workdir=task.repo, timeout=300))
+        got = box_mcp.seen(ctx.docker.sh(agent, f'{diff_script(task.repo, base, at)}; printf "{PATCH_BYTES}=%s\\n" "$(wc -c < "{at}")"; '
+                                                f'rm -f "{at}"', workdir=task.repo, timeout=300), size)
     except (OSError, RuntimeError, subprocess.SubprocessError):
         return None
-    found = re.findall(rf"^{PATCH_BYTES}=\s*(\d+)\s*$", said, re.M)
-    return int(found[-1]) if found else None
+    return got.answer if got.state == box_mcp.PASSED else None
 
 
 def loop_status(status: str, size: int | None) -> str:
@@ -3323,10 +3351,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             calls = box_mcp.read_state(box_state_of(workspace))
             if calls is not None:
                 run.write_json("box_calls.json", calls)
-        ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/final.patch"), workdir=task.repo, timeout=600)
-        final = run.fresh_path("final.patch")
-        if not copy_out(ctx.docker, agent, f"{WE}/final.patch", final):
-            final.write_bytes(b"")
+        record["final_patch_read"] = keep_final(ctx, task, agent, base, run)
+        final = run.path / "final.patch"
         record["final_patch_bytes"] = final.stat().st_size
         record["final_patch_sha256"] = c.sha256_file(final)
         if round2:   # G6's key file never leaves the container
@@ -3404,7 +3430,9 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
                 folder: c.RunFolder | None = None, label: str = "", amended: bool = False) -> dict[str, Any]:
     """In a fresh container from the oracle image, with no network: the code (the parent's, the maintainers' fix or
     a patch), the maintainers' test files when ``tests``, the bug's amendment when ``amended``, extra files, then
-    pytest on ``modules``."""
+    pytest on ``modules``. Every step's result is read by the one reader (``box_mcp.seen``): the body keeps the pytest call's
+    state (``call``, with ``call_why``), its exit (``pytest_exit``), whether its report came back (``report``) and the results,
+    which ``box_mcp.tests_seen`` reads."""
     _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     name = f"g6we-check-{uuid.uuid4().hex[:10]}"
     body: dict[str, Any] = {"label": label}
@@ -3417,13 +3445,13 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
                     "the maintainers' fix")
         if patch is not None and patch.stat().st_size:
             checked(ctx.docker("cp", str(patch), f"{name}:/tmp/we.patch", timeout=300), "patch copy")
-            applied = ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we.patch", workdir=task.repo)
-            body["patch_applied"] = applied.returncode == 0
-            if applied.returncode != 0:
-                body["apply_error"] = err(applied)[-600:]
+            applied = box_mcp.seen(ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we.patch", workdir=task.repo))
+            body["patch_applied"] = applied.state == box_mcp.PASSED
+            if not body["patch_applied"]:
+                body["apply_error"] = applied.why[-600:]
                 return body
         if tests:
-            files = out(ctx.docker.sh(name, "cat /oracle/fix.files"))
+            files = checked(ctx.docker.sh(name, "cat /oracle/fix.files"), "the fix's list of files")
             pairs = [x for st, p in test_changes(files) for x in (st, p)]
             checked(ctx.docker.sh(name, APPLY_TESTS, task.repo, *pairs, workdir=task.repo), "the maintainers' tests")
         if amended:
@@ -3432,14 +3460,19 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
                     "the amendment")
         for dest, src in (extra or {}).items():
             checked(ctx.docker("cp", str(src), f"{name}:{task.repo}/{dest}", timeout=300), f"copy {dest}")
-        ran = ctx.docker.sh(name, pytest_script(modules or task.test_modules), workdir=task.repo, timeout=2400)
-        body["pytest_exit"] = out(ran).rsplit("exit=", 1)[-1] if "exit=" in out(ran) else None
+        ran = box_mcp.seen(ctx.docker.sh(name, pytest_script(modules or task.test_modules), workdir=task.repo, timeout=2400),
+                           pytest_exit)
+        body.update(call=ran.state, call_why=ran.why, pytest_exit=ran.answer)
         if folder is not None:
             copy_out(ctx.docker, name, "/tmp/we-pytest.txt", folder.path / f"{label}-pytest.txt")
         with tempfile.TemporaryDirectory(prefix="g6we-") as tmp:
             junit = Path(tmp) / "junit.xml"
-            body["results"] = parse_junit(junit.read_text(encoding="utf-8")) if copy_out(
-                ctx.docker, name, JUNIT_IN, junit) else {}
+            body["report"], body["results"] = copy_out(ctx.docker, name, JUNIT_IN, junit), {}
+            if body["report"]:
+                try:
+                    body["results"] = parse_junit(junit.read_text(encoding="utf-8"))
+                except (ET.ParseError, UnicodeDecodeError) as exc:     # a report that cannot be read is no report
+                    body.update(report=False, report_error=f"{type(exc).__name__}: {exc}"[:300])
     finally:
         ctx.docker("rm", "-f", name, timeout=300)
     return body
@@ -3561,18 +3594,31 @@ def selfcheck(ctx: Context, task: Task) -> dict[str, Any]:
     folder = ctx.archive.start("selfcheck", task.id, g6_commit=ctx.g6.get("commit"))
     _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     gold = folder.fresh_path("gold.patch")
-    got = ctx.docker("run", "--rm", "--network", "none", oracle, "cat", "/oracle/fix.patch", timeout=600)
-    checked(got, "the fix's patch")
-    gold.write_bytes(got.stdout or b"")
+    got = box_mcp.seen(ctx.docker("run", "--rm", "--network", "none", oracle, "cat", "/oracle/fix.patch", timeout=600))
+    if got.state != box_mcp.PASSED:
+        raise RuntimeError(f"the fix's patch failed ({got.why})"[:900])
+    gold.write_bytes(got.output)
     empty = folder.fresh_path("empty.patch")
     empty.write_bytes(b"")
     rows = {}
     for label, patch in (("gold", gold), ("empty", empty)):
         body = _oracle_run(ctx, task, patch=patch, folder=folder, label=label)
-        rows[label] = {"patch_applied": body.get("patch_applied", True), **verdict(body.get("results") or {}, f2p, p2p)}
-    ok = bool(rows["gold"]["passes"]) and not rows["empty"]["passes"]
-    return folder.finish({"ok": ok, **{k: {"passes": r["passes"], "failing": len(r["failing"]),
-                                           "patch_applied": r["patch_applied"]} for k, r in rows.items()}}, "finished")
+        rows[label] = {"patch_applied": body.get("patch_applied", True), **verdict(body.get("results") or {}, f2p, p2p),
+                       "seen": box_mcp.tests_seen(body, [*f2p, *p2p]), "observed": observed(body, [*f2p, *p2p])}
+    # seen, not inferred: the fix seen to pass every test on the lists, and the empty patch seen to fail one (``tests_seen``)
+    ok = rows["gold"]["seen"]["state"] == box_mcp.PASSED and rows["empty"]["seen"]["state"] == box_mcp.FAILED
+    return folder.finish({"ok": ok, **{k: {"passes": r["passes"], "failing": len(r["failing"]), "patch_applied": r["patch_applied"],
+                                           "seen": r["seen"], "observed": r["observed"]} for k, r in rows.items()}}, "finished")
+
+
+def observed(body: Mapping[str, Any] | None, tests: Iterable[str]) -> dict[str, Any]:
+    """What a test run observed of ``tests``, kept so ``box_mcp.tests_seen`` reads it again from the record alone: the pytest
+    call's state, its exit, whether its report came back, whether the patch applied, and each of ``tests``' results the report
+    holds (a test it does not hold is absent, as in the report)."""
+    body = body or {}
+    names, results = set(tests), body.get("results") or {}
+    return {**{k: body[k] for k in ("call", "call_why", "pytest_exit", "patch_applied") if k in body},
+            "report": bool(body.get("report", bool(results))), "results": {t: results[t] for t in sorted(names) if t in results}}
 
 
 G6_REPLAY = """import json, sys
