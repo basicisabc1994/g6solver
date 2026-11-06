@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.7 — 2026-11-06: follow-up review 2 repairs
+
+- One rule for a claim of a state, at any depth (`codes.claims`): every mapping, sequence, set and record in a value is read, and a `reliability_label` anywhere, a `verified` flag anywhere but false directly inside a warning card, a nested result outside the makers' format, or anything nested deeper than 64 levels is refused. It is applied to every collaborator's answer as it returns and to what its check makes of it (`snapshot.returned`; a model's reply is read as JSON by its check, `snapshot.json_reply`), to every tool's answer as G6's door hands it on, and by `codes.refusal` and `codes.settled` to every result they return. Every result the package writes leaves through them.
+- One check of a result's format (`codes.result_faults`), read by both makers and the rule: a blocked dossier, reconciliation or any nested result carries a code the bridge registered and that code's warning card; a qualified draft's card, if it has one, claims nothing.
+- A step whose tool answer claims a state outside the door's card, even a `verified` flag the door turned false, fails with `G6_E_COGNITIVE_STEP_FAILED`; the reason names each place and the door's card is kept whole under `door`. A step the door did not pass keeps the door's card, not a component's own blocked answer.
+- One reading of a yes (`codes.affirmed`): `approved=True` and nothing else runs a plan, and every admission or authentication hook, the door's `ok` and a step's confirmed identification are read the same way; `"false"`, `1`, `"yes"` or a truthy object is not a yes.
+- Inventory tests list, from the code, every place an answer enters, a tool's answer is read and a result leaves, and every read of a yes, and fail on one outside its rule.
+
 ## v0.2.6 — 2026-11-06: follow-up review 1 repairs
 
 - Credit binds its subject. A dossier names the evidence it assessed by digest (`subject_sha256`, from `assurance.evidence_sha256`), and an assessment credits it only for the evidence submitted to that assessment; a reconciliation names its assertions the same way (`epistemic.assertions_sha256`) and is credited only for the assertions submitted, and only in the state its own findings give. A method selection is taken only when it is for the methods handed, is refused exactly when one is missing, meets each with one mandatory row, and each row is a variant given, as given (its cost included), eligible under the context given, with the rows together inside its budget.

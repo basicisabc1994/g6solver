@@ -72,9 +72,11 @@ Composed (Python only):
 
 - `MixedMethodExecutor` runs an approved plan's steps through G6's checked door (`g6.core.door.invoke_checked`, the
   call `g6.invoke` makes): a sensitive op runs only when the person allowed it (`allow=` or `G6_MCP_SENSITIVE`), and
-  a component's own `verified` is held at `qualified-draft` with the door's card. It checks the plan against the
-  canonical routing, refuses an edited one (`G6_E_COGNITIVE_PLAN_TAMPERED`) and runs nothing without approval
-  (`G6_E_COGNITIVE_APPROVAL_REQUIRED`).
+  a component's own `verified` is held at `qualified-draft` with the door's card. A step whose answer carries a
+  `reliability_label`, a `verified` flag outside a warning card, or a nested result outside the bridge's format is
+  `G6_E_COGNITIVE_STEP_FAILED`, the reason naming each place. It checks the plan against the canonical routing,
+  refuses an edited one (`G6_E_COGNITIVE_PLAN_TAMPERED`) and runs nothing unless `approved=True`
+  (`G6_E_COGNITIVE_APPROVAL_REQUIRED`; `"false"`, `1` or any other value is not approval).
 - `CognitiveAgent` makes each observation a tool step through the same door, credited only when the door's reply
   says `ok`; `allow=` is the person's allow, as the executor takes it.
 - What the bridge checks and then uses is a snapshot taken when it is accepted (`g6.cognitive_bridge.snapshot`):
