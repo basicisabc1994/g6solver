@@ -760,8 +760,10 @@ class FileRead:
     patch shows of it is not that (``""`` where it is); whether it is new since the base, which then holds no text of it;
     whether G6 left it unread, as it leads out of the repository, and G6 never reads such a file in its own process (review
     M1); how much of its text the patch shows, with the line endings ``_normal`` gives (``limit``; None: all of it); its
-    mode at the base and now, as git's listing gives them (``""`` where it gives none); and ``base``, the object name of its
-    blob at the base, as git's listing gives it (``""`` where the base holds none), by which its old text is read."""
+    mode at the base and now, as git's listing gives them (``""`` where it gives none); ``base``, the object name of its
+    blob at the base, as git's listing gives it (``""`` where the base holds none); and ``old``, that blob's bytes as this
+    same read read them by that name (None where the base holds none or G6 left the file unread; the refusal itself where
+    git would not give them, so a copy made from this read refuses too and never shows a base it could not read)."""
 
     rel: str
     new: str | None
@@ -771,6 +773,7 @@ class FileRead:
     limit: int | None = None
     modes: tuple[str, str] = ("", "")
     base: str = ""
+    old: bytes | RepoRefused | None = None
 
 
 @dataclass(frozen=True)
@@ -792,6 +795,20 @@ def _bytes_line(raw: bytes, shown: str, what: str) -> str:
     if shown.encode("utf-8") == raw:
         return ""
     return f"\\ G6: {what} shows here only in part; its bytes have SHA-256 {hashlib.sha256(raw).hexdigest()}\n"
+
+
+def shown_name(rel: str) -> str:
+    """A path git gave, as text, the one way it is put into what the patch is known by and into what a reader is shown: its
+    bytes (``_listing`` and ``_paths`` read each byte that is not UTF-8 as a lone surrogate, which no UTF-8 text can hold)
+    through the one decoder, ``_decoded``."""
+    return _decoded(rel.encode("utf-8", "surrogateescape"))
+
+
+def name_line(rel: str) -> str:
+    """The line naming the bytes of a path whose name is not UTF-8 (``_bytes_line``), else ``""``: two names that
+    ``shown_name`` shows alike are still two patches, and the reader is shown them apart."""
+    shown = shown_name(rel)
+    return _bytes_line(rel.encode("utf-8", "surrogateescape"), shown, f"the name {shown}")
 
 
 #: The diff ``diff_read`` asks git for: its listing of the tracked files that changed, one record each (``--raw -z``, so a
@@ -889,6 +906,43 @@ def _read_inside(root: Path, path: Path) -> bytes | None:
         os.close(fd)
 
 
+def _link_inside(root: Path, path: Path) -> bytes | None:
+    """The path the link at ``path`` names, as bytes, or None where the link is not inside ``root``. As for a file
+    (``_read_inside``), where it is, is decided on what G6 holds open while it reads: the folder the link lies in is held
+    open, its own path decides, and the link is read in that folder, so a folder on its way swapped for a link between any
+    check and the read cannot make G6 read a link outside the repository. Where ``readlink`` takes a folder (``dir_fd``),
+    the link is read in the folder held. Windows takes none, so there it is read by the held folder's own final path, which
+    names no link: the folder is held for listing, shared for reading and writing but never for being moved or removed, and
+    Windows moves no folder above one held so, so that path is the folder decided on."""
+    if os.name != "nt":
+        held = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    else:
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        create = ctypes.WinDLL("kernel32", use_last_error=True).CreateFileW
+        create.restype = wintypes.HANDLE
+        create.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+                           wintypes.DWORD, wintypes.HANDLE)
+        # FILE_LIST_DIRECTORY; FILE_SHARE_READ | FILE_SHARE_WRITE, never FILE_SHARE_DELETE; OPEN_EXISTING;
+        # FILE_FLAG_BACKUP_SEMANTICS, which opens a folder (a link or junction on the way is followed: its final path says)
+        handle = create(str(path.parent), 0x1, 0x1 | 0x2, None, 3, 0x02000000, None)
+        if handle in (None, ctypes.c_void_p(-1).value):
+            raise ctypes.WinError(ctypes.get_last_error())
+        held = msvcrt.open_osfhandle(handle, os.O_RDONLY)
+    try:
+        try:
+            folder = _where(held)
+        except OSError:
+            return None
+        if not folder.is_relative_to(root):
+            return None
+        return os.fsencode(os.readlink(folder / path.name) if os.name == "nt" else os.readlink(path.name, dir_fd=held))
+    finally:
+        os.close(held)
+
+
 def _leads_out(repo: Path, rel: str) -> bool:
     """Whether a folder on ``rel``'s way is a link or junction and the path resolves outside ``repo``, or cannot be resolved:
     what lies there is outside the repository, and G6 does not open it. ``rel`` itself being a link is not this. It is only
@@ -906,14 +960,18 @@ def diff_read(change: Change) -> DiffRead:
     """The change, read once, its ``files`` exactly the files of that read: the tracked ones git's own listing names, in the
     same run as the patch (``_DIFF``), and the untracked ones the change holds that its listing names. Its ``text``, what the
     patch is known by, is one unified diff: git's own for tracked files (each file's text, never a ``textconv`` filter's),
-    which holds each one's mode; then a line for each tracked file, naming the digest of its bytes as they stand, or of the
-    path a link names, as git shows a file after its filters (line endings by ``core.autocrlf`` or ``.gitattributes``, a
-    ``clean`` driver), so two working files that run differently could give one diff, and with these lines cannot; then
-    each untracked file as added lines (at most ``DIFF_FILE_CHARS`` of it, each byte that is not UTF-8 one U+FFFD), so a scan
-    of the diff sees a new test file too, each followed by a line naming its bytes, or the path a link names, where its text
-    is not them (``_bytes_line``). A link is known by the path it names, as git holds a link, never by what it leads to. A
-    removed file has no bytes, so no line. A file below a link that leads out of the repository is never read (M1): it has
-    no line, and no text in ``files``."""
+    which holds each one's mode; then lines for each tracked file, naming the digest of its blob's bytes at the base, as
+    this read read them by the object name git listed (``blob_bytes``: what a reader is shown of the base is those bytes, so
+    the patch is known by them too, and a base that changes after or during the read is another patch), and the digest of
+    its bytes as they stand, or of the path a link names, as git shows a file after its filters (line endings by
+    ``core.autocrlf`` or ``.gitattributes``, a ``clean`` driver), so two working files that run differently could give one
+    diff, and with these lines cannot; then each untracked file as added lines (at most ``DIFF_FILE_CHARS`` of it, each byte
+    that is not UTF-8 one U+FFFD), so a scan of the diff sees a new test file too, each followed by a line naming its bytes,
+    or the path a link names, where its text is not them (``_bytes_line``). A link is known by the path it names, as git
+    holds a link, never by what it leads to, and read where G6 decides it lies (``_link_inside``). A removed file has no
+    bytes now, so no line for them. A file below a link that leads out of the repository is never read (M1): it is named,
+    and has no text in ``files``. Each name is put into the text as ``shown_name`` shows it, with the line naming its bytes
+    where they are not UTF-8 (``name_line``)."""
     # a private index built from the base tree (the review of VS-4, finding 1): git's flags, its stat cache and an
     # entry written into the repository's own index hide nothing (review C2 too)
     listed, others = _private(change.repo, change.base_commit, _DIFF, ("ls-files", "--others", "--exclude-standard", "-z"))
@@ -929,7 +987,9 @@ def diff_read(change: Change) -> DiffRead:
         if _leads_out(change.repo, rel):
             return FileRead(rel, None, added=added, unread=True, modes=modes), None, False
         if path.is_symlink():     # read as the path it names: the link is never followed
-            named = os.fsencode(os.readlink(path))      # its bytes, shown through the one decoder as a file's are
+            named = _link_inside(root, path)      # its bytes, shown through the one decoder as a file's are
+            if named is None:
+                return FileRead(rel, None, added=added, unread=True, modes=modes), None, False
             return FileRead(rel, _decoded(named), added=added, modes=modes), named, True
         if not path.is_file():
             return FileRead(rel, None, added=added, modes=modes), None, False
@@ -938,33 +998,44 @@ def diff_read(change: Change) -> DiffRead:
             return FileRead(rel, None, added=added, unread=True, modes=modes), None, False
         return FileRead(rel, _decoded(raw), added=added, modes=modes), raw, False
 
-    def named(rel: str, raw: bytes) -> str:
-        return f"\\ G6: the link {rel} as it stands names a path with SHA-256 {hashlib.sha256(raw).hexdigest()}\n"
+    def named(name: str, raw: bytes) -> str:
+        return f"\\ G6: the link {name} as it stands names a path with SHA-256 {hashlib.sha256(raw).hexdigest()}\n"
 
-    def unread(rel: str) -> str:      # a file G6 did not read is still named in what the patch is known by
-        return f"\\ G6: {rel} is not read, as it leads out of the repository or lies below a link that does\n"
+    def unread(name: str) -> str:      # a file G6 did not read is still named in what the patch is known by
+        return f"\\ G6: {name} is not read, as it leads out of the repository or lies below a link that does\n"
 
     for rel, old, now, before in sorted(tracked):
         one, raw, link = found(rel, False, (old, now))
-        one = replace(one, base=before)
+        name = shown_name(rel)
+        text += name_line(rel)
         if one.unread:
-            text += unread(rel)
+            text += unread(name)
+        elif before:    # the base, read once, here: the copy a reader is shown is made from these bytes, never read again
+            try:
+                base: bytes | RepoRefused = blob_bytes(change.repo, before)
+                text += f"\\ G6: the bytes of {name} at the base have SHA-256 {hashlib.sha256(base).hexdigest()}\n"
+            except RepoRefused as refused:
+                base = refused
+                text += f"\\ G6: the bytes of {name} at the base could not be read\n"
+            one = replace(one, old=base)
+        one = replace(one, base=before)
         if raw is not None:
-            text += named(rel, raw) if link else \
-                f"\\ G6: the bytes of {rel} as they stand have SHA-256 {hashlib.sha256(raw).hexdigest()}\n"
-            one = replace(one, note=_bytes_line(raw, _normal(one.new), rel))
+            text += named(name, raw) if link else \
+                f"\\ G6: the bytes of {name} as they stand have SHA-256 {hashlib.sha256(raw).hexdigest()}\n"
+            one = replace(one, note=_bytes_line(raw, _normal(one.new), name))
         files.append(one)
     for rel in sorted(new & set(change.files)):
         one, raw, link = found(rel, True, ("", LINK_MODE))
+        name = shown_name(rel)
         if raw is None:
-            text += unread(rel) if one.unread else ""
+            text += (unread(name) if one.unread else "") + name_line(rel)
             files.append(replace(one, modes=("", "")))
             continue
         shown = _cut_lines(_normal(one.new), DIFF_FILE_CHARS)
         lines = _at_newlines(shown)
-        note = named(rel, raw) if link else _bytes_line(raw, shown, rel)
-        text += (f"--- /dev/null\n+++ b/{rel}\n@@ -0,0 +1,{len(lines)} @@\n" + "".join(f"+{line}\n" for line in lines)
-                 + note)
+        note = named(name, raw) if link else _bytes_line(raw, shown, name)
+        text += (f"--- /dev/null\n+++ b/{name}\n@@ -0,0 +1,{len(lines)} @@\n" + "".join(f"+{line}\n" for line in lines)
+                 + note + name_line(rel))
         files.append(replace(one, note=note, limit=DIFF_FILE_CHARS, modes=("", LINK_MODE if link else "")))
     return DiffRead(text, tuple(files))
 

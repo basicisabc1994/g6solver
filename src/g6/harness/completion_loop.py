@@ -683,23 +683,26 @@ def _modes(one: repo_tests.FileRead) -> list[str]:
 
 
 def _name(rel: str) -> str:
-    """A path as a reader is shown it: its bytes, as git gave them, through the one decoder (``repo_tests._decoded``)."""
-    return repo_tests._decoded(rel.encode("utf-8", "surrogateescape"))
+    """A path as a reader is shown it, as what the patch is known by names it (``repo_tests.shown_name``): its bytes, as git
+    gave them, through the one decoder."""
+    return repo_tests.shown_name(rel)
 
 
 def _shown(change: repo_tests.Change, read: repo_tests.DiffRead) -> Shown:
-    """The patch as the reviewer reads it, made from the files ``read`` holds and nothing else: no file is opened again, no
-    git setting reaches it, and the patch is still known by ``read.text`` alone. Each file's whole text at the base (its
-    blob, by the object name git listed: ``repo_tests.blob_text``) and now, as read, goes through ``_seen`` alone, so a name
-    on a line the change leaves out is still beside its value, and nothing of one file masks another; the two are then
-    compared line by line here (``difflib``), with ``CONTEXT`` unchanged lines on each side of a change. A line shown is
+    """The patch as the reviewer reads it, made from the files ``read`` holds and nothing else: nothing is read here, no file
+    opened and no git object asked for, no git setting reaches it, and the patch is still known by ``read.text`` alone. Each
+    file's whole text at the base (its blob's bytes, as the read read them by the object name git listed, which
+    ``read.text`` names; a base the read could not read refuses the copy) and now, as read, goes through ``_seen`` alone,
+    so a name on a line the change leaves out is still beside its value, and nothing of one file masks another; the two
+    are then compared line by line here (``difflib``), with ``CONTEXT`` unchanged lines on each side of a change. A line shown is
     masked where the scrubber found a value in it; an unchanged line, where it found one in either text; and any line, the
     base's own included, where it found a value of one line in a line of the same file, at the base or now, with the same
     words but for the spaces around them, so a value found beside its name stays masked on a line that moved or was indented
     away from it. A value hides lines (``hidden``) only where it covers two or more lines the copy shows. What the patch is
     known by is shown: each file's lines, its mode where it is in the patch (``_modes``), a link by the path it names, and the
     line naming the bytes where the text shown is not them, as in ``read.text``: a byte that is not UTF-8 is shown as one
-    U+FFFD of its own. A file G6 left unread is named, with why, and never read. G6's own lines are scrubbed one by one."""
+    U+FFFD of its own, and a name that is not UTF-8 is followed by the line naming its bytes (``repo_tests.name_line``). A
+    file G6 left unread is named, with why, and never read. G6's own lines are scrubbed one by one."""
     plain, masked, parents, masked_parents, covers = [], [], [], [], {}
 
     def own(line: str) -> None:
@@ -714,8 +717,11 @@ def _shown(change: repo_tests.Change, read: repo_tests.DiffRead) -> Shown:
             own(f"--- a/{name}\n")
             own(f"+++ b/{name}\n")
             own(f"\\ G6: {name} leads out of the repository, or lies below a link that does, so G6 did not read it\n")
+            own(repo_tests.name_line(one.rel))
             continue
-        raw = None if one.added or not one.base else repo_tests.blob_bytes(change.repo, one.base)
+        if isinstance(one.old, repo_tests.RepoRefused):      # a base the read could not read is never shown as none
+            raise one.old
+        raw = one.old
         old = None if raw is None else repo_tests._decoded(raw)
         own(f"--- {'/dev/null' if old is None else 'a/' + name}\n")
         own(f"+++ {'/dev/null' if one.new is None else 'b/' + name}\n")
@@ -754,6 +760,7 @@ def _shown(change: repo_tests.Change, read: repo_tests.DiffRead) -> Shown:
             own(f"\\ G6: {name} at the base shows here only in part; its bytes have SHA-256 {hashlib.sha256(raw).hexdigest()}\n")
         if one.note:
             own(one.note)
+        own(repo_tests.name_line(one.rel))
         if old is not None:
             parents.append(f"parent/{name}:\n" + "".join(sides[0].rows))
             masked_parents.append(_seen(f"parent/{name}:\n").masked() + "".join(

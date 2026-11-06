@@ -54,6 +54,16 @@ def blob_id(rel: str) -> str:
     return hashlib.sha1(rel.encode()).hexdigest()
 
 
+def link_read(link: Path, target, real=os.readlink):
+    """``os.readlink`` with the placeholder ``link`` read as a link naming ``target()``, for an account that cannot make one,
+    called as ``repo_tests._link_inside`` calls it: by its path, or by its name in the folder it holds (``dir_fd``)."""
+    def readlink(path, *, dir_fd=None):
+        if Path(path) == link or (dir_fd is not None and path == link.name):
+            return target()
+        return real(path) if dir_fd is None else real(path, dir_fd=dir_fd)
+    return readlink
+
+
 def listing(base: dict, now: dict, modes: dict | None = None) -> bytes:
     """Git's ``--raw -z`` records for the tracked files of ``base`` and ``now``, as ``repo_tests._DIFF`` gives them first."""
     records = []
@@ -297,9 +307,9 @@ def test_a_removed_file_is_shown_removed_and_a_lost_last_newline_as_git_shows_it
 
 def test_a_tracked_link_is_shown_by_the_path_it_names_and_that_path_is_part_of_what_the_patch_is_known_by(tmp_path, monkeypatch):
     change = held(tmp_path, monkeypatch, {"ln": "old/target"}, {"ln": "placeholder"}, modes={"ln": ("120000", "120000")})
-    link, real_is_symlink, real_readlink = tmp_path / "ln", Path.is_symlink, os.readlink
+    link, real_is_symlink = tmp_path / "ln", Path.is_symlink
     monkeypatch.setattr(Path, "is_symlink", lambda self: self == link or real_is_symlink(self))
-    monkeypatch.setattr(os, "readlink", lambda path: "new/target" if Path(path) == link else real_readlink(path))
+    monkeypatch.setattr(os, "readlink", link_read(link, lambda: "new/target"))
     read = repo_tests.diff_read(change)
     assert hashlib.sha256(b"new/target").hexdigest() in read.text
     assert "-old/target\n\\ No newline at end of file\n+new/target\n\\ No newline at end of file\n" in \
@@ -457,9 +467,9 @@ def test_mask1_finding_5_a_new_links_identity_is_the_path_it_names_not_what_it_l
     change = held(tmp_path, monkeypatch, {}, {"new_link.py": "placeholder"})
     monkeypatch.setattr(repo_tests, "_tracked_new", lambda *args: {"new_link.py"})
     link, named = tmp_path / "new_link.py", ["one.py"]
-    real_is_symlink, real_readlink, real_read_bytes = Path.is_symlink, os.readlink, Path.read_bytes
+    real_is_symlink, real_read_bytes = Path.is_symlink, Path.read_bytes
     monkeypatch.setattr(Path, "is_symlink", lambda path: path == link or real_is_symlink(path))
-    monkeypatch.setattr(os, "readlink", lambda path: named[0] if Path(path) == link else real_readlink(path))
+    monkeypatch.setattr(os, "readlink", link_read(link, lambda: named[0]))
     monkeypatch.setattr(Path, "read_bytes", lambda path: real_read_bytes(tmp_path / named[0]) if path == link
                         else real_read_bytes(path))
     before = repo_tests.diff_read(change)
@@ -604,10 +614,10 @@ def test_mask2_finding_6_a_tracked_links_base_is_read_by_its_object_name_whereve
     repo = tmp_path / "repo"
     repo.mkdir()
     link, outside = repo / "ln", tmp_path / "outside.txt"
-    real_resolve, real_is_symlink, real_readlink = Path.resolve, Path.is_symlink, os.readlink
+    real_resolve, real_is_symlink = Path.resolve, Path.is_symlink
     monkeypatch.setattr(Path, "resolve", lambda path, *a, **kw: outside if path == link else real_resolve(path, *a, **kw))
     monkeypatch.setattr(Path, "is_symlink", lambda path: path == link or real_is_symlink(path))
-    monkeypatch.setattr(os, "readlink", lambda path: "../outside.txt" if Path(path) == link else real_readlink(path))
+    monkeypatch.setattr(os, "readlink", link_read(link, lambda: "../outside.txt"))
     listed = b":120000 120000 " + b"b" * 40 + b" " + b"0" * 40 + b" M\0ln\0\0"
     monkeypatch.setattr(repo_tests, "_private", lambda *args: [listed, b""])
     monkeypatch.setattr(repo_tests, "_tracked_new", lambda *args: set())
@@ -763,9 +773,9 @@ def test_mask3_finding_5_a_links_path_is_shown_through_the_one_decoder(tmp_path,
     link = tmp_path / "link"
     link.write_bytes(b"placeholder")
     target = b"made-up-target-\xff".decode("utf-8", "surrogateescape")
-    real_is_symlink, real_readlink = Path.is_symlink, os.readlink
+    real_is_symlink = Path.is_symlink
     monkeypatch.setattr(Path, "is_symlink", lambda path: path == link or real_is_symlink(path))
-    monkeypatch.setattr(os, "readlink", lambda path: target if Path(path) == link else real_readlink(path))
+    monkeypatch.setattr(os, "readlink", link_read(link, lambda: target))
     listed = b":120000 120000 " + b"b" * 40 + b" " + b"0" * 40 + b" M\0link\0\0"
     monkeypatch.setattr(repo_tests, "_private", lambda *args: [b"" if added else listed, b"link\0" if added else b""])
     monkeypatch.setattr(repo_tests, "_tracked_new", lambda *args: set())
@@ -777,13 +787,14 @@ def test_the_reviewer_is_shown_text_through_one_decoder_and_one_masking_rule_alo
     """An inventory, built from the code: each place on the way to the reviewer that decodes bytes or masks text. Masking is
     ``_seen``'s, by ``secret_spans``, alone (``mask_paths`` then takes home folders out of a test's output, which is no
     secret's mask); decoding of what is shown is ``repo_tests._decoded``'s alone. ``_listing`` decodes git's own fields and
-    names (shown only through ``_name``), and ``diff_read`` decodes git's patch for what the patch is known by, never shown."""
+    names (shown only through ``repo_tests.shown_name``, which ``_name`` is, and which what the patch is known by names them
+    by too), and ``diff_read`` decodes git's patch for what the patch is known by, never shown."""
     import ast
     import inspect
 
     watched, found = {"scrub", "secret_spans", "_decoded", "decode", "mask_paths"}, set()
     path = {"diff_read", "found", "named", "unread", "_listing", "blob_bytes", "_decoded", "_normal", "_cut_lines",
-            "_bytes_line", "_read_inside", "_where", "_leads_out"}
+            "_bytes_line", "_read_inside", "_link_inside", "_where", "_leads_out", "shown_name", "name_line"}
     for module, only in ((loop, None), (repo_tests, path)):
         for node in ast.walk(ast.parse(inspect.getsource(module))):
             if isinstance(node, ast.FunctionDef) and (only is None or node.name in only):
@@ -791,7 +802,7 @@ def test_the_reviewer_is_shown_text_through_one_decoder_and_one_masking_rule_alo
                     name = call.func.attr if isinstance(call.func, ast.Attribute) else getattr(call.func, "id", "")
                     if name in watched:
                         found.add((module.__name__.rsplit(".", 1)[1], node.name, name))
-    assert found == {("completion_loop", "_seen", "secret_spans"), ("completion_loop", "_name", "_decoded"),
+    assert found == {("completion_loop", "_seen", "secret_spans"), ("repo_tests", "shown_name", "_decoded"),
                      ("completion_loop", "_shown", "_decoded"), ("completion_loop", "_unrun", "mask_paths"),
                      ("repo_tests", "_decoded", "decode"), ("repo_tests", "_listing", "decode"),
                      ("repo_tests", "diff_read", "decode"), ("repo_tests", "diff_read", "_decoded"),
