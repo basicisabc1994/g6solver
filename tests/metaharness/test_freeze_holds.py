@@ -926,8 +926,6 @@ READS = {"read_bytes", "read_text", "open", "walk", "rglob", "glob", "iterdir", 
 ALLOWED = {
     ("core/reading.py", "sha256_of", "read_bytes"): "the one reader: any failure is Unreadable",
     ("core/reading.py", "walk", "walk"): "the one lister: os.walk with a handler that raises, or names what it skipped",
-    ("integrity/__init__.py", "build_manifest", "glob"): "the caller's patterns choose among the files the one lister "
-                                                         "listed whole; what is read is read by the one reader",
     ("metaharness/loop.py", "does", "getsource"): "a step's source text for what a profile may express, which inspect "
                                                   "cannot tell from none at all; left open, and a file under a root is "
                                                   "pinned by its bytes",
@@ -935,17 +933,35 @@ ALLOWED = {
 
 
 def _reads(sources: dict[str, str], entries) -> set[tuple[str, str, str]]:
-    """Every read or listing reachable from ``entries`` in ``sources``, as (file, function, call): a function is reached
+    """Every read or listing reachable from ``entries`` in ``sources``, as (file, function, call), by ``_reached``."""
+    import ast
+
+    found = set()
+    for rel, node, parts in _reached(sources, entries):
+        for part in parts:
+            if isinstance(part, ast.Call):
+                called = part.func.attr if isinstance(part.func, ast.Attribute) else getattr(part.func, "id", "")
+                if called in READS and (isinstance(part.func, ast.Attribute) or called == "open"):
+                    found.add((rel, node.name, called))
+    return found
+
+
+def _reached(sources: dict[str, str], entries) -> list:
+    """Every function reachable from ``entries`` in ``sources``, as (file, function, its own nodes): a function is reached
     when a reached function calls it by any name, whatever object it is called on, or names it bare or on ``self``
     (``_whole(reading)``, ``_whole(self._frozen_reading)``), so the walk errs toward reaching too much. A callable a
-    domain holds (``check.run``) is the domain's, not one of these."""
+    domain holds (``check.run``) is the domain's, not one of these, and a name an ``import`` statement binds in that file
+    is a module (``inspect``), never one of them."""
     import ast
 
     functions: dict[str, list[tuple[str, ast.AST]]] = {}
+    modules: dict[str, set[str]] = {}
     for rel, text in sources.items():
         for node in ast.walk(ast.parse(text)):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 functions.setdefault(node.name, []).append((rel, node))
+            if isinstance(node, ast.Import):
+                modules.setdefault(rel, set()).update(alias.asname or alias.name.split(".")[0] for alias in node.names)
 
     def own(node):                                    # a function's own nodes, its nested functions left to be reached
         stack = list(ast.iter_child_nodes(node))
@@ -957,7 +973,7 @@ def _reads(sources: dict[str, str], entries) -> set[tuple[str, str, str]]:
             yield child
             stack.extend(ast.iter_child_nodes(child))
 
-    found, seen, todo = set(), set(), list(entries)
+    reached, seen, todo = [], set(), list(entries)
     while todo:
         name = todo.pop()
         for rel, node in functions.get(name, ()):
@@ -965,22 +981,20 @@ def _reads(sources: dict[str, str], entries) -> set[tuple[str, str, str]]:
                 continue
             seen.add((rel, node.lineno))
             parts = list(own(node))
+            reached.append((rel, node, parts))
             calls = {id(part.func) for part in parts if isinstance(part, ast.Call)}
             local = {arg.arg for arg in ast.walk(node.args) if isinstance(arg, ast.arg)} | {
                 part.id for part in parts if isinstance(part, ast.Name) and isinstance(getattr(part, "ctx", None), ast.Store)}
             for part in parts:
-                if isinstance(part, ast.Call):
-                    called = part.func.attr if isinstance(part.func, ast.Attribute) else getattr(part.func, "id", "")
-                    if called in READS and (isinstance(part.func, ast.Attribute) or called == "open"):
-                        found.add((rel, node.name, called))
                 if isinstance(part, ast.Attribute):
                     on_self = isinstance(part.value, ast.Name) and part.value.id in ("self", "cls")
                     named = part.attr if on_self or id(part) in calls else ""
-                else:                                 # a function's own locals are not other functions
-                    named = part.id if isinstance(part, ast.Name) and part.id not in local else ""
+                else:                                 # a function's own locals are not other functions, nor modules
+                    named = (part.id if isinstance(part, ast.Name) and part.id not in local
+                             and part.id not in modules.get(rel, ()) else "")
                 if named in functions:
                     todo.append(named)
-    return found
+    return reached
 
 
 def test_every_read_and_listing_the_freeze_stands_on_goes_through_the_one_reader():
@@ -1000,6 +1014,65 @@ def test_every_read_and_listing_the_freeze_stands_on_goes_through_the_one_reader
     old = {"x.py": "import hashlib\ndef reader(p):\n    return hashlib.sha256(p.read_bytes()).hexdigest()\n"
                    "def frozen(p):\n    return reader(p)\n"}
     assert _reads(old, ["frozen"]) == {("x.py", "reader", "read_bytes")}     # the old reader, it finds
+
+
+#: What answers "no" for an entry it could not ask, or chooses by listing again: none may decide on the freeze's path.
+ASKS = {"is_file", "is_dir", "exists", "lexists", "isfile", "isdir", "is_symlink", "is_junction", "islink", "isjunction",
+        "glob", "rglob", "iglob"}
+#: What lists a folder: a function on the path lists at most once, so what it chooses is chosen from that one listing.
+LISTS = {"walk", "files_under", "scandir", "listdir", "iterdir", "glob", "rglob", "iglob"}
+#: The handlers on the path that catch less than ``Exception``, and why each may stand: neither stands a value for a byte
+#: or a listing the freeze pins.
+NARROW = {
+    ("metaharness/loop.py", "does"): "a step's source text for what a profile may express, where no source (a built-in) "
+                                     "is no file; a file under a root is pinned by its bytes, and any other module's by "
+                                     "_loaded_outside",
+    ("metaharness/loop.py", "_within"): "the loop's own folder is compared by identity and is absent until it is made; a "
+                                        "folder under a judge's root that cannot be listed is in reach all the same",
+}
+
+
+def _on_the_path(sources: dict[str, str], entries) -> tuple[set, dict, set]:
+    """What the reached functions ask with, how often each lists, and which of them hold a handler catching less than
+    ``Exception``."""
+    import ast
+    from collections import Counter
+
+    asks, lists, narrow = set(), Counter(), set()
+    for rel, node, parts in _reached(sources, entries):
+        for part in parts:
+            if isinstance(part, ast.Call):
+                called = part.func.attr if isinstance(part.func, ast.Attribute) else getattr(part.func, "id", "")
+                if called in ASKS:
+                    asks.add((rel, node.name, called))
+                lists[(rel, node.name)] += called in LISTS
+            if isinstance(part, ast.ExceptHandler):
+                kinds = part.type.elts if isinstance(part.type, ast.Tuple) else [part.type]
+                if not any(kind is None or isinstance(kind, ast.Name) and kind.id in ("Exception", "BaseException")
+                           for kind in kinds):
+                    narrow.add((rel, node.name))
+    return asks, dict(lists), narrow
+
+
+def test_the_freezes_reading_path_asks_by_a_stat_that_raises_lists_once_and_lets_no_error_past():
+    import g6
+
+    package = Path(g6.__file__).resolve().parent
+    asks, lists, narrow = _on_the_path({rel: (package / rel).read_text(encoding="utf-8") for rel in FREEZE_SOURCES},
+                                       FREEZE_ENTRIES)
+    assert asks == set(), sorted(asks)
+    assert all(count <= 1 for count in lists.values()), sorted(name for name, count in lists.items() if count > 1)
+    assert narrow == set(NARROW), sorted(narrow ^ set(NARROW))             # each allowance names a handler that is there
+    old = {"x.py": "import os\nfrom pathlib import Path\n"
+                   "def files_under(base):\n"
+                   "    return [Path(h) / f for h, _, fs in os.walk(base) for f in fs if (Path(h) / f).is_file()]\n"
+                   "def manifest(base):\n    listed = set(files_under(base))\n"
+                   "    return [p for p in base.glob('**/*') if p in listed]\n"
+                   "def link(p):\n    try:\n        return p.is_symlink()\n    except OSError:\n        return True\n"
+                   "def frozen(base):\n    return manifest(base), link(base)\n"}
+    asks, lists, narrow = _on_the_path(old, ["frozen"])                  # the old reader, it finds all three
+    assert asks == {("x.py", "files_under", "is_file"), ("x.py", "manifest", "glob"), ("x.py", "link", "is_symlink")}
+    assert lists[("x.py", "manifest")] == 2 and narrow == {("x.py", "link")}
 
 
 def _exclusive(path: Path, folder: bool = False):

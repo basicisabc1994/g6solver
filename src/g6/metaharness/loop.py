@@ -48,7 +48,7 @@ from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import LedgerError, canonical, digest
 from g6.core.llm import _WAITS, DEFAULT_MAX_TOKENS, LLMError
 from g6.core.model_calls import counting
-from g6.core.reading import Unreadable, files_under, said, sha256_of, walk
+from g6.core.reading import Unreadable, asked, files_under, linked, said, sha256_of, walk
 from g6.integrity import build_manifest, in_cache, manifest_sha256
 from g6.metaharness.api import _blocked, _envelope, judging_sha256
 from g6.metaharness.domain import (
@@ -469,9 +469,9 @@ class _Counted:
         with counting(before_call=next_request) as noted, _gating_resends(take, limited), telling_stops(told):
             try:
                 text = self.inner.complete(system, user, max_tokens=max_tokens)
-            except LLMError as failed:
-                self.requests.at_a_limit(failed, generation)
+            except LLMError as failed:   # a refusal is kept first: it reads no clock, and the two never share a text
                 self.requests.at_a_refusal(failed, asked, sent, generation)
+                self.requests.at_a_limit(failed, generation)
                 raise
             finally:
                 returned = True
@@ -569,27 +569,46 @@ def _within(inner: Path, outer: Path) -> bool:
     return False
 
 
-def _is_link(path: Path) -> bool:
-    """Whether ``path`` is a link or a junction; one that cannot be asked is taken for one."""
-    try:
-        return path.is_symlink() or path.is_junction()
-    except OSError:
-        return True
+def _is_link(path: Path, *, absent: bool = False) -> bool:
+    """Whether ``path`` is a link or a junction, by the one reader's stat that raises (``asked``): one that cannot be
+    asked raises ``Unreadable``, never a "no", and so does one that is gone, unless ``absent`` allows it (a root, which is
+    compared by its absence), when it is none."""
+    info = asked(path, absent=absent)
+    return info is not None and linked(info)
 
 
-def _links_under(roots: Sequence[Path]) -> tuple[list[Path], list[str]]:
-    """Every link or junction that is a root or lies under one, since what it points at is no part of the root's listing,
-    and every folder under a root that could not be listed, named. The walk goes on past a folder it cannot list, so no
-    link found elsewhere is lost to it, and the caller refuses either (``_in_reach``, ``_unpinned``)."""
+def _links_under(roots: Sequence[Path], given: Sequence[Path] = ()) -> tuple[list[Path], list[str]]:
+    """Every link or junction that is a root, as ``given`` before anything resolved it or as resolved, or lies under one,
+    since what it points at is no part of the root's listing, and every root, folder or entry under one that could not
+    be listed or asked, named. The walk goes on past what it cannot list or ask, so no link found elsewhere is lost to it,
+    and the caller refuses either (``_in_reach``, ``_unpinned``)."""
     found: list[Path] = []
     unlisted: list[str] = []
+
+    def link(path: Path, absent: bool = False) -> bool | None:
+        """``True`` for a link, ``False`` for none, ``None`` for what could not be asked, which is named."""
+        try:
+            return _is_link(path, absent=absent)
+        except Exception:  # noqa: BLE001 - what cannot be asked is not known to be no link: named, and refused
+            unlisted.append(said(path))
+            return None
+
+    found += [root for root in given if link(root, absent=True)]
     for root in roots:
-        if _is_link(root):
+        at = link(root, absent=True)
+        if at:
             found.append(root)
+        if at is not False:
             continue
         for here, dirs, files in walk(root, skipped=unlisted):
-            found += [Path(here) / name for name in (*dirs, *files) if _is_link(Path(here) / name)]
-            dirs[:] = [name for name in dirs if not _is_link(Path(here) / name)]
+            kept = []
+            for name in (*dirs, *files):
+                held = link(Path(here) / name)
+                if held:
+                    found.append(Path(here) / name)
+                elif held is False and name in dirs:
+                    kept.append(name)
+            dirs[:] = kept
     return found, unlisted
 
 
@@ -612,9 +631,9 @@ def _whole(read: Callable[[], Any]) -> Any:
     own code raising while it is read included, so no reading of what judges raises anything else past it."""
     try:
         return read()
-    except Unreadable:
-        raise
     except Exception as exc:  # noqa: BLE001 - whatever keeps the reading from being made, it is unreadable
+        if isinstance(exc, Unreadable):
+            raise
         raise FrozenUnreadable(f"what judges could not be read whole ({type(exc).__name__}: {said(exc)})"[:400]) from exc
 
 
@@ -629,18 +648,20 @@ def envelope_sha256() -> str:
     made is theirs to accept by enrolling again. The place counts, so a run enrolled on a pinned install cannot be swapped
     for a working tree that holds the same bytes today. It is a tripwire, not custody: the code that compares this digest is
     among what it covers, so an edit to that code can skip the comparison. Holding it needs the read-only checkout of design
-    6.5."""
-    return digest({"code": manifest_sha256({**build_manifest(_SOURCE, patterns=ENVELOPE_PATTERNS), **_importable_caches(_SOURCE)}),
+    6.5. G6's package is listed once, and both its files and its importable caches are chosen from that one listing."""
+    listed = files_under(_SOURCE)
+    return digest({"code": manifest_sha256({**build_manifest(_SOURCE, patterns=ENVELOPE_PATTERNS, listed=listed),
+                                            **_importable_caches(_SOURCE, listed)}),
                    "install": os.path.normcase(str(_SOURCE))})
 
 
-def _importable_caches(root: Path) -> dict[str, str]:
+def _importable_caches(root: Path, listed: Sequence[Path] | None = None) -> dict[str, str]:
     """Each file under a ``__pycache__`` folder that Python could import as a module, as ``build_manifest`` gives files. A cache
     folder is a namespace package, so ``g6.x.__pycache__.name`` imports ``name.py``, ``name.pyc`` or an extension there. A cache
     a first import writes is named for its interpreter (``select.cpython-312.pyc``), which no import statement can name, so it is
-    left out and a legitimate import changes nothing. Listed and read by the one reader: what cannot be listed or read
-    raises ``FrozenUnreadable``."""
-    return {path.relative_to(root).as_posix(): _frozen_bytes(path) for path in files_under(root)
+    left out and a legitimate import changes nothing. Listed and read by the one reader, or chosen from ``listed``, its listing
+    of ``root``: what cannot be listed or read raises ``FrozenUnreadable``."""
+    return {path.relative_to(root).as_posix(): _frozen_bytes(path) for path in (files_under(root) if listed is None else listed)
             if in_cache(path.relative_to(root)) and _importable(path.name)}
 
 
@@ -767,8 +788,7 @@ def _unpinned(domain: Domain) -> list[tuple[str, str]]:
     problems = [(JUDGE_UNPINNED, "; ".join(found) + ", outside G6, the Python installation and every root this domain "
                  "declares, so no listing pins what it does")] if found else []
     given = [Path(root) for root in getattr(domain, "roots", None) or ()]       # as declared, before anything resolves it
-    under, unlisted = _links_under(roots)
-    links = [root for root in given if _is_link(root)] + under
+    links, unlisted = _links_under(roots, given)
     if unlisted:
         problems.append((JUDGE_UNPINNED, f"what judges cannot be listed whole ({unlisted[0]} cannot be listed), so no "
                          "listing pins it"))
@@ -781,22 +801,21 @@ def _pinned(roots: Sequence[Path]) -> dict[str, str]:
     under ``__pycache__`` as much as source), and any link or junction under it by that name alone, which refuses
     (``_unpinned``). Only the bytecode cache the interpreter writes for a source file under the root is left out, by the
     interpreter's own rule (``_interpreter_caches``): an import writes one, and the runner reads none (the freeze's threat
-    model is honest drift). A file that cannot be read, or a folder that cannot be listed, raises ``FrozenUnreadable``."""
-    return {os.path.normcase(str(root)): ("a link" if _is_link(root) else manifest_sha256(_listing(root)) if root.is_dir()
-                                          else "") for root in roots}
+    model is honest drift). A root that does not exist pins nothing, so its absence is compared. A file that cannot be read,
+    a folder that cannot be listed, an entry that cannot be asked, and a root that is no folder raise ``FrozenUnreadable``."""
+    return {os.path.normcase(str(root)): ("" if (info := asked(root, absent=True)) is None else "a link" if linked(info)
+                                          else manifest_sha256(_listing(root))) for root in roots}
 
 
 def _listing(root: Path) -> dict[str, str]:
-    """Every entry under ``root``: a link by that name alone, a file by its bytes, and no interpreter cache."""
+    """Every entry under ``root``, from one listing and each asked once by a stat that raises: a link by that name alone, a
+    file by its bytes, and no interpreter cache."""
     links, files = [], []
     for here, dirs, names in walk(root):
-        for name in (*dirs, *names):
-            path = Path(here) / name
-            if _is_link(path):
-                links.append(path)
-            elif name in names:
-                files.append(path)
-        dirs[:] = [name for name in dirs if not _is_link(Path(here) / name)]
+        held = {name for name in (*dirs, *names) if _is_link(Path(here) / name)}
+        links += [Path(here) / name for name in (*dirs, *names) if name in held]
+        files += [Path(here) / name for name in names if name not in held]
+        dirs[:] = [name for name in dirs if name not in held]
     caches = _interpreter_caches(files)
     return {**{path.relative_to(root).as_posix(): "a link" for path in links},
             **{path.relative_to(root).as_posix(): _frozen_bytes(path) for path in files
@@ -962,6 +981,7 @@ class ShadowLoop:
         self.waited = 0                           # ticks a budget wait turned away since the last cycle: a wait leaves no row
         self.tuned: list[dict[str, Any]] = []     # this tick's tuning cycles as they happen, for a row that a raise cut short
         self._frozen_seen: dict[str, str] | None = None   # the frozen digests this tick read before it developed anything
+        self._met: tuple[list[str], dict[str, str] | None, bool, _Halted | None] | None = None   # what its cycle met
         self.requests = _Requests(lambda: self._now(), self._halted, self._barred,
                                   lambda request, said: note_refusal(self.root, request, said))
         self._proposer = _Counted(proposer, self.requests)
@@ -1173,12 +1193,12 @@ class ShadowLoop:
         paused = self.log.paused() or self._must_stop()
         if paused:
             return _blocked(PAUSED, f"the loop is paused: {paused}", "A person reads why, then loop.resume('<name>').")
-        try:
+        try:                                     # the reading's one boundary (``_whole``) raises nothing else
             now, breached = self._frozen_now()
-            changed = _differs(now, breached, self.log.enrolled()["frozen"])
-        except FrozenUnreadable as exc:          # no reading of what judges stands, so none is compared or kept
+        except Exception as exc:  # noqa: BLE001 - no reading of what judges stands, so none is compared or kept
             return _blocked(FROZEN_CHANGED, f"what judges could not be read ({said(exc)}), so nothing measured against it "
                             "would mean what it did", "A person makes it readable; the next tick reads it again.")
+        changed = _differs(now, breached, self.log.enrolled()["frozen"])
         if changed:
             return _blocked(FROZEN_CHANGED, f"changed since a person enrolled this domain: {', '.join(changed)}. Nothing "
                             "measured against it would mean what it did", "A person checks the change and enrols again.")
@@ -1287,6 +1307,7 @@ class ShadowLoop:
         """One cycle. A heartbeat follows every tick, so someone watching can tell a loop that is waiting from one that
         has died."""
         self._frozen_seen = None                  # no tick adopts on a reading an earlier tick made
+        self._met = None                          # nor carries what an earlier tick's cycle met
         reply = self._refused() or self._run()
         self._beat(reply["completion_state"], reply["warning_card"]["code"], reason=reply["message"])
         return reply
@@ -1296,12 +1317,13 @@ class ShadowLoop:
         """A tick that raised past its own guard is a failed cycle like any other, so three in a row still pause. It ends on
         the same frozen check and the same rule as every cycle that adopts nothing (``_still_frozen``, ``_coded``), held to
         what the tick read before it developed anything, or to what a person enrolled when it read nothing, so a frozen
-        change in a failed cycle is kept and ranked."""
+        change in a failed cycle is kept and ranked, and it carries every safety status the tick's cycle met before it
+        failed (``_carried``), so a restart pauses on them."""
         if self.log.paused():
             return _blocked(PAUSED, f"the loop is paused: {self.log.paused()}", "A person reads why, then lifts it.")
         row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error", "code": CYCLE_FAILED,
                "reason": f"{type(exc).__name__}: {exc}"[:500]}
-        statuses: list[Mapping[str, Any]] = [row]
+        statuses: list[Mapping[str, Any]] = [row, *self._carried(row)]
         try:
             held = self._still_frozen() if self._frozen_seen is not None else self._as_enrolled()
         except Exception as second:  # noqa: BLE001 - a failed cycle is recorded whatever else fails
@@ -1364,50 +1386,37 @@ class ShadowLoop:
             try:                      # a sealed file already held open: no cycle starts over it
                 row = self._row() if breaches else self._cycle(recommended)
             except _AtLimit as reached:
-                row, limit = self._row(), reached
+                limit = reached
+                row = self._row()
             except _Halted as reached:
-                row, halted = self._row(), reached
+                halted = reached
+                row = self._row()
             except _Refused:
                 row = self._row()
             except Exception as exc:  # noqa: BLE001 - an unattended loop records the failure and lives to its next tick
                 row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
                        "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]}
-            finally:             # use nobody could count stays charged at its worst case
+            finally:
+                # what the cycle met, kept before anything that can fail (``_carried``), and a limit on disk with it
+                self._met = (breaches, self.requests.refusal, self.requests.unseen, halted)
+                if limit is not None:
+                    self._limited(spend.provider, limit)
+                # use nobody could count stays charged at its worst case
                 charged = self.meter.settle(spend, spend.amount if self.requests.unseen else self.requests.sent)
-        unseen, stopped, refusal = self.requests.unseen, self.requests.stopped, self.requests.refusal
+        stopped = self.requests.stopped
         self.requests.close()
         if self.tuned and "tuning" not in row:     # a tick cut short keeps what it had made
             row["tuning"] = reflex.funnel(self.tuned)
-        held: list[dict[str, Any]] = []           # what held over the cycle, read only now: a strategy that swallowed a
-        if breaches:                              # refusal adopts nothing either
-            held.append({"outcome": "sealed_breach", "code": SEALED_BREACH,
-                         "reason": f"{len(breaches)} sign(s) that the sealed split was within reach while developing. "
-                                   "Nothing is adopted. A read through a handle already open leaves no trace, so a person "
-                                   "decides whether it still counts as sealed"})
-        if unseen:
-            held.append({"outcome": "error", "code": UNMETERED_CALLER,
-                         "reason": "a model caller answered with no request noted, so the loop cannot count what it sends: "
-                                   "nothing is adopted, and a person gives it a caller that notes each request"})
-        if refusal is not None:       # a cycle, so it is on the record, and a pause, so nothing rephrases it on the next tick
-            row["classifier_stop"] = refusal
-            held.append({"outcome": "blocked", "code": CLASSIFIER_STOP,
-                         "reason": f"a classifier or a permission stopped a request ({refusal['said']}): nothing is "
-                                   "adopted, it is not sent again, and a person reads this before the loop goes on"})
-        if not held and limit is not None:   # a wait and no cycle, like any other: what ran is charged, none of it counts,
-            self.meter.limit_reached(spend.provider, limit.until)     # nothing is adopted, and a frozen change stays on
-            try:                                                      # disk for the next tick's reading to refuse
-                self.log.limit(spend.provider, limit.until.isoformat())
-            except (OSError, LedgerError):
-                pass                  # this process still waits; after a restart the first request finds the limit again
+        held = self._carried(row)                 # what held over the cycle: a strategy that swallowed a refusal adopts
+        if not held and limit is not None:        # nothing either
+            # a wait and no cycle, like any other: what ran is charged, none of it counts, nothing is adopted, and a frozen
+            # change stays on disk for the next tick's reading to refuse
             self.waited += 1
             return _blocked(BUDGET_WAIT, f"{spend.provider} met a limit after {charged:g} requests, so this tick scored nothing "
                             f"and waits until {limit.until.isoformat()}: {limit.said}",
                             "The loop waits; it runs again when the limit ends.", wait_until=limit.until.isoformat(),
                             charged=charged)
-        if halted is not None and halted.code in BARRED:   # a fault that is on the record, and holds the loop for a person
-            held.append({"outcome": "error", "code": halted.code,
-                         "reason": f"{halted.said}: nothing was sent, and nothing is adopted"})
-        elif not held and halted is not None:   # also no cycle, and as a limit: what ran is charged, none of it counts
+        if not held and halted is not None:   # also no cycle, and as a limit: what ran is charged, none of it counts
             return self._cut_off(halted, charged)
         if stopped:                   # runs cut off mid-tick compared nothing: no gate result stands on them
             held.append({"outcome": "blocked", "code": TICK_BUDGET_SPENT, "reason": f"{stopped}, so nothing is adopted"})
@@ -1433,6 +1442,46 @@ class ShadowLoop:
                          "target": seen.target, "ceiling": seen.ceiling, "estimated": seen.estimated, "waited": self.waited}
         row["reflex"] = opened
         return self._record(row)
+
+    def _carried(self, row: dict[str, Any]) -> list[dict[str, Any]]:
+        """The safety statuses this tick's cycle met, as it kept them the moment its work ended and before settlement
+        (``_met``), so every row the tick writes carries them, a fault's row among them, and a restart pauses on them
+        whatever failed after they were met. A classifier's stop puts the request it refused on the row as well, where
+        ``lost_cycle`` and the next tick read it. The sealed split's breaches are read as they stand, since its guard
+        counts a file still held open on its way out too."""
+        if self._met is None:
+            return []
+        breaches, refusal, unseen, halted = self._met
+        held: list[dict[str, Any]] = []
+        if breaches:
+            held.append({"outcome": "sealed_breach", "code": SEALED_BREACH,
+                         "reason": f"{len(breaches)} sign(s) that the sealed split was within reach while developing. "
+                                   "Nothing is adopted. A read through a handle already open leaves no trace, so a person "
+                                   "decides whether it still counts as sealed"})
+        if unseen:
+            held.append({"outcome": "error", "code": UNMETERED_CALLER,
+                         "reason": "a model caller answered with no request noted, so the loop cannot count what it sends: "
+                                   "nothing is adopted, and a person gives it a caller that notes each request"})
+        if refusal is not None:       # a cycle, so it is on the record, and a pause, so nothing rephrases it on the next tick
+            row["classifier_stop"] = refusal
+            held.append({"outcome": "blocked", "code": CLASSIFIER_STOP,
+                         "reason": f"a classifier or a permission stopped a request ({refusal['said']}): nothing is "
+                                   "adopted, it is not sent again, and a person reads this before the loop goes on"})
+        if halted is not None and halted.code in BARRED:   # a fault that is on the record, and holds the loop for a person
+            held.append({"outcome": "error", "code": halted.code,
+                         "reason": f"{halted.said}: nothing was sent, and nothing is adopted"})
+        return held
+
+    def _limited(self, provider: str, limit: _AtLimit) -> None:
+        """A provider's limit, kept the moment the cycle met it and before anything that can fail: first in the records a
+        restart reads (``CycleLog.limits``), then in this process, so a restart waits it out whatever failed after it, and
+        whatever else the cycle met. A note that cannot be written is left: this process still waits, and after a restart
+        the first request finds the limit again."""
+        try:
+            self.log.limit(provider, limit.until.isoformat())
+        except (OSError, LedgerError):
+            pass
+        self.meter.limit_reached(provider, limit.until)
 
     def _cut_off(self, halted: _Halted, charged: float) -> dict[str, Any]:
         """A stop met at a model call: say what it cut off, and note this folder's stop in the records, which this tick

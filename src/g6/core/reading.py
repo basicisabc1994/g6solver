@@ -5,13 +5,17 @@ raises ``Unreadable`` and nothing ever stands in for what could not be read.
 A digest of a file that could not be read, or a listing that skipped a folder it could not open, would say the bytes are
 what they were when nobody read them. So a read that fails, for whatever reason (a file another process holds without
 sharing, a byte-range lock, a denied folder, a file removed while it was read, an error never seen before), raises, and
-the caller decides what an unreadable reading means. The sealed split (``g6.core.vault``), the integrity manifest
+the caller decides what an unreadable reading means. Each root is listed once: a folder the listing goes into is listed
+whole or raises, every other entry is decided by a stat that raises (``asked``), never by a predicate that answers "no"
+for an entry it could not ask, and a selection is made from that listing, never by listing again. The sealed split
+(``g6.core.vault``), the integrity manifest
 (``g6.integrity.build_manifest``) and the loop's freeze (``g6.metaharness.loop``) all read through here.
 """
 from __future__ import annotations
 
 import hashlib
 import os
+import stat
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -33,52 +37,76 @@ def sha256_of(path: str | os.PathLike[str]) -> str:
         raise Unreadable(f"{said(path)} cannot be read ({type(exc).__name__})") from exc
 
 
+def asked(path: str | os.PathLike[str], *, follow: bool = False, absent: bool = False) -> os.stat_result | None:
+    """What ``path`` is, by a stat that raises: of the path itself (``os.lstat``), or of what a link there names when
+    ``follow`` (``os.stat``). Any failure at all raises ``Unreadable``, an entry gone since it was listed among them, never
+    a "no"; only with ``absent`` is a path that does not exist ``None``, for a root a caller compares by its absence."""
+    try:
+        return os.stat(path) if follow else os.lstat(path)
+    except Exception as exc:  # noqa: BLE001 - an entry that cannot be asked is unreadable, never a "no"
+        if absent and isinstance(exc, FileNotFoundError):
+            return None
+        raise Unreadable(f"{said(path)} cannot be read ({type(exc).__name__})") from exc
+
+
+def linked(info: os.stat_result) -> bool:
+    """Whether an entry, as ``asked`` found it, is a link or a junction: what it points at is no part of its folder."""
+    return stat.S_ISLNK(info.st_mode) or getattr(info, "st_reparse_tag", 0) == stat.IO_REPARSE_TAG_MOUNT_POINT
+
+
 def walk(root: str | os.PathLike[str], *, skipped: list[str] | None = None) -> Iterator[tuple[str, list[str], list[str]]]:
-    """``os.walk`` of ``root``, top down and following no link. A folder that cannot be listed raises ``Unreadable``, or,
-    with ``skipped``, is named there and the walk goes on, for a caller that must see all else the listing holds. A root
-    that does not exist lists nothing, as ``files_under`` holds none for it."""
+    """``os.walk`` of ``root``, top down and following no link, each folder listed once. A folder that cannot be listed
+    raises ``Unreadable``, or, with ``skipped``, is named there and the walk goes on, for a caller that must see all else
+    the listing holds. Whatever else ends the listing, an error ``os.walk`` hands no handler (one that is no ``OSError``,
+    never seen before) among them, ends it the same way, the folder named, so nothing past it is taken for listed. A
+    root that does not exist lists nothing, as ``files_under`` holds none for it."""
     try:
         os.lstat(root)
-    except FileNotFoundError:
-        return
-    except Exception:  # noqa: BLE001 - a root that cannot be asked is the walk's to refuse, as a folder it cannot list
-        pass
+    except Exception as exc:  # noqa: BLE001 - absence lists nothing; a root that cannot be asked is the walk's to refuse
+        if isinstance(exc, FileNotFoundError):
+            return
 
-    def refused(error: OSError) -> None:
+    def refused(error: BaseException) -> None:
         name = said(getattr(error, "filename", None) or root)
         if skipped is None:
             raise Unreadable(f"{name} cannot be listed ({type(error).__name__})") from error
         skipped.append(name)
 
-    yield from os.walk(root, followlinks=False, onerror=refused)
+    listing = os.walk(root, followlinks=False, onerror=refused)
+    while True:
+        try:
+            found = next(listing, None)
+        except Exception as exc:  # noqa: BLE001 - whatever ends the listing early, it was not listed whole
+            if isinstance(exc, Unreadable):
+                raise
+            refused(exc)
+            return
+        if found is None:
+            return
+        yield found
 
 
 def files_under(root: str | os.PathLike[str]) -> list[Path]:
-    """Every regular file at or under ``root``, sorted: the root itself when it is a file, and otherwise every file the
-    walk finds under it, a link to a file counting as the file it names and a link to a folder below the root not
-    followed. A root that does not exist holds none, so a caller compares its absence; any other failure to list a folder
-    or to ask what an entry is raises ``Unreadable``."""
+    """Every regular file at or under ``root``, sorted, from one listing: the root itself when it is a file, and otherwise
+    every entry the walk lists under it that a stat that raises (``asked``, following a link) finds a regular file, a link
+    to a file counting as the file it names and a link to a folder below the root not followed. A root that does not
+    exist holds none, so a caller compares its absence; any other failure to list a folder or to ask what an entry is,
+    an entry gone since its folder was listed among them, raises ``Unreadable``."""
     base = Path(root)
-    try:
-        os.lstat(base)
-    except FileNotFoundError:
+    if asked(base, absent=True) is None:
         return []
-    except Exception as exc:  # noqa: BLE001 - a root that cannot even be asked is unreadable
-        raise Unreadable(f"{said(base)} cannot be read ({type(exc).__name__})") from exc
-    if _asked(base, Path.is_file):
+    kind = asked(base, follow=True).st_mode
+    if stat.S_ISREG(kind):
         return [base]
-    if not _asked(base, Path.is_dir):
+    if not stat.S_ISDIR(kind):
         return []
-    return sorted(Path(here) / name for here, _, files in walk(base) for name in files
-                  if _asked(Path(here) / name, Path.is_file))
+    found = []
+    for here, _, files in walk(base):
+        for name in files:
+            path = Path(here) / name
+            if stat.S_ISREG(asked(path, follow=True).st_mode):
+                found.append(path)
+    return sorted(found)
 
 
-def _asked(path: Path, question) -> bool:  # noqa: ANN001 - a ``Path`` predicate
-    """What ``question`` says of ``path``; an entry that cannot be asked is unreadable, never a "no"."""
-    try:
-        return question(path)
-    except Exception as exc:  # noqa: BLE001 - an entry that cannot be asked is unreadable
-        raise Unreadable(f"{said(path)} cannot be read ({type(exc).__name__})") from exc
-
-
-__all__ = ["Unreadable", "files_under", "said", "sha256_of", "walk"]
+__all__ = ["Unreadable", "asked", "files_under", "linked", "said", "sha256_of", "walk"]
