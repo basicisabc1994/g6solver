@@ -755,13 +755,29 @@ def _same(one: Path, other: Path) -> bool:
 
 
 def _folders(root: Path | Archive) -> tuple[Path, Path]:
-    """The saved rows' folder and the amended verdicts' (``SAVED``, ``AMENDED``), refused (ValueError) when they are one folder by
-    identity, as a junction or link from one to the other makes them: a row read or written in one would be the other's (study
-    review 3, finding 14). Every reader and writer of the rows (``shelf``, ``keep``) and of a store (``beside``) asks it, at each
-    access."""
+    """The saved rows' folder and the amended verdicts' (``SAVED``, ``AMENDED``), by the one rule that every store folder is its
+    own, which every path in asks at each access: the rows' reader and writer (``shelf``, ``keep``) and ``beside``, through which
+    every review's and replay's store and the training's files are opened (tests/validation/test_study_followup_2.py lists every
+    path that opens a store for writing, from the code). The rows' folder, the amended verdicts' and every folder in either (each
+    review's or replay's store, or whatever else is there) must be distinct by identity, junctions and links followed: two that are
+    one folder are refused (ValueError), so a row, an amended verdict or a review is never written into another's folder (study
+    review 3, finding 14; study follow-up review 2, finding 5). A folder there that cannot be told apart (one that cannot be
+    read) is refused too; a link that resolves to nothing is no folder, and holds nothing."""
     rows, amended = _root(root) / SAVED, _root(root) / SAVED / AMENDED
-    if _same(rows, amended):
-        raise ValueError(f"{SAVED}/{AMENDED} is the saved rows' folder itself, by a junction or a link")
+    seen: dict[tuple[int, int], Path] = {}
+    entries = [Path(e.path) for folder in (rows, amended) if folder.is_dir() for e in os.scandir(folder) if e.is_dir()]
+    for path in (rows, amended, *entries):
+        try:
+            st = os.stat(path)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise ValueError(f"{path.name!r} beside the saved rows cannot be told apart from the other stores: {exc}") from None
+        other = seen.setdefault((st.st_dev, st.st_ino), path)
+        if os.path.normcase(os.fspath(other)) != os.path.normcase(os.fspath(path)):
+            what = "the saved rows' folder itself" if other == rows else other.relative_to(rows.parent).as_posix()
+            raise ValueError(f"{path.relative_to(rows.parent).as_posix()} is {what}, by a junction or a link: every store folder is "
+                             "its own")
     return rows, amended
 
 
