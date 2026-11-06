@@ -3346,3 +3346,40 @@ re-scored.
 
 **Not changed.** The frozen comparison rule and every earlier registration stand as written, and no earlier result is
 re-scored.
+
+## 2026-11-07 (morning): a correction to the layer tables, from a repair of the layers reader
+
+**What changed.** `claude/study-trust-followup` 29768de repairs `layers.py`, after its follow-up's second review found three
+defects:
+- it read an escaped f-string brace and an expression brace as the same;
+- it read a statement's end and a backslash continuation as the same;
+- it read a statement's indentation level as the same.
+Each merged two changes that behave differently. The repaired reader keeps every token Python gives, with its type and text,
+except comments and blank-line tokens.
+
+**What it moves.** One distinct patch: click-3769, arm H1 (stage 1's task list). It was counted as the commonest wrong change,
+and is another wrong change. Every layer had flagged it. No other run, stage or arm moves; the right patches, the pair lines
+and the balanced accuracies do not change. Across all bugs, 86 pairs of one bug's distinct patches that were one change are now
+two, and none goes the other way.
+
+**The figures, as recorded and as corrected.** Amended tests, inside the mixed bugs: share of distinct patches flagged (the
+table of 2026-11-04, midday).
+
+| Layer | Commonest wrong, recorded | Commonest wrong, corrected | Other wrong, recorded | Other wrong, corrected |
+|---|---|---|---|---|
+| Symptom test | 8 of 37 (22%) | 7 of 36 (19%) | 11 of 55 (20%) | 12 of 56 (21%) |
+| Rule test | 12 of 37 (32%) | 11 of 36 (31%) | 40 of 55 (73%) | 41 of 56 (73%) |
+| Frozen review | 13 of 37 (35%) | 12 of 36 (33%) | 29 of 55 (53%) | 30 of 56 (54%) |
+
+The same patch moves in the other three views (amended over all bugs, and maintainers' tests over all bugs and the mixed bugs),
+by one count in each.
+
+**What it changes in what was concluded: nothing.**
+- **Replay 4's prediction still fails.** The symptom test's gap between the commonest wrong change and right patches is 19
+  points where 25 were needed; it was 22.
+- **The kill rule still does not fire.** That needs a gap under 10 points.
+- **The symptom test still catches** the commonest wrong change about as often as other wrong patches (19% and 21%).
+- **Replay 3's rule test** still misses the shared reading and catches patches wrong in their own way (31% and 73%).
+
+**Not changed.** The recorded figures stand as written above, with the corrected ones beside them. No run is re-scored, and
+the 727 saved rows and 149 amended rows that kept no ending digest are read as they were.
