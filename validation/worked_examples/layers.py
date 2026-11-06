@@ -30,33 +30,85 @@ TEST_PATH = re.compile(r"(^|/)(tests?|testing)/|(^|/)test_[^/]*\.py$|_test\.py$|
 Said = Mapping[str, Mapping[str, str]]
 
 
-def _tokens(body: str) -> str:
-    """One line of code as Python's tokenizer reads it, its tokens joined with their boundaries kept (a NUL between two, which no
-    token holds), so two token sequences are never one change (study review 4, finding 8): layout and comments go, a string
-    literal stays exactly as written. A line the tokenizer cannot finish (a line of a string spanning lines) keeps the tokens it read, or is kept
-    stripped when it read none."""
-    got: list[str] = []
-    skip = (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.ENDMARKER)
+#: What Python's tokenizer gives that is layout or a comment, never a change's content.
+LAYOUT = (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.ENDMARKER)
+
+
+def _side(lines: Sequence[str]) -> list[list[str] | None]:
+    """One side of a hunk (its old lines or its new ones, in order: a span of the file as the patch holds it) read whole by Python's
+    own tokenizer, so a line inside a string that spans lines is that string's text, never a comment or code of its own (study
+    follow-up review 1, finding 3): for each line, the text of each token on it, a token that spans lines giving each line its own
+    part (a line inside a string gets one, even an empty one); layout and comments dropped, a string literal kept exactly as
+    written. The span may start inside a block and leave it, so the tokenizer is first given one line at each indentation the
+    span holds, shallowest first, and a dedent to any of them is one it knows. A line from where the tokenizer stopped (a span that
+    starts inside a string or ends inside one, or cannot be read) is None, and is kept as written."""
+    widths: dict[int, str] = {}
+    for line in lines:
+        if line.strip():
+            space = line[:len(line) - len(line.lstrip(" \t"))]
+            widths.setdefault(len(space.expandtabs(8)), space)
+    ladder = [widths[w] + "_\n" for w in sorted(widths) if w]
+    source = "".join(ladder) + "".join(line + "\n" for line in lines)
+    parts: list[list[str]] = [[] for _ in lines]
+    read = len(lines)                   # lines from this one on were not read by the tokenizer
     try:
-        for token in tokenize.generate_tokens(io.StringIO(body).readline):
-            if token.type not in skip:
-                got.append(token.string)
-    except (tokenize.TokenError, IndentationError, SyntaxError):
-        if not got:
-            return "" if body.strip().startswith("#") else body.strip()
-    return "\0".join(got)
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type in LAYOUT:
+                continue
+            pieces = token.string.split("\n")
+            if len(pieces) != token.end[0] - token.start[0] + 1:      # a token whose text is not its lines: read no further
+                read = min(read, max(0, token.start[0] - 1 - len(ladder)))
+                break
+            for i, piece in enumerate(pieces):
+                at = token.start[0] - 1 - len(ladder) + i
+                if 0 <= at < len(lines):
+                    parts[at].append(piece)
+    except tokenize.TokenError as exc:
+        if "statement" not in str(exc.args[0]):     # a span ending inside brackets is read whole; any other stop is not
+            read = min(read, max(0, int(exc.args[1][0]) - 1 - len(ladder)))
+    except SyntaxError as exc:                       # IndentationError and TabError among them
+        read = min(read, max(0, int(exc.lineno or 1) - 1 - len(ladder)))
+    return [got if at < read else None for at, got in enumerate(parts)]
+
+
+def _hunk(lines: Sequence[tuple[str, str]]) -> list[str]:
+    """A hunk's added and removed lines in order, each as its side's tokens read it (``_side``), joined with their boundaries kept
+    (a NUL between two, which no token holds: study review 4, finding 8); a line with none (blank, or a comment) dropped, and one
+    the tokenizer could not read kept as written."""
+    old = _side([body for sign, body in lines if sign != "+"])
+    new = _side([body for sign, body in lines if sign != "-"])
+    at, out = {"-": 0, "+": 0}, []
+    for sign, body in lines:
+        if sign == " ":
+            at["-"], at["+"] = at["-"] + 1, at["+"] + 1
+            continue
+        got = (old if sign == "-" else new)[at[sign]]
+        at[sign] += 1
+        if got is None:
+            if body:
+                out.append(sign + body)
+        elif got:
+            out.append(sign + "\0".join(got))
+    return out
 
 
 def change(text: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
     """A patch's normalised source change: for each Python file outside tests, its added and removed lines in order, each as
-    its tokens (``_tokens``), blank and comment lines dropped; files sorted by path. A file's name is read as ``git apply``
-    reads it, with ``product_review``'s own reader, from its header, which ends at its first hunk; in a hunk every line is
-    content, whatever it begins with."""
+    Python's tokenizer reads it in its hunk's whole old or new span (``_hunk``), blank and comment lines dropped; files sorted by
+    path. A file's name is read as ``git apply`` reads it, with ``product_review``'s own reader, from its header, which ends at its
+    first hunk; in a hunk every line is content, whatever it begins with, and a line that begins "@@" begins the next hunk."""
     files: dict[str, list[str]] = {}
-    current, header = None, False
+    current, header, hunk = None, False, []
+
+    def flush() -> None:
+        if current is not None and hunk:
+            files.setdefault(current, []).extend(_hunk(hunk))
+        hunk.clear()
+
     for line in text.split("\n"):
         line = line[:-1] if line.endswith("\r") else line
         if line.startswith("diff --git "):
+            flush()
             current, header = None, True
             for old, new in pr._sides(line[len("diff --git "):]):
                 path = pr._applied(pr._unquoted(new))
@@ -74,11 +126,11 @@ def change(text: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
                 if not (current and current.endswith(".py") and not TEST_PATH.search(current)):
                     current = None
             continue
-        if current is None or line[:1] not in "+-":
-            continue
-        body = _tokens(line[1:])
-        if body:
-            files.setdefault(current, []).append(line[0] + body)
+        if line.startswith("@@"):
+            flush()
+        elif current is not None and line[:1] in ("+", "-", " ", ""):
+            hunk.append((line[:1] or " ", line[1:]))
+    flush()
     return tuple(sorted((path, tuple(lines)) for path, lines in files.items() if lines))
 
 
