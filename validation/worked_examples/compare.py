@@ -26,7 +26,7 @@ TARGET = 0.95
 TWO_PRIMARIES = 0.025       # the bar with M9 and K1 both counted (PLAN.md, 2026-11-01): beside the rule, never in place of it
 EXPLORATORY = ("K0",)       # chosen after a result was read (PLAN.md, 2026-11-02): a report, never a verdict of the rule
 STAGE_1_PRIMARIES = ("M9", "K1")    # the arms stage 1 tested: for any later arm its bugs are development (PLAN.md, 2026-11-02)
-CLEAN = "no_counterexample_in_domain"
+CLEAN = we.LOOP_CLEAN       # the one rule's clean (``run.loop_status``); a loop over no change is ``run.NO_PATCH``, never this
 Rows = Mapping[tuple[str, str, int], Mapping[str, bool | None]]
 
 

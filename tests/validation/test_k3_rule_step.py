@@ -412,6 +412,8 @@ def _gated_loop(monkeypatch, after_step):
         tree = 0
 
         def sh(self, agent, script, *a, **kw):
+            if we.PATCH_BYTES in script:         # the patch's size (``run.patch_bytes``): the tree holds a change
+                return SimpleNamespace(returncode=0, stdout=f"{we.PATCH_BYTES}=100\n".encode(), stderr=b"")
             return SimpleNamespace(returncode=0, stdout=f"tree {Docker.tree}".encode(), stderr=b"")
 
     def session(*a, **kw):
@@ -620,6 +622,8 @@ def _timed_loop(monkeypatch, *, deadline, review_takes=0.0, start=0.0):
         tree = 0
 
         def sh(self, agent, script, *a, **kw):
+            if we.PATCH_BYTES in script:         # the patch's size (``run.patch_bytes``): the tree holds a change
+                return SimpleNamespace(returncode=0, stdout=f"{we.PATCH_BYTES}=100\n".encode(), stderr=b"")
             return SimpleNamespace(returncode=0, stdout=f"tree {Docker.tree}".encode(), stderr=b"")
 
     def session(*a, **kw):
@@ -1180,6 +1184,8 @@ def _repairing(monkeypatch, *, result, code, stop):
         tree = 0
 
         def sh(self, *a, **kw):
+            if we.PATCH_BYTES in a[1]:           # the patch's size (``run.patch_bytes``): the tree holds a change
+                return SimpleNamespace(returncode=0, stdout=f"{we.PATCH_BYTES}=100\n".encode(), stderr=b"")
             return SimpleNamespace(returncode=0, stdout=f"tree {Docker.tree}".encode(), stderr=b"")
 
     def session(ctx, run, agent, command, key, tally_, text, name, *, seconds, stop_usd, codes=None, deadline=None):
@@ -1244,7 +1250,10 @@ def _container_loop(monkeypatch, first, repaired, arm="K3", after_step=True):
     monkeypatch.setattr(we, "run_set", lambda *a: we.ProbeRun(1, {"test_critic.py::test_rule": "failed"}, {}, ""))
     monkeypatch.setattr(we, "parent_check", lambda *a: we.ProbeRun(1, {"test_critic.py::test_rule": "failed"}, {}, ""))
     monkeypatch.setattr(we, "keep_first_patch", lambda *a: None)
-    got = we.reviews_until_clean(SimpleNamespace(arm=arm), SimpleNamespace(repo="/repo"), SimpleNamespace(write_json=lambda *a: None),
+    sized = SimpleNamespace(sh=lambda agent, script, **kw: SimpleNamespace(      # the container answers only the patch's size
+        returncode=0, stdout=f"{we.PATCH_BYTES}=100\n".encode() if we.PATCH_BYTES in script else b"", stderr=b""))
+    got = we.reviews_until_clean(SimpleNamespace(arm=arm, docker=sized), SimpleNamespace(repo="/repo"),
+                                 SimpleNamespace(write_json=lambda *a: None),
                                  "agent", "base", ["claude", "--disallowedTools", "x"], "key", tally, 10, time.monotonic(), review,
                                  finding="parent", tree=lambda: state[0], after_step=after_step)
     return got, started, reviews

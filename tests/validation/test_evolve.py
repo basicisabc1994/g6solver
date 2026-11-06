@@ -131,12 +131,21 @@ class _Run:
         self.saved.append(name)
 
 
+class _Sized:
+    """The agent's container, which answers only the patch's size (``run.patch_bytes``): the tree holds a change."""
+
+    def sh(self, agent, script, *a, **kw):
+        assert we.PATCH_BYTES in script, script
+        return type("Done", (), {"stdout": f"{we.PATCH_BYTES}=100\n".encode(), "stderr": b"", "returncode": 0})()
+
+
 def _review(monkeypatch, critic, *sets):
     runs, asked = list(sets), []
     monkeypatch.setattr(we, "run_set", lambda ctx, task, agent, where: runs.pop(0))
     monkeypatch.setattr(we, "run_session", lambda ctx, run, agent, args, key, tally, text, name, **kw: asked.append((text, name)))
     monkeypatch.setattr(we, "scout_again", lambda args: args)
-    got = we.review_once(None, None, _Run(), "agent", [], "key", None, 1.0, 0.0, lambda: critic)
+    got = we.review_once(type("Ctx", (), {"docker": _Sized()})(), type("T", (), {"repo": "/w/r"})(), _Run(), "agent", [], "key", None,
+                         1.0, 0.0, lambda: critic, base="base")
     return got, asked
 
 

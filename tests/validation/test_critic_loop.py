@@ -39,6 +39,8 @@ class _Docker:
 
     def sh(self, agent, script, *args, **kw):
         self.scripts.append(script)
+        if we.PATCH_BYTES in script:             # the patch's size (``run.patch_bytes``): the tree holds a change
+            return type("Done", (), {"stdout": f"{we.PATCH_BYTES}=100\n".encode(), "stderr": b"", "returncode": 0})()
         return type("Done", (), {"stdout": f"tree {self.tree}".encode(), "stderr": b"", "returncode": 0})()
 
 

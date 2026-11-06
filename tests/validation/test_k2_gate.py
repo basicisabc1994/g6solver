@@ -33,6 +33,8 @@ def _loop(monkeypatch, arm, on_tree, at_parent, *, parent_raises=False):
         tree = 0
 
         def sh(self, agent, script, *a, **kw):
+            if we.PATCH_BYTES in script:         # the patch's size (``run.patch_bytes``): the tree holds a change
+                return SimpleNamespace(returncode=0, stdout=f"{we.PATCH_BYTES}=100\n".encode(), stderr=b"")
             return SimpleNamespace(returncode=0, stdout=f"tree {Docker.tree}".encode(), stderr=b"")
 
     def session(*a, **kw):

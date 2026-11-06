@@ -2258,10 +2258,11 @@ def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
 
 def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: list[str], key: str, tally: c.Tally,
                 stop: float, started: float, at_base: Mapping[str, ProbeRun] | None = None,
-                critique: Callable[[], dict[str, Any]] | None = None) -> dict[str, Any]:
+                critique: Callable[[], dict[str, Any]] | None = None, base: str | None = None) -> dict[str, Any]:
     """G6's ``cegis`` over the agent's finished work: the runner runs both scouts' probes and sends failures back in the
     same session. The hidden set is copied in for the run and removed, so the agent can never read it. From L8 a set that
-    exercised nothing on the base is left out, as it can say nothing of the patch, and the critic reads the patch once."""
+    exercised nothing on the base is left out, as it can say nothing of the patch, and the critic reads the patch once. Its
+    status is cegis's as the one rule reads it with the patch's size against ``base`` (``loop_status``)."""
     from g6.cegis import InputDomain, cegis
 
     rounds = [0]
@@ -2312,8 +2313,44 @@ def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
     loop = Repairs(check, ask, state if qualified(ctx.arm) else None, repair_text(ctx.arm) if qualified(ctx.arm) else "")
     got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
                 max_iterations=MAX_REPAIRS + 1, timeout_s=float(c.WALL_CLOCK_S))
-    return {"status": got.status, "rounds": loop.round, "reason": got.reason, "failing": sorted(loop.failing)[:40],
-            "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}}
+    return {"status": loop_status(got.status, patch_bytes(ctx, task, agent, base)), "rounds": loop.round, "reason": got.reason,
+            "failing": sorted(loop.failing)[:40], "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}}
+
+
+#: A review loop's status when nothing is open over a patch that holds a change: the loop's one "clean", written here only.
+LOOP_CLEAN = "no_counterexample_in_domain"
+#: A review loop's status over a tree that holds no change, whatever any review said: never clean (replay cohort, 2026-11-06;
+#: K3 pilot, pygments-3158 repeat 1, whose empty patch a review called clean).
+NO_PATCH = "no_patch"
+PATCH_BYTES = "we-patch-bytes"      # the line ``patch_bytes`` reads its answer from
+
+
+def patch_bytes(ctx: Context, task: Task, agent: str, base: str | None) -> int | None:
+    """How many bytes the tree's patch against ``base`` has, in the agent's container, made as every capture makes it
+    (``diff_script``, new files included): 0 for a tree with no change. None when it could not be read: no base, a docker step
+    that failed or ran out of time, or a reply without the size's own line."""
+    if not base:
+        return None
+    at = f"{WE}/we-size.patch"
+    try:
+        said = out(ctx.docker.sh(agent, f'{diff_script(task.repo, base, at)}; printf "{PATCH_BYTES}=%s\\n" "$(wc -c < "{at}")"; '
+                                        f'rm -f "{at}"', workdir=task.repo, timeout=300))
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        return None
+    found = re.findall(rf"^{PATCH_BYTES}=\s*(\d+)\s*$", said, re.M)
+    return int(found[-1]) if found else None
+
+
+def loop_status(status: str, size: int | None) -> str:
+    """The one rule every review loop's status is decided by (``reviews_until_clean``, ``review_once``, ``reviews_with_bug_test``,
+    ``repair_loop``), from what the loop found and the size of the patch it read (``patch_bytes``): ``NO_PATCH`` for a tree with
+    no change, whatever the loop found; ``LOOP_CLEAN`` only over a patch known to hold a change, so a size that could not be
+    read is "inconclusive", never clean; any other status as the loop found it."""
+    if size == 0:
+        return NO_PATCH
+    if status == LOOP_CLEAN and not (size and size > 0):
+        return "inconclusive"
+    return status
 
 
 def keep_first_patch(ctx: Context, task: Task, agent: str, base: str, n: int = 1) -> None:
@@ -2441,16 +2478,17 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
         reason = "the run's deadline passed"
     clean = not timed_out and not failing and not broken and verdicts[-1] in ("none", "defect")
     ended = ended or ("timeout" if timed_out else "")      # a host repair's own ending first: it is the run's ending on record
-    return {"status": "no_counterexample_in_domain" if clean else "inconclusive", "rounds": rounds, "reason": reason,
+    return {"status": loop_status(LOOP_CLEAN if clean else "inconclusive", patch_bytes(ctx, task, agent, base)), "rounds": rounds,
+            "reason": reason,
             "failing": failing[:40], "critic": {"verdicts": verdicts, "seconds": round(seconds, 1)},
             **({"finding": "parent"} if gated else {}), **({"ended": ended} if ended else {})}
 
 
 def review_once(ctx: Context, task: Task, run: Any, agent: str, docker_args: list[str], key: str, tally: c.Tally, stop: float,
-                started: float, critique: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+                started: float, critique: Callable[[], dict[str, Any]], base: str | None = None) -> dict[str, Any]:
     """Arm R, the control for the loop (PLAN.md, 2026-10-31 night): one review by another model family, and one repair if its test
     fails on the patch. No scout, no probes, no G6, so what the full loop adds is the difference. A test that will not run says
-    nothing of the patch."""
+    nothing of the patch. Its status is decided by the one rule, with the patch's size against ``base`` (``loop_status``)."""
     critic = critique()
     rounds, failing = 1, set()
 
@@ -2467,8 +2505,8 @@ def review_once(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
                     CRITIC_NOTE.format(**{k: critic.get(k, "") for k in ("rule", "why", "test")}) + REVIEW_ASK, c.NDJSON["numbered_stream"].format(tag="repair", n=1),
                     seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
         failing = check()
-    return {"status": "inconclusive" if failing else "no_counterexample_in_domain", "rounds": rounds, "reason": "",
-            "failing": sorted(failing)[:40], "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}}
+    return {"status": loop_status("inconclusive" if failing else LOOP_CLEAN, patch_bytes(ctx, task, agent, base)), "rounds": rounds,
+            "reason": "", "failing": sorted(failing)[:40], "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}}
 
 
 # --- arm K3: K2 with the author's rule step after the first patch (PLAN.md, 2026-11-05, morning, later, items 1 and 4) ----------
@@ -2926,22 +2964,24 @@ def reviews_with_bug_test(ctx: Context, task: Task, run: Any, agent: str, base: 
     """Arms V3 and V4 after the agent's session (PLAN.md, 2026-11-04): the bug's test, written before the patch, run on the tree
     after each session; while a case fails, the failing cases and the test go back to the same session, as arm K's reviewer's
     do, up to ``MAX_REPAIRS`` repairs. A fresh copy of the test is put in place before each check. A test that fails nothing on
-    the parent says nothing of any patch, so it sends nothing back, as replays 3 and 4 read it."""
+    the parent says nothing of any patch, so it sends nothing back, as replays 3 and 4 read it. Each status it returns is decided
+    by the one rule, with the patch's size as it stands then (``loop_status``)."""
     import replay3
 
     ins = bug_instruction(ctx.arm)
     summary = {"verdict": bug.get("verdict"), "instruction": bug.get("instruction"), "seconds": bug.get("seconds")}
     if not bug.get("test") or bug.get("error") or replay3.no_answer(bug):
         failed = bool(replay3.no_answer(bug)) or bool(bug.get("error"))
-        return {"status": "inconclusive" if failed else "no_counterexample_in_domain", "rounds": 0, "failing": [], "critic": summary,
+        return {"status": loop_status("inconclusive" if failed else LOOP_CLEAN, patch_bytes(ctx, task, agent, base)), "rounds": 0,
+                "failing": [], "critic": summary,
                 "reason": "the bug's reviewer failed" if failed else "no test of the bug was written"}
     at_parent = bug.get("at_parent")
     if at_parent is None or at_parent.exit is None:
-        return {"status": "inconclusive", "rounds": 0, "failing": [], "critic": summary,
-                "reason": "the bug's test gave no result on the parent, as a container failure gives"}
+        return {"status": loop_status("inconclusive", patch_bytes(ctx, task, agent, base)), "rounds": 0, "failing": [],
+                "critic": summary, "reason": "the bug's test gave no result on the parent, as a container failure gives"}
     if not replay3.failed_cases(at_parent):
-        return {"status": "no_counterexample_in_domain", "rounds": 0, "failing": [], "critic": summary,
-                "reason": "the bug's test reproduces nothing on the parent"}
+        return {"status": loop_status(LOOP_CLEAN, patch_bytes(ctx, task, agent, base)), "rounds": 0, "failing": [],
+                "critic": summary, "reason": "the bug's test reproduces nothing on the parent"}
     checked_ctx = copy.copy(ctx)                       # every exec of a check is checked: a docker failure is no clean review
     checked_ctx.docker = replay3.Checked(ctx.docker)
     patch_at = f"{WE}/we-tree.patch"
@@ -2960,12 +3000,12 @@ def reviews_with_bug_test(ctx: Context, task: Task, run: Any, agent: str, base: 
             write_in(ctx.docker, agent, f"{ins.at}/{ins.file}", bug["test"] + "\n", user="root")
             got = run_set(checked_ctx, task, agent, ins.at)
         except RuntimeError as exc:
-            return {"status": "inconclusive", "rounds": rounds, "failing": [], "critic": summary,
-                    "reason": f"a check of the bug's test failed to run: {exc}"[:300]}
+            return {"status": loop_status("inconclusive", patch_bytes(ctx, task, agent, base)), "rounds": rounds, "failing": [],
+                    "critic": summary, "reason": f"a check of the bug's test failed to run: {exc}"[:300]}
         run.write_json(f"repair_check_{n}_bug.json", {"exit": got.exit, "ran": got.ran, "results": got.results, "tail": got.tail})
         if got.exit is None:
-            return {"status": "inconclusive", "rounds": rounds, "failing": [], "critic": summary,
-                    "reason": "a check of the bug's test gave no exit, as a container failure gives"}
+            return {"status": loop_status("inconclusive", patch_bytes(ctx, task, agent, base)), "rounds": rounds, "failing": [],
+                    "critic": summary, "reason": "a check of the bug's test gave no exit, as a container failure gives"}
         failing = [case.split(":", 1)[1] for case in replay3.failed_cases(got)]
         if not failing:
             reason = "the bug's test holds" if got.usable else "the bug's test would not run on the patch"
@@ -2981,8 +3021,8 @@ def reviews_with_bug_test(ctx: Context, task: Task, run: Any, agent: str, base: 
         if tree() == before:
             reason = "the agent left the code as it was"
             break
-    return {"status": "inconclusive" if failing else "no_counterexample_in_domain", "rounds": rounds, "reason": reason,
-            "failing": failing[:40], "critic": summary}
+    return {"status": loop_status("inconclusive" if failing else LOOP_CLEAN, patch_bytes(ctx, task, agent, base)), "rounds": rounds,
+            "reason": reason, "failing": failing[:40], "critic": summary}
 
 
 def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -> dict[str, Any]:
@@ -3235,11 +3275,11 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                 ended = "" if got == "finished" else got
         if looped and holds_loop(ctx.arm) and not dry and not ended:
             record["repairs"] = repair_loop(ctx, task, run, agent, docker_args, key, tally, stop, started, at_base,
-                                            lambda: run_critic(ctx, task, run, agent, base, title, text))
+                                            lambda: run_critic(ctx, task, run, agent, base, title, text), base=base)
         if ctx.arm == "R" and not dry and not ended:
             keep_first_patch(ctx, task, agent, base)
             record["repairs"] = review_once(ctx, task, run, agent, docker_args, key, tally, stop, started,
-                                            lambda: run_critic(ctx, task, run, agent, base, title, text))
+                                            lambda: run_critic(ctx, task, run, agent, base, title, text), base=base)
         stepped, steps_ctx = dog is not None, ctx
         if stepped:      # K3: the first session, its patch kept, the rule step; each only from a recognised success (step_ending)
             steps_ctx = copy.copy(ctx)       # every docker call of K3's steps bounded by the watchdog, which their reviews see too

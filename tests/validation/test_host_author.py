@@ -180,6 +180,9 @@ class HostDocker:
 
     def sh(self, ctr, script, *a, **kw):
         self.calls.append(("sh", script))
+        if getattr(we, "PATCH_BYTES", "\0") in script:     # the patch's size (``run.patch_bytes``): mod.py as the base had it, or not
+            changed = (self.repo / "src" / "mod.py").read_text("utf-8") != "def f():\n    return 0\n"
+            return ok(f"{we.PATCH_BYTES}={len((self.repo / 'src' / 'mod.py').read_bytes()) if changed else 0}\n".encode())
         if script == we.TREE_STATE:
             return ok(json.dumps({"head": self.task.parent, "tree": "tree", "dirty": 0, "commits": 1}).encode())
         if script == we.ARM_STATE:
@@ -876,7 +879,9 @@ def test_a_host_run_reserves_and_stops_nothing_of_the_apis_money(monkeypatch, tm
 # R5: on the host the agent's tree is the workspace, by its bytes.
 def test_k_on_the_host_compares_the_workspaces_bytes_and_never_gits_display(monkeypatch):
     class Docker:
-        def sh(self, *a, **kw):
+        def sh(self, agent, script, *a, **kw):
+            if we.PATCH_BYTES in script:         # the patch's size at the loop's end (``run.patch_bytes``), which is no display
+                return ok(f"{we.PATCH_BYTES}=100\n".encode())
             raise AssertionError("git's display is not read when the tree is given")
 
     trees = iter(["a", "b", "b", "b"])
