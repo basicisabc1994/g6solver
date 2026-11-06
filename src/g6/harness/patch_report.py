@@ -17,7 +17,12 @@ At most ``MAX_LINES`` lines, in this order:
    merging;
 5. how this was decided, one line per step: proposed, tested (with the proposed checks and template instances, each
    with its result; none of them passes a requirement), gate, approve;
-6. the standing note: the specification may be incomplete.
+6. the standing note: the specification may be incomplete; then what was not checked (``assessment.not_checked``).
+
+Where the assessment carries the evidence issuer's statements (``assessment.requirement_evidence``), each requirement's
+line in parts 2 and 3 also says the evidence kind of its checks and how the issuer, the one rule that decides a
+requirement's status, reads it: checked, refuted, conflicting, or not counted yet and why. Model results and proposed
+checks are never among them: they stay in the Tested step, where none passes a requirement.
 
 A list cut at its room ends with "and N more" and names the field that holds the rest. Text the repository or the
 caller wrote (node ids, paths, requirement text, messages, commands) is shown only inside code spans fenced against
@@ -26,7 +31,7 @@ from __future__ import annotations
 
 import re
 
-MAX_LINES = 40
+MAX_LINES = 41
 #: The third part the reports of V9's arm 3 must keep (the registered protocol's amendment A5).
 STANDING_NOTE = ("The task's specification may be incomplete: G6 checked the requirements as they were stated and "
                  "cannot rule out something they leave out.")
@@ -96,6 +101,42 @@ LOOP_LIMITS = ("- This loop has been measured on seven training bugs only.",
                "- A model wrote these tests, so none of them passes a requirement.")
 
 
+#: Why the evidence issuer does not count a requirement yet, by the first code its gap names (``g6.evidence``'s words).
+NOT_COUNTED = (("control_after_receipt", "its negative control, the run at the base commit, came after the pass"),
+               ("self_authored", "the patch's author wrote the check"),
+               ("frozen_after_artifact", "the check is new with the patch"),
+               ("evidence_kind", "no check of a kind that can count ran"),
+               ("no_negative_control", "no run showed the check can fail"),
+               ("not_in_ledger", "a record is not in G6's ledger"),
+               ("receipt_for_other_bytes", "a result was taken on other bytes"),
+               ("advisory_check_failed", "a check failed that was not first shown able to fail"),
+               ("check_result_unknown", "a check gave no result"))
+
+
+def _issuer(assessment: dict, requirement: object, form: str = "; {}") -> str:
+    """The evidence issuer's reading of ``requirement``, with its checks' evidence kinds, as a clause in ``form`` (by
+    default one that ends a line); "" when the assessment carries none."""
+    evidence = assessment.get("requirement_evidence") or {}
+    if evidence.get("refused_by_issuer"):   # never silence: the issuer counted nothing, and says why in the field
+        return form.format("the evidence issuer refused the review's inputs, so it counts nothing "
+                           f"({code('assessment.requirement_evidence')})")
+    found = next((s for s in evidence.get("requirements") or [] if s.get("requirement") == requirement), None)
+    if found is None:
+        return ""
+    kinds = sorted({str(kind) for kind in (found.get("kinds") or {}).values() if kind})
+    shown = ", ".join(code(kind, 40) for kind in kinds) or "none it can count"
+    if found.get("checked"):
+        said = "checked"
+    elif found.get("support") and found.get("refute"):
+        said = "conflicting evidence, one check for it and one against"
+    elif found.get("refute"):
+        said = "refuted by " + ", ".join(code(c, 40) for c in found.get("refuted_by") or [])
+    else:
+        gap = str(found.get("gap") or "")
+        said = "not counted yet: " + next((why for key, why in NOT_COUNTED if key in gap), "no check G6 can count ran")
+    return form.format(f"evidence {shown}, and the evidence issuer: {said}")
+
+
 def _plain(node: object) -> str:
     """The repository's plain command for ``node``: its own pytest, with none of G6's isolating options."""
     import shlex
@@ -162,7 +203,8 @@ def _findings(assessment: dict) -> list[list[str]]:
               f"{code(_words(str(r.get('detail', ''))))}", *([IGNORED_TO_DO] if r["code"] in TO_DO else [])]
              for r in assessment.get("reasons", []) if r.get("stage") == "integrity"]
     for found in defects.get("stated_and_repository_checks", []):
-        requirements = ", ".join(code(r) for r in found.get("requirements", [])) or "no stated requirement"
+        requirements = ", ".join(code(r) + _issuer(assessment, r, " ({})") for r in found.get("requirements", [])
+                                 ) or "no stated requirement"
         reproduction = found.get("reproduction") or {}
         head = (f"- **{FAILED.get(found.get('code'), 'A check failed')}** ({found.get('code')}) for {requirements}: "
                 f"{code(found.get('check', ''))}")
@@ -197,7 +239,8 @@ def _findings(assessment: dict) -> list[list[str]]:
 
 def _missing(assessment: dict) -> list[list[str]]:
     return [[f"- {code(item.get('requirement', ''), 40)} {code(item.get('text', ''), 80)}: "
-             f"{code(_words(str(item.get('reason', ''))), 120)}; to settle it: {code(item.get('settle_by', ''), 140)}"]
+             f"{code(_words(str(item.get('reason', ''))), 120)}; to settle it: {code(item.get('settle_by', ''), 140)}"
+             + _issuer(assessment, item.get("requirement"))]
             for item in (assessment.get("completion") or {}).get("not_established", [])]
 
 
@@ -212,7 +255,7 @@ def _shown(assessment: dict) -> list[list[str]]:
         line = f"- {code(item.get('requirement', ''), 40)} on " + ", ".join(code(c, 80) for c in checks)
         if item.get("kind") != "preserve" and checks and all(base.get(c) in ("failed", "timed_out") for c in checks):
             line += ": fails at the base commit, passes on the patch"
-        items.append([line])
+        items.append([line + _issuer(assessment, item.get("requirement"))])
     return items
 
 
@@ -342,6 +385,8 @@ def render(assessment: dict) -> str:
     lines += _cut(_shown(assessment), BUDGET["shown"], "assessment.completion.demonstrated") or ["- None."]
     lines += ["", "## For you to decide", *_decide(assessment)[:BUDGET["decide"]]]
     lines += ["", "## How this was decided", *_steps(assessment), "", STANDING_NOTE]
+    if assessment.get("not_checked"):
+        lines.append("Not checked: " + "; ".join(str(item) for item in assessment["not_checked"]) + ".")
     return "\n".join(lines)
 
 

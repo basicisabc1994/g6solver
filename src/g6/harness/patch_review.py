@@ -118,6 +118,7 @@ caller assertions; their lexical support is reported and decides nothing.
 from __future__ import annotations
 
 import configparser
+import hashlib
 import platform
 import re
 import time
@@ -1174,6 +1175,13 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     self_checked = ", ".join(_self_checked(evaluated, change, Path(root), runs))
     if self_checked:
         reason("evidence", SELF_CHECKED, SELF_CHECKED_DETAIL.format(ids=self_checked))
+
+    def authored(check: str) -> bool:
+        try:
+            return _written(check, change, Path(root))
+        except (repo_tests.RepoRefused, OSError):   # authorship G6 cannot read is the patch author's: no support
+            return True
+
     return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
                   artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects,
                   first_action=(MISSING_IMPORT_ASK.format(name=missing[0]) if missing else
@@ -1181,7 +1189,25 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                   prepared=prepared, adequacy=adequacy, config=config,
                   counts={"template_instances": len(instances), "proposed_checks": len(proposed),
                           "model_calls": proposals.calls if proposals else 0}, roots=roots,
-                  stopped=stopped, proposer=proposals)
+                  stopped=stopped, proposer=proposals,
+                  issuer_inputs={"check_sha": _check_shas(Path(root), evaluated), "written": authored})
+
+
+def _check_shas(root: Path, evaluated: list[dict]) -> dict[str, str]:
+    """Each stated check's SHA-256, its node id and its file's bytes as the review found them; none for a check whose
+    file G6 cannot read as a file inside the tree (a folder, a link, a file gone), which the mapping then refuses."""
+    found: dict[str, str] = {}
+    top = root.resolve()
+    for check in (c for req in evaluated for c in req["checks"] if c.get("provenance") == STATED):
+        path = root / check["id"].partition("::")[0]
+        try:
+            if (check["id"] in found or path.is_symlink() or not path.is_file()
+                    or not path.resolve().is_relative_to(top)):
+                continue
+            found[check["id"]] = hashlib.sha256(check["id"].encode("utf-8") + b"\0" + path.read_bytes()).hexdigest()
+        except OSError:
+            continue
+    return found
 
 
 def _structural_check(found: dict) -> dict:
@@ -1348,26 +1374,29 @@ SELF_CHECKED_ASK = ("{ids}: this rests on the author's own tests, so tell the pe
                     "not write and that fails at the base commit can change it. Do not rewrite tests to change it.")
 
 
+def _written(check: str, change, root: Path) -> bool:
+    """Whether the patch wrote ``check``: its file (or a test in its folder) is one the patch adds or changes, or it
+    does not exist at the base commit."""
+    head = (root / check.partition("::")[0]).resolve()
+    try:
+        rel = head.relative_to(Path(change.repo).resolve()).as_posix()
+    except ValueError:
+        return False
+    rel = "" if rel == "." else rel
+    inside = [path for path in change.files if not rel or path.startswith(rel + "/")]
+    if rel in change.files or any(repo_tests.is_test_related(path) for path in inside):
+        return True
+    return bool(rel) and not repo_tests._git(change.repo, "ls-tree", "--name-only", change.base_commit, "--", rel)
+
+
 def _self_checked(evaluated: list[dict], change, root: Path, runs: list[dict]) -> list[str]:
     """The requirements with no independent check. A check is independent when it exists at the base commit, its file
     is unchanged, a folder holds no test the patch adds or changes, and, unless the requirement only keeps behaviour,
     it does not pass at the base commit too: an old test that passes there says nothing of the change."""
     at_base = next((run.get("outcomes") or {} for run in runs if run.get("check") == AT_BASE), {})
 
-    def written(check: str) -> bool:
-        head = (root / check.partition("::")[0]).resolve()
-        try:
-            rel = head.relative_to(Path(change.repo).resolve()).as_posix()
-        except ValueError:
-            return False
-        rel = "" if rel == "." else rel
-        inside = [path for path in change.files if not rel or path.startswith(rel + "/")]
-        if rel in change.files or any(repo_tests.is_test_related(path) for path in inside):
-            return True
-        return bool(rel) and not repo_tests._git(change.repo, "ls-tree", "--name-only", change.base_commit, "--", rel)
-
     def independent(req: dict, check: dict) -> bool:
-        return (check["provenance"] == STATED and not written(check["id"])
+        return (check["provenance"] == STATED and not _written(check["id"], change, root)
                 and (req["kind"] == "preserve" or at_base.get(check["id"]) != "passed"))
 
     return [req["id"] for req in evaluated if req["status"] == PASSED_ON_CHECKS
@@ -1398,9 +1427,12 @@ def _one_line(text: object) -> str:
 
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
            sources, started, follow_ups=(), listed=(), assumed=(), search=None, defects=(), prepared=None,
-           adequacy=None, config=None, counts=None, roots=(), stopped=(), proposer=None, first_action="") -> dict:
+           adequacy=None, config=None, counts=None, roots=(), stopped=(), proposer=None, first_action="",
+           issuer_inputs=None) -> dict:
     """The reply. ``first_action``: the next action that stands first for an insufficient-evidence outcome in place of
-    the general one (the launch review's I6: a module the patch imports that is not installed here)."""
+    the general one (the launch review's I6: a module the patch imports that is not installed here).
+    ``issuer_inputs``: each stated check's SHA-256 and whether the patch wrote it, for ``assessment.requirement_evidence``
+    (``g6.harness.requirement_evidence``), the issuer's statement for each requirement beside the review's own reading."""
     from g6.harness import verification_search   # the completion report, in every reply
     # a repository's names reach these texts as they are; each is one line (the fresh review of the F1-F8 fix pass)
     reasons = [{**r, "detail": _one_line(r["detail"])} for r in reasons]
@@ -1454,6 +1486,11 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                                                      artifact=artifact, base_commit=change.base_commit,
                                                      templates=prepared, adequacy=adequacy, stopped=stopped,
                                                      proposals=proposer)}
+    if issuer_inputs is not None:   # the one authority's statement of each requirement (G6 0.3, slice 2)
+        from g6.harness import requirement_evidence
+        assessment["requirement_evidence"] = requirement_evidence.assess(
+            evaluated, runs, artifact=artifact, base_commit=change.base_commit, environment=environment,
+            **issuer_inputs)
     from g6.harness import patch_report   # A1: the readable report, derived from the fields above; it decides nothing
     assessment["report"] = patch_report.safe_render(assessment)
     card = warning_card(CODE, summary, next_actions[0])
