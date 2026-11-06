@@ -1283,10 +1283,12 @@ def read_report(data: bytes) -> dict[str, Any] | None:
 
 
 def pytest_exit(output: bytes) -> str | None:
-    """pytest's exit as ``pytest_script`` prints it last (``exit=N``), or None when the line is not there: the answer the one
-    reader (``box_mcp.seen``) takes from the call."""
+    """pytest's exit as ``pytest_script`` prints it last (``exit=N``), or None when the line is not there or what follows it is
+    no integer written (``box_mcp.exit_status``; replay cohort, repair 2): the answer the one reader (``box_mcp.seen``) takes
+    from the call, so a call with no exit status written is unknown."""
     said = box_mcp._text(output).strip()
-    return said.rsplit("exit=", 1)[-1] if "exit=" in said else None
+    code = said.rsplit("exit=", 1)[-1] if "exit=" in said else None
+    return code if box_mcp.exit_status(code) is not None else None
 
 
 def parse_junit(text: str) -> dict[str, str]:
@@ -3654,7 +3656,7 @@ def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool
     rows = []
     for label, patch in [*patches, ("final", src / "final.patch")]:
         body = _oracle_run(ctx, task, patch=patch, folder=folder, label=label, amended=amended)
-        if body.get("patch_applied", True) and not body.get("results") and str(body.get("pytest_exit")).strip() != "124":
+        if body.get("patch_applied", True) and not body.get("results") and box_mcp.exit_status(body.get("pytest_exit")) != 124:
             raise RuntimeError(f"no test report for {label}")   # a check that did not happen is not a failed patch
         rows.append({"patch": label, "bytes": patch.stat().st_size if patch.exists() else 0,
                      "patch_applied": body.get("patch_applied", True), **verdict(body.get("results") or {}, f2p, p2p)})

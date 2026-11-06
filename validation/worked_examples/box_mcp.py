@@ -409,10 +409,21 @@ def seen(done: Any, read: Callable[[bytes], Any] | None = None) -> Seen:
     return Seen(UNKNOWN, f"the call itself returned {code}: {said}", code, output)
 
 
+def exit_status(value: Any) -> int | None:
+    """The one reader of an exit status a script wrote (replay cohort, repair 2): an integer from 0 to 255, given as an int or as
+    the decimal digits a shell writes (``exit=$?``); None for anything else (missing, empty, not a number, out of range, a bool),
+    so a run whose exit status was not written is not seen to end, never known."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str) and re.fullmatch("[0-9]{1,3}", value):
+        value = int(value)
+    return value if isinstance(value, int) and 0 <= value <= 255 else None
+
+
 def _run_seen(body: Any) -> bool:
     """Whether a test run was observed: its call seen to pass, its exit and its report came back (``tests_seen``'s first rules)."""
     return (isinstance(body, Mapping) and body.get("patch_applied") is not False and body.get("call") == PASSED
-            and body.get("pytest_exit") is not None and isinstance(body.get("results"), Mapping)
+            and exit_status(body.get("pytest_exit")) is not None and isinstance(body.get("results"), Mapping)
             and bool(body.get("report", bool(body.get("results")))))
 
 
@@ -451,15 +462,16 @@ def tests_seen(body: Mapping[str, Any] | None, tests: Iterable[str], *, seen_pas
     back, its results), over ``tests``: PASSED when the run was observed and every one of them was seen to pass; FAILED when the
     run was observed and at least one was seen to fail (failed or error); else UNKNOWN, with why. The run is not observed when
     its patch did not apply, its call was not seen to pass (``seen``) or its call's own result was never recorded, no exit
-    status came back, or no report came back (a timeout with no result among them); a test the report does not hold, or holds
-    as skipped, is a missing result: never a pass and never a failure. Whether each test was seen to fail is the one rule's
+    status came back (one that is no integer written is none: ``exit_status``), or no report came back (a timeout with no result
+    among them); a test the report does not hold, or holds as skipped, is a missing result: never a pass and never a failure.
+    Whether each test was seen to fail is the one rule's
     (``seen_failing``); ``seen_passing_in``, the gold patch's run on the same image ids, is its evidence for each of
     ``fail_to_pass``, as the base's and the empty patch's controls give them. Returns the state, why, and how many tests were
     seen to pass, seen to fail, and not seen."""
     names = sorted(set(tests))
     body = body if isinstance(body, Mapping) else {}
     results = body.get("results")
-    exit_ = body.get("pytest_exit")
+    exit_ = exit_status(body.get("pytest_exit"))
     counts = {"tests": len(names), "passed": 0, "failed": 0, "unknown": len(names)}
 
     def unknown(why: str) -> dict[str, Any]:
@@ -473,9 +485,10 @@ def tests_seen(body: Mapping[str, Any] | None, tests: Iterable[str], *, seen_pas
         return unknown(f"the test call was not seen to run: {body.get('call_why') or body.get('call')}" if "call" in body else
                        "the test call's own result was never recorded")
     if exit_ is None:
-        return unknown("no exit status came back: the tests were not seen to end")
+        return unknown("no exit status came back: the tests were not seen to end" if body.get("pytest_exit") is None else
+                       f"no exit status came back, {body.get('pytest_exit')!r} is no integer written: the tests were not seen to end")
     if not isinstance(results, Mapping) or not body.get("report", bool(results)):
-        return unknown("the tests ran out of time (exit 124) with no report" if str(exit_).strip() == "124" else
+        return unknown("the tests ran out of time (exit 124) with no report" if exit_ == 124 else
                        f"no test report came back (exit {exit_})")
     f2p = set(fail_to_pass or ())
     passed = sum(results.get(t) == "passed" for t in names)

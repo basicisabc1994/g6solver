@@ -645,3 +645,132 @@ def test_both_controls_decide_a_seen_failure_by_the_one_rule_and_nothing_else_de
     for key in [("cohorts.py", "summary"), ("run.py", "selfcheck")]:      # what a manifest and selfcheck's ok show, the same way
         empties = [c for c in calls(key, "tests_seen") if "fail_to_pass" in {k.arg for k in c.keywords}]
         assert empties, f"{key[1]} reads an empty patch or a base without the one rule"
+
+
+# --- an exit status is a number that was seen (replay cohort, repair 2, review 2's finding 4) ------------------------------------
+@pytest.mark.parametrize(("value", "code"), [
+    ("0", 0), ("1", 1), ("2", 2), ("124", 124), ("255", 255), (0, 0), (5, 5),
+    ("", None), (" ", None), (None, None), ("abc", None), ("1.0", None), ("-1", None), ("256", None), ("1\n2", None),
+    ("１", None), (True, None), (False, None), (-1, None), (256, None), (1.0, None), ([1], None),
+])
+def test_one_reader_takes_an_exit_status_only_as_an_integer_that_was_written(value, code):
+    assert box.exit_status(value) == code
+
+
+@pytest.mark.parametrize("said", [b"exit=\n", b"exit= \n", b"exit=x\n", b"exit=1.5\n", b"exit=-1\n", b"exit=999\n", b"ran\n"])
+def test_review_2_finding_4_a_control_with_no_pytest_exit_status_written_is_unknown_and_never_admits_the_bug(monkeypatch, tmp_path,
+                                                                                                            said):
+    import contextlib
+    monkeypatch.setattr(we.tempfile, "TemporaryDirectory", lambda **kw: contextlib.nullcontext(str(tmp_path)))
+    task = SimpleNamespace(id="toy-1", repo="/w/toy", test_modules=["t.py"])
+    ctx = SimpleNamespace(docker=OracleDocker(said, 0, JUNIT), g6={"commit": "0" * 40}, variant=we.ROUND3)
+    run = we._oracle_run(ctx, task, label="base")
+    assert run["results"]["t::bug"] == "failed"            # the report came back; the exit status did not
+    assert run["pytest_exit"] is None and run["call"] == U, run
+    seen = box.tests_seen(run, ["t::bug"])
+    assert seen["state"] == U, seen
+    ids = {"task_image_id": "sha256:" + "1" * 64, "oracle_image_id": "sha256:" + "2" * 64}
+    gold = {"call": P, "pytest_exit": "0", "report": True, "results": {"t::bug": "passed", "t::ok": "passed"}}
+    record = {"validate": {"images": ids, "fail_to_pass": ["t::bug"], "pass_to_pass": ["t::ok"], "base": run, "fixed": gold},
+              "selfcheck": {"images": ids, "gold": gold, "empty": run}, "round_trip": {**TRIP, "images": ids}, "images_after": ids}
+    assert cohorts.admit(record, ids).startswith("base: "), "a bug admitted without a pytest exit status: " + repr(seen)
+
+
+@pytest.mark.parametrize("exit_", ["", " ", "abc", "1.0", True, "256", [1]])
+def test_a_report_whose_exit_is_no_number_that_was_written_is_unknown_never_a_failure_or_a_pass(exit_):
+    for results in ({"t1": "failed", "t2": "passed"}, {"t1": "passed", "t2": "passed"}):
+        seen = box.tests_seen(body(results, exit=exit_), ["t1", "t2"])
+        assert seen["state"] == U and "exit status" in seen["why"], seen
+    gold = {**GOLD_RUN, "pytest_exit": exit_}                     # nor is such a gold run evidence for a collection error
+    assert box.seen_failing(NEW, ERRED, gold) is False
+    assert box.tests_seen(ERRED, [NEW], seen_passing_in=gold, fail_to_pass=[NEW])["state"] == U
+    assert box.tests_seen(body({}, exit=exit_, report=False), ["t1"])["why"] != "the tests ran out of time (exit 124) with no report"
+
+
+#: What reads an exit status (replay cohort, repair 2): a call's return code (``.returncode``), pytest's exit as a test run's body
+#: keeps it (``"pytest_exit"``), an ``exit=`` line a script printed (a string holding ``exit=`` that is not the shell's own
+#: ``echo``), or an exit a record or a probe run keeps (``"exit"`` or ``"exit_code"`` as a key, ``.exit``).
+EXIT_KEYS = {"pytest_exit", "exit", "exit_code"}
+#: The readers: ``seen`` takes a call's return code only as an int that came back, and ``exit_status`` pytest's exit only as an
+#: integer that was written; ``run.pytest_exit`` gives the ``exit=`` line's text only when ``exit_status`` reads it as one.
+EXIT_READERS = {("box_mcp.py", "seen"), ("box_mcp.py", "exit_status")}
+#: Inside the controls, the probe and the call phases: each place that reads an exit status, and how. Each that reads pytest's exit
+#: reads it through ``exit_status`` (``THROUGH``), and each that reads a return code through ``seen``.
+EXIT_INSIDE = {
+    ("box_mcp.py", "_run_seen", "[pytest_exit]"): "through exit_status: a gold run's exit, for the collection rule",
+    ("box_mcp.py", "tests_seen", "[pytest_exit]"): "through exit_status: no integer written is no exit status, so unknown",
+    ("run.py", "pytest_exit", "exit="): "the exit= line, given only when exit_status reads it as an integer that was written",
+}
+THROUGH = {("box_mcp.py", "_run_seen"), ("box_mcp.py", "tests_seen"), ("run.py", "pytest_exit")}
+#: Outside them, every function that reads an exit status, with why it is not a control's: a new one fails until it is named.
+_PROBED = "a probe run's exit, as read_probes read it (digits only, else None, so the run is not usable): " + _STUDY
+EXIT_OUTSIDE = {
+    "check": "the independent check that scores a run, by the frozen rule; it reads pytest's exit through exit_status",
+    "probe_failures": "a probe run's exit= line, read only as digits; none is a failure ('no exit'), never clean: " + _STUDY,
+    "gate_numbers": "the gate's exit= line, read only as digits; none is 2, which the gate refuses: " + _STUDY,
+    "read_probes": "a probe run's exit= line, read only as digits; none is None, so the run is not usable: " + _STUDY,
+    "ProbeRun.usable": _PROBED, "probe_gate": _PROBED, "bug_test": _PROBED, "failures_of": _PROBED, "review_once.check": _PROBED,
+    "reviews_until_clean": _PROBED, "reviews_with_bug_test": _PROBED, "repair_loop.check": _PROBED, "run_scout": _PROBED,
+    "scout_gate": "the probes' gate, given pytest's exit as gate_numbers read it: " + _STUDY,
+    "key_check_ok": "the key check's control exit from its own JSON: not 0 and not None, never a pass by default: " + _STUDY,
+    "_run_task": OUTSIDE["_run_task"], "build_base": OUTSIDE["build_base"], "contains_required": OUTSIDE["contains_required"],
+    "g6replay": _STUDY, "git_commit": OUTSIDE["git_commit"], "kept": _STUDY, "key_check": _STUDY, "modelcheck": _STUDY,
+    "read_issue": OUTSIDE["read_issue"], "read_thread.api": OUTSIDE["read_thread.api"], "read_tree": OUTSIDE["read_tree"],
+}
+
+
+def _exit_reads(fn: ast.AST) -> set[str]:
+    """The exit status reads in a function's own body (``EXIT_KEYS``, ``.returncode``, ``.exit``, an ``exit=`` line), its lambdas'
+    among them, a docstring and a nested function apart."""
+    found: set[str] = set()
+
+    def visit(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if isinstance(child, ast.Expr) and isinstance(child.value, ast.Constant):
+                continue                                                  # a docstring reads nothing
+            if isinstance(child, ast.Attribute) and child.attr == "returncode":
+                found.add(".returncode")
+            elif isinstance(child, ast.Attribute) and child.attr == "exit" and not (
+                    isinstance(child.value, ast.Name) and child.value.id == "sys"):
+                found.add(".exit")
+            elif isinstance(child, ast.Constant) and isinstance(child.value, str) and "exit=" in child.value \
+                    and "echo" not in child.value:
+                found.add("exit=")
+            elif isinstance(child, ast.Call) and getattr(child.func, "attr", None) == "get" and child.args \
+                    and isinstance(child.args[0], ast.Constant) and child.args[0].value in EXIT_KEYS:
+                found.add(f"[{child.args[0].value}]")
+            elif isinstance(child, ast.Subscript) and isinstance(child.slice, ast.Constant) and child.slice.value in EXIT_KEYS:
+                found.add(f"[{child.slice.value}]")
+            elif isinstance(child, ast.Name) and child.id == "exit_code" and isinstance(child.ctx, ast.Load):
+                found.add("exit_code")
+            elif isinstance(child, ast.Call) and getattr(child.func, "id", None) == "getattr" and len(child.args) > 1 \
+                    and isinstance(child.args[1], ast.Constant) and child.args[1].value in ("returncode", "exit"):
+                found.add("." + child.args[1].value)                       # the same read, by name
+            visit(child)
+    visit(fn)
+    return found
+
+
+def test_every_place_an_exit_status_is_read_is_listed_and_inside_the_controls_only_the_readers_read_one():
+    functions = {(file, name): fn for file in ("box_mcp.py", "cohorts.py", "run.py") for name, fn in _functions(file).items()}
+    sites = {(file, name, kind) for (file, name), fn in functions.items() for kind in _exit_reads(fn)}
+    scope = _scope(functions)
+    inside = {s for s in sites if s[:2] in scope and s[:2] not in EXIT_READERS}
+    returned = {s for s in inside if s[2] == ".returncode"}
+    assert not returned, ("a return code read inside the controls not through seen", sorted(returned))
+    assert inside == set(EXIT_INSIDE), ("an exit status read inside the controls, the probe or the call phases not listed",
+                                        sorted(inside - set(EXIT_INSIDE)), sorted(set(EXIT_INSIDE) - inside))
+
+    def calls(key: tuple[str, str], name: str) -> bool:
+        return any(isinstance(n, ast.Call) and (getattr(n.func, "attr", None) or getattr(n.func, "id", None)) == name
+                   for n in ast.walk(functions[key]))
+    assert {s[:2] for s in inside} == THROUGH and all(calls(key, "exit_status") for key in THROUGH), \
+        "a place that reads pytest's exit not through exit_status"
+    outside = {name for file, name, _ in sites if (file, name) not in scope and (file, name) not in EXIT_READERS}
+    assert {file for file, name, _ in sites if (file, name) not in scope and (file, name) not in EXIT_READERS} <= {"run.py"}
+    assert outside == set(EXIT_OUTSIDE), (sorted(outside - set(EXIT_OUTSIDE)), sorted(set(EXIT_OUTSIDE) - outside))
+    assert calls(("run.py", "check"), "exit_status"), "the independent check reads pytest's exit some other way"
+    assert {(f, n) for f, n, _ in sites} >= EXIT_READERS - {("box_mcp.py", "exit_status")}
+    assert ("box_mcp.py", "exit_status") in functions
