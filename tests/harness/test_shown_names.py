@@ -169,8 +169,9 @@ def test_finding_4_filename_cannot_inject_a_second_file_into_patch_identity(tmp_
 
 #: Where a name as git gave it may stand in the functions that build the identity and the copy, by the call it is given to:
 #: the one quoting rule (``shown_name``, which ``_name`` is), the scrubber's look at it (``_found``, a yes or no), and what
-#: finds the file (``found``, ``_leads_out``, a path joined to the repository's, a ``FileRead`` it is kept in).
-NAME_SINKS = {"shown_name", "_name", "_found", "found", "_leads_out", "FileRead"}
+#: finds the file (``found``, ``_on_disk``, the one rule for its name on the disk since review-maskfu2's finding 3,
+#: ``_leads_out``, a path joined to the repository's, a ``FileRead`` it is kept in).
+NAME_SINKS = {"shown_name", "_name", "_found", "found", "_on_disk", "_leads_out", "FileRead"}
 #: The functions that put text into what the patch is known by (``diff_read``) and into the copy (``_shown``), with each
 #: helper either calls to write a line.
 BUILDERS = ((repo_tests, ("diff_read", "now_line", "_link_line", "_part_line", "_bytes_line", "shown_name")),
@@ -310,7 +311,8 @@ def test_gits_own_patch_quotes_each_name_as_the_one_rule_does(tmp_path, label):
 def _listed(where: Path, monkeypatch, gone: dict | None = None, new: dict | None = None) -> repo_tests.Change:
     """A change with names as git's listing gives them, git never run and the working tree emulated, as no file here can
     carry such a name: ``gone``, files the base holds and the working tree lacks (name: bytes at the base), and ``new``,
-    untracked files (name: bytes as they stand)."""
+    untracked files (name: bytes as they stand). The emulated tree holds each file by the name as given (``_on_disk``),
+    as no listing git for Windows gives holds an untracked name that is not UTF-8 (``_on_disk`` has its own tests)."""
     gone, new = gone or {}, new or {}
     where.mkdir(parents=True, exist_ok=True)
     held = {str(where / rel): raw for rel, raw in new.items()}
@@ -326,6 +328,7 @@ def _listed(where: Path, monkeypatch, gone: dict | None = None, new: dict | None
     monkeypatch.setattr(repo_tests, "_tracked_new", lambda *args: set())
     monkeypatch.setattr(repo_tests, "blob_bytes", lambda repo, name, **kwargs: {oid(r): b for r, b in gone.items()}[name])
     monkeypatch.setattr(repo_tests, "_leads_out", lambda *args: False)
+    monkeypatch.setattr(repo_tests, "_on_disk", lambda rel: (rel, True))
     monkeypatch.setattr(Path, "is_file", lambda path: str(path) in held if str(path).startswith(str(where)) else real_file(path))
     monkeypatch.setattr(Path, "is_symlink", lambda path: False if str(path).startswith(str(where)) else real_link(path))
     monkeypatch.setattr(repo_tests, "_read_inside", lambda root, path: held[str(path)])
@@ -403,16 +406,17 @@ def test_g6s_own_lines_are_never_scrubbed_whatever_a_name_holds(tmp_path, monkey
 # --- the root: G6's own lines are added after masking, and every mask is read by the one hidden rule, from the code -----------
 
 #: Every text the scrubber reads in the completion loop, by the function it is read in: the task, each file's text at the base
-#: and now, the rest of a parent file a cut fell in, what a run said, and a name (``_found``'s ``text``, a yes or no). No
-#: line G6 writes is among them.
+#: and now, the rest of a parent file a cut fell in, what a run said, and a name (``_found``'s ``text``, a yes or no, read by
+#: ``secret_spans`` itself since review-maskfu2's finding 2, as ``_seen`` reads its own ``text``). No line G6 writes is among
+#: them.
 SCRUBBED = {("_sent_head", "task"), ("_masked_pack", "task"), ("_shown", "old"), ("_shown", "one.new, one.limit"),
-            ("_remasked", "rest"), ("_unrun", "text"), ("_found", "text")}
+            ("_remasked", "rest"), ("_unrun", "text"), ("_found", "text"), ("_seen", "text")}
 
 
 def test_every_line_g6_writes_is_added_after_masking():
     functions = _functions(loop)
     calls = {(name, ", ".join(ast.unparse(arg) for arg in call.args)) for name, function in functions.items()
-             for call in ast.walk(function) if isinstance(call, ast.Call) and _callee(call) == "_seen"}
+             for call in ast.walk(function) if isinstance(call, ast.Call) and _callee(call) in ("_seen", "secret_spans")}
     nested = {"say", "own", "cuts_of", "shown_line", "numbered"}       # _shown's own, which ast.walk also visits alone
     assert {(name, args) for name, args in calls if name not in nested} == SCRUBBED, calls
     assert not {name for name, _ in calls} & nested

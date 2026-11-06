@@ -211,7 +211,10 @@ def test_no_setting_of_gits_display_reaches_the_copy_and_each_still_changes_what
         git(repo, "config", name, value)
         read = repo_tests.diff_read(repo_tests.change(repo))
         copies.append(loop._shown(change, read))
-        assert read.text != last.text or name == "diff.algorithm", f"git ignored {name}, so this case tests nothing"
+        if name in ("diff.mnemonicPrefix", "diff.noprefix"):     # G6 tells git the sides' prefixes (review-maskfu2, finding 1)
+            assert read.text == last.text, f"{name} changed how the identity names a file"
+        else:
+            assert read.text != last.text or name == "diff.algorithm", f"git ignored {name}, so this case tests nothing"
         last = read
     assert all(copy == copies[0] for copy in copies)
     assert secret not in copies[0].masked and '"api_key":' in copies[0].masked
@@ -786,17 +789,18 @@ def test_mask3_finding_5_a_links_path_is_shown_through_the_one_decoder(tmp_path,
 def test_the_reviewer_is_shown_text_through_one_decoder_and_one_masking_rule_alone():
     """An inventory, built from the code: each place on the way to the reviewer that decodes bytes or masks text. Masking is
     ``_seen``'s, by ``secret_spans``, alone (``mask_paths`` then takes home folders out of a test's output, which is no
-    secret's mask); decoding of what is shown is ``repo_tests._decoded``'s alone. ``_listing`` decodes git's own fields and
-    names (shown only through ``repo_tests.shown_name``, which ``_name`` is, and which what the patch is known by names them
-    by too: git's quoting, which decodes nothing, review-maskfu1), and ``diff_read`` decodes git's patch for what the patch is
-    known by, never shown."""
+    secret's mask), and ``_found``'s yes or no for a name is ``secret_spans`` on the name itself (review-maskfu2, finding
+    2); decoding of what is shown is ``repo_tests._decoded``'s alone. ``_listing`` decodes git's own fields and names (shown
+    only through ``repo_tests.shown_name``, which ``_name`` is, and which what the patch is known by names them by too: git's
+    quoting, which decodes nothing, review-maskfu1), ``_named_patch`` and ``diff_read`` decode git's patch for what the patch
+    is known by, never shown, and ``_on_disk`` decodes a name only to give it to the system (review-maskfu2, finding 3)."""
     import ast
     import inspect
 
     watched, found = {"scrub", "secret_spans", "_decoded", "decode", "mask_paths"}, set()
     path = {"diff_read", "found", "named", "unread", "_listing", "blob_bytes", "_decoded", "_normal", "_cut_lines",
             "_bytes_line", "_read_inside", "_link_inside", "_where", "_leads_out", "shown_name", "name_line", "_octal",
-            "now_line", "_part", "_part_line", "_link_line"}
+            "now_line", "_part", "_part_line", "_link_line", "_named_patch", "_on_disk", "_within", "_git_quoted"}
     for module, only in ((loop, None), (repo_tests, path)):
         for node in ast.walk(ast.parse(inspect.getsource(module))):
             if isinstance(node, ast.FunctionDef) and (only is None or node.name in only):
@@ -804,8 +808,9 @@ def test_the_reviewer_is_shown_text_through_one_decoder_and_one_masking_rule_alo
                     name = call.func.attr if isinstance(call.func, ast.Attribute) else getattr(call.func, "id", "")
                     if name in watched:
                         found.add((module.__name__.rsplit(".", 1)[1], node.name, name))
-    assert found == {("completion_loop", "_seen", "secret_spans"),
+    assert found == {("completion_loop", "_seen", "secret_spans"), ("completion_loop", "_found", "secret_spans"),
                      ("completion_loop", "_shown", "_decoded"), ("completion_loop", "_unrun", "mask_paths"),
                      ("repo_tests", "_decoded", "decode"), ("repo_tests", "_listing", "decode"),
                      ("repo_tests", "diff_read", "decode"), ("repo_tests", "diff_read", "_decoded"),
-                     ("repo_tests", "found", "_decoded"), ("repo_tests", "_where", "decode")}, found
+                     ("repo_tests", "found", "_decoded"), ("repo_tests", "_where", "decode"),
+                     ("repo_tests", "_named_patch", "decode"), ("repo_tests", "_on_disk", "decode")}, found

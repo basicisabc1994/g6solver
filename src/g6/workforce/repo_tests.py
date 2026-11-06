@@ -281,11 +281,16 @@ def _private(repo: Path, commit: str, *commands: tuple[str, ...]) -> list[bytes]
     VS-4, finding 1): the repository's own index, its stat cache, its assume-unchanged and skip-worktree flags and any
     entry written into it are never consulted, so ``git diff`` with it hashes every tracked file and compares the
     content with the base commit's blob (after git's line-ending conversion, so an untouched file is never a change),
-    and ``ls-files --others`` lists every file the base tree does not hold."""
+    and ``ls-files --others`` lists every file the base tree does not hold. ``_DIFF`` is never run alone: git's own listing
+    of the tracked files it cannot see (``_UNSEEN``) is read after it with the same index, and a file it names that the diff
+    left out refuses (``_left_none_out``; repair 1's open item A)."""
     with tempfile.TemporaryDirectory(prefix="g6-index-") as scratch:
         index = Path(scratch) / "index"
         _git(repo, "read-tree", *([commit] if commit else ["--empty"]), index=index)   # no commit yet: empty
-        return [_git(repo, *command, index=index) for command in commands]
+        found = [_git(repo, *command, index=index) for command in commands]
+        if _DIFF in commands:
+            _left_none_out(found[commands.index(_DIFF)], _git(repo, *_UNSEEN, index=index), len(commit) or 40)
+        return found
 
 
 def _tracked_new(repo: Path, commit: str, spec: list[str] | tuple[str, ...] = ()) -> set[str]:
@@ -299,7 +304,12 @@ def _tracked_new(repo: Path, commit: str, spec: list[str] | tuple[str, ...] = ()
     staged = {_index_path(repo, entry.partition("\t")[2], linked)
               for entry in _paths(_git(repo, "ls-files", "--stage", "-z", *spec)) if not entry.startswith("160000 ")}
     base = set(_paths(_git(repo, "ls-tree", "-r", "-z", "--name-only", commit, *spec))) if commit else set()
-    return {rel for rel in staged - base if rel and os.path.lexists(repo / rel)}
+    present = set()
+    for rel in staged - base:       # looked for where git looks (``_on_disk``); one G6 cannot look for so is kept, to refuse
+        on_disk, exact = _on_disk(rel)
+        if rel and (not exact or os.path.lexists(repo / on_disk)):
+            present.add(rel)
+    return present
 
 
 def _gitlinks(repo: Path, index: bytes | None = None) -> tuple[str, ...]:
@@ -762,9 +772,11 @@ class FileRead:
     whether G6 left it unread, as it leads out of the repository, and G6 never reads such a file in its own process (review
     M1); how much of its text the patch shows, with the line endings ``_normal`` gives (``limit``; None: all of it); its
     mode at the base and now, as git's listing gives them (``""`` where it gives none); ``base``, the object name of its
-    blob at the base, as git's listing gives it (``""`` where the base holds none); and ``old``, that blob's bytes as this
+    blob at the base, as git's listing gives it (``""`` where the base holds none); ``old``, that blob's bytes as this
     same read read them by that name (None where the base holds none or G6 left the file unread; the refusal itself where
-    git would not give them, so a copy made from this read refuses too and never shows a base it could not read)."""
+    git would not give them, so a copy made from this read refuses too and never shows a base it could not read); and
+    ``refusal``, where git lists the file as there and G6 cannot open it by the name git gives it, the refusal a copy made
+    from this read raises, so it is never shown as gone (review-maskfu2, finding 3)."""
 
     rel: str
     new: str | None
@@ -775,6 +787,7 @@ class FileRead:
     modes: tuple[str, str] = ("", "")
     base: str = ""
     old: bytes | RepoRefused | None = None
+    refusal: RepoRefused | None = None
 
 
 @dataclass(frozen=True)
@@ -804,6 +817,12 @@ def _bytes_line(raw: bytes, shown: str, what: str) -> str:
     differently would read as one patch, and the patch's text is what a review of it is held to. With it, two patches with one
     text hold the same bytes. The line starts as git's "\\ No newline at end of file" does, so no reader takes it for code."""
     return _part_line(what, _part(raw, shown))
+
+
+#: Why a file git lists as there is not read (``diff_read``'s ``found``): its name is one git reads, on Windows, as another
+#: file, by git's own fallback for bytes that are not UTF-8, which G6 does not copy; or nothing is at its name.
+CANNOT_OPEN = "is listed by git under bytes git reads here as another file's name, which G6 cannot open"
+NOT_THERE = "is listed by git as there, and G6 finds no file at that name to read"
 
 
 def _link_line(name: str, digest: str) -> str:
@@ -845,6 +864,38 @@ def shown_name(rel: str, prefix: str = "") -> str:
     return path if shown == path else f'"{shown}"'
 
 
+#: Each character ``shown_name`` writes as a letter's escape, by that letter.
+_UNESCAPED = {escaped[1]: ch for ch, escaped in _ESCAPED.items()}
+
+
+def unquoted_name(shown: str) -> str:
+    """A name as ``shown_name`` writes it, read back: the one reader of the one quoting rule, its exact inverse, so that
+    ``unquoted_name(shown_name(rel, prefix)) == prefix + rel`` for every name a listing gives (repair 1's open item B). A
+    bare name is itself; a quoted one has each escape read back (a letter to its character, an octal escape to its byte),
+    and its bytes are then read as a listing's are (UTF-8, each byte that is not a lone surrogate). Text the rule never
+    writes, such as an escape it has no use for, a quote or a control character left bare, or a quote left open, raises
+    ``ValueError``: what it would name is not known."""
+    name = shown
+    if len(shown) >= 2 and shown[0] == shown[-1] == '"':
+        body, out, at = shown[1:-1], bytearray(), 0
+        while at < len(body):
+            if body[at] != "\\":
+                out += body[at].encode("utf-8")       # a lone surrogate here raises (UnicodeEncodeError is a ValueError)
+                at += 1
+            elif body[at + 1:at + 2] in _UNESCAPED:
+                out += _UNESCAPED[body[at + 1]].encode("utf-8")
+                at += 2
+            elif re.fullmatch("[0-3][0-7]{2}", body[at + 1:at + 4]):
+                out.append(int(body[at + 1:at + 4], 8))
+                at += 4
+            else:
+                raise ValueError(f"an escape the name rule never writes: {body[at:at + 4]!r}")
+        name = bytes(out).decode("utf-8", "surrogateescape")
+    if shown_name(name) != shown:
+        raise ValueError(f"text the name rule never writes: {shown[:80]!r}")
+    return name
+
+
 def name_line(rel: str) -> str:
     """The line naming the bytes of a name ``shown_name`` quotes, else ``""``. No text G6 writes holds it any more, as the
     quoting itself names each byte; it is kept for callers of this module outside those texts."""
@@ -855,9 +906,15 @@ def name_line(rel: str) -> str:
 #: The diff ``diff_read`` asks git for: its listing of the tracked files that changed, one record each (``--raw -z``, so a
 #: name is never quoted, and ``--no-abbrev``, so each object name is whole), then the patch itself, in one run over one read
 #: of each file. ``--text``: an attribute never hides a file's lines; with ``--no-renames`` a moved file is a file gone and a
-#: file added.
+#: file added; and the sides are ``a/`` and ``b/`` whatever the repository's ``diff.noprefix`` or ``diff.mnemonicPrefix``
+#: says, so each header is the one ``_named_patch`` checks against the listing.
 _DIFF = ("diff", "--patch-with-raw", "-z", "--no-abbrev", "--no-renames", "--no-color", "--no-ext-diff", "--no-textconv",
-         "--text")
+         "--text", "--src-prefix=a/", "--dst-prefix=b/")
+#: git's own listing of the tracked files it cannot see, read with the private index ``_DIFF`` runs with: ``--deleted``
+#: names each one git's ``lstat`` fails on (a file gone, or a path git cannot use here, such as one too long for it), and
+#: ``--stage -t`` marks it ``R`` after its ``H`` record, with its mode, so a gitlink, which ``_DIFF`` never enters, is told
+#: apart. git's diff skips such a file, says so on its error output alone and ends well (``_left_none_out``).
+_UNSEEN = ("ls-files", "--deleted", "--stage", "-t", "-z")
 #: What a record of ``_DIFF`` may hold, by git's documented raw format: a mode git writes, and, with ``--no-renames``, an
 #: added, deleted, modified or retyped file. Anything else (an unmerged file, a status git reserves) refuses the read.
 _RAW_MODES = frozenset({NO_MODE, "100644", "100755", LINK_MODE, "160000"})
@@ -901,6 +958,81 @@ def _listing(output: bytes, length: int = 40) -> tuple[list[tuple[str, str, str,
     return found, patch
 
 
+#: The bytes git's C-style quoting (``quote_c_style``) writes by a letter.
+_GIT_NAMED = {7: b"\\a", 8: b"\\b", 9: b"\\t", 10: b"\\n", 11: b"\\v", 12: b"\\f", 13: b"\\r", 34: b'\\"', 92: b"\\\\"}
+
+
+def _git_quoted(raw: bytes) -> bytes:
+    """``raw``, a path with its ``a/`` or ``b/``, as git's patch writes it with ``core.quotePath`` off: bare, unless it holds
+    a byte below a space, a quote, a backslash or DEL; then in double quotes, each such byte escaped (by a letter where git's
+    table has one, else in octal) and every other byte, those from 0x80 too, as it is. What ``_named_patch`` checks git's own
+    headers against, so a header is the listed file's or the read refuses; never what a reader is shown (``shown_name``)."""
+    if not any(byte < 0x20 or byte in (0x22, 0x5C, 0x7F) for byte in raw):
+        return raw
+    return b'"' + b"".join(_GIT_NAMED.get(byte) or (b"\\%03o" % byte if byte < 0x20 or byte == 0x7F else bytes([byte]))
+                           for byte in raw) + b'"'
+
+
+#: The lines git writes between a file's ``diff --git`` line and its ``---`` line, with ``--no-renames`` and ``--text``.
+_EXTENDED = (b"old mode ", b"new mode ", b"deleted file mode ", b"new file mode ", b"index ")
+
+
+def _named_patch(records: list[tuple[str, str, str, str]], patch: bytes) -> str:
+    """git's patch (``_DIFF``) as what the patch is known by: each line as git wrote it, decoded as read (the line naming the
+    patch's bytes covers what decoding leaves out), but each header git writes for a file its listing names, which names
+    that file from the listing's own bytes through the one rule (``shown_name``), the rule the copy names it by
+    (review-maskfu2, finding 1). A header is the file's only where it is, byte for byte, the one git's quoting writes for the
+    listed name (``_git_quoted``; its ``---`` and ``+++`` lines next, with git's tab after a name holding a space). A line of
+    any other shape is left as it was read, as before: no git writes it for a listed file, and the copy is made from the
+    files, never from this text. The headers are lines no hunk holds (each of a hunk's lines starts with its mark), and the
+    lines are cut at newlines alone."""
+    heads = {b"diff --git " + _git_quoted(b"a/" + raw) + b" " + _git_quoted(b"b/" + raw): (rel, raw)
+             for rel, raw in ((rel, rel.encode("utf-8", "surrogateescape")) for rel, *_ in records)}
+    lines, out, at = patch.split(b"\n"), [], 0
+    while at < len(lines):
+        if lines[at] not in heads:
+            out.append(lines[at].decode("utf-8", "replace"))
+            at += 1
+            continue
+        rel, raw = heads[lines[at]]
+        out.append(f"diff --git {shown_name(rel, 'a/')} {shown_name(rel, 'b/')}")
+        at += 1
+        while at < len(lines) and lines[at].startswith(_EXTENDED):
+            out.append(lines[at].decode("utf-8", "replace"))
+            at += 1
+        for mark, prefix in ((b"--- ", "a/"), (b"+++ ", "b/")):
+            side = _git_quoted(prefix.encode() + raw)
+            if at < len(lines) and lines[at] == mark + side + (b"\t" if b" " in side else b""):
+                out.append(f"{mark.decode()}{shown_name(rel, prefix)}")
+            elif at < len(lines) and lines[at] == mark + b"/dev/null":
+                out.append(f"{mark.decode()}/dev/null")
+            else:
+                break
+            at += 1
+    return "\n".join(out)
+
+
+def _left_none_out(diffed: bytes, unseen: bytes, length: int) -> None:
+    """A refusal (``G6_E_GIT_COMMAND_FAILED``) where git's diff (``diffed``, ``_DIFF``'s output) left out a tracked file git
+    cannot see. ``unseen`` is ``_UNSEEN``'s records, git's ``ls-files -t --stage`` form (``H`` for each entry, then ``R``
+    for each one git's ``lstat`` fails on); each file it marks ``R``, but a gitlink (``_DIFF`` enters none), must be in the
+    diff's listing (a file gone is, as removed). A record of any other shape refuses too: what git said is not known."""
+    listed = {path for path, *_ in _listing(diffed, length)[0]}
+    left = []
+    for record in unseen.split(b"\0"):
+        if not record:
+            continue
+        found = re.fullmatch(rb"([HR]) ([0-7]{6}) [0-9a-f]+ [0-3]\t(.+)", record, re.S)
+        if found is None:
+            raise RepoRefused("G6_E_GIT_COMMAND_FAILED", "git ls-files gave a listing G6 cannot read")
+        rel = found[3].decode("utf-8", "surrogateescape")
+        if found[1] == b"R" and found[2] != b"160000" and rel not in listed:
+            left.append(rel)
+    if left:
+        named = ", ".join(shown_name(rel) for rel in left[:3]) + (" and more" if len(left) > 3 else "")
+        raise RepoRefused("G6_E_GIT_COMMAND_FAILED", (f"git could not read {named}, so its diff leaves them out (a path too "
+                                                      "long for git here, or one it may not enter)")[:200])
+
 def blob_bytes(repo: Path, name: str, *, timeout_s: float = GIT_TIMEOUT_S) -> bytes:
     """The bytes of the blob git names ``name``, read by git from its own store by that name (``cat-file``): no path is
     looked up and no link followed, so a name git listed is read as git keeps it. A reader is shown them through
@@ -929,14 +1061,39 @@ def _where(fd: int) -> Path:
     return Path(fcntl.fcntl(fd, 50, b"\0" * 1024).split(b"\0", 1)[0].decode("utf-8", "surrogateescape"))  # F_GETPATH
 
 
+def _within(root: Path, where: Path) -> bool:
+    """Whether ``where``, a path the system gave for what G6 looked at or holds, lies in ``root``, the repository's top as the
+    system gives it: part by part, each as the system writes it, with no case folded. The system writes a folder's name as
+    it is stored, so one folder is always one text and two folders two, under a folder whose names may differ by case alone
+    (a case-sensitive NTFS folder) as under any other. ``PurePath.is_relative_to`` folds case on Windows, which let a sibling
+    ``Repo`` pass as inside ``repo`` (review-maskfu2, finding 4)."""
+    return where.parts[:len(root.parts)] == root.parts
+
+
+def _on_disk(rel: str) -> tuple[str, bool]:
+    """The name the system is given for a path git gave (``rel``, git's bytes as ``_listing`` and ``_paths`` read them),
+    and whether it names the file git means: git's bytes read back as git encodes a name where it runs (review-maskfu2,
+    finding 3). git for Windows writes a file's UTF-16 name as UTF-8 with a lone surrogate kept as its three bytes, so
+    those bytes read back that way are the file's name. Bytes that do not read back so name, for git there, another file
+    (its own fallback for them, which G6 does not copy): G6 may look at the folders on the way (``exact`` False, ``rel`` as
+    given) but never opens such a file. Elsewhere a name is its bytes, as the system takes them (``os.fsdecode``)."""
+    raw = rel.encode("utf-8", "surrogateescape")
+    if os.name != "nt":
+        return os.fsdecode(raw), True
+    try:
+        return raw.decode("utf-8", "surrogatepass"), True
+    except UnicodeDecodeError:
+        return rel, False
+
+
 def _read_inside(root: Path, path: Path) -> bytes | None:
     """The bytes of the file ``path`` opens, or None where what was opened is not a regular file inside ``root``: where a
     file is, is decided on the file G6 holds open, after it is opened, so a folder on its way swapped for a link between any
-    check and the open cannot make G6 read outside the repository (M1)."""
+    check and the open cannot make G6 read outside the repository (M1), by the system's own path for it (``_within``)."""
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
     try:
         try:
-            inside = stat.S_ISREG(os.fstat(fd).st_mode) and _where(fd).is_relative_to(root)
+            inside = stat.S_ISREG(os.fstat(fd).st_mode) and _within(root, _where(fd))
         except OSError:
             inside = False
         if not inside:
@@ -977,7 +1134,7 @@ def _link_inside(root: Path, path: Path) -> bytes | None:
             folder = _where(held)
         except OSError:
             return None
-        if not folder.is_relative_to(root):
+        if not _within(root, folder):
             return None
         return os.fsencode(os.readlink(folder / path.name) if os.name == "nt" else os.readlink(path.name, dir_fd=held))
     finally:
@@ -987,12 +1144,12 @@ def _link_inside(root: Path, path: Path) -> bytes | None:
 def _leads_out(repo: Path, rel: str) -> bool:
     """Whether a folder on ``rel``'s way is a link or junction and the path resolves outside ``repo``, or cannot be resolved:
     what lies there is outside the repository, and G6 does not open it. ``rel`` itself being a link is not this. It is only
-    the first look: what a file G6 opens is, is decided on the open file (``_read_inside``)."""
+    the first look: what a file G6 opens is, is decided on the open file (``_read_inside``). Inside is ``_within``'s."""
     parts = PurePosixPath(rel).parts
     if not any(_linked(repo.joinpath(*parts[:end])) for end in range(1, len(parts))):
         return False
     try:
-        return not (repo / rel).resolve().is_relative_to(repo.resolve())
+        return not _within(repo.resolve(), (repo / rel).resolve())
     except (OSError, RuntimeError):
         return True
 
@@ -1012,28 +1169,40 @@ def diff_read(change: Change) -> DiffRead:
     holds a link, never by what it leads to, and read where G6 decides it lies (``_link_inside``). A removed file has no
     bytes now, so no line for them. A file below a link that leads out of the repository is never read (M1): it is named,
     and has no text in ``files``. Each name G6 writes is put into the text as ``shown_name`` quotes it, so a name is one
-    line of the text and two names are two texts (review-maskfu1, finding 4)."""
+    line of the text and two names are two texts (review-maskfu1, finding 4), git's own headers too (``_named_patch``,
+    review-maskfu2, finding 1). A file is looked for where git looks (``_on_disk``), and only where git's listing says
+    something is there."""
     # a private index built from the base tree (the review of VS-4, finding 1): git's flags, its stat cache and an
     # entry written into the repository's own index hide nothing (review C2 too)
     listed, others = _private(change.repo, change.base_commit, _DIFF, ("ls-files", "--others", "--exclude-standard", "-z"))
     tracked, diffed = _listing(listed, len(change.base_commit))
-    shown = diffed.decode("utf-8", "replace")
+    shown = _named_patch(tracked, diffed)
     new = set(_paths(others)) | _tracked_new(change.repo, change.base_commit)   # a force-added file too (F4)
-    text, files, root = shown + _bytes_line(diffed, shown, "the diff of the tracked files"), [], change.repo.resolve()
+    text, files, root = (shown + _bytes_line(diffed, diffed.decode("utf-8", "replace"), "the diff of the tracked files"),
+                         [], change.repo.resolve())
 
     def found(rel: str, added: bool, modes: tuple[str, str]) -> tuple[FileRead, bytes | None, bool]:
         """The file at ``rel`` as it stands, its bytes where G6 read them, and whether it is a link, whose bytes are the
-        path it names."""
-        path = change.repo / rel     # where a file is comes from this read alone, never an earlier ``Change.outside_links``
-        if _leads_out(change.repo, rel):
+        path it names. A file git lists as removed is never opened. One git lists as there that G6 cannot open by the name
+        git gives it is named so in what the patch is known by, and a copy made of it refuses (``refusal``): it is never
+        read as removed (review-maskfu2, finding 3)."""
+        on_disk, exact = _on_disk(rel)
+        path = change.repo / on_disk     # where a file is comes from this read alone, never an earlier ``Change.outside_links``
+        if _leads_out(change.repo, on_disk):
             return FileRead(rel, None, added=added, unread=True, modes=modes), None, False
-        if path.is_symlink():     # read as the path it names: the link is never followed
+        if not added and modes[1] == NO_MODE:     # git's own word that nothing is there now
+            return FileRead(rel, None, added=added, modes=modes), None, False
+        if exact and path.is_symlink():     # read as the path it names: the link is never followed
             named = _link_inside(root, path)      # its bytes, shown through the one decoder as a file's are
             if named is None:
                 return FileRead(rel, None, added=added, unread=True, modes=modes), None, False
             return FileRead(rel, _decoded(named), added=added, modes=modes), named, True
-        if not path.is_file():
+        if exact and not path.is_file() and added and os.path.lexists(path):   # an untracked folder git lists: nothing to show
             return FileRead(rel, None, added=added, modes=modes), None, False
+        if not exact or not path.is_file():      # the name whole, so the line the identity holds for it names it whole
+            why = CANNOT_OPEN if not exact else NOT_THERE
+            return FileRead(rel, None, added=added, modes=modes, refusal=RepoRefused(
+                "G6_E_GIT_COMMAND_FAILED", f"{shown_name(rel)} {why}")), None, False
         raw = _read_inside(root, path)
         if raw is None:
             return FileRead(rel, None, added=added, unread=True, modes=modes), None, False
@@ -1045,6 +1214,8 @@ def diff_read(change: Change) -> DiffRead:
     for rel, old, now, before in sorted(tracked):
         one, raw, link = found(rel, False, (old, now))
         name = shown_name(rel)
+        if one.refusal is not None:      # named, never as removed: a copy made of this read refuses
+            text += f"\\ G6: {one.refusal}\n"
         if one.unread:
             text += unread(name)
         elif before:    # the base, read once, here: the copy a reader is shown is made from these bytes, never read again
@@ -1065,7 +1236,7 @@ def diff_read(change: Change) -> DiffRead:
         one, raw, link = found(rel, True, ("", LINK_MODE))
         name = shown_name(rel)
         if raw is None:
-            text += unread(name) if one.unread else ""
+            text += unread(name) if one.unread else f"\\ G6: {one.refusal}\n" if one.refusal is not None else ""
             files.append(replace(one, modes=("", "")))
             continue
         shown = _cut_lines(_normal(one.new), DIFF_FILE_CHARS)

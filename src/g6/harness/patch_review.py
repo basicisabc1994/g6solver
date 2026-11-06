@@ -675,20 +675,20 @@ def _requirement(req: Requirement, verdicts: dict[str, dict], norm: dict[str, st
 
 
 _HUNK_HEADER = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
-_ESCAPE = re.compile(rb"\\([0-7]{3}|.)")
 #: Continuous-integration and task-runner files the weakening detector's list leaves out (``weakening._kind``'s
 #: "runner" kind holds the others: tox.ini, noxfile.py, .gitlab-ci.yml, .github/workflows/, .circleci/, ...).
 _CI_FILES = frozenset({"makefile", ".pre-commit-config.yaml"})
 
 
 def _unquoted(raw: str) -> str:
-    """A path as git writes it in a diff: unquoted (git quotes a name holding a control character, a quote or a
-    backslash), without the line's end or the tab git ends a name holding a space with."""
-    name = raw.rstrip("\n").removesuffix("\t")
-    if len(name) >= 2 and name[0] == name[-1] == '"':
-        name = _ESCAPE.sub(lambda m: bytes([int(m[1], 8)]) if len(m[1]) == 3 else {b"t": b"\t", b"n": b"\n"}.get(
-            m[1], m[1]), name[1:-1].encode("utf-8")).decode("utf-8", "replace")
-    return name
+    """A path as a line of the diff gives it (``repo_tests.diff_text``, whose names ``repo_tests.shown_name`` writes), read
+    back by that rule's one reader (``repo_tests.unquoted_name``), without the line's end or the tab git ends a bare name
+    holding a space with (repair 1's open item B); "" where it is not a name the rule writes, so its part is scanned as a
+    part whose file cannot be read."""
+    try:
+        return repo_tests.unquoted_name(raw.rstrip("\n").removesuffix("\t"))
+    except ValueError:
+        return ""
 
 
 def _diff_name(raw: str) -> str:
@@ -701,10 +701,13 @@ def _diff_files(diff: str) -> list[tuple[set[str], str]]:
     """``diff`` (``repo_tests.diff_text``) cut into one part per file, each with the paths it names, old and new. A
     part begins at ``diff --git``, or at a ``---`` line outside a hunk once the part has had one (the untracked files
     ``diff_text`` appends have no ``diff --git`` line); a hunk's lines are counted from its header, so a removed line
-    that itself starts with ``-- `` is never taken for a header."""
+    that itself starts with ``-- `` is never taken for a header. Lines are cut at newlines alone, as git writes them
+    (``str.splitlines`` also cuts at U+0085, U+2028, a form feed and others, which put a hunk's count out; repair 1's open
+    item C)."""
     parts: list[tuple[set[str], list[str]]] = []
     old = new = 0
-    for line in diff.splitlines(keepends=True):
+    rows = diff.split("\n")
+    for line in [f"{row}\n" for row in rows[:-1]] + ([rows[-1]] if rows[-1] else []):
         if old > 0 or new > 0:   # inside a hunk
             mark = line[:1]
             old -= mark in ("-", " ", "\n")

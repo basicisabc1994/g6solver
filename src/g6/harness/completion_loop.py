@@ -650,8 +650,11 @@ def _seen(text: str | None, limit: int | None = None) -> Seen:
 
 
 def _found(text: str) -> bool:
-    """Whether the scrubber finds a value anywhere in ``text`` (``_seen``'s one rule)."""
-    return any(_seen(text).cuts)
+    """Whether the scrubber finds a value anywhere in ``text``, as it stands: ``secret_spans`` on the text itself, before any
+    rule makes a line ending a newline (``_seen``'s does, and a value that was a lone carriage return was lost to it), so a
+    name holding such a value is found as one holding a tab is (review-maskfu2, finding 2). ``_shown`` asks it of each name
+    as git gave it and as quoted."""
+    return bool(secret_spans(text))
 
 
 def _hides(marks: Iterable[tuple[Any, int]], names: int = 0) -> bool:
@@ -713,7 +716,8 @@ def _shown(change: repo_tests.Change, read: repo_tests.DiffRead) -> Shown:
     """The patch as the reviewer reads it, made from the files ``read`` holds and nothing else: nothing is read here, no file
     opened and no git object asked for, no git setting reaches it, and the patch is still known by ``read.text`` alone. Each
     file's whole text at the base (its blob's bytes, as the read read them by the object name git listed, which
-    ``read.text`` names; a base the read could not read refuses the copy) and now, as read, goes through ``_seen`` alone,
+    ``read.text`` names; a base the read could not read refuses the copy, as does a file git lists as there that the read
+    could not open, ``FileRead.refusal``) and now, as read, goes through ``_seen`` alone,
     so a name on a line the change leaves out is still beside its value, and nothing of one file masks another; the two
     are then compared line by line here (``difflib``), with ``CONTEXT`` unchanged lines on each side of a change. A line shown is
     masked where the scrubber found a value in it; an unchanged line, where it found one in either text; and any line, the
@@ -735,6 +739,8 @@ def _shown(change: repo_tests.Change, read: repo_tests.DiffRead) -> Shown:
         masked.append(line if sent is None else sent)
 
     for n, one in enumerate(read.files):
+        if one.refusal is not None:      # a file git lists as there that the read could not open: never shown as gone
+            raise one.refusal
         shown = tuple(_name(one.rel, prefix) for prefix in _PREFIXES)
         sent = (MASK,) * len(_PREFIXES) if _found(one.rel) or any(_found(name) for name in shown) else shown
         names += sent != shown

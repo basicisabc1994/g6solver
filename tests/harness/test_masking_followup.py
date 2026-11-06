@@ -212,12 +212,13 @@ def test_each_place_the_read_looks_at_or_reads_the_working_tree_is_one_that_deci
     (``_leads_out``, ``is_symlink``, ``is_file``) only chooses a reader or names a file unread; each reader decides where
     what it reads lies on what it holds open (``_read_inside``: the file; ``_link_inside``: the link's folder), and reads
     nothing else by path but what that open decided, on Windows by the held folder's own final path. git is asked by commit
-    and object name (``_private``, ``_tracked_new``, ``blob_bytes``)."""
+    and object name (``_private``, ``_tracked_new``, ``blob_bytes``). ``lexists`` (review-maskfu2, finding 3) only tells
+    an untracked folder git lists, which shows nothing, from a name with nothing there, which refuses the read."""
     functions = _functions(repo_tests)
     found = {(owner, _callee(call)) for owner, call in _own_calls(functions["diff_read"]) if _callee(call) in READS}
     assert found == {("diff_read", "_private"), ("diff_read", "_tracked_new"), ("diff_read", "resolve"),
                      ("diff_read", "blob_bytes"), ("found", "_leads_out"), ("found", "is_symlink"), ("found", "is_file"),
-                     ("found", "_link_inside"), ("found", "_read_inside")}, found
+                     ("found", "lexists"), ("found", "_link_inside"), ("found", "_read_inside")}, found
     readers = {name: [(_callee(call), ast.unparse(call)) for _, call in _own_calls(functions[name]) if _callee(call) in READS]
                for name in ("_read_inside", "_link_inside")}
     assert [callee for callee, _ in readers["_read_inside"]] == ["open", "_where", "fdopen", "read"], readers
@@ -366,7 +367,8 @@ def _raw(rel: str) -> bytes:
 def _named_change(where: Path, monkeypatch, base: dict, now: dict, mode: str = "100644") -> repo_tests.Change:
     """A change of ``now`` (bytes as each file stands, None where it is gone) against a base that held ``base``, with names
     as git gives them: each byte that is not UTF-8 a lone surrogate, as ``_listing`` and ``_paths`` read them. Git never
-    runs."""
+    runs, and each file is held by the name as given (``_on_disk``): git for Windows would read another file for such a
+    name, which G6 refuses to open (``_on_disk`` and that refusal have their own tests)."""
     where.mkdir(parents=True, exist_ok=True)
     for rel, raw in now.items():
         if raw is not None and not rel.startswith("linked/"):
@@ -382,6 +384,7 @@ def _named_change(where: Path, monkeypatch, base: dict, now: dict, mode: str = "
     monkeypatch.setattr(repo_tests, "_private", lambda *args: [listed + b"\0" if listed else b"", others])
     monkeypatch.setattr(repo_tests, "_tracked_new", lambda *args: set())
     monkeypatch.setattr(repo_tests, "blob_bytes", lambda repo, name, **kwargs: {oid(r): b for r, b in base.items()}[name])
+    monkeypatch.setattr(repo_tests, "_on_disk", lambda rel: (rel, True))
     return repo_tests.Change(where, "a" * 40, "a" * 40, "a" * 40, tuple(sorted(set(base) | set(now))), {}, {}, (), ())
 
 
