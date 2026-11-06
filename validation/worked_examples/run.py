@@ -1704,28 +1704,18 @@ def host_facts(path: Path, model: str) -> dict[str, Any]:
 
 def host_ending(stop: str, facts: Mapping[str, Any], *, code: int | None, limit: str | None, by_g6: bool,
                 left: str = "") -> tuple[str, str]:
-    """How a host session ended, decided once from all of its evidence: ("", "") when cleanly, else its status and why. In this
-    order: "limited" when Claude Code said the usage limit was reached (with the reset it gave); "refused", G6's own refusal of
-    the session, when its stream has no init or an init that is not exactly the box's and the five file tools (``host_init``);
-    "model_refused" at a record of a request the model refused (``model_refusal``), a run made as Claude Code alone would leave
-    it (PLAN.md, runtime-k ec0f761), with nothing resent. ``left``: why the session's processes could not be confirmed ended
-    (``end_session``), which makes any ending but "limited" and "refused" "error", never one more scoreable. Then the one rule
-    every session process ends by (``session_ending``), given its stream's own stop, its exit and its own result as they are:
-    a stop the stream read after a success is still its stop (study follow-up review 1, finding 1); ``by_g6``: G6 ended the
-    process once its stream had ended, so its code is G6's."""
-    if limit is not None:
-        return "limited", limit
-    init, result = facts.get("init"), facts.get("result")
-    if init is None:
-        return "refused", "the host session's stream had no init, so what tools it had is not known"
-    if init["why"]:
-        return "refused", init["why"]
-    if left:
-        return "error", left
-    if facts.get("refusals"):
-        return "model_refused", ""
-    ended = session_ending(stop, code, result, ended_by_g6=by_g6)
-    return ended, (f"the session exited {code}" if ended == "error" and result_status(result) == "finished" else "")
+    """How a host session ended, from its saved stream's facts (``host_facts``), by the one rule every session's ending is decided
+    by (``session_end``): ("", "") when cleanly, else its status and why. ``left``: why the session's processes could not be
+    confirmed ended (``end_session``), a failure as any other is; ``by_g6``: G6 ended the process once its stream had ended, so
+    its code is G6's."""
+    return session_end(stop, code, facts.get("result"), ended_by_g6=by_g6, failed=[left] if left else [], limit=limit,
+                       refused=init_refused(facts.get("init")), refusals=facts.get("refusals") or ())
+
+
+def init_refused(init: Mapping[str, Any] | None) -> str:
+    """Why G6 refuses a host session by its init (``host_init``): its stream had none, or one that is not exactly the box's and
+    the five file tools; "" for an init it may go on with."""
+    return "the host session's stream had no init, so what tools it had is not known" if init is None else str(init["why"])
 
 
 def limit_of(line: str) -> str | None:
@@ -1979,18 +1969,21 @@ def run_session(ctx: Context, run: Any, agent: str, command: list[str], key: str
     that outlives its stream is given its time to exit, then ended by G6 (``outlived``), as on the host. ``deadline``, when given, is the
     run's watchdog (``Watchdog``, or its deadline): it ends the session's processes when it fires, no prompt goes in once it has
     fired, and the stream ends at its deadline however long the process took to start. Without it the session has ``seconds``
-    from when its prompt has gone in, as before."""
+    from when its prompt has gone in, as before. Its stream's file is made exclusively (``"x"``), inside the try whose finally
+    ends the process; each cleanup step runs in its own guard (``cleanup``), so one failing never skips another, and every
+    failure is part of its ending, decided once by the one rule (``session_end``; study follow-up review 3, finding 7)."""
     dog = None if deadline is None else Watchdog.of(deadline)
     raw = unbounded(ctx.docker)
     proc = ctx.docker.popen(*command, env=ctx.client_env(key))
-    stream = open(run.fresh_path(name), "w", encoding="utf-8", newline="\n")
+    stream, failed = None, []
 
     def end() -> None:               # Claude Code in the container, then its client, by the helpers every session ends by
         raw.sh(agent, KILL_AGENT, user="root", timeout=60)
         proc.kill()
 
-    stop, before = "error", tally.result      # a stream that could not be read is no clean end
+    stop, before, by_g6, code = "error", tally.result, True, None      # a stream that could not be read is no clean end
     try:
+        stream = open(run.fresh_path(name), "x", encoding="utf-8", newline="\n")
         with (dog.watching(end) if dog is not None else contextlib.nullcontext()):
             if dog is not None and not dog.may_start("prompt"):
                 stop = "timeout"     # no prompt goes in after the deadline: the process is ended below
@@ -2002,13 +1995,20 @@ def run_session(ctx: Context, run: Any, agent: str, command: list[str], key: str
                                    write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
                                    stop_usd=stop_usd)
     finally:
-        stream.close()
-        by_g6 = outlived(proc, came_to_end=not stop)
+        if stream is not None:
+            with cleanup(failed, "its stream's file could not be closed"):
+                stream.close()
+        with cleanup(failed, "whether it outlived its stream could not be read"):      # when it cannot be read, it is ended
+            by_g6 = outlived(proc, came_to_end=not stop)
         if by_g6:
-            raw.sh(agent, KILL_AGENT, user="root", timeout=60)
-            proc.kill()
-        code = proc.wait(timeout=60)
-    return session_ending(stop, code, tally.result if tally.result is not before else None, ended_by_g6=by_g6)
+            with cleanup(failed, "Claude Code in its container could not be ended"):
+                raw.sh(agent, KILL_AGENT, user="root", timeout=60)
+            with cleanup(failed, "its client could not be ended"):
+                proc.kill()
+        with cleanup(failed, "its exit could not be read"):
+            code = proc.wait(timeout=60)
+    return session_end(stop, code, tally.result if tally.result is not before else None, ended_by_g6=by_g6,
+                       failed=cleaned(failed), limit=None, refused="", refusals=())[0]
 
 
 def outlived(proc: Any, *, came_to_end: bool) -> bool:
@@ -2039,6 +2039,56 @@ def session_ending(stop: str, code: Any, result: Mapping[str, Any] | None, *, en
     if got != "finished":
         return got
     return "" if ended_by_g6 or (code == 0 and not isinstance(code, bool)) else "error"
+
+
+def session_end(stop: str, code: Any, result: Mapping[str, Any] | None, *, ended_by_g6: bool, failed: Sequence[str],
+                limit: str | None, refused: str, refusals: Sequence[Any]) -> tuple[str, str]:
+    """The one rule a session's ending is decided by, once, from every fact it has, on either executor: ("", "") when it ended
+    cleanly, else its status and why. Every way out of ``run_session`` and ``host_session`` returns through it (study follow-up
+    review 3, findings 1, 4 and 7), and no caller can leave a fact out. In this order: "limited" when Claude Code said the
+    subscription's usage limit was reached (``limit``: the reset it gave); "refused", G6's own refusal of a host session by its
+    init (``refused``: why, ``init_refused``; "" for a container session, whose init G6 does not read); "error" for any failure
+    (``failed``, each named): a reader of its output that did not read to its end, a cleanup step that raised (``cleanup``),
+    its processes not confirmed ended. Then a request the model refused (``refusals``, each a record ``model_refusal``
+    recognised), "model_refused", a run made as Claude Code alone would leave it (PLAN.md, runtime-k ec0f761): one fact among the
+    others, which never hides a failure; only when its stream was read to its end (a stop but "error") and its own exit is clean
+    (0, or G6's once its stream had ended), else "error". It stands over its result's error, as Claude Code marks a refused
+    request's result as one (host review 4, finding 4), and over a stop at a cap or the clock, as before. Last, the one rule of
+    a session process's ending (``session_ending``): its stream's own stop, its result, its exit."""
+    if limit is not None:
+        return "limited", limit
+    if refused:
+        return "refused", refused
+    if failed:
+        return "error", "; ".join(failed)
+    if refusals:
+        if stop == "error":
+            return "error", "its stream could not be read to its end"
+        if not ended_by_g6 and not (code == 0 and not isinstance(code, bool)):
+            return "error", f"the session exited {code}"
+        return "model_refused", ""
+    ended = session_ending(stop, code, result, ended_by_g6=ended_by_g6)
+    return ended, (f"the session exited {code}" if ended == "error" and result_status(result) == "finished" else "")
+
+
+@contextlib.contextmanager
+def cleanup(failed: list[tuple[str, BaseException]], what: str) -> Iterator[None]:
+    """One step of a session's cleanup (closing its stream's file, ending its processes, reading its exit) in its own guard: what
+    it raises is kept in ``failed`` with what failed, and goes no further, so one step failing never skips another (study
+    follow-up review 3, finding 7). Every failure is part of the session's ending (``cleaned``, ``session_end``)."""
+    try:
+        yield
+    except BaseException as exc:        # noqa: BLE001 - kept, and read by ``cleaned`` once every step has run
+        failed.append((what, exc))
+
+
+def cleaned(failed: Sequence[tuple[str, BaseException]]) -> list[str]:
+    """Why each cleanup step that failed failed (``cleanup``), once every step has run, for the session's ending; a stop among
+    them (an interrupt or an exit, which is no ``Exception``) is raised then, the first as it came."""
+    for _, exc in failed:
+        if not isinstance(exc, Exception):
+            raise exc
+    return [f"{what}: {type(exc).__name__}: {exc}" for what, exc in failed]
 
 
 def run_ending(*endings: str) -> str:
@@ -2146,7 +2196,8 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
     not exactly the box's (``host_init``) or at the usage limit. Whatever happened, every process the session started is then
     ended: it started in a process tree of its own (``host_start``), killed strictly (``end_session``); its exit code, whether G6
     had to end it, and why its processes could not be confirmed ended ("" when they were) are saved beside the stream. Returns
-    how it ended, as ``host_ending`` decides from all of it ("" when cleanly), with why G6 refused it, or when the limit resets,
+    how it ended, as the one rule (``session_end``) decides from all of it, each cleanup step's failure and its readers' ends
+    among them ("" when cleanly), with why G6 refused it, or when the limit resets,
     saved there too; an ending that is not clean is its run's, written there at once (``RunFolder.end``). ``deadline``: arm K3's
     run's watchdog (``Watchdog``), given for a resumed session as ``run_session`` is given it: while the session runs, the
     watchdog ends its processes when it fires. They are ended once, by whichever comes first, the watchdog or the session's end."""
@@ -2154,6 +2205,7 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
     tree = proc = stream = writer = drain = None
     errors: list[bytes] = []
     cut: list[str] = []          # the line the stream was stopped at, before its end
+    failed: list[tuple[str, BaseException]] = []     # each cleanup step that failed (``cleanup``)
     stop, by_g6, left, code = "error", False, "", None
     dog = None if deadline is None else Watchdog.of(deadline)
     ended_once: list[str] = []
@@ -2192,24 +2244,33 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
         with (dog.watching(end) if dog is not None else contextlib.nullcontext()):    # K3: the run's watchdog ends it too
             drain = threading.Thread(target=read_all, args=(proc.stderr, errors), daemon=True)
             drain.start()
-            stream = open(run.fresh_path(name), "w", encoding="utf-8", newline="\n")
+            stream = open(run.fresh_path(name), "x", encoding="utf-8", newline="\n")
             until = time.monotonic() + seconds
             writer = threading.Thread(target=feed, daemon=True)
             writer.start()
             stop = read_stream(lines(), tally, deadline=until,
                                write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
                                stop_usd=stop_usd or float("inf"))
-    finally:
+    finally:            # each step in its own guard (``cleanup``): one failing never skips another (study follow-up review 3, 7)
         if stream is not None:
-            stream.close()
-        if proc is not None:
-            by_g6 = outlived(proc, came_to_end=not stop and not cut)    # still running: G6 ends it, and its code is G6's doing
-            left = end()
-            if proc.poll() is None:
-                proc.kill()
-            code = proc.wait(timeout=60)
+            with cleanup(failed, "its stream's file could not be closed"):
+                stream.close()
+        if proc is not None:        # still running: G6 ends it, and its code is G6's doing
+            by_g6 = running = True      # what could not be read is taken to be running, and is ended
+            with cleanup(failed, "whether it outlived its stream could not be read"):
+                by_g6 = outlived(proc, came_to_end=not stop and not cut)
+            with cleanup(failed, "its processes could not be ended"):
+                left = end()
+            with cleanup(failed, "whether its launcher still runs could not be read"):
+                running = proc.poll() is None
+            if running:
+                with cleanup(failed, "its launcher could not be ended"):
+                    proc.kill()
+            with cleanup(failed, "its exit could not be read"):
+                code = proc.wait(timeout=60)
         if writer is not None:
-            writer.join(timeout=30)
+            with cleanup(failed, "the writer of its prompt could not be joined"):
+                writer.join(timeout=30)
     lost = unread(drain, errors)         # its stderr not read to its end: no clean session (study follow-up review 2, finding 6)
     stem, said = Path(name).stem, b"".join(x for x in errors if isinstance(x, bytes)).decode("utf-8", errors="replace")
     run.write(c.NDJSON["stderr"].format(stem=stem), said)
@@ -2217,9 +2278,10 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
     facts = host_facts(run.path / name, ctx.model)
     limit = facts["limit"] if facts["limit"] is not None else next((x for x in map(limit_of, c.stream_lines(said)) if x is not None),
                                                                    None)
-    ended, why = host_ending(stop, facts, code=code, limit=limit, by_g6=by_g6, left=left)    # its own stop, exit and result
-    why = why if ended or not lost else "its stderr could not be read to its end"
-    ended = run_ending(ended, lost)
+    ended, why = session_end(stop, code, facts["result"], ended_by_g6=by_g6, limit=limit, refused=init_refused(facts["init"]),
+                             failed=[*cleaned(failed), *([left] if left else []),
+                                     *(["its stderr could not be read to its end"] if lost else [])],
+                             refusals=facts["refusals"])       # every fact it has, once (study follow-up review 3, 1 and 4)
     if ended in ("refused", "limited"):
         run.write(f"{stem}_{'refused' if ended == 'refused' else 'limit'}.txt", why)
     if ended and not c.on_patch({"status": ended}):    # a session that did not end cleanly ends its run: the run's ending, before
