@@ -856,15 +856,17 @@ def test_a_continued_line_is_its_tokens_and_its_comment_still_goes():
 
 
 def test_a_hunk_that_starts_inside_a_block_and_leaves_it_is_read_as_python_reads_it():
-    """A hunk's span starts at any indentation and may dedent past where it began: the tokenizer is given every level the span
-    holds first, so the span reads as it would inside its file, comments and layout dropped, strings kept."""
+    """A hunk's span starts at any indentation and may dedent past where it began: the tokenizer is given every level a dedent in
+    the span can reach first (``layers._ladder``), so the span reads as it would inside its file, comments and blank or bracketed
+    line breaks dropped, strings kept."""
     base = ("class A:\n    def f(self):\n        a = 0\n        b = 0\n        c = 0\n        if x:\n            y = 1\n"
             "        return y\n\n    def g(self):\n        return 2\n")
     one = base.replace("y = 1", "y  =  3   # set").replace("return 2", "return 4")
     same = base.replace("y = 1", "y = 3").replace("return 2", "return 4  # four")
     assert _patch(base, one).splitlines()[3].startswith("@@ -4,")      # the span starts inside f, and leaves it
     assert layers.change(_patch(base, one)) == layers.change(_patch(base, same))
-    assert ("-y\0=\0" "1") in layers.change(_patch(base, one))[0][1]
+    got = layers.change(_patch(base, one))[0][1]          # its tokens one after another, each with its type (follow-up review 2)
+    assert any(got[i:i + 3] == (("-", "NAME", "y"), ("-", "OP", "="), ("-", "NUMBER", "1")) for i in range(len(got)))
 
 
 def test_a_span_the_tokenizer_cannot_read_keeps_its_lines_as_written():
@@ -875,7 +877,7 @@ def test_a_span_the_tokenizer_cannot_read_keeps_its_lines_as_written():
                 f"+{new}\n x\n")
 
     assert layers.change(patch("# first")) != layers.change(patch("# second"))
-    assert "+# first" in layers.change(patch("# first"))[0][1]
+    assert ("+", layers.AS_WRITTEN, "# first") in layers.change(patch("# first"))[0][1]
 
 
 def test_python_is_tokenized_in_one_place_over_a_whole_span():

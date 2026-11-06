@@ -17,6 +17,7 @@ import io
 import re
 import tokenize
 from collections.abc import Iterable, Mapping, Sequence
+from contextlib import suppress
 from pathlib import Path
 
 import product_review as pr
@@ -30,51 +31,115 @@ TEST_PATH = re.compile(r"(^|/)(tests?|testing)/|(^|/)test_[^/]*\.py$|_test\.py$|
 Said = Mapping[str, Mapping[str, str]]
 
 
-#: What Python's tokenizer gives that is layout or a comment, never a change's content.
-LAYOUT = (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.ENDMARKER)
+#: The tokens Python's tokenizer gives that carry no meaning to the program, each with why. Nothing else is dropped: every other
+#: token is kept, its type with its text, so two changes Python tells apart are two changes (study follow-up review 2, findings 2,
+#: 3 and 7). Whitespace between two tokens is no token, and Python reads nothing from it, but inside an f-string, where an "="
+#: field prints its expression as written; so an f-string is kept as written (``_side``).
+DROPPED = {
+    "COMMENT": "never compiled, so the program cannot read it; but a coding declaration, which Python reads on a file's first two "
+               "lines (PEP 263), is kept wherever it is, since a hunk's lines are not numbered here",
+    "NL": "the end of a blank or comment-only line, or a line break inside brackets: the statement goes on, and the program reads "
+          "nothing from it but the numbers of the lines after it, which only a program reading its own frames or source can see",
+}
+#: Every token type the tokenizer gives that is kept, type and text: names, numbers, strings, operators (``OP``: every exact
+#: operator type is given as one), each statement's end (``NEWLINE``) and the input's, and each block's start and end (``INDENT``,
+#: ``DEDENT``, with their line's indentation as written). An f-string's parts are kept as one literal, as written. The types the
+#: tokenizer gives no text of a span (ENCODING, ERRORTOKEN, the parser's own TYPE_COMMENT, TYPE_IGNORE, SOFT_KEYWORD, ASYNC and
+#: AWAIT) are kept if one ever comes. A type named neither here nor in ``DROPPED`` stops the reading, so its line is kept as written.
+KEPT = frozenset({"ENDMARKER", "NAME", "NUMBER", "STRING", "NEWLINE", "INDENT", "DEDENT", "OP", "FSTRING_START", "FSTRING_MIDDLE",
+                  "FSTRING_END", "ENCODING", "ERRORTOKEN", "TYPE_COMMENT", "TYPE_IGNORE", "SOFT_KEYWORD", "ASYNC", "AWAIT"})
+#: What the ``token`` module names that is no token type: its counts.
+NOT_TOKENS = frozenset({"N_TOKENS", "NT_OFFSET"})
+#: The type a line has that the tokenizer could not read, kept as written (no token type has this name).
+AS_WRITTEN = "as written"
 
 
-def _side(lines: Sequence[str]) -> list[list[str] | None]:
+def _ladder(starting: Sequence[str]) -> list[str]:
+    """What the tokenizer is given before a side's span (``_side``), so it reads the span's indentation as Python reads it in its
+    file, from the lines that start a statement (``starting``, in order: a comment, a blank line or a line inside brackets has no
+    level, so none is a step here). The hunk does not show the levels before its span: one line at each indentation at or above
+    the span's first statement, shallowest first, so a dedent to any of them is one the tokenizer knows; then one line a step
+    deeper than that statement, so it is read as a dedent to its own indentation and keeps it. A deeper level is the span's own."""
+    if not starting:
+        return []
+    space = [line[:len(line) - len(line.lstrip(" \t\f"))] for line in starting]
+    width = [len(s.expandtabs(8)) for s in space]
+    levels: dict[int, str] = {}
+    for w, s in zip(width, space):
+        if w <= width[0]:
+            levels.setdefault(w, s)
+    return [levels[w] + "_\n" for w in sorted(levels) if w] + [space[0] + " _\n"]
+
+
+def _side(lines: Sequence[str]) -> list[list[tuple[str, str]] | None]:
     """One side of a hunk (its old lines or its new ones, in order: a span of the file as the patch holds it) read whole by Python's
     own tokenizer, so a line inside a string that spans lines is that string's text, never a comment or code of its own (study
-    follow-up review 1, finding 3): for each line, the text of each token on it, a token that spans lines giving each line its own
-    part (a line inside a string gets one, even an empty one); layout and comments dropped, a string literal kept exactly as
-    written. The span may start inside a block and leave it, so the tokenizer is first given one line at each indentation the
-    span holds, shallowest first, and a dedent to any of them is one it knows. A line from where the tokenizer stopped (a span that
-    starts inside a string or ends inside one, or cannot be read) is None, and is kept as written."""
-    widths: dict[int, str] = {}
-    for line in lines:
-        if line.strip():
-            space = line[:len(line) - len(line.lstrip(" \t"))]
-            widths.setdefault(len(space.expandtabs(8)), space)
-    ladder = [widths[w] + "_\n" for w in sorted(widths) if w]
+    follow-up review 1, finding 3): for each line, each token on it as (type, text), a token that spans lines giving each line its
+    own part (a line inside a string gets one, even an empty one). Every token is kept but those that carry no meaning
+    (``DROPPED``): a statement's end is not a line break inside brackets, nor a backslash's continuation, and a block is its
+    ``INDENT`` and ``DEDENT`` with their line's indentation as written (a DEDENT's own text is empty), the level a hunk's span
+    cannot show otherwise (study follow-up review 2, findings 3 and 7). Where a token's text is not its source, the source is kept:
+    an f-string, whose parts the tokenizer renders ("{{" as "{") without the spaces an "=" field prints, is one literal as written
+    (finding 2). The tokenizer reads the span twice: once with no indentation, to find the lines that start a statement, then after
+    their ladder (``_ladder``). A line from where it stopped (a span that starts inside a string or ends inside one, or cannot be
+    read) is None, and is kept as written."""
+    starts, fresh = [], True
+    with suppress(tokenize.TokenError, SyntaxError):         # as far as it reads: the second reading stops where it stops
+        for token in tokenize.generate_tokens(io.StringIO("".join(line.lstrip(" \t\f") + "\n" for line in lines)).readline):
+            if token.type not in (tokenize.COMMENT, tokenize.NL):
+                if fresh and token.type != tokenize.ENDMARKER:
+                    starts.append(token.start[0] - 1)
+                fresh = token.type == tokenize.NEWLINE
+    ladder = _ladder([lines[at] for at in starts])
     source = "".join(ladder) + "".join(line + "\n" for line in lines)
-    parts: list[list[str]] = [[] for _ in lines]
+    rows, off = source.split("\n"), len(ladder)
+    parts: list[list[tuple[str, str]]] = [[] for _ in lines]
     read = len(lines)                   # lines from this one on were not read by the tokenizer
+    opened, depth = (0, 0), 0           # where the outermost open f-string starts, and how many are open
+
+    def put(kind: str, text: str, start: tuple[int, int], end: tuple[int, int]) -> bool:
+        pieces = [text] if start[0] == end[0] else text.split("\n")
+        if len(pieces) != end[0] - start[0] + 1:        # a token whose text is not its lines: read no further
+            return False
+        for i, piece in enumerate(pieces):
+            if 0 <= start[0] - 1 - off + i < len(lines):
+                parts[start[0] - 1 - off + i].append((kind, piece))
+        return True
+
     try:
         for token in tokenize.generate_tokens(io.StringIO(source).readline):
-            if token.type in LAYOUT:
+            kind = tokenize.tok_name.get(token.type, "")
+            if kind == "FSTRING_START" or depth:          # an f-string, nested ones in it, is one literal, as written
+                depth += (kind == "FSTRING_START") - (kind == "FSTRING_END")
+                opened = token.start if kind == "FSTRING_START" and depth == 1 else opened
+                if not depth:
+                    (r0, c0), (r1, c1) = opened, token.end
+                    text = rows[r0 - 1][c0:c1] if r0 == r1 else "\n".join([rows[r0 - 1][c0:], *rows[r0:r1 - 1], rows[r1 - 1][:c1]])
+                    if not put("STRING", text, opened, token.end):
+                        read = min(read, max(0, r0 - 1 - off))
+                        break
                 continue
-            pieces = token.string.split("\n")
-            if len(pieces) != token.end[0] - token.start[0] + 1:      # a token whose text is not its lines: read no further
-                read = min(read, max(0, token.start[0] - 1 - len(ladder)))
+            if kind in DROPPED and not (kind == "COMMENT" and tokenize.cookie_re.match(token.line)):
+                continue
+            text = rows[token.start[0] - 1][:token.start[1]] if kind == "DEDENT" else token.string
+            if (kind not in KEPT and kind not in DROPPED) or not put(kind, text, token.start, token.end):
+                read = min(read, max(0, token.start[0] - 1 - off))
                 break
-            for i, piece in enumerate(pieces):
-                at = token.start[0] - 1 - len(ladder) + i
-                if 0 <= at < len(lines):
-                    parts[at].append(piece)
     except tokenize.TokenError as exc:
         if "statement" not in str(exc.args[0]):     # a span ending inside brackets is read whole; any other stop is not
-            read = min(read, max(0, int(exc.args[1][0]) - 1 - len(ladder)))
+            read = min(read, max(0, int(exc.args[1][0]) - 1 - off))
     except SyntaxError as exc:                       # IndentationError and TabError among them
-        read = min(read, max(0, int(exc.lineno or 1) - 1 - len(ladder)))
+        read = min(read, max(0, int(exc.lineno or 1) - 1 - off))
+    if depth:                                        # an f-string the span does not close is not read
+        read = min(read, max(0, opened[0] - 1 - off))
     return [got if at < read else None for at, got in enumerate(parts)]
 
 
-def _hunk(lines: Sequence[tuple[str, str]]) -> list[str]:
-    """A hunk's added and removed lines in order, each as its side's tokens read it (``_side``), joined with their boundaries kept
-    (a NUL between two, which no token holds: study review 4, finding 8); a line with none (blank, or a comment) dropped, and one
-    the tokenizer could not read kept as written."""
+def _hunk(lines: Sequence[tuple[str, str]]) -> list[tuple[str, str, str]]:
+    """A hunk's added and removed lines in order, as their side's tokens read them (``_side``): each token as (sign, type, text),
+    one after another, so a statement broken inside brackets over two lines is the same tokens as on one line, and its type keeps
+    two tokens of one text apart (an operator's "{" and an f-string's literal one). A line the tokenizer could not read is kept
+    as written (``AS_WRITTEN``), a blank one dropped."""
     old = _side([body for sign, body in lines if sign != "+"])
     new = _side([body for sign, body in lines if sign != "-"])
     at, out = {"-": 0, "+": 0}, []
@@ -86,17 +151,18 @@ def _hunk(lines: Sequence[tuple[str, str]]) -> list[str]:
         at[sign] += 1
         if got is None:
             if body:
-                out.append(sign + body)
-        elif got:
-            out.append(sign + "\0".join(got))
+                out.append((sign, AS_WRITTEN, body))
+        else:
+            out.extend((sign, kind, text) for kind, text in got)
     return out
 
 
-def change(text: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
-    """A patch's normalised source change: for each Python file outside tests, its added and removed lines in order, each as
-    Python's tokenizer reads it in its hunk's whole old or new span (``_hunk``), blank and comment lines dropped; files sorted by
-    path. A file's name is read as ``git apply`` reads it, with ``product_review``'s own reader, from its header, which ends at its
-    first hunk; in a hunk every line is content, whatever it begins with, and a line that begins "@@" begins the next hunk."""
+def change(text: str) -> tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...]:
+    """A patch's normalised source change: for each Python file outside tests, the tokens of its added and removed lines in order,
+    each as Python's tokenizer reads it in its hunk's whole old or new span (``_hunk``), with its type, and only those that carry
+    no meaning dropped (``DROPPED``); files sorted by path. A file's name is read as ``git apply`` reads it, with
+    ``product_review``'s own reader, from its header, which ends at its first hunk; in a hunk every line is content, whatever it
+    begins with, and a line that begins "@@" begins the next hunk."""
     files: dict[str, list[str]] = {}
     current, header, hunk = None, False, []
 
