@@ -188,8 +188,9 @@ Every piece names the existing code it builds on, by branch. Where two implement
    - the repository's own tests, at tiers 1 and 2.
 6. The report: each requirement with its evidence and its kind, what was not checked, the open choices, and the answered ones
    (3.1).
-7. A reproduced finding goes to the repair loop that exists (K mode). The two harness defects the pilot found are fixed
-   first: a file written inside the box never reached the kept patch, and a review called an empty patch clean.
+7. A reproduced finding goes to the repair loop that exists (K mode). The repair is applied automatically when the fix is
+   clear, and offered otherwise (section 9). The two harness defects the pilot found are fixed first: a file written inside
+   the box never reached the kept patch, and a review called an empty patch clean.
 
 ## 5. What is measured before each piece is promoted
 
@@ -242,11 +243,36 @@ The website shows each piece only once its section 5 row has run.
 **Left to the builder:** module names inside the existing packages; the exact rule-table format; the shape of the shared
 three-valued type; and how the question renders in each client's dialog.
 
-**Decisions for the owner:**
-1. **The question budget's default.** One per task is proposed.
-2. **Containers on a user's machine.** B needs containers, as the study did. Without them, B refuses rather than running
+**Decided by the owner (2026-11-06):**
+1. **The question budget:** one question per task by default. The person can ask for more, or for none.
+2. **Containers:** B uses containers on the user's machine, as the study did. Without them, B refuses rather than running
    unconfined.
-3. **The public repository** for B's second worked example.
-4. **The site's tagline and the owner-held lines** that the findings contradict. The site draft lists true replacements to
-   choose from.
-5. **The repair loops on G6's own control code.** Pause all of them, except findings that weaken the stop or the freeze?
+3. **B's worked example** is G6's own repository, g6solver.
+4. **The site's tagline and the owner-held lines** stay as they are.
+5. **Repair is automatic when the fix is clear, and every improvement is shown clearly to the person using G6.** This holds for
+   the product and for G6's own code (section 9).
+
+## 9. Repair: automatic when the fix is clear, and shown clearly
+
+**When a fix is clear.** All four must hold:
+- a finding is reproduced by a test that fails on the code as it stands;
+- the repair makes that test pass;
+- the repair breaks no test that passed before, on the same checks;
+- it changes nothing the frozen standard or a confirmed expectation forbids.
+
+The repair is then applied automatically. In the product, that means to the working tree. For G6's own code, it means on its
+branch: merging stays a person's step.
+
+**When it is not clear,** the repair is offered, not applied. That covers:
+- a finding with no failing test;
+- a repair that breaks another test;
+- two plausible repairs;
+- a choice only the person can make, which becomes A's question.
+
+**What the person sees, for every repair applied:** "Fixed: <what was wrong>". Below it:
+- the failing test, before and after;
+- the checks that still pass;
+- the diff;
+- what was not checked.
+
+This is in the report, before anything else. An improvement is stated in the terms that were measured, never as "now correct".
