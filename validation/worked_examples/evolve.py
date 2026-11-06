@@ -47,6 +47,8 @@ ADD_ONLY = ("Your text is added to that part's existing instructions, which stay
             "as instructions. It cannot change how results are scored.")
 NEAR_COPY = 0.8
 MAX_CASES, MAX_RECORDS = 6, 8
+#: What a proposal's record keeps of it (``Training.proposed``), beside the harness file's bytes it makes.
+RECORDED = ("operator", "field", "text", "decision")
 
 
 def judged_on() -> set[str]:
@@ -156,6 +158,14 @@ def tracked(path: Path) -> bool:
                        "git's list of tracked files", ok=(0, 1)).returncode == 0      # git's own 0 (tracked) and 1 (not)
 
 
+def committed_as_is(path: Path) -> bool:
+    """Whether ``path`` is committed as it is now: tracked, and no different from what git's HEAD holds, so a file added to git's
+    index whose commit a stop cut short is not taken for committed (study follow-up review 2, finding 4)."""
+    return tracked(path) and c.completed(subprocess.run(
+        ["git", "-C", str(path.parent), "diff", "--quiet", "HEAD", "--", path.name], capture_output=True),
+        "git's diff of the file against HEAD", ok=(0, 1)).returncode == 0           # git's own 0 (the same) and 1 (not)
+
+
 def projects() -> tuple[str, ...]:
     return (*distill.PROJECTS, *(t.project.split("/", 1)[1] for t in we.load_tasks(we.TASKS_DEV)))
 
@@ -186,48 +196,75 @@ class Training:
         return SearchResult(None, "stopped", False, self.n)
 
     def proposed(self, child: heuristics.Heuristic, arm: str) -> dict[str, Any]:
-        path, spec = we.HARNESS / f"{arm}.json", c.beside(self.root, f"evolve_{arm}.json")
+        """``arm``'s candidate text, recorded before anything is committed (study follow-up review 2, finding 4): the proposal, with
+        the harness file's bytes it makes, is written whole and synced beside the rows first (``evolve_<arm>.json``, by the one
+        writer of store files), then the harness file, then its commit. A restart that finds the record never asks for a second
+        proposal: it finds the harness committed as the record says, or writes it and commits it. A record that cannot be read as
+        one (``recorded``), or one kept before the harness's bytes were kept with it whose harness is not committed, is refused
+        (ValueError), and nothing is proposed again."""
+        path, record = we.HARNESS / f"{arm}.json", self.recorded(arm)
         entry: dict[str, Any] = {"arm": arm, "id": child.id, "operator": child.operator}
-        if path.is_file() and spec.is_file() and self.committed(path):    # a restart: this text was proposed and committed
-            entry.update(json.loads(spec.read_text("utf-8")), outcome="to run")
+        if record is not None:               # a restart: this text was proposed, and is never proposed again
+            entry.update({k: record[k] for k in RECORDED if k in record})
             self.seen.append(entry["text"])
-            return entry
-        way = WAYS[child.operator]
-        rows = diverse(self.rows)
-        summary = [{"kind": r["kind"], "caught": str(r.get("caught") or "")[:600]} for r in rows]
-        field, decision = agentic.choice(self.caller, "field", FIELD_SYSTEM, {"way": way, "parts": FIELDS, "failures": summary},
-                                         tuple(FIELDS), DEFAULT_FIELD[child.operator])
-        read = library.passages(self.shelves, f"{way} {' '.join(s['caught'] for s in summary)}") if self.shelves else []
-        notes = [way, f"Your text is the {FIELDS[field]}.", ADD_ONLY]
-        if read:
-            notes.append("Reference on method, to use in your own words. Never quote it or name it:\n" + "\n---\n".join(read))
-        try:
-            text, bad = distill.distill(self.text.get(field, ""), rows, self.root, self.caller, notes, projects=projects())
-        except distill.llm.LLMError as exc:
-            text, bad = "", [f"the model call failed: {exc}"]
-        entry.update(field=field, decision=decision.as_dict(), text=text)
-        folder = c.Archive(self.root).start("distill", arm, parent=self.parent)
-        folder.write("text.txt", text)
-        if not text:
-            folder.write("reply.txt", str(getattr(self.caller, "last", "")))
-        folder.finish({"cost_usd": getattr(self.caller, "cost_usd", 0.0), "named": bad, "parent": self.parent,
-                       "operator": child.operator, "field": field}, "finished" if text else "error")
-        self.caller.cost_usd = 0.0
-        if not text:
-            return {**entry, "outcome": f"refused: no text {bad}".rstrip(" []")}
-        if bad:
-            return {**entry, "outcome": f"refused: named {bad}"}
-        if library.copied(text, read):
-            return {**entry, "text": "", "outcome": "refused: copied from the reference"}
-        if any(similar(text, old) >= NEAR_COPY for old in self.seen):
-            return {**entry, "outcome": "refused: a near copy of an earlier candidate"}
-        self.seen.append(text)
-        path.parent.mkdir(exist_ok=True)
-        path.write_text(json.dumps({**self.text, field: text}, indent=1) + "\n", "utf-8", newline="\n")
-        loop.commit(path, f"worked examples round 3: harness candidate {arm}, proposed by G6")
-        c.write_whole(lambda: c.beside(self.root, f"evolve_{arm}.json"),       # the one writer of store files
-                      json.dumps({k: entry[k] for k in ("operator", "field", "text", "decision")}, indent=1))
+        else:
+            way = WAYS[child.operator]
+            rows = diverse(self.rows)
+            summary = [{"kind": r["kind"], "caught": str(r.get("caught") or "")[:600]} for r in rows]
+            field, decision = agentic.choice(self.caller, "field", FIELD_SYSTEM, {"way": way, "parts": FIELDS, "failures": summary},
+                                             tuple(FIELDS), DEFAULT_FIELD[child.operator])
+            read = library.passages(self.shelves, f"{way} {' '.join(s['caught'] for s in summary)}") if self.shelves else []
+            notes = [way, f"Your text is the {FIELDS[field]}.", ADD_ONLY]
+            if read:
+                notes.append("Reference on method, to use in your own words. Never quote it or name it:\n" + "\n---\n".join(read))
+            try:
+                text, bad = distill.distill(self.text.get(field, ""), rows, self.root, self.caller, notes, projects=projects())
+            except distill.llm.LLMError as exc:
+                text, bad = "", [f"the model call failed: {exc}"]
+            entry.update(field=field, decision=decision.as_dict(), text=text)
+            folder = c.Archive(self.root).start("distill", arm, parent=self.parent)
+            folder.write("text.txt", text)
+            if not text:
+                folder.write("reply.txt", str(getattr(self.caller, "last", "")))
+            folder.finish({"cost_usd": getattr(self.caller, "cost_usd", 0.0), "named": bad, "parent": self.parent,
+                           "operator": child.operator, "field": field}, "finished" if text else "error")
+            self.caller.cost_usd = 0.0
+            if not text:
+                return {**entry, "outcome": f"refused: no text {bad}".rstrip(" []")}
+            if bad:
+                return {**entry, "outcome": f"refused: named {bad}"}
+            if library.copied(text, read):
+                return {**entry, "text": "", "outcome": "refused: copied from the reference"}
+            if any(similar(text, old) >= NEAR_COPY for old in self.seen):
+                return {**entry, "outcome": "refused: a near copy of an earlier candidate"}
+            self.seen.append(text)
+            record = {**{k: entry[k] for k in RECORDED}, "harness": json.dumps({**self.text, field: text}, indent=1) + "\n"}
+            c.write_whole(lambda: c.beside(self.root, f"evolve_{arm}.json"),       # the one writer of store files: first, synced
+                          json.dumps(record, indent=1))
+        harness = record.get("harness")
+        if not isinstance(harness, str):     # kept before the harness's bytes were kept with it: only as it was committed
+            if not (path.is_file() and self.committed(path)):
+                raise ValueError(f"evolve_{arm}.json records no harness to commit, and {path.name} is not committed as it is: "
+                                 "nothing is proposed again")
+        elif not (path.is_file() and path.read_bytes() == harness.encode("utf-8") and self.committed(path)):
+            path.parent.mkdir(exist_ok=True)
+            path.write_text(harness, "utf-8", newline="\n")
+            loop.commit(path, f"worked examples round 3: harness candidate {arm}, proposed by G6")
         return {**entry, "outcome": "to run"}
+
+    def recorded(self, arm: str) -> dict[str, Any] | None:
+        """The proposal recorded for ``arm`` before its commit (``proposed``), or None when there is none. One that cannot be read
+        as a proposal (not JSON, or naming no operator, field and text) is refused (ValueError), never taken for none."""
+        spec = c.beside(self.root, f"evolve_{arm}.json")
+        if not os.path.lexists(spec):
+            return None
+        try:
+            record = json.loads(spec.read_bytes().decode("utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"evolve_{arm}.json cannot be read as a recorded proposal: {exc}") from None
+        if not isinstance(record, dict) or not all(isinstance(record.get(k), str) for k in ("operator", "field", "text")):
+            raise ValueError(f"evolve_{arm}.json cannot be read as a recorded proposal: it names no operator, field and text")
+        return record
 
     def evaluate(self, sketch: Any, controls: Any, inputs: Any) -> list[list[dict[str, bool]]]:
         entry, none = self.made[-1], [[{"ok": False} for _ in inputs]]
@@ -253,7 +290,7 @@ class Training:
 
 
 def train(root: Path, g6: str, tasks: Sequence[str], parent: str, caller: Any, *, first: int, candidates: int = 4,
-          committed: Callable[[Path], bool] = tracked, shelves: Sequence[Path] = ()) -> dict[str, Any]:
+          committed: Callable[[Path], bool] = committed_as_is, shelves: Sequence[Path] = ()) -> dict[str, Any]:
     """Candidates from ``parent``'s failure records, tried in turn: the best arm, and everything that happened to each. ``shelves``:
     folders of reference Markdown for the proposer (``library.py``), named outside the repository."""
     runner = Training(root, g6, tasks, parent, caller, first, candidates, committed, shelves)
