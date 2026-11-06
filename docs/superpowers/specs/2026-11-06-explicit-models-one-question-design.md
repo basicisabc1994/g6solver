@@ -1,7 +1,7 @@
 # G6 0.3: explicit models, one question, measured — design
 
-Status: version 2, 2026-11-06, for the owner's review. Version 1 (178ef54) was challenged by Codex. All 16 of its challenges
-were read against the code, all 16 are adopted, and appendix A lists each. Nothing here is built until the owner approves it.
+Status: version 2, approved by the owner on 2026-11-06. Version 1 (178ef54) was challenged by Codex. All 16 of its challenges
+were read against the code, all 16 are adopted, and appendix A lists each. Building follows section 7's order.
 
 ## 1. Why
 
