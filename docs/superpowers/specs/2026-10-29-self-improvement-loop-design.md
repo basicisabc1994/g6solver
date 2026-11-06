@@ -596,8 +596,10 @@ cognitive work, with programming as the first toy model. So P2 was built first a
   A cycle that adopts nothing ends on the same check, so a change is `G6_E_LOOP_FROZEN_CHANGED` whether or not a candidate
   won, and whatever else held, a cycle that raised past its own guard included (`fault`, held to the tick's reading, or to
   the enrolment when it read none); a wait or a stop met at a model call writes no cycle, and the next tick's reading
-  refuses the change. A safety stop in a cycle the log would not take stops the loop at once, as a `STOP` a restarted
-  handle reads. The judge is pinned by files listed whole, never by following imports: the verdict function selected, by
+  refuses the change. Every safety stop a cycle met is kept on the tick the moment its work ends, before it settles or
+  does anything else that can fail, and every row the tick writes carries it, the fault's row among them, so a failure at
+  any step after it, then a restart, still pauses; a test built from the code fails each step after the cycle in turn. A
+  safety stop in a cycle the log would not take stops the loop at once, as a `STOP` a restarted handle reads. The judge is pinned by files listed whole, never by following imports: the verdict function selected, by
   its file and qualified name, each check by its file and name, every regular file of any suffix under the roots that
   hold the verdict and the checks (the folders they are in, or the `roots` a domain declares), data files and archives as
   much as source, and every module loaded from anywhere outside those, G6 and the installation, by its bytes. A verdict or
@@ -618,9 +620,16 @@ cognitive work, with programming as the first toy model. So P2 was built first a
   (`g6/core/reading.py`) takes every byte the freeze stands on and lists every folder it stands on, the sealed split's
   (`g6/core/vault.py`), G6's own code and the judging code the harness pins (`g6.integrity.build_manifest`), and the
   roots', and any failure, a locked file, a file another process holds without sharing, a folder that cannot be listed, a
-  file gone mid-listing or an error of any other kind, raises. The freeze's reading has one boundary that makes anything
+  file gone mid-listing or an error of any other kind, raises. Each root is listed once: a folder the listing goes into is
+  listed whole or raises, every other entry is decided by a stat that raises, never by a predicate that answers no for an
+  entry it could not ask, and the manifest's patterns choose among the files of that one listing, as `Path.glob` reads them
+  on Python 3.12, never by listing again; an error of any kind while listing or asking, one that is no `OSError` among
+  them, is unreadable. The freeze's reading has one boundary that makes anything
   else that keeps it from being made, a domain's own code raising included, unreadable too, and a test built from the code
-  lists every read and listing the freeze reaches and finds none outside the reader. An unreadable reading refuses
+  lists every read and listing the freeze reaches and finds none outside the reader, no predicate that answers no, no
+  function that lists twice, and no handler that catches less than every error but two that stand for no pinned byte; a
+  second test counts every folder each digest lists and finds none listed twice. G6's own code is listed once for the
+  envelope; the judging code's digest, which the harness reads on its own, lists it once more. An unreadable reading refuses
   enrolment (`G6_E_LOOP_JUDGE_UNPINNED`) and every tick and adoption as a frozen change naming what could not be read,
   while it stands; nothing raises past them, so a cycle's last check keeps every status the cycle held, a safety stop
   among them. A folder under a judge's root that cannot be listed is in reach of the loop's folder as a link there would
@@ -946,8 +955,9 @@ tick there. On `FakeLLM`, a week of one-call ticks on 86 cases at that allowance
 the rest of its reservation back and replies `G6_E_LOOP_BUDGET_WAIT` with the reset in `wait_until`. It is no cycle, so it
 writes no result and never counts towards the pause, and an evaluation it cut off is not one of the split's five, since
 nothing read it. The next tick waits for the reset, spending nothing. The reset is written to the constraint log as a row of
-its own, no cycle, so a restart waits it out too and sends nothing; only if that row cannot be written does a restart's first
-request find the limit again. The next tick to propose takes up what was left: the candidates proposed since the last
+its own, no cycle, the moment the tick meets it and before it settles, whatever else the cycle met, so a restart waits it out
+too and sends nothing, whatever failed after; only if that row cannot be written does a restart's first request find the
+limit again. The next tick to propose takes up what was left: the candidates proposed since the last
 tuning run and not beaten in a race race again in its first cycle, and the reservation counts them. They are read from the
 run ledger, so a restart loses none, and they are run again from the start of their race, on the same head only.
 
@@ -997,7 +1007,8 @@ never sent again, across restarts, and reads as a failed case. Only the exact re
 and only the pause stands between a refusal and that.
 
 No failure of the records can undo this. A refused request is kept as it happens, by digest, in `refused.log`, a file no lock stands
-in front of, before any record of the tick is written, and this process holds it too, for good. So a crash before its cycle is
+in front of, before any record of the tick is written and before the failed request is asked anything else (whether it met a
+limit, which reads the clock), and this process holds it too, for good. So a crash before its cycle is
 written, or a log that will not take that cycle, cannot send it again. A cycle lost that way cannot carry the pause, so it ends the
 run at the first, as three lost cycles do: `STOP` and `stops.log` hold it, the reason says what was refused, and only a person's
 start goes on. If `refused.log`, the log and `STOP` all refuse a write, this process still sends nothing more, and a restart then
