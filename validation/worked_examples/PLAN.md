@@ -3172,3 +3172,64 @@ API spend). Each run has a verdict on the maintainers' tests for its first patch
 next fourteen would have to make right about 9 of their roughly 12 wrong first patches; even at a true rate of 45% that has a
 chance of about 4%, and the rule step changed nothing in any run. Instead, the cause is found from the fourteen runs' saved
 records, at no spend, and a new hypothesis is registered in its own section before any run that tests it.
+
+## 2026-11-06 (evening): why the K3 pilot converted so little, and hypothesis H-decide, registered before any run that tests it
+
+Written after reading the fourteen pilot runs' saved records (seven development bugs; no stage 5 bug read; no model, container
+or test run), and before any run that tests what follows.
+
+**What the rule step was.** A prompt to the same author session after its first patch is kept; the tree after it is the `rule`
+patch. So it is the author testing its own patch, not an independent check:
+- In 10 of the 14 runs the rule patch's source is the first patch's, unchanged.
+- In 4 runs, where the author's own test disagreed with its patch, the author changed the test, not the code (in one run in
+  part).
+- Its reply reaches no reviewer and no gate.
+- Replay 3's patch-blind test of the issue's rule, the part that discriminated on recorded patches (2026-11-04), is not in K3 at
+  all; it is arm V3's path. On these seven bugs its saved verdicts discriminate little anyway.
+
+**What the ten wrong final patches miss** (one primary mode each, from the issue and the names and assertions of the
+maintainers' failing tests):
+- 7: behaviour the issue does not state (the maintainers' intent);
+- 2: a form or entry point visible from the repository (an alias the touched file already imports; delegating lexers);
+- 1: a case the issue's own caveat covers.
+- Every patch that is not empty fixes the issue's own example.
+
+**The author saw it.** In 5 of the 10, the author met or named the behaviour the maintainers' failing tests check, and kept
+the other side, calling it back-compatibility, an existing test, out of scope, or a separate change. Nothing read that
+statement.
+
+**The review.** On 5 of the 10 nothing went back. On the other 5 every repair made its reviewer's test pass, and the repairs
+fixed the cases shown, not the rule. The parent gate dropped 4 findings and caused no wrong final; on one bug it kept a right
+patch right.
+
+**Harness defects found on the way, to confirm and fix before any further run of a host-executor arm:**
+- A file written by a command inside the box does not reach the kept patch (seen on 3 runs). Whether it changed any verdict is
+  not known yet.
+- A review can call an empty patch clean (1 run).
+
+**Hypothesis H-decide.** Where an agent declines a decision point, the task is underdetermined there, and that is where wrong
+patches sit. Declining means the agent names a behaviour the task might require and keeps the other side.
+1. **Location, first, on recorded data, at no spend.**
+   - A plain-code tagger finds declined decision points in the author's saved final report. It is built on development records
+     only (these fourteen runs and earlier development bugs) and frozen by digest before it reads any scored run.
+   - **Prediction:** on stage 4's saved runs, tagged runs fail the maintainers' tests at least 20 points more often than
+     untagged runs, and at least a third of the wrong runs are tagged.
+   - **Kill:** a gap under 10 points, or under a third of the wrong runs tagged.
+2. **Resolution, only if 1 holds, registered in its own section before it runs.**
+   - The top declined point goes to someone other than the author. In the product that is the person. In the study it is a
+     simulated maintainer who answers only the question asked, from the maintainers' merged change.
+   - That measures an upper bound: what one question to someone who knows the intent adds. It is never counted as the
+     harness's uplift alone.
+   - Its measures, bar and question budget are written before it runs.
+
+**What H-decide cannot do.** About 5 of the 10 wrong finals depend on intent with no grounding in the issue or the repository.
+Only a person can settle those. Choosing a side changes a default, and right patches pay for a wrong choice.
+
+**Noted, not tested now:**
+- H2: the patch-blind test covers every supported form, entry point and documented output contract from the repository, and
+  the reviewer may import the project's runtime dependencies.
+- H3: the old rule is evidence of what changed, not a reference that outranks the issue.
+
+Each would be registered in its own section before any test.
+
+**Unchanged:** stage 5's runs wait, its bugs stay unread, and the frozen rule stays the claim.
