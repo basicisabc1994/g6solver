@@ -544,12 +544,36 @@ def _link(path):
     return _st.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & _st.FILE_ATTRIBUTE_REPARSE_POINT)
 
 
-def _through(path):
+def _links_at_start(top):
+    found = []
+    for entry in os.scandir(top):
+        if _link(entry.path):
+            found.append(entry.path)
+        elif entry.is_dir(follow_symlinks=False):
+            found += _links_at_start(entry.path)
+    return found
+
+
+_WERE = _links_at_start(_REPO) if os.path.isdir(_REPO) else []
+
+
+def _through(path, reads):
+    """The link an operation on ``path`` reaches through: an ancestor that is a link now, or, for an operation that reads, one
+    that was a link when the script started, whatever the script has made of that name since."""
     p = os.path.abspath(path)
     if not p.startswith(_REPO + os.sep):
         return None
     parts = os.path.relpath(p, _REPO).split(os.sep)
-    return next((a for a in (os.path.join(_REPO, *parts[:i]) for i in range(1, len(parts))) if _link(a)), None)
+    now = next((a for a in (os.path.join(_REPO, *parts[:i]) for i in range(1, len(parts))) if _link(a)), None)
+    was = next((w + " (a link when the script started)" for w in _WERE if p.startswith(w + os.sep)), None)
+    return now or (was if reads else None)
+
+
+def _reads(name, args):
+    if name == "open":                # builtins.open's mode, or os.open's flags
+        how = args[1] if len(args) > 1 else "r"
+        return ("w" not in how and "x" not in how and "a" not in how) if isinstance(how, str) else not how & (os.O_WRONLY | os.O_RDWR)
+    return name in ("lstat", "stat", "listdir", "scandir", "readlink", "realpath")
 
 
 def _watch(mod, name, itself_ok, at=0):
@@ -561,7 +585,7 @@ def _watch(mod, name, itself_ok, at=0):
         path = args[at] if len(args) > at else None
         if isinstance(path, (str, os.PathLike)):
             _SEEN.add(name)
-            through = _through(path)
+            through = _through(path, _reads(name, args))
             if through:
                 print("FOLLOWED", name, path, "through", through, file=sys.stderr)
             elif not itself_ok and _link(path):
@@ -702,9 +726,14 @@ def test_finding_3_the_mirror_never_inspects_a_member_through_an_existing_ancest
     (outside / "x" / ".git").mkdir(parents=True)
     tree.helpers.link(outside, repo / "d")
     tree.helpers.write(ws, {"d/x": "replacement\n"})
-    done = subprocess.run([sys.executable, "-I", "-c", OBSERVE + box.MIRROR, str(repo), "tester"], input=box.pack(ws),
+    under = (                          # the review's own observer: any lstat of a name below the link's path, at any time
+        "import os, sys\nnative_lstat = os.lstat\ndef observed_lstat(path, *args, **kw):\n"
+        "    result = native_lstat(path, *args, **kw)\n"
+        f"    if str(path).startswith({str(repo / 'd') + os.sep!r}):\n"
+        "        print('FOLLOWED_CONTAINER_ANCESTOR_LINK', file=sys.stderr)\n    return result\nos.lstat = observed_lstat\n")
+    done = subprocess.run([sys.executable, "-I", "-c", OBSERVE + under + box.MIRROR, str(repo), "tester"], input=box.pack(ws),
                           capture_output=True, timeout=30)
-    assert b"FOLLOWED" not in done.stderr, done.stderr
+    assert b"FOLLOWED" not in done.stderr, done.stderr       # nor anything in the folder the mirror made in the link's place
     assert done.returncode == 0 and (repo / "d" / "x").read_bytes() == (ws / "d" / "x").read_bytes() and not reparse(repo / "d"), \
         done.stderr
     assert (outside / "x" / ".git").is_dir() and not (outside / "x" / "replacement").exists()

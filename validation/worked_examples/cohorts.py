@@ -530,6 +530,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("command", choices=("sizes", "controls", "manifest"))
     ap.add_argument("--cohort", choices=tuple(COHORTS))
     ap.add_argument("--only", default="", help="controls: one bug, or several, comma-separated")
+    ap.add_argument("--again", action="store_true", help="controls: run them again for a bug whose record is admitted too, so "
+                                                         "every record is made by the code as it is now")
     ap.add_argument("--archive", type=Path, default=None)
     args = ap.parse_args(argv)
     if args.command == "sizes":
@@ -547,7 +549,8 @@ def main(argv: list[str] | None = None) -> int:
         done = latest_controls(archive)
         for bug in [b for b in cohort(args.cohort) if not args.only or b in args.only.split(",")]:
             ids = image_ids(bug, docker)
-            if bug in done and not admit(done[bug], ids):     # the one rule, on both ids now: a change to either runs them again
+            if not args.again and bug in done and not admit(done[bug], ids):    # the one rule, on both ids now: a change to
+                # either runs them again
                 print(json.dumps({"bug": bug, "kept": "a control record admitted on both of these image ids"}), flush=True)
                 continue
             folder = archive.start("control", bug, cohort=args.cohort, g6_commit=G6_COMMIT)

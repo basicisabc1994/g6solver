@@ -97,7 +97,8 @@ def stop(uid):
 #: holding ``.git`` or ``.venv`` at any depth may be removed, all before anything changes. No path operation reaches through a
 #: link at any depth: each name's path is used only once every folder above it is read, by lstat from the root down, as a folder
 #: of its own (``inside``, ``path_of``), and a name below a link or a file is not in the repository's tree; the tree is walked
-#: by lstat (``below``), a link or anything but a folder of its own an entry never walked into. Then what is new or changed is
+#: by lstat (``below``), a link or anything but a folder of its own an entry never walked into; a folder the mirror made holds
+#: only what it writes there, and nothing in it is read (``made``, ``holding``). Then what is new or changed is
 #: written: never through a name already there, which is removed (a folder, a link, another name of a file) and the file or link
 #: made fresh, exclusively, keeping a replaced file's owner, and its mode when the executable bit is the tar's; a file's mode is
 #: its tar member's, git's 0755 or 0644, so the executable bit is carried; a file with the same bytes whose executable bit
@@ -155,6 +156,7 @@ for name in [*dirs, *files, *links]:
     if "/" in name and name.rsplit("/", 1)[0] not in dirs:
         sys.exit("refused: " + repr(name) + " is not inside a folder the tar holds")
 written = removed = 0
+made = set()   # the folders this mirror made: empty when made, so all they hold is what it writes there, never read again
 
 
 def at(name):
@@ -164,9 +166,20 @@ def at(name):
 def inside(name):
     """Whether each folder above ``name`` is a folder of its own, read by lstat from the repository's root down (``kind``) and
     stopping at the first that is not, so nothing below a link, a file or anything else is ever read: such a name is not in the
-    repository's tree."""
+    repository's tree. A folder this mirror made (``made``) is one, and so is every folder the tar holds below it."""
     parts = name.split("/")
-    return all(kind(at("/".join(parts[:i])))[0] == "dir" for i in range(1, len(parts)))
+    for i in range(1, len(parts)):
+        above = "/".join(parts[:i])
+        if above in made:
+            return True
+        if kind(at(above))[0] != "dir":
+            return False
+    return True
+
+
+def holding(name):
+    """What holds ``name`` (``kind``), read only when its folder was there before this mirror: in a folder it made, nothing."""
+    return (None, None) if "/" in name and name.rsplit("/", 1)[0] in made else kind(at(name))
 
 
 def path_of(name):
@@ -179,14 +192,15 @@ def path_of(name):
 
 def below(name):
     """Every entry below the folder ``name`` ("" for the repository's root), deepest first, each with its kind by lstat
-    (``kind``): a link, or anything but a folder of its own, is an entry never walked into, as are ``.git`` and ``.venv``."""
+    (``kind``): a link, or anything but a folder of its own, is an entry never walked into, as are ``.git`` and ``.venv``, and a
+    folder this mirror made, which holds only what the tar holds."""
     found = []
     for n in sorted(os.listdir(path_of(name))):
         child = name + "/" + n if name else n
-        held = kind(at(child))[0]
-        if held == "dir" and n not in kept:
+        what = kind(at(child))[0]
+        if what == "dir" and n not in kept and child not in made:
             found.extend(below(child))
-        found.append((child, held))
+        found.append((child, what))
     return found
 
 
@@ -251,14 +265,15 @@ def link(path, target):
 
 for name in sorted(dirs):     # a folder before what is in it: each folder above it is already one of its own
     path = path_of(name)
-    if kind(path)[0] not in (None, "dir"):
+    if holding(name)[0] not in (None, "dir"):
         clear(path)
-    if kind(path)[0] is None:
+    if holding(name)[0] is None:
         os.mkdir(path, 0o755)
         own(path)
+        made.add(name)
 for name, m in sorted(files.items()):
     path, data, run = path_of(name), tar.extractfile(m).read(), bool(m.mode & stat.S_IXUSR)
-    held, st = kind(path)
+    held, st = holding(name)
     keeps = held == "file" and bool(st.st_mode & stat.S_IXUSR) == run      # the old file's mode, its executable bit the tar's
     if held == "file":
         with os.fdopen(os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)), "rb") as f:
@@ -273,7 +288,7 @@ for name, m in sorted(files.items()):
     written += 1
 for name, target in sorted(links.items()):
     path = path_of(name)
-    held, st = kind(path)
+    held, st = holding(name)
     if held == "other" and stat.S_ISLNK(st.st_mode) and os.readlink(path) == target:
         continue               # the same link: left as it is
     if held is not None:

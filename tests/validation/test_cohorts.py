@@ -278,6 +278,9 @@ def test_finding_7_a_change_to_either_image_id_runs_the_controls_again_and_only_
         ran.clear()
         assert cohorts.main(["controls", "--cohort", "selection", "--only", bug, "--archive", str(tmp_path)]) == 0
         assert ran == ([bug] if again else []), record
+        ran.clear()                                   # --again: every record made again by the code as it is now
+        assert cohorts.main(["controls", "--cohort", "selection", "--only", bug, "--archive", str(tmp_path), "--again"]) == 0
+        assert ran == [bug]
 
 
 def test_finding_11_a_manifest_admits_by_the_recorded_outcomes_and_never_by_a_callers_failed_flag():
