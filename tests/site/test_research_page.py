@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """/research/: the evidence page, rendered from pages.evidence. One thesis (owner, 2026-10-19): G6 engineers its own
-gains, so every study run is shown as the same model without G6 and with it, labelled core harness or extensions."""
+gains, so every study run is shown as the same model without G6 and with it, labelled core harness or extensions.
+Since 2026-11-03 it also carries the coding study, which found no significant uplift on unseen bugs, so the page says
+where G6 gained and where it did not."""
 from __future__ import annotations
 
 import html
 import json
 import re
+import shutil
+from pathlib import Path
 
 from pages import evidence
 
@@ -177,6 +181,109 @@ def test_the_development_section_is_closed_and_lists_no_study_that_never_ran(cli
     for study in (s for s in evidence.studies() if s.kind == "planned"):
         assert study.title not in _text(page), study.id
     assert not re.search(r"\b(?:ECHA|VLE)\b", dev)
+
+
+def _block(section: str, block_id: str) -> str:
+    """One stage's block inside the coding study's section (its divs hold no nested div but the bars' grid)."""
+    return section.split(f'id="{block_id}"', 1)[1].split('<div id="coding-', 1)[0].split("<h3>What worked", 1)[0]
+
+
+def test_the_coding_study_is_an_early_worked_example_in_plain_words(client):
+    # owner, 2026-11-03: "update the case study on the website with your findings"; plain words, no arm's short name,
+    # results a worked example, never more than the numbers say
+    page = _page(client)
+    assert page.index('id="coding-study"') < page.index('id="the-meta-harness"') < page.index('id="reading"')
+    section = _section(page, "coding-study")
+    text = _text(section)
+    assert "A worked example" in text and "Claude Code on real bugs, with a review loop and without" in text
+    for arm in evidence.CODING_ARMS.values():
+        assert arm in text, arm
+    assert not re.search(r"\b(?:K[012]|M9|L9|arm [A-Z])\b", text)
+    for said in ("no significant uplift", "Uplift not shown: neither loop met the rule", "Uplift not shown; direction "
+                 "only.", "Nothing adopted.", "What worked", "What did not", "Why", "These are plans, not results"):
+        assert said in text, said
+    assert not re.search(r"(?i)\b(?:verified|proven?|proof of concept|experimental|breakthrough|superhuman)\b", text)
+    assert not re.search(r"(?i)\bthe first\b|\bfirst (?:to|ever)\b", text)
+    for cause in ("does not carry to unseen bugs", "Little headroom, and too few bugs", "need the maintainers' intent",
+                  "edits are too narrow"):
+        assert cause in text, cause
+
+
+def test_the_coding_studys_numbers_on_the_page_are_its_files(client):
+    data = json.loads(evidence.VALIDATION_DIR.joinpath("results", "coding", "coding_study.json")
+                      .read_text(encoding="utf-8"))
+    section = html.unescape(_section(_page(client), "coding-study"))
+    for block_id, key in (("coding-training", "training"), ("coding-stage-1", "stage_1"), ("coding-stage-2", "stage_2")):
+        block, runs = _block(section, block_id), data[key]["runs"]
+        for score, label in evidence.SCORES:
+            figure = block.split(f">{label}<", 1)[1].split("</figure>", 1)[0]
+            for arm, value in data[key]["passed"][score].items():
+                bar = figure.split(f">{evidence.CODING_ARMS[arm]}<", 1)[1].split("</div>", 1)[0]
+                assert f"{value} of {runs}" in bar, (key, score, arm)
+    text = _text(section)
+    stage3 = data["stage_3"]
+    assert f"{stage3['held_out']['wins']} wins to {stage3['held_out']['losses']} losses" in text
+    spend = data["spend"]
+    assert f"${spend['usd']:.2f} of the ${spend['budget_usd']} budget" in text
+    assert f"${spend['runs_usd']:.2f} on the study's runs and ${spend['design_review_usd']:.2f} on a review" in text
+    k1 = data["stage_2"]["passed"]
+    assert (f"it passed {k1['maintainers']['K1']} of {data['stage_2']['runs']} runs against {k1['maintainers']['A']} "
+            f"on the maintainers' tests") in text
+
+
+def test_the_reviews_of_g6s_own_code_are_counted_by_the_page_not_typed_in(client):
+    data = json.loads(evidence.VALIDATION_DIR.joinpath("results", "coding", "coding_study.json")
+                      .read_text(encoding="utf-8"))
+    branches = data["own_code_reviews"]["branches"]
+    section = _section(_page(client), "coding-study")
+    table = section.split('<table class="rs-matrix is-compact">', 1)[1].split("</table>", 1)[0]
+    for b in branches:
+        row = table.split(f"<code>{b['branch']}</code>", 1)[1].split("</tr>", 1)[0]
+        cells = re.findall(r"<td[^>]*>([^<]*)</td>", row)
+        assert cells[:len(b["found"])] == [str(n) for n in b["found"]] and cells[4] == str(sum(b["found"])), b["branch"]
+    foot = _text(table.split("<tfoot>", 1)[1])
+    total = sum(sum(b["found"]) for b in branches)
+    per_review = [sum(b["found"][i] for b in branches if len(b["found"]) > i) for i in range(4)]
+    assert f"All {len(branches)} {' '.join(map(str, per_review))} {total}" in foot
+    assert f"found {total} defects in {len(branches)} branches" in _text(section)
+    template = (Path(evidence.__file__).parents[1] / "templates" / "pages" / "research.html").read_text(encoding="utf-8")
+    assert str(total) not in template and "160.27" not in template          # worked out or read, never typed
+
+
+def test_a_changed_count_in_a_copy_of_the_coding_studys_file_changes_the_page(client, tmp_path, monkeypatch):
+    copy = tmp_path / "validation"
+    shutil.copytree(evidence.VALIDATION_DIR, copy)
+    path = copy / "results" / "coding" / "coding_study.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["stage_2"]["passed"]["maintainers"]["K1"] = 29
+    data["own_code_reviews"]["branches"][1]["found"][0] += 7
+    total = sum(sum(b["found"]) for b in data["own_code_reviews"]["branches"])
+    path.write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setattr(evidence, "VALIDATION_DIR", copy)
+    text = _text(_section(_page(client), "coding-study"))
+    assert "it passed 29 of 40 runs against 23 on the maintainers' tests" in text
+    assert f"found {total} defects in 10 branches" in text and f"Together the reviews found {total}." in text
+
+
+def test_the_page_claims_no_more_than_the_coding_study_shows(client):
+    # the hero, the description, the reading's lede and its status: true of the local-model gains and of the coding
+    # study's no significant uplift on unseen bugs alike
+    page = _page(client)
+    text = _text(page)
+    for gone in ("G6 engineers its own gains", "the power of G6's self-engineering", "The experiments are complete",
+                 "the numbers here are final"):
+        assert gone not in text and gone not in page, gone
+    hero = _text(page.split('class="rs-hero"', 1)[1].split("</section>", 1)[0])
+    assert "Where G6 gained, and where it did not." in hero
+    description = html.unescape(re.search(r'<meta name="description" content="([^"]*)"', page)[1])
+    assert "no significant uplift over Claude Code alone on unseen bugs" in description
+    reading = _text(_section(page, "reading"))
+    assert "where a harness around the same model gained" in reading and "and where it did not" in reading
+    status = reading.split("Status", 1)[1]
+    assert "its numbers stand as measured" in status and "none of those has run" in status
+    entry = html.unescape(_section(page, "studies").split(">Review loop on unseen coding bugs<", 1)[1]
+                          .split("</li>", 1)[0])
+    assert "Not shown" in entry and "Review loop: <b>" in entry and "G6: <b>" not in entry
 
 
 def test_the_page_reads_without_javascript(client):

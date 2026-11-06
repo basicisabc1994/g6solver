@@ -158,7 +158,8 @@ def test_every_study_run_is_counted_once_with_what_it_covers():
     rows = evidence.ledger()
     registered = [s for s in evidence.studies() if s.kind == "registered"]
     finished = [r for r in evidence.rounds() if not r.status.startswith("in progress")]
-    assert len(rows) == len(registered) + 1 + len(finished) + len(evidence.archive()["rows"])   # + the pilot
+    # + the pilot, + the coding study
+    assert len(rows) == len(registered) + 1 + len(finished) + 1 + len(evidence.archive()["rows"])
     assert len({r.name for r in rows}) == len(rows)
     by = {r.name: r for r in rows}
     assert by["SWE-bench Pro"].scope == "core" and by["Omni-MATH"].scope == "extensions"
@@ -225,6 +226,112 @@ def test_a_missing_results_file_fails_loudly(tmp_path, monkeypatch):
     monkeypatch.setattr(evidence, "VALIDATION_DIR", tmp_path)
     with pytest.raises(FileNotFoundError):
         evidence.studies()
+
+
+CODING_FILE = ("results", "coding", "coding_study.json")
+
+
+def _coding_data() -> dict:
+    return json.loads(evidence.VALIDATION_DIR.joinpath(*CODING_FILE).read_text(encoding="utf-8"))
+
+
+def _coding_copy(tmp_path, monkeypatch, change) -> None:
+    """The coding study's file alone, changed by ``change``, as the only results the module reads."""
+    data = _coding_data()
+    change(data)
+    target = tmp_path.joinpath(*CODING_FILE)
+    target.parent.mkdir(parents=True)
+    target.write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setattr(evidence, "VALIDATION_DIR", tmp_path)
+
+
+def test_the_coding_studys_file_holds_counts_arm_names_and_public_bug_ids_only():
+    # the brief (2026-11-03): no task, issue, test or patch text
+    data = _coding_data()
+    prose = {"what", "label", "source", "note", "counted", "name", "plan", "rca", "lead", "model", "ended"}
+
+    def walk(value, key=""):
+        if isinstance(value, dict):
+            for k, v in value.items():
+                yield from walk(v, k)
+        elif isinstance(value, list):
+            for v in value:
+                yield from walk(v, key)
+        elif isinstance(value, str):
+            yield key, value
+
+    for key, value in walk(data):
+        if key in prose:
+            continue
+        assert re.fullmatch(r"[A-Za-z0-9_\-. ]{1,40}", value), (key, value)   # an arm, a bug id, a label, a branch
+    for stage in ("stage_1", "stage_2"):
+        assert all(re.fullmatch(r"[a-z0-9-]+-\d+", bug) for bug in data[stage]["bugs"])
+    every = " ".join(v for _, v in walk(data))
+    assert not re.search(r"\b(?:verified|proven?|proof of concept|experimental)\b", every, re.IGNORECASE)
+
+
+def test_the_coding_study_works_out_its_totals_tests_and_ranges_from_the_counts():
+    data, found = _coding_data(), evidence.coding_study()
+    branches = data["own_code_reviews"]["branches"]
+    own = found["own"]
+    assert own["total"] == sum(sum(b["found"]) for b in branches) == 157 and own["count"] == len(branches) == 10
+    assert own["per_review"] == [sum(b["found"][i] for b in branches if len(b["found"]) > i) for i in range(4)]
+    assert (own["clean"], own["ran_out"], own["in_loop"]) == (1, 9, 0)
+    assert own["open"] == "2 to 5"          # the last review of each branch whose repairs ran out: 2 to 5 still open
+    two = found["two"]
+    assert (two["bugs"], two["repos"], two["same_bugs"], two["differing"]) == (20, 11, 18, 3)
+    assert two["never_behind"] and two["best_p"] == "0.125" and two["amended_gain"] == "7 or 8"
+    assert (found["one"]["bugs"], found["one"]["repos"]) == (11, 6)
+    assert not any(found[s]["rule_met"] for s in ("training", "one", "two")) and found["training"]["met"] is None
+    assert found["best"] == {"pct": "85.0", "stage": 2, "arm": "Review loop", "score": "amended tests"}
+    assert (found["training"]["lead"], found["one"]["lead"], two["lead"]) == ("+21.4", "−4.5", "+7.5")
+    # every sign test the plan printed, worked out again from the pairs that differ
+    printed = {("stage_1", "A", "maintainers", "M9"): 0.875, ("stage_1", "A", "amended", "M9"): 0.188,
+               ("stage_1", "A", "maintainers", "K1"): 1.0, ("stage_1", "A", "amended", "K1"): 0.313,
+               ("stage_1", "T", "amended", "M9"): 0.063, ("stage_1", "T", "maintainers", "K1"): 0.750,
+               ("stage_2", "A", "maintainers", "M9"): 0.891, ("stage_2", "A", "maintainers", "K1"): 0.125,
+               ("stage_2", "T", "maintainers", "M9"): 0.938, ("stage_2", "T", "amended", "M9"): 0.855,
+               ("stage_2", "T", "maintainers", "K1"): 0.250}
+    for (stage, other, score, arm), p in printed.items():
+        key = {"stage_1": "one", "stage_2": "two"}[stage]
+        assert abs(found[key]["pairs"][other][score][arm]["p"] - p) < 6e-4, (stage, other, score, arm)
+    one_bug = data["stage_2"]["one_bug"]                  # with a reviewer: every arm that passed it, and only those
+    assert set(one_bug["passed_all"]) == set(data["arms"]["with_reviewer"])
+    assert set(one_bug["failed_all"]) - {"S"} == set(data["arms"]["order"]) - set(data["arms"]["with_reviewer"])
+    blind = data["blind_labels"]
+    assert blind["within_reach"] + blind["out_of_reach"] == blind["agreed"] <= blind["patches"]
+
+
+def test_the_coding_study_is_in_the_ledger_as_not_shown_beside_claude_code_alone():
+    data = _coding_data()["stage_2"]
+    entry = {r.name: r for r in evidence.ledger()}["Review loop on unseen coding bugs"]
+    passed = data["passed"]["maintainers"]
+    assert (entry.without, entry.with_g6) == (f"{passed['A']} of {data['runs']}", f"{passed['K1']} of {data['runs']}")
+    assert entry.outcome == "not shown" and entry.treatment == "Review loop" and entry.baseline == "Claude Code alone"
+    assert [label for label, _, _ in entry.bars] == ["Claude Code alone", "Review loop"]
+    assert entry.scope == "core" and entry.source == "development" and "Direction only" in entry.note
+
+
+def test_a_changed_count_in_the_coding_studys_file_changes_what_the_module_says(tmp_path, monkeypatch):
+    def change(data):
+        data["own_code_reviews"]["branches"][0]["found"][0] += 4
+        data["stage_2"]["passed"]["maintainers"]["K1"] = 30
+
+    before = _coding_data()["own_code_reviews"]["branches"]
+    _coding_copy(tmp_path, monkeypatch, change)
+    found = evidence.coding_study()
+    assert found["own"]["total"] == sum(sum(b["found"]) for b in before) + 4
+    assert found["own"]["per_review"][0] == sum(b["found"][0] for b in before) + 4
+    assert found["two"]["passed"]["maintainers"]["K1"] == 30 and found["two"]["lead"] == "+17.5"
+
+
+def test_the_coding_studys_file_must_agree_with_itself(tmp_path, monkeypatch):
+    def clean_with_a_finding_open(data):
+        data["own_code_reviews"]["branches"][0]["ended"] = "clean"
+
+    _coding_copy(tmp_path, monkeypatch, clean_with_a_finding_open)
+    with pytest.raises(ValueError, match="k-loop"):
+        evidence.coding_study()
 
 
 def test_fixed_arm_and_posthoc_selection_are_separate():

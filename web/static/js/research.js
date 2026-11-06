@@ -25,5 +25,5 @@
     head.addEventListener("click", function () { show(head.getAttribute("aria-expanded") !== "true"); });
     show(i === 0);                                        // the latest round starts open
   });
-  ["#the-meta-harness", "#studies"].forEach(function (id) { var s = root.querySelector(id); if (s) grow(s); });
+  ["#coding-study", "#the-meta-harness", "#studies"].forEach(function (id) { var s = root.querySelector(id); if (s) grow(s); });
 })();
