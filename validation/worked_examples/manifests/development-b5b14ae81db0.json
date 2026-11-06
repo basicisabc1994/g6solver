@@ -690,21 +690,41 @@
   },
   {
    "controls": {
-    "failed": "empty patch",
-    "images_after": null,
-    "record": {
-     "run": "control/starlette-3166/20261106T140332740604Z",
-     "sha256": "1ebf7f99029858a1589460d713831639e90c2ba9756d918651482bf32212933e"
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:51aef3b68bcdf740d68c7b72dcd289afbc6299f47ad2139b0f9645f0e299f756",
+     "task_image_id": "sha256:d97c2ef8c6a8d85621d996a83be982abd9559bb3e4ab6c15e46f49e8c5d24b69"
     },
-    "round_trip": null,
+    "record": {
+     "run": "control/starlette-3166/20261106T141300920677Z",
+     "sha256": "b1510bedf3893a1935d8c02b10912470b60d6e820901699dd7fac011fe310141"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:51aef3b68bcdf740d68c7b72dcd289afbc6299f47ad2139b0f9645f0e299f756",
+      "task_image_id": "sha256:d97c2ef8c6a8d85621d996a83be982abd9559bb3e4ab6c15e46f49e8c5d24b69"
+     },
+     "kept_bytes": 8696,
+     "kept_read": true,
+     "kept_sha256": "74df75a5d8b32f44e73486e4de1021d94c50c1b02eed1fffb7cc905ad28439f3",
+     "known_bytes": 8696,
+     "known_names_an_executable": false,
+     "known_sha256": "74df75a5d8b32f44e73486e4de1021d94c50c1b02eed1fffb7cc905ad28439f3",
+     "run": "run/starlette-3166/20261106T141312682380Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 8
+    },
     "selfcheck": {
      "empty": {
-      "failed": 0,
+      "failed": 19,
       "passed": 0,
-      "state": "unknown",
+      "state": "failed",
       "tests": 19,
-      "unknown": 19,
-      "why": "none of 19 was seen to fail and 19 have no result in the report (exit 2)"
+      "unknown": 0,
+      "why": "19 of 19 seen to fail"
      },
      "gold": {
       "failed": 0,
@@ -718,7 +738,7 @@
       "oracle_image_id": "sha256:51aef3b68bcdf740d68c7b72dcd289afbc6299f47ad2139b0f9645f0e299f756",
       "task_image_id": "sha256:d97c2ef8c6a8d85621d996a83be982abd9559bb3e4ab6c15e46f49e8c5d24b69"
      },
-     "run": "selfcheck/starlette-3166/20261106T140337263455Z"
+     "run": "selfcheck/starlette-3166/20261106T141306947242Z"
     },
     "validate": {
      "base": {
@@ -743,16 +763,16 @@
       "task_image_id": "sha256:d97c2ef8c6a8d85621d996a83be982abd9559bb3e4ab6c15e46f49e8c5d24b69"
      },
      "pass_to_pass": 0,
-     "run": "validate/starlette-3166/20261106T140332937994Z"
+     "run": "validate/starlette-3166/20261106T141301537056Z"
     },
-    "why": "not seen to fail the maintainers' tests: unknown: none of 19 was seen to fail and 19 have no result in the report (exit 2)"
+    "why": ""
    },
    "id": "starlette-3166",
    "oracle_image": "g6we-oracle:starlette-3166-c53d310d65a5-r3",
    "oracle_image_id": "sha256:51aef3b68bcdf740d68c7b72dcd289afbc6299f47ad2139b0f9645f0e299f756",
    "task_image": "g6we-task:starlette-3166-c53d310d65a5-r3",
    "task_image_id": "sha256:d97c2ef8c6a8d85621d996a83be982abd9559bb3e4ab6c15e46f49e8c5d24b69",
-   "usable": false
+   "usable": true
   },
   {
    "controls": {
@@ -1530,21 +1550,41 @@
   },
   {
    "controls": {
-    "failed": "empty patch",
-    "images_after": null,
-    "record": {
-     "run": "control/setuptools-5362/20261106T140342328178Z",
-     "sha256": "f5bdf2c87e2201a8708de661d41c0c8d6d4dd417b14a8a8d64fd2faf028445e7"
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:9e7d9da0fb58a9d46961ef122fda43c884d04a5c2df63fbaf543db9920dc05ca",
+     "task_image_id": "sha256:f156dcde992f9dedbca73a988ad9047f054130e6bc5e3449b6bfdb66310c106b"
     },
-    "round_trip": null,
+    "record": {
+     "run": "control/setuptools-5362/20261106T141317480590Z",
+     "sha256": "1d41cabb210469da4673b93e3375429db1dd3b30bb2cb1ef3ac50bbad9b0e7c2"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:9e7d9da0fb58a9d46961ef122fda43c884d04a5c2df63fbaf543db9920dc05ca",
+      "task_image_id": "sha256:f156dcde992f9dedbca73a988ad9047f054130e6bc5e3449b6bfdb66310c106b"
+     },
+     "kept_bytes": 23179,
+     "kept_read": true,
+     "kept_sha256": "57c0566050b00012c282aa74378d6f0ce08c401991cb898b6f05d2077f20c190",
+     "known_bytes": 23179,
+     "known_names_an_executable": false,
+     "known_sha256": "57c0566050b00012c282aa74378d6f0ce08c401991cb898b6f05d2077f20c190",
+     "run": "run/setuptools-5362/20261106T141337365164Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 2
+    },
     "selfcheck": {
      "empty": {
-      "failed": 0,
+      "failed": 139,
       "passed": 0,
-      "state": "unknown",
+      "state": "failed",
       "tests": 139,
-      "unknown": 139,
-      "why": "none of 139 was seen to fail and 139 have no result in the report (exit 2)"
+      "unknown": 0,
+      "why": "139 of 139 seen to fail"
      },
      "gold": {
       "failed": 0,
@@ -1558,7 +1598,7 @@
       "oracle_image_id": "sha256:9e7d9da0fb58a9d46961ef122fda43c884d04a5c2df63fbaf543db9920dc05ca",
       "task_image_id": "sha256:f156dcde992f9dedbca73a988ad9047f054130e6bc5e3449b6bfdb66310c106b"
      },
-     "run": "selfcheck/setuptools-5362/20261106T140352183187Z"
+     "run": "selfcheck/setuptools-5362/20261106T141327145222Z"
     },
     "validate": {
      "base": {
@@ -1583,16 +1623,16 @@
       "task_image_id": "sha256:f156dcde992f9dedbca73a988ad9047f054130e6bc5e3449b6bfdb66310c106b"
      },
      "pass_to_pass": 0,
-     "run": "validate/setuptools-5362/20261106T140342751529Z"
+     "run": "validate/setuptools-5362/20261106T141317608988Z"
     },
-    "why": "not seen to fail the maintainers' tests: unknown: none of 139 was seen to fail and 139 have no result in the report (exit 2)"
+    "why": ""
    },
    "id": "setuptools-5362",
    "oracle_image": "g6we-oracle:setuptools-5362-c53d310d65a5-r3",
    "oracle_image_id": "sha256:9e7d9da0fb58a9d46961ef122fda43c884d04a5c2df63fbaf543db9920dc05ca",
    "task_image": "g6we-task:setuptools-5362-c53d310d65a5-r3",
    "task_image_id": "sha256:f156dcde992f9dedbca73a988ad9047f054130e6bc5e3449b6bfdb66310c106b",
-   "usable": false
+   "usable": true
   },
   {
    "controls": {
@@ -2973,24 +3013,16 @@
  ],
  "cohort": "development",
  "controls": [
-  "the base is seen to fail the maintainers' tests (validate); a collection error, in pytest's own report, of a fail-to-pass test's module at the base is that test's failure when the gold patch's run on the same image ids saw it pass",
+  "the base is seen to fail the maintainers' tests (validate)",
   "the maintainers' fix, as a patch, is seen to pass them (selfcheck)",
   "an empty patch is seen to fail them (selfcheck)",
+  "the base and the empty patch by one rule: a failure in a test result, or a collection error, in pytest's own report, of a fail-to-pass test's module where the gold patch's run on the same image ids saw it pass",
   "a known patch written through the host executor's runner is read back byte for byte in the kept patch (round trip)",
   "each ran on both of the bug's image ids here, read again after them; a result not known is no pass and no failure, and excludes the bug"
  ],
  "design": "docs/superpowers/specs/2026-11-06-explicit-models-one-question-design.md, sections 3.6 and 7.1",
- "digest": "4816136d21a51d57043002302debfc2f7a33460ebe40c02156c55648db9dccb8",
- "excluded": [
-  {
-   "id": "starlette-3166",
-   "why": "empty patch: not seen to fail the maintainers' tests: unknown: none of 19 was seen to fail and 19 have no result in the report (exit 2)"
-  },
-  {
-   "id": "setuptools-5362",
-   "why": "empty patch: not seen to fail the maintainers' tests: unknown: none of 139 was seen to fail and 139 have no result in the report (exit 2)"
-  }
- ],
+ "digest": "b5b14ae81db04a458354d31c6e74235fcca57a182a9e33911efde4e615367f2b",
+ "excluded": [],
  "g6_commit": "c53d310d65a5b5ba02c64c3faf6682dcf048888e",
  "left_out": [],
  "plan": "validation/worked_examples/PLAN.md, 2026-11-06 (night)",
@@ -3054,6 +3086,7 @@
   "pydantic-13133",
   "starlette-3189",
   "attrs-1509",
+  "starlette-3166",
   "fastapi-14616",
   "fastapi-13920",
   "black-5521",
@@ -3063,6 +3096,7 @@
   "urllib3-5254",
   "charset-normalizer-772",
   "charset-normalizer-715",
+  "setuptools-5362",
   "setuptools-5352",
   "pygments-3204",
   "pygments-3158",

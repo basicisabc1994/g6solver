@@ -432,21 +432,41 @@
   },
   {
    "controls": {
-    "failed": "empty patch",
-    "images_after": null,
-    "record": {
-     "run": "control/opentelemetry-python-5823/20261106T140402482324Z",
-     "sha256": "9511f63d53484886179f3962fea7eb3c14366ce2f9e3eaf99f47a75ba7f6150c"
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:4e3771e7cd8caecd9bb5b2a378e08711d149066c54eaa4782c2d265bd943f2c9",
+     "task_image_id": "sha256:cde80c3c222308e0ab50a3e0e70f83a64aeca2f99a7b53111c1d20ed1dd44cef"
     },
-    "round_trip": null,
+    "record": {
+     "run": "control/opentelemetry-python-5823/20261106T141349271376Z",
+     "sha256": "b64d8c377067708ee3c920692cab160ba893cebbda1d3406563ddb3b9e9be2ca"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:4e3771e7cd8caecd9bb5b2a378e08711d149066c54eaa4782c2d265bd943f2c9",
+      "task_image_id": "sha256:cde80c3c222308e0ab50a3e0e70f83a64aeca2f99a7b53111c1d20ed1dd44cef"
+     },
+     "kept_bytes": 19396,
+     "kept_read": true,
+     "kept_sha256": "d301672ea314ba1b7724273ec0e6ff456d30f58af8cf92487ad05cb853399081",
+     "known_bytes": 19396,
+     "known_names_an_executable": false,
+     "known_sha256": "d301672ea314ba1b7724273ec0e6ff456d30f58af8cf92487ad05cb853399081",
+     "run": "run/opentelemetry-python-5823/20261106T141358231024Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 13
+    },
     "selfcheck": {
      "empty": {
-      "failed": 0,
+      "failed": 9,
       "passed": 0,
-      "state": "unknown",
+      "state": "failed",
       "tests": 45,
-      "unknown": 45,
-      "why": "none of 45 was seen to fail and 45 have no result in the report (exit 2)"
+      "unknown": 36,
+      "why": "9 of 45 seen to fail"
      },
      "gold": {
       "failed": 0,
@@ -460,7 +480,7 @@
       "oracle_image_id": "sha256:4e3771e7cd8caecd9bb5b2a378e08711d149066c54eaa4782c2d265bd943f2c9",
       "task_image_id": "sha256:cde80c3c222308e0ab50a3e0e70f83a64aeca2f99a7b53111c1d20ed1dd44cef"
      },
-     "run": "selfcheck/opentelemetry-python-5823/20261106T140405984462Z"
+     "run": "selfcheck/opentelemetry-python-5823/20261106T141353492085Z"
     },
     "validate": {
      "base": {
@@ -485,34 +505,54 @@
       "task_image_id": "sha256:cde80c3c222308e0ab50a3e0e70f83a64aeca2f99a7b53111c1d20ed1dd44cef"
      },
      "pass_to_pass": 0,
-     "run": "validate/opentelemetry-python-5823/20261106T140402606573Z"
+     "run": "validate/opentelemetry-python-5823/20261106T141349626799Z"
     },
-    "why": "not seen to fail the maintainers' tests: unknown: none of 45 was seen to fail and 45 have no result in the report (exit 2)"
+    "why": ""
    },
    "id": "opentelemetry-python-5823",
    "oracle_image": "g6we-oracle:opentelemetry-python-5823-c53d310d65a5-r3",
    "oracle_image_id": "sha256:4e3771e7cd8caecd9bb5b2a378e08711d149066c54eaa4782c2d265bd943f2c9",
    "task_image": "g6we-task:opentelemetry-python-5823-c53d310d65a5-r3",
    "task_image_id": "sha256:cde80c3c222308e0ab50a3e0e70f83a64aeca2f99a7b53111c1d20ed1dd44cef",
-   "usable": false
+   "usable": true
   },
   {
    "controls": {
-    "failed": "empty patch",
-    "images_after": null,
-    "record": {
-     "run": "control/pip-14218/20261106T140410079206Z",
-     "sha256": "175ae7154751dc4f4d20f9af0ecc4645a05cb16dbdda9fe497dccc3b82c67db0"
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:61a9396d9615cb92540dada6b3f1f50fe82526b06c9d72464a4a62becf9f6d56",
+     "task_image_id": "sha256:033c4b96f95520e09272c52dae411da343d4bf450dd17eda85f52151653ec420"
     },
-    "round_trip": null,
+    "record": {
+     "run": "control/pip-14218/20261106T141418154320Z",
+     "sha256": "6b61d44446bfce40f290dafd03a1ec1217c7fd47fd431e99cd99552bb610c21e"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:61a9396d9615cb92540dada6b3f1f50fe82526b06c9d72464a4a62becf9f6d56",
+      "task_image_id": "sha256:033c4b96f95520e09272c52dae411da343d4bf450dd17eda85f52151653ec420"
+     },
+     "kept_bytes": 14376,
+     "kept_read": true,
+     "kept_sha256": "2188b6cbbddd0ebc74478aec14f289053ae73f3e22967dc6a559d141b7db87a7",
+     "known_bytes": 14376,
+     "known_names_an_executable": false,
+     "known_sha256": "2188b6cbbddd0ebc74478aec14f289053ae73f3e22967dc6a559d141b7db87a7",
+     "run": "run/pip-14218/20261106T141433650187Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 6
+    },
     "selfcheck": {
      "empty": {
-      "failed": 0,
+      "failed": 11,
       "passed": 0,
-      "state": "unknown",
+      "state": "failed",
       "tests": 14,
-      "unknown": 14,
-      "why": "none of 14 was seen to fail and 14 have no result in the report (exit 2)"
+      "unknown": 3,
+      "why": "11 of 14 seen to fail"
      },
      "gold": {
       "failed": 0,
@@ -526,7 +566,7 @@
       "oracle_image_id": "sha256:61a9396d9615cb92540dada6b3f1f50fe82526b06c9d72464a4a62becf9f6d56",
       "task_image_id": "sha256:033c4b96f95520e09272c52dae411da343d4bf450dd17eda85f52151653ec420"
      },
-     "run": "selfcheck/pip-14218/20261106T140417277780Z"
+     "run": "selfcheck/pip-14218/20261106T141425421636Z"
     },
     "validate": {
      "base": {
@@ -551,16 +591,16 @@
       "task_image_id": "sha256:033c4b96f95520e09272c52dae411da343d4bf450dd17eda85f52151653ec420"
      },
      "pass_to_pass": 0,
-     "run": "validate/pip-14218/20261106T140410321707Z"
+     "run": "validate/pip-14218/20261106T141418495927Z"
     },
-    "why": "not seen to fail the maintainers' tests: unknown: none of 14 was seen to fail and 14 have no result in the report (exit 2)"
+    "why": ""
    },
    "id": "pip-14218",
    "oracle_image": "g6we-oracle:pip-14218-c53d310d65a5-r3",
    "oracle_image_id": "sha256:61a9396d9615cb92540dada6b3f1f50fe82526b06c9d72464a4a62becf9f6d56",
    "task_image": "g6we-task:pip-14218-c53d310d65a5-r3",
    "task_image_id": "sha256:033c4b96f95520e09272c52dae411da343d4bf450dd17eda85f52151653ec420",
-   "usable": false
+   "usable": true
   },
   {
    "controls": {
@@ -1746,23 +1786,16 @@
  ],
  "cohort": "selection",
  "controls": [
-  "the base is seen to fail the maintainers' tests (validate); a collection error, in pytest's own report, of a fail-to-pass test's module at the base is that test's failure when the gold patch's run on the same image ids saw it pass",
+  "the base is seen to fail the maintainers' tests (validate)",
   "the maintainers' fix, as a patch, is seen to pass them (selfcheck)",
   "an empty patch is seen to fail them (selfcheck)",
+  "the base and the empty patch by one rule: a failure in a test result, or a collection error, in pytest's own report, of a fail-to-pass test's module where the gold patch's run on the same image ids saw it pass",
   "a known patch written through the host executor's runner is read back byte for byte in the kept patch (round trip)",
   "each ran on both of the bug's image ids here, read again after them; a result not known is no pass and no failure, and excludes the bug"
  ],
  "design": "docs/superpowers/specs/2026-11-06-explicit-models-one-question-design.md, sections 3.6 and 7.1",
- "digest": "67d5dbaaee735d787f17948d44c10e5c0b6f5f176f64f91db9d9dc4d9789e44c",
+ "digest": "7f68ad0e310110a2a67e9806e94e0dd9e08825cef9c713d1f74270be4879cc66",
  "excluded": [
-  {
-   "id": "opentelemetry-python-5823",
-   "why": "empty patch: not seen to fail the maintainers' tests: unknown: none of 45 was seen to fail and 45 have no result in the report (exit 2)"
-  },
-  {
-   "id": "pip-14218",
-   "why": "empty patch: not seen to fail the maintainers' tests: unknown: none of 14 was seen to fail and 14 have no result in the report (exit 2)"
-  },
   {
    "id": "tenacity-660",
    "why": "base: not seen to fail the maintainers' tests: unknown: the tests ran out of time (exit 124) with no report"
@@ -1808,6 +1841,8 @@
   "tomlkit-552",
   "tomlkit-581",
   "markdown-it-py-416",
+  "opentelemetry-python-5823",
+  "pip-14218",
   "pyasn1-108",
   "pyasn1-102",
   "websockets-1752",
