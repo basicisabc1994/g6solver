@@ -27,6 +27,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from g6.operator.gates import amount_of, exact_number, exact_text, kind_of
 from g6.operator.store import BudgetRefused, Held, OperatorStore, utc
 
 OWNER = "g6-loop"
@@ -49,11 +50,16 @@ class ProviderWindow:
     estimated: bool = False          # the allowance is estimated from a first observed cap
 
     def __post_init__(self) -> None:
-        if not self.provider.strip() or not math.isfinite(self.allowance) or self.allowance <= 0:
-            raise ValueError("a provider window needs a provider and a finite, positive allowance")
-        if not 0 <= self.reserve_share < 1:
+        """Each field converted once to a plain value (``exact_text``, ``amount_of``, ``exact_number``), which is all the
+        ceiling is computed from."""
+        provider, allowance, share = exact_text(self.provider), amount_of(self.allowance), exact_number(self.reserve_share)
+        if provider is None or not provider.strip() or allowance is None or not isinstance(self.estimated, bool):
+            raise ValueError("a provider window needs a provider, a finite, positive allowance and whether it is an estimate")
+        if share is None or not 0 <= share < 1:
             raise ValueError("reserve_share must be in [0, 1)")
-        object.__setattr__(self, "week_start", utc(self.week_start))
+        for name, value in (("provider", provider), ("allowance", allowance), ("reserve_share", share),
+                            ("week_start", utc(self.week_start))):
+            object.__setattr__(self, name, value)
 
     def place(self, now: datetime) -> tuple[datetime, int]:
         """The start of the provider week ``now`` falls in, and which day of it this is (1 to 7)."""
@@ -117,15 +123,11 @@ def ceiling(allowance: float, day: int, reserve_share: float) -> float:
 
 def figure_of(value: Any, most: float = math.inf) -> float | None:
     """The one check of a figure an account reports, wherever it is made: a number (not a flag), finite, from zero to
-    ``most``, as a float. ``None`` for anything else: a NaN, an infinity, a negative, one past ``most``, or a type never
-    seen. A reading with such a figure is unread (``AccountReading``); a reply with one is no reading (``usage``)."""
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return None
-    try:
-        number = float(value)
-    except OverflowError:
-        return None
-    return number if math.isfinite(number) and 0 <= number <= most else None
+    ``most``, as a plain float converted once (``exact_number``), which is all that is used after it. ``None`` for anything
+    else: a NaN, an infinity, a negative, one past ``most``, a type never seen, or one whose own conversion fails or says
+    otherwise. A reading with such a figure is unread (``AccountReading``); a reply with one is no reading (``usage``)."""
+    number = exact_number(value)
+    return number if number is not None and 0 <= number <= most else None
 
 
 @dataclass(frozen=True)
@@ -139,17 +141,27 @@ class AccountReading:
     unread: str = ""                        # why a tool that reports could not be read, with no good figure left standing
 
     def __post_init__(self) -> None:
-        """Every time goes through ``utc``, and every figure through ``figure_of``, however the reading is made: by the
-        reader, a caller, or ``replace``. One figure or flag that does not read loses the whole reading, as a reply that
-        wrong says nothing of the rest: it is unread, and admits nothing."""
+        """Every field is converted once, as the reading is made (by the reader, a caller, or ``replace``), to a plain value:
+        each time through ``utc``, the figure through ``figure_of``, the flag as a ``bool`` and why it is unread as a plain
+        ``str`` (``exact_text``). Nothing of a caller's object is kept. One that does not convert, for any reason, loses the
+        whole reading, as a reply that wrong says nothing of the rest: it is unread, and admits nothing. Its message names
+        what was given by its type, and never renders it."""
+        why = ""
         for name in ("limited_until", "read_at", "resets_at", "ended_at"):
-            object.__setattr__(self, name, utc(getattr(self, name)))
-        used = figure_of(self.used)
-        why = (f"its figure {self.used!r:.80} is not a finite number of zero or more" if used is None
-               else f"whether its figure is an estimate reads {self.estimated!r:.80}" if not isinstance(self.estimated, bool)
-               else f"why it is unread reads {self.unread!r:.80}" if not isinstance(self.unread, str) else "")
+            given = getattr(self, name)
+            try:
+                object.__setattr__(self, name, utc(given))
+            except (TypeError, ValueError):
+                why = why or f"its {name}, a {kind_of(given)}, is not a moment with its zone"
+        used, unread = figure_of(self.used), exact_text(self.unread)
+        estimated = self.estimated if isinstance(self.estimated, bool) else None       # no class can extend ``bool``
+        why = why or (f"its figure, a {kind_of(self.used)}, is not a finite number of zero or more" if used is None
+                      else f"whether its figure is an estimate, a {kind_of(self.estimated)}, is not yes or no"
+                      if estimated is None else f"why it is unread, a {kind_of(self.unread)}, is not text"
+                      if unread is None else "")
         if not why:
-            object.__setattr__(self, "used", used)
+            for name, value in (("used", used), ("estimated", estimated), ("unread", unread)):
+                object.__setattr__(self, name, value)
             return
         for name, value in (("used", 0.0), ("estimated", True), ("limited_until", None), ("read_at", None),
                             ("resets_at", None), ("ended_at", None), ("unread", f"the account's reading does not read: {why}")):
@@ -221,21 +233,41 @@ class BudgetMeter:
     def reading(self, provider: str, now: datetime) -> Admission:
         """Where this provider's week stands; ``admitted`` is left false, since nothing was asked for."""
         now = utc(now)
-        return self._look(provider, now)[0]
+        name = exact_text(provider)
+        if name is None:
+            return Admission("", 0, 0.0, 0.0, 0.0, False, reason=f"a provider is named by text, not a {kind_of(provider)}")
+        return self._look(name, now)[0]
+
+    def _account(self, provider: str, now: datetime) -> AccountReading | None:
+        """The one reader of what ``read_account`` hands back, for every use of it: an ``AccountReading`` of that very class,
+        or ``None`` for no reading. Anything else it gives, and any failure of its own, is an unread reading."""
+        now = utc(now)
+        if self._read_account is None:
+            return None
+        try:
+            given = self._read_account(provider, now)
+        except Exception as exc:  # noqa: BLE001 - a reader that fails says nothing of the account, whatever it raised
+            return AccountReading(unread=f"what reads the account failed ({kind_of(exc)})")
+        if given is None or type(given) is AccountReading:
+            return given
+        return AccountReading(unread=f"what reads the account gave a {kind_of(given)}, not a reading")
 
     def limit_reached(self, provider: str, until: datetime) -> None:
         """A limit a request ran into, which the account's figure may not show yet: it stands as a reported one does. It
         is held in memory, and the loop's records hand it back after a restart."""
         until = utc(until)
-        self._limits[provider] = until
+        name = exact_text(provider)
+        if name is None:
+            raise ValueError(f"a provider is named by text, not a {kind_of(provider)}")
+        self._limits[name] = until
 
     def next_room(self, now: datetime) -> datetime:
         """The next time any ceiling can rise: the soonest a tick refused for its budget could be admitted. An account that
         could not be read is looked at again a refresh later."""
         now = utc(now)
         soonest = min(window.next_day(now) for window in self.windows.values())
-        unread = self._read_account is not None and any(
-            (seen := standing(self._read_account(provider, now), now)) is not None and seen.unread for provider in self.windows)
+        unread = any((seen := standing(self._account(provider, now), now)) is not None and seen.unread
+                     for provider in self.windows)
         return min(soonest, now + REFRESH) if unread else soonest
 
     def _look(self, provider: str, now: datetime) -> tuple[Admission, AccountReading | None, datetime]:
@@ -254,9 +286,7 @@ class BudgetMeter:
             grid, grid_at = self.scope.kept_grid(provider)
         except ValueError as exc:
             grid, grid_at, refused = None, None, refused or f"where {provider}'s weeks fall cannot be read from operator.db ({exc})"
-        given = self._read_account(provider, now) if self._read_account is not None else None
-        if given is not None and not isinstance(given, AccountReading):
-            given = AccountReading(unread=f"what reads the account gave a {type(given).__name__}, not a reading")
+        given = self._account(provider, now)
         account = standing(given, now)
         if account is not None and account.unread:
             refused = refused or (f"{provider}'s account is not known ({account.unread}), so nothing is reserved on it until "
@@ -293,8 +323,16 @@ class BudgetMeter:
         venture, every reservation overlapping it, and so the reading's baseline) is read inside the one transaction that
         writes the reservation, so nothing it was checked against can change before it is written. The reservation runs
         from ``now``, in the week ``now`` falls in. ``tick``: the tick that makes it, which only the loop gives, under its
-        folder's tick lock; a reservation made with none is never recovered (``recover``)."""
+        folder's tick lock; a reservation made with none is never recovered (``recover``). The provider, the worst case and
+        the tick are converted once, as they enter (``exact_text``, ``amount_of``): the ceiling is checked on, and the store
+        reserves, the one plain amount."""
         now = utc(now)
+        given, provider, worst_case, tick = provider, exact_text(provider), amount_of(worst_case), exact_text(tick)
+        if provider is None or tick is None:
+            return Admission("", 0, 0.0, 0.0, 0.0, False, reason=f"a provider and a tick are named by text, not a "
+                                                                 f"{kind_of(given)}")
+        if worst_case is None:
+            return Admission(provider, 0, 0.0, 0.0, 0.0, False, reason="a worst case must be a finite, positive amount")
         seen: list[tuple[Admission, datetime]] = []
 
         def decide() -> tuple[str, datetime, datetime, datetime]:
@@ -314,8 +352,7 @@ class BudgetMeter:
                 return Admission(provider, 0, 0.0, 0.0, 0.0, False, reason=str(exc))
             return replace(seen[-1][0], reason=str(exc))
         look, start = seen[-1]
-        return replace(look, admitted=True, venture=venture, reservation=reservation, amount=float(worst_case),
-                       ends=start + _WEEK)
+        return replace(look, admitted=True, venture=venture, reservation=reservation, amount=worst_case, ends=start + _WEEK)
 
     def settle(self, admission: Admission, used: float, now: datetime | None = None) -> float:
         """Charge what the host counted, up or down; a tick that never settles stays charged in full, in every week from
@@ -324,7 +361,13 @@ class BudgetMeter:
         if now is not None:
             raise ValueError("a settlement is dated by the store's own clock as it is written: a time a caller gives is "
                              "refused, one before its reservation began or any other")
-        return self.scope.settle(admission.venture, admission.reservation, metered=used)
+        try:
+            venture, reservation = exact_text(admission.venture), exact_text(admission.reservation)
+        except Exception:  # noqa: BLE001 - an admission that cannot be read settles nothing
+            venture = reservation = None
+        if venture is None or reservation is None:
+            raise ValueError(f"an admission names its venture and reservation by text; a {kind_of(admission)} did not")
+        return self.scope.settle(venture, reservation, metered=used)
 
     def recover(self, provider: str) -> float:
         """Settle in full the reservations on ``provider`` that a tick made and left open, and give what was charged: only

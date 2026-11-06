@@ -78,6 +78,7 @@ from g6.core import component_process, host_models
 from g6.core.llm import LLMError
 from g6.core.outside import clean_environment, find_program
 from g6.core.process_tree import ProcessTreeError
+from g6.operator.gates import exact_number, kind_of
 from g6.self_maintenance.pacing import REFRESH, AccountReading, ProviderWindow, figure_of, standing, utc
 
 MODEL_REFUSED = "G6_E_MODEL_REFUSED"
@@ -238,34 +239,39 @@ def read_stops(sender: Any) -> None:
         sender.__class__ = type(kind.__name__, (WatchedClaude, kind), {})
 
 
-def _number(value: Any) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool)
-
-
 def _time(value: Any) -> datetime | None:
-    """``value`` as a moment, or ``None`` when no clock could show it."""
+    """``value``, seconds since 1970, as a moment, or ``None`` when no clock could show it. The number is converted once
+    (``exact_number``) before any clock reads it."""
+    seconds = exact_number(value)
     try:
-        return utc(datetime.fromtimestamp(value, UTC)) if _number(value) else None
+        return utc(datetime.fromtimestamp(seconds, UTC)) if seconds is not None else None
     except (OverflowError, OSError, ValueError):
         return None
 
 
-def _reads(window: Any) -> bool:
-    """Whether a window's figures can be believed. Written so that a NaN fails, as it fails every comparison. The tool may
-    leave out how long a window is and when it resets, and it may not send nonsense for either."""
-    if not isinstance(window, Mapping):
-        return False
-    percent, minutes, reset = window.get("usedPercent"), window.get("windowDurationMins"), window.get("resetsAt")
-    return (figure_of(percent, FULL) is not None and (minutes is None or (figure_of(minutes) or 0) > 0)
-            and (reset is None or _time(reset) is not None))
+def _window(raw: Any) -> dict[str, Any] | None:
+    """A window of the tool's reply as plain values, each read once and converted where it enters: its percentage
+    (``figure_of``, to 100), its length in minutes and when it resets. ``None`` when any of them does not read, so a NaN, a
+    subclass that answers its own way and nonsense alike lose the reply, and nothing of the reply is used after this. The
+    tool may leave out how long a window is and when it resets, and it may not send nonsense for either."""
+    try:
+        if not isinstance(raw, Mapping):
+            return None
+        percent, minutes, reset = raw.get("usedPercent"), raw.get("windowDurationMins"), raw.get("resetsAt")
+    except Exception:  # noqa: BLE001 - a window that cannot be read is none
+        return None
+    used, length, at = figure_of(percent, FULL), None if minutes is None else figure_of(minutes), _time(reset)
+    if used is None or (minutes is not None and not length) or (reset is not None and at is None):
+        return None
+    return {"usedPercent": used, "windowDurationMins": length, "resetsAt": at}
 
 
 def _reset(window: Mapping[str, Any], now: datetime) -> datetime | None:
-    """When a window resets: ahead of ``now`` and no further than the window is long, or a week where it does not say. Any
-    other figure is no reset: a limit that outlasts its own window cannot be believed."""
+    """When a converted window (``_window``) resets: ahead of ``now`` and no further than the window is long, or a week
+    where it does not say. Any other figure is no reset: a limit that outlasts its own window cannot be believed."""
     now = utc(now)
-    at = _time(window.get("resetsAt"))
-    longest = (window.get("windowDurationMins") or WEEK_MINUTES) * 60
+    at = window["resetsAt"]
+    longest = (window["windowDurationMins"] or WEEK_MINUTES) * 60
     return at if at is not None and 0 < (at - now).total_seconds() <= longest else None
 
 
@@ -277,19 +283,23 @@ def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datet
     matter: a tool that has not caught up is saying last week's use, so that figure is left out and nothing stands for it.
     That reset is kept apart as ``ended_at``: it says where the provider's weeks fall, and it ends no tick."""
     now = utc(now)
-    snapshot, allowed = limits.get("rateLimits"), limits.get("ordinaryUsageAllowed")
-    if not isinstance(snapshot, Mapping) or not isinstance(allowed, bool | None):
+    try:
+        snapshot, allowed = limits.get("rateLimits"), limits.get("ordinaryUsageAllowed")
+        if not isinstance(snapshot, Mapping) or not isinstance(allowed, bool | None):
+            return None
+        raw = [w for w in (snapshot.get("primary"), snapshot.get("secondary")) if w is not None]
+    except Exception:  # noqa: BLE001 - a reply that cannot be read is no reading
         return None
-    seen = [w for w in (snapshot.get("primary"), snapshot.get("secondary")) if w is not None]
-    if not seen or not all(_reads(w) for w in seen):
+    seen = [_window(w) for w in raw]
+    if not seen or any(w is None for w in seen):
         return None
-    week = next((w for w in seen if w.get("windowDurationMins") == WEEK_MINUTES), None)
+    week = next((w for w in seen if w["windowDurationMins"] == WEEK_MINUTES), None)
     full = [w for w in seen if w["usedPercent"] >= FULL]
     resets = [at for w in (full or seen) if (at := _reset(w, now)) is not None]
     until = (max(resets) if resets else now + REFRESH) if full or allowed is False else None
-    ended = week is not None and (_time(week.get("resetsAt")) or now + WEEK) <= now
+    ended = week is not None and (week["resetsAt"] or now + WEEK) <= now
     if ended:
-        return AccountReading(limited_until=until, ended_at=_time(week.get("resetsAt")))
+        return AccountReading(limited_until=until, ended_at=week["resetsAt"])
     if week is None:
         return AccountReading(limited_until=until)
     return AccountReading(used=window.allowance * week["usedPercent"] / FULL, estimated=False, limited_until=until,
@@ -334,9 +344,13 @@ class AccountReader:
         self._asked = now
         for provider in set(self.windows) & set(self.ask):
             try:
-                found = limits_reading(self.ask[provider]() or {}, self.windows[provider], now)
+                answer = self.ask[provider]()
+                found = limits_reading({} if answer is None else answer, self.windows[provider], now)
             except (OSError, UsageUnavailable) as exc:
                 self._no_reading(provider, now, f"its usage could not be read ({str(exc)[:120]})")
+                continue
+            except Exception as exc:  # noqa: BLE001 - a reader that fails any other way says nothing new either
+                self._no_reading(provider, now, f"its usage could not be read ({kind_of(exc)})")
                 continue
             if found is None:
                 self._no_reading(provider, now, "its reply could not be read")

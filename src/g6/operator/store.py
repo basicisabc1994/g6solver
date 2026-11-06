@@ -23,7 +23,6 @@ times in one zone compare by their wall clocks, which repeat in the hour a clock
 from __future__ import annotations
 
 import json
-import math
 import os
 import sqlite3
 import threading
@@ -74,14 +73,28 @@ _WEEK = timedelta(days=7)
 def utc(moment: Any) -> Any:
     """The one way an instant enters the loop's budget (this module, ``pacing`` and ``usage``): ``moment`` as the same
     instant in UTC, so every comparison and every stored value is of instants, never of wall clocks. ``None`` stays
-    ``None``; a time with no zone is a ``ValueError``, as a naive time reads differently on another machine."""
+    ``None``; a time with no zone is a ``ValueError``, as a naive time reads differently on another machine. Only a plain
+    ``datetime`` is a moment, and its zone is asked its offset once: what comes back is a plain ``datetime`` in UTC, with
+    nothing of the caller's left on it, so no class of a caller's can answer a comparison or a sum its own way. Anything
+    else is a ``TypeError``, and a zone that does not say its offset a ``ValueError``."""
     if moment is None:
         return None
-    if not isinstance(moment, datetime):
-        raise TypeError(f"{moment!r} is not a moment")
-    if moment.tzinfo is None or moment.utcoffset() is None:
+    if type(moment) is not datetime:
+        raise TypeError(f"a moment is a datetime, not a {gates.kind_of(moment)}")
+    if moment.tzinfo is UTC:
+        return moment
+    try:
+        offset = moment.utcoffset()
+    except Exception:  # noqa: BLE001 - a zone that cannot say its offset gives no moment
+        raise ValueError("a moment's zone does not say its offset from UTC") from None
+    if offset is None:
         raise ValueError("a moment needs its zone: a naive time reads differently on another machine")
-    return moment.astimezone(UTC)
+    if type(offset) is not timedelta:
+        raise ValueError(f"a moment's zone gave a {gates.kind_of(offset)} for its offset, not a timedelta")
+    try:
+        return (moment.replace(tzinfo=None) - offset).replace(tzinfo=UTC)
+    except OverflowError:
+        raise ValueError("a moment out of the range a datetime holds") from None
 
 
 _EPOCH = utc(datetime(1970, 1, 1, tzinfo=UTC))
@@ -103,9 +116,10 @@ def utc_clock(clock: Callable[[], datetime]) -> Callable[[], datetime]:
 def stored_amount(value: Any) -> float:
     """The one way an amount is read back from the ledger: a finite number of zero or more. Anything else, a text, bytes,
     an infinity, is a ``ValueError``: an unreadable row, which refuses, and never zero."""
-    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value) or value < 0:
-        raise ValueError(f"an amount in the ledger does not read as a finite number of zero or more: {value!r}"[:160])
-    return float(value)
+    number = gates.exact_number(value)
+    if number is None or number < 0:
+        raise ValueError(f"an amount in the ledger, a {gates.kind_of(value)}, does not read as a finite number of zero or more")
+    return number
 
 
 def append_only(table: str, key: str = "seq") -> str:
@@ -231,11 +245,11 @@ class OwnerScope:
 
     def _insert_venture(self, name: str, caps: dict[str, float]) -> str:
         """Inside the caller's transaction: the venture's row and its history, and its id."""
-        bad = [a for a in gates.ACCOUNTS if gates.cap_of(caps, a) is None]
+        clean = {a: gates.cap_of(caps, a) for a in gates.ACCOUNTS}       # each cap read once: the one that is checked is kept
+        bad = [a for a, cap in clean.items() if cap is None]
         if bad:
             raise ValueError(f"caps must give a finite, non-negative monthly budget for {bad}")
         venture_id = uuid.uuid4().hex[:12]
-        clean = {a: gates.cap_of(caps, a) for a in gates.ACCOUNTS}
         self.conn.execute("INSERT INTO ventures VALUES (?, ?, ?, ?, 'active', ?)",
                           (venture_id, self.owner, name, json.dumps(clean), _now()))
         self._append_evidence(venture_id, "created", "", {"name": name, "caps": clean})
@@ -280,21 +294,32 @@ class OwnerScope:
                     self.conn.execute(f"SAVEPOINT {point}")
                     try:
                         yield
-                    except BaseException:
-                        self.conn.execute(f"ROLLBACK TO {point}")
                         self.conn.execute(f"RELEASE {point}")
+                    except BaseException:          # the step, or its own release, failed: nothing of it is left
+                        self._undo(point)
                         raise
-                    self.conn.execute(f"RELEASE {point}")
                 else:
+                    store._held.broken = ""
                     self.conn.execute("BEGIN IMMEDIATE")
                     try:
                         yield
+                        if store._held.broken:
+                            raise sqlite3.OperationalError(f"nothing of this transaction is kept: {store._held.broken}")
                     except BaseException:
                         self.conn.rollback()
                         raise
                     self.conn.commit()
             finally:
                 store._held.depth = depth
+
+    def _undo(self, point: str) -> None:
+        """Roll a failed step back to its savepoint and release it. When that itself fails, the step's writes may still be
+        there, so the transaction it is in is marked: it can no longer commit, and is rolled back whole when it ends."""
+        try:
+            self.conn.execute(f"ROLLBACK TO {point}")
+            self.conn.execute(f"RELEASE {point}")
+        except Exception as exc:  # noqa: BLE001 - whatever stopped the undo, the transaction must not commit
+            self.store._held.broken = f"a failed step could not be rolled back ({gates.kind_of(exc)})"
 
     def keep_grid(self, provider: str, reset: datetime, read_at: datetime | None = None) -> tuple[datetime, datetime | None]:
         """Where the provider's weeks fall, as a reading taken at ``read_at`` says: a moment one of them ends. A grid moves
@@ -318,7 +343,8 @@ class OwnerScope:
         """The venture the reservations made in the provider week that began at ``week`` are filed under, or ``""`` before
         one is made."""
         week = utc(week)
-        return self._named(f"{provider}@{_week_name(week)}") or ""
+        name = gates.exact_text(provider)
+        return self._named(f"{name}@{_week_name(week)}") or "" if name is not None else ""
 
     def week_held(self, provider: str, account: str, start: datetime, end: datetime) -> list[Held]:
         """Every reservation of ``provider`` on ``account`` whose span overlaps [``start``, ``end``), as it stands, in one
@@ -353,12 +379,19 @@ class OwnerScope:
         ``caps``; the operator's own stop check on it; and the ledger's row with its span. Nothing it was checked against can
         change before it is written. A refusal is ``BudgetRefused``, raised once the transaction has ended with no
         reservation in it: what ``decide`` itself kept, such as where the provider's weeks fall, stays kept. ``tick``: the
-        tick that makes it, recorded with it, or ``""`` for none (``settle_open``)."""
+        tick that makes it, recorded with it, or ``""`` for none (``settle_open``). Every value given is converted once, as it
+        enters, to a plain one (``gates.exact_number``, ``gates.exact_text``), and only that is used."""
         value = gates.amount_of(amount)
         if value is None:
-            raise BudgetRefused(f"a reservation must be a finite, positive amount, got {amount!r}")
+            raise BudgetRefused(f"a reservation must be a finite, positive amount, not a {gates.kind_of(amount)}")
+        provider, account, tick = gates.exact_text(provider), gates.exact_text(account), gates.exact_text(tick)
+        if provider is None or account is None or tick is None:
+            raise BudgetRefused("a reservation's provider, account and tick are text")
         with self.immediate():
-            why, week, start, end = decide()
+            said, week, start, end = decide()
+            why = gates.exact_text(said)
+            if why is None:
+                why = f"admission gave a {gates.kind_of(said)}, not why or nothing"
             if not why:
                 week, start, end = utc(week), utc(start), utc(end)
                 span = _us(week), _us(start), _us(end)
@@ -406,6 +439,7 @@ class OwnerScope:
         time, and goes on top of every reading. One transaction, so a stop part way leaves the old rows as they were, read
         again on the next open. It returns why a provider's old rows cannot be read: that is a refusal to reserve until a
         person looks, never a fresh book."""
+        providers = [name for name in map(gates.exact_text, providers) if name is not None]
         unread: dict[str, str] = {}
         if not any(self._old_reservations(providers).values()):     # looked at again under the lock, before anything is read
             return unread
@@ -552,11 +586,14 @@ class OwnerScope:
         vid = self.resolve(venture_id)
         value = gates.amount_of(amount)
         if value is None:
-            raise BudgetRefused(f"a reservation must be a finite, positive amount, got {amount!r}")
+            raise BudgetRefused(f"a reservation must be a finite, positive amount, not a {gates.kind_of(amount)}")
         with self.immediate():
             try:
-                why = "" if admit is None else admit(self._committed(vid, month).get(account, 0.0),
-                                                     self._outstanding(vid, month).get(account, 0.0))
+                said = "" if admit is None else admit(self._committed(vid, month).get(account, 0.0),
+                                                      self._outstanding(vid, month).get(account, 0.0))
+                why = gates.exact_text(said)              # converted once: its own truth is never asked
+                if why is None:
+                    why = f"the further check gave a {gates.kind_of(said)}, not why or nothing"
             except ValueError as exc:
                 why = f"this month's ledger cannot be read ({exc}), so nothing more is reserved on it"
             why = why or self._refusal(vid, month, account, value)
@@ -578,9 +615,11 @@ class OwnerScope:
         A reservation on a provider's weeks is dated as it settles, by the store's own clock alone, and never before it
         began: that one value ends its span (``week_held``) and dates its charge against a reading, for every reader
         alike. No caller gives that time."""
-        if metered is not None and (isinstance(metered, bool) or not isinstance(metered, int | float)
-                                    or not math.isfinite(metered) or metered < 0):
-            raise ValueError(f"a metered amount must be finite and not negative, got {metered!r}")
+        if metered is not None:
+            given, metered = metered, gates.exact_number(metered)          # converted once; only this is used
+            if metered is None or metered < 0:
+                raise ValueError(f"a metered amount must be finite and not negative, not a {gates.kind_of(given)}")
+        reported = gates.amount_of(reported)                                  # converted once; one that does not read is none
         vid = self.resolve(venture_id)
         try:
             with self.immediate():

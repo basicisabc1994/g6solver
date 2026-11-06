@@ -919,7 +919,7 @@ def test_every_figure_of_an_account_reading_goes_through_the_one_check():
     assert numbers == {"used"}, numbers
     assert {f"self.{name}" for name in numbers} <= checked, checked
     usage_tree = trees["g6.self_maintenance.usage"]
-    reads = next(f for f in _functions(usage_tree) if f.name == "_reads")
+    reads = next(f for f in _functions(usage_tree) if f.name == "_window")         # every window of the reply, once
     assert {ast.unparse(c.args[0]) for c in ast.walk(reads) if isinstance(c, ast.Call) and _called(c) == "figure_of"} \
         == {"percent", "minutes"}
     own = [f"{n.lineno}: {ast.unparse(n)}" for n in ast.walk(usage_tree) if isinstance(n, ast.Call) and _called(n) == "isfinite"]
@@ -948,3 +948,141 @@ def test_every_settlement_stamp_is_written_over_the_floor_the_store_already_hold
     assert stamps == [("g6.operator.store", "_date_old_charge"), ("g6.operator.store", "_settle")], stamps
     settle = next(f for f in _functions(trees["g6.operator.store"]) if f.name == "_settle")
     assert "_kept_times(" in ast.unparse(settle)
+
+
+# 4. A caller's value is converted once, where it enters, and only that is used (review wksfu1) ------------------------------------
+
+class _Sly(float):
+    """A number whose every sum is 0 and every comparison says there is room, after any check; it holds its value."""
+
+    def _zero(self, *_):
+        return 0.0
+
+    __add__ = __radd__ = __mul__ = __rmul__ = __sub__ = __rsub__ = _zero
+
+    def __gt__(self, other):
+        return False
+
+    def __lt__(self, other):
+        return True
+
+
+class _FalseText(str):
+    def __bool__(self):
+        return False
+
+
+class _OwnMoment(datetime):
+    pass
+
+
+def _of_its_own(annotation: str):
+    """A value of a caller's class for a field of this type."""
+    if "datetime" in annotation:
+        return _OwnMoment(2026, 11, 1, tzinfo=UTC)
+    return {"float": _Sly(5), "bool": 1, "str": _FalseText("why")}[annotation]
+
+
+def _plain(value) -> bool:
+    return type(value) in (float, bool, str, type(None)) or (type(value) is datetime and value.tzinfo is UTC)
+
+
+def _fields(tree, name) -> dict[str, str]:
+    node = next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == name)
+    return {s.target.id: ast.unparse(s.annotation) for s in node.body if isinstance(s, ast.AnnAssign)
+            and isinstance(s.target, ast.Name)}
+
+
+def test_every_field_of_a_reading_is_a_plain_value_once_it_is_made():
+    """Listed from the code: every field of ``AccountReading``. Made with a value of a caller's class in any one of them,
+    every field of the reading is a plain ``float``, ``bool``, ``str``, ``None`` or a plain ``datetime`` in UTC: nothing of
+    the caller's object is kept to answer an operation its own way."""
+    fields = _fields(_trees()["g6.self_maintenance.pacing"], "AccountReading")
+    assert set(fields) == {"used", "estimated", "limited_until", "read_at", "resets_at", "ended_at", "unread"}, fields
+    for name, annotation in fields.items():
+        reading = AccountReading(**{name: _of_its_own(annotation.split(" | ")[0])})
+        assert all(_plain(getattr(reading, f)) for f in fields), (name, reading)
+    plain = AccountReading(used=_Sly(5), estimated=False, unread=_FalseText(""))
+    assert (plain.used, plain.unread, plain.estimated) == (5.0, "", False) and _plain(plain.used) and _plain(plain.unread)
+
+
+def _amount_entries() -> set[str]:
+    """Every public method of the meter and of the store's owner scope that takes an amount (a parameter typed ``float``,
+    or caps of them; a callback that is handed amounts takes none), and every field of a provider window that holds one."""
+    trees = _trees()
+    found = set()
+    for module, name in (("g6.self_maintenance.pacing", "BudgetMeter"), ("g6.operator.store", "OwnerScope")):
+        node = next(n for n in ast.walk(trees[module]) if isinstance(n, ast.ClassDef) and n.name == name)
+        for f in node.body:
+            if isinstance(f, ast.FunctionDef) and not f.name.startswith("_"):
+                found |= {f"{name}.{f.name}({a.arg})" for a in (*f.args.args, *f.args.kwonlyargs)
+                          if a.annotation is not None and "float" in ast.unparse(a.annotation)
+                          and not ast.unparse(a.annotation).startswith("Callable")}
+    found |= {f"ProviderWindow.{f}" for f, annotation in _fields(trees["g6.self_maintenance.pacing"], "ProviderWindow").items()
+              if annotation == "float"}
+    return found
+
+
+def test_every_amount_given_reaches_the_ceiling_and_the_store_as_one_plain_float(tmp_path, monkeypatch):
+    """Listed from the code: every entry that takes an amount. Each is given a number of a caller's class whose sums and
+    comparisons say there is room, and what reaches the ceiling check (the operator's ``spend_refusal`` and the meter's own),
+    ``reserve_span``, ``_settle`` and the ledger's rows is a plain ``float`` every time, and the ceiling holds."""
+    entries = _amount_entries()
+    assert entries == {"BudgetMeter.reserve(worst_case)", "BudgetMeter.settle(used)", "OwnerScope.reserve(amount)",
+                       "OwnerScope.reserve_span(amount)", "OwnerScope.reserve_span(caps)", "OwnerScope.settle(reported)",
+                       "OwnerScope.settle(metered)", "OwnerScope.create_venture(caps)", "OwnerScope.venture_named(caps)",
+                       "ProviderWindow.allowance", "ProviderWindow.reserve_share"}, sorted(entries)
+    from g6.operator import store as store_module
+
+    seen: list[tuple[str, type]] = []
+    now = datetime(2026, 11, 7, tzinfo=UTC)
+    store = OperatorStore(tmp_path / "op.db", clock=lambda: now)
+    try:
+        window = ProviderWindow("codex", _Sly(100), datetime(2026, 11, 1, tzinfo=UTC), reserve_share=_Sly(0.0))
+        assert _plain(window.allowance) and _plain(window.reserve_share)
+        meter = BudgetMeter((window,), store=store, read_account=lambda *_: AccountReading(used=90, estimated=False))
+        scope = meter.scope
+        for name in ("_append_ledger", "_settle", "reserve_span"):
+            real = getattr(scope, name)
+
+            def noted(*args, real=real, name=name, **kwargs):
+                seen.extend((name, type(v)) for v in (*args, *kwargs.values()) if isinstance(v, int | float))
+                return real(*args, **kwargs)
+
+            monkeypatch.setattr(scope, name, noted)
+        refusal = store_module.gates.spend_refusal
+        monkeypatch.setattr(store_module.gates, "spend_refusal", lambda venture, committed, account, amount: (
+            seen.append(("spend_refusal", type(amount))), refusal(venture, committed, account, amount))[1])
+        assert not meter.reserve("codex", now, _Sly(20)).admitted                      # 90 + 20 is over 100
+        spend = meter.reserve("codex", now, _Sly(10))
+        assert spend.admitted and _plain(spend.amount)
+        assert meter.settle(spend, _Sly(10)) == 10.0
+        venture = scope.create_venture("monthly", caps={"model": _Sly(50), "cash": _Sly(0)})["venture_id"]
+        assert scope.venture(venture)["caps"] == {"model": 50.0, "cash": 0.0}
+        named = scope.venture_named("named", caps={"model": _Sly(7), "cash": _Sly(0)})
+        assert scope.venture(named)["caps"] == {"model": 7.0, "cash": 0.0}
+        held = scope.reserve(venture, month="2026-11", account="model", amount=_Sly(30))
+        with pytest.raises(store_module.BudgetRefused):
+            scope.reserve(venture, month="2026-11", account="model", amount=_Sly(30))        # 30 + 30 is over 50
+        assert scope.settle(venture, held, reported=_Sly(40)) == 40.0
+    finally:
+        store.close()
+    assert {name for name, _ in seen} >= {"_append_ledger", "_settle", "reserve_span", "spend_refusal"}, seen
+    assert all(kind is float for _, kind in seen), [entry for entry in seen if entry[1] is not float]
+
+
+def test_every_use_of_what_reads_the_account_goes_through_the_one_reader():
+    """Listed from the code: every call of a ``read_account`` the meter was given, anywhere in the package. Each is in
+    ``BudgetMeter._account``, the one step that makes anything but a reading, and any failure, an unread reading
+    (one_fact_two_rules: finding 3 of review wksfu1 was scheduling reading it raw)."""
+    calls, outside = [], []
+    for name, tree in _package_trees().items():
+        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr == "_read_account" and isinstance(node.ctx, ast.Load):
+                where = f"{name}.{_inside(node, parents)}:{node.lineno}"
+                calls.append(where)
+                if (name, _inside(node, parents)) != ("g6.self_maintenance.pacing", "_account"):
+                    outside.append(where)
+    assert calls, "the inventory found no use of read_account at all"
+    assert not outside, outside

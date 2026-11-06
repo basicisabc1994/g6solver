@@ -16,19 +16,64 @@ ACCOUNTS = ("model", "cash")
 _SLACK = 1e-9   # float sums such as 0.1 + 0.2 must not read as over a cap they meet exactly
 
 
-def amount_of(value: Any) -> float | None:
-    """``value`` as a finite, positive amount, or None."""
-    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value) or value <= 0:
+def kind_of(value: Any) -> str:
+    """What ``value`` is, for a message: the name its class was made with, read so that no class of a caller's can render
+    itself, raise, or run long. A refusal names this, never the value."""
+    try:
+        name = type.__dict__["__name__"].__get__(type(value))
+    except Exception:  # noqa: BLE001 - naming a value must never fail
+        return "value"
+    return name[:60] if type(name) is str else "value"
+
+
+def exact_number(value: Any) -> float | None:
+    """``value`` as a plain ``float``, converted once where it enters: an ``int`` or a ``float`` by the base type's own
+    conversion, which no subclass can override; ``None`` for anything else (a flag, a text, a type never seen), for one whose
+    own conversion fails or says otherwise, for any exception, and for a value that is not finite. Nothing of the caller's
+    object is used after this: its arithmetic, comparisons, truth and rendering are never asked."""
+    try:
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            return None
+        if isinstance(value, float):
+            number, own = float.__float__(value), float(value)
+        else:
+            whole, said = int.__int__(value), int(value)
+            if type(whole) is not int or type(said) is not int or whole != said:
+                return None
+            number = own = float(whole)
+        if type(number) is not float or type(own) is not float or not math.isfinite(number) or number != own:
+            return None
+        return number
+    except Exception:  # noqa: BLE001 - a value that cannot be converted is no number, whatever it raised
         return None
-    return float(value)
+
+
+def exact_text(value: Any) -> str | None:
+    """``value`` as a plain ``str``, by ``str``'s own conversion; ``None`` when it is not text, when its own conversion fails
+    or says otherwise, or for any exception. Its truth, comparisons and rendering are never asked after this."""
+    try:
+        if not isinstance(value, str):
+            return None
+        text, own = str.__str__(value), str(value)
+        return text if type(text) is str and type(own) is str and text == own else None
+    except Exception:  # noqa: BLE001 - a text that cannot be read is none
+        return None
+
+
+def amount_of(value: Any) -> float | None:
+    """``value`` as a finite, positive amount (``exact_number``), or None."""
+    number = exact_number(value)
+    return number if number is not None and number > 0 else None
 
 
 def cap_of(caps: Mapping[str, Any] | None, account: str) -> float | None:
-    """The finite, non-negative cap for ``account``, or None when there is none."""
-    raw = (caps or {}).get(account)
-    if isinstance(raw, bool) or not isinstance(raw, int | float) or not math.isfinite(raw) or raw < 0:
+    """The finite, non-negative cap for ``account`` (``exact_number``), or None when there is none or it cannot be read."""
+    try:
+        raw = None if caps is None else caps.get(account)
+    except Exception:  # noqa: BLE001 - caps that cannot be read set no cap, which stops the venture
         return None
-    return float(raw)
+    number = exact_number(raw)
+    return number if number is not None and number >= 0 else None
 
 
 def stop_reason(venture: Mapping[str, Any], committed: Mapping[str, float]) -> str | None:

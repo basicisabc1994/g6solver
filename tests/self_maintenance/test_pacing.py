@@ -1578,3 +1578,329 @@ def test_once_the_clock_is_past_every_kept_time_a_settlement_is_stamped_by_it():
         assert _stamps(store) == [clock[0]]
     finally:
         store.close()
+
+
+# Review wksfu1: a caller's value is converted once where it enters, and only that is used ----------------------------------
+
+class _Sly(float):
+    """A number that answers every question its own way after any check: all its arithmetic gives 0, every comparison
+    says yes to admitting, and it cannot be rendered. Its value, the one ``float`` holds, is what it was made with."""
+
+    def _zero(self, *_):
+        return 0.0
+
+    __add__ = __radd__ = __mul__ = __rmul__ = __sub__ = __rsub__ = __truediv__ = __rtruediv__ = _zero
+
+    def __gt__(self, other):
+        return False
+
+    def __ge__(self, other):
+        return False
+
+    def __lt__(self, other):
+        return True
+
+    def __le__(self, other):
+        return True
+
+    def __repr__(self):
+        raise RuntimeError("never rendered")
+
+    __format__ = __str__ = __repr__
+
+
+class _Hostile:
+    """A value of a type never seen, which raises whatever is asked of it."""
+
+    def _raise(self, *_):
+        raise RuntimeError("never asked")
+
+    __repr__ = __str__ = __format__ = __bool__ = __float__ = __int__ = __index__ = _raise
+
+
+class _FalseText(str):
+    def __bool__(self):
+        return False
+
+
+class _OtherText(str):
+    def __str__(self):
+        return ""
+
+
+class _LyingFloat(float):
+    def __float__(self):
+        return 0.0
+
+
+class _FailingFloat(float):
+    def __float__(self):
+        raise RuntimeError("its own conversion fails")
+
+
+class _LyingInt(int):
+    def __int__(self):
+        return 0
+
+    __index__ = __int__
+
+
+class _Moment(datetime):
+    def __lt__(self, other):
+        return True
+
+
+def test_a_subclass_of_a_number_is_read_by_the_value_it_holds_and_nothing_of_it_is_kept():
+    from g6.self_maintenance.pacing import figure_of
+
+    for given in (_Sly(90), _Sly(0.5)):
+        figure = figure_of(given, 100)
+        assert type(figure) is float and figure == float.__float__(given)
+    reading = AccountReading(used=_Sly(90), estimated=False, unread=_FalseText(""))
+    assert type(reading.used) is float and reading.used == 90.0 and type(reading.unread) is str and not reading.unread
+
+
+@pytest.mark.parametrize("given", [_LyingFloat(5), _FailingFloat(5), _LyingInt(5), _Hostile(), 10 ** 5000,
+                                   10 ** (sys.get_int_max_str_digits() + 1), complex(1, 0), "5", b"5"],
+                         ids=["lying float", "failing float", "lying int", "hostile", "huge int", "past the digit limit",
+                              "complex", "text", "bytes"])
+def test_a_value_whose_own_conversion_fails_or_disagrees_or_is_of_a_type_never_seen_is_no_figure_and_no_amount(given):
+    from decimal import Decimal  # noqa: F401 - the types below are never a figure either
+    from fractions import Fraction  # noqa: F401
+
+    from g6.operator.gates import amount_of
+    from g6.self_maintenance.pacing import figure_of
+
+    assert figure_of(given) is None and amount_of(given) is None
+    reading = AccountReading(used=given, estimated=False)
+    assert reading.unread and type(reading.unread) is str and reading.used == 0.0
+
+
+def test_types_never_seen_among_numbers_are_no_figure():
+    from decimal import Decimal
+    from fractions import Fraction
+
+    from g6.self_maintenance.pacing import figure_of
+
+    assert [figure_of(v) for v in (Decimal("5"), Fraction(1, 2), True)] == [None, None, None]
+
+
+def test_an_unread_text_that_says_it_is_false_still_refuses_and_one_that_says_other_text_is_unread():
+    now = _WKS4 + timedelta(days=6)
+    for unread in (_FalseText("the provider's usage could not be read"), _OtherText("it could not be read")):
+        reading = AccountReading(unread=unread)
+        assert type(reading.unread) is str and reading.unread
+        store = OperatorStore(":memory:", clock=lambda: now)
+        try:
+            refused = _wks4_meter(store, lambda *_, r=reading: r).reserve("codex", now, 100)
+            assert not refused.admitted and "not known" in refused.reason, refused.reason
+        finally:
+            store.close()
+
+
+def test_a_refusal_never_renders_what_was_given():
+    from g6.operator.store import BudgetRefused, utc
+
+    now = _WKS4 + timedelta(days=6)
+    huge = 10 ** (sys.get_int_max_str_digits() + 1)
+    for given in (_Hostile(), huge):
+        reading = AccountReading(used=given)
+        assert reading.unread and "a " in reading.unread
+        with pytest.raises(TypeError, match="not a"):
+            utc(given)
+        with pytest.raises(ValueError, match="window"):
+            ProviderWindow("codex", given, _WKS4)
+    store = OperatorStore(":memory:", clock=lambda: now)
+    try:
+        meter = _wks4_meter(store)
+        for given in (_Hostile(), huge, _LyingFloat(5)):
+            refused = meter.reserve("codex", now, given)
+            assert not refused.admitted and "worst case" in refused.reason
+            with pytest.raises(BudgetRefused, match="not a"):
+                meter.scope.reserve_span("codex", account="model", amount=given, caps={"model": 100, "cash": 0},
+                                         decide=lambda: ("", _WKS4, now, _WKS4 + timedelta(days=7)))
+        spend = meter.reserve("codex", now, 10)
+        for given in (_Hostile(), huge, -1, float("nan")):
+            with pytest.raises(ValueError, match="metered"):
+                meter.settle(spend, given)
+        assert meter.settle(spend, _Sly(4)) == 4.0
+    finally:
+        store.close()
+
+
+def test_the_ceiling_and_the_store_use_the_one_plain_amount(monkeypatch):
+    """Finding 6: the ceiling was checked on the caller's object, whose sum said there was room, while the store reserved
+    its plain value. The worst case is converted once, as it enters, and both use that."""
+    from g6.operator import store as store_module
+
+    now = _WKS4 + timedelta(days=6)
+    store = OperatorStore(":memory:", clock=lambda: now)
+    seen = []
+    try:
+        meter = _wks4_meter(store, lambda *_: AccountReading(used=90, estimated=False, read_at=now))
+        append = meter.scope._append_ledger
+        monkeypatch.setattr(meter.scope, "_append_ledger", lambda *a: (seen.append(type(a[4])), append(*a))[1])
+        refusal = store_module.gates.spend_refusal
+        monkeypatch.setattr(store_module.gates, "spend_refusal",
+                            lambda venture, committed, account, amount: (seen.append(type(amount)),
+                                                                         refusal(venture, committed, account, amount))[1])
+        assert not meter.reserve("codex", now, _Sly(20)).admitted          # 90 + 20 is over the 100
+        spend = meter.reserve("codex", now, _Sly(10))
+        assert spend.admitted and type(spend.amount) is float and spend.amount == 10.0
+        assert meter.settle(spend, _Sly(10)) == 10.0
+    finally:
+        store.close()
+    assert seen and all(kind is float for kind in seen), seen
+
+
+def test_a_provider_figure_that_answers_its_own_way_is_read_by_its_value():
+    """Finding 1: the tool's percentage was checked and then its original object multiplied, which said 0."""
+    from g6.self_maintenance.usage import AccountReader
+
+    now = _WKS4 + timedelta(days=6)
+    window = ProviderWindow("codex", 100, _WKS4, reserve_share=0)
+    reader = AccountReader((window,), ask={"codex": lambda: {"rateLimits": {"primary": {
+        "usedPercent": _Sly(90), "windowDurationMins": _Sly(10080), "resetsAt": _Sly((_WKS4 + timedelta(days=7)).timestamp())}}}})
+    reader.refresh(now)
+    reading = reader("codex", now)
+    assert type(reading.used) is float and reading.used == 90.0 and type(reading.resets_at) is datetime
+    store = OperatorStore(":memory:", clock=lambda: now)
+    try:
+        assert not _wks4_meter(store, reader).reserve("codex", now, 20).admitted
+    finally:
+        store.close()
+
+
+class _Raising(dict):
+    def get(self, *_):
+        raise RuntimeError("cannot be read")
+
+
+@pytest.mark.parametrize("answer", [_Raising(), _Hostile(), {"rateLimits": _Raising()}, {"rateLimits": {"primary": _Raising()}}],
+                         ids=["reply", "hostile", "limits", "window"])
+def test_a_reply_that_cannot_be_read_at_all_is_no_reading(answer):
+    from g6.self_maintenance.usage import AccountReader
+
+    now = _WKS4 + timedelta(days=6)
+    reader = AccountReader((ProviderWindow("codex", 100, _WKS4),), ask={"codex": lambda: answer})
+    reader.refresh(now)
+    assert reader("codex", now).unread
+
+
+def test_a_reader_that_raises_anything_is_no_reading():
+    from g6.self_maintenance.usage import AccountReader
+
+    def fails():
+        raise RuntimeError("the reader broke")
+
+    now = _WKS4 + timedelta(days=6)
+    reader = AccountReader((ProviderWindow("codex", 100, _WKS4),), ask={"codex": fails})
+    reader.refresh(now)
+    assert reader("codex", now).unread
+
+
+@pytest.mark.parametrize("given", [{"used": 0}, "fine", _Hostile(), "raises"], ids=["dict", "text", "hostile", "raises"])
+def test_every_use_of_what_reads_the_account_goes_through_the_one_reader(given):
+    """Finding 3: admission read a callback's result through the step that makes anything else unread, and scheduling read
+    it raw. Both go through ``_account`` now."""
+    from g6.self_maintenance.pacing import REFRESH
+
+    def read(*_):
+        if given == "raises":
+            raise RuntimeError("the callback broke")
+        return given
+
+    now = _WKS4 + timedelta(days=6, hours=1)
+    store = OperatorStore(":memory:", clock=lambda: now)
+    try:
+        meter = BudgetMeter((ProviderWindow("codex", 100, _WKS4),), store=store, read_account=read)
+        assert not meter.reserve("codex", now, 1).admitted
+        assert meter.reading("codex", now).reason
+        assert meter.next_room(now) == now + REFRESH
+    finally:
+        store.close()
+
+
+def test_a_moment_of_a_caller_class_or_a_zone_that_does_not_say_its_offset_is_no_moment():
+    from datetime import tzinfo as tz
+    from zoneinfo import ZoneInfo
+
+    from g6.operator.store import utc
+
+    class Broken(tz):
+        def utcoffset(self, dt):
+            raise RuntimeError("no offset")
+
+    class Shifty(timedelta):
+        pass
+
+    class Odd(tz):
+        def utcoffset(self, dt):
+            return Shifty(hours=1)
+
+    with pytest.raises(TypeError):
+        utc(_Moment(2026, 11, 1, tzinfo=UTC))
+    for zone in (Broken(), Odd()):
+        with pytest.raises(ValueError):
+            utc(datetime(2026, 11, 1, tzinfo=zone))
+    moment = utc(datetime(2026, 11, 1, 1, 30, fold=1, tzinfo=ZoneInfo("America/New_York")))
+    assert type(moment) is datetime and moment.tzinfo is UTC and moment == datetime(2026, 11, 1, 6, 30, tzinfo=UTC)
+    reading = AccountReading(used=5, read_at=_Moment(2026, 11, 1, tzinfo=UTC))
+    assert reading.unread and reading.read_at is None
+
+
+def _denying(store, refuse):
+    import sqlite3 as db
+
+    denied = []
+
+    def authorizer(action, operation, name, database, trigger):
+        if action == db.SQLITE_SAVEPOINT and (operation, name) in refuse and (operation, name) not in denied:
+            denied.append((operation, name))
+            return db.SQLITE_DENY
+        return db.SQLITE_OK
+
+    store.conn.set_authorizer(authorizer)
+    return denied
+
+
+def test_a_nested_step_whose_release_is_refused_leaves_nothing_of_itself():
+    """Finding 7: the step's own release was outside the handler that rolls it back, so a refused release left its writes
+    for the outer commit."""
+    store = OperatorStore(":memory:")
+    try:
+        scope = store.for_owner("ada")
+        venture = scope.create_venture("v", caps={"model": 10, "cash": 0})["venture_id"]
+        with scope.immediate():
+            scope.record(venture, "before")
+            denied = _denying(store, {("RELEASE", "g6_step_1")})
+            with pytest.raises(sqlite3.DatabaseError):
+                with scope.immediate():
+                    scope.record(venture, "failed step")
+            store.conn.set_authorizer(None)
+            assert denied == [("RELEASE", "g6_step_1")]
+            scope.record(venture, "after")
+        assert [e["kind"] for e in scope.evidence(venture)] == ["created", "before", "after"]
+    finally:
+        store.close()
+
+
+def test_a_nested_step_that_cannot_be_rolled_back_makes_its_transaction_unable_to_commit():
+    store = OperatorStore(":memory:")
+    try:
+        scope = store.for_owner("ada")
+        venture = scope.create_venture("v", caps={"model": 10, "cash": 0})["venture_id"]
+        with pytest.raises(sqlite3.OperationalError, match="nothing of this transaction is kept"):
+            with scope.immediate():
+                scope.record(venture, "before")
+                _denying(store, {("RELEASE", "g6_step_1"), ("ROLLBACK", "g6_step_1")})
+                with pytest.raises(sqlite3.DatabaseError):
+                    with scope.immediate():
+                        scope.record(venture, "failed step")
+                store.conn.set_authorizer(None)
+                scope.record(venture, "after")
+        assert [e["kind"] for e in scope.evidence(venture)] == ["created"]
+        scope.record(venture, "next")                                        # the next transaction is a fresh one
+        assert [e["kind"] for e in scope.evidence(venture)] == ["created", "next"]
+    finally:
+        store.close()
