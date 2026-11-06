@@ -3679,11 +3679,14 @@ def selfcheck(ctx: Context, task: Task, *, report: bool = False) -> dict[str, An
     gold.write_bytes(got.output)
     empty = folder.fresh_path("empty.patch")
     empty.write_bytes(b"")
-    rows = {}
+    rows, bodies = {}, {}
     for label, patch in (("gold", gold), ("empty", empty)):
-        body = _oracle_run(ctx, task, patch=patch, folder=folder, label=label, report=report)
+        body = bodies[label] = _oracle_run(ctx, task, patch=patch, folder=folder, label=label, report=report)
+        # the empty patch is seen failing by the one rule, the gold run of this same image its evidence (box_mcp.seen_failing)
         rows[label] = {"patch_applied": body.get("patch_applied", True), **verdict(body.get("results") or {}, f2p, p2p),
-                       "seen": box_mcp.tests_seen(body, [*f2p, *p2p]), "observed": observed(body, [*f2p, *p2p])}
+                       "seen": box_mcp.tests_seen(body, [*f2p, *p2p], seen_passing_in=bodies["gold"] if label == "empty" else None,
+                                                  fail_to_pass=f2p),
+                       "observed": observed(body, [*f2p, *p2p])}
     # seen, not inferred: the fix seen to pass every test on the lists, and the empty patch seen to fail one (``tests_seen``)
     ok = rows["gold"]["seen"]["state"] == box_mcp.PASSED and rows["empty"]["seen"]["state"] == box_mcp.FAILED
     return folder.finish({"ok": ok, **{k: {"passes": r["passes"], "failing": len(r["failing"]), "patch_applied": r["patch_applied"],

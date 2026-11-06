@@ -348,11 +348,12 @@ def _part(record: Any, key: str) -> Mapping[str, Any]:
     return got if isinstance(got, Mapping) else {}
 
 
-def _gold_for_base(record: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    """The gold patch's run the base is read against (coordinator's ruling, 2026-11-06; ``box_mcp.tests_seen``'s
-    ``seen_passing_in``): selfcheck's, only when it ran on the same two image ids, both recorded, as the base did; else none."""
-    v, s = _part(record, "validate"), _part(record, "selfcheck")
-    same = the_ids(s.get("images")) == the_ids(v.get("images")) and all(the_ids(v.get("images")).values())
+def _gold_on_ids_of(record: Mapping[str, Any], part: str) -> Mapping[str, Any] | None:
+    """The gold patch's run a control's run is read against (``box_mcp.seen_failing``'s evidence; coordinator's ruling and its
+    Option B, 2026-11-06 and 07): selfcheck's, only when it ran on the same two image ids, both recorded, as ``part`` did (the
+    base's "validate", the empty patch's "selfcheck"); else none."""
+    ran, s = _part(record, part), _part(record, "selfcheck")
+    same = the_ids(s.get("images")) == the_ids(ran.get("images")) and all(the_ids(ran.get("images")).values())
     gold = s.get("gold")
     return gold if same and isinstance(gold, Mapping) else None
 
@@ -361,11 +362,13 @@ def control_why(record: Mapping[str, Any], control: str) -> str:
     """Whether one control holds, recomputed from its record's observed outcomes alone (``box_mcp.tests_seen``): "" when it holds,
     else why. Never from a ``failed`` flag or a verdict a record carries.
 
-    - base: the fix seen to pass every test on the fail-to-pass list, and the base seen to fail one of them; a test the base's
-      report does not hold counts as failing when pytest's own report shows its module failing to collect at the base and the
-      gold patch's run, on the same image ids, saw it pass (coordinator's ruling, 2026-11-06; ``_gold_for_base``);
+    - base: the fix seen to pass every test on the fail-to-pass list, and the base seen to fail one of them;
     - gold patch: the maintainers' fix, given as a patch, seen to pass every test on both lists;
     - empty patch: an empty patch seen to fail one of them;
+
+    The base and the empty patch decide "seen to fail" by one rule (``box_mcp.seen_failing``), with the same evidence: a failure
+    in a test result, or, for a fail-to-pass test, a collection error of its module in pytest's own report where the gold patch's
+    run on the same two image ids saw it pass (coordinator's ruling and its Option B, 2026-11-06 and 07; ``_gold_on_ids_of``).
     - round trip: the run finished, its kept patch was read, the known patch holds a change and the kept patch's SHA-256 is
       the known patch's.
 
@@ -386,8 +389,8 @@ def control_why(record: Mapping[str, Any], control: str) -> str:
                 return f"the fix was not seen to pass the tests the base is to fail: {fixed['state']}: {fixed['why']}"
         tests, want = (f2p, box_mcp.FAILED) if control == "base" else ([*f2p, *p2p], box_mcp.FAILED if control == "empty patch"
                                                                         else box_mcp.PASSED)
-        got = box_mcp.tests_seen(observed[control], tests,
-                                 seen_passing_in=_gold_for_base(record) if control == "base" else None)
+        gold = None if control == "gold patch" else _gold_on_ids_of(record, "validate" if control == "base" else "selfcheck")
+        got = box_mcp.tests_seen(observed[control], tests, seen_passing_in=gold, fail_to_pass=f2p)   # one rule: seen_failing
         if got["state"] != want:
             return f"not seen to {'fail' if want == box_mcp.FAILED else 'pass'} the maintainers' tests: {got['state']}: {got['why']}"
         return ""
@@ -444,11 +447,13 @@ def summary(record: Mapping[str, Any]) -> dict[str, Any]:
                 for lists in (v.get("fail_to_pass"), v.get("pass_to_pass")))      # a record's lists, read, never trusted
     return {"failed": record.get("failed", ""), "why": record.get("why", ""), "record": record.get("record"),
             "validate": {"run": v.get("run"), "images": v.get("images"), "fail_to_pass": len(f2p), "pass_to_pass": len(p2p),
-                         "base": box_mcp.tests_seen(v.get("base"), f2p, seen_passing_in=_gold_for_base(record)),
+                         "base": box_mcp.tests_seen(v.get("base"), f2p, seen_passing_in=_gold_on_ids_of(record, "validate"),
+                                                    fail_to_pass=f2p),
                          "fixed": box_mcp.tests_seen(v.get("fixed"), f2p)},
             "selfcheck": {"run": s.get("run"), "images": s.get("images"),
                           "gold": box_mcp.tests_seen(s.get("gold"), [*f2p, *p2p]),
-                          "empty": box_mcp.tests_seen(s.get("empty"), [*f2p, *p2p])},
+                          "empty": box_mcp.tests_seen(s.get("empty"), [*f2p, *p2p],
+                                                      seen_passing_in=_gold_on_ids_of(record, "selfcheck"), fail_to_pass=f2p)},
             "round_trip": {k: rt.get(k) for k in ("run", "status", "error", "holds", "kept_read", "known_bytes", "known_sha256",
                                                   "kept_bytes", "kept_sha256", "same_bytes", "tree_executables",
                                                   "known_names_an_executable", "images")} if rt else None,
@@ -505,10 +510,11 @@ def manifest(name: str, images: Mapping[str, Mapping[str, Any]], results: Mappin
             "design": "docs/superpowers/specs/2026-11-06-explicit-models-one-question-design.md, sections 3.6 and 7.1",
             "g6_commit": G6_COMMIT, "variant": VARIANT, "sources": SOURCES[name],
             "left_out": [{"id": bug, "why": why} for bug, why in LEFT_OUT.get(name, {}).items()],
-            "controls": (["the base is seen to fail the maintainers' tests (validate); a collection error, in pytest's own report, "
-                          "of a fail-to-pass test's module at the base is that test's failure when the gold patch's run on the "
-                          "same image ids saw it pass", "the maintainers' fix, as a patch, is "
-                          "seen to pass them (selfcheck)", "an empty patch is seen to fail them (selfcheck)", "a known patch written "
+            "controls": (["the base is seen to fail the maintainers' tests (validate)", "the maintainers' fix, as a patch, is "
+                          "seen to pass them (selfcheck)", "an empty patch is seen to fail them (selfcheck)",
+                          "the base and the empty patch by one rule: a failure in a test result, or a collection error, in "
+                          "pytest's own report, of a fail-to-pass test's module where the gold patch's run on the same image "
+                          "ids saw it pass", "a known patch written "
                           "through the host executor's runner is read back byte for byte in the kept patch (round trip)",
                           "each ran on both of the bug's image ids here, read again after them; a result not known is no pass "
                           "and no failure, and excludes the bug"] if controlled else

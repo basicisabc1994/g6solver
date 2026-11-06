@@ -258,7 +258,7 @@ GOLD_RUN = body({NEW: "passed", OLD: "passed"}, exit="0",
 
 
 def test_a_base_collection_error_of_the_fail_to_pass_tests_module_is_seen_failing_when_the_gold_run_saw_it_pass():
-    got = box.tests_seen(ERRED, [NEW], seen_passing_in=GOLD_RUN)
+    got = box.tests_seen(ERRED, [NEW], seen_passing_in=GOLD_RUN, fail_to_pass=[NEW])
     assert got["state"] == F and got["failed"] == 1, got
     assert box.tests_seen(ERRED, [NEW])["state"] == U, "without the gold run's report, a missing result stays unknown"
 
@@ -277,7 +277,7 @@ def test_a_base_collection_error_of_the_fail_to_pass_tests_module_is_seen_failin
 ])
 def test_a_collection_error_stays_unknown_unless_pytests_own_report_puts_the_test_below_it_and_the_gold_run_saw_it_pass(base,
                                                                                                                        gold, why):
-    assert box.tests_seen(base, [NEW], seen_passing_in=gold)["state"] == U, why
+    assert box.tests_seen(base, [NEW], seen_passing_in=gold, fail_to_pass=[NEW])["state"] == U, why
 
 
 def _erred_record(gold_images=None, empty=None):
@@ -290,22 +290,71 @@ def _erred_record(gold_images=None, empty=None):
             "round_trip": {**TRIP, "images": dict(ids)}, "images_after": dict(ids)}
 
 
-def test_the_base_control_reads_the_gold_run_of_the_same_image_ids_and_the_empty_patch_control_is_unchanged():
+def test_the_base_control_reads_the_gold_run_of_the_same_image_ids_and_the_empty_patch_the_same_way():
     ids = {"task_image_id": ORACLE, "oracle_image_id": ORACLE}
     record = _erred_record(empty=body({NEW: "failed", OLD: "passed"}))
     assert cohorts.control_why(record, "base") == "" and cohorts.admit(record, ids) == ""
     other = {"task_image_id": ORACLE, "oracle_image_id": "sha256:" + "9" * 64}
     assert cohorts.control_why(_erred_record(gold_images=other, empty=body({NEW: "failed", OLD: "passed"})), "base") != ""
-    record = _erred_record()                   # the empty patch's run has the same collection error: unchanged, not seen failing
-    assert cohorts.control_why(record, "base") == ""
-    assert cohorts.admit(record, ids).startswith("empty patch: not seen to fail"), cohorts.admit(record, ids)
+    record = _erred_record()                   # the empty patch's run has the same collection error: by the coordinator's
+    assert cohorts.control_why(record, "base") == ""      # Option B (2026-11-07), seen failing by the same rule as the base
+    assert cohorts.control_why(record, "empty patch") == "" and cohorts.admit(record, ids) == ""
+
+
+#: Each case above, as a record whose base and empty patch both ran into it (the empty patch is the base's code), with the gold run
+#: on the same two image ids: (base or empty body, gold body).
+CASES = {"seen failing": (ERRED, GOLD_RUN),
+         "a module that holds no fail-to-pass test": ({**ERRED, "collect_errors": ["tests/test_other.py"]}, GOLD_RUN),
+         "the gold run errors too": (ERRED, {**GOLD_RUN, "results": {NEW: "error", OLD: "passed"}}),
+         "the gold run has no result for it": (ERRED, {**GOLD_RUN, "results": {OLD: "passed"}}),
+         "the gold run's report gives no node id for it": (ERRED, {**GOLD_RUN, "nodes": {OLD: "tests/test_old.py::test_ok"}}),
+         "only junit's rendering names the error": ({k: v for k, v in ERRED.items() if k != "collect_errors"}, GOLD_RUN),
+         "an error node id that is not the test's module": ({**ERRED, "collect_errors": ["tests/test_new"]}, GOLD_RUN),
+         "a report that is not a list of node ids": ({**ERRED, "collect_errors": "tests/test_new.py"}, GOLD_RUN),
+         "an error in the module of a pass-to-pass test only": ({**ERRED, "results": {OLD: "passed"},
+                                                                 "collect_errors": ["tests/test_old.py"]}, GOLD_RUN)}
+
+
+def _case_record(run, gold):
+    """A record whose base and empty patch both ran as ``run``, and whose gold patch ran as ``gold``, all on one pair of ids."""
+    ids = {"task_image_id": ORACLE, "oracle_image_id": ORACLE}
+    lists = {"fail_to_pass": [NEW], "pass_to_pass": [OLD]}
+    return {"failed": "", "why": "",
+            "validate": {"images": dict(ids), **lists, "base": we.observed(run, [NEW]), "fixed": we.observed(GOLD_RUN, [NEW, OLD])},
+            "selfcheck": {"images": dict(ids), "gold": we.observed(gold, [NEW, OLD]), "empty": we.observed(run, [NEW, OLD])},
+            "round_trip": {**TRIP, "images": dict(ids)}, "images_after": dict(ids)}
+
+
+def test_the_empty_patch_with_a_collection_error_of_the_fail_to_pass_tests_module_and_a_passing_gold_run_counts_as_failing():
+    record = _case_record(*CASES["seen failing"])
+    assert cohorts.control_why(record, "empty patch") == "", cohorts.control_why(record, "empty patch")
+    assert cohorts.admit(record, {"task_image_id": ORACLE, "oracle_image_id": ORACLE}) == ""
+    seen = cohorts.summary(record)["selfcheck"]["empty"]
+    assert seen["state"] == F and seen["failed"] == 1 and seen["unknown"] == 0, seen      # OLD passed, NEW seen failing
+
+
+@pytest.mark.parametrize("case", [c for c in CASES if c != "seen failing"])
+def test_a_collection_error_the_one_rule_does_not_tie_to_the_test_leaves_the_empty_patch_not_seen_failing(case):
+    record = _case_record(*CASES[case])
+    assert cohorts.control_why(record, "empty patch").startswith("not seen to fail"), case
+    assert cohorts.admit(record, {"task_image_id": ORACLE, "oracle_image_id": ORACLE}).startswith("base: "), case   # the same evidence
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_the_base_and_the_empty_patch_decide_a_seen_failure_by_one_rule_on_the_same_evidence(case):
+    record = _case_record(*CASES[case])
+    base, empty = cohorts.control_why(record, "base"), cohorts.control_why(record, "empty patch")
+    assert (base == "") == (empty == "") == (case == "seen failing"), (case, base, empty)
+    run, gold = CASES[case]
+    assert box.seen_failing(NEW, run, gold) is (case == "seen failing")
+    assert box.seen_failing(NEW, run) is False                # without the gold run, a missing result is never a failure
 
 
 def test_the_controls_judge_the_base_once_the_gold_patch_has_run(monkeypatch, tmp_path):
     got = controls(monkeypatch, tmp_path, base=ERRED, fixed=GOLD_RUN, gold=GOLD_RUN, empty=body({NEW: "failed", OLD: "passed"}))
     assert got["failed"] == "" and cohorts.admit(got, {"task_image_id": ORACLE, "oracle_image_id": ORACLE}) == "", got
     got = controls(monkeypatch, tmp_path / "2", base=ERRED, fixed=GOLD_RUN, gold=GOLD_RUN, empty=ERRED)
-    assert got["failed"] == "empty patch", got
+    assert got["failed"] == "", got             # the empty patch's collection error, by the same rule as the base's
 
 
 # --- pytest's own report, which the controls' oracle runs keep ---------------------------------------------------------------------
@@ -438,7 +487,8 @@ def test_no_phase_outside_the_closed_set_is_ever_written(tmp_path):
 #: ``read_probes``), or a test report's results or exit taken from a body (``"results"``, ``"pytest_exit"``).
 ATTRS, RAW, KEYS = {"returncode", "stdout", "stderr"}, {"out", "err", "parse_junit", "read_probes"}, {"results", "pytest_exit"}
 #: The one reader, and the ``read`` each consumer hands it to take its answer from a call's output.
-READERS = {("box_mcp.py", "seen"), ("box_mcp.py", "tests_seen"), ("box_mcp.py", "_run_seen"), ("box_mcp.py", "_collect_failed")}
+READERS = {("box_mcp.py", "seen"), ("box_mcp.py", "tests_seen"), ("box_mcp.py", "_run_seen"), ("box_mcp.py", "_collect_failed"),
+           ("box_mcp.py", "seen_failing")}
 #: Where the controls, the probe and the call phases start, and the host run, which the round trip reads only by its record's
 #: status, its ``final_patch_read`` and the kept patch ``keep_final`` read: a boundary the walk below does not cross.
 ROOTS = {("cohorts.py", n) for n in ("main", "controls", "manifest", "admit", "round_trip", "known_patch", "image_ids")} | \
@@ -558,3 +608,40 @@ def test_every_place_a_container_result_or_a_test_report_is_read_is_listed_and_i
     assert outside == set(OUTSIDE), (sorted(outside - set(OUTSIDE)), sorted(set(OUTSIDE) - outside))
     assert not set(OUTSIDE) & {name for file, name in scope if file == "run.py"}
     assert {(f, n) for f, n, _ in sites} >= READERS
+
+#: The one rule for "this test was seen failing" (coordinator's ruling and Option B, 2026-11-06 and 07): box_mcp.seen_failing,
+#: which tests_seen alone calls; and, inside the controls, the probe and the call phases, the only other place that compares an
+#: outcome with "failed" or "error": junit's own tags turned into an outcome.
+FAILING_RULE = ("box_mcp.py", "seen_failing")
+PRODUCERS = {("run.py", "parse_junit"): "junit's own tags made the outcome seen_failing reads"}
+
+
+def _compares_a_failure(fn: ast.AST) -> bool:
+    def failure(node: ast.AST) -> bool:
+        if isinstance(node, ast.Constant):
+            return node.value in ("failed", "error")
+        return isinstance(node, (ast.Tuple, ast.List, ast.Set)) and any(failure(x) for x in node.elts)
+    return any(isinstance(n, ast.Compare) and any(failure(x) for x in (n.left, *n.comparators)) for n in ast.walk(fn))
+
+
+def test_both_controls_decide_a_seen_failure_by_the_one_rule_and_nothing_else_decides_one():
+    functions = {(file, name): fn for file in ("box_mcp.py", "cohorts.py", "run.py") for name, fn in _functions(file).items()}
+    scope = _scope(functions) | {k for k in functions if k[0] in ("box_mcp.py", "cohorts.py")}
+    deciding = {k for k in scope if _compares_a_failure(functions[k])}
+    assert deciding == {FAILING_RULE, *PRODUCERS}, sorted(deciding - {FAILING_RULE, *PRODUCERS})
+
+    def calls(key: tuple[str, str], name: str) -> list[ast.Call]:
+        return [n for n in ast.walk(functions[key]) if isinstance(n, ast.Call)
+                and (getattr(n.func, "attr", None) or getattr(n.func, "id", None)) == name]
+    callers = {k for k in functions if calls(k, "_collect_failed")}
+    assert callers == {FAILING_RULE}, sorted(callers)            # the collection's evidence is read by the one rule only
+    assert calls(("box_mcp.py", "tests_seen"), "seen_failing"), "tests_seen counts failures some other way"
+    readings = calls(("cohorts.py", "control_why"), "tests_seen")
+    ruled = [c for c in readings if {k.arg for k in c.keywords} == {"seen_passing_in", "fail_to_pass"}]
+    others = [c for c in readings if c not in ruled]       # the fix's own reading: seen to pass, so no failure is decided there
+    assert len(ruled) == 1 and len(others) == 1 and not others[0].keywords, \
+        "control_why reads the base and the empty patch by different calls"
+    assert ast.unparse(others[0].args[0]) == "v['fixed']"
+    for key in [("cohorts.py", "summary"), ("run.py", "selfcheck")]:      # what a manifest and selfcheck's ok show, the same way
+        empties = [c for c in calls(key, "tests_seen") if "fail_to_pass" in {k.arg for k in c.keywords}]
+        assert empties, f"{key[1]} reads an empty patch or a base without the one rule"
