@@ -2,7 +2,7 @@
  "bugs": [
   {
    "controls": {
-    "failed": "round trip",
+    "failed": "",
     "images": {
      "oracle_image": "g6we-oracle:uvicorn-3236-c53d310d65a5-r3",
      "oracle_image_id": "sha256:ace4518c80e5437ea928a90f0cc86792fa771db292dfd2f6e9aaa8d4fb3bb441",
@@ -10,15 +10,15 @@
      "task_image_id": "sha256:1f30f99aae9b673df0c746d61dd2146f4399243823308787e78f5a626816327c"
     },
     "round_trip": {
-     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './CHANGELOG.md', which the host cannot hold as a plain file or folder inside the workspace",
-     "holds": false,
-     "kept_bytes": null,
-     "kept_sha256": null,
+     "error": null,
+     "holds": true,
+     "kept_bytes": 3389,
+     "kept_sha256": "f61d720f8e4c1940d329059cced809aa4612b8934f1a570b8491a3de6af09c3e",
      "known_bytes": 3389,
      "known_sha256": "f61d720f8e4c1940d329059cced809aa4612b8934f1a570b8491a3de6af09c3e",
-     "run": "run/uvicorn-3236/20261106T071859898809Z",
-     "same_bytes": false,
-     "status": "error"
+     "run": "run/uvicorn-3236/20261106T092134453923Z",
+     "same_bytes": true,
+     "status": "finished"
     },
     "selfcheck": {
      "empty": {
@@ -32,7 +32,7 @@
       "patch_applied": true
      },
      "ok": true,
-     "run": "selfcheck/uvicorn-3236/20261106T071812194279Z"
+     "run": "selfcheck/uvicorn-3236/20261106T092046508312Z"
     },
     "validate": {
      "base_fails": true,
@@ -41,21 +41,21 @@
      "ok": true,
      "oracle_image_id": "sha256:ace4518c80e5437ea928a90f0cc86792fa771db292dfd2f6e9aaa8d4fb3bb441",
      "pass_to_pass": 440,
-     "run": "validate/uvicorn-3236/20261106T071725449180Z"
+     "run": "validate/uvicorn-3236/20261106T091959866410Z"
     },
     "waited_s": 0.0,
-    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './CHANGELOG.md', which the host cannot hold as a plain file or folder inside the workspace"
+    "why": ""
    },
    "id": "uvicorn-3236",
    "oracle_image": "g6we-oracle:uvicorn-3236-c53d310d65a5-r3",
    "oracle_image_id": "sha256:ace4518c80e5437ea928a90f0cc86792fa771db292dfd2f6e9aaa8d4fb3bb441",
    "task_image": "g6we-task:uvicorn-3236-c53d310d65a5-r3",
    "task_image_id": "sha256:1f30f99aae9b673df0c746d61dd2146f4399243823308787e78f5a626816327c",
-   "usable": false
+   "usable": true
   },
   {
    "controls": {
-    "failed": "round trip",
+    "failed": "",
     "images": {
      "oracle_image": "g6we-oracle:uvicorn-3199-c53d310d65a5-r3",
      "oracle_image_id": "sha256:d715b98174541f4977f47cdb260b541e58ff115d0d9b088500cffc47a9fb86be",
@@ -63,15 +63,15 @@
      "task_image_id": "sha256:f6f878cceec93ca371a0010166a406561771e12a22f372551d78ad552952c8c4"
     },
     "round_trip": {
-     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './CHANGELOG.md', which the host cannot hold as a plain file or folder inside the workspace",
-     "holds": false,
-     "kept_bytes": null,
-     "kept_sha256": null,
+     "error": null,
+     "holds": true,
+     "kept_bytes": 899,
+     "kept_sha256": "15c15ff52f50e126c7d151ef4c83d514d3390bd4b736cba3440dd5ebdf350ad5",
      "known_bytes": 899,
      "known_sha256": "15c15ff52f50e126c7d151ef4c83d514d3390bd4b736cba3440dd5ebdf350ad5",
-     "run": "run/uvicorn-3199/20261106T071913419884Z",
-     "same_bytes": false,
-     "status": "error"
+     "run": "run/uvicorn-3199/20261106T092150176927Z",
+     "same_bytes": true,
+     "status": "finished"
     },
     "selfcheck": {
      "empty": {
@@ -85,7 +85,7 @@
       "patch_applied": true
      },
      "ok": true,
-     "run": "selfcheck/uvicorn-3199/20261106T071906898375Z"
+     "run": "selfcheck/uvicorn-3199/20261106T092143909284Z"
     },
     "validate": {
      "base_fails": true,
@@ -94,17 +94,17 @@
      "ok": true,
      "oracle_image_id": "sha256:d715b98174541f4977f47cdb260b541e58ff115d0d9b088500cffc47a9fb86be",
      "pass_to_pass": 126,
-     "run": "validate/uvicorn-3199/20261106T071901138531Z"
+     "run": "validate/uvicorn-3199/20261106T092138317302Z"
     },
     "waited_s": 0.0,
-    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './CHANGELOG.md', which the host cannot hold as a plain file or folder inside the workspace"
+    "why": ""
    },
    "id": "uvicorn-3199",
    "oracle_image": "g6we-oracle:uvicorn-3199-c53d310d65a5-r3",
    "oracle_image_id": "sha256:d715b98174541f4977f47cdb260b541e58ff115d0d9b088500cffc47a9fb86be",
    "task_image": "g6we-task:uvicorn-3199-c53d310d65a5-r3",
    "task_image_id": "sha256:f6f878cceec93ca371a0010166a406561771e12a22f372551d78ad552952c8c4",
-   "usable": false
+   "usable": true
   },
   {
    "controls": {
@@ -479,7 +479,7 @@
   },
   {
    "controls": {
-    "failed": "round trip",
+    "failed": "",
     "images": {
      "oracle_image": "g6we-oracle:websockets-1752-c53d310d65a5-r3",
      "oracle_image_id": "sha256:f13c843ea95ca69f1777243918d2a23251a5875add65b6bacd5b938f55e5dd9a",
@@ -487,15 +487,15 @@
      "task_image_id": "sha256:0a2bfe1c309cb51c293d4423155efe82b3069207d16bd6df2514f2b3cc13dbce"
     },
     "round_trip": {
-     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './example/tutorial/step2/favicon.ico', which the host cannot hold as a plain file or folder inside the workspace",
-     "holds": false,
-     "kept_bytes": null,
-     "kept_sha256": null,
+     "error": null,
+     "holds": true,
+     "kept_bytes": 14646,
+     "kept_sha256": "fd8a09f5de6d4eaca9f51b6097bc0b804cd4f9046fc95f96aa2f0983d036716d",
      "known_bytes": 14646,
      "known_sha256": "fd8a09f5de6d4eaca9f51b6097bc0b804cd4f9046fc95f96aa2f0983d036716d",
-     "run": "run/websockets-1752/20261106T072111624374Z",
-     "same_bytes": false,
-     "status": "error"
+     "run": "run/websockets-1752/20261106T092209433812Z",
+     "same_bytes": true,
+     "status": "finished"
     },
     "selfcheck": {
      "empty": {
@@ -509,7 +509,7 @@
       "patch_applied": true
      },
      "ok": true,
-     "run": "selfcheck/websockets-1752/20261106T072103187797Z"
+     "run": "selfcheck/websockets-1752/20261106T092201220698Z"
     },
     "validate": {
      "base_fails": true,
@@ -518,21 +518,21 @@
      "ok": true,
      "oracle_image_id": "sha256:f13c843ea95ca69f1777243918d2a23251a5875add65b6bacd5b938f55e5dd9a",
      "pass_to_pass": 1006,
-     "run": "validate/websockets-1752/20261106T072055676268Z"
+     "run": "validate/websockets-1752/20261106T092153650692Z"
     },
     "waited_s": 0.0,
-    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './example/tutorial/step2/favicon.ico', which the host cannot hold as a plain file or folder inside the workspace"
+    "why": ""
    },
    "id": "websockets-1752",
    "oracle_image": "g6we-oracle:websockets-1752-c53d310d65a5-r3",
    "oracle_image_id": "sha256:f13c843ea95ca69f1777243918d2a23251a5875add65b6bacd5b938f55e5dd9a",
    "task_image": "g6we-task:websockets-1752-c53d310d65a5-r3",
    "task_image_id": "sha256:0a2bfe1c309cb51c293d4423155efe82b3069207d16bd6df2514f2b3cc13dbce",
-   "usable": false
+   "usable": true
   },
   {
    "controls": {
-    "failed": "round trip",
+    "failed": "",
     "images": {
      "oracle_image": "g6we-oracle:websockets-1738-c53d310d65a5-r3",
      "oracle_image_id": "sha256:4c5afeaedec316f61af981f9d3d02f7ed8d656eeedf3891fe358200b483f58c6",
@@ -540,15 +540,15 @@
      "task_image_id": "sha256:5765c7b564e21b1e9641cde29ba708878eb2f3422e1f6aa5e6c3ab5985cdbaed"
     },
     "round_trip": {
-     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './example/tutorial/step2/favicon.ico', which the host cannot hold as a plain file or folder inside the workspace",
-     "holds": false,
-     "kept_bytes": null,
-     "kept_sha256": null,
+     "error": null,
+     "holds": true,
+     "kept_bytes": 8869,
+     "kept_sha256": "57c0b871524bf6a8507144d957efef63e5233ef06860f71cc04be2cf5744f28c",
      "known_bytes": 8869,
      "known_sha256": "57c0b871524bf6a8507144d957efef63e5233ef06860f71cc04be2cf5744f28c",
-     "run": "run/websockets-1738/20261106T072137660156Z",
-     "same_bytes": false,
-     "status": "error"
+     "run": "run/websockets-1738/20261106T092238989388Z",
+     "same_bytes": true,
+     "status": "finished"
     },
     "selfcheck": {
      "empty": {
@@ -562,7 +562,7 @@
       "patch_applied": true
      },
      "ok": true,
-     "run": "selfcheck/websockets-1738/20261106T072125054257Z"
+     "run": "selfcheck/websockets-1738/20261106T092227081331Z"
     },
     "validate": {
      "base_fails": true,
@@ -571,17 +571,17 @@
      "ok": true,
      "oracle_image_id": "sha256:4c5afeaedec316f61af981f9d3d02f7ed8d656eeedf3891fe358200b483f58c6",
      "pass_to_pass": 475,
-     "run": "validate/websockets-1738/20261106T072112863944Z"
+     "run": "validate/websockets-1738/20261106T092215489743Z"
     },
     "waited_s": 0.0,
-    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './example/tutorial/step2/favicon.ico', which the host cannot hold as a plain file or folder inside the workspace"
+    "why": ""
    },
    "id": "websockets-1738",
    "oracle_image": "g6we-oracle:websockets-1738-c53d310d65a5-r3",
    "oracle_image_id": "sha256:4c5afeaedec316f61af981f9d3d02f7ed8d656eeedf3891fe358200b483f58c6",
    "task_image": "g6we-task:websockets-1738-c53d310d65a5-r3",
    "task_image_id": "sha256:5765c7b564e21b1e9641cde29ba708878eb2f3422e1f6aa5e6c3ab5985cdbaed",
-   "usable": false
+   "usable": true
   },
   {
    "controls": {
@@ -744,7 +744,7 @@
   },
   {
    "controls": {
-    "failed": "round trip",
+    "failed": "",
     "images": {
      "oracle_image": "g6we-oracle:tenacity-660-c53d310d65a5-r3",
      "oracle_image_id": "sha256:925016ad4ecbf1d6ea179afd66866e8da58b1e109dd8e0886a8cf8465eca25fc",
@@ -752,15 +752,15 @@
      "task_image_id": "sha256:63240e9ce74b0d2a041b057b2601fa2a776203af844fef2ae9664c634016a969"
     },
     "round_trip": {
-     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './README.rst', which the host cannot hold as a plain file or folder inside the workspace",
-     "holds": false,
-     "kept_bytes": null,
-     "kept_sha256": null,
+     "error": null,
+     "holds": true,
+     "kept_bytes": 2543,
+     "kept_sha256": "bb1af7e61cd07904bcc4a5e264ac23f8d9c810b15ccbd5e20e3f13dd27ef4679",
      "known_bytes": 2543,
      "known_sha256": "bb1af7e61cd07904bcc4a5e264ac23f8d9c810b15ccbd5e20e3f13dd27ef4679",
-     "run": "run/tenacity-660/20261106T082221472578Z",
-     "same_bytes": false,
-     "status": "error"
+     "run": "run/tenacity-660/20261106T102253019634Z",
+     "same_bytes": true,
+     "status": "finished"
     },
     "selfcheck": {
      "empty": {
@@ -774,7 +774,7 @@
       "patch_applied": true
      },
      "ok": true,
-     "run": "selfcheck/tenacity-660/20261106T075216365798Z"
+     "run": "selfcheck/tenacity-660/20261106T095247806063Z"
     },
     "validate": {
      "base_fails": true,
@@ -783,21 +783,21 @@
      "ok": true,
      "oracle_image_id": "sha256:925016ad4ecbf1d6ea179afd66866e8da58b1e109dd8e0886a8cf8465eca25fc",
      "pass_to_pass": 0,
-     "run": "validate/tenacity-660/20261106T072212546975Z"
+     "run": "validate/tenacity-660/20261106T092243829902Z"
     },
     "waited_s": 0.0,
-    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './README.rst', which the host cannot hold as a plain file or folder inside the workspace"
+    "why": ""
    },
    "id": "tenacity-660",
    "oracle_image": "g6we-oracle:tenacity-660-c53d310d65a5-r3",
    "oracle_image_id": "sha256:925016ad4ecbf1d6ea179afd66866e8da58b1e109dd8e0886a8cf8465eca25fc",
    "task_image": "g6we-task:tenacity-660-c53d310d65a5-r3",
    "task_image_id": "sha256:63240e9ce74b0d2a041b057b2601fa2a776203af844fef2ae9664c634016a969",
-   "usable": false
+   "usable": true
   },
   {
    "controls": {
-    "failed": "round trip",
+    "failed": "",
     "images": {
      "oracle_image": "g6we-oracle:pyparsing-652-c53d310d65a5-r3",
      "oracle_image_id": "sha256:bbdb203651f37076e441882a341ca365cb3b057fd0db0f57cec60b89bdfffa73",
@@ -805,15 +805,15 @@
      "task_image_id": "sha256:4fd11cca0fd596fa033eb94064b48d9bacff60df160fa0c1f9e19f4bb58a5f51"
     },
     "round_trip": {
-     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/CONTRIBUTING.md', which the host cannot hold as a plain file or folder inside the workspace",
-     "holds": false,
-     "kept_bytes": null,
-     "kept_sha256": null,
+     "error": null,
+     "holds": true,
+     "kept_bytes": 10276,
+     "kept_sha256": "0b92b920eae6ad25876a3105d979c63d7427ed8a643d75cf3f706bdd825e6f83",
      "known_bytes": 10276,
      "known_sha256": "0b92b920eae6ad25876a3105d979c63d7427ed8a643d75cf3f706bdd825e6f83",
-     "run": "run/pyparsing-652/20261106T082742314476Z",
-     "same_bytes": false,
-     "status": "error"
+     "run": "run/pyparsing-652/20261106T102825766409Z",
+     "same_bytes": true,
+     "status": "finished"
     },
     "selfcheck": {
      "empty": {
@@ -827,7 +827,7 @@
       "patch_applied": true
      },
      "ok": true,
-     "run": "selfcheck/pyparsing-652/20261106T082500121585Z"
+     "run": "selfcheck/pyparsing-652/20261106T102540248958Z"
     },
     "validate": {
      "base_fails": true,
@@ -836,21 +836,21 @@
      "ok": true,
      "oracle_image_id": "sha256:bbdb203651f37076e441882a341ca365cb3b057fd0db0f57cec60b89bdfffa73",
      "pass_to_pass": 1892,
-     "run": "validate/pyparsing-652/20261106T082222756279Z"
+     "run": "validate/pyparsing-652/20261106T102256234623Z"
     },
     "waited_s": 0.0,
-    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/CONTRIBUTING.md', which the host cannot hold as a plain file or folder inside the workspace"
+    "why": ""
    },
    "id": "pyparsing-652",
    "oracle_image": "g6we-oracle:pyparsing-652-c53d310d65a5-r3",
    "oracle_image_id": "sha256:bbdb203651f37076e441882a341ca365cb3b057fd0db0f57cec60b89bdfffa73",
    "task_image": "g6we-task:pyparsing-652-c53d310d65a5-r3",
    "task_image_id": "sha256:4fd11cca0fd596fa033eb94064b48d9bacff60df160fa0c1f9e19f4bb58a5f51",
-   "usable": false
+   "usable": true
   },
   {
    "controls": {
-    "failed": "round trip",
+    "failed": "",
     "images": {
      "oracle_image": "g6we-oracle:pyparsing-649-c53d310d65a5-r3",
      "oracle_image_id": "sha256:97ec1dffaac3ddd1a8fce13265e92f35c945c6995376df420e839321de294e10",
@@ -858,15 +858,15 @@
      "task_image_id": "sha256:c7c8001afadbb13d8d4e4cc802c3c2edabfbf854d0c8c63cd9ba307475cb409f"
     },
     "round_trip": {
-     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/CONTRIBUTING.md', which the host cannot hold as a plain file or folder inside the workspace",
-     "holds": false,
-     "kept_bytes": null,
-     "kept_sha256": null,
+     "error": null,
+     "holds": true,
+     "kept_bytes": 5339,
+     "kept_sha256": "5a33b83a4b3b606f980e2f6ec442130a58ae59c86f3c5757542a7de36e9f764d",
      "known_bytes": 5339,
      "known_sha256": "5a33b83a4b3b606f980e2f6ec442130a58ae59c86f3c5757542a7de36e9f764d",
-     "run": "run/pyparsing-649/20261106T082936285955Z",
-     "same_bytes": false,
-     "status": "error"
+     "run": "run/pyparsing-649/20261106T103029801176Z",
+     "same_bytes": true,
+     "status": "finished"
     },
     "selfcheck": {
      "empty": {
@@ -880,7 +880,7 @@
       "patch_applied": true
      },
      "ok": true,
-     "run": "selfcheck/pyparsing-649/20261106T082839780569Z"
+     "run": "selfcheck/pyparsing-649/20261106T102930418440Z"
     },
     "validate": {
      "base_fails": true,
@@ -889,17 +889,17 @@
      "ok": true,
      "oracle_image_id": "sha256:97ec1dffaac3ddd1a8fce13265e92f35c945c6995376df420e839321de294e10",
      "pass_to_pass": 1856,
-     "run": "validate/pyparsing-649/20261106T082743691632Z"
+     "run": "validate/pyparsing-649/20261106T102834155106Z"
     },
     "waited_s": 0.0,
-    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/CONTRIBUTING.md', which the host cannot hold as a plain file or folder inside the workspace"
+    "why": ""
    },
    "id": "pyparsing-649",
    "oracle_image": "g6we-oracle:pyparsing-649-c53d310d65a5-r3",
    "oracle_image_id": "sha256:97ec1dffaac3ddd1a8fce13265e92f35c945c6995376df420e839321de294e10",
    "task_image": "g6we-task:pyparsing-649-c53d310d65a5-r3",
    "task_image_id": "sha256:c7c8001afadbb13d8d4e4cc802c3c2edabfbf854d0c8c63cd9ba307475cb409f",
-   "usable": false
+   "usable": true
   },
   {
    "controls": {
@@ -1122,37 +1122,8 @@
   "a known patch written through the host executor's runner comes back byte for byte in the kept patch (round trip)"
  ],
  "design": "docs/superpowers/specs/2026-11-06-explicit-models-one-question-design.md, sections 3.6 and 7.1",
- "digest": "d3163eb815c122872865ab23fd032086ebd77ae88153fe7fb24bbbd1f78b8ee1",
- "excluded": [
-  {
-   "id": "uvicorn-3236",
-   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './CHANGELOG.md', which the host cannot hold as a plain file or folder inside the workspace"
-  },
-  {
-   "id": "uvicorn-3199",
-   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './CHANGELOG.md', which the host cannot hold as a plain file or folder inside the workspace"
-  },
-  {
-   "id": "websockets-1752",
-   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './example/tutorial/step2/favicon.ico', which the host cannot hold as a plain file or folder inside the workspace"
-  },
-  {
-   "id": "websockets-1738",
-   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './example/tutorial/step2/favicon.ico', which the host cannot hold as a plain file or folder inside the workspace"
-  },
-  {
-   "id": "tenacity-660",
-   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './README.rst', which the host cannot hold as a plain file or folder inside the workspace"
-  },
-  {
-   "id": "pyparsing-652",
-   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/CONTRIBUTING.md', which the host cannot hold as a plain file or folder inside the workspace"
-  },
-  {
-   "id": "pyparsing-649",
-   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/CONTRIBUTING.md', which the host cannot hold as a plain file or folder inside the workspace"
-  }
- ],
+ "digest": "da3f65312030623d6db93397d18322ec241d405766d97542985b4a8002ff968f",
+ "excluded": [],
  "g6_commit": "c53d310d65a5b5ba02c64c3faf6682dcf048888e",
  "left_out": [
   {
@@ -1188,6 +1159,8 @@
   ]
  },
  "usable": [
+  "uvicorn-3236",
+  "uvicorn-3199",
   "tomlkit-552",
   "tomlkit-581",
   "markdown-it-py-416",
@@ -1195,9 +1168,14 @@
   "pip-14218",
   "pyasn1-108",
   "pyasn1-102",
+  "websockets-1752",
+  "websockets-1738",
   "pydantic-settings-1109",
   "wheel-695",
   "wheel-686",
+  "tenacity-660",
+  "pyparsing-652",
+  "pyparsing-649",
   "soupsieve-316",
   "soupsieve-315",
   "openai-python-4166",

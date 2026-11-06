@@ -7,7 +7,7 @@ digest, written before any slice run reads it.
   pilot's seven. Every choice is made on these.
 - **Selection:** stage 4's 22 whole bugs, less any that is development. A choice is scored on it once.
 - **Final:** the 84 stage 5 bugs both audit families labelled determined. Only their names and image digests are read here:
-  never an issue, a test or a fix.
+  never an issue, a test or a fix. One a builder has seen any part of is excluded (PLAN.md, 2026-11-06 evening, ruling 2).
 
 Each development and selection bug passes four controls before it enters a cohort's runs (``controls``): the maintainers' fix
 passes the maintainers' tests and the base commit fails them (``run.validate``), the fix given as a patch passes and an empty
@@ -78,9 +78,11 @@ FINAL = ("urllib3-5271", "urllib3-5212", "charset_normalizer-825", "pygments-317
 FINAL_SOURCE = {"file": "audit_stage5_labels_combined.json", "sha256": "fc90565f968ed932cf930a1fc2c928f56f22e2432b548a5750222eabba78dcbf",
                 "record": "selection_stage5.md at claude/stage5 f558566: Opus 86, Codex 95, both 84",
                 "rule": "a bug is determined only if both families say so"}
-#: What the slice 1 builder saw of a final-cohort bug beyond its name: recorded, for the owner to rule on.
+#: What the slice 1 builder saw of a final-cohort bug beyond its name. Ruled 2026-11-06 (evening, PLAN.md ruling 2): a final-cohort
+#: bug anyone working on G6 has seen any part of is excluded (``SEEN_WHY``), its note kept.
 FINAL_SEEN = {"strix-1116": "one line of selection_stage5.md's judgement column (a summary of its issue's report), read by the "
                             "slice 1 builder on 2026-11-06 while looking for the audit's combined file; nothing else of it was read"}
+SEEN_WHY = "excluded: seen by a builder before the final measurement"
 
 G6_COMMIT = "c53d310d65a5b5ba02c64c3faf6682dcf048888e"     # the images' G6, the K3 pilot's (round 3's index)
 VARIANT = we.ROUND3
@@ -311,7 +313,8 @@ def manifest(name: str, images: Mapping[str, Mapping[str, Any]], results: Mappin
     control results; the bugs left out before the controls, and the bugs a control excluded, each with why; the usable bugs;
     the sources; and its digest (``digest``). A controlled cohort's bug with no control result, or no image, is excluded and
     says so. A final-cohort bug is listed with its images only: none is usable until its controls have run, which they do only
-    before the registered final measurement, so each is pending, with whether docker holds its images."""
+    before the registered final measurement, so each is pending, with whether docker holds its images; one a builder has seen
+    any part of (``FINAL_SEEN``) is excluded instead (``SEEN_WHY``), never pending."""
     names = cohort(name)
     controlled = name in CONTROLLED
     bugs, excluded, pending = [], [], []
@@ -325,7 +328,10 @@ def manifest(name: str, images: Mapping[str, Mapping[str, Any]], results: Mappin
         if not controlled:
             entry["usable"] = False
             bugs.append(entry)
-            pending.append({"id": bug, "why": why or "its images are present; its controls have not run"})
+            if bug in FINAL_SEEN:
+                excluded.append({"id": bug, "why": SEEN_WHY})
+            else:
+                pending.append({"id": bug, "why": why or "its images are present; its controls have not run"})
             continue
         got = (results or {}).get(bug)
         entry["controls"] = dict(got) if got else None

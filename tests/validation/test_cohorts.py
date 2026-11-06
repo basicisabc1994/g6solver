@@ -112,12 +112,16 @@ def test_the_final_manifest_holds_names_and_image_digests_only_none_usable_befor
     assert all("controls" not in bug for bug in body["bugs"]) and isinstance(body["controls"], str)
     assert set(body["bugs"][0]) <= {"id", "task_image", "oracle_image", "task_image_id", "oracle_image_id", "usable",
                                     "seen_by_builder"}
-    assert body["usable"] == [] and body["excluded"] == [] and len(body["pending"]) == 84
+    # ruled 2026-11-06 (evening): a final-cohort bug anyone working on G6 has seen any part of is excluded, never pending
+    assert body["usable"] == [] and len(body["pending"]) == 84 - len(cohorts.FINAL_SEEN) == 83
+    assert body["excluded"] == [{"id": bug, "why": "excluded: seen by a builder before the final measurement"}
+                                for bug in cohorts.FINAL_SEEN] == [{"id": "strix-1116", "why": cohorts.SEEN_WHY}]
     why = {p["id"]: p["why"] for p in body["pending"]}
     assert {why[b] for b in cohorts.FINAL[:10]} == {"its images are present; its controls have not run"}
-    assert {why[b] for b in cohorts.FINAL[10:]} == {"docker holds no task or oracle image for it"}
+    assert {why[b] for b in cohorts.FINAL[10:] if b not in cohorts.FINAL_SEEN} == {"docker holds no task or oracle image for it"}
     seen = [b for b in body["bugs"] if "seen_by_builder" in b]
-    assert [b["id"] for b in seen] == list(cohorts.FINAL_SEEN)
+    assert [b["id"] for b in seen] == list(cohorts.FINAL_SEEN) and all(b["usable"] is False for b in seen)
+    assert not {p["id"] for p in body["pending"]} & set(cohorts.FINAL_SEEN)
 
 
 def test_a_manifest_is_written_once_and_never_with_a_digest_that_is_not_its_own(tmp_path):
@@ -147,6 +151,7 @@ def test_the_committed_manifests_hold_their_digests_and_every_usable_bug_passed_
                 assert got["selfcheck"]["empty"]["passes"] is False and got["round_trip"]["same_bytes"] is True
                 assert got["validate"]["oracle_image_id"] == bug["oracle_image_id"]
     assert found["final"][1]["usable"] == [] and all("controls" not in b for b in found["final"][1]["bugs"])
+    assert found["final"][1]["excluded"] == [{"id": bug, "why": cohorts.SEEN_WHY} for bug in cohorts.FINAL_SEEN]
 
 
 # --- the controls -----------------------------------------------------------------------------------------------------------

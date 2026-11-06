@@ -677,8 +677,13 @@
  "cohort": "final",
  "controls": "none here: the final cohort's issues, tests and fixes stay unread",
  "design": "docs/superpowers/specs/2026-11-06-explicit-models-one-question-design.md, sections 3.6 and 7.1",
- "digest": "19764baca00ab65ed1d69c813b5a0ccbbd43cc3fad43a0b00aed80cf0e0d98d8",
- "excluded": [],
+ "digest": "6ac8cc5298e76cadd5c7c0470d3bd7d48c685b8c9972c9f067849e44aa81f287",
+ "excluded": [
+  {
+   "id": "strix-1116",
+   "why": "excluded: seen by a builder before the final measurement"
+  }
+ ],
  "g6_commit": "c53d310d65a5b5ba02c64c3faf6682dcf048888e",
  "left_out": [],
  "pending": [
@@ -880,10 +885,6 @@
   },
   {
    "id": "llamafactory-10632",
-   "why": "docker holds no task or oracle image for it"
-  },
-  {
-   "id": "strix-1116",
    "why": "docker holds no task or oracle image for it"
   },
   {

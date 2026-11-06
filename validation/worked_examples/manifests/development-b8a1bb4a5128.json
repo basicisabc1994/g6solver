@@ -2,7 +2,7 @@
  "bugs": [
   {
    "controls": {
-    "failed": "round trip",
+    "failed": "",
     "images": {
      "oracle_image": "g6we-oracle:pydantic-13243-c53d310d65a5-r3",
      "oracle_image_id": "sha256:fc8335616742d50aa206c666a57de47dfc65392e06ddb273d7368d36e3f287f2",
@@ -10,15 +10,15 @@
      "task_image_id": "sha256:f0f6e76085d2ac23c5a02b2cd8a7f921156fd4c9f53eb8dd2af792d0e68d9388"
     },
     "round_trip": {
-     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './tests/pydantic_core', which the host cannot hold as a plain file or folder inside the workspace",
-     "holds": false,
-     "kept_bytes": null,
-     "kept_sha256": null,
+     "error": null,
+     "holds": true,
+     "kept_bytes": 3136,
+     "kept_sha256": "f17b4bc12635a5142be8d0f6a53b54c7faf4409bd79d97d66098eb4620250a8d",
      "known_bytes": 3136,
      "known_sha256": "f17b4bc12635a5142be8d0f6a53b54c7faf4409bd79d97d66098eb4620250a8d",
-     "run": "run/pydantic-13243/20261106T065425162492Z",
-     "same_bytes": false,
-     "status": "error"
+     "run": "run/pydantic-13243/20261106T091859255094Z",
+     "same_bytes": true,
+     "status": "finished"
     },
     "selfcheck": {
      "empty": {
@@ -32,7 +32,7 @@
       "patch_applied": true
      },
      "ok": true,
-     "run": "selfcheck/pydantic-13243/20261106T065418103327Z"
+     "run": "selfcheck/pydantic-13243/20261106T091852086572Z"
     },
     "validate": {
      "base_fails": true,
@@ -41,17 +41,17 @@
      "ok": true,
      "oracle_image_id": "sha256:fc8335616742d50aa206c666a57de47dfc65392e06ddb273d7368d36e3f287f2",
      "pass_to_pass": 120,
-     "run": "validate/pydantic-13243/20261106T065411616829Z"
+     "run": "validate/pydantic-13243/20261106T091845291198Z"
     },
     "waited_s": 0.0,
-    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './tests/pydantic_core', which the host cannot hold as a plain file or folder inside the workspace"
+    "why": ""
    },
    "id": "pydantic-13243",
    "oracle_image": "g6we-oracle:pydantic-13243-c53d310d65a5-r3",
    "oracle_image_id": "sha256:fc8335616742d50aa206c666a57de47dfc65392e06ddb273d7368d36e3f287f2",
    "task_image": "g6we-task:pydantic-13243-c53d310d65a5-r3",
    "task_image_id": "sha256:f0f6e76085d2ac23c5a02b2cd8a7f921156fd4c9f53eb8dd2af792d0e68d9388",
-   "usable": false
+   "usable": true
   },
   {
    "controls": {
@@ -267,7 +267,7 @@
   },
   {
    "controls": {
-    "failed": "round trip",
+    "failed": "",
     "images": {
      "oracle_image": "g6we-oracle:pydantic-13133-c53d310d65a5-r3",
      "oracle_image_id": "sha256:95711b3caee4e457b4e93ba4ac6596a1efe0a5d18251b7174e98071e029fe106",
@@ -275,15 +275,15 @@
      "task_image_id": "sha256:af49e7d7faafa8c28ac3e4a0720c03c73f08e9ba63a41d1bbda50d833b782885"
     },
     "round_trip": {
-     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './tests/pydantic_core', which the host cannot hold as a plain file or folder inside the workspace",
-     "holds": false,
-     "kept_bytes": null,
-     "kept_sha256": null,
+     "error": null,
+     "holds": true,
+     "kept_bytes": 24316,
+     "kept_sha256": "fac5b9c12afa51fe74866bf9f29df3a3e62930ec52a5bb5bcf4ec26ab328625a",
      "known_bytes": 24316,
      "known_sha256": "fac5b9c12afa51fe74866bf9f29df3a3e62930ec52a5bb5bcf4ec26ab328625a",
-     "run": "run/pydantic-13133/20261106T065852544322Z",
-     "same_bytes": false,
-     "status": "error"
+     "run": "run/pydantic-13133/20261106T091925382114Z",
+     "same_bytes": true,
+     "status": "finished"
     },
     "selfcheck": {
      "empty": {
@@ -297,7 +297,7 @@
       "patch_applied": true
      },
      "ok": true,
-     "run": "selfcheck/pydantic-13133/20261106T065844592679Z"
+     "run": "selfcheck/pydantic-13133/20261106T091917644691Z"
     },
     "validate": {
      "base_fails": true,
@@ -306,17 +306,17 @@
      "ok": true,
      "oracle_image_id": "sha256:95711b3caee4e457b4e93ba4ac6596a1efe0a5d18251b7174e98071e029fe106",
      "pass_to_pass": 602,
-     "run": "validate/pydantic-13133/20261106T065837190912Z"
+     "run": "validate/pydantic-13133/20261106T091910561092Z"
     },
     "waited_s": 0.0,
-    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './tests/pydantic_core', which the host cannot hold as a plain file or folder inside the workspace"
+    "why": ""
    },
    "id": "pydantic-13133",
    "oracle_image": "g6we-oracle:pydantic-13133-c53d310d65a5-r3",
    "oracle_image_id": "sha256:95711b3caee4e457b4e93ba4ac6596a1efe0a5d18251b7174e98071e029fe106",
    "task_image": "g6we-task:pydantic-13133-c53d310d65a5-r3",
    "task_image_id": "sha256:af49e7d7faafa8c28ac3e4a0720c03c73f08e9ba63a41d1bbda50d833b782885",
-   "usable": false
+   "usable": true
   },
   {
    "controls": {
@@ -1539,7 +1539,7 @@
   },
   {
    "controls": {
-    "failed": "round trip",
+    "failed": "",
     "images": {
      "oracle_image": "g6we-oracle:python-dotenv-711-c53d310d65a5-r3",
      "oracle_image_id": "sha256:c90269b95c786229bc3cf54789d973cb92459afa479898818234d3be27fa64fa",
@@ -1547,15 +1547,15 @@
      "task_image_id": "sha256:f2bbd64df1b824ecb7cd8b50923ca535103f001b74b28b1707f08902b9517ad8"
     },
     "round_trip": {
-     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/license.md', which the host cannot hold as a plain file or folder inside the workspace",
-     "holds": false,
-     "kept_bytes": null,
-     "kept_sha256": null,
+     "error": null,
+     "holds": true,
+     "kept_bytes": 6289,
+     "kept_sha256": "5a2c53c8e67437a5cafcc9dafa86a65de81efff22c0d537fcbcfaca118d4078f",
      "known_bytes": 6289,
      "known_sha256": "5a2c53c8e67437a5cafcc9dafa86a65de81efff22c0d537fcbcfaca118d4078f",
-     "run": "run/python-dotenv-711/20261106T071531405007Z",
-     "same_bytes": false,
-     "status": "error"
+     "run": "run/python-dotenv-711/20261106T091945197912Z",
+     "same_bytes": true,
+     "status": "finished"
     },
     "selfcheck": {
      "empty": {
@@ -1569,7 +1569,7 @@
       "patch_applied": true
      },
      "ok": true,
-     "run": "selfcheck/python-dotenv-711/20261106T071525833058Z"
+     "run": "selfcheck/python-dotenv-711/20261106T091939977061Z"
     },
     "validate": {
      "base_fails": true,
@@ -1578,21 +1578,21 @@
      "ok": true,
      "oracle_image_id": "sha256:c90269b95c786229bc3cf54789d973cb92459afa479898818234d3be27fa64fa",
      "pass_to_pass": 181,
-     "run": "validate/python-dotenv-711/20261106T071521114520Z"
+     "run": "validate/python-dotenv-711/20261106T091935715326Z"
     },
     "waited_s": 0.0,
-    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/license.md', which the host cannot hold as a plain file or folder inside the workspace"
+    "why": ""
    },
    "id": "python-dotenv-711",
    "oracle_image": "g6we-oracle:python-dotenv-711-c53d310d65a5-r3",
    "oracle_image_id": "sha256:c90269b95c786229bc3cf54789d973cb92459afa479898818234d3be27fa64fa",
    "task_image": "g6we-task:python-dotenv-711-c53d310d65a5-r3",
    "task_image_id": "sha256:f2bbd64df1b824ecb7cd8b50923ca535103f001b74b28b1707f08902b9517ad8",
-   "usable": false
+   "usable": true
   },
   {
    "controls": {
-    "failed": "round trip",
+    "failed": "",
     "images": {
      "oracle_image": "g6we-oracle:python-dotenv-700-c53d310d65a5-r3",
      "oracle_image_id": "sha256:a1e7baf237f835bb9856ef29c6f9421a73aa6f5f00f84e5d32b481e5fc29a903",
@@ -1600,15 +1600,15 @@
      "task_image_id": "sha256:e7608b380499960ad92d1e274586a0388a8eaf0e9e4244ca9febea6fe1f5dc17"
     },
     "round_trip": {
-     "error": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/license.md', which the host cannot hold as a plain file or folder inside the workspace",
-     "holds": false,
-     "kept_bytes": null,
-     "kept_sha256": null,
+     "error": null,
+     "holds": true,
+     "kept_bytes": 3137,
+     "kept_sha256": "935204c7e4f8eddcb32342846999e0d5d9f8c987521a209142201ad96a5b56d9",
      "known_bytes": 3137,
      "known_sha256": "935204c7e4f8eddcb32342846999e0d5d9f8c987521a209142201ad96a5b56d9",
-     "run": "run/python-dotenv-700/20261106T071540991787Z",
-     "same_bytes": false,
-     "status": "error"
+     "run": "run/python-dotenv-700/20261106T091956567377Z",
+     "same_bytes": true,
+     "status": "finished"
     },
     "selfcheck": {
      "empty": {
@@ -1622,7 +1622,7 @@
       "patch_applied": true
      },
      "ok": true,
-     "run": "selfcheck/python-dotenv-700/20261106T071536319374Z"
+     "run": "selfcheck/python-dotenv-700/20261106T091951968961Z"
     },
     "validate": {
      "base_fails": true,
@@ -1631,17 +1631,17 @@
      "ok": true,
      "oracle_image_id": "sha256:a1e7baf237f835bb9856ef29c6f9421a73aa6f5f00f84e5d32b481e5fc29a903",
      "pass_to_pass": 43,
-     "run": "validate/python-dotenv-700/20261106T071532612829Z"
+     "run": "validate/python-dotenv-700/20261106T091948320461Z"
     },
     "waited_s": 0.0,
-    "why": "RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/license.md', which the host cannot hold as a plain file or folder inside the workspace"
+    "why": ""
    },
    "id": "python-dotenv-700",
    "oracle_image": "g6we-oracle:python-dotenv-700-c53d310d65a5-r3",
    "oracle_image_id": "sha256:a1e7baf237f835bb9856ef29c6f9421a73aa6f5f00f84e5d32b481e5fc29a903",
    "task_image": "g6we-task:python-dotenv-700-c53d310d65a5-r3",
    "task_image_id": "sha256:e7608b380499960ad92d1e274586a0388a8eaf0e9e4244ca9febea6fe1f5dc17",
-   "usable": false
+   "usable": true
   },
   {
    "controls": {
@@ -1864,25 +1864,8 @@
   "a known patch written through the host executor's runner comes back byte for byte in the kept patch (round trip)"
  ],
  "design": "docs/superpowers/specs/2026-11-06-explicit-models-one-question-design.md, sections 3.6 and 7.1",
- "digest": "da19626d97b0a9662645f8d2f78343a1bd466d48b4257f9edff9f8c0a3599264",
- "excluded": [
-  {
-   "id": "pydantic-13243",
-   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './tests/pydantic_core', which the host cannot hold as a plain file or folder inside the workspace"
-  },
-  {
-   "id": "pydantic-13133",
-   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './tests/pydantic_core', which the host cannot hold as a plain file or folder inside the workspace"
-  },
-  {
-   "id": "python-dotenv-711",
-   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/license.md', which the host cannot hold as a plain file or folder inside the workspace"
-  },
-  {
-   "id": "python-dotenv-700",
-   "why": "round trip: RuntimeError: the workspace's export was refused, and nothing of it written: the container's tree holds './docs/license.md', which the host cannot hold as a plain file or folder inside the workspace"
-  }
- ],
+ "digest": "b8a1bb4a5128dfd1acd9a6cb4e51ae1884e1e924107e9138a98b9e0fad32b884",
+ "excluded": [],
  "g6_commit": "c53d310d65a5b5ba02c64c3faf6682dcf048888e",
  "left_out": [],
  "plan": "validation/worked_examples/PLAN.md, 2026-11-06 (night)",
@@ -1938,10 +1921,12 @@
   ]
  },
  "usable": [
+  "pydantic-13243",
   "black-5144",
   "black-5148",
   "click-3434",
   "click-3404",
+  "pydantic-13133",
   "starlette-3189",
   "attrs-1509",
   "starlette-3166",
@@ -1965,6 +1950,8 @@
   "anyio-1424",
   "anyio-1354",
   "s3transfer-423",
+  "python-dotenv-711",
+  "python-dotenv-700",
   "pyjwt-1216",
   "pyjwt-1201",
   "platformdirs-666",
