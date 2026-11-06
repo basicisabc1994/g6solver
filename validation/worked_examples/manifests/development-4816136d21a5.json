@@ -690,11 +690,11 @@
   },
   {
    "controls": {
-    "failed": "base",
+    "failed": "empty patch",
     "images_after": null,
     "record": {
-     "run": "control/starlette-3166/20261106T124227182978Z",
-     "sha256": "dcfbabb8dd54adedf582c7124a2d43e8249bb9165e1e0b11cdcab73fcf505000"
+     "run": "control/starlette-3166/20261106T140332740604Z",
+     "sha256": "1ebf7f99029858a1589460d713831639e90c2ba9756d918651482bf32212933e"
     },
     "round_trip": null,
     "selfcheck": {
@@ -704,27 +704,30 @@
       "state": "unknown",
       "tests": 19,
       "unknown": 19,
-      "why": "the test call's own result was never recorded"
+      "why": "none of 19 was seen to fail and 19 have no result in the report (exit 2)"
      },
      "gold": {
       "failed": 0,
-      "passed": 0,
-      "state": "unknown",
+      "passed": 19,
+      "state": "passed",
       "tests": 19,
-      "unknown": 19,
-      "why": "the test call's own result was never recorded"
+      "unknown": 0,
+      "why": ""
      },
-     "images": null,
-     "run": null
+     "images": {
+      "oracle_image_id": "sha256:51aef3b68bcdf740d68c7b72dcd289afbc6299f47ad2139b0f9645f0e299f756",
+      "task_image_id": "sha256:d97c2ef8c6a8d85621d996a83be982abd9559bb3e4ab6c15e46f49e8c5d24b69"
+     },
+     "run": "selfcheck/starlette-3166/20261106T140337263455Z"
     },
     "validate": {
      "base": {
-      "failed": 0,
+      "failed": 19,
       "passed": 0,
-      "state": "unknown",
+      "state": "failed",
       "tests": 19,
-      "unknown": 19,
-      "why": "none of 19 was seen to fail and 19 have no result in the report (exit 2)"
+      "unknown": 0,
+      "why": "19 of 19 seen to fail"
      },
      "fail_to_pass": 19,
      "fixed": {
@@ -740,7 +743,7 @@
       "task_image_id": "sha256:d97c2ef8c6a8d85621d996a83be982abd9559bb3e4ab6c15e46f49e8c5d24b69"
      },
      "pass_to_pass": 0,
-     "run": "validate/starlette-3166/20261106T124227489649Z"
+     "run": "validate/starlette-3166/20261106T140332937994Z"
     },
     "why": "not seen to fail the maintainers' tests: unknown: none of 19 was seen to fail and 19 have no result in the report (exit 2)"
    },
@@ -1527,11 +1530,11 @@
   },
   {
    "controls": {
-    "failed": "base",
+    "failed": "empty patch",
     "images_after": null,
     "record": {
-     "run": "control/setuptools-5362/20261106T124741341225Z",
-     "sha256": "df40a15cf344174d7822cab2b71850130192cec0045400816891bbdba29f4538"
+     "run": "control/setuptools-5362/20261106T140342328178Z",
+     "sha256": "f5bdf2c87e2201a8708de661d41c0c8d6d4dd417b14a8a8d64fd2faf028445e7"
     },
     "round_trip": null,
     "selfcheck": {
@@ -1541,27 +1544,30 @@
       "state": "unknown",
       "tests": 139,
       "unknown": 139,
-      "why": "the test call's own result was never recorded"
+      "why": "none of 139 was seen to fail and 139 have no result in the report (exit 2)"
      },
      "gold": {
       "failed": 0,
-      "passed": 0,
-      "state": "unknown",
+      "passed": 139,
+      "state": "passed",
       "tests": 139,
-      "unknown": 139,
-      "why": "the test call's own result was never recorded"
+      "unknown": 0,
+      "why": ""
      },
-     "images": null,
-     "run": null
+     "images": {
+      "oracle_image_id": "sha256:9e7d9da0fb58a9d46961ef122fda43c884d04a5c2df63fbaf543db9920dc05ca",
+      "task_image_id": "sha256:f156dcde992f9dedbca73a988ad9047f054130e6bc5e3449b6bfdb66310c106b"
+     },
+     "run": "selfcheck/setuptools-5362/20261106T140352183187Z"
     },
     "validate": {
      "base": {
-      "failed": 0,
+      "failed": 139,
       "passed": 0,
-      "state": "unknown",
+      "state": "failed",
       "tests": 139,
-      "unknown": 139,
-      "why": "none of 139 was seen to fail and 139 have no result in the report (exit 2)"
+      "unknown": 0,
+      "why": "139 of 139 seen to fail"
      },
      "fail_to_pass": 139,
      "fixed": {
@@ -1577,7 +1583,7 @@
       "task_image_id": "sha256:f156dcde992f9dedbca73a988ad9047f054130e6bc5e3449b6bfdb66310c106b"
      },
      "pass_to_pass": 0,
-     "run": "validate/setuptools-5362/20261106T124741473368Z"
+     "run": "validate/setuptools-5362/20261106T140342751529Z"
     },
     "why": "not seen to fail the maintainers' tests: unknown: none of 139 was seen to fail and 139 have no result in the report (exit 2)"
    },
@@ -2967,22 +2973,22 @@
  ],
  "cohort": "development",
  "controls": [
-  "the base is seen to fail the maintainers' tests (validate)",
+  "the base is seen to fail the maintainers' tests (validate); a collection error, in pytest's own report, of a fail-to-pass test's module at the base is that test's failure when the gold patch's run on the same image ids saw it pass",
   "the maintainers' fix, as a patch, is seen to pass them (selfcheck)",
   "an empty patch is seen to fail them (selfcheck)",
   "a known patch written through the host executor's runner is read back byte for byte in the kept patch (round trip)",
   "each ran on both of the bug's image ids here, read again after them; a result not known is no pass and no failure, and excludes the bug"
  ],
  "design": "docs/superpowers/specs/2026-11-06-explicit-models-one-question-design.md, sections 3.6 and 7.1",
- "digest": "180cdd8c38a842c84467d882885ebd9d1185ae16afc74a09947db7a429e0bfe5",
+ "digest": "4816136d21a51d57043002302debfc2f7a33460ebe40c02156c55648db9dccb8",
  "excluded": [
   {
    "id": "starlette-3166",
-   "why": "base: not seen to fail the maintainers' tests: unknown: none of 19 was seen to fail and 19 have no result in the report (exit 2)"
+   "why": "empty patch: not seen to fail the maintainers' tests: unknown: none of 19 was seen to fail and 19 have no result in the report (exit 2)"
   },
   {
    "id": "setuptools-5362",
-   "why": "base: not seen to fail the maintainers' tests: unknown: none of 139 was seen to fail and 139 have no result in the report (exit 2)"
+   "why": "empty patch: not seen to fail the maintainers' tests: unknown: none of 139 was seen to fail and 139 have no result in the report (exit 2)"
   }
  ],
  "g6_commit": "c53d310d65a5b5ba02c64c3faf6682dcf048888e",

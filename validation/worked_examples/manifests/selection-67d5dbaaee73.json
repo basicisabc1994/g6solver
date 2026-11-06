@@ -432,11 +432,11 @@
   },
   {
    "controls": {
-    "failed": "base",
+    "failed": "empty patch",
     "images_after": null,
     "record": {
-     "run": "control/opentelemetry-python-5823/20261106T130341233947Z",
-     "sha256": "a03c16bee786a508e12bb8155601944af0b73093297c8f4c1c7318c2779c8eef"
+     "run": "control/opentelemetry-python-5823/20261106T140402482324Z",
+     "sha256": "9511f63d53484886179f3962fea7eb3c14366ce2f9e3eaf99f47a75ba7f6150c"
     },
     "round_trip": null,
     "selfcheck": {
@@ -446,27 +446,30 @@
       "state": "unknown",
       "tests": 45,
       "unknown": 45,
-      "why": "the test call's own result was never recorded"
+      "why": "none of 45 was seen to fail and 45 have no result in the report (exit 2)"
      },
      "gold": {
       "failed": 0,
-      "passed": 0,
-      "state": "unknown",
+      "passed": 45,
+      "state": "passed",
       "tests": 45,
-      "unknown": 45,
-      "why": "the test call's own result was never recorded"
+      "unknown": 0,
+      "why": ""
      },
-     "images": null,
-     "run": null
+     "images": {
+      "oracle_image_id": "sha256:4e3771e7cd8caecd9bb5b2a378e08711d149066c54eaa4782c2d265bd943f2c9",
+      "task_image_id": "sha256:cde80c3c222308e0ab50a3e0e70f83a64aeca2f99a7b53111c1d20ed1dd44cef"
+     },
+     "run": "selfcheck/opentelemetry-python-5823/20261106T140405984462Z"
     },
     "validate": {
      "base": {
-      "failed": 0,
+      "failed": 9,
       "passed": 0,
-      "state": "unknown",
+      "state": "failed",
       "tests": 45,
-      "unknown": 45,
-      "why": "none of 45 was seen to fail and 45 have no result in the report (exit 2)"
+      "unknown": 36,
+      "why": "9 of 45 seen to fail"
      },
      "fail_to_pass": 45,
      "fixed": {
@@ -482,7 +485,7 @@
       "task_image_id": "sha256:cde80c3c222308e0ab50a3e0e70f83a64aeca2f99a7b53111c1d20ed1dd44cef"
      },
      "pass_to_pass": 0,
-     "run": "validate/opentelemetry-python-5823/20261106T130341356962Z"
+     "run": "validate/opentelemetry-python-5823/20261106T140402606573Z"
     },
     "why": "not seen to fail the maintainers' tests: unknown: none of 45 was seen to fail and 45 have no result in the report (exit 2)"
    },
@@ -495,11 +498,11 @@
   },
   {
    "controls": {
-    "failed": "base",
+    "failed": "empty patch",
     "images_after": null,
     "record": {
-     "run": "control/pip-14218/20261106T130344539100Z",
-     "sha256": "e21aad4bb498f1ccab20a8b8484c6e8de63698609e2b3f24e0a30e79f6974ff7"
+     "run": "control/pip-14218/20261106T140410079206Z",
+     "sha256": "175ae7154751dc4f4d20f9af0ecc4645a05cb16dbdda9fe497dccc3b82c67db0"
     },
     "round_trip": null,
     "selfcheck": {
@@ -509,27 +512,30 @@
       "state": "unknown",
       "tests": 14,
       "unknown": 14,
-      "why": "the test call's own result was never recorded"
+      "why": "none of 14 was seen to fail and 14 have no result in the report (exit 2)"
      },
      "gold": {
       "failed": 0,
-      "passed": 0,
-      "state": "unknown",
+      "passed": 14,
+      "state": "passed",
       "tests": 14,
-      "unknown": 14,
-      "why": "the test call's own result was never recorded"
+      "unknown": 0,
+      "why": ""
      },
-     "images": null,
-     "run": null
+     "images": {
+      "oracle_image_id": "sha256:61a9396d9615cb92540dada6b3f1f50fe82526b06c9d72464a4a62becf9f6d56",
+      "task_image_id": "sha256:033c4b96f95520e09272c52dae411da343d4bf450dd17eda85f52151653ec420"
+     },
+     "run": "selfcheck/pip-14218/20261106T140417277780Z"
     },
     "validate": {
      "base": {
-      "failed": 0,
+      "failed": 11,
       "passed": 0,
-      "state": "unknown",
+      "state": "failed",
       "tests": 14,
-      "unknown": 14,
-      "why": "none of 14 was seen to fail and 14 have no result in the report (exit 2)"
+      "unknown": 3,
+      "why": "11 of 14 seen to fail"
      },
      "fail_to_pass": 14,
      "fixed": {
@@ -545,7 +551,7 @@
       "task_image_id": "sha256:033c4b96f95520e09272c52dae411da343d4bf450dd17eda85f52151653ec420"
      },
      "pass_to_pass": 0,
-     "run": "validate/pip-14218/20261106T130344666141Z"
+     "run": "validate/pip-14218/20261106T140410321707Z"
     },
     "why": "not seen to fail the maintainers' tests: unknown: none of 14 was seen to fail and 14 have no result in the report (exit 2)"
    },
@@ -1740,22 +1746,22 @@
  ],
  "cohort": "selection",
  "controls": [
-  "the base is seen to fail the maintainers' tests (validate)",
+  "the base is seen to fail the maintainers' tests (validate); a collection error, in pytest's own report, of a fail-to-pass test's module at the base is that test's failure when the gold patch's run on the same image ids saw it pass",
   "the maintainers' fix, as a patch, is seen to pass them (selfcheck)",
   "an empty patch is seen to fail them (selfcheck)",
   "a known patch written through the host executor's runner is read back byte for byte in the kept patch (round trip)",
   "each ran on both of the bug's image ids here, read again after them; a result not known is no pass and no failure, and excludes the bug"
  ],
  "design": "docs/superpowers/specs/2026-11-06-explicit-models-one-question-design.md, sections 3.6 and 7.1",
- "digest": "b6bcc19129e44500e54fae1a691955e01c24866f6e01de284d0abd53337e2f84",
+ "digest": "67d5dbaaee735d787f17948d44c10e5c0b6f5f176f64f91db9d9dc4d9789e44c",
  "excluded": [
   {
    "id": "opentelemetry-python-5823",
-   "why": "base: not seen to fail the maintainers' tests: unknown: none of 45 was seen to fail and 45 have no result in the report (exit 2)"
+   "why": "empty patch: not seen to fail the maintainers' tests: unknown: none of 45 was seen to fail and 45 have no result in the report (exit 2)"
   },
   {
    "id": "pip-14218",
-   "why": "base: not seen to fail the maintainers' tests: unknown: none of 14 was seen to fail and 14 have no result in the report (exit 2)"
+   "why": "empty patch: not seen to fail the maintainers' tests: unknown: none of 14 was seen to fail and 14 have no result in the report (exit 2)"
   },
   {
    "id": "tenacity-660",
