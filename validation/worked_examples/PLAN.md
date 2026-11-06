@@ -3136,3 +3136,39 @@ conversions had been made.
   can convert at all; stage 5 is the test.
 - If the owner rules instead that repeats 3 and 4 be run, that needs a reviewed change to round 3's schedule, and it is
   written in its own section before those runs.
+
+## 2026-11-06 (afternoon): the K3 pilot's result: the bar is not met, so stage 5's runs wait
+
+Written after the pilot's fourteen runs were counted, and before any further run of any arm.
+
+**The counts.** All fourteen runs finished (seven bugs, repeats 1 and 2, on 754513c, host executor, subscription sign-in, no
+API spend). Each run has a verdict on the maintainers' tests for its first patch (`round-1`), its patch after the rule step
+(`rule`) and its final patch, so no run is missing a pair.
+
+| | All seven bugs | The four bugs (black-5148, click-3404, starlette-3189, pygments-3158) |
+|---|---|---|
+| Runs | 14 | 8 |
+| Wrong first patches | 12 | 7 |
+| Made right by the final patch | 2 (17%) | 0 |
+| Right first patches | 2 | 1 |
+| Made wrong by the final patch | 0 | 0 |
+| Wrong first patches made right by the rule step | 0 | 0 |
+| Right first patches made wrong by the rule step | 0 | 0 |
+
+- **The bar.** At least 45% of wrong first patches made right: 2 of 12, **not met**. No right first patch made wrong: 0 of 2,
+  met. So, by the pre-spend rule of 2026-11-05 (morning), stage 5's runs wait; its preparation and audit go on.
+- **The rule step changed no verdict.** In all fourteen runs the patch after the rule step has the same verdict as the first
+  patch.
+- **Both conversions are one bug's.** s3transfer-423, both repeats, made right by a repair after a review, not by the rule
+  step.
+- **Where the other ten wrong first patches went.** Five had no repair round after the rule step: nothing went back on a wrong
+  patch (black-5148 repeat 1, starlette-3189 both, pygments-3158 both). Five had two or three repair rounds and still
+  fail the maintainers' tests (click-3404 both, fastapi-13920 both, pydantic-settings-1089 repeat 2).
+- **Against K2.** On the four bugs, K2's recorded runs made right 0 of the 16 wrong first patches they had (2026-11-05,
+  morning), and K3 made right 0 of 7. The rule step (H-rule's first half) did not move the bugs it was read from. Over all
+  bugs, K2's 6 of 22 and K3's 2 of 12 are on different sets of bugs, so they are not compared.
+
+**Decided by the owner (2026-11-06).** Repeats 3 and 4 are not run: the pilot stays at fourteen runs. To pass at 28 runs the
+next fourteen would have to make right about 9 of their roughly 12 wrong first patches; even at a true rate of 45% that has a
+chance of about 4%, and the rule step changed nothing in any run. Instead, the cause is found from the fourteen runs' saved
+records, at no spend, and a new hypothesis is registered in its own section before any run that tests it.
