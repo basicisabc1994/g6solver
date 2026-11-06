@@ -5,6 +5,7 @@
   "model": "Claude Sonnet 5.5",
   "sources": {
     "plan": "validation/worked_examples/PLAN.md at commit 74a00fd: the study's plan, written before each run, with its dated results. Each block below names the plan's sections by their dated headings.",
+    "plan_commit": "74a00fd207888e592ae0f6764cf813f3a382bafe",
     "own_code": "validation/own_code/RCA.md, dated 2026-11-03: why the reviews of G6's own code did not converge, counts only"
   },
   "arms": {

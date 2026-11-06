@@ -772,7 +772,9 @@ def coding_study() -> dict:
         "spend": {"usd": f"{spend['usd']:.2f}", "limit": f"{spend['limit_usd']:g}",
                   "design_review": f"{spend['design_review_usd']:.2f}"},
         "url": f"{REPO}docs/validation/results/coding/coding_study.json",
-        "plan_url": f"{REPO}validation/worked_examples/PLAN.md",
+        # the plan as it stood at the commit its cited sections come from: a commit permalink, never a branch
+        "plan_url": f"{REPO.replace('/blob/main/', '/blob/' + data['sources']['plan_commit'] + '/')}"
+                    "validation/worked_examples/PLAN.md",
         "own_url": f"{REPO}validation/own_code/RCA.md"}
 
 

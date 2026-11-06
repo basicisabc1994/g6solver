@@ -229,6 +229,15 @@ def test_the_coding_study_tells_one_story_in_plain_words(client):
     assert "0.80" not in text and "477" not in text and "claude/" not in section
 
 
+def test_the_plan_is_linked_at_the_commit_its_cited_sections_come_from(client):
+    # coordinator, 2026-11-06: PLAN.md on main stops at 2026-11-01, so the link is a commit permalink, never a branch
+    commit = _coding_file()["sources"]["plan_commit"]
+    assert re.fullmatch(r"[0-9a-f]{40}", commit)
+    section = _section(_page(client), "coding-study")
+    links = re.findall(r'href="([^"]*PLAN\.md[^"]*)"', section)
+    assert links == [f"https://github.com/basicisabc1994/g6solver/blob/{commit}/validation/worked_examples/PLAN.md"]
+
+
 def test_every_registered_comparison_on_unseen_bugs_is_in_the_table_by_bug(client):
     data = _coding_file()
     rows = _table(html.unescape(_section(_page(client), "coding-study")), "coding-tests")[1:]
