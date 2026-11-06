@@ -1,0 +1,1820 @@
+{
+ "bugs": [
+  {
+   "controls": {
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:ace4518c80e5437ea928a90f0cc86792fa771db292dfd2f6e9aaa8d4fb3bb441",
+     "task_image_id": "sha256:1f30f99aae9b673df0c746d61dd2146f4399243823308787e78f5a626816327c"
+    },
+    "record": {
+     "run": "control/uvicorn-3236/20261106T130108003636Z",
+     "sha256": "3e92855c9fd05373bf0cdf2d719cf0f5c580b8dff4e13c031b4942f900124f30"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:ace4518c80e5437ea928a90f0cc86792fa771db292dfd2f6e9aaa8d4fb3bb441",
+      "task_image_id": "sha256:1f30f99aae9b673df0c746d61dd2146f4399243823308787e78f5a626816327c"
+     },
+     "kept_bytes": 3389,
+     "kept_read": true,
+     "kept_sha256": "f61d720f8e4c1940d329059cced809aa4612b8934f1a570b8491a3de6af09c3e",
+     "known_bytes": 3389,
+     "known_names_an_executable": false,
+     "known_sha256": "f61d720f8e4c1940d329059cced809aa4612b8934f1a570b8491a3de6af09c3e",
+     "run": "run/uvicorn-3236/20261106T130243530235Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 8
+    },
+    "selfcheck": {
+     "empty": {
+      "failed": 7,
+      "passed": 440,
+      "state": "failed",
+      "tests": 447,
+      "unknown": 0,
+      "why": "7 of 447 seen to fail"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 447,
+      "state": "passed",
+      "tests": 447,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:ace4518c80e5437ea928a90f0cc86792fa771db292dfd2f6e9aaa8d4fb3bb441",
+      "task_image_id": "sha256:1f30f99aae9b673df0c746d61dd2146f4399243823308787e78f5a626816327c"
+     },
+     "run": "selfcheck/uvicorn-3236/20261106T130155212119Z"
+    },
+    "validate": {
+     "base": {
+      "failed": 7,
+      "passed": 0,
+      "state": "failed",
+      "tests": 7,
+      "unknown": 0,
+      "why": "7 of 7 seen to fail"
+     },
+     "fail_to_pass": 7,
+     "fixed": {
+      "failed": 0,
+      "passed": 7,
+      "state": "passed",
+      "tests": 7,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:ace4518c80e5437ea928a90f0cc86792fa771db292dfd2f6e9aaa8d4fb3bb441",
+      "task_image_id": "sha256:1f30f99aae9b673df0c746d61dd2146f4399243823308787e78f5a626816327c"
+     },
+     "pass_to_pass": 440,
+     "run": "validate/uvicorn-3236/20261106T130108120932Z"
+    },
+    "why": ""
+   },
+   "id": "uvicorn-3236",
+   "oracle_image": "g6we-oracle:uvicorn-3236-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:ace4518c80e5437ea928a90f0cc86792fa771db292dfd2f6e9aaa8d4fb3bb441",
+   "task_image": "g6we-task:uvicorn-3236-c53d310d65a5-r3",
+   "task_image_id": "sha256:1f30f99aae9b673df0c746d61dd2146f4399243823308787e78f5a626816327c",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:d715b98174541f4977f47cdb260b541e58ff115d0d9b088500cffc47a9fb86be",
+     "task_image_id": "sha256:f6f878cceec93ca371a0010166a406561771e12a22f372551d78ad552952c8c4"
+    },
+    "record": {
+     "run": "control/uvicorn-3199/20261106T130248155681Z",
+     "sha256": "ab9c8a8a14c88be1bc3bad2ba6083c1942ae42cc365a9ee3bf4f3ac029b75132"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:d715b98174541f4977f47cdb260b541e58ff115d0d9b088500cffc47a9fb86be",
+      "task_image_id": "sha256:f6f878cceec93ca371a0010166a406561771e12a22f372551d78ad552952c8c4"
+     },
+     "kept_bytes": 899,
+     "kept_read": true,
+     "kept_sha256": "15c15ff52f50e126c7d151ef4c83d514d3390bd4b736cba3440dd5ebdf350ad5",
+     "known_bytes": 899,
+     "known_names_an_executable": false,
+     "known_sha256": "15c15ff52f50e126c7d151ef4c83d514d3390bd4b736cba3440dd5ebdf350ad5",
+     "run": "run/uvicorn-3199/20261106T130300936066Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 8
+    },
+    "selfcheck": {
+     "empty": {
+      "failed": 1,
+      "passed": 126,
+      "state": "failed",
+      "tests": 127,
+      "unknown": 0,
+      "why": "1 of 127 seen to fail"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 127,
+      "state": "passed",
+      "tests": 127,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:d715b98174541f4977f47cdb260b541e58ff115d0d9b088500cffc47a9fb86be",
+      "task_image_id": "sha256:f6f878cceec93ca371a0010166a406561771e12a22f372551d78ad552952c8c4"
+     },
+     "run": "selfcheck/uvicorn-3199/20261106T130254142656Z"
+    },
+    "validate": {
+     "base": {
+      "failed": 1,
+      "passed": 0,
+      "state": "failed",
+      "tests": 1,
+      "unknown": 0,
+      "why": "1 of 1 seen to fail"
+     },
+     "fail_to_pass": 1,
+     "fixed": {
+      "failed": 0,
+      "passed": 1,
+      "state": "passed",
+      "tests": 1,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:d715b98174541f4977f47cdb260b541e58ff115d0d9b088500cffc47a9fb86be",
+      "task_image_id": "sha256:f6f878cceec93ca371a0010166a406561771e12a22f372551d78ad552952c8c4"
+     },
+     "pass_to_pass": 126,
+     "run": "validate/uvicorn-3199/20261106T130248481308Z"
+    },
+    "why": ""
+   },
+   "id": "uvicorn-3199",
+   "oracle_image": "g6we-oracle:uvicorn-3199-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:d715b98174541f4977f47cdb260b541e58ff115d0d9b088500cffc47a9fb86be",
+   "task_image": "g6we-task:uvicorn-3199-c53d310d65a5-r3",
+   "task_image_id": "sha256:f6f878cceec93ca371a0010166a406561771e12a22f372551d78ad552952c8c4",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:3479fecfe1b472adfa7a2ba7117120895245dbbf63b8c8ed145e9dd99ae7c5fe",
+     "task_image_id": "sha256:03206bf3f667716c5013d396549f97b050d83c4ad17ae29b925b676bb741d867"
+    },
+    "record": {
+     "run": "control/tomlkit-552/20261106T130305411695Z",
+     "sha256": "197786eb1e6080b2720856f74b9d87edbff88dd2d83fb12ff043a577a546255f"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:3479fecfe1b472adfa7a2ba7117120895245dbbf63b8c8ed145e9dd99ae7c5fe",
+      "task_image_id": "sha256:03206bf3f667716c5013d396549f97b050d83c4ad17ae29b925b676bb741d867"
+     },
+     "kept_bytes": 4693,
+     "kept_read": true,
+     "kept_sha256": "a6533bcbeaebd3e3be243ea85c48253805fccb79bc76d2f3cf4cf6756252f26a",
+     "known_bytes": 4693,
+     "known_names_an_executable": false,
+     "known_sha256": "a6533bcbeaebd3e3be243ea85c48253805fccb79bc76d2f3cf4cf6756252f26a",
+     "run": "run/tomlkit-552/20261106T130313783251Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 0
+    },
+    "selfcheck": {
+     "empty": {
+      "failed": 1,
+      "passed": 196,
+      "state": "failed",
+      "tests": 197,
+      "unknown": 0,
+      "why": "1 of 197 seen to fail"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 197,
+      "state": "passed",
+      "tests": 197,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:3479fecfe1b472adfa7a2ba7117120895245dbbf63b8c8ed145e9dd99ae7c5fe",
+      "task_image_id": "sha256:03206bf3f667716c5013d396549f97b050d83c4ad17ae29b925b676bb741d867"
+     },
+     "run": "selfcheck/tomlkit-552/20261106T130308922530Z"
+    },
+    "validate": {
+     "base": {
+      "failed": 1,
+      "passed": 0,
+      "state": "failed",
+      "tests": 1,
+      "unknown": 0,
+      "why": "1 of 1 seen to fail"
+     },
+     "fail_to_pass": 1,
+     "fixed": {
+      "failed": 0,
+      "passed": 1,
+      "state": "passed",
+      "tests": 1,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:3479fecfe1b472adfa7a2ba7117120895245dbbf63b8c8ed145e9dd99ae7c5fe",
+      "task_image_id": "sha256:03206bf3f667716c5013d396549f97b050d83c4ad17ae29b925b676bb741d867"
+     },
+     "pass_to_pass": 196,
+     "run": "validate/tomlkit-552/20261106T130305534382Z"
+    },
+    "why": ""
+   },
+   "id": "tomlkit-552",
+   "oracle_image": "g6we-oracle:tomlkit-552-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:3479fecfe1b472adfa7a2ba7117120895245dbbf63b8c8ed145e9dd99ae7c5fe",
+   "task_image": "g6we-task:tomlkit-552-c53d310d65a5-r3",
+   "task_image_id": "sha256:03206bf3f667716c5013d396549f97b050d83c4ad17ae29b925b676bb741d867",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:e96a21dc4fdddc09ca0bc1d60da49e54f5ea258f282254f28db0f321cb939a47",
+     "task_image_id": "sha256:872fdd343a9055f4b89a0df828f900df6fa98002ebfb69b031b39f6d1bc08f14"
+    },
+    "record": {
+     "run": "control/tomlkit-581/20261106T130317916695Z",
+     "sha256": "df01134595dcfa0411a7a5478e5af78fe5379cae5224d2af460f9e47d1f41c25"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:e96a21dc4fdddc09ca0bc1d60da49e54f5ea258f282254f28db0f321cb939a47",
+      "task_image_id": "sha256:872fdd343a9055f4b89a0df828f900df6fa98002ebfb69b031b39f6d1bc08f14"
+     },
+     "kept_bytes": 1685,
+     "kept_read": true,
+     "kept_sha256": "54583f9a6ca1e5f1d390b90b4aca4aba4aebbdce36acc07086ae23d72e75f158",
+     "known_bytes": 1685,
+     "known_names_an_executable": false,
+     "known_sha256": "54583f9a6ca1e5f1d390b90b4aca4aba4aebbdce36acc07086ae23d72e75f158",
+     "run": "run/tomlkit-581/20261106T130325844210Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 0
+    },
+    "selfcheck": {
+     "empty": {
+      "failed": 1,
+      "passed": 102,
+      "state": "failed",
+      "tests": 103,
+      "unknown": 0,
+      "why": "1 of 103 seen to fail"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 103,
+      "state": "passed",
+      "tests": 103,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:e96a21dc4fdddc09ca0bc1d60da49e54f5ea258f282254f28db0f321cb939a47",
+      "task_image_id": "sha256:872fdd343a9055f4b89a0df828f900df6fa98002ebfb69b031b39f6d1bc08f14"
+     },
+     "run": "selfcheck/tomlkit-581/20261106T130321319279Z"
+    },
+    "validate": {
+     "base": {
+      "failed": 1,
+      "passed": 0,
+      "state": "failed",
+      "tests": 1,
+      "unknown": 0,
+      "why": "1 of 1 seen to fail"
+     },
+     "fail_to_pass": 1,
+     "fixed": {
+      "failed": 0,
+      "passed": 1,
+      "state": "passed",
+      "tests": 1,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:e96a21dc4fdddc09ca0bc1d60da49e54f5ea258f282254f28db0f321cb939a47",
+      "task_image_id": "sha256:872fdd343a9055f4b89a0df828f900df6fa98002ebfb69b031b39f6d1bc08f14"
+     },
+     "pass_to_pass": 102,
+     "run": "validate/tomlkit-581/20261106T130318045920Z"
+    },
+    "why": ""
+   },
+   "id": "tomlkit-581",
+   "oracle_image": "g6we-oracle:tomlkit-581-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:e96a21dc4fdddc09ca0bc1d60da49e54f5ea258f282254f28db0f321cb939a47",
+   "task_image": "g6we-task:tomlkit-581-c53d310d65a5-r3",
+   "task_image_id": "sha256:872fdd343a9055f4b89a0df828f900df6fa98002ebfb69b031b39f6d1bc08f14",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:25e3f666d00949ca19fd7029b3b4725ed8ab6e72aac14753864df029fa6de100",
+     "task_image_id": "sha256:3a03f078bfab7dd1c3bf117431812a1d2a9f335c419bbb58d36af2be47f32a99"
+    },
+    "record": {
+     "run": "control/markdown-it-py-416/20261106T130329602786Z",
+     "sha256": "3bd9c35a29d0f04ccd8987b65083f4a1ec14884f6c574fa3cfff696f5d1d90ee"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:25e3f666d00949ca19fd7029b3b4725ed8ab6e72aac14753864df029fa6de100",
+      "task_image_id": "sha256:3a03f078bfab7dd1c3bf117431812a1d2a9f335c419bbb58d36af2be47f32a99"
+     },
+     "kept_bytes": 2330,
+     "kept_read": true,
+     "kept_sha256": "973d4b35097e8ee64e1057ab708f3dfe4215b6986187fb63be8e5239f82e4f54",
+     "known_bytes": 2330,
+     "known_names_an_executable": false,
+     "known_sha256": "973d4b35097e8ee64e1057ab708f3dfe4215b6986187fb63be8e5239f82e4f54",
+     "run": "run/markdown-it-py-416/20261106T130336336643Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 0
+    },
+    "selfcheck": {
+     "empty": {
+      "failed": 2,
+      "passed": 3,
+      "state": "failed",
+      "tests": 5,
+      "unknown": 0,
+      "why": "2 of 5 seen to fail"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 5,
+      "state": "passed",
+      "tests": 5,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:25e3f666d00949ca19fd7029b3b4725ed8ab6e72aac14753864df029fa6de100",
+      "task_image_id": "sha256:3a03f078bfab7dd1c3bf117431812a1d2a9f335c419bbb58d36af2be47f32a99"
+     },
+     "run": "selfcheck/markdown-it-py-416/20261106T130332469718Z"
+    },
+    "validate": {
+     "base": {
+      "failed": 2,
+      "passed": 0,
+      "state": "failed",
+      "tests": 2,
+      "unknown": 0,
+      "why": "2 of 2 seen to fail"
+     },
+     "fail_to_pass": 2,
+     "fixed": {
+      "failed": 0,
+      "passed": 2,
+      "state": "passed",
+      "tests": 2,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:25e3f666d00949ca19fd7029b3b4725ed8ab6e72aac14753864df029fa6de100",
+      "task_image_id": "sha256:3a03f078bfab7dd1c3bf117431812a1d2a9f335c419bbb58d36af2be47f32a99"
+     },
+     "pass_to_pass": 3,
+     "run": "validate/markdown-it-py-416/20261106T130329728609Z"
+    },
+    "why": ""
+   },
+   "id": "markdown-it-py-416",
+   "oracle_image": "g6we-oracle:markdown-it-py-416-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:25e3f666d00949ca19fd7029b3b4725ed8ab6e72aac14753864df029fa6de100",
+   "task_image": "g6we-task:markdown-it-py-416-c53d310d65a5-r3",
+   "task_image_id": "sha256:3a03f078bfab7dd1c3bf117431812a1d2a9f335c419bbb58d36af2be47f32a99",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "base",
+    "images_after": null,
+    "record": {
+     "run": "control/opentelemetry-python-5823/20261106T130341233947Z",
+     "sha256": "a03c16bee786a508e12bb8155601944af0b73093297c8f4c1c7318c2779c8eef"
+    },
+    "round_trip": null,
+    "selfcheck": {
+     "empty": {
+      "failed": 0,
+      "passed": 0,
+      "state": "unknown",
+      "tests": 45,
+      "unknown": 45,
+      "why": "the test call's own result was never recorded"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 0,
+      "state": "unknown",
+      "tests": 45,
+      "unknown": 45,
+      "why": "the test call's own result was never recorded"
+     },
+     "images": null,
+     "run": null
+    },
+    "validate": {
+     "base": {
+      "failed": 0,
+      "passed": 0,
+      "state": "unknown",
+      "tests": 45,
+      "unknown": 45,
+      "why": "none of 45 was seen to fail and 45 have no result in the report (exit 2)"
+     },
+     "fail_to_pass": 45,
+     "fixed": {
+      "failed": 0,
+      "passed": 45,
+      "state": "passed",
+      "tests": 45,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:4e3771e7cd8caecd9bb5b2a378e08711d149066c54eaa4782c2d265bd943f2c9",
+      "task_image_id": "sha256:cde80c3c222308e0ab50a3e0e70f83a64aeca2f99a7b53111c1d20ed1dd44cef"
+     },
+     "pass_to_pass": 0,
+     "run": "validate/opentelemetry-python-5823/20261106T130341356962Z"
+    },
+    "why": "not seen to fail the maintainers' tests: unknown: none of 45 was seen to fail and 45 have no result in the report (exit 2)"
+   },
+   "id": "opentelemetry-python-5823",
+   "oracle_image": "g6we-oracle:opentelemetry-python-5823-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:4e3771e7cd8caecd9bb5b2a378e08711d149066c54eaa4782c2d265bd943f2c9",
+   "task_image": "g6we-task:opentelemetry-python-5823-c53d310d65a5-r3",
+   "task_image_id": "sha256:cde80c3c222308e0ab50a3e0e70f83a64aeca2f99a7b53111c1d20ed1dd44cef",
+   "usable": false
+  },
+  {
+   "controls": {
+    "failed": "base",
+    "images_after": null,
+    "record": {
+     "run": "control/pip-14218/20261106T130344539100Z",
+     "sha256": "e21aad4bb498f1ccab20a8b8484c6e8de63698609e2b3f24e0a30e79f6974ff7"
+    },
+    "round_trip": null,
+    "selfcheck": {
+     "empty": {
+      "failed": 0,
+      "passed": 0,
+      "state": "unknown",
+      "tests": 14,
+      "unknown": 14,
+      "why": "the test call's own result was never recorded"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 0,
+      "state": "unknown",
+      "tests": 14,
+      "unknown": 14,
+      "why": "the test call's own result was never recorded"
+     },
+     "images": null,
+     "run": null
+    },
+    "validate": {
+     "base": {
+      "failed": 0,
+      "passed": 0,
+      "state": "unknown",
+      "tests": 14,
+      "unknown": 14,
+      "why": "none of 14 was seen to fail and 14 have no result in the report (exit 2)"
+     },
+     "fail_to_pass": 14,
+     "fixed": {
+      "failed": 0,
+      "passed": 14,
+      "state": "passed",
+      "tests": 14,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:61a9396d9615cb92540dada6b3f1f50fe82526b06c9d72464a4a62becf9f6d56",
+      "task_image_id": "sha256:033c4b96f95520e09272c52dae411da343d4bf450dd17eda85f52151653ec420"
+     },
+     "pass_to_pass": 0,
+     "run": "validate/pip-14218/20261106T130344666141Z"
+    },
+    "why": "not seen to fail the maintainers' tests: unknown: none of 14 was seen to fail and 14 have no result in the report (exit 2)"
+   },
+   "id": "pip-14218",
+   "oracle_image": "g6we-oracle:pip-14218-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:61a9396d9615cb92540dada6b3f1f50fe82526b06c9d72464a4a62becf9f6d56",
+   "task_image": "g6we-task:pip-14218-c53d310d65a5-r3",
+   "task_image_id": "sha256:033c4b96f95520e09272c52dae411da343d4bf450dd17eda85f52151653ec420",
+   "usable": false
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:44a739952df01e05a69b75d8bbfa89925dde954a88b738ffa32f4f2035bc20c9",
+     "task_image_id": "sha256:d6b30d5552cfe204ebc92b17c0aea632ae4a1d6cf97f4f1f6ea6fef25f983cf0"
+    },
+    "record": {
+     "run": "control/pyasn1-108/20261106T130351161189Z",
+     "sha256": "f55437b6d2c2659de6baafe038216b19df9926d9c41357ed3bec40acb2c75d0a"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:44a739952df01e05a69b75d8bbfa89925dde954a88b738ffa32f4f2035bc20c9",
+      "task_image_id": "sha256:d6b30d5552cfe204ebc92b17c0aea632ae4a1d6cf97f4f1f6ea6fef25f983cf0"
+     },
+     "kept_bytes": 1732,
+     "kept_read": true,
+     "kept_sha256": "e2ff1ea9329b52f97bd4e50faf178dc278a00239e0ee7ab3a09dcf1cf9ac9705",
+     "known_bytes": 1732,
+     "known_names_an_executable": false,
+     "known_sha256": "e2ff1ea9329b52f97bd4e50faf178dc278a00239e0ee7ab3a09dcf1cf9ac9705",
+     "run": "run/pyasn1-108/20261106T130359454049Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 0
+    },
+    "selfcheck": {
+     "empty": {
+      "failed": 1,
+      "passed": 260,
+      "state": "failed",
+      "tests": 261,
+      "unknown": 0,
+      "why": "1 of 261 seen to fail"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 261,
+      "state": "passed",
+      "tests": 261,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:44a739952df01e05a69b75d8bbfa89925dde954a88b738ffa32f4f2035bc20c9",
+      "task_image_id": "sha256:d6b30d5552cfe204ebc92b17c0aea632ae4a1d6cf97f4f1f6ea6fef25f983cf0"
+     },
+     "run": "selfcheck/pyasn1-108/20261106T130354842187Z"
+    },
+    "validate": {
+     "base": {
+      "failed": 1,
+      "passed": 0,
+      "state": "failed",
+      "tests": 1,
+      "unknown": 0,
+      "why": "1 of 1 seen to fail"
+     },
+     "fail_to_pass": 1,
+     "fixed": {
+      "failed": 0,
+      "passed": 1,
+      "state": "passed",
+      "tests": 1,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:44a739952df01e05a69b75d8bbfa89925dde954a88b738ffa32f4f2035bc20c9",
+      "task_image_id": "sha256:d6b30d5552cfe204ebc92b17c0aea632ae4a1d6cf97f4f1f6ea6fef25f983cf0"
+     },
+     "pass_to_pass": 260,
+     "run": "validate/pyasn1-108/20261106T130351284504Z"
+    },
+    "why": ""
+   },
+   "id": "pyasn1-108",
+   "oracle_image": "g6we-oracle:pyasn1-108-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:44a739952df01e05a69b75d8bbfa89925dde954a88b738ffa32f4f2035bc20c9",
+   "task_image": "g6we-task:pyasn1-108-c53d310d65a5-r3",
+   "task_image_id": "sha256:d6b30d5552cfe204ebc92b17c0aea632ae4a1d6cf97f4f1f6ea6fef25f983cf0",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:28a854de35054495d805ef9119f762ae6053d41d15cda43d9e33268778a509f6",
+     "task_image_id": "sha256:f2f4034f20c012ca824e17fdacda3911977e0de28cea38631ea37be2cbb36b7a"
+    },
+    "record": {
+     "run": "control/pyasn1-102/20261106T130404127699Z",
+     "sha256": "e411ede3db012cd231f8b92fe1ae4f008b8dae6d14ec0613dc10848348a45230"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:28a854de35054495d805ef9119f762ae6053d41d15cda43d9e33268778a509f6",
+      "task_image_id": "sha256:f2f4034f20c012ca824e17fdacda3911977e0de28cea38631ea37be2cbb36b7a"
+     },
+     "kept_bytes": 5667,
+     "kept_read": true,
+     "kept_sha256": "e29aa9958089e9d9b93428322558f5e52a0ff606422f11611156a4798b60fb95",
+     "known_bytes": 5667,
+     "known_names_an_executable": false,
+     "known_sha256": "e29aa9958089e9d9b93428322558f5e52a0ff606422f11611156a4798b60fb95",
+     "run": "run/pyasn1-102/20261106T130411369379Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 0
+    },
+    "selfcheck": {
+     "empty": {
+      "failed": 11,
+      "passed": 17,
+      "state": "failed",
+      "tests": 28,
+      "unknown": 0,
+      "why": "11 of 28 seen to fail"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 28,
+      "state": "passed",
+      "tests": 28,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:28a854de35054495d805ef9119f762ae6053d41d15cda43d9e33268778a509f6",
+      "task_image_id": "sha256:f2f4034f20c012ca824e17fdacda3911977e0de28cea38631ea37be2cbb36b7a"
+     },
+     "run": "selfcheck/pyasn1-102/20261106T130407341252Z"
+    },
+    "validate": {
+     "base": {
+      "failed": 11,
+      "passed": 0,
+      "state": "failed",
+      "tests": 11,
+      "unknown": 0,
+      "why": "11 of 11 seen to fail"
+     },
+     "fail_to_pass": 11,
+     "fixed": {
+      "failed": 0,
+      "passed": 11,
+      "state": "passed",
+      "tests": 11,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:28a854de35054495d805ef9119f762ae6053d41d15cda43d9e33268778a509f6",
+      "task_image_id": "sha256:f2f4034f20c012ca824e17fdacda3911977e0de28cea38631ea37be2cbb36b7a"
+     },
+     "pass_to_pass": 17,
+     "run": "validate/pyasn1-102/20261106T130404466550Z"
+    },
+    "why": ""
+   },
+   "id": "pyasn1-102",
+   "oracle_image": "g6we-oracle:pyasn1-102-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:28a854de35054495d805ef9119f762ae6053d41d15cda43d9e33268778a509f6",
+   "task_image": "g6we-task:pyasn1-102-c53d310d65a5-r3",
+   "task_image_id": "sha256:f2f4034f20c012ca824e17fdacda3911977e0de28cea38631ea37be2cbb36b7a",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:f13c843ea95ca69f1777243918d2a23251a5875add65b6bacd5b938f55e5dd9a",
+     "task_image_id": "sha256:0a2bfe1c309cb51c293d4423155efe82b3069207d16bd6df2514f2b3cc13dbce"
+    },
+    "record": {
+     "run": "control/websockets-1752/20261106T130415843568Z",
+     "sha256": "f52409253d4ff12062b2aa5b5111c9c6a3393dbcbe64aa2f62d8d4a8c7777a48"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:f13c843ea95ca69f1777243918d2a23251a5875add65b6bacd5b938f55e5dd9a",
+      "task_image_id": "sha256:0a2bfe1c309cb51c293d4423155efe82b3069207d16bd6df2514f2b3cc13dbce"
+     },
+     "kept_bytes": 14646,
+     "kept_read": true,
+     "kept_sha256": "fd8a09f5de6d4eaca9f51b6097bc0b804cd4f9046fc95f96aa2f0983d036716d",
+     "known_bytes": 14646,
+     "known_names_an_executable": false,
+     "known_sha256": "fd8a09f5de6d4eaca9f51b6097bc0b804cd4f9046fc95f96aa2f0983d036716d",
+     "run": "run/websockets-1752/20261106T130433067871Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 29
+    },
+    "selfcheck": {
+     "empty": {
+      "failed": 6,
+      "passed": 1006,
+      "state": "failed",
+      "tests": 1012,
+      "unknown": 0,
+      "why": "6 of 1012 seen to fail"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 1012,
+      "state": "passed",
+      "tests": 1012,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:f13c843ea95ca69f1777243918d2a23251a5875add65b6bacd5b938f55e5dd9a",
+      "task_image_id": "sha256:0a2bfe1c309cb51c293d4423155efe82b3069207d16bd6df2514f2b3cc13dbce"
+     },
+     "run": "selfcheck/websockets-1752/20261106T130424206639Z"
+    },
+    "validate": {
+     "base": {
+      "failed": 6,
+      "passed": 0,
+      "state": "failed",
+      "tests": 6,
+      "unknown": 0,
+      "why": "6 of 6 seen to fail"
+     },
+     "fail_to_pass": 6,
+     "fixed": {
+      "failed": 0,
+      "passed": 6,
+      "state": "passed",
+      "tests": 6,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:f13c843ea95ca69f1777243918d2a23251a5875add65b6bacd5b938f55e5dd9a",
+      "task_image_id": "sha256:0a2bfe1c309cb51c293d4423155efe82b3069207d16bd6df2514f2b3cc13dbce"
+     },
+     "pass_to_pass": 1006,
+     "run": "validate/websockets-1752/20261106T130416109318Z"
+    },
+    "why": ""
+   },
+   "id": "websockets-1752",
+   "oracle_image": "g6we-oracle:websockets-1752-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:f13c843ea95ca69f1777243918d2a23251a5875add65b6bacd5b938f55e5dd9a",
+   "task_image": "g6we-task:websockets-1752-c53d310d65a5-r3",
+   "task_image_id": "sha256:0a2bfe1c309cb51c293d4423155efe82b3069207d16bd6df2514f2b3cc13dbce",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:4c5afeaedec316f61af981f9d3d02f7ed8d656eeedf3891fe358200b483f58c6",
+     "task_image_id": "sha256:5765c7b564e21b1e9641cde29ba708878eb2f3422e1f6aa5e6c3ab5985cdbaed"
+    },
+    "record": {
+     "run": "control/websockets-1738/20261106T130440026346Z",
+     "sha256": "e4d3980d96c7a63f840d0ee8edd4952558a57e2e5ce4f31ee0fdd4a5c2ff835d"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:4c5afeaedec316f61af981f9d3d02f7ed8d656eeedf3891fe358200b483f58c6",
+      "task_image_id": "sha256:5765c7b564e21b1e9641cde29ba708878eb2f3422e1f6aa5e6c3ab5985cdbaed"
+     },
+     "kept_bytes": 8869,
+     "kept_read": true,
+     "kept_sha256": "57c0b871524bf6a8507144d957efef63e5233ef06860f71cc04be2cf5744f28c",
+     "known_bytes": 8869,
+     "known_names_an_executable": false,
+     "known_sha256": "57c0b871524bf6a8507144d957efef63e5233ef06860f71cc04be2cf5744f28c",
+     "run": "run/websockets-1738/20261106T130506779015Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 21
+    },
+    "selfcheck": {
+     "empty": {
+      "failed": 2,
+      "passed": 475,
+      "state": "failed",
+      "tests": 477,
+      "unknown": 0,
+      "why": "2 of 477 seen to fail"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 477,
+      "state": "passed",
+      "tests": 477,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:4c5afeaedec316f61af981f9d3d02f7ed8d656eeedf3891fe358200b483f58c6",
+      "task_image_id": "sha256:5765c7b564e21b1e9641cde29ba708878eb2f3422e1f6aa5e6c3ab5985cdbaed"
+     },
+     "run": "selfcheck/websockets-1738/20261106T130453137237Z"
+    },
+    "validate": {
+     "base": {
+      "failed": 2,
+      "passed": 0,
+      "state": "failed",
+      "tests": 2,
+      "unknown": 0,
+      "why": "2 of 2 seen to fail"
+     },
+     "fail_to_pass": 2,
+     "fixed": {
+      "failed": 0,
+      "passed": 2,
+      "state": "passed",
+      "tests": 2,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:4c5afeaedec316f61af981f9d3d02f7ed8d656eeedf3891fe358200b483f58c6",
+      "task_image_id": "sha256:5765c7b564e21b1e9641cde29ba708878eb2f3422e1f6aa5e6c3ab5985cdbaed"
+     },
+     "pass_to_pass": 475,
+     "run": "validate/websockets-1738/20261106T130440150776Z"
+    },
+    "why": ""
+   },
+   "id": "websockets-1738",
+   "oracle_image": "g6we-oracle:websockets-1738-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:4c5afeaedec316f61af981f9d3d02f7ed8d656eeedf3891fe358200b483f58c6",
+   "task_image": "g6we-task:websockets-1738-c53d310d65a5-r3",
+   "task_image_id": "sha256:5765c7b564e21b1e9641cde29ba708878eb2f3422e1f6aa5e6c3ab5985cdbaed",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:3dcbce62a8afeda51da2cca2beb95163168f5354ecd4bc283ada723b0b9344f6",
+     "task_image_id": "sha256:7a9fd7e3d8a2928cf30802c7dd41fd633a3f9aa113dabf3017ff2ac6e6870dda"
+    },
+    "record": {
+     "run": "control/pydantic-settings-1109/20261106T130512854752Z",
+     "sha256": "f54cc85dc4255de6e0ea2aa015b50211aa92fb23ef7f21c2b27fbc716fdfd741"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:3dcbce62a8afeda51da2cca2beb95163168f5354ecd4bc283ada723b0b9344f6",
+      "task_image_id": "sha256:7a9fd7e3d8a2928cf30802c7dd41fd633a3f9aa113dabf3017ff2ac6e6870dda"
+     },
+     "kept_bytes": 4140,
+     "kept_read": true,
+     "kept_sha256": "13a5666184fd899b4d70e0026baf45e2a03e4eb19700ae3e5b4dd318af296996",
+     "known_bytes": 4140,
+     "known_names_an_executable": false,
+     "known_sha256": "13a5666184fd899b4d70e0026baf45e2a03e4eb19700ae3e5b4dd318af296996",
+     "run": "run/pydantic-settings-1109/20261106T130527238880Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 0
+    },
+    "selfcheck": {
+     "empty": {
+      "failed": 9,
+      "passed": 518,
+      "state": "failed",
+      "tests": 527,
+      "unknown": 0,
+      "why": "9 of 527 seen to fail"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 527,
+      "state": "passed",
+      "tests": 527,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:3dcbce62a8afeda51da2cca2beb95163168f5354ecd4bc283ada723b0b9344f6",
+      "task_image_id": "sha256:7a9fd7e3d8a2928cf30802c7dd41fd633a3f9aa113dabf3017ff2ac6e6870dda"
+     },
+     "run": "selfcheck/pydantic-settings-1109/20261106T130519345815Z"
+    },
+    "validate": {
+     "base": {
+      "failed": 9,
+      "passed": 0,
+      "state": "failed",
+      "tests": 9,
+      "unknown": 0,
+      "why": "9 of 9 seen to fail"
+     },
+     "fail_to_pass": 9,
+     "fixed": {
+      "failed": 0,
+      "passed": 9,
+      "state": "passed",
+      "tests": 9,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:3dcbce62a8afeda51da2cca2beb95163168f5354ecd4bc283ada723b0b9344f6",
+      "task_image_id": "sha256:7a9fd7e3d8a2928cf30802c7dd41fd633a3f9aa113dabf3017ff2ac6e6870dda"
+     },
+     "pass_to_pass": 518,
+     "run": "validate/pydantic-settings-1109/20261106T130512980548Z"
+    },
+    "why": ""
+   },
+   "id": "pydantic-settings-1109",
+   "oracle_image": "g6we-oracle:pydantic-settings-1109-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:3dcbce62a8afeda51da2cca2beb95163168f5354ecd4bc283ada723b0b9344f6",
+   "task_image": "g6we-task:pydantic-settings-1109-c53d310d65a5-r3",
+   "task_image_id": "sha256:7a9fd7e3d8a2928cf30802c7dd41fd633a3f9aa113dabf3017ff2ac6e6870dda",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:d8eac4aa86ca9a132631a1e6def7f637587235cb88b7994e3f419f58f663deae",
+     "task_image_id": "sha256:cdb41a2e3420bfc5affbc1ab1b25e7954c98a66c451d1a476c2f9bf7057d5841"
+    },
+    "record": {
+     "run": "control/wheel-695/20261106T130531346196Z",
+     "sha256": "cd1c6fda54fb9a50e5ad1209938cd91a6ad21257e70049f62d9165d2442d87ad"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:d8eac4aa86ca9a132631a1e6def7f637587235cb88b7994e3f419f58f663deae",
+      "task_image_id": "sha256:cdb41a2e3420bfc5affbc1ab1b25e7954c98a66c451d1a476c2f9bf7057d5841"
+     },
+     "kept_bytes": 5612,
+     "kept_read": true,
+     "kept_sha256": "406294d815b68d9fa36270031d73c9d996e1696da4b11bc14b199a48c54aeefd",
+     "known_bytes": 5612,
+     "known_names_an_executable": false,
+     "known_sha256": "406294d815b68d9fa36270031d73c9d996e1696da4b11bc14b199a48c54aeefd",
+     "run": "run/wheel-695/20261106T130539369013Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 0
+    },
+    "selfcheck": {
+     "empty": {
+      "failed": 1,
+      "passed": 11,
+      "state": "failed",
+      "tests": 12,
+      "unknown": 0,
+      "why": "1 of 12 seen to fail"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 12,
+      "state": "passed",
+      "tests": 12,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:d8eac4aa86ca9a132631a1e6def7f637587235cb88b7994e3f419f58f663deae",
+      "task_image_id": "sha256:cdb41a2e3420bfc5affbc1ab1b25e7954c98a66c451d1a476c2f9bf7057d5841"
+     },
+     "run": "selfcheck/wheel-695/20261106T130534655676Z"
+    },
+    "validate": {
+     "base": {
+      "failed": 1,
+      "passed": 0,
+      "state": "failed",
+      "tests": 1,
+      "unknown": 0,
+      "why": "1 of 1 seen to fail"
+     },
+     "fail_to_pass": 1,
+     "fixed": {
+      "failed": 0,
+      "passed": 1,
+      "state": "passed",
+      "tests": 1,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:d8eac4aa86ca9a132631a1e6def7f637587235cb88b7994e3f419f58f663deae",
+      "task_image_id": "sha256:cdb41a2e3420bfc5affbc1ab1b25e7954c98a66c451d1a476c2f9bf7057d5841"
+     },
+     "pass_to_pass": 11,
+     "run": "validate/wheel-695/20261106T130531509905Z"
+    },
+    "why": ""
+   },
+   "id": "wheel-695",
+   "oracle_image": "g6we-oracle:wheel-695-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:d8eac4aa86ca9a132631a1e6def7f637587235cb88b7994e3f419f58f663deae",
+   "task_image": "g6we-task:wheel-695-c53d310d65a5-r3",
+   "task_image_id": "sha256:cdb41a2e3420bfc5affbc1ab1b25e7954c98a66c451d1a476c2f9bf7057d5841",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:475ac8a28286ea370db365004b2b43706909bfa1d540c689e1bf5a780196338d",
+     "task_image_id": "sha256:282551761b3d0958a641f3178a2941d548af0765afd2864bd0ccc69f4886b3d0"
+    },
+    "record": {
+     "run": "control/wheel-686/20261106T130542995245Z",
+     "sha256": "8c4c19cb5d907289d66c3ecaf03af845d0749f0864c282e45cf7a8feac2b34d7"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:475ac8a28286ea370db365004b2b43706909bfa1d540c689e1bf5a780196338d",
+      "task_image_id": "sha256:282551761b3d0958a641f3178a2941d548af0765afd2864bd0ccc69f4886b3d0"
+     },
+     "kept_bytes": 3338,
+     "kept_read": true,
+     "kept_sha256": "b79b0a5cc239a4639a7caf261cef9c74751927ceb6cb7d90e4c510826874acc8",
+     "known_bytes": 3338,
+     "known_names_an_executable": false,
+     "known_sha256": "b79b0a5cc239a4639a7caf261cef9c74751927ceb6cb7d90e4c510826874acc8",
+     "run": "run/wheel-686/20261106T130550279007Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 0
+    },
+    "selfcheck": {
+     "empty": {
+      "failed": 1,
+      "passed": 20,
+      "state": "failed",
+      "tests": 21,
+      "unknown": 0,
+      "why": "1 of 21 seen to fail"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 21,
+      "state": "passed",
+      "tests": 21,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:475ac8a28286ea370db365004b2b43706909bfa1d540c689e1bf5a780196338d",
+      "task_image_id": "sha256:282551761b3d0958a641f3178a2941d548af0765afd2864bd0ccc69f4886b3d0"
+     },
+     "run": "selfcheck/wheel-686/20261106T130546057778Z"
+    },
+    "validate": {
+     "base": {
+      "failed": 1,
+      "passed": 0,
+      "state": "failed",
+      "tests": 1,
+      "unknown": 0,
+      "why": "1 of 1 seen to fail"
+     },
+     "fail_to_pass": 1,
+     "fixed": {
+      "failed": 0,
+      "passed": 1,
+      "state": "passed",
+      "tests": 1,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:475ac8a28286ea370db365004b2b43706909bfa1d540c689e1bf5a780196338d",
+      "task_image_id": "sha256:282551761b3d0958a641f3178a2941d548af0765afd2864bd0ccc69f4886b3d0"
+     },
+     "pass_to_pass": 20,
+     "run": "validate/wheel-686/20261106T130543127371Z"
+    },
+    "why": ""
+   },
+   "id": "wheel-686",
+   "oracle_image": "g6we-oracle:wheel-686-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:475ac8a28286ea370db365004b2b43706909bfa1d540c689e1bf5a780196338d",
+   "task_image": "g6we-task:wheel-686-c53d310d65a5-r3",
+   "task_image_id": "sha256:282551761b3d0958a641f3178a2941d548af0765afd2864bd0ccc69f4886b3d0",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "base",
+    "images_after": null,
+    "record": {
+     "run": "control/tenacity-660/20261106T130553583489Z",
+     "sha256": "7ea075cde857cb3c350a1ab59916d97d22dc5c65cdf60398aacc9ea3035f86c7"
+    },
+    "round_trip": null,
+    "selfcheck": {
+     "empty": {
+      "failed": 0,
+      "passed": 0,
+      "state": "unknown",
+      "tests": 134,
+      "unknown": 134,
+      "why": "the test call's own result was never recorded"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 0,
+      "state": "unknown",
+      "tests": 134,
+      "unknown": 134,
+      "why": "the test call's own result was never recorded"
+     },
+     "images": null,
+     "run": null
+    },
+    "validate": {
+     "base": {
+      "failed": 0,
+      "passed": 0,
+      "state": "unknown",
+      "tests": 134,
+      "unknown": 134,
+      "why": "the tests ran out of time (exit 124) with no report"
+     },
+     "fail_to_pass": 134,
+     "fixed": {
+      "failed": 0,
+      "passed": 134,
+      "state": "passed",
+      "tests": 134,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:925016ad4ecbf1d6ea179afd66866e8da58b1e109dd8e0886a8cf8465eca25fc",
+      "task_image_id": "sha256:63240e9ce74b0d2a041b057b2601fa2a776203af844fef2ae9664c634016a969"
+     },
+     "pass_to_pass": 0,
+     "run": "validate/tenacity-660/20261106T130553836303Z"
+    },
+    "why": "not seen to fail the maintainers' tests: unknown: the tests ran out of time (exit 124) with no report"
+   },
+   "id": "tenacity-660",
+   "oracle_image": "g6we-oracle:tenacity-660-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:925016ad4ecbf1d6ea179afd66866e8da58b1e109dd8e0886a8cf8465eca25fc",
+   "task_image": "g6we-task:tenacity-660-c53d310d65a5-r3",
+   "task_image_id": "sha256:63240e9ce74b0d2a041b057b2601fa2a776203af844fef2ae9664c634016a969",
+   "usable": false
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:bbdb203651f37076e441882a341ca365cb3b057fd0db0f57cec60b89bdfffa73",
+     "task_image_id": "sha256:4fd11cca0fd596fa033eb94064b48d9bacff60df160fa0c1f9e19f4bb58a5f51"
+    },
+    "record": {
+     "run": "control/pyparsing-652/20261106T133558170660Z",
+     "sha256": "a5e2e8bcef2ca0704771935c6573c5cf709df8546bc183ed00ac8aaac4a3cc57"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:bbdb203651f37076e441882a341ca365cb3b057fd0db0f57cec60b89bdfffa73",
+      "task_image_id": "sha256:4fd11cca0fd596fa033eb94064b48d9bacff60df160fa0c1f9e19f4bb58a5f51"
+     },
+     "kept_bytes": 10276,
+     "kept_read": true,
+     "kept_sha256": "0b92b920eae6ad25876a3105d979c63d7427ed8a643d75cf3f706bdd825e6f83",
+     "known_bytes": 10276,
+     "known_names_an_executable": false,
+     "known_sha256": "0b92b920eae6ad25876a3105d979c63d7427ed8a643d75cf3f706bdd825e6f83",
+     "run": "run/pyparsing-652/20261106T134100523626Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 0
+    },
+    "selfcheck": {
+     "empty": {
+      "failed": 36,
+      "passed": 1892,
+      "state": "failed",
+      "tests": 1928,
+      "unknown": 0,
+      "why": "36 of 1928 seen to fail"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 1928,
+      "state": "passed",
+      "tests": 1928,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:bbdb203651f37076e441882a341ca365cb3b057fd0db0f57cec60b89bdfffa73",
+      "task_image_id": "sha256:4fd11cca0fd596fa033eb94064b48d9bacff60df160fa0c1f9e19f4bb58a5f51"
+     },
+     "run": "selfcheck/pyparsing-652/20261106T133828727621Z"
+    },
+    "validate": {
+     "base": {
+      "failed": 36,
+      "passed": 0,
+      "state": "failed",
+      "tests": 36,
+      "unknown": 0,
+      "why": "36 of 36 seen to fail"
+     },
+     "fail_to_pass": 36,
+     "fixed": {
+      "failed": 0,
+      "passed": 36,
+      "state": "passed",
+      "tests": 36,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:bbdb203651f37076e441882a341ca365cb3b057fd0db0f57cec60b89bdfffa73",
+      "task_image_id": "sha256:4fd11cca0fd596fa033eb94064b48d9bacff60df160fa0c1f9e19f4bb58a5f51"
+     },
+     "pass_to_pass": 1892,
+     "run": "validate/pyparsing-652/20261106T133558296359Z"
+    },
+    "why": ""
+   },
+   "id": "pyparsing-652",
+   "oracle_image": "g6we-oracle:pyparsing-652-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:bbdb203651f37076e441882a341ca365cb3b057fd0db0f57cec60b89bdfffa73",
+   "task_image": "g6we-task:pyparsing-652-c53d310d65a5-r3",
+   "task_image_id": "sha256:4fd11cca0fd596fa033eb94064b48d9bacff60df160fa0c1f9e19f4bb58a5f51",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:97ec1dffaac3ddd1a8fce13265e92f35c945c6995376df420e839321de294e10",
+     "task_image_id": "sha256:c7c8001afadbb13d8d4e4cc802c3c2edabfbf854d0c8c63cd9ba307475cb409f"
+    },
+    "record": {
+     "run": "control/pyparsing-649/20261106T134109400691Z",
+     "sha256": "ba555b5569eaf47ab93ca2ddcc7783a623523e28a000e6b3721d257b1abab7ca"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:97ec1dffaac3ddd1a8fce13265e92f35c945c6995376df420e839321de294e10",
+      "task_image_id": "sha256:c7c8001afadbb13d8d4e4cc802c3c2edabfbf854d0c8c63cd9ba307475cb409f"
+     },
+     "kept_bytes": 5339,
+     "kept_read": true,
+     "kept_sha256": "5a33b83a4b3b606f980e2f6ec442130a58ae59c86f3c5757542a7de36e9f764d",
+     "known_bytes": 5339,
+     "known_names_an_executable": false,
+     "known_sha256": "5a33b83a4b3b606f980e2f6ec442130a58ae59c86f3c5757542a7de36e9f764d",
+     "run": "run/pyparsing-649/20261106T134258453774Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 0
+    },
+    "selfcheck": {
+     "empty": {
+      "failed": 6,
+      "passed": 1856,
+      "state": "failed",
+      "tests": 1862,
+      "unknown": 0,
+      "why": "6 of 1862 seen to fail"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 1862,
+      "state": "passed",
+      "tests": 1862,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:97ec1dffaac3ddd1a8fce13265e92f35c945c6995376df420e839321de294e10",
+      "task_image_id": "sha256:c7c8001afadbb13d8d4e4cc802c3c2edabfbf854d0c8c63cd9ba307475cb409f"
+     },
+     "run": "selfcheck/pyparsing-649/20261106T134203807602Z"
+    },
+    "validate": {
+     "base": {
+      "failed": 6,
+      "passed": 0,
+      "state": "failed",
+      "tests": 6,
+      "unknown": 0,
+      "why": "6 of 6 seen to fail"
+     },
+     "fail_to_pass": 6,
+     "fixed": {
+      "failed": 0,
+      "passed": 6,
+      "state": "passed",
+      "tests": 6,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:97ec1dffaac3ddd1a8fce13265e92f35c945c6995376df420e839321de294e10",
+      "task_image_id": "sha256:c7c8001afadbb13d8d4e4cc802c3c2edabfbf854d0c8c63cd9ba307475cb409f"
+     },
+     "pass_to_pass": 1856,
+     "run": "validate/pyparsing-649/20261106T134109531499Z"
+    },
+    "why": ""
+   },
+   "id": "pyparsing-649",
+   "oracle_image": "g6we-oracle:pyparsing-649-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:97ec1dffaac3ddd1a8fce13265e92f35c945c6995376df420e839321de294e10",
+   "task_image": "g6we-task:pyparsing-649-c53d310d65a5-r3",
+   "task_image_id": "sha256:c7c8001afadbb13d8d4e4cc802c3c2edabfbf854d0c8c63cd9ba307475cb409f",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:97527deff07a3cd42275df595a544e624ec8d79f8c3993414cf4cd5c77755536",
+     "task_image_id": "sha256:ce5f595861dab5c946fc78e22b85cc6a21ca296565ab3ade643fb9a37f335062"
+    },
+    "record": {
+     "run": "control/soupsieve-316/20261106T134306081970Z",
+     "sha256": "14527c3ffee008cac44c71cd74d9c3512fc71501bda859c32dd6e31fb7175679"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:97527deff07a3cd42275df595a544e624ec8d79f8c3993414cf4cd5c77755536",
+      "task_image_id": "sha256:ce5f595861dab5c946fc78e22b85cc6a21ca296565ab3ade643fb9a37f335062"
+     },
+     "kept_bytes": 2485,
+     "kept_read": true,
+     "kept_sha256": "d8f3e99d5e2529092fdcf449c5832309c2064bb1cbb6c6a702fad90e9bdd96c1",
+     "known_bytes": 2485,
+     "known_names_an_executable": false,
+     "known_sha256": "d8f3e99d5e2529092fdcf449c5832309c2064bb1cbb6c6a702fad90e9bdd96c1",
+     "run": "run/soupsieve-316/20261106T134313985441Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 0
+    },
+    "selfcheck": {
+     "empty": {
+      "failed": 3,
+      "passed": 15,
+      "state": "failed",
+      "tests": 18,
+      "unknown": 0,
+      "why": "3 of 18 seen to fail"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 18,
+      "state": "passed",
+      "tests": 18,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:97527deff07a3cd42275df595a544e624ec8d79f8c3993414cf4cd5c77755536",
+      "task_image_id": "sha256:ce5f595861dab5c946fc78e22b85cc6a21ca296565ab3ade643fb9a37f335062"
+     },
+     "run": "selfcheck/soupsieve-316/20261106T134309553941Z"
+    },
+    "validate": {
+     "base": {
+      "failed": 3,
+      "passed": 0,
+      "state": "failed",
+      "tests": 3,
+      "unknown": 0,
+      "why": "3 of 3 seen to fail"
+     },
+     "fail_to_pass": 3,
+     "fixed": {
+      "failed": 0,
+      "passed": 3,
+      "state": "passed",
+      "tests": 3,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:97527deff07a3cd42275df595a544e624ec8d79f8c3993414cf4cd5c77755536",
+      "task_image_id": "sha256:ce5f595861dab5c946fc78e22b85cc6a21ca296565ab3ade643fb9a37f335062"
+     },
+     "pass_to_pass": 15,
+     "run": "validate/soupsieve-316/20261106T134306322431Z"
+    },
+    "why": ""
+   },
+   "id": "soupsieve-316",
+   "oracle_image": "g6we-oracle:soupsieve-316-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:97527deff07a3cd42275df595a544e624ec8d79f8c3993414cf4cd5c77755536",
+   "task_image": "g6we-task:soupsieve-316-c53d310d65a5-r3",
+   "task_image_id": "sha256:ce5f595861dab5c946fc78e22b85cc6a21ca296565ab3ade643fb9a37f335062",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:1717bbf585b09987c9a823390eae4dbce382369e39366f56aee2f82745016b0b",
+     "task_image_id": "sha256:f574763e87502e12766c052194ccb246c369003ad6e4a3799cf011490bbf0240"
+    },
+    "record": {
+     "run": "control/soupsieve-315/20261106T134318378199Z",
+     "sha256": "48842225e128cc5ee4e9556b9597847fa3188b0321492a5575b3abcd0bb4c031"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:1717bbf585b09987c9a823390eae4dbce382369e39366f56aee2f82745016b0b",
+      "task_image_id": "sha256:f574763e87502e12766c052194ccb246c369003ad6e4a3799cf011490bbf0240"
+     },
+     "kept_bytes": 3443,
+     "kept_read": true,
+     "kept_sha256": "75297fe8ef67c990adf401b9ca590ac91a3ccc1d7c410222624fcedbb91baffb",
+     "known_bytes": 3443,
+     "known_names_an_executable": false,
+     "known_sha256": "75297fe8ef67c990adf401b9ca590ac91a3ccc1d7c410222624fcedbb91baffb",
+     "run": "run/soupsieve-315/20261106T134324894082Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 0
+    },
+    "selfcheck": {
+     "empty": {
+      "failed": 1,
+      "passed": 5,
+      "state": "failed",
+      "tests": 6,
+      "unknown": 0,
+      "why": "1 of 6 seen to fail"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 6,
+      "state": "passed",
+      "tests": 6,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:1717bbf585b09987c9a823390eae4dbce382369e39366f56aee2f82745016b0b",
+      "task_image_id": "sha256:f574763e87502e12766c052194ccb246c369003ad6e4a3799cf011490bbf0240"
+     },
+     "run": "selfcheck/soupsieve-315/20261106T134321176132Z"
+    },
+    "validate": {
+     "base": {
+      "failed": 1,
+      "passed": 0,
+      "state": "failed",
+      "tests": 1,
+      "unknown": 0,
+      "why": "1 of 1 seen to fail"
+     },
+     "fail_to_pass": 1,
+     "fixed": {
+      "failed": 0,
+      "passed": 1,
+      "state": "passed",
+      "tests": 1,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:1717bbf585b09987c9a823390eae4dbce382369e39366f56aee2f82745016b0b",
+      "task_image_id": "sha256:f574763e87502e12766c052194ccb246c369003ad6e4a3799cf011490bbf0240"
+     },
+     "pass_to_pass": 5,
+     "run": "validate/soupsieve-315/20261106T134318496862Z"
+    },
+    "why": ""
+   },
+   "id": "soupsieve-315",
+   "oracle_image": "g6we-oracle:soupsieve-315-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:1717bbf585b09987c9a823390eae4dbce382369e39366f56aee2f82745016b0b",
+   "task_image": "g6we-task:soupsieve-315-c53d310d65a5-r3",
+   "task_image_id": "sha256:f574763e87502e12766c052194ccb246c369003ad6e4a3799cf011490bbf0240",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:af2432b95d2d84a871c75260f0430db55049eafa897ef81866ea48ffa872c8ca",
+     "task_image_id": "sha256:6e512e0c5fac3595bbff53b32c63232e94db73e363c96c75c26f3a80bbaa179d"
+    },
+    "record": {
+     "run": "control/openai-python-4166/20261106T134328165474Z",
+     "sha256": "be67a33974fdc0d207d7e54dd8a81bfdf8610e7e92d556cc7ebcde85d26de01e"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:af2432b95d2d84a871c75260f0430db55049eafa897ef81866ea48ffa872c8ca",
+      "task_image_id": "sha256:6e512e0c5fac3595bbff53b32c63232e94db73e363c96c75c26f3a80bbaa179d"
+     },
+     "kept_bytes": 6069,
+     "kept_read": true,
+     "kept_sha256": "c10e111eb80a0bb81ea51efb2887d20b54e14c1a5f1bc2051f3b965eb365585f",
+     "known_bytes": 6069,
+     "known_names_an_executable": false,
+     "known_sha256": "c10e111eb80a0bb81ea51efb2887d20b54e14c1a5f1bc2051f3b965eb365585f",
+     "run": "run/openai-python-4166/20261106T134349389349Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 27
+    },
+    "selfcheck": {
+     "empty": {
+      "failed": 5,
+      "passed": 26,
+      "state": "failed",
+      "tests": 31,
+      "unknown": 0,
+      "why": "5 of 31 seen to fail"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 31,
+      "state": "passed",
+      "tests": 31,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:af2432b95d2d84a871c75260f0430db55049eafa897ef81866ea48ffa872c8ca",
+      "task_image_id": "sha256:6e512e0c5fac3595bbff53b32c63232e94db73e363c96c75c26f3a80bbaa179d"
+     },
+     "run": "selfcheck/openai-python-4166/20261106T134338391256Z"
+    },
+    "validate": {
+     "base": {
+      "failed": 5,
+      "passed": 0,
+      "state": "failed",
+      "tests": 5,
+      "unknown": 0,
+      "why": "5 of 5 seen to fail"
+     },
+     "fail_to_pass": 5,
+     "fixed": {
+      "failed": 0,
+      "passed": 5,
+      "state": "passed",
+      "tests": 5,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:af2432b95d2d84a871c75260f0430db55049eafa897ef81866ea48ffa872c8ca",
+      "task_image_id": "sha256:6e512e0c5fac3595bbff53b32c63232e94db73e363c96c75c26f3a80bbaa179d"
+     },
+     "pass_to_pass": 26,
+     "run": "validate/openai-python-4166/20261106T134328284280Z"
+    },
+    "why": ""
+   },
+   "id": "openai-python-4166",
+   "oracle_image": "g6we-oracle:openai-python-4166-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:af2432b95d2d84a871c75260f0430db55049eafa897ef81866ea48ffa872c8ca",
+   "task_image": "g6we-task:openai-python-4166-c53d310d65a5-r3",
+   "task_image_id": "sha256:6e512e0c5fac3595bbff53b32c63232e94db73e363c96c75c26f3a80bbaa179d",
+   "usable": true
+  },
+  {
+   "controls": {
+    "failed": "",
+    "images_after": {
+     "oracle_image_id": "sha256:a2708126136019f8d3f5fb776a84f53e55c58a55f17217b3344d6b1adc026436",
+     "task_image_id": "sha256:1fa089de3a4a28e86078bce0c7a6d8db83646d60a36af8b7f7874c590aa532fd"
+    },
+    "record": {
+     "run": "control/openai-python-3982/20261106T134421818553Z",
+     "sha256": "6ce91770ab3998a141aa96a66c12cae76ee9e0f686c9adb41ee767543e1e2b0a"
+    },
+    "round_trip": {
+     "error": null,
+     "holds": true,
+     "images": {
+      "oracle_image_id": "sha256:a2708126136019f8d3f5fb776a84f53e55c58a55f17217b3344d6b1adc026436",
+      "task_image_id": "sha256:1fa089de3a4a28e86078bce0c7a6d8db83646d60a36af8b7f7874c590aa532fd"
+     },
+     "kept_bytes": 5136,
+     "kept_read": true,
+     "kept_sha256": "74ec05d27808eaa8fd6732093079b6fcfb5dbcb1bbf66fda6ba4d4a7445aa3fe",
+     "known_bytes": 5136,
+     "known_names_an_executable": false,
+     "known_sha256": "74ec05d27808eaa8fd6732093079b6fcfb5dbcb1bbf66fda6ba4d4a7445aa3fe",
+     "run": "run/openai-python-3982/20261106T134445124039Z",
+     "same_bytes": true,
+     "status": "finished",
+     "tree_executables": 24
+    },
+    "selfcheck": {
+     "empty": {
+      "failed": 20,
+      "passed": 324,
+      "state": "failed",
+      "tests": 344,
+      "unknown": 0,
+      "why": "20 of 344 seen to fail"
+     },
+     "gold": {
+      "failed": 0,
+      "passed": 344,
+      "state": "passed",
+      "tests": 344,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:a2708126136019f8d3f5fb776a84f53e55c58a55f17217b3344d6b1adc026436",
+      "task_image_id": "sha256:1fa089de3a4a28e86078bce0c7a6d8db83646d60a36af8b7f7874c590aa532fd"
+     },
+     "run": "selfcheck/openai-python-3982/20261106T134432985591Z"
+    },
+    "validate": {
+     "base": {
+      "failed": 20,
+      "passed": 0,
+      "state": "failed",
+      "tests": 20,
+      "unknown": 0,
+      "why": "20 of 20 seen to fail"
+     },
+     "fail_to_pass": 20,
+     "fixed": {
+      "failed": 0,
+      "passed": 20,
+      "state": "passed",
+      "tests": 20,
+      "unknown": 0,
+      "why": ""
+     },
+     "images": {
+      "oracle_image_id": "sha256:a2708126136019f8d3f5fb776a84f53e55c58a55f17217b3344d6b1adc026436",
+      "task_image_id": "sha256:1fa089de3a4a28e86078bce0c7a6d8db83646d60a36af8b7f7874c590aa532fd"
+     },
+     "pass_to_pass": 324,
+     "run": "validate/openai-python-3982/20261106T134421945923Z"
+    },
+    "why": ""
+   },
+   "id": "openai-python-3982",
+   "oracle_image": "g6we-oracle:openai-python-3982-c53d310d65a5-r3",
+   "oracle_image_id": "sha256:a2708126136019f8d3f5fb776a84f53e55c58a55f17217b3344d6b1adc026436",
+   "task_image": "g6we-task:openai-python-3982-c53d310d65a5-r3",
+   "task_image_id": "sha256:1fa089de3a4a28e86078bce0c7a6d8db83646d60a36af8b7f7874c590aa532fd",
+   "usable": true
+  }
+ ],
+ "cohort": "selection",
+ "controls": [
+  "the base is seen to fail the maintainers' tests (validate)",
+  "the maintainers' fix, as a patch, is seen to pass them (selfcheck)",
+  "an empty patch is seen to fail them (selfcheck)",
+  "a known patch written through the host executor's runner is read back byte for byte in the kept patch (round trip)",
+  "each ran on both of the bug's image ids here, read again after them; a result not known is no pass and no failure, and excludes the bug"
+ ],
+ "design": "docs/superpowers/specs/2026-11-06-explicit-models-one-question-design.md, sections 3.6 and 7.1",
+ "digest": "b6bcc19129e44500e54fae1a691955e01c24866f6e01de284d0abd53337e2f84",
+ "excluded": [
+  {
+   "id": "opentelemetry-python-5823",
+   "why": "base: not seen to fail the maintainers' tests: unknown: none of 45 was seen to fail and 45 have no result in the report (exit 2)"
+  },
+  {
+   "id": "pip-14218",
+   "why": "base: not seen to fail the maintainers' tests: unknown: none of 14 was seen to fail and 14 have no result in the report (exit 2)"
+  },
+  {
+   "id": "tenacity-660",
+   "why": "base: not seen to fail the maintainers' tests: unknown: the tests ran out of time (exit 124) with no report"
+  }
+ ],
+ "g6_commit": "c53d310d65a5b5ba02c64c3faf6682dcf048888e",
+ "left_out": [
+  {
+   "id": "pydantic-settings-1089",
+   "why": "in the development cohort: a K3 pilot bug, whose fourteen runs' records, issue and failing tests' names the pilot's analysis read (PLAN.md, 2026-11-06 evening)"
+  }
+ ],
+ "plan": "validation/worked_examples/PLAN.md, 2026-11-06 (night)",
+ "sources": {
+  "stage 4 whole bugs": [
+   "uvicorn-3236",
+   "uvicorn-3199",
+   "tomlkit-552",
+   "tomlkit-581",
+   "markdown-it-py-416",
+   "opentelemetry-python-5823",
+   "pip-14218",
+   "pyasn1-108",
+   "pyasn1-102",
+   "websockets-1752",
+   "websockets-1738",
+   "pydantic-settings-1109",
+   "pydantic-settings-1089",
+   "wheel-695",
+   "wheel-686",
+   "tenacity-660",
+   "pyparsing-652",
+   "pyparsing-649",
+   "soupsieve-316",
+   "soupsieve-315",
+   "openai-python-4166",
+   "openai-python-3982"
+  ]
+ },
+ "usable": [
+  "uvicorn-3236",
+  "uvicorn-3199",
+  "tomlkit-552",
+  "tomlkit-581",
+  "markdown-it-py-416",
+  "pyasn1-108",
+  "pyasn1-102",
+  "websockets-1752",
+  "websockets-1738",
+  "pydantic-settings-1109",
+  "wheel-695",
+  "wheel-686",
+  "pyparsing-652",
+  "pyparsing-649",
+  "soupsieve-316",
+  "soupsieve-315",
+  "openai-python-4166",
+  "openai-python-3982"
+ ],
+ "variant": "r3"
+}
