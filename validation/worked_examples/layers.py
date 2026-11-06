@@ -20,7 +20,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
 
-import product_review as pr
+import export_reviewer_cases as erc
 import replay_compare as rc
 import run as we
 import wecommon as c
@@ -157,46 +157,48 @@ def _hunk(lines: Sequence[tuple[str, str]]) -> list[tuple[str, str, str]]:
     return out
 
 
+def named(part: str) -> str | None:
+    """The file one part of a patch changes, by git's own reader of the patch format alone (``export_reviewer_cases.touched``:
+    ``git apply --numstat -z``, which only reads), never by a split of its header of this module's own, so a name git reads one way
+    is one name however the header spells it (a doubled separator, a quoted name; study follow-up review 3, finding 5). Git reads
+    each hunk's length from its lines (``--recount``), as ``change`` reads a hunk, never trusting its header's counts. A "."
+    part of git's name is dropped, as the file system resolves it when the patch is applied (``git apply`` keeps it). None for a
+    part git cannot read, or reads as other than one file."""
+    names = erc.touched(part, recount=True)
+    return "/".join(p for p in names[0].split("/") if p != ".") if len(names) == 1 else None
+
+
 def change(text: str) -> tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...]:
     """A patch's normalised source change: for each Python file outside tests, the tokens of its added and removed lines in order,
     each as Python's tokenizer reads it in its hunk's whole old or new span (``_hunk``), with its type, and only those that carry
-    no meaning dropped (``DROPPED``); files sorted by path. A file's name is read as ``git apply`` reads it, with
-    ``product_review``'s own reader, from its header, which ends at its first hunk; in a hunk every line is content, whatever it
-    begins with, and a line that begins "@@" begins the next hunk."""
-    files: dict[str, list[str]] = {}
-    current, header, hunk = None, False, []
-
-    def flush() -> None:
-        if current is not None and hunk:
-            files.setdefault(current, []).extend(_hunk(hunk))
-        hunk.clear()
-
-    for line in text.split("\n"):
-        line = line[:-1] if line.endswith("\r") else line
-        if line.startswith("diff --git "):
-            flush()
-            current, header = None, True
-            for old, new in pr._sides(line[len("diff --git "):]):
-                path = pr._applied(pr._unquoted(new))
-                if path and path == pr._applied(pr._unquoted(old)):
-                    current = path
-                    break
+    no meaning dropped (``DROPPED``); files sorted by path. The patch is read part by part, each beginning at git's own
+    ``diff --git`` line, which no line inside a hunk can begin with; each part's file is named by git (``named``). A part with
+    no name is kept whole, as written (``AS_WRITTEN``), under the name "": never guessed, never dropped. A part's header ends at
+    its first hunk; in a hunk every line is content, whatever it begins with, and a line that begins "@@" begins the next hunk."""
+    files: dict[str, list[tuple[str, str, str]]] = {}
+    for part in re.split(r"(?m)^(?=diff --git )", text):
+        if not part.startswith("diff --git "):
+            continue                                 # what comes before the first part is no file's
+        name = named(part)
+        if name is None:
+            files.setdefault("", []).append(("", AS_WRITTEN, part))
             continue
-        if header:
-            if line.startswith("+++ "):
-                name = pr._unquoted(line[4:].split("\t", 1)[0])
-                if name != "/dev/null" and pr._applied(name):
-                    current = pr._applied(name)
-            elif line.startswith(("@@", "GIT binary patch", "Binary files ")):
-                header = False
-                if not (current and current.endswith(".py") and not TEST_PATH.search(current)):
-                    current = None
+        if not (name.endswith(".py") and not TEST_PATH.search(name)):
             continue
-        if line.startswith("@@"):
-            flush()
-        elif current is not None and line[:1] in ("+", "-", " ", ""):
-            hunk.append((line[:1] or " ", line[1:]))
-    flush()
+        hunk: list[tuple[str, str]] = []
+        header = True
+        for line in part.split("\n"):
+            line = line[:-1] if line.endswith("\r") else line
+            if header:
+                header = not line.startswith(("@@", "GIT binary patch", "Binary files "))
+                if header:
+                    continue
+            if line.startswith("@@"):
+                files.setdefault(name, []).extend(_hunk(hunk) if hunk else [])
+                hunk = []
+            elif line[:1] in ("+", "-", " ", ""):
+                hunk.append((line[:1] or " ", line[1:]))
+        files.setdefault(name, []).extend(_hunk(hunk) if hunk else [])
     return tuple(sorted((path, tuple(lines)) for path, lines in files.items() if lines))
 
 

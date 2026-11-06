@@ -6,6 +6,9 @@ and the classes they belong to, each removed at its root with an inventory built
    one rule (``run.session_end``) every way out of ``run_session`` and ``host_session`` returns through; a model refusal is one
    fact among the others and never hides a failed read, a failed exit or a failed cleanup; each cleanup step runs in its own guard
    (``run.cleanup``), so one failing never skips another, and its failure is part of the ending.
+2. A file's name in a patch is the one git's own reader gives (finding 5; own_parser_for_foreign_format): ``layers`` reads no
+   name itself. Finding 2 (identity_from_rendering: one edit read differently under different context) is offered, not repaired:
+   every root repair changes a behaviour earlier repairs pinned, and the archive holds no parent for 32 of the 34 bugs.
 
 Fakes only: no Docker, no model, no network; git is run only to read a patch (``git apply --numstat``)."""
 from __future__ import annotations
@@ -15,6 +18,7 @@ import builtins
 import contextlib
 import io
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -26,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 STUDY = ROOT / "validation" / "worked_examples"
 sys.path.insert(0, str(STUDY))
 
+import layers  # noqa: E402
 import run as we  # noqa: E402
 import wecommon as c  # noqa: E402
 
@@ -312,3 +317,99 @@ def test_every_cleanup_step_runs_when_each_other_one_raises(tmp_path, monkeypatc
         assert attempted == steps, (failing, attempted)
         assert got == ("" if failing is None else "error"), failing
         assert proc.killed and proc.waited
+
+
+# --- 2: a file's name in a patch is the one git's own reader gives ------------------------------------------------------------
+def _git_names(patch: str, tmp_path: Path) -> list[str]:
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE")}
+    env["GIT_CEILING_DIRECTORIES"] = str(tmp_path.parent)
+    done = subprocess.run(["git", "apply", "--numstat", "-z"], input=patch.encode(), cwd=tmp_path, env=env, capture_output=True,
+                          timeout=30)        # --numstat only reads the patch: no index, work tree or git state is written
+    assert done.returncode == 0, done.stderr
+    return c.numstat_names(done.stdout)
+
+
+def test_finding_5_a_files_name_is_the_one_git_reads_however_its_header_spells_it(tmp_path):
+    patches = [f"diff --git a/{name} b/{name}\n--- a/{name}\n+++ b/{name}\n@@ -1 +1 @@\n-x = 0\n+x = 1\n"
+               for name in ("pkg/api.py", "pkg//api.py")]
+    assert [_git_names(p, tmp_path) for p in patches] == [["pkg/api.py"], ["pkg/api.py"]]
+    assert layers.change(patches[0]) == layers.change(patches[1]), "layers split the same Git path into pkg/api.py and pkg//api.py"
+
+
+def _spelled(old: str, new: str) -> str:
+    return (f"diff --git {old} {new}\n--- {old}\n+++ {new}\n@@ -1,3 +1,3 @@\n def value():\n-    return 0\n+    return 1\n"
+            " # end\n")
+
+
+SPELLINGS = {
+    "doubled separators": ("a/pkg//api.py", "b/pkg//api.py"),
+    "a dot part": ("a/./pkg/api.py", "b/./pkg/api.py"),
+    "quoted": ('"a/pkg/api.py"', '"b/pkg/api.py"'),
+    "quoted, with doubled separators": ('"a/pkg//api.py"', '"b/pkg//api.py"'),
+    "other prefixes": ("old/pkg/api.py", "new/pkg/api.py"),
+}
+
+
+@pytest.mark.parametrize("spelling", sorted(SPELLINGS))
+def test_one_edit_has_one_identity_however_its_files_name_is_spelled(spelling):
+    plain = layers.change(_spelled("a/pkg/api.py", "b/pkg/api.py"))
+    assert plain and plain[0][0] == "pkg/api.py"
+    assert layers.change(_spelled(*SPELLINGS[spelling])) == plain, spelling
+    escaped = layers.change(_spelled('"a/pkg/\\303\\251.py"', '"b/pkg/\\303\\251.py"'))   # a name git escapes, and as UTF-8
+    assert escaped == layers.change(_spelled("a/pkg/é.py", "b/pkg/é.py")) and escaped[0][0] == "pkg/é.py"
+
+
+def test_a_part_git_cannot_read_has_no_name_and_is_kept_whole_as_written():
+    corrupt = "diff --git a/api.py b/api.py\n--- a/api.py\n+++ b/api.py\n@@ -x +y @@\n-x = 0\n+x = 1\n"     # no hunk git can read
+    got = layers.change(corrupt)
+    assert got == (("", (("", layers.AS_WRITTEN, corrupt),)),)          # never a name guessed, never dropped
+    assert layers.change(corrupt.replace("x = 1", "x = 2")) != got
+    tests_only = "diff --git a/tests/test_api.py b/tests/test_api.py\n--- a/tests/test_api.py\n+++ b/tests/test_api.py\n" \
+                 "@@ -1 +1 @@\n-x = 0\n+x = 1\n"
+    assert layers.change(tests_only) == ()                          # a test file git names is no source change, as before
+
+
+#: Every function of the study that reads which file a patch changes, from the code (it splits a patch at git's own "diff --git"
+#: line, reads a header's "---" or "+++" line, or asks git's reader of the format): how. Only product_review.touched reads a header
+#: itself, as the product's own listing of a patch's files does; layers reads no name but git's.
+PATCH_NAMES = {
+    ("export_reviewer_cases", "changed"): "parts, each named by git",
+    ("export_reviewer_cases", "touched"): "git",
+    ("layers", "change"): "parts, each named by git",
+    ("layers", "named"): "git",
+    ("product_review", "touched"): "its own reading of a header, as the product's listing reads it",
+    ("run", "test_changes"): "git",
+}
+OWN_READERS = {"_sides", "_applied", "_unquoted"}
+
+
+def _header_texts(fn) -> set[str]:
+    """What ``fn`` looks for at a line's start (``startswith``), or splits a patch at (a pattern of git's "diff --git" line)."""
+    out = set()
+    for n in ast.walk(fn):
+        if isinstance(n, ast.Call) and _called(n.func) == "startswith":
+            out |= {x.value for a in n.args for x in ast.walk(a) if isinstance(x, ast.Constant) and isinstance(x.value, str)}
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and "(?=diff --git" in n.value:
+            out.add(n.value)
+    return out
+
+
+#: The readers of a patch's file names by git's own reader: git's machine-readable output (``numstat_names``), and the one helper
+#: that runs git on a part (``export_reviewer_cases.touched``, as layers calls it).
+BY_GIT = {"numstat_names", "c.numstat_names", "erc.touched"}
+
+
+def test_every_reader_of_a_patchs_file_names_is_listed_and_layers_asks_git_alone():
+    found = {}
+    for path in sorted(STUDY.glob("*.py")):
+        for fn in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(fn, FUNCS):
+                continue
+            calls = {ast.unparse(n.func).removeprefix("pr.") for n in ast.walk(fn) if isinstance(n, ast.Call)}
+            if calls & (OWN_READERS | BY_GIT) or any(
+                    t.startswith(("diff --git", "+++ ", "--- ")) or "(?=diff --git" in t for t in _header_texts(fn)):
+                found[(path.stem, fn.name)] = calls
+    assert set(found) == set(PATCH_NAMES), sorted(found)
+    for (module, name), calls in found.items():
+        assert bool(calls & OWN_READERS) is (module == "product_review"), (module, name)
+    assert found[("layers", "named")] & BY_GIT and "named" in found[("layers", "change")]

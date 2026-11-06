@@ -49,10 +49,12 @@ def is_source(path: str) -> bool:
     return path.endswith((".py", ".pyi")) and "tests/" not in f"/{path}" and not name.startswith("test_") and name != "conftest.py"
 
 
-def touched(part: str) -> list[str]:
+def touched(part: str, *, recount: bool = False) -> list[str]:
     """The files one part of a patch touches, as git's own reader of its patch format names them (``git apply --numstat -z``, run on
     the part's bytes in an empty folder, which only reads them: no tree is changed), so a name git quotes or escapes is read as
     git reads it. Each file by its name after the patch (for a rename, the new one). None for a part git cannot read.
+    ``recount``: git reads its hunks' lengths from their lines, not from their headers (``--recount``), for a reader of a hunk's
+    lines that does not trust the header's counts either (``layers``).
 
     The empty folder is git's whole world (review 4, finding 8): git looks for no repository above it (``GIT_CEILING_DIRECTORIES``,
     its parent), and none named by the environment (``GIT_DIR``, ``GIT_WORK_TREE``), so a work tree that holds the temporary folder
@@ -62,7 +64,8 @@ def touched(part: str) -> list[str]:
     with tempfile.TemporaryDirectory() as empty:
         env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE")}
         env["GIT_CEILING_DIRECTORIES"] = str(Path(empty).resolve().parent)
-        got = c.completed(subprocess.run(["git", "apply", "--numstat", "-z"], input=part.encode("utf-8", errors="surrogateescape"),
+        got = c.completed(subprocess.run(["git", "apply", "--numstat", "-z", *(["--recount"] if recount else [])],
+                                         input=part.encode("utf-8", errors="surrogateescape"),
                                          cwd=empty, capture_output=True, timeout=60, env=env), "git's reading of a part",
                           ok=c.APPLY_EXITS)      # a part git cannot read names nothing
     if got.returncode != 0:
