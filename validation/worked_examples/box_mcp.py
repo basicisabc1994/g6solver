@@ -668,6 +668,13 @@ def _names(value: Any) -> bool:
     return isinstance(value, list) and all(isinstance(x, str) for x in value)
 
 
+def _is_pending(value: Any) -> bool:
+    """A pull's pending names as the box writes them, in the workspace's record and in a call's state: by name, the marks a pull
+    was changing each between (``{"from": mark, "to": mark}``, ``_is_mark``)."""
+    return isinstance(value, dict) and all(isinstance(k, str) and isinstance(v, dict) and set(v) == {"from", "to"}
+                                           and _is_mark(v["from"]) and _is_mark(v["to"]) for k, v in value.items())
+
+
 def read_links(workspace: Path) -> dict[str, Any]:
     """The workspace's link record (``links_of``): ``links``, the names of its plain files that are links, ``executable``, the
     names of those whose mode is 100755, and ``pending``, by name, what a pull that may not have ended was changing a name's
@@ -687,9 +694,7 @@ def read_links(workspace: Path) -> dict[str, Any]:
         raise Refused(f"the workspace's link record {path.name} cannot be read: {exc}") from exc
     links, execs, pending = ((got.get("links"), got.get("executable"), got.get("pending")) if isinstance(got, dict)
                              else (None, None, None))
-    if not (_names(links) and _names(execs) and isinstance(pending, dict) and not set(links) & set(execs)
-            and all(isinstance(v, dict) and set(v) == {"from", "to"} and _is_mark(v["from"]) and _is_mark(v["to"])
-                    for v in pending.values())):
+    if not (_names(links) and _names(execs) and _is_pending(pending) and not set(links) & set(execs)):
         raise Refused(f"the workspace's link record {path.name} is not a list of links and of executables with the changes a "
                       "pull was making")
     return {"links": set(links), "executable": set(execs), "pending": pending}
@@ -804,13 +809,18 @@ def pack(workspace: Path, repo: str = "", *, marks: dict[str, str] | None = None
     return out.getvalue()
 
 
-def mirror(workspace: Path, docker: Callable[..., Any], *, container: str, repo: str, user: str, timeout: float) -> dict[str, str]:
+def mirror(workspace: Path, docker: Callable[..., Any], *, container: str, repo: str, user: str, timeout: float,
+           intend: Callable[[], None] | None = None) -> dict[str, str]:
     """The workspace into the container's repository (``MIRROR``, as root). ``docker`` is called as ``run.Docker`` is. A refused
     workspace, a name the container cannot hold under ``repo`` among them, sends nothing and runs nothing (``Refused``); a docker
     step not seen to pass (``seen``) raises ``BoxError``. Returns the tree it sent, as a map (``tree_map``'s form), from the one
-    read of the workspace that built the tar (``pack``): the baseline of a call's three-way pull, never a second read."""
+    read of the workspace that built the tar (``pack``): the baseline of a call's three-way pull, never a second read.
+    ``intend``: called once the workspace is packed and before the container's first write, to keep the step's intent (a box
+    call's phase, ``RESETS``); if it raises, nothing is written."""
     sent: dict[str, str] = {}
     data = pack(workspace, repo, marks=sent)
+    if intend is not None:
+        intend()
     got = seen(docker("exec", "-i", "-u", "root", container, "python3", "-I", "-c", MIRROR, repo, user, input=data,
                       timeout=timeout))
     if got.state != PASSED:
@@ -891,7 +901,23 @@ def export_members(tar: tarfile.TarFile) -> dict[str, tarfile.TarInfo]:
 
 
 class Partial(Refused):
-    """A container's tree that could not be brought into the workspace after the pull began to write it: part of it is there."""
+    """A container's tree that could not be brought into the workspace after the pull began to write it: part of it is there.
+    ``came``: the names the pull was to change that the workspace now holds as the container did; ``missed``: those it does not;
+    each None when the workspace could not be read after the failure."""
+
+    def __init__(self, why: str, came: list[str] | None = None, missed: list[str] | None = None) -> None:
+        super().__init__(why)
+        self.came, self.missed = came, missed
+
+
+def _one_write(was: str | None, now: str | None) -> bool:
+    """Whether a pull changes a name from the mark ``was`` to ``now`` (``_mark``; None for no name) in one write: a plain file's
+    bytes put in place or removed, or a folder made. Any other change takes more than one (a change of kind in either direction,
+    a folder removed, a link or an executable, whose mode the workspace's record carries), so the pull keeps it as its intent
+    before its first write (``bring_in``; replay cohort, repair 2)."""
+    def plain(mark: str | None) -> bool:
+        return mark is None or _mode_of(mark) == FILE_MODE
+    return (plain(was) and plain(now)) or (was is None and now == FOLDER)
 
 
 def spare(workspace: Path) -> Path:
@@ -932,7 +958,9 @@ def _write_new(path: Path, data: bytes, *, folder: Path, over: bool = False) -> 
             os.remove(temp)
 
 
-def bring_in(workspace: Path, data: bytes, repo: str = "", before: Mapping[str, str] | None = None) -> list[str]:
+def bring_in(workspace: Path, data: bytes, repo: str = "", before: Mapping[str, str] | None = None, *,
+             earlier: Mapping[str, Mapping[str, str | None]] | None = None,
+             intend: Callable[[dict[str, dict[str, str | None]]], None] | None = None) -> list[str]:
     """The container's tree (``data``, an ``EXPORT`` tar) made the workspace's, and the names it changed there, sorted. Every member
     is checked first (``export_members``) and the workspace read as ``pack`` reads it, so a tree that cannot be held writes
     nothing. ``before``: the tree the container was given before the command (``tree_map``, as the call's state keeps it). Then
@@ -950,7 +978,14 @@ def bring_in(workspace: Path, data: bytes, repo: str = "", before: Mapping[str, 
     it left each name (``_mode``); once the tree is checked the record is set to the tree's links and executables. Last, the
     workspace is read again: every member is there under its exact name and no two files are one (``written``), and the tree is
     exactly the one decided. A failure before anything is touched is ``Refused``; one after, ``Partial``: part of the tree is in
-    the workspace, and the link record is set to what the workspace then holds."""
+    the workspace, with which names came back and which did not, and the link record is set to what the workspace then holds.
+
+    Every name the pull changes in more than one write (``_one_write``: a folder made a file or a file made a folder, a folder
+    removed, a link or an executable) is its intent, given to ``intend`` (the call's state, ``pull``) with ``earlier``'s before the
+    first write (replay cohort, repair 2). ``earlier``: what an earlier pull of the same call, ended part way, kept as its intent:
+    a name it names that the workspace holds as that pull's from-side, its to-side or not at all is in a state that pull passed it
+    through, its own and no one's edit, and is read as ``before`` holds it, so the container's side is taken and the step finished."""
+    earlier = dict(earlier or {})
     root = Path(workspace)
     _root(root)
     base = root.resolve()
@@ -975,7 +1010,11 @@ def bring_in(workspace: Path, data: bytes, repo: str = "", before: Mapping[str, 
     else:
         target = {}
         for rel in {*before, *marks, *now}:
-            side = marks.get(rel) if now.get(rel) == before.get(rel) else now.get(rel)
+            here = now.get(rel)
+            was = earlier.get(rel)
+            if was is not None and here in (was["from"], was["to"], None):
+                here = before.get(rel)          # a state the earlier pull passed the name through: its own, never an edit
+            side = marks.get(rel) if here == before.get(rel) else here
             if side is not None:
                 target[rel] = side
     for rel in list(target):                    # every folder a file is in is a folder of the tree
@@ -989,23 +1028,35 @@ def bring_in(workspace: Path, data: bytes, repo: str = "", before: Mapping[str, 
     def listed(tree: Mapping[str, str], mode: str) -> set[str]:
         return {rel for rel, mark in tree.items() if _mode_of(mark) == mode}
 
-    def plain(mark: str | None) -> bool:
-        return _mode_of(mark) in (None, FILE_MODE)
-
-    pending = {rel: {"from": now.get(rel), "to": target.get(rel)} for rel in sorted({*now, *target})
-               if now.get(rel) != target.get(rel) and not (plain(now.get(rel)) and plain(target.get(rel)))}
+    steps = {rel: {"from": now.get(rel), "to": target.get(rel)} for rel in sorted({*now, *target})
+             if now.get(rel) != target.get(rel) and not _one_write(now.get(rel), target.get(rel))}
+    # of those, the names whose mode the workspace's record carries (a link or an executable, on either side)
+    pending = {rel: v for rel, v in steps.items() if {_mode_of(v["from"]), _mode_of(v["to"])} & {LINK_MODE, EXEC_MODE}}
     changed: list[str] = []                     # each name is listed before it is touched, so a failure after it says "in part"
 
     def failed(why: str) -> Refused:
-        if pending:                             # the record set to what the workspace holds now; else its pending stays, read as is
+        held = None
+        if pending or changed:                  # what the workspace holds now
             try:
                 held = tree_map(root, repo)
-                write_links(base, listed(held, LINK_MODE), executable=listed(held, EXEC_MODE))
             except (Refused, OSError, ValueError):
                 pass
-        return (Partial if changed else Refused)(why)
+        if pending and held is not None:        # the record set to what the workspace holds now; else its pending stays, read as is
+            try:
+                write_links(base, listed(held, LINK_MODE), executable=listed(held, EXEC_MODE))
+            except (OSError, ValueError):
+                pass
+        if not changed:
+            return Refused(why)
+        meant = sorted(rel for rel in {*now, *target} if now.get(rel) != target.get(rel))
+        if held is None:
+            return Partial(why)
+        return Partial(why, [rel for rel in meant if held.get(rel) == target.get(rel)],
+                       [rel for rel in meant if held.get(rel) != target.get(rel)])
 
     try:
+        if steps and intend is not None:        # before anything is written: each name changed in more than one write, in the
+            intend({**steps, **earlier})        # call's state, with what an earlier pull of the call kept
         if pending:                             # before anything is written: which names the pull changes a mode of, and to what
             write_links(base, listed(now, LINK_MODE), pending, executable=listed(now, EXEC_MODE))
         for rel in sorted(now, key=lambda r: (-r.count("/"), r)):
@@ -1050,36 +1101,45 @@ def bring_in(workspace: Path, data: bytes, repo: str = "", before: Mapping[str, 
 
 
 def pull(workspace: Path, docker: Callable[..., Any], *, container: str, repo: str, user: str, timeout: float,
-         state: Path | None = None, call_no: int = 0, before: Mapping[str, str] | None = None) -> list[str]:
+         state: Path | None = None, call_no: int = 0, before: Mapping[str, str] | None = None,
+         earlier: Mapping[str, Mapping[str, str | None]] | None = None) -> list[str]:
     """What a command changed in files, brought from the container into the workspace: ``PULL`` (as root: the user's processes
     stopped, then the export), then ``bring_in``, three-way from ``before``. With ``state``, the call's phase "pulling" is kept
-    there (``write_state``) before anything is written, so a box ended in the middle of it is found and settled (``settle``). A
-    docker step not seen to pass (``seen``) raises ``BoxError``; a tree that cannot be held, ``Refused``. Returns the names it
-    changed."""
+    there (``write_state``) before anything is written, and then, before the first write, each name the pull changes in more than
+    one write (``pending``, ``bring_in``'s intent), so a box ended in the middle of it is found and settled (``settle``), which
+    gives ``earlier``, what the call's state kept. A docker step not seen to pass (``seen``) raises ``BoxError``; a tree that
+    cannot be held, ``Refused``. Returns the names it changed."""
     got = seen(docker("exec", "-u", "root", container, "python3", "-I", "-c", PULL, repo, user, timeout=timeout))
     if got.state != PASSED:
         raise BoxError(f"the pull failed ({got.why[:2000]})")
     if state is not None:
         write_state(state, {"call": call_no, "phase": "pulling"})
-    return bring_in(workspace, got.output, repo, before)
+    return bring_in(workspace, got.output, repo, before, earlier=earlier,
+                    intend=None if state is None else (lambda steps: write_state(state, {"call": call_no, "phase": "pulling",
+                                                                                         "pending": steps})))
 
 
-def set_back(workspace: Path, docker: Callable[..., Any], **where: Any) -> str:
+def set_back(workspace: Path, docker: Callable[..., Any], *, intend: Callable[[], None] | None = None, **where: Any) -> str:
     """The container set to the workspace again (``mirror``) after a pull that could not be made, so the two hold one tree: "" when
-    it was, else why not."""
+    it was, else why not. ``intend``: the reset's intent kept first, as ``mirror`` keeps it."""
     try:
-        mirror(workspace, docker, **where)
+        mirror(workspace, docker, intend=intend, **where)
     except (Refused, BoxError, OSError, subprocess.SubprocessError) as exc:
         return f"{type(exc).__name__}: {exc}"[:2000]
     return ""
 
 
 #: Every phase a call of the box is kept in (``write_state``), a closed set: "mirrored" (the container given the workspace, the
-#: tree it was given kept) and "pulling" (the command's tree being brought back) are unfinished, and a box that ended in either is
-#: settled before anything is mirrored again (``settle``); "settled", "set back" and "not settled" are finished. Any other phase
-#: refuses (``read_state``, ``write_state``): what that call left in the container is not known.
+#: tree it was given kept) and "pulling" (the command's tree being brought back, with each name it changes in more than one write)
+#: are unfinished, and a box that ended in either is settled by a pull before anything is mirrored again (``settle``). The
+#: container being set to the workspace is a step of many writes too (replay cohort, repair 2): its intent is a phase of its own,
+#: kept before its first write, "sending" (the call's own mirror, before its command) and "setting back" (after a pull that could
+#: not be made, with that pull's outcome), and a box that ended in either is settled by setting the container to the workspace
+#: again, never by a pull (``RESETS``). "settled", "set back" and "not settled" are finished. Any other phase refuses
+#: (``read_state``, ``write_state``): what that call left in the container is not known.
 UNFINISHED = ("mirrored", "pulling")
-PHASES = (*UNFINISHED, "settled", "set back", "not settled")
+RESETS = ("sending", "setting back")
+PHASES = (*UNFINISHED, *RESETS, "settled", "set back", "not settled")
 
 
 def read_state(path: Path) -> dict[str, Any] | None:
@@ -1108,6 +1168,12 @@ def read_state(path: Path) -> dict[str, Any] | None:
         if x["phase"] in UNFINISHED and not (isinstance(before, dict) and all(isinstance(k, str) and _is_mark(v) and v is not None
                                                                               for k, v in before.items())):
             raise Refused(f"the box's state {path} gives call {x['call']} no tree it was mirrored from")
+        if "pending" in x and not _is_pending(x["pending"]):
+            raise Refused(f"the box's state {path} gives call {x['call']} a pull's intent that is not its names with the marks "
+                          "it was changing each between")
+        if x["phase"] == "setting back" and not (x.get("kept") in (PART, NONE) and _names(x.get("changed"))
+                                                 and (x.get("missed") is None or _names(x.get("missed")))):
+            raise Refused(f"the box's state {path} gives call {x['call']} a reset with no outcome of the pull before it")
     return got
 
 
@@ -1126,6 +1192,7 @@ def write_state(path: Path, entry: Mapping[str, Any]) -> None:
         calls.append(dict(entry))
     if calls[-1]["phase"] not in UNFINISHED:
         calls[-1].pop("before", None)
+        calls[-1].pop("pending", None)
     temp = Path(path).with_name(Path(path).name + f".{os.getpid()}.tmp")
     with open(temp, "wb") as f:
         f.write(json.dumps(state, indent=1, sort_keys=True).encode("utf-8"))
@@ -1134,8 +1201,85 @@ def write_state(path: Path, entry: Mapping[str, Any]) -> None:
     os.replace(temp, path)
 
 
-def _changes(changed: list[str]) -> dict[str, Any]:
-    return {"changed": changed[:200], "count": len(changed)}
+# --- a pull's outcome, one type, read by the call and by settlement alike (replay cohort, repair 2) ------------------------------
+#: What came back of a command's change: all of it, part of it (the pull failed after it began to write, ``Partial``), or none.
+ALL, PART, NONE = "all", "part", "none"
+
+
+class Pulled(NamedTuple):
+    """The outcome of a pull (``pulled``), the one type the direct call and settlement both read and keep in the call's state
+    (``entry``, ``of``): ``kept`` is ALL, PART or NONE; ``changed``, the names that came back as the command left them (with
+    PART, None when the workspace could not be read after the failure); ``missed``, those it changed that did not (PART), None
+    when not known (NONE, or PART unread); ``why``, why not ALL."""
+    kept: str
+    changed: list[str] | None
+    missed: list[str] | None
+    why: str = ""
+
+    def entry(self) -> dict[str, Any]:
+        """The outcome as the call's state keeps it."""
+        came = self.changed or []
+        return {"kept": self.kept, "changed": came[:200], "count": len(came),
+                "missed": None if self.missed is None else self.missed[:200], "error": self.why[:2000],
+                "in_part": self.kept == PART}
+
+    @classmethod
+    def of(cls, entry: Mapping[str, Any]) -> Pulled:
+        """The outcome a call's state keeps (``entry``)."""
+        return cls(entry.get("kept", NONE), list(entry.get("changed") or []), entry.get("missed"), entry.get("error") or "")
+
+
+def pulled(got: list[str] | BaseException) -> Pulled:
+    """The one rule for a pull's outcome, from what ``pull`` returned (the names it changed: ALL) or raised: ``Partial`` (PART,
+    with its names) or anything else that stopped it (NONE)."""
+    if isinstance(got, Partial):
+        return Pulled(PART, got.came, got.missed, str(got))
+    if isinstance(got, BaseException):
+        return Pulled(NONE, [], None, str(got) if isinstance(got, Refused) else f"{type(got).__name__}: {got}")
+    return Pulled(ALL, list(got), [])
+
+
+#: What the agent is told of a pull, one message for each outcome, the same from the direct call (``what``: the command's
+#: change) and from settlement (``what``: the last call's, ended before it came back; ``when``: now, before this command).
+TOLD = {
+    ALL: "{what} came back{when}: {count} names changed in your working folder{after}.",
+    PART: "{what} came back{when}, but only in part ({why}): kept, as the command left them: {changed}; not kept: {missed}{after}. "
+          "Read the files the command was to change before you go on.",
+    NONE: "{what} could not be brought back{when} ({why}), so none of it is kept{after}. Make the change with your own editing "
+          "tools.",
+}
+#: A call ended inside its own mirror, before its command ran (phase "sending").
+NEVER_RAN = "the box's last call (call {n}) ended before its command ran, so that command never ran{after}."
+
+
+def _listed(names: list[str] | None) -> str:
+    if names is None:
+        return "not known: the working folder could not be read after the failure"
+    if not names:
+        return "none"
+    return ", ".join(names[:20]) + (f", and {len(names) - 20} more" if len(names) > 20 else "")
+
+
+def told(got: Pulled, *, call: int | None = None, after: str = "") -> str:
+    """The message for a pull's outcome (``TOLD``): of the command just run, or, with ``call``, of that earlier call, settled now.
+    ``after``: what then became of the container, said after the outcome."""
+    what = ("what the command changed in files" if call is None else
+            f"the box's last call (call {call}) had ended before what its command changed in files came back; it")
+    return TOLD[got.kept].format(what=what, when="" if call is None else " now, before this command", why=got.why,
+                                 count=len(got.changed or []), changed=_listed(got.changed), missed=_listed(got.missed),
+                                 after=f": {after}" if after else "")
+
+
+def _settled_note(last: Mapping[str, Any]) -> str:
+    """What the agent is told, before its command's output, of the call ``settle`` finished first."""
+    if last.get("reset_error"):        # a reset ``settle`` finished, or could not
+        after = (f"the container could not be set back to your working folder ({last['reset_error']}), and is set back before "
+                 "this command")
+    else:
+        after = "the container was set back to your working folder" if last["phase"] == "set back" else ""
+    if last.get("never_ran"):
+        return NEVER_RAN.format(n=last["call"], after=f": {after}" if after else "")
+    return told(Pulled.of(last), call=last["call"], after=after)
 
 
 def settle(workspace: Path, docker: Callable[..., Any], *, state: Path, container: str, repo: str, user: str,
@@ -1144,36 +1288,32 @@ def settle(workspace: Path, docker: Callable[..., Any], *, state: Path, containe
     mirrors anything (``call``), and by the runner once the session has ended (``run._run_task``'s ``turn``). None when the last
     call in the box's state is finished, or there is no state. A call left unfinished (``UNFINISHED``: its command may have
     changed the container, and its pull may have written part of the workspace) is pulled now, three-way from the tree the call
-    mirrored, so what the command changed is kept and what the workspace changed after it is not written over; a tree that cannot
-    be held is "not settled", with why, and the mirror after this sets the container to the workspace. A state that cannot be
-    read, a phase outside ``PHASES`` among it, refuses (``read_state``); so does a docker step not seen to pass (``BoxError``):
-    the call stays unfinished, and nothing may be mirrored over it."""
+    mirrored, given the names its pull kept pending (``earlier``), so what the command changed is kept, what the workspace changed
+    after it is not written over, and a name the pull was changing in more than one write is never read as an edit; its outcome is
+    ``pulled``'s, and one that is not ALL is "not settled", with it, and the mirror after this sets the container to the
+    workspace. A call ended while the container was being set to the workspace (``RESETS``) is finished by setting it again
+    (``set_back``), never by a pull, which would read what that step left half done as the command's change: "set back", or "not
+    settled" when it cannot be. A state that cannot be read, a phase outside ``PHASES`` among it, refuses (``read_state``); so does
+    a docker step of a pull not seen to pass (``BoxError``): the call stays unfinished, and nothing may be mirrored over it."""
     calls = (read_state(state) or {"calls": []})["calls"]
     last = calls[-1] if calls else None
-    if last is None or last["phase"] not in UNFINISHED:
+    if last is None or last["phase"] not in (*UNFINISHED, *RESETS):
         return None
-    n, before = last["call"], last["before"]
-    try:
-        changed = pull(workspace, docker, container=container, repo=repo, user=user, timeout=timeout, state=state, call_no=n,
-                       before=before)
-    except Refused as exc:
-        entry = {"call": n, "phase": "not settled", "by": "runner", "error": str(exc)[:2000]}
+    n, where = last["call"], {"container": container, "repo": repo, "user": user, "timeout": timeout}
+    if last["phase"] in RESETS:
+        left = set_back(workspace, docker, **where)
+        outcome = {"never_ran": True} if last["phase"] == "sending" else Pulled.of(last).entry()
+        entry = {"call": n, "phase": "set back" if not left else "not settled", "by": "runner", **outcome,
+                 **({"reset_error": left} if left else {})}
     else:
-        entry = {"call": n, "phase": "settled", "by": "runner", **_changes(changed)}
+        try:
+            got = pulled(pull(workspace, docker, **where, state=state, call_no=n, before=last["before"],
+                              earlier=last.get("pending")))
+        except Refused as exc:
+            got = pulled(exc)
+        entry = {"call": n, "phase": "settled" if got.kept == ALL else "not settled", "by": "runner", **got.entry()}
     write_state(state, entry)
-    return {k: v for k, v in entry.items()}
-
-
-BACK = ("what the command changed in files could not be brought back into your working folder ({why}), so none of it is kept: "
-        "{after}. Make the change with your own editing tools.")
-#: Said before a command's output when the box first finished its last call, which had ended before its pull (``settle``).
-SETTLED = ("the box's last call (call {n}) had ended before what its command changed in files came back; it came back now, "
-           "before this command: {count} names changed in your working folder.")
-UNSETTLED = ("the box's last call (call {n}) had ended before what its command changed in files came back, and it could not be "
-             "brought back now ({why}), so none of it is kept. Make that change with your own editing tools.")
-#: A pull that failed after it began to write (``Partial``): part of the command's change is in the working folder.
-PART = ("what the command changed in files was brought back into your working folder only in part ({why}): {after}, as your "
-        "working folder now is. Read the files the command was to change before you go on.")
+    return dict(entry)
 
 
 def run_command(command: str, docker: Callable[..., Any], *, container: str, repo: str, user: str, timeout: float) -> tuple[int, str]:
@@ -1211,11 +1351,15 @@ def call(opts: Any, params: dict[str, Any], docker: Callable[..., Any]) -> dict[
     command's. Once the mirror is made, the pull is made whatever the command returned: a command that ran in part changed files
     too. A pull that cannot be made is a tool error after the command's output, which says so, and the container is set back to
     the workspace (``set_back``), so no change is dropped without the agent being told. With ``opts.state`` each phase is kept
-    (``write_state``): "mirrored" with the tree the container was given, "pulling", then "settled", "set back" or "not settled".
-    One snapshot of a call, settled first: before anything is mirrored, the previous call's state is read and a call it left
-    unfinished is settled (``settle``), so a box ended after a command and started again never mirrors over what the command
-    changed; and the tree the three-way pull starts from is the one the mirror sent, from the one read of the workspace that
-    built it (``mirror``), never a second read, which an edit made after the mirror would be in."""
+    (``write_state``): "sending" before the mirror's first write, "mirrored" with the tree the container was given, "pulling", with
+    the names the pull changes in more than one write, then "settled"; or, after a pull that could not be made, "setting back"
+    with its outcome before the reset's first write, then "set back" or "not settled". So a box ended inside any step that writes
+    a tree in more than one write is settled by what that step said it was doing, never by reading its half-done tree as anyone's
+    edit (replay cohort, repair 2). The pull's outcome is one type (``pulled``), told by its one message (``told``), as a call
+    settled first is. One snapshot of a call, settled first: before anything is mirrored, the previous call's state is read and a
+    call it left unfinished is settled (``settle``), so a box ended after a command and started again never mirrors over what the
+    command changed; and the tree the three-way pull starts from is the one the mirror sent, from the one read of the workspace
+    that built it (``mirror``), never a second read, which an edit made after the mirror would be in."""
     arguments = params.get("arguments") or {}
     if params.get("name") != "run":
         return _result(f"there is no tool {params.get('name')!r}; the one tool is run", error=True)
@@ -1233,17 +1377,23 @@ def call(opts: Any, params: dict[str, Any], docker: Callable[..., Any]) -> dict[
             return _result(f"nothing was mirrored or run: the box's last call ended before it was finished, and it could not be "
                            f"finished now: {type(exc).__name__}: {exc}", error=True)
         if last is not None:
-            note = (SETTLED if last["phase"] == "settled" else UNSETTLED).format(
-                n=last["call"], count=last.get("count", 0), why=last.get("error", "")) + "\n\n"
-    try:
-        before = mirror(workspace, docker, **where)
-    except Refused as exc:
-        return _result(f"{note}nothing was mirrored or run: {exc}", error=True)
-    except (BoxError, OSError, subprocess.SubprocessError) as exc:
-        return _result(f"{note}{type(exc).__name__}: {exc}", error=True)
+            note = _settled_note(last) + "\n\n"
     try:
         calls = (read_state(state) or {"calls": []})["calls"] if state is not None else []
-        n = (calls[-1]["call"] + 1) if calls else 1
+    except (Refused, OSError, ValueError) as exc:
+        return _result(f"{note}nothing was mirrored or run: the box could not read its state: {exc}", error=True)
+    n = (calls[-1]["call"] + 1) if calls else 1
+
+    def keep(entry: Mapping[str, Any]) -> Callable[[], None] | None:     # a step's intent, kept before its first write
+        return None if state is None else (lambda: write_state(state, entry))
+
+    try:
+        before = mirror(workspace, docker, **where, intend=keep({"call": n, "phase": "sending", "by": "box"}))
+    except Refused as exc:
+        return _result(f"{note}nothing was mirrored or run: {exc}", error=True)
+    except (BoxError, OSError, ValueError, subprocess.SubprocessError) as exc:
+        return _result(f"{note}{type(exc).__name__}: {exc}", error=True)
+    try:
         if state is not None:
             write_state(state, {"call": n, "phase": "mirrored", "by": "box", "before": before})
     except (Refused, OSError, ValueError) as exc:
@@ -1255,24 +1405,23 @@ def call(opts: Any, params: dict[str, Any], docker: Callable[..., Any]) -> dict[
     except (BoxError, OSError, subprocess.SubprocessError) as exc:
         text, failed = f"{note}{type(exc).__name__}: {exc}", True
     try:
-        changed = pull(workspace, docker, **where, state=state, call_no=n, before=before)
+        got = pulled(pull(workspace, docker, **where, state=state, call_no=n, before=before))
     except (Refused, BoxError, OSError, subprocess.SubprocessError) as exc:
-        why = str(exc) if isinstance(exc, Refused) else f"{type(exc).__name__}: {exc}"
-        left = set_back(workspace, docker, **where)
+        got = pulled(exc)
+    if got.kept != ALL:
+        entry = {"call": n, **got.entry()}
+        left = set_back(workspace, docker, **where, intend=keep({**entry, "phase": "setting back"}))
         after = ("the container was set back to your working folder" if not left else
                  f"the container could not be set back to your working folder ({left}), and is set back before your next command")
-        partial = isinstance(exc, Partial)
-        entry: dict[str, Any] = {"call": n, "phase": "set back" if not left else "not settled", "error": why[:2000],
-                                 "in_part": partial}
         try:
             if state is not None:
-                write_state(state, entry)
-        except (Refused, OSError) as exc2:
+                write_state(state, {**entry, "phase": "set back" if not left else "not settled"})
+        except (Refused, OSError, ValueError) as exc2:
             after += f"; the box could not keep its state ({exc2})"
-        return _result(f"{text}\n\n{(PART if partial else BACK).format(why=why, after=after)}", error=True)
+        return _result(f"{text}\n\n{told(got, after=after)}", error=True)
     try:
         if state is not None:
-            write_state(state, {"call": n, "phase": "settled", **_changes(changed)})
+            write_state(state, {"call": n, "phase": "settled", **got.entry()})
     except (Refused, OSError) as exc:
         return _result(f"{text}\n\nwhat the command changed in files is in your working folder, but the box could not keep its "
                        f"state: {exc}", error=True)

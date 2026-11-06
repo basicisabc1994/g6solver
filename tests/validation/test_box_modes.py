@@ -286,6 +286,27 @@ def test_a_pull_refused_with_modes_in_the_tree_sets_the_container_back_with_its_
     assert got.final == b"", "a change the agent was told was not kept reached the patch"
 
 
+def test_a_reset_the_box_was_ended_inside_is_finished_with_its_modes_and_never_pulled(monkeypatch, tmp_path):
+    real, ran, stopped = ModeDocker.__call__, [], []
+
+    def call(self, *args, **kw):          # the reset after the refused pull: the box is ended as its mirror starts
+        if box.MIRROR in args and ran and not stopped:
+            stopped.append(1)
+            raise one_tree.Killed
+        if box.PULL in args and stopped:
+            ran.append("pulled after the reset")
+        return real(self, *args, **kw)
+
+    monkeypatch.setattr(ModeDocker, "__call__", call)
+    got = run_modes(monkeypatch, tmp_path, [("s1", [("killed", "ln")])],
+                    commands={"ln": lambda docker: (ran.append(1), hard_link_and_chmod(docker))[1]})
+    assert stopped and got.seen["replies"] == ["killed"] and "pulled after the reset" not in ran
+    assert got.record["status"] == "finished", got.record.get("error")
+    assert [s["phase"] for s in got.record["box_settled"]] == ["set back"]
+    assert got.docker.modes == set(EXECUTABLES) and got.docker.sent[-1] == set(EXECUTABLES)
+    assert got.final == b"", "a change the agent was told was not kept reached the patch"
+
+
 def test_a_pull_that_fails_part_way_through_modes_sets_the_record_to_what_the_workspace_holds(monkeypatch, tmp_path):
     real_write, ran, writes = box._write_new, [], []
 

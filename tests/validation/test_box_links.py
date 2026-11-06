@@ -460,6 +460,27 @@ def test_a_pull_refused_with_links_in_the_tree_sets_the_container_back_with_its_
     assert got.final == b"", "a change the agent was told was not kept reached the patch"
 
 
+def test_a_reset_the_box_was_ended_inside_is_finished_with_its_links_and_never_pulled(monkeypatch, tmp_path):
+    real, ran, stopped = LinkDocker.__call__, [], []
+
+    def call(self, *args, **kw):          # the reset after the refused pull: the box is ended as its mirror starts
+        if box.MIRROR in args and ran and not stopped:
+            stopped.append(1)
+            raise one_tree.Killed
+        if box.PULL in args and stopped:
+            ran.append("pulled after the reset")
+        return real(self, *args, **kw)
+
+    monkeypatch.setattr(LinkDocker, "__call__", call)
+    got = run_links(monkeypatch, tmp_path, [("s1", [("killed", "ln")])],
+                    commands={"ln": lambda docker: (ran.append(1), relink(docker), hard_link(docker))[2]})
+    assert stopped and got.seen["replies"] == ["killed"] and "pulled after the reset" not in ran
+    assert got.record["status"] == "finished", got.record.get("error")
+    assert [s["phase"] for s in got.record["box_settled"]] == ["set back"]
+    assert got.docker.links == LINKS and got.docker.sent[-1] == LINKS
+    assert got.final == b"", "a change the agent was told was not kept reached the patch"
+
+
 def test_arm_ks_check_that_a_repair_changed_the_tree_sees_a_repair_that_changes_only_a_link(monkeypatch, tmp_path):
     monkeypatch.setattr(we, "run_critic", lambda ctx, task, run, agent, base, title, text, n=1:
                         one_tree.DEFECT if n == 1 else one_tree.CLEAN)

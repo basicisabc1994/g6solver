@@ -15,6 +15,8 @@ import importlib.util
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -407,6 +409,8 @@ CROSSINGS = {
     ("box_mcp.py", "pull", "bring_in"): "the container's export made the workspace's, checked whole before anything is written",
     ("box_mcp.py", "set_back", "mirror"): "one tree again after a refused pull (test_a_command_that_makes_what_...)",
     ("box_mcp.py", "settle", "pull"): "a call ended before its pull, finished by the runner (test_a_box_ended_between_...)",
+    ("box_mcp.py", "settle", "set_back"): "a reset a call was ended inside, finished by setting the container to the workspace "
+                                          "again, never by a pull (test_review_2_finding_3_...)",
     ("box_mcp.py", "call", "settle"): "before the call mirrors anything: a call the box ended before its pull is settled, so no "
                                       "mirror writes over what its command changed (test_a_stop_and_a_restart_between_...)",
     ("box_mcp.py", "bring_in", "tree_map"): "the workspace read before anything is written, and again to check what was",
@@ -464,6 +468,7 @@ LINKED = {
     ("box_mcp.py", "pull", "bring_in"): _SWAPPED,
     ("box_mcp.py", "set_back", "mirror"): _SET_BACK,
     ("box_mcp.py", "settle", "pull"): _ENDED,
+    ("box_mcp.py", "settle", "set_back"): "test_a_reset_the_box_was_ended_inside_is_finished_with_its_links_and_never_pulled",
     ("box_mcp.py", "call", "settle"): "test_a_box_ended_after_a_command_that_changed_links_is_settled_by_the_next_call_first",
     ("box_mcp.py", "bring_in", "tree_map"): _SWAPPED,
     ("box_mcp.py", "bring_in.failed", "tree_map"): "test_a_pull_that_fails_part_way_through_links_sets_the_record_to_what_the_workspace_holds",
@@ -500,6 +505,7 @@ MODED = {
     ("box_mcp.py", "pull", "bring_in"): _M_CHANGED,
     ("box_mcp.py", "set_back", "mirror"): _M_SET_BACK,
     ("box_mcp.py", "settle", "pull"): _M_ENDED,
+    ("box_mcp.py", "settle", "set_back"): "test_a_reset_the_box_was_ended_inside_is_finished_with_its_modes_and_never_pulled",
     ("box_mcp.py", "bring_in", "tree_map"): _M_CHANGED,
     ("box_mcp.py", "bring_in.failed", "tree_map"): "test_a_pull_that_fails_part_way_through_modes_sets_the_record_to_what_the_"
                                                    "workspace_holds",
@@ -571,10 +577,43 @@ def test_finding_9_a_restarted_box_settles_the_previous_call_before_its_next_mir
 
 
 #: The steps of one call, in order, and where the box is ended between two of them: the mirror, the call's state ("mirrored"),
-#: the command, the pull's export, its state ("pulling"), its writes, its state ("settled"); and, for a call that first settles
-#: the one before it, that settling's own last step.
+#: the command, the pull's export, its state ("pulling"), its writes, its state ("settled"); for a call that first settles the
+#: one before it, that settling's own last step; and (replay cohort, repair 2) a point inside each step that writes a tree in more
+#: than one write (``MULTI``): the call's mirror, a folder made a file, a file made a folder, a folder removed, and the container
+#: set back after a pull that could not be made.
 STOPS = ["after the mirror", "after the mirrored state", "after the command", "after the export", "after the pulling state",
-         "while the pull writes", "before the settled state", "while a previous call is settled"]
+         "while the pull writes", "before the settled state", "while a previous call is settled",
+         "inside the call's mirror", "while a folder becomes a file", "while a file becomes a folder", "while a folder is removed",
+         "inside the setting back"]
+#: The fake container's tree beyond ``HostDocker``'s, so the command below changes names in more than one write.
+MORE = {"pkg/a.py": b"a = 1\n", "pkg/b.py": b"b = 1\n", "conf": b"conf = 1\n", "old/x.py": b"x = 1\n", "old/y.py": b"y = 1\n"}
+PKG = b"pkg = 'a folder the command made a file'\n"
+CONF = b"c = 'in a folder the command made of a file'\n"
+
+
+def many_edits(repo: Path) -> bytes:
+    """``box_edits``, and a folder made a file (``pkg``), a file made a folder (``conf``) and a folder removed (``old``)."""
+    box_edits(repo)
+    shutil.rmtree(repo / "pkg")
+    (repo / "pkg").write_bytes(PKG)
+    (repo / "conf").unlink()
+    (repo / "conf").mkdir()
+    (repo / "conf" / "c.py").write_bytes(CONF)
+    shutil.rmtree(repo / "old")
+    return b"edited\n"
+
+
+#: Run before MIRROR, in the container's place: the script stops (exit 88) right after the first call of the given path step on a
+#: name ending as given, so the container is left between two of the mirror's writes.
+STOP_AFTER = '''import os, shutil
+def _stopping(real):
+    def step(path, *a, **kw):
+        real(path, *a, **kw)
+        if os.path.basename(path).endswith(%r):
+            raise SystemExit(88)
+    return step
+%s = _stopping(%s)
+'''
 
 
 @pytest.mark.parametrize("restart", ["the next call", "the runner"])
@@ -582,14 +621,28 @@ STOPS = ["after the mirror", "after the mirrored state", "after the command", "a
 def test_a_stop_and_a_restart_between_each_two_steps_of_a_call_loses_no_change(monkeypatch, tmp_path, at, restart):
     task = SimpleNamespace(name="toy", repo="/w/toy")
     docker = BoxDocker(tmp_path, task)
+    for rel, data in MORE.items():
+        (docker.repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (docker.repo / rel).write_bytes(data)
+    base = snapshot(docker.repo)
     ws = tmp_path / "ws"
     ws.mkdir()
     box.bring_in(ws, helpers.export_of(docker.repo))                 # the workspace, as the run's export makes it
-    docker.commands.update({"edit": box_edits, "true": lambda repo: b""})
+    held = ws.resolve()                                              # the names as the pull gives them
+    ran = []
+
+    def edit(repo):
+        ran.append(1)
+        if at == "inside the setting back":                       # a name the host cannot hold: the pull is refused
+            docker.extra.append(("./conf/held:name", "file", b"x"))
+        return many_edits(repo)
+
+    docker.commands.update({"edit": edit, "true": lambda repo: b""})
     state = tmp_path / "state.json"
     opts = SimpleNamespace(workspace=ws, container="ctr", repo=task.repo, user="tester", timeout=30, state=state)
     killed = []
     real_state, real_run, real_bring, real_write = box.write_state, box.run_command, box.bring_in, box._write_new
+    real_mkdir, real_remove = os.mkdir, os.remove
 
     def once(name):
         if killed:
@@ -615,39 +668,327 @@ def test_a_stop_and_a_restart_between_each_two_steps_of_a_call_loses_no_change(m
         return real_bring(*a, **kw)
 
     def write_new(path, data, **kw):
+        if at == "while a folder becomes a file" and data == PKG and once(at):
+            raise Killed                                        # pkg's folder removed, its file not yet put at its name
         real_write(path, data, **kw)
         if at == "while the pull writes" and data in (BOX_EDIT, BOX_NEW) and once(at):
             raise Killed
+
+    def mkdir(path, *a, **kw):
+        if at == "while a file becomes a folder" and Path(path) == held / "conf" and once(at):
+            raise Killed                                        # conf's file removed, its folder not yet made
+        return real_mkdir(path, *a, **kw)
+
+    def remove(path, *a, **kw):
+        real_remove(path, *a, **kw)
+        if at == "while a folder is removed" and Path(path).parent == held / "old" and once(at):
+            raise Killed                                        # one of old's files removed, the other and the folder not yet
+
+    inside = {"inside the call's mirror": (".py", "os.remove"), "inside the setting back": ("conf", "shutil.rmtree")}.get(at)
+
+    def container(*args, **kw):          # the container, its own mirror stopped part way where a point says
+        if box.MIRROR in args and inside and bool(ran) == (at == "inside the setting back") and once(at):
+            done = subprocess.run([sys.executable, "-I", "-c", STOP_AFTER % (inside[0], inside[1], inside[1]) + box.MIRROR,
+                                   str(docker.repo), "tester"], input=kw["input"], capture_output=True, timeout=60)
+            assert done.returncode == 88, done.stderr
+            docker.extra.clear()
+            raise Killed
+        return docker(*args, **kw)
 
     monkeypatch.setattr(box, "write_state", write_state)
     monkeypatch.setattr(box, "run_command", run_command)
     monkeypatch.setattr(box, "bring_in", bring_in)
     monkeypatch.setattr(box, "_write_new", write_new)
+    monkeypatch.setattr(os, "mkdir", mkdir)
+    monkeypatch.setattr(os, "remove", remove)
     if at in ("after the command", "while a previous call is settled"):
         docker.pull_fails.append(Killed())
+    if at == "inside the call's mirror":                          # the agent's edits, which the call's mirror sends
+        (ws / "old" / "x.py").unlink()
+        (ws / "old" / "y.py").unlink()
     with pytest.raises(Killed):
-        box.call(opts, {"name": "run", "arguments": {"command": "edit"}}, docker)
+        box.call(opts, {"name": "run", "arguments": {"command": "edit"}}, container)
     if at == "while a previous call is settled":               # the next call settles the first, and is ended doing it
         with pytest.raises(Killed):
-            box.call(opts, {"name": "run", "arguments": {"command": "true"}}, docker)
+            box.call(opts, {"name": "run", "arguments": {"command": "true"}}, container)
     assert killed == ([] if at == "after the command" else [at]) and not docker.pull_fails
     later = b"later = 'the Write tool, after the box ended'\n"
     (ws / "src" / "later.py").write_bytes(later)                # the session goes on writing before the box starts again
     where = {"container": "ctr", "repo": task.repo, "user": "tester", "timeout": 30.0}
     if restart == "the next call":
-        reply = box.call(opts, {"name": "run", "arguments": {"command": "true"}}, docker)
+        reply = box.call(opts, {"name": "run", "arguments": {"command": "true"}}, container)
         assert reply["isError"] is False, reply
     else:                                                       # as the runner's turn does after the session
-        box.settle(ws, docker, state=state, **where)
-        box.mirror(ws, docker, **where)
-    ran = at not in ("after the mirror", "after the mirrored state")
-    assert (ws / "src" / "mod.py").read_bytes() == (BOX_EDIT if ran else docker.base["src/mod.py"])
-    assert ((ws / "src" / "by_box.py").read_bytes() == BOX_NEW) if ran else not (ws / "src" / "by_box.py").exists()
-    assert (ws / "src" / "later.py").read_bytes() == later
+        box.settle(ws, container, state=state, **where)
+        box.mirror(ws, container, **where)
+    never = at in ("after the mirror", "after the mirrored state", "inside the call's mirror")      # the command never ran
+    kept = not never and at != "inside the setting back"        # it ran, and what it changed came back
+    want = dict(base)
+    if at == "inside the call's mirror":
+        del want["old/x.py"], want["old/y.py"]
+    if kept:
+        for rel in ("pkg/a.py", "pkg/b.py", "conf", "old/x.py", "old/y.py"):
+            del want[rel]
+        want.update({"src/mod.py": BOX_EDIT, "src/by_box.py": BOX_NEW, "pkg": PKG, "conf/c.py": CONF})
+    want["src/later.py"] = later
+    assert snapshot(ws) == want
     assert snapshot(ws) == snapshot(docker.repo), "the call did not end with one tree in the workspace and the container"
-    calls = (box.read_state(state) or {"calls": []})["calls"]     # none when the box ended before it kept a call's state
-    assert [c["phase"] for c in calls][-1:] == ([] if not calls else ["settled"])
-    assert calls or (at == "after the mirror" and restart == "the runner")
+    calls = box.read_state(state)["calls"]       # a call ended at its mirror is kept too: its intent was written before it
+    reset = at in ("after the mirror", "inside the call's mirror", "inside the setting back")
+    assert calls[-1]["phase"] == ("set back" if restart == "the runner" and reset else "settled"), calls
+    if restart == "the next call":                              # and the agent is told what became of the call it lost
+        said = reply["content"][0]["text"]
+        assert ("never ran" if at in ("after the mirror", "inside the call's mirror") else "none of it is kept"
+                if at == "inside the setting back" else "came back now, before this command") in said, said
+
+
+# --- every step that writes a tree in more than one write says what it does first (replay cohort, repair 2) -----------------------
+def test_review_2_finding_1_a_restart_keeps_a_folder_a_command_made_a_file(monkeypatch, tmp_path):
+    replacement = b"the command replaced the directory with this file\n"
+    real_write, interrupted = box._write_new, []
+
+    def stop_before_replacement(path, data, **kw):
+        if path.name == "src" and data == replacement and not interrupted:
+            assert not path.exists()            # the pull has removed src and its old child, and not yet put the new file there
+            interrupted.append(True)
+            raise Killed()
+        return real_write(path, data, **kw)
+
+    def replace_directory(repo):
+        shutil.rmtree(repo / "src")
+        (repo / "src").write_bytes(replacement)
+        return b"replaced\n"
+
+    monkeypatch.setattr(box, "_write_new", stop_before_replacement)
+    got = run_with(monkeypatch, tmp_path, "A", [("s1", [("killed", "replace src")])], commands={"replace src": replace_directory})
+    assert interrupted == [True] and got.replies == ["killed"]
+    assert got.record["status"] == "finished", got.record.get("error")
+    final = (got.folder / "final.patch").read_bytes()
+    assert entry("src", replacement) in final, "restart dropped the command's replacement file: " + repr(final)
+
+
+def test_review_2_finding_3_a_reset_ended_inside_its_mirror_is_finished_as_a_reset_and_never_pulled(tmp_path):
+    class ResetKilledDocker(BoxDocker):
+        mirrors = 0
+
+        def __call__(self, *args, **kw):
+            if box.MIRROR in args:
+                self.mirrors += 1
+                if self.mirrors == 2:           # the real MIRROR, stopped just after it clears a folder for the host's own file
+                    done = subprocess.run([sys.executable, "-I", "-c", STOP_AFTER % ("mod.py", "shutil.rmtree", "shutil.rmtree")
+                                           + box.MIRROR, str(self.repo), "tester"], input=kw["input"], capture_output=True,
+                                          timeout=30)
+                    assert done.returncode == 88, done.stderr
+                    assert not (self.repo / "src/mod.py").exists()
+                    self.extra.clear()              # the name the host cannot hold was below the folder just removed
+                    raise Killed()
+            if box.PULL in args and self.mirrors >= 2:
+                self.pulled_after_reset = True
+            return super().__call__(*args, **kw)
+
+    task = SimpleNamespace(name="toy", repo="/w/toy")
+    docker = ResetKilledDocker(tmp_path, task)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    we.workspace_from(SimpleNamespace(docker=docker), task, "ctr", ws)
+    original = (ws / "src/mod.py").read_bytes()
+    opts = SimpleNamespace(container="ctr", repo=task.repo, workspace=ws, user="tester", timeout=30, state=tmp_path / "state.json")
+
+    def command(repo):
+        (repo / "src/mod.py").unlink()
+        (repo / "src/mod.py").mkdir()
+        (repo / "src/mod.py/new.py").write_bytes(b"command change\n")
+        docker.extra.append(("./src/mod.py/unholdable:name", "file", b"x"))       # a name only Linux holds, as the export gives it
+        return b"done\n"
+
+    docker.commands["unholdable tree"] = command
+    with pytest.raises(Killed):
+        box.call(opts, {"name": "run", "arguments": {"command": "unholdable tree"}}, docker)
+    assert (ws / "src/mod.py").read_bytes() == original                         # the refused pull wrote nothing
+    assert box.read_state(opts.state)["calls"][-1]["phase"] == "setting back"   # the reset's intent, kept before its first write
+    got = box.settle(ws, docker, state=opts.state, container="ctr", repo=task.repo, user="tester", timeout=30)
+    assert got["phase"] == "set back" and not getattr(docker, "pulled_after_reset", False), got
+    box.mirror(ws, docker, container="ctr", repo=task.repo, user="tester", timeout=30)
+    assert (ws / "src/mod.py").is_file(), "recovery imported the reset's transient deletion into the workspace"
+    assert (ws / "src/mod.py").read_bytes() == original and snapshot(ws) == snapshot(docker.repo)
+
+
+@pytest.mark.parametrize("calls", [
+    [{"call": 1, "phase": "pulling", "before": {}, "pending": {"a": {"from": "not a mark", "to": None}}}],
+    [{"call": 1, "phase": "pulling", "before": {}, "pending": ["a"]}],
+    [{"call": 1, "phase": "pulling", "before": {}, "pending": {"a": {"from": None}}}],
+    [{"call": 1, "phase": "setting back"}],                                     # a reset with no outcome of the pull it follows
+    [{"call": 1, "phase": "setting back", "kept": "all"}],
+    [{"call": 1, "phase": "setting back", "kept": "part", "changed": "a", "missed": None}],
+])
+def test_a_state_whose_intent_cannot_be_read_as_the_box_writes_it_refuses_and_never_guesses(tmp_path, calls):
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"calls": calls}))
+    with pytest.raises(box.Refused):
+        box.read_state(state)
+    with pytest.raises(box.Refused):
+        box.settle(tmp_path, lambda *a, **kw: pytest.fail("no container step on a state that cannot be read"), state=state,
+                   container="c", repo="/r", user="u", timeout=1)
+
+
+#: Every step that writes the agent's tree in more than one write (replay cohort, repair 2, review 2's findings 1 and 3; class
+#: ``state_not_durable``), by the function that makes it and the step, with the intent it keeps, written whole and synced, before
+#: its first write, and the points of ``STOPS`` inside it. Built from the code: each call of a step that writes the container's
+#: tree (``mirror``, ``set_back``) or the workspace's (``pull``, ``bring_in``), in the box and in the runner.
+MULTI = {
+    ("box_mcp.py", "call", "mirror"): "'sending', once the workspace is packed (intend): settle sets the container to the workspace "
+                                      "again and tells the agent the command never ran (inside the call's mirror)",
+    ("box_mcp.py", "call", "set_back"): "'setting back', with the pull's outcome, over 'pulling' (intend): settle sets the container "
+                                        "to the workspace again, never pulls it (inside the setting back)",
+    ("box_mcp.py", "set_back", "mirror"): "the intent its caller gives (intend)",
+    ("box_mcp.py", "settle", "set_back"): "a reset a call was ended inside, finished: the state already names it",
+    ("box_mcp.py", "call", "pull"): "'pulling', then each name the pull changes in more than one write (bring_in)",
+    ("box_mcp.py", "settle", "pull"): "the same, given the names an earlier pull of the call kept pending (earlier)",
+    ("box_mcp.py", "pull", "bring_in"): "each name it changes in more than one write (a folder made a file, a file made a folder, a "
+                                        "folder removed, a link or an executable) kept pending in the call's state (intend), and a "
+                                        "mode in the workspace's record too, before its first write (while a folder becomes a file, "
+                                        "while a file becomes a folder, while a folder is removed; test_box_links' and "
+                                        "test_box_modes' points for a link and a mode)",
+    ("run.py", "workspace_from", "bring_in"): "none: into an empty workspace before any session, with no call to settle; one that "
+                                              "fails or stops ends the run",
+    ("run.py", "_run_task.turn", "mirror"): "none: the runner's own step, after settle; one that fails or stops ends the run and its "
+                                            "container is removed, so nothing reads what it left",
+    ("run.py", "_run_task", "mirror"): "none: the runner's own step before the final capture; one that fails or stops ends the run "
+                                       "and its container is removed, so nothing reads what it left",
+}
+TREE_STEPS = {"mirror", "set_back", "pull", "bring_in"}
+#: What writes the workspace's tree in ``bring_in``: each comes after the pull's intent is kept.
+TREE_WRITES = {"rmtree", "mkdir", "_write_new"}
+
+
+def test_every_step_that_writes_a_tree_in_more_than_one_write_keeps_its_intent_before_its_first_write():
+    here = ROOT / "validation" / "worked_examples"
+    found = {c for c in _crossings(here / "box_mcp.py") | _crossings(here / "run.py") if c[2] in TREE_STEPS}
+    assert found == set(MULTI), (sorted(found - set(MULTI)), sorted(set(MULTI) - found))
+    fns = {n.name: n for n in ast.walk(ast.parse((here / "box_mcp.py").read_text("utf-8"))) if isinstance(n, ast.FunctionDef)}
+
+    def calls(fn: str, name: str) -> list[ast.Call]:
+        return [n for n in ast.walk(fns[fn]) if isinstance(n, ast.Call)
+                and (getattr(n.func, "attr", None) or getattr(n.func, "id", None)) == name]
+
+    def given(call: ast.Call) -> set[str]:
+        return {k.arg for k in call.keywords}
+    assert calls("call", "mirror") and all("intend" in given(c) for c in calls("call", "mirror") + calls("call", "set_back"))
+    assert all("intend" in given(c) for c in calls("set_back", "mirror"))
+    assert calls("pull", "bring_in") and all({"intend", "earlier"} <= given(c) for c in calls("pull", "bring_in"))
+    assert calls("settle", "pull") and all("earlier" in given(c) for c in calls("settle", "pull"))
+    first = min(c.lineno for c in calls("mirror", "intend"))
+    assert all(c.lineno > first for c in calls("mirror", "docker")), "the mirror writes the container before its intent is kept"
+    first = min(c.lineno for c in calls("bring_in", "intend"))
+    writes = [c for name in TREE_WRITES for c in calls("bring_in", name)]
+    writes += [c for c in calls("bring_in", "remove") if c.args and isinstance(c.args[0], ast.Name) and c.args[0].id == "path"]
+    assert writes and all(c.lineno > first for c in writes), "the pull writes the workspace before its intent is kept"
+    assert set(box.RESETS) == {"sending", "setting back"} and set(box.RESETS) < set(box.PHASES)
+    assert not set(box.RESETS) & set(box.UNFINISHED), "a reset is settled by a pull"
+
+
+# --- a pull's outcome is one type, told by one message for each (replay cohort, repair 2, review 2's finding 2) --------------------
+def test_review_2_finding_2_a_partial_pull_settled_after_a_restart_never_says_none_of_it_is_kept(monkeypatch, tmp_path):
+    task = SimpleNamespace(name="toy", repo="/w/toy")
+    docker = BoxDocker(tmp_path, task)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    we.workspace_from(SimpleNamespace(docker=docker), task, "ctr", ws)
+    opts = SimpleNamespace(container="ctr", repo=task.repo, workspace=ws, user="tester", timeout=30, state=tmp_path / "state.json")
+    docker.commands.update({"edit": box_edits, "true": lambda repo: b""})
+    docker.pull_fails.append(Killed())
+    with pytest.raises(Killed):
+        box.call(opts, {"name": "run", "arguments": {"command": "edit"}}, docker)
+    real_write, writes = box._write_new, []
+
+    def fail_second(path, data, **kw):
+        if data in (BOX_EDIT, BOX_NEW):
+            writes.append(path.name)
+            if len(writes) == 2:
+                raise OSError(28, "No space left on device")
+        return real_write(path, data, **kw)
+
+    monkeypatch.setattr(box, "_write_new", fail_second)
+    text = box.call(opts, {"name": "run", "arguments": {"command": "true"}}, docker)["content"][0]["text"]
+    assert len(writes) == 2
+    assert (ws / "src/by_box.py").read_bytes() == BOX_NEW and (ws / "src/mod.py").read_bytes() != BOX_EDIT
+    assert "none of it is kept" not in text, text
+    assert "only in part" in text and "kept, as the command left them: src/by_box.py" in text and "not kept: src/mod.py" in text
+
+
+def _pull_with_outcome(monkeypatch, tmp_path, kept: str, path: str):
+    """One call whose pull ends ``kept`` (``box.ALL``, ``PART`` or ``NONE``), made by the call itself (``path`` "direct") or, the box
+    ended at the pull, by the next call's settlement ("settled"). Its reply's text, and the call's entry in the box's state."""
+    task = SimpleNamespace(name="toy", repo="/w/toy")
+    docker = BoxDocker(tmp_path, task)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    we.workspace_from(SimpleNamespace(docker=docker), task, "ctr", ws)
+    opts = SimpleNamespace(container="ctr", repo=task.repo, workspace=ws, user="tester", timeout=30, state=tmp_path / "state.json")
+
+    def edit(repo):
+        if kept == box.NONE:
+            docker.extra.append(("./held:name", "file", b"x"))        # a name the host cannot hold: nothing is written
+        return box_edits(repo)
+
+    def container(*args, **kw):          # the name the host cannot hold is in one export only
+        done = docker(*args, **kw)
+        if box.PULL in args:
+            docker.extra.clear()
+        return done
+
+    docker.commands.update({"edit": edit, "true": lambda repo: b""})
+    if kept == box.PART:                                              # the second of the command's two files fails to land
+        real, writes = box._write_new, []
+
+        def write_new(p, data, **kw):
+            if data in (BOX_EDIT, BOX_NEW):
+                writes.append(p.name)
+                if len(writes) == 2:
+                    raise OSError(28, "No space left on device")
+            return real(p, data, **kw)
+        monkeypatch.setattr(box, "_write_new", write_new)
+    if path == "settled":
+        docker.pull_fails.append(Killed())
+        with pytest.raises(Killed):
+            box.call(opts, {"name": "run", "arguments": {"command": "edit"}}, container)
+        reply = box.call(opts, {"name": "run", "arguments": {"command": "true"}}, container)
+    else:
+        reply = box.call(opts, {"name": "run", "arguments": {"command": "edit"}}, container)
+    return reply, box.read_state(opts.state)["calls"][0], ws
+
+
+@pytest.mark.parametrize("kept", ["all", "part", "none"])
+def test_each_outcome_of_a_pull_is_one_type_told_by_one_message_whether_the_call_or_its_settlement_made_it(monkeypatch, tmp_path,
+                                                                                                           kept):
+    got = {}
+    for path in ("direct", "settled"):
+        got[path] = _pull_with_outcome(monkeypatch, tmp_path / path, kept, path)
+        monkeypatch.undo()
+    outcome = {path: box.Pulled.of(e) for path, (_, e, _) in got.items()}
+    assert {o.kept for o in outcome.values()} == {kept}
+    assert outcome["direct"][:3] == outcome["settled"][:3], outcome          # what was kept and what was not, the same
+    fixed = [part for part in re.split(r"\{\w+\}", box.TOLD[kept]) if len(part.strip(" .,:;()")) > 2]
+    for path, (reply, e, ws) in got.items():
+        text = reply["content"][0]["text"]
+        assert e["phase"] == ("settled" if kept == "all" else "set back" if path == "direct" else "not settled"), e
+        if kept == "all" and path == "direct":                   # nothing to tell: the command's own output, as it always was
+            assert reply["isError"] is False and text == "exit code 0\nedited\n", text
+            continue
+        assert all(part in text for part in fixed), (path, fixed, text)
+        exact = (box.told(outcome[path], call=1) if path == "settled" else
+                 box.told(outcome[path], after="the container was set back to your working folder"))
+        assert exact in text, (exact, text)
+    kept_names = {"all": ["src/by_box.py", "src/mod.py"], "part": ["src/by_box.py"], "none": []}[kept]
+    assert outcome["direct"].changed == kept_names
+    assert outcome["direct"].missed == {"all": [], "part": ["src/mod.py"], "none": None}[kept]
+    for path, (reply, e, ws) in got.items():
+        text = reply["content"][0]["text"]
+        assert ("none of it is kept" in text) is (kept == "none"), text
+        if kept == "part":
+            assert "kept, as the command left them: src/by_box.py" in text and "not kept: src/mod.py" in text, text
+        assert ((ws / "src/by_box.py").is_file() and (ws / "src/by_box.py").read_bytes() == BOX_NEW) is (kept != "none")
+        assert ((ws / "src/mod.py").read_bytes() == BOX_EDIT) is (kept == "all")
 
 
 # --- every file is put in place whole (replay cohort, repair 1, review 1's finding 4) ---------------------------------------------
