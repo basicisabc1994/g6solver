@@ -1577,7 +1577,7 @@ HOST_FIXED_ENV = {"ENABLE_CLAUDEAI_MCP_SERVERS": "false", "CLAUDE_CODE_DISABLE_R
 #: Exactly what a host session's init may name: the five file tools and the box's ``run``, and the box as its one MCP server.
 HOST_TOOLS = frozenset({"Edit", "Glob", "Grep", "Read", "Write", "mcp__box__run"})
 HOST_SERVERS = frozenset({"box"})
-HOST_EXIT_S = 30           # how long a session whose stream has ended is given to exit by itself before it is stopped
+SESSION_EXIT_S = 30        # how long a session whose stream has ended is given to exit by itself before G6 ends it, on either executor
 #: Claude Code's word that the subscription's usage limit is reached, with when it resets when it says.
 HOST_LIMIT = re.compile(r"You(?:'|’)ve hit your (?:[\w-]+ ){0,3}limit\b\W{0,4}(resets\b[^\n|]*)?", re.I)
 #: A name part Windows would refuse or change (a device name, a reserved character, a trailing dot or space): the box's one rule,
@@ -1684,11 +1684,11 @@ def host_ending(stop: str, facts: Mapping[str, Any], *, code: int | None, limit:
     order: "limited" when Claude Code said the usage limit was reached (with the reset it gave); "refused", G6's own refusal of
     the session, when its stream has no init or an init that is not exactly the box's and the five file tools (``host_init``);
     "model_refused" at a record of a request the model refused (``model_refusal``), a run made as Claude Code alone would leave
-    it (PLAN.md, runtime-k ec0f761), with nothing resent. Then, once the session's own result was read, what it says (``status_of``),
-    whatever ended the process after it; before any result, the stream's own stop ("timeout", "cap_turns") or "error". Then
-    "error" for a process that ended by itself with a code other than 0; ``by_g6``: G6 ended the process, its code says nothing.
-    Last, ``left``: why the session's processes could not be confirmed ended (``end_session``), which makes any ending but
-    "limited" and "refused" "error", never one more scoreable."""
+    it (PLAN.md, runtime-k ec0f761), with nothing resent. ``left``: why the session's processes could not be confirmed ended
+    (``end_session``), which makes any ending but "limited" and "refused" "error", never one more scoreable. Then the one rule
+    every session process ends by (``session_ending``), given its stream's own stop, its exit and its own result as they are:
+    a stop the stream read after a success is still its stop (study follow-up review 1, finding 1); ``by_g6``: G6 ended the
+    process once its stream had ended, so its code is G6's."""
     if limit is not None:
         return "limited", limit
     init, result = facts.get("init"), facts.get("result")
@@ -1700,10 +1700,8 @@ def host_ending(stop: str, facts: Mapping[str, Any], *, code: int | None, limit:
         return "error", left
     if facts.get("refusals"):
         return "model_refused", ""
-    got = status_of("" if result else stop, SimpleNamespace(result=result))
-    if got != "finished":
-        return got, ""
-    return ("error", "") if code != 0 and not by_g6 else ("", "")
+    ended = session_ending(stop, code, result, ended_by_g6=by_g6)
+    return ended, (f"the session exited {code}" if ended == "error" and result_status(result) == "finished" else "")
 
 
 def limit_of(line: str) -> str | None:
@@ -1953,7 +1951,8 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
 def run_session(ctx: Context, run: Any, agent: str, command: list[str], key: str, tally: c.Tally, text_in: str, name: str,
                 *, seconds: float, stop_usd: float, deadline: Any = None) -> str:
     """One Claude Code session in the container, its stream saved as ``name``: how it ended, by ``session_ending`` from its stream's
-    own stop and its process's exit, which no caller can leave unread (study review 4, findings 2 and 5). ``deadline``, when given, is the
+    own stop, its process's exit and its own result, which no caller can leave unread (study review 4, findings 2 and 5); a process
+    that outlives its stream is given its time to exit, then ended by G6 (``outlived``), as on the host. ``deadline``, when given, is the
     run's watchdog (``Watchdog``, or its deadline): it ends the session's processes when it fires, no prompt goes in once it has
     fired, and the stream ends at its deadline however long the process took to start. Without it the session has ``seconds``
     from when its prompt has gone in, as before."""
@@ -1980,25 +1979,50 @@ def run_session(ctx: Context, run: Any, agent: str, command: list[str], key: str
                                    stop_usd=stop_usd)
     finally:
         stream.close()
-        if proc.poll() is None:
+        by_g6 = outlived(proc, came_to_end=not stop)
+        if by_g6:
             raw.sh(agent, KILL_AGENT, user="root", timeout=60)
             proc.kill()
         code = proc.wait(timeout=60)
-    return session_ending(stop, code, tally.result if tally.result is not before else None)
+    return session_ending(stop, code, tally.result if tally.result is not before else None, ended_by_g6=by_g6)
 
 
-def session_ending(stop: str, code: Any, result: Mapping[str, Any] | None = None) -> str:
+def outlived(proc: Any, *, came_to_end: bool) -> bool:
+    """Whether a session's process is still running once its stream has stopped, so that G6 must end it, by one rule on either
+    executor: a stream that came to its end by itself (``came_to_end``) gives the process ``SESSION_EXIT_S`` to exit by itself
+    first, and its own exit is read; one G6 stopped (a cap, the clock, a refused init) gives it none."""
+    if came_to_end:
+        try:
+            proc.wait(timeout=SESSION_EXIT_S)
+        except subprocess.TimeoutExpired:
+            pass
+    return proc.poll() is None
+
+
+def session_ending(stop: str, code: Any, result: Mapping[str, Any] | None, *, ended_by_g6: bool = False) -> str:
     """The one rule a session process's ending is decided by, for every session process a run starts (its first session, on
-    either executor, a scout's, each repair, the rule step's): its stream's own stop; "" for an exit of 0; for any other exit, or
-    one not read, what its own ``result`` says, but never a success (``result_status``'s "finished" is "error"), whatever its
-    output says (study review 4, findings 2 and 5), as K3's ``step_ending`` reads an exit. Every place a session process is
-    waited on gives its exit here (tests/validation/test_study_review_4.py lists them from the code)."""
+    either executor, each scout's, each repair, the rule step's), from all three of its facts, given as they are, so none is left
+    unread: its stream's own stop, first, whatever its result says (study follow-up review 1, finding 1); then what its own
+    ``result`` says when that is no success (a cap it names, or "error" for none, an error, or a subtype nobody knows:
+    ``result_status``); then its exit: "" for 0, "error" for any other, or for one not read, whatever its output says (study
+    review 4, findings 2 and 5). ``ended_by_g6``: G6 ended the process once its stream had ended and it had not exited in the
+    time it was given (``outlived``), so its code is G6's and says nothing of the session, which ends as its result says. Every
+    ending that comes back is folded into its run's by one rule (``run_ending``), and tests/validation/test_study_followup_1.py
+    follows each from the code to the run's ending."""
     if stop:
         return stop
-    if code == 0 and not isinstance(code, bool):
-        return ""
     got = result_status(result)
-    return "error" if got == "finished" else got
+    if got != "finished":
+        return got
+    return "" if ended_by_g6 or (code == 0 and not isinstance(code, bool)) else "error"
+
+
+def run_ending(*endings: str) -> str:
+    """The one rule a run's ending is folded by from its sessions' endings (``session_ending``), given in the order the
+    sessions ran, scouts first: the first that is not clean, which every later one ran after and may only echo; "" when all are
+    clean. A run whose scout did not end cleanly ends with that ending, whatever its fixer did after it (study follow-up review
+    1, findings 4 and 5)."""
+    return next((ended for ended in endings if ended), "")
 
 
 def host_refusal(ctx: Context, *, dry: bool) -> str:
@@ -2155,12 +2179,7 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
         if stream is not None:
             stream.close()
         if proc is not None:
-            if not stop and not cut:      # the stream came to its end: the session is given a moment to exit by itself
-                try:
-                    proc.wait(timeout=HOST_EXIT_S)
-                except subprocess.TimeoutExpired:
-                    pass
-            by_g6 = proc.poll() is None        # still running: G6 ends it, and its exit code is G6's doing
+            by_g6 = outlived(proc, came_to_end=not stop and not cut)    # still running: G6 ends it, and its code is G6's doing
             left = end()
             if proc.poll() is None:
                 proc.kill()
@@ -2174,10 +2193,7 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
     facts = host_facts(run.path / name, ctx.model)
     limit = facts["limit"] if facts["limit"] is not None else next((x for x in map(limit_of, c.stream_lines(said)) if x is not None),
                                                                    None)
-    ended, why = host_ending(stop, facts, code=code, limit=limit, by_g6=by_g6, left=left)
-    if not ended and not by_g6:     # the one decision (study review 4); an exit G6 caused, ending it after its result, is G6's
-        ended = session_ending("", code, tally.result)
-        why = f"the session exited {code}" if ended else why
+    ended, why = host_ending(stop, facts, code=code, limit=limit, by_g6=by_g6, left=left)    # its own stop, exit and result
     if ended in ("refused", "limited"):
         run.write(f"{stem}_{'refused' if ended == 'refused' else 'limit'}.txt", why)
     if ended and not c.on_patch({"status": ended}):    # a session that did not end cleanly ends its run: the run's ending, before
@@ -2293,7 +2309,8 @@ def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
               text: str) -> dict[str, Any]:
     """Arm L's first step (PLAN.md, 2026-10-31): the scout's session, then the repository back at the base and its probes
     out of the agent's reach. From L5, a second scout whose work the agent never sees. The sessions' cost is returned, to
-    count in the run."""
+    count in the run, and how they ended (``ended``): every scout session's ending, visible and hidden, each try's, folded by
+    the run's one rule (``run_ending``), which the run's ending is then folded from (study follow-up review 1, findings 4, 5)."""
     owner, name = task.project.split("/", 1)
     cap_at = docker_args.index("--max-budget-usd") + 1
     args = [*docker_args[:cap_at], f"{SCOUT_CAP_USD:.2f}", *docker_args[cap_at + 1:]]
@@ -2321,14 +2338,17 @@ def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
     wrong = probe_gate(ctx, task, agent, *visible) if int(ctx.arm[1:]) >= 3 else []
     refused = list(wrong)
     if wrong:
-        ended, wrong = checked_again(wrong, c.NDJSON["numbered_stream"].format(tag="scout", n=2), *visible)
+        again, wrong = checked_again(wrong, c.NDJSON["numbered_stream"].format(tag="scout", n=2), *visible)
+        ended = run_ending(ended, again)
     if has_critic(ctx.arm):   # a fresh session: it has read neither the scout's reasoning nor any patch
         restore()
-        ended = session(args, critic_prompt(task.issue, title, text), c.NDJSON["tagged_stream"].format(tag="critic"))
+        ended = run_ending(ended, session(args, critic_prompt(task.issue, title, text),
+                                          c.NDJSON["tagged_stream"].format(tag="critic")))
         wrong = probe_gate(ctx, task, agent, *visible)
         if wrong:
             refused += wrong
-            ended, wrong = checked_again(wrong, c.NDJSON["numbered_stream"].format(tag="critic", n=2), *visible)
+            again, wrong = checked_again(wrong, c.NDJSON["numbered_stream"].format(tag="critic", n=2), *visible)
+            ended = run_ending(ended, again)
     hidden: dict[str, Any] = {}
     if holds_loop(ctx.arm):
         restore()
@@ -2343,11 +2363,12 @@ def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
             tag = f"hidden{i + 1}" if i else "hidden"
             second = scout_prompt(ctx.arm, hidden=True, at=i).format(**filled)
             run.write(f"{tag}_prompt.txt", second)
-            session(args, second, c.NDJSON["tagged_stream"].format(tag=tag))
+            ended = run_ending(ended, session(args, second, c.NDJSON["tagged_stream"].format(tag=tag)))
             left = probe_gate(ctx, task, agent, where, tree_at)
             refused += left
             if left:
-                _, left = checked_again(left, c.NDJSON["numbered_stream"].format(tag=tag, n=2), where, tree_at)
+                again, left = checked_again(left, c.NDJSON["numbered_stream"].format(tag=tag, n=2), where, tree_at)
+                ended = run_ending(ended, again)
             run.write(f"{tag}_at_base.txt", checked(ctx.docker.sh(agent, f"{probes_at(where)} 2>&1 | tail -c 8000",
                                                                   workdir=task.repo, timeout=300), "the probes at the base"))
             copy_out(ctx.docker, agent, where, run.path / f"{tag}_probes")
@@ -2442,7 +2463,7 @@ def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
     loop = Repairs(check, ask, state if qualified(ctx.arm) else None, repair_text(ctx.arm) if qualified(ctx.arm) else "")
     got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
                 max_iterations=MAX_REPAIRS + 1, timeout_s=float(c.WALL_CLOCK_S))
-    ended = next((s for s in stops if s), "")      # a repair session that did not end cleanly ends the run as it did
+    ended = run_ending(*stops)      # a repair session that did not end cleanly ends the run as it did
     return {"status": got.status, "rounds": loop.round, "reason": got.reason, "failing": sorted(loop.failing)[:40],
             "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}, **({"ended": ended} if ended else {})}
 
@@ -3270,9 +3291,11 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                                             "turns": c.MAX_TURNS, "wall_clock_s": c.WALL_CLOCK_S},
                                             "key": "passed by name; its value only in the docker client's environment"})
         at_base: dict[str, ProbeRun] = {}
+        scouted = ""             # how the scouts' sessions ended, folded into the run's ending with its own (``run_ending``)
         if looped and not dry:   # the hook arrives after the scout, so it cannot stop the scout
             record["agent_started"] = True
-            record["scout"] = run_scout(ctx, task, run, agent, base, docker_args, key, title, text)
+            record["scout"] = scout = run_scout(ctx, task, run, agent, base, docker_args, key, title, text)
+            scouted = scout["ended"]
             at_base = record["scout"].pop("at_base")
             if qualified(ctx.arm):   # one allowance for the whole run: the scouts' spend comes out of the fixer's
                 stop = max(1.0, stop - float(record["scout"]["usd"]))
@@ -3352,6 +3375,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                                      daemon=True)
             drain.start()
             stream = open(run.fresh_path(c.NDJSON["stream"]), "w", encoding="utf-8", newline="\n")
+            ended = "error"          # a stream that could not be read is no clean end
             try:
                 proc.stdin.write(text_in.encode("utf-8"))
                 proc.stdin.close()
@@ -3360,11 +3384,13 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                                     stop_usd=stop)
             finally:
                 stream.close()
-                if proc.poll() is None:
+                by_g6 = outlived(proc, came_to_end=not ended)
+                if by_g6:
                     ctx.docker.sh(agent, KILL_AGENT, user="root", timeout=60)
                     proc.kill()
-                first_code = proc.wait(timeout=60)
-            ended = session_ending(ended, first_code, tally.result)      # every arm's first session (review 4, finding 2)
+                code = proc.wait(timeout=60)
+            ended = session_ending(ended, code, tally.result, ended_by_g6=by_g6)     # every arm's first session, by the one rule
+            first_code = None if ended else 0     # its exit as that rule read it, as on the host
             if dog is not None:
                 dog.end("first session")
             drain.join(timeout=30)
@@ -3372,22 +3398,23 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             if critic_led and not dry:   # a K arm's first session ends by the one rule each session of its loop ends by
                 got = step_ending(ended, tally.result, first_code)
                 ended = "" if got == "finished" else got
+        ended = run_ending(scouted, ended)       # the scouts ran first: a scout that did not end cleanly ends the run with it
         if looped and holds_loop(ctx.arm) and not dry and not ended:
-            record["repairs"] = repair_loop(ctx, task, run, agent, docker_args, key, tally, stop, started, at_base,
-                                            lambda: run_critic(ctx, task, run, agent, base, title, text))
-            ended = record["repairs"].get("ended") or ended
+            record["repairs"] = repairs = repair_loop(ctx, task, run, agent, docker_args, key, tally, stop, started, at_base,
+                                                      lambda: run_critic(ctx, task, run, agent, base, title, text))
+            ended = run_ending(ended, repairs.get("ended", ""))
         if ctx.arm == "R" and not dry and not ended:
             keep_first_patch(ctx, task, agent, base)
-            record["repairs"] = review_once(ctx, task, run, agent, docker_args, key, tally, stop, started,
-                                            lambda: run_critic(ctx, task, run, agent, base, title, text))
-            ended = record["repairs"].get("ended") or ended
+            record["repairs"] = repairs = review_once(ctx, task, run, agent, docker_args, key, tally, stop, started,
+                                                      lambda: run_critic(ctx, task, run, agent, base, title, text))
+            ended = run_ending(ended, repairs.get("ended", ""))
         stepped, steps_ctx = dog is not None, ctx
         if stepped:      # K3: the first session, its patch kept, the rule step; each only from a recognised success (step_ending)
             steps_ctx = copy.copy(ctx)       # every docker call of K3's steps bounded by the watchdog, which their reviews see too
             steps_ctx.docker, steps_ctx.watchdog = dog.docker(ctx.docker), dog
-            record["rule_step"] = rule_led_start(steps_ctx, task, run, agent, base, docker_args, key, tally, stop, dog,
-                                                 (ended, first_code), session=resumed)
-            ended = record["rule_step"]["ended"]
+            record["rule_step"] = steps = rule_led_start(steps_ctx, task, run, agent, base, docker_args, key, tally, stop, dog,
+                                                         (ended, first_code), session=resumed)
+            ended = steps["ended"]          # the first session's ending is its first step's (``rule_led_start``)
             record["first_patch_sha256"] = kept_digest(ctx.archive, run.rel)    # whether it is a baseline: has_baseline, at the end
         if critic_led and not dry and not ended and not str((tally.result or {}).get("session_id") or ""):
             # review 4, finding 3: the K loop starts only from a result that names its session (the first session's, or K3's rule
@@ -3397,19 +3424,19 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             if host:
                 run.end("error", why="the first session's own result named no session, so the K loop had none to continue")
         if critic_led and not dry and not ended:
-            record["repairs"] = reviews_until_clean(steps_ctx, task, run, agent, base, docker_args, key, tally, stop, started,
-                                                    lambda n: run_critic(steps_ctx, task, run, agent, base, title, text, n),
-                                                    finding=finding_rule(ctx.arm),
-                                                    session=resumed,
-                                                    tree=(lambda: hashlib.sha256(box_mcp.pack(workspace)).hexdigest()) if host else None,
-                                                    after_step=stepped, **({"deadline": dog} if stepped else {}))
-            ended = record["repairs"].get("ended") or ended      # a repair that did not end cleanly, on either executor: the run
-                                                                 # ends as it did
+            record["repairs"] = repairs = reviews_until_clean(
+                steps_ctx, task, run, agent, base, docker_args, key, tally, stop, started,
+                lambda n: run_critic(steps_ctx, task, run, agent, base, title, text, n), finding=finding_rule(ctx.arm),
+                session=resumed, tree=(lambda: hashlib.sha256(box_mcp.pack(workspace)).hexdigest()) if host else None,
+                after_step=stepped, **({"deadline": dog} if stepped else {}))
+            ended = run_ending(ended, repairs.get("ended", ""))    # a repair that did not end cleanly, on either executor: the
+                                                                     # run ends as it did
         if dog is not None:
             dog.stop()                       # the steps are over: what the run does after them is no step
         if test_led and not dry and not ended:
-            record["repairs"] = reviews_with_bug_test(ctx, task, run, agent, base, docker_args, key, tally, stop, started, bug)
-            ended = record["repairs"].get("ended") or ended
+            record["repairs"] = repairs = reviews_with_bug_test(ctx, task, run, agent, base, docker_args, key, tally, stop,
+                                                                started, bug)
+            ended = run_ending(ended, repairs.get("ended", ""))
         result = tally.result or {}
         record.update(status_detail=status_of(ended, tally),
                       agent_usd=tally.cost_usd,

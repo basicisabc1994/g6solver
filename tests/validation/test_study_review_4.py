@@ -76,7 +76,10 @@ def test_finding_2_a_clean_exit_still_finishes(tmp_path, monkeypatch):
 @pytest.mark.parametrize("stop,code,ended", [("", 0, ""), ("", 1, "error"), ("", 125, "error"), ("", None, "error"),
                                              ("", True, "error"), ("timeout", 0, "timeout"), ("cap_cost", 137, "cap_cost")])
 def test_the_one_decision_of_a_sessions_ending(stop, code, ended):
-    assert we.session_ending(stop, code) == ended
+    """With its own result a success, the exit decides (its result is a required input since study follow-up review 1, whose
+    tests/validation/test_study_followup_1.py covers the result's own word)."""
+    success = {"type": "result", "subtype": "success", "is_error": False, "session_id": "s1"}
+    assert we.session_ending(stop, code, success) == ended
 
 
 def test_finding_5_arm_r_cannot_finish_after_its_repair_exec_failed(tmp_path, monkeypatch):
@@ -102,28 +105,10 @@ def test_finding_5_arm_r_cannot_finish_after_its_repair_exec_failed(tmp_path, mo
     assert len(sessions) == 2 and record["status"] == "error" and record["repairs"]["ended"] == "error"
 
 
-def _functions(tree):
-    return [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
-
-
-def test_every_session_process_waited_on_reaches_the_one_decision():
-    """Study review 4, findings 2 and 5: an exit read only where a caller asked for it (``codes``). Built from the code: every
-    function that starts a session process (``popen``) and waits on it gives that exit to ``session_ending``; no call names a
-    ``codes`` list; and no session's ending is discarded (a ``run_session`` call as a statement)."""
-    tree = ast.parse((STUDY / "run.py").read_text(encoding="utf-8"))
-    waited = []
-    for fn in _functions(tree):
-        calls = [n for n in ast.walk(fn) if isinstance(n, ast.Call)]
-        names = {getattr(n.func, "attr", getattr(n.func, "id", "")) for n in calls}
-        waits = [n for n in calls if getattr(n.func, "attr", "") == "wait"]
-        if any(not (isinstance(n.func.value, ast.Attribute) and n.func.value.attr == "_stop") for n in waits):
-            waited.append((fn.name, "session_ending" in names))     # a process waited on (a watchdog's own event aside)
-    assert waited and all(ok for _, ok in waited), waited
-    assert {name for name, _ in waited} == {"run_session", "host_session", "_run_task"}
-    assert not [n for n in ast.walk(tree) if isinstance(n, ast.keyword) and n.arg == "codes"]
-    bare = [n.lineno for n in ast.walk(tree) if isinstance(n, ast.Expr) and isinstance(n.value, ast.Call)
-            and getattr(n.value.func, "id", "") == "run_session"]
-    assert bare == []
+# The inventory of where each session process's exit goes, which found process waits by name and so missed the scouts' sessions,
+# is replaced by one that follows the value of every ending from the code to the run's ending (study follow-up review 1:
+# tests/validation/test_study_followup_1.py, test_every_ending_of_every_session_is_passed_on_to_the_runs_ending), which also
+# holds that no call names a ``codes`` list.
 
 
 # --- 1, 4: stores by identity, below them too --------------------------------------------------------------------------------

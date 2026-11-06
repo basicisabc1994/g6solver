@@ -596,6 +596,7 @@ def test_a_resumed_session_reads_the_runs_deadline_and_gets_no_prompt_once_it_ha
 
     def read_stream(lines, tally, *, deadline, **kw):
         deadlines.append(deadline)
+        tally.feed(dict(SUCCESS))       # the session's own result, which its ending reads with its exit (study follow-up 1)
         return ""
 
     monkeypatch.setattr(we.time, "monotonic", lambda: now[0])
