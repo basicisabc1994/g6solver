@@ -48,6 +48,7 @@ from typing import Any
 from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, is_allowed
 from g6.core.ledger import LedgerError, digest as digest_of
 from g6.core.storage import g6_home
+from g6.invariants import ERROR_CODE_PATTERN
 from g6.mcp.consent import question as _question
 from g6.metaharness.api import _blocked, _envelope
 from g6.self_maintenance import digest
@@ -471,8 +472,9 @@ ACT_DONE = {"enrol": "G6_E_LOOP_ENROLLED", "resume": "G6_E_LOOP_RESUMED", "demot
 #: The shape of a person's act's reply as ``g6.metaharness.api._envelope`` writes it: each field the one reader reads or
 #: passes on as the envelope every surface carries, with the JSON type it must have, and the card's. ``completion_state``,
 #: the card and its ``code`` must be there; any other must have its type when it is there, and a ``code`` or a
-#: ``reliability_label`` beside them must say the same. A reply is recognised by this shape alone; anything else in it is
-#: passed on as it is and read nowhere.
+#: ``reliability_label`` beside them must say the same. The card's code must be a G6 code by G6's own rule, its envelope
+#: checker's (``g6.invariants.ERROR_CODE_PATTERN``, matched as ``check_envelope`` matches it). A reply is recognised by
+#: this shape alone; anything else in it is passed on as it is and read nowhere.
 REPLY_SHAPE: dict[str, type] = {"completion_state": str, "reliability_label": str, "warning_card": dict, "code": str,
                                 "message": str, "next_action": str, "evidence": list, "request_id": str, "run_id": str}
 CARD_SHAPE: dict[str, type] = {"code": str, "message": str, "suggested_action": str}
@@ -515,6 +517,8 @@ def _recognised(out: Any) -> tuple[dict[str, Any] | None, str]:
         if name in card and not isinstance(card[name], kind):
             return None, f"a reply whose warning_card.{name} is {_kind(card[name])}"
     state, said = reply["completion_state"], card["code"]
+    if not ERROR_CODE_PATTERN.match(said):
+        return None, f"a reply whose warning_card.code {said[:80]!r} is not a G6 code"
     if reply.get("code", said) != said or reply.get("reliability_label", state) != state:
         return None, "a reply whose code or state says two different things"
     return reply, f"a reply of state {state[:80]!r} and code {said[:80]!r}"
@@ -524,16 +528,17 @@ def _read_act(code: int | None, out: str, err: str = "", *, act_name: str | None
     """The one reader of a person's act as its process ended (``g6.metaharness.runner.act_main``). It did what it was
     asked only on exit status 0 with a recognised reply (``_recognised``) that is a qualified draft whose code is that
     act's own (``ACT_DONE``; any of them when no act is named). It refused only on exit status 1 with a recognised blocked
-    reply that has a G6 code, which is passed on as it is. Anything else is ``ACT_FAILED`` and names the exit status and
-    what was found, and nothing in it raises: a reply that does not read or is not the act's shape, one that claims more
-    than a qualified draft, a success with a failing status, and a status never seen before, of any type."""
+    reply, which is passed on as it is: recognised, its code is a G6 code by G6's own rule. Anything else is
+    ``ACT_FAILED`` and names the exit status and what was found, and nothing in it raises: a reply that does not read or
+    is not the act's shape, a code that is not a G6 code, one that claims more than a qualified draft, a success with a
+    failing status, and a status never seen before, of any type."""
     reply, found = _recognised(out)
     if reply is not None and type(code) is int:
         state, said = reply["completion_state"], reply["warning_card"]["code"]
         done = [value for name, value in ACT_DONE.items() if act_name is None or name == act_name]
         if code == 0 and state == "qualified-draft" and said in done:
             return reply
-        if code == 1 and state == "blocked-escalated" and said.startswith("G6_E_"):
+        if code == 1 and state == "blocked-escalated":
             return reply
     tail = next((text for text in (err, out) if isinstance(text, str) and text), "")
     return _blocked(ACT_FAILED, f"the act ended with exit status {code!r} and {found}, which is neither the act done nor "

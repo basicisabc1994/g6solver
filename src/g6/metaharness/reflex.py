@@ -27,6 +27,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from g6.invariants import ERROR_CODE_PATTERN
 from g6.metaharness.lessons import ROOT_CAUSES, Lesson, repeats
 from g6.metaharness.lessons import stuck as recurring
 from g6.metaharness.schema import HOLDOUT_REUSED, INSUFFICIENT_EVIDENCE, NO_GAIN, OBJECTIVE_REGRESSED, SUITE_CANNOT_DISCRIMINATE
@@ -65,7 +66,6 @@ CLASSIFIER_STOP = "G6_E_LOOP_CLASSIFIER_STOP"
 CYCLE_FAILED = "G6_E_LOOP_CYCLE_FAILED"
 #: Outcomes that went no further than this stage, whatever the reason. ``idle`` is here because a pool with no failure left gave the cycle nothing to do.
 _HELD = ("blocked", "error", "sealed_breach", "no_constraint", "idle")
-_CODE = re.compile(r"\bG6_E_[A-Z0-9_]+\b")
 POOL, HELD_OUT, JUDGE, ENVELOPE, STOP, PERSON_ONLY, ERROR, NO_GAIN_FOUND = (
     "pool", "held_out", "judge", "envelope", "stop", "person_only", "error", "no_gain")
 #: What a reason points at, where that is not the stage it stopped at.
@@ -163,12 +163,12 @@ def stages(rows: Iterable[Mapping[str, Any]]) -> tuple[StageMeasurement, ...]:
 
 
 def _reason(row: Mapping[str, Any]) -> str:
-    """Why a cycle went no further, as a stable code. A step the harness blocked carries its code at the head of its reason."""
+    """Why a cycle went no further, as a stable code. A step the harness blocked carries its code at the head of its reason:
+    the first word of it that is a G6 code by G6's own rule (``g6.invariants.ERROR_CODE_PATTERN``)."""
     code = _text(row.get("code"))
     if code and code != CYCLE:
         return code
-    found = _CODE.search(str(row.get("reason", "")))
-    return found.group() if found else CYCLE
+    return next(filter(ERROR_CODE_PATTERN.match, re.findall(r"\w+", str(row.get("reason", "")))), None) or CYCLE
 
 
 def _refused_by(row: Mapping[str, Any]) -> str:
