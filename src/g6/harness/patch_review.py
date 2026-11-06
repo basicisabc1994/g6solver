@@ -108,7 +108,11 @@ no search setting, every decided field is as before.
 Last, each stated check of a requirement for new behaviour that passed on the patch and failed at the base commit runs
 once more on the patch (``_run_again``), so the evidence issuer has a pass that its control, the run at the base commit,
 came before (``assessment.requirement_evidence``). That run decides no field; it and its test receipt are recorded
-there, never in ``scope.checks_run`` or ``scope.receipts``.
+there, never in ``scope.checks_run`` or ``scope.receipts``. Each stated check's identity (its node id and its file's
+bytes) is read before any run, and the final integrity snapshot after the last read the issuer's inputs need, so a
+change between is the review's integrity problem; and a review with an integrity problem gives the issuer nothing to
+count, as the runs it does not believe are no evidence. The run again lets an operator stop and unconfirmed cleanup
+through, as every handler of the review does (``LETS_THROUGH``).
 
 Every in-place run asks for a test receipt (``repo_tests.run(..., receipt=True)``): the scope lists each id, and the
 coding gate, which this review builds bound to its own snapshot digest (never a digest from the request), counts a
@@ -128,7 +132,7 @@ import platform
 import re
 import time
 import uuid
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from typing import Literal
@@ -153,6 +157,10 @@ SUPPORTED, DEFECT = "supported_within_scope", "defect_detected"
 INTEGRITY, INSUFFICIENT = "test_integrity_compromised", "insufficient_evidence"
 PASSED_ON_CHECKS, FAILED, NOT_ESTABLISHED = "passed_on_stated_checks", "failed", "not_established"
 CODE = "G6_E_PATCH_REVIEW"
+#: The execution-control signals the review lets through to its door, never caught as an ordinary error: an operator
+#: stop or a spent allowance, and process cleanup that could not be confirmed. Both are ``OSError``s, so every handler
+#: in the review that catches ``OSError`` or ``Exception`` lets this list through first (an inventory test lists them).
+LETS_THROUGH = (component_process.ExecutionInterrupted, component_process.ContainmentFailure)
 #: Files that configure, or could stand in for, the runner: ``repo_tests``'s list, every configuration file pytest
 #: looks for by name among them (``pytest.toml``, ``.pytest.toml``, ``pytest.ini``, ``.pytest.ini`` and the project
 #: files below; review C1).
@@ -837,7 +845,7 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
                        deadline=started + timeout_s, started=started, listed=listed, assumed=assumed,
                        unmapped=unmapped, proposed=proposed, placed=placed, instances=instances, config=config,
                        roots=roots, llm=llm)
-    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+    except LETS_THROUGH:
         raise   # an operator stop, a spent allowance or unconfirmed process cleanup must reach the enclosing door
     except repo_tests.RepoRefused as exc:
         said = str(exc)
@@ -868,7 +876,7 @@ def _stage(stopped: list[dict], what: str, run, *args, **kwargs):
     unconfirmed process cleanup and a refusal still reach the door."""
     try:
         return run(*args, **kwargs)
-    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure, repo_tests.RepoRefused):
+    except (*LETS_THROUGH, repo_tests.RepoRefused):
         raise
     except Exception as exc:
         from g6.harness import verification_search
@@ -954,6 +962,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     asks = [*_ignored_asks(scan),
             *(TEST_DATA_ASK.format(base=change.base_commit[:12], path=rel) for rel in data[:10])]
 
+    # G6 0.3: each stated check's identity, the bytes its runs will execute, read before any of them; the final integrity
+    # snapshot comes after the last read of the tree, so a change in between is the review's integrity problem
+    check_sha = _check_shas(Path(root), stated_ids)
     # Tier 1: the stated checks and the extra tests, in one confined run.
     present = [i for i in ids if (root / i.partition("::")[0]).exists()]
     verdicts = {i: {"verdict": "missing", "detail": "no such file on the patched tree"} for i in ids
@@ -1121,6 +1132,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     # G6 0.3: after the run at the base commit (each check's control), the checks it killed run again on the patch, so
     # the issuer has a receipt its control came before; last, so it takes no time from anything that decides a field
     again = _run_again(root, change, stated, norm, verdicts, runs, deadline, artifact, roots)
+    written = {check: _authored(check, change, Path(root)) for check in stated_ids}   # read before the final snapshot
     final = repo_tests.snapshot(root)
     if repo_tests._moved(before, final):   # review I2: a folder G6 did not hash on one side is not a change
         reason("integrity", "repository_changed_during_review", "the working tree changed while G6 reviewed it")
@@ -1183,13 +1195,6 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     self_checked = ", ".join(_self_checked(evaluated, change, Path(root), runs))
     if self_checked:
         reason("evidence", SELF_CHECKED, SELF_CHECKED_DETAIL.format(ids=self_checked))
-
-    def authored(check: str) -> bool:
-        try:
-            return _written(check, change, Path(root))
-        except (repo_tests.RepoRefused, OSError):   # authorship G6 cannot read is the patch author's: no support
-            return True
-
     return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
                   artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects,
                   first_action=(MISSING_IMPORT_ASK.format(name=missing[0]) if missing else
@@ -1198,7 +1203,19 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                   counts={"template_instances": len(instances), "proposed_checks": len(proposed),
                           "model_calls": proposals.calls if proposals else 0}, roots=roots,
                   stopped=stopped, proposer=proposals,
-                  issuer_inputs={"check_sha": _check_shas(Path(root), evaluated), "written": authored, "again": again})
+                  issuer_inputs={"check_sha": check_sha, "written": lambda check: written.get(check, True),
+                                 "again": again})
+
+
+def _authored(check: str, change, root: Path) -> bool:
+    """Whether the patch wrote ``check`` (``_written``); authorship G6 cannot read is the patch author's, so no support.
+    An execution-control signal is let through."""
+    try:
+        return _written(check, change, root)
+    except LETS_THROUGH:
+        raise
+    except (repo_tests.RepoRefused, OSError):
+        return True
 
 
 def _run_again(root, change, stated, norm, verdicts, runs, deadline, artifact, roots=()) -> dict:
@@ -1217,6 +1234,8 @@ def _run_again(root, change, stated, norm, verdicts, runs, deadline, artifact, r
         return {"checks": ids, "why": "the time budget was spent before they could run again"}
     try:
         ran = _confined(_execute(root, ids, timeout_s=max(1, _left(deadline)), **_rooted(roots)))
+    except LETS_THROUGH:
+        raise   # the review's own rule: an operator stop or unconfirmed cleanup reaches the door, here as everywhere
     except Exception as exc:   # G6's own work: this run decides no field, so it never fails the review
         return {"checks": ids, "why": f"G6 could not run them again ({type(exc).__name__})"}
     if _loaded_elsewhere(change, ran) or (ran.get("source_before") and ran["source_before"] != artifact):
@@ -1228,18 +1247,21 @@ def _run_again(root, change, stated, norm, verdicts, runs, deadline, artifact, r
             "receipt": ran.get("receipt", ""), "seconds": ran.get("seconds", 0.0)}
 
 
-def _check_shas(root: Path, evaluated: list[dict]) -> dict[str, str]:
-    """Each stated check's SHA-256, its node id and its file's bytes as the review found them; none for a check whose
-    file G6 cannot read as a file inside the tree (a folder, a link, a file gone), which the mapping then refuses."""
+def _check_shas(root: Path, checks: Sequence[str]) -> dict[str, str]:
+    """Each stated check's SHA-256, its node id and its file's bytes, read before any run of the review; none for a
+    check whose file G6 cannot read as a file inside the tree (a folder, a link, a file gone), which the mapping then
+    refuses. A change to a file after this read is a change between the review's integrity snapshots."""
     found: dict[str, str] = {}
     top = root.resolve()
-    for check in (c for req in evaluated for c in req["checks"] if c.get("provenance") == STATED):
-        path = root / check["id"].partition("::")[0]
+    for check in checks:
+        path = root / check.partition("::")[0]
         try:
-            if (check["id"] in found or path.is_symlink() or not path.is_file()
+            if (check in found or path.is_symlink() or not path.is_file()
                     or not path.resolve().is_relative_to(top)):
                 continue
-            found[check["id"]] = hashlib.sha256(check["id"].encode("utf-8") + b"\0" + path.read_bytes()).hexdigest()
+            found[check] = hashlib.sha256(check.encode("utf-8") + b"\0" + path.read_bytes()).hexdigest()
+        except LETS_THROUGH:
+            raise
         except OSError:
             continue
     return found
@@ -1523,9 +1545,10 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                                                      proposals=proposer)}
     if issuer_inputs is not None:   # the one authority's statement of each requirement (G6 0.3, slice 2)
         from g6.harness import requirement_evidence
+        # the review's own integrity rule: a run it does not believe is no evidence for the issuer either
         assessment["requirement_evidence"] = requirement_evidence.assess(
             evaluated, runs, artifact=artifact, base_commit=change.base_commit, environment=environment,
-            **issuer_inputs)
+            integrity=[r["code"] for r in reasons if r["stage"] == "integrity"], **issuer_inputs)
     from g6.harness import patch_report   # A1: the readable report, derived from the fields above; it decides nothing
     assessment["report"] = patch_report.safe_render(assessment)
     card = warning_card(CODE, summary, next_actions[0])

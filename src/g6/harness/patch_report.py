@@ -101,18 +101,23 @@ LOOP_LIMITS = ("- This loop has been measured on seven training bugs only.",
                "- A model wrote these tests, so none of them passes a requirement.")
 
 
-#: Why the evidence issuer does not count a requirement yet, by the first code its gap names (``g6.evidence``'s words).
-#: A later failure or unknown result is named before an earlier pass that came before its control.
+#: The one table from the evidence issuer's codes (``assessment.requirement_evidence.requirements[].codes``, which
+#: ``g6.harness.requirement_evidence.codes`` reads from the issuer's structured fields) to G6's words for why it does
+#: not count a requirement yet. The first row whose code the requirement has is said: a failure or a result that is
+#: none comes before why a pass did not count.
 NOT_COUNTED = (("advisory_check_failed", "a run of its check failed, and nothing showed the check passes on code "
                                          "known to be right, so the failure is a caveat, not a refutation"),
                ("check_result_unknown", "a run of its check gave no result"),
                ("self_authored", "the patch's author wrote the check"),
                ("frozen_after_artifact", "the check is new with the patch"),
                ("evidence_kind", "no check of a kind that can count ran"),
+               ("formal_without_certificate", "a formal check names no digest of what it decided"),
                ("no_negative_control", "no run showed the check can fail"),
-               ("not_in_ledger", "a record is not in G6's ledger"),
-               ("receipt_for_other_bytes", "a result was taken on other bytes"),
-               ("control_after_receipt", "its negative control, the run at the base commit, came after the pass"))
+               ("control_not_generated_by_g6", "its negative control is not one G6 made"),
+               ("control_not_killed", "its negative control was not caught by the check"),
+               ("control_for_other_code", "its negative control was run against other code of the check"),
+               ("control_before_freeze", "its negative control came before the check was fixed"),
+               ("not_in_ledger", "a record is not in G6's ledger"))
 
 
 def _issuer(assessment: dict, requirement: object, form: str = "; {}") -> str:
@@ -138,9 +143,10 @@ def _issuer(assessment: dict, requirement: object, form: str = "; {}") -> str:
     elif not kinds and (found.get("kinds") or {}):   # each check was refused before the issuer saw it
         said = (f"not counted: the evidence mapping refused each of its checks for a part it lacks "
                 f"({code('assessment.requirement_evidence.refused')})")
-    else:
-        gap = str(found.get("gap") or "")
-        said = "not counted yet: " + next((why for key, why in NOT_COUNTED if key in gap), "no check G6 can count ran")
+    else:   # the issuer's own codes, never the text of its gap or of a check's name
+        given = found.get("codes")
+        held = frozenset(str(one) for one in given) if isinstance(given, list) else frozenset()
+        said = "not counted yet: " + next((why for key, why in NOT_COUNTED if key in held), "no check G6 can count ran")
     return form.format(f"evidence {shown}, and the evidence issuer: {said}")
 
 

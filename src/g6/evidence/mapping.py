@@ -22,12 +22,20 @@ that was not killed, a check frozen after the artefact, a pass taken before its 
 
 ``CheckBinding`` is ECHA custody's binding of one evaluator receipt to its request, task, predicate, artefact, standard,
 fixture and evaluator, graduated here so a receipt keeps that binding when it becomes the issuer's (``from_binding``).
+
+What a record is about is read in one place, ``about``: from its custody binding when it has one, else from its own
+fields (a record G6 observed itself, such as the patch review's, has no custody). A field that repeats a part of the
+binding (the artefact, the standard, the predicate, the check) must equal it, or the record is refused with the code
+that names the part (``bound_parts``, which ECHA's claim rule reads through too). A bound record's check id is derived
+from every part of its binding (``check_id_of``), so receipts for two predicates, two requests or two fixtures are
+never one check. A record id is one record: reused with any other part, it is refused (``CONFLICTING``), and so is a
+check id another record gives another check.
 """
 from __future__ import annotations
 
 import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 
 from g6.core.ledger import ChainLedger
 from g6.core.ledger import digest as _digest
@@ -64,8 +72,16 @@ NO_ORDER = "G6_E_EVIDENCE_NO_ORDER"
 NO_SCOPE = "G6_E_EVIDENCE_NO_SCOPE"
 NO_RESULT = "G6_E_EVIDENCE_NO_RESULT"
 CONFLICTING = "G6_E_EVIDENCE_CONFLICTING_RECORD"
+#: A field of a record that repeats a part of its custody binding with another value, by the part it names; and a
+#: binding that does not read as one.
+BINDING_ARTEFACT = "G6_E_EVIDENCE_BINDING_ARTEFACT"
+BINDING_STANDARD = "G6_E_EVIDENCE_BINDING_STANDARD"
+BINDING_PREDICATE = "G6_E_EVIDENCE_BINDING_PREDICATE"
+BINDING_CHECK = "G6_E_EVIDENCE_BINDING_CHECK"
+BINDING_UNREADABLE = "G6_E_EVIDENCE_BINDING_UNREADABLE"
 CODES = (UNMAPPED, NOT_PROMOTED, NO_ARTEFACT, OTHER_ARTEFACT, NO_MODEL, NO_STANDARD, OTHER_STANDARD, NO_CHECK,
-         NO_ENVIRONMENT, NO_CONTROL, NO_INDEPENDENCE, NO_ORDER, NO_SCOPE, NO_RESULT, CONFLICTING)
+         NO_ENVIRONMENT, NO_CONTROL, NO_INDEPENDENCE, NO_ORDER, NO_SCOPE, NO_RESULT, CONFLICTING, BINDING_ARTEFACT,
+         BINDING_STANDARD, BINDING_PREDICATE, BINDING_CHECK, BINDING_UNREADABLE)
 #: The ledger kind under which a promoted receipt's environment, model, scope and source are kept beside it.
 PROVENANCE_KIND = "provenance"
 
@@ -219,12 +235,63 @@ class CheckBinding:
         return asdict(self)
 
 
+def check_id_of(binding: CheckBinding) -> str:
+    """The id of the check a custody binding names: its task, then the digest of every part of the binding (request,
+    task, predicate, artefact, standard, fixture and evaluator), so two bindings that differ in any part never name one
+    check."""
+    return f"{binding.task_id}:{_digest(binding.to_dict())}"
+
+
+@dataclass(frozen=True)
+class About:
+    """What a record is about (``about``), each part read once, from its custody binding when it has one."""
+
+    artefact: str
+    standard: str
+    predicates: tuple[str, ...]
+    #: The binding's request, task and fixture ("" for a record with no custody binding).
+    request: str
+    task: str
+    fixture: str
+    check_id: str
+    check_sha: str
+    #: The record's own: a custody binding does not carry the run's environment or what the result covers.
+    environment: str
+    scope: str
+
+
+#: The parts of a custody binding a record's own fields may repeat, with the code a disagreeing field is refused with.
+_REPEATED = {"artefact": BINDING_ARTEFACT, "standard": BINDING_STANDARD, "predicates": BINDING_PREDICATE,
+             "check_id": BINDING_CHECK, "check_sha": BINDING_CHECK}
+
+
+def bound_parts(binding: object, *, environment: str = "", scope: str = "",
+                **given: object) -> tuple[About | None, tuple[tuple[str, str], ...]]:
+    """What a record bound by ``binding`` is about, read from the binding, and each of ``given`` (``artefact``,
+    ``standard``, ``predicates``, ``check_id``, ``check_sha``: the values the record's own fields repeat) that is not
+    the binding's, as (the code that names the part, why). (None, (BINDING_UNREADABLE, why)) when ``binding`` is not a
+    custody binding."""
+    if not isinstance(binding, CheckBinding):
+        return None, ((BINDING_UNREADABLE, "the record's custody binding does not read as one"),)
+    parts = About(artefact=binding.artifact_sha256, standard=binding.standard_sha256,
+                  predicates=(binding.predicate_id,), request=binding.request_id, task=binding.task_id,
+                  fixture=binding.fixture_sha256, check_id=check_id_of(binding), check_sha=binding.evaluator_sha256,
+                  environment=environment, scope=scope)
+    found: list[tuple[str, str]] = []
+    for part, value in given.items():
+        held = tuple(value) if part == "predicates" and isinstance(value, (list, tuple)) else value
+        if held != getattr(parts, part):
+            found.append((_REPEATED[part], f"its {part.replace('_', ' ')} is not the one its custody binding names"))
+    return parts, tuple(dict.fromkeys(found))
+
+
 @dataclass(frozen=True)
 class SourceRecord:
     """One receipt as its source gives it, in the parts the mapping table asks of every kind.
 
     ``controls`` are the issuer's ``Control`` values G6 observed for this check; ``seq`` and the other positions are the
-    order G6 observed things in, never one a caller chose."""
+    order G6 observed things in, never one a caller chose. Every reader takes the parts a record is about from
+    ``about``, never from these fields alone."""
 
     kind: str
     record_id: str
@@ -245,21 +312,40 @@ class SourceRecord:
     certificate: str = ""
     controls: tuple[Control, ...] = ()
     positive_seq: int | None = None
-    #: The identities a custody binding gave this record, when it came from one (``from_binding``).
-    binding: CheckBinding | None = field(default=None, compare=False)
+    #: The custody binding that fixes what this record is about, when it came with one (``from_binding``).
+    binding: CheckBinding | None = None
 
     @classmethod
     def from_binding(cls, binding: CheckBinding, *, kind: str, record_id: str, result: str, producer: str,
                      artefact_seq: int | None, author: str, frozen_seq: int | None, environment_sha256: str,
                      seq: int | None, scope: str, controls: tuple[Control, ...] = (), positive_seq: int | None = None,
                      model_sha256: str = "", certificate: str = "") -> SourceRecord:
-        """A receipt bound by a custody binding: its artefact, standard and check are the binding's digests."""
-        return cls(kind=kind, record_id=record_id, predicates=(binding.predicate_id,), result=result,
-                   artefact_sha256=binding.artifact_sha256, producer=producer, artefact_seq=artefact_seq,
-                   standard_sha256=binding.standard_sha256, check_id=f"{binding.task_id}:{binding.evaluator_sha256[:16]}",
-                   check_sha256=binding.evaluator_sha256, author=author, frozen_seq=frozen_seq,
-                   environment_sha256=environment_sha256, seq=seq, scope=scope, model_sha256=model_sha256,
-                   certificate=certificate, controls=controls, positive_seq=positive_seq, binding=binding)
+        """A receipt bound by a custody binding: the fields that repeat its parts are the binding's own."""
+        parts, _ = bound_parts(binding, environment=environment_sha256, scope=scope)
+        if parts is None:
+            raise ValueError("a custody binding is a CheckBinding")
+        return cls(kind=kind, record_id=record_id, predicates=parts.predicates, result=result,
+                   artefact_sha256=parts.artefact, producer=producer, artefact_seq=artefact_seq,
+                   standard_sha256=parts.standard, check_id=parts.check_id, check_sha256=parts.check_sha,
+                   author=author, frozen_seq=frozen_seq, environment_sha256=environment_sha256, seq=seq, scope=scope,
+                   model_sha256=model_sha256, certificate=certificate, controls=controls, positive_seq=positive_seq,
+                   binding=binding)
+
+
+def about(rec: SourceRecord) -> tuple[About, tuple[tuple[str, str], ...]]:
+    """What ``rec`` is about, and each of its fields that disagrees with its custody binding (``bound_parts``). A
+    record with no binding is about what its fields say; one with a binding, about what the binding says."""
+    if rec.binding is None:
+        return About(artefact=rec.artefact_sha256, standard=rec.standard_sha256, predicates=rec.predicates,
+                     request="", task="", fixture="", check_id=rec.check_id, check_sha=rec.check_sha256,
+                     environment=rec.environment_sha256, scope=rec.scope), ()
+    parts, found = bound_parts(rec.binding, environment=rec.environment_sha256, scope=rec.scope,
+                               artefact=rec.artefact_sha256, standard=rec.standard_sha256, predicates=rec.predicates,
+                               check_id=rec.check_id, check_sha=rec.check_sha256)
+    if parts is None:   # nothing the record says stands in for a binding that does not read as one
+        return About(artefact="", standard="", predicates=(), request="", task="", fixture="", check_id="",
+                     check_sha="", environment=rec.environment_sha256, scope=rec.scope), found
+    return parts, found
 
 
 def _position(value: object) -> bool:
@@ -278,28 +364,30 @@ def problems(rec: SourceRecord, *, artefact_sha256: str, standard_sha256: str,
         return [(UNMAPPED, f"the kind {rec.kind!r} has no row in the mapping table")]
     if not row.issuer_kind:
         return [(NOT_PROMOTED, f"{rec.kind}: {row.conflicts}")]
-    found: list[tuple[str, str]] = []
-    if not isinstance(rec.artefact_sha256, str) or not _HEX64.match(rec.artefact_sha256):
+    parts, disagree = about(rec)
+    found: list[tuple[str, str]] = list(disagree)
+    if not isinstance(parts.artefact, str) or not _HEX64.match(parts.artefact):
         found.append((NO_ARTEFACT, "no SHA-256 of the artefact bytes the result was taken on"))
-    elif rec.artefact_sha256 != artefact_sha256:
+    elif parts.artefact != artefact_sha256:
         found.append((OTHER_ARTEFACT, "the result was taken on other bytes than the artefact it would count for"))
     if row.needs_model and not (isinstance(rec.model_sha256, str) and _HEX64.match(rec.model_sha256)):
         found.append((NO_MODEL, f"a {rec.kind} record names its model: {row.model}"))
-    if not isinstance(rec.standard_sha256, str) or not _HEX64.match(rec.standard_sha256):
+    if not isinstance(parts.standard, str) or not _HEX64.match(parts.standard):
         found.append((NO_STANDARD, "no SHA-256 of the frozen standard"))
-    elif rec.standard_sha256 != standard_sha256:
+    elif parts.standard != standard_sha256:
         found.append((OTHER_STANDARD, "the result was taken under another standard"))
-    if not rec.predicates or not all(isinstance(p, str) and p for p in rec.predicates):
+    named = parts.predicates if isinstance(parts.predicates, (tuple, list)) else ()
+    if not named or not all(isinstance(p, str) and p for p in named):
         found.append((NO_STANDARD, "it names no predicate of the standard"))
-    elif not set(rec.predicates) <= set(predicates):
+    elif not set(named) <= set(predicates):
         found.append((OTHER_STANDARD, "it names a predicate the standard does not have"))
-    if not _text(rec.check_id) or not isinstance(rec.check_sha256, str) or not _HEX64.match(rec.check_sha256):
+    if not _text(parts.check_id) or not isinstance(parts.check_sha, str) or not _HEX64.match(parts.check_sha):
         found.append((NO_CHECK, "no check id and SHA-256 of the check's frozen code"))
     if row.needs_certificate and not (isinstance(rec.certificate, str) and _HEX64.match(rec.certificate)):
         found.append((NO_CHECK, "a formal check names its certificate's digest"))
-    if not isinstance(rec.environment_sha256, str) or not _HEX64.match(rec.environment_sha256):
+    if not isinstance(parts.environment, str) or not _HEX64.match(parts.environment):
         found.append((NO_ENVIRONMENT, "no SHA-256 of the environment the check ran in"))
-    if not any(isinstance(c, Control) and c.check_sha == rec.check_sha256 and c.predicate in rec.predicates
+    if not any(isinstance(c, Control) and c.check_sha == parts.check_sha and c.predicate in named
                for c in rec.controls):
         found.append((NO_CONTROL, f"no negative control for this check and predicate: {row.negative_control}"))
     if not _text(rec.author) or not _text(rec.producer):
@@ -307,7 +395,7 @@ def problems(rec: SourceRecord, *, artefact_sha256: str, standard_sha256: str,
     if not all(_position(v) for v in (rec.artefact_seq, rec.frozen_seq, rec.seq)) or (
             rec.positive_seq is not None and not _position(rec.positive_seq)):
         found.append((NO_ORDER, "the ledger positions of the freeze, the artefact and the receipt"))
-    if not _text(rec.scope):
+    if not _text(parts.scope):
         found.append((NO_SCOPE, "what the result covers"))
     if rec.result not in RESULTS:
         found.append((NO_RESULT, f"a result among {RESULTS}"))
@@ -327,10 +415,11 @@ def promote(rec: SourceRecord, *, artefact_sha256: str, standard_sha256: str,
     found = problems(rec, artefact_sha256=artefact_sha256, standard_sha256=standard_sha256, predicates=predicates)
     if found:
         raise PromotionRefused(rec.record_id, found)
-    controls = tuple(c for c in rec.controls if c.check_sha == rec.check_sha256 and c.predicate in rec.predicates)
-    check = Check(rec.check_id, tuple(rec.predicates), rec.author, issuer_kind(rec), rec.check_sha256,
+    parts, _ = about(rec)
+    controls = tuple(c for c in rec.controls if c.check_sha == parts.check_sha and c.predicate in parts.predicates)
+    check = Check(parts.check_id, tuple(parts.predicates), rec.author, issuer_kind(rec), parts.check_sha,
                   int(rec.frozen_seq), controls, rec.certificate, rec.positive_seq)
-    return check, Receipt(rec.record_id, rec.check_id, rec.check_sha256, rec.artefact_sha256, rec.result, int(rec.seq))
+    return check, Receipt(rec.record_id, parts.check_id, parts.check_sha, parts.artefact, rec.result, int(rec.seq))
 
 
 @dataclass(frozen=True)
@@ -346,14 +435,16 @@ class Issued:
 
 
 def _merged(old: Check, new: Check) -> Check | None:
-    """One check from two records of the same check, or None when they disagree about what the check is."""
-    same = (old.author, old.kind, old.check_sha, old.frozen_seq, old.certificate, old.positive_seq) == (
-        new.author, new.kind, new.check_sha, new.frozen_seq, new.certificate, new.positive_seq)
+    """One check from two records of the same check (each a receipt of it, with the controls each saw), or None when
+    they disagree about what the check is, its predicates included: two records about other predicates are never one
+    check, so neither is given the other's result."""
+    same = (old.predicates, old.author, old.kind, old.check_sha, old.frozen_seq, old.certificate, old.positive_seq) == (
+        new.predicates, new.author, new.kind, new.check_sha, new.frozen_seq, new.certificate, new.positive_seq)
     if not same:
         return None
     controls = tuple({c.control_id: c for c in (*old.controls, *new.controls)}.values())
-    return Check(old.check_id, tuple(dict.fromkeys((*old.predicates, *new.predicates))), old.author, old.kind,
-                 old.check_sha, old.frozen_seq, controls, old.certificate, old.positive_seq)
+    return Check(old.check_id, old.predicates, old.author, old.kind, old.check_sha, old.frozen_seq, controls,
+                 old.certificate, old.positive_seq)
 
 
 def issue_records(facts: MissionFacts, artifact: Artifact, records: Iterable[SourceRecord], *,
@@ -361,12 +452,23 @@ def issue_records(facts: MissionFacts, artifact: Artifact, records: Iterable[Sou
     """The issuer's certificate for ``artifact`` from the records the mapping promotes. Each promoted control and
     receipt is written to a fresh ledger with the issuer's ``record``, and beside each receipt its provenance (the
     source kind, the environment, the model and the scope), which the issuer does not read; then ``issue`` decides.
-    ``extra`` is added to every provenance entry (what the caller ran, say)."""
+    ``extra`` is added to every provenance entry (what the caller ran, say).
+
+    One id, one record: a record id seen before is refused (``CONFLICTING``) when anything else of the record differs,
+    what it is about included (its binding, environment and scope), and is the same record when nothing does; a check
+    id is refused the same way when another record gives it another check."""
     refused: list[tuple[str, tuple[tuple[str, str], ...]]] = []
     checks: dict[str, Check] = {}
     receipts: dict[str, tuple[Receipt, SourceRecord]] = {}
     controls: dict[str, Control] = {}
+    seen: dict[str, SourceRecord] = {}
     for rec in records:
+        if rec.record_id in seen:
+            if seen[rec.record_id] != rec:
+                refused.append((rec.record_id, ((CONFLICTING, "another record with this id is about another part, "
+                                                              "or says another thing"),)))
+            continue
+        seen[rec.record_id] = rec
         try:
             check, receipt = promote(rec, artefact_sha256=artifact.sha256, standard_sha256=facts.standard_sha,
                                      predicates=facts.predicates)
@@ -377,11 +479,10 @@ def issue_records(facts: MissionFacts, artifact: Artifact, records: Iterable[Sou
             refused.append((rec.record_id, tuple((NO_ORDER, p) for p in exc.problems)))
             continue
         merged = check if check.check_id not in checks else _merged(checks[check.check_id], check)
-        if (merged is None or receipts.get(receipt.receipt_id, (receipt,))[0] != receipt
-                or any(controls.get(c.control_id, c) != c for c in check.controls)):
-            # one fact, one body: a check, receipt or control another record gives another body is kept out
-            refused.append((rec.record_id, ((CONFLICTING, "another record gives this check, receipt or control "
-                                                          "another body"),)))
+        if merged is None or any(controls.get(c.control_id, c) != c for c in check.controls):
+            # one fact, one body: a check or control another record gives another body is kept out
+            refused.append((rec.record_id, ((CONFLICTING, "another record gives this check or control another "
+                                                          "body"),)))
             continue
         checks[check.check_id] = merged
         receipts[receipt.receipt_id] = (receipt, rec)
@@ -391,13 +492,15 @@ def issue_records(facts: MissionFacts, artifact: Artifact, records: Iterable[Sou
     record(ledger, *sorted([*controls.values(), *(r for r, _ in receipts.values())],
                            key=lambda item: (item.seq, isinstance(item, Receipt))))
     for receipt, rec in receipts.values():
+        parts, _ = about(rec)
         ledger.append(PROVENANCE_KIND, receipt.receipt_id, {
-            "source_kind": rec.kind, "issuer_kind": checks[rec.check_id].kind, "environment_sha256":
-            rec.environment_sha256, "model_sha256": rec.model_sha256, "scope": rec.scope,
+            "source_kind": rec.kind, "issuer_kind": checks[receipt.check_id].kind, "environment_sha256":
+            parts.environment, "model_sha256": rec.model_sha256, "scope": parts.scope,
             **({"binding": rec.binding.to_dict()} if rec.binding else {}), **dict(extra or {})})
     certificate = issue(facts, artifact, list(checks.values()), [r for r, _ in receipts.values()],
                         decisions=decisions, ledger=ledger)
-    promoted = tuple((receipt.receipt_id, rec.kind, checks[rec.check_id].kind) for receipt, rec in receipts.values())
+    promoted = tuple((receipt.receipt_id, rec.kind, checks[receipt.check_id].kind)
+                     for receipt, rec in receipts.values())
     return Issued(certificate, ledger, tuple(refused), promoted)
 
 
@@ -429,8 +532,9 @@ def render_markdown() -> str:
     return f"{PAGE_HEAD}{head}\n{rule}\n" + "\n".join(rows) + f"\n\n## Refusal codes\n\n{codes}\n"
 
 
-__all__ = ["CODES", "COLUMNS", "CONFLICTING", "MAPPING", "NOT_PROMOTED", "NO_ARTEFACT", "NO_CHECK", "NO_CONTROL",
+__all__ = ["BINDING_ARTEFACT", "BINDING_CHECK", "BINDING_PREDICATE", "BINDING_STANDARD", "BINDING_UNREADABLE", "CODES",
+           "COLUMNS", "CONFLICTING", "MAPPING", "NOT_PROMOTED", "NO_ARTEFACT", "NO_CHECK", "NO_CONTROL",
            "NO_ENVIRONMENT", "NO_INDEPENDENCE", "NO_MODEL", "NO_ORDER", "NO_RESULT", "NO_SCOPE", "NO_STANDARD",
-           "OTHER_ARTEFACT", "OTHER_STANDARD", "PROVENANCE_KIND", "UNMAPPED", "CheckBinding", "Issued",
-           "PromotionRefused", "Row", "SourceRecord", "environment_sha256", "issue_records", "issuer_kind", "problems",
-           "promote", "render_markdown"]
+           "OTHER_ARTEFACT", "OTHER_STANDARD", "PROVENANCE_KIND", "UNMAPPED", "About", "CheckBinding", "Issued",
+           "PromotionRefused", "Row", "SourceRecord", "about", "bound_parts", "check_id_of", "environment_sha256",
+           "issue_records", "issuer_kind", "problems", "promote", "render_markdown"]

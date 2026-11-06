@@ -5,13 +5,18 @@ The binding structure, ``CheckBinding``, graduated into the product (``g6.eviden
 to its artefact, standard and check when the receipt becomes the issuer's; it is the same class here. The records this
 module writes are partial falsifiers, never independent support, and ECHA's records are not a source of evidence for
 the issuer (``view.source_record``).
+
+``about`` is where ECHA reads what one of its records is about: from its custody binding when ``source_ref`` holds one
+(the binding is the one source, by the mapping's own rule, ``g6.evidence.mapping.bound_parts``), else from the record's
+own fields. A record whose standard or predicate is not its binding's is named with the code for that part, and the
+claim rule counts it for nothing.
 """
 from __future__ import annotations
 
 import json
 import math
 
-from g6.evidence.mapping import CheckBinding
+from g6.evidence.mapping import About, CheckBinding, bound_parts
 
 from .records import EvidenceRecord, canonical, digest
 
@@ -33,6 +38,17 @@ def binding_of(rec: EvidenceRecord) -> CheckBinding | None:
         return CheckBinding(**found)
     except (TypeError, ValueError):
         return None
+
+
+def about(rec: EvidenceRecord) -> tuple[About, tuple[tuple[str, str], ...]]:
+    """What ``rec`` is about, and each of its fields that disagrees with its custody binding, as (code, why). With no
+    binding, its own standard and predicate, and no artefact ("")."""
+    binding = binding_of(rec)
+    if binding is None:
+        return About(artefact="", standard=rec.standard_sha256, predicates=(rec.predicate_id,), request="", task="",
+                     fixture="", check_id="", check_sha="", environment="", scope=rec.scope), ()
+    parts, found = bound_parts(binding, scope=rec.scope, standard=rec.standard_sha256, predicates=(rec.predicate_id,))
+    return parts, found
 
 
 def _pairs(pairs):

@@ -20,6 +20,11 @@ is not counted, and ``not_counted`` says so, as it says for every requirement th
 
 The review's own ``status`` and ``outcome`` keep their meaning; ``assessment.requirement_evidence`` adds the issuer's
 statement for each requirement beside them, with what the mapping refused and why. Nothing here decides anything.
+
+Why the issuer does not count a requirement is given as its own codes (``codes``), read from its structured fields:
+a caveat's receipts' own results, its grounding rule's reasons for each check (``grounding``) and the records its
+ledger did not hold; never by reading the text of its gaps. A review with an integrity problem gives the issuer
+nothing to count (``integrity``): the runs the review does not believe are no evidence for it either.
 """
 from __future__ import annotations
 
@@ -27,8 +32,16 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from g6.core.ledger import digest
-from g6.evidence.certificate import Artifact, CertificateRefused, Control, MissionFacts
-from g6.evidence.mapping import SourceRecord, environment_sha256, issue_records
+from g6.evidence.certificate import (
+    Artifact,
+    Certificate,
+    CertificateRefused,
+    Control,
+    MissionFacts,
+    PredicateStatement,
+    grounding,
+)
+from g6.evidence.mapping import SourceRecord, about, environment_sha256, issue_records
 from g6.harness.patch_review import AT_BASE   # the review's run of the stated checks against the base commit's code
 
 #: Who the review names as the artefact's producer, and as the author of a check the patch did not write.
@@ -39,6 +52,11 @@ _RESULT = {"passed": "pass", "failed": "fail"}
 #: Why a requirement to keep behaviour is never counted in a review (the mapping table's ``stated`` row).
 KEEPS = ("it keeps behaviour: the base commit's code is its known-good reference, not a control, and no run seeded a "
          "defect for its checks to catch, so none was shown able to fail")
+#: Why nothing is counted when the review found an integrity problem (its codes follow).
+INTEGRITY = "the review found an integrity problem, so none of its runs is read as evidence"
+#: The codes ``codes`` gives besides the grounding rule's: a caveat check's failure or result that is none, and a record
+#: the ledger did not hold.
+ADVISORY, UNKNOWN, NOT_IN_LEDGER = "advisory_check_failed", "check_result_unknown", "not_in_ledger"
 
 
 def standard_sha256(evaluated: Sequence[Mapping[str, Any]]) -> str:
@@ -136,42 +154,73 @@ def _not_counted(req: Mapping[str, Any], at_base: Mapping[str, str], again: Mapp
     return ""
 
 
+def codes(certificate: Certificate, statement: PredicateStatement, artifact: Artifact) -> list[str]:
+    """Why the issuer does not count ``statement``'s predicate, as the issuer's own codes read from its structured
+    fields, never from the text of its gap: for each check it keeps as a caveat, its receipts' own results (a failure,
+    ``ADVISORY``; a result that is none, ``UNKNOWN``); then each of the predicate's checks' reasons under the issuer's
+    grounding rule (``grounding``); then ``NOT_IN_LEDGER`` when a record its support would rest on is not in the
+    ledger. Empty when the predicate is counted, or refuted (the refutation says why)."""
+    if statement.verified or statement.refute:
+        return []
+    mine = [check for check in certificate.checks if statement.predicate in check.predicates]
+    results: dict[str, set[str]] = {}
+    for receipt in certificate.receipts:
+        results.setdefault(receipt.check_id, set()).add(receipt.result)
+    found: list[str] = []
+    for check_id in statement.caveats:
+        found += [code for result, code in (("fail", ADVISORY), ("unknown", UNKNOWN))
+                  if result in results.get(check_id, set())]
+    for check in mine:
+        found += grounding(check, artifact, statement.predicate)
+    held = {("receipt", r.receipt_id) for r in certificate.receipts if any(r.check_id == c.check_id for c in mine)}
+    held |= {("control", k.control_id) for c in mine for k in c.controls if k.predicate == statement.predicate}
+    if held & set(certificate.unresolved):
+        found.append(NOT_IN_LEDGER)
+    return list(dict.fromkeys(found))
+
+
 def assess(evaluated: Sequence[Mapping[str, Any]], runs: Sequence[Mapping[str, Any]], *, artifact: str,
            base_commit: str, check_sha: Mapping[str, str], written: Callable[[str], bool],
-           environment: Mapping[str, Any], again: Mapping[str, Any] | None = None) -> dict:
+           environment: Mapping[str, Any], again: Mapping[str, Any] | None = None,
+           integrity: Sequence[str] = ()) -> dict:
     """``assessment.requirement_evidence``: the issuer's certificate for the review, each requirement's statement from
-    it with the issuer kinds of its checks and, when it is not counted, why (``not_counted``), each record the mapping
-    refused with its codes, and the run again (``again``). Inputs the issuer refuses as a whole are said so, with its
-    problems, and nothing is counted; the review's own fields stand."""
+    it with the issuer kinds of its checks and, when it is not counted, why (``not_counted`` in G6's words from what the
+    review ran, and ``codes``, the issuer's own), each record the mapping refused with its codes, and the run again
+    (``again``). Inputs the issuer refuses as a whole are said so, with its problems, and nothing is counted; the
+    review's own fields stand. ``integrity``: the codes of the review's integrity problems; with any, no run is read as
+    evidence, so no record is made, and each requirement says why."""
     again = dict(again or {})
     try:
         facts, artefact, records = records_for(evaluated, runs, artifact=artifact, base_commit=base_commit,
                                                check_sha=check_sha, written=written, environment=environment,
                                                again=again)
+        if integrity:   # the review's own rule: a run it does not believe is no evidence
+            records = []
         issued = issue_records(facts, artefact, records)
     except (CertificateRefused, ValueError, TypeError) as exc:   # CertificateRefused is a ValueError: named for readers
         return {"authority": "g6.evidence.certificate", "refused_by_issuer": str(exc), "requirements": [],
                 "refused": []}
-    def check_of(rid: str) -> str:
-        return rid.removeprefix("stated-run:").removeprefix("again:")
-
-    kinds = {check_of(rid): kind for rid, _source, kind in issued.promoted}
-    refused = [{"check": check_of(rid), "record": rid, "codes": [{"code": code, "missing": why} for code, why in codes]}
-               for rid, codes in issued.refused]
+    certificate = issued.certificate
+    kinds = {check.check_id: check.kind for check in certificate.checks}
+    check_of = {rec.record_id: about(rec)[0].check_id for rec in records}
+    refused = [{"check": check_of.get(rid, ""), "record": rid,
+                "codes": [{"code": code, "missing": why} for code, why in found]} for rid, found in issued.refused]
     at_base = _at_base(runs)
     requirements = []
-    for statement, req in zip(issued.certificate.predicates, evaluated, strict=True):
+    for statement, req in zip(certificate.predicates, evaluated, strict=True):
         checks = [c["id"] for c in req["checks"]]
         found = {"requirement": statement.predicate, **statement.as_dict(), "checked": statement.verified,
                  "kinds": {check: kinds.get(check, "") for check in checks},
-                 "gap": dict(issued.certificate.gaps).get(f"predicate:{statement.predicate}", "")}
+                 "gap": dict(certificate.gaps).get(f"predicate:{statement.predicate}", ""),
+                 "codes": codes(certificate, statement, artefact)}
         if not statement.verified and not statement.refute:
-            found["not_counted"] = _not_counted(req, at_base, again, check_sha)
+            found["not_counted"] = (f"{INTEGRITY} ({', '.join(integrity)})" if integrity else
+                                    _not_counted(req, at_base, again, check_sha))
         requirements.append(found)
-    return {"authority": "g6.evidence.certificate", "state": issued.certificate.state,
-            "certificate": issued.certificate.as_dict(), "requirements": requirements, "refused": refused,
-            **({"again": again} if again else {})}
+    return {"authority": "g6.evidence.certificate", "state": certificate.state,
+            "certificate": certificate.as_dict(), "requirements": requirements, "refused": refused,
+            **({"again": again} if again else {}), **({"integrity": list(integrity)} if integrity else {})}
 
 
-__all__ = ["AGAIN", "ARTEFACT", "AT_BASE", "BASE_RUN", "FROZEN", "KEEPS", "PATCH_AUTHOR", "RECEIPT", "REPOSITORY",
-           "assess", "records_for", "standard_sha256"]
+__all__ = ["ADVISORY", "AGAIN", "ARTEFACT", "AT_BASE", "BASE_RUN", "FROZEN", "INTEGRITY", "KEEPS", "NOT_IN_LEDGER",
+           "PATCH_AUTHOR", "RECEIPT", "REPOSITORY", "UNKNOWN", "assess", "codes", "records_for", "standard_sha256"]

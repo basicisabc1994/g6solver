@@ -26,7 +26,7 @@ from g6.core.ledger import ChainLedger
 from g6.core.ledger import digest as _digest
 from g6.evidence.mapping import SourceRecord
 
-from .custody import binding_of
+from .custody import about, binding_of
 from .records import EvidenceRecord
 
 #: The issuer's statement fields the view copies, unchanged, as each predicate's status.
@@ -50,6 +50,19 @@ def _provenance(ledger: ChainLedger | None, receipt_id: str) -> dict | None:
         return dict(ledger.get("provenance", receipt_id))
     except (KeyError, ValueError):
         return None
+
+
+def _role(result: object, check_id: str, status: Mapping[str, Any]) -> str:
+    """One receipt's role, from its own result: a pass of a check the issuer counts in support supports; a failure of a
+    check it counts against refutes, and of one it keeps as a caveat is a caveat, as is a result that is none; anything
+    else is not counted. A check's other receipts never lend it theirs."""
+    if result == "pass" and check_id in status["supported_by"]:
+        return "supports"
+    if result == "fail" and check_id in status["refuted_by"]:
+        return "refutes"
+    if result in ("fail", "unknown") and check_id in status["caveats"]:
+        return "caveat"
+    return "not counted"
 
 
 def certificate_view(body: Mapping[str, Any], *, artifact_sha256: str, ledger: ChainLedger | None = None) -> dict:
@@ -80,8 +93,7 @@ def _view(body: Mapping[str, Any], artifact_sha256: str, ledger: ChainLedger | N
             if name not in check.get("predicates", ()):
                 continue
             cid = receipt["check_id"]
-            role = ("supports" if cid in status["supported_by"] else "refutes" if cid in status["refuted_by"] else
-                    "caveat" if cid in status["caveats"] else "not counted")
+            role = _role(receipt["result"], cid, status)
             evidence.append({
                 "receipt_id": receipt["receipt_id"], "check_id": cid, "kind": check.get("kind"),
                 "result": receipt["result"], "role": role,
@@ -100,16 +112,18 @@ def _view(body: Mapping[str, Any], artifact_sha256: str, ledger: ChainLedger | N
 
 
 def source_record(rec: EvidenceRecord) -> SourceRecord:
-    """An ECHA record as the mapping table reads it, with only the parts ECHA holds (the module docstring)."""
+    """An ECHA record as the mapping table reads it, with only the parts ECHA holds (the module docstring): what it is
+    about is read through ``custody.about``, so a bound record's parts are its binding's and never its own fields."""
+    parts, _ = about(rec)
     binding = binding_of(rec)
     formal = rec.oracle_category == "FORMAL_CHECK"
     return SourceRecord(
-        kind=rec.oracle_category, record_id=rec.evidence_id, predicates=(rec.predicate_id,),
+        kind=rec.oracle_category, record_id=rec.evidence_id, predicates=parts.predicates,
         result=rec.result if rec.result in ("pass", "fail", "unknown") else "unknown",
-        artefact_sha256=binding.artifact_sha256 if binding else "", producer="", artefact_seq=None,
-        standard_sha256=rec.standard_sha256, check_id=rec.evidence_id,
-        check_sha256=binding.evaluator_sha256 if binding else "", author="", frozen_seq=None, environment_sha256="",
-        seq=None, scope=rec.scope, certificate=rec.fixture_version if formal else "", binding=binding)
+        artefact_sha256=parts.artefact, producer="", artefact_seq=None, standard_sha256=parts.standard,
+        check_id=parts.check_id or rec.evidence_id, check_sha256=parts.check_sha, author="", frozen_seq=None,
+        environment_sha256="", seq=None, scope=parts.scope, certificate=rec.fixture_version if formal else "",
+        binding=binding)
 
 
 __all__ = ["STATUS_FIELDS", "certificate_view", "source_record"]

@@ -19,6 +19,11 @@ G6 0.3 (slice 2) closes the two places where this rule differed from the issuer'
   that never ran; a claim that names an artefact counts only records bound to it. A claim and records that name no
   bytes are read as declared (``subject_bound`` false).
 
+Every part a record is about (its artefact, standard and predicate) is read through ``custody.about``: from its
+custody binding when it has one. A record whose own standard or predicate is not its binding's counts for nothing,
+and the reason names the part (``G6_E_EVIDENCE_BINDING_STANDARD``, ``G6_E_EVIDENCE_BINDING_PREDICATE``), so a bound
+receipt cannot be retargeted to another standard or predicate by its fields; its control likewise.
+
 This rule is research analysis, never a requirement's status: the issuer decides that, and ECHA shows it as it is
 (``view.certificate_view``).
 """
@@ -27,7 +32,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .custody import binding_of
+from .custody import about
 from .records import ClaimRecord, EvidenceRecord
 
 EXECUTABLE = ("FORMAL_CHECK", "INDEPENDENT_EXECUTABLE", "PARTIAL_FALSIFIER")
@@ -42,16 +47,18 @@ def subject_artefact(claim: ClaimRecord) -> str | None:
 
 def _control_holds(ledger: Any, rec: EvidenceRecord, contaminated: set) -> bool:
     """Whether the check's negative control is in the ledger, is one, failed on its injected defect, concerns the same
-    standard, and was not taken against a compromised fixture."""
+    standard and predicate as the check (each read through its custody binding, which it agrees with), and was not
+    taken against a compromised fixture."""
     if not rec.negative_control_ref:
         return False
     try:
         control = EvidenceRecord.from_dict(ledger.get("evidence", rec.negative_control_ref))
     except (KeyError, ValueError, TypeError):
         return False
-    return (control.purpose == "negative_control" and control.result == "fail"
-            and control.standard_sha256 == rec.standard_sha256 and control.fixture_version not in contaminated
-            and control.predicate_id == rec.predicate_id and control.oracle_version == rec.oracle_version
+    (of_control, control_refused), (of_check, _) = about(control), about(rec)
+    return (not control_refused and control.purpose == "negative_control" and control.result == "fail"
+            and of_control.standard == of_check.standard and control.fixture_version not in contaminated
+            and of_control.predicates == of_check.predicates and control.oracle_version == rec.oracle_version
             and control.oracle_category in EXECUTABLE)
 
 
@@ -72,17 +79,20 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
         except (KeyError, ValueError, TypeError):
             _once(reasons, "evidence_not_traceable")
             continue
-        binding = binding_of(rec)
-        bound = binding.artifact_sha256 if binding else None
-        if bound is not None and bound != subject:   # evidence on other bytes is never this subject's
+        parts, disagree = about(rec)
+        bound = parts.artefact or None
+        if disagree:   # a field that is not its binding's: the record is refused, with the code naming the part
+            for code, _why in disagree:
+                _once(reasons, code)
+        elif bound is not None and bound != subject:   # evidence on other bytes is never this subject's
             _once(reasons, "evidence_for_another_subject")
         elif subject is not None and bound is None:   # a claim about bytes counts only evidence taken on them
             _once(reasons, "evidence_not_bound_to_subject")
         elif rec.purpose != "check":
             _once(reasons, "cited_record_is_a_control_not_a_check")
-        elif rec.standard_sha256 != claim.standard_sha256:
+        elif parts.standard != claim.standard_sha256:
             _once(reasons, "evidence_for_another_standard")
-        elif rec.predicate_id != claim.predicate_id:
+        elif parts.predicates != (claim.predicate_id,):
             _once(reasons, "evidence_for_another_predicate")
         elif rec.fixture_version in contaminated:
             _once(reasons, "contaminated_fixture")
@@ -144,7 +154,7 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
 
     limits: list[str] = list(claim.known_limitations)
     for rec in active:
-        for item in (*rec.known_limitations, f"covers only: {rec.scope}"):
+        for item in (*rec.known_limitations, f"covers only: {about(rec)[0].scope}"):
             _once(limits, item)
     if any(r.oracle_category == "FORMAL_CHECK" for r in passing):
         _once(limits, "a proof holds relative to its formalisation, which may not capture the intended requirement")

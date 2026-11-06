@@ -20,6 +20,7 @@ from typing import Any
 
 from g6.core.ledger import ChainLedger, LedgerCorrupt, LedgerError
 
+from .custody import about
 from .episodes import EpisodeRecord, verify_episode_body
 from .records import UNSEALED, ClaimRecord, EvidenceRecord, StandardRef
 
@@ -40,16 +41,18 @@ def _semantic(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], 
             StandardRef.from_dict(body)
         elif kind == "evidence":
             rec = EvidenceRecord.from_dict(body)
-            if rec.standard_sha256 not in standards:
+            parts = about(rec)[0]   # what it is about, read through its custody binding when it has one
+            if parts.standard not in standards:
                 found.append(f"evidence {ident}: no standard with this standard_sha256 is in the ledger")
             if rec.fixture_version != UNSEALED and rec.fixture_version not in vaults:
                 found.append(f"evidence {ident}: fixture_version names no sealed vault in the ledger (seal the fixture "
                              f"first, or say {UNSEALED})")
             if rec.negative_control_ref:
                 control = seen.get(("evidence", rec.negative_control_ref))
+                of_control = about(EvidenceRecord.from_dict(control))[0] if control is not None else None
                 if (control is None or control.get("purpose") != "negative_control" or control.get("result") != "fail"
-                        or control.get("standard_sha256") != rec.standard_sha256
-                        or control.get("predicate_id") != rec.predicate_id
+                        or of_control.standard != parts.standard
+                        or of_control.predicates != parts.predicates
                         or control.get("oracle_version") != rec.oracle_version
                         or control.get("oracle_category") in NOT_A_CONTROL):
                     found.append(f"evidence {ident}: negative_control_ref {rec.negative_control_ref!r} must name an "
