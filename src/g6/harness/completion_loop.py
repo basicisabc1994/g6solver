@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import bisect
 import difflib
+import hashlib
 import json
 import os
 import re
@@ -62,7 +63,7 @@ from pathlib import Path
 from typing import Any
 
 from g6.cegis import InputDomain, SearchResult, cegis
-from g6.context.redact import MASK, mask_paths, scrub, secret_spans
+from g6.context.redact import MASK, mask_paths, secret_spans
 from g6.core import host_models, keys
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
@@ -678,7 +679,12 @@ def _modes(one: repo_tests.FileRead) -> list[str]:
         return [f"deleted file mode {old}\n"]
     if old and now and old != now:
         return [f"old mode {old}\n", f"new mode {now}\n"]
-    return [f"\\ G6: {one.rel} keeps mode {old}\n"] if old and old == now and old != "100644" else []
+    return [f"\\ G6: {_name(one.rel)} keeps mode {old}\n"] if old and old == now and old != "100644" else []
+
+
+def _name(rel: str) -> str:
+    """A path as a reader is shown it: its bytes, as git gave them, through the one decoder (``repo_tests._decoded``)."""
+    return repo_tests._decoded(rel.encode("utf-8", "surrogateescape"))
 
 
 def _shown(change: repo_tests.Change, read: repo_tests.DiffRead) -> Shown:
@@ -698,19 +704,21 @@ def _shown(change: repo_tests.Change, read: repo_tests.DiffRead) -> Shown:
 
     def own(line: str) -> None:
         plain.append(line)
-        masked.append(scrub(line))
+        masked.append(_seen(line).masked())
 
     for n, one in enumerate(read.files):
+        name = _name(one.rel)
         for line in _modes(one):
             own(line)
         if one.unread:
-            own(f"--- a/{one.rel}\n")
-            own(f"+++ b/{one.rel}\n")
-            own(f"\\ G6: {one.rel} leads out of the repository, or lies below a link that does, so G6 did not read it\n")
+            own(f"--- a/{name}\n")
+            own(f"+++ b/{name}\n")
+            own(f"\\ G6: {name} leads out of the repository, or lies below a link that does, so G6 did not read it\n")
             continue
-        old = None if one.added or not one.base else repo_tests.blob_text(change.repo, one.base)
-        own(f"--- {'/dev/null' if old is None else 'a/' + one.rel}\n")
-        own(f"+++ {'/dev/null' if one.new is None else 'b/' + one.rel}\n")
+        raw = None if one.added or not one.base else repo_tests.blob_bytes(change.repo, one.base)
+        old = None if raw is None else repo_tests._decoded(raw)
+        own(f"--- {'/dev/null' if old is None else 'a/' + name}\n")
+        own(f"+++ {'/dev/null' if one.new is None else 'b/' + name}\n")
         sides = [_seen(old), _seen(one.new, one.limit)]
         alike = {words: [*sides[0].alike.get(words, ()), *sides[1].alike.get(words, ())]
                  for words in {*sides[0].alike, *sides[1].alike}}
@@ -742,11 +750,13 @@ def _shown(change: repo_tests.Change, read: repo_tests.DiffRead) -> Shown:
                         line, line_masked = shown_line(mark, sides[side].rows[i], cuts)
                         plain.append(line)
                         masked.append(line_masked)
+        if raw is not None and old.encode("utf-8") != raw:      # bytes the one decoder could not show as they are
+            own(f"\\ G6: {name} at the base shows here only in part; its bytes have SHA-256 {hashlib.sha256(raw).hexdigest()}\n")
         if one.note:
             own(one.note)
         if old is not None:
-            parents.append(f"parent/{one.rel}:\n" + "".join(sides[0].rows))
-            masked_parents.append(scrub(f"parent/{one.rel}:\n") + "".join(
+            parents.append(f"parent/{name}:\n" + "".join(sides[0].rows))
+            masked_parents.append(_seen(f"parent/{name}:\n").masked() + "".join(
                 shown_line("", row, cuts_of(row, cuts))[1].replace("\n\\ No newline at end of file\n", "")
                 for row, cuts in zip(sides[0].rows, sides[0].cuts)))
     hidden = any(len(lines) >= 2 for lines in covers.values())
@@ -765,7 +775,7 @@ def _masked_pack(change: repo_tests.Change, shown: Shown, task: str, proof: str)
             lines[number] = lines.get(number, 0) + 1
     hidden = shown.hidden or any(count >= 2 for count in lines.values())
     return _cut(_sent_head(shown.masked, task, proof), list(shown.masked_parents), _read_whole(shown.masked, task),
-                scrub), hidden
+                lambda part: _seen(part).masked()), hidden
 
 
 def critic_file(n: int) -> str:
@@ -817,7 +827,7 @@ def _unrun(got: ProbeRun) -> str:
     the reviewer, who is told nothing else of this machine, so it leaves with no secret and no home folder in it."""
     said = [text for case, text in got.texts.items() if got.results.get(case, "unknown") == "unknown"]
     text = "\n".join(part for part in (got.tail, *said) if part)
-    return mask_paths(scrub(text))[-MAX_CASE_CHARS:] or "no case of it ran to a result"
+    return mask_paths(_seen(text).masked())[-MAX_CASE_CHARS:] or "no case of it ran to a result"
 
 
 def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shipped: Harness, session: Path, reviews: list[dict],

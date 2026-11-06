@@ -296,7 +296,7 @@ def _files(rig, monkeypatch, base: dict[str, str], now: dict[str, str], renderin
     monkeypatch.setattr(repo_tests, "_private", lambda *args: [(listed + b"\0" if listed else b"") + rendering.encode(),
                                                                "".join(f"{rel}\0" for rel in rels if rel not in base).encode()])
     monkeypatch.setattr(repo_tests, "read_at", lambda repo, commit, rel, **kwargs: base.get(rel))
-    monkeypatch.setattr(repo_tests, "blob_text", lambda repo, name, **kwargs: {blob_id(rel): text for rel, text in base.items()}[name])
+    monkeypatch.setattr(repo_tests, "blob_bytes", lambda repo, name, **kwargs: {blob_id(rel): text.encode("utf-8") for rel, text in base.items()}[name])
     return repo_tests.Change(rig.repo, rig.base, rig.base, rig.base, rels, {}, {}, rels, ())
 
 
@@ -313,7 +313,7 @@ def test_a_secret_the_diffs_line_marks_part_from_its_name_never_reaches_the_revi
 
 def test_a_secret_split_over_a_tracked_files_hunk_never_reaches_the_reviewer(rig, monkeypatch):
     old, new = "made-up-old-value-0000", "made-up-new-value-1234"
-    patch = (f'--- a/conf.py\n+++ b/conf.py\n@@ -1,3 +1,3 @@\n config = {{\n     "api_key":\n-        "{old}",\n'
+    patch = (f'diff --git a/conf.py b/conf.py\n--- a/conf.py\n+++ b/conf.py\n@@ -1,3 +1,3 @@\n config = {{\n     "api_key":\n-        "{old}",\n'
              f'+        "{new}",\n')
     change = _files(rig, monkeypatch, {"conf.py": f'config = {{\n    "api_key":\n        "{old}",\n'},
                     {"conf.py": f'config = {{\n    "api_key":\n        "{new}",\n'}, patch)
@@ -324,7 +324,7 @@ def test_a_secret_split_over_a_tracked_files_hunk_never_reaches_the_reviewer(rig
 def test_a_value_whose_name_the_hunk_leaves_out_is_found_in_the_parent_file(rig, monkeypatch):
     secret = "made-up-context-value-0123"
     parent = f'cfg = {{\n    "token":\n\n\n        "{secret}",\n    "a": 1,\n    "b": 2,\n    "c": 3,\n}}\n'
-    patch = (f'--- a/mod.py\n+++ b/mod.py\n@@ -5,4 +5,4 @@\n         "{secret}",\n     "a": 1,\n     "b": 2,\n'
+    patch = (f'diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n@@ -5,4 +5,4 @@\n         "{secret}",\n     "a": 1,\n     "b": 2,\n'
              '-    "c": 3,\n+    "c": 4,\n')
     change = _files(rig, monkeypatch, {"mod.py": parent}, {"mod.py": parent.replace('"c": 3', '"c": 4')}, patch)
     _sent(rig, repo_tests.diff_read(change), change=change)

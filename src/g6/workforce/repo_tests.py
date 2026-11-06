@@ -835,18 +835,21 @@ def _listing(output: bytes, length: int = 40) -> tuple[list[tuple[str, str, str,
             at = end + 1
     except (ValueError, UnicodeDecodeError) as exc:
         raise RepoRefused("G6_E_GIT_COMMAND_FAILED", f"git diff gave a listing G6 cannot read ({exc})"[:200]) from exc
-    patch = output[at + 1:] if found and output.startswith(b"\0", at) else output[at:]
-    if patch.strip() and not found:      # a patch whose files git did not list: what it holds cannot all be shown
-        raise RepoRefused("G6_E_GIT_COMMAND_FAILED", "git diff gave a patch with no listing of its files")
+    if found and not output.startswith(b"\0", at):    # each record is exactly one path; then one NUL ends the listing
+        raise RepoRefused("G6_E_GIT_COMMAND_FAILED", "git diff gave a listing G6 cannot read (a record with more than one path)")
+    patch = output[at + 1:] if found else output[at:]
+    if patch and (not found or not patch.startswith(b"diff --git ")):    # a patch its listing does not account for
+        raise RepoRefused("G6_E_GIT_COMMAND_FAILED", "git diff gave a patch that its listing does not account for")
     return found, patch
 
 
-def blob_text(repo: Path, name: str, *, timeout_s: float = GIT_TIMEOUT_S) -> str:
-    """The text of the blob git names ``name``, read by git from its own store by that name (``cat-file``): no path is looked
-    up and no link followed, so a name git listed is read as git keeps it. Its text is as git holds it (``_decoded``)."""
+def blob_bytes(repo: Path, name: str, *, timeout_s: float = GIT_TIMEOUT_S) -> bytes:
+    """The bytes of the blob git names ``name``, read by git from its own store by that name (``cat-file``): no path is
+    looked up and no link followed, so a name git listed is read as git keeps it. A reader is shown them through
+    ``_decoded``, the one decoder."""
     if not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", name):
         raise RepoRefused("G6_E_GIT_COMMAND_FAILED", "an object name that is not git's")
-    return _decoded(_git(repo, "cat-file", "blob", name, timeout_s=timeout_s))
+    return _git(repo, "cat-file", "blob", name, timeout_s=timeout_s)
 
 
 def _where(fd: int) -> Path:
@@ -926,8 +929,8 @@ def diff_read(change: Change) -> DiffRead:
         if _leads_out(change.repo, rel):
             return FileRead(rel, None, added=added, unread=True, modes=modes), None, False
         if path.is_symlink():     # read as the path it names: the link is never followed
-            named = os.readlink(path)
-            return FileRead(rel, named, added=added, modes=modes), os.fsencode(named), True
+            named = os.fsencode(os.readlink(path))      # its bytes, shown through the one decoder as a file's are
+            return FileRead(rel, _decoded(named), added=added, modes=modes), named, True
         if not path.is_file():
             return FileRead(rel, None, added=added, modes=modes), None, False
         raw = _read_inside(root, path)
@@ -938,9 +941,14 @@ def diff_read(change: Change) -> DiffRead:
     def named(rel: str, raw: bytes) -> str:
         return f"\\ G6: the link {rel} as it stands names a path with SHA-256 {hashlib.sha256(raw).hexdigest()}\n"
 
+    def unread(rel: str) -> str:      # a file G6 did not read is still named in what the patch is known by
+        return f"\\ G6: {rel} is not read, as it leads out of the repository or lies below a link that does\n"
+
     for rel, old, now, before in sorted(tracked):
         one, raw, link = found(rel, False, (old, now))
         one = replace(one, base=before)
+        if one.unread:
+            text += unread(rel)
         if raw is not None:
             text += named(rel, raw) if link else \
                 f"\\ G6: the bytes of {rel} as they stand have SHA-256 {hashlib.sha256(raw).hexdigest()}\n"
@@ -949,6 +957,7 @@ def diff_read(change: Change) -> DiffRead:
     for rel in sorted(new & set(change.files)):
         one, raw, link = found(rel, True, ("", LINK_MODE))
         if raw is None:
+            text += unread(rel) if one.unread else ""
             files.append(replace(one, modes=("", "")))
             continue
         shown = _cut_lines(_normal(one.new), DIFF_FILE_CHARS)
