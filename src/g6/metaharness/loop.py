@@ -796,9 +796,9 @@ class _Counted:
 
         def finish(latched: bool) -> None:
             ended.set()
-            self.requests.settle(around, noted)   # what its children imported, once, into the record
             _ACTIVE.reset(active)
             _AROUND.reset(lineage)
+            self.requests.settle(around, noted)   # what its children imported, once, into the record
             self.requests.release(call.owner)
             if latched:                           # what the tick latched decides, unless the process is going down
                 self.requests.recheck(call.generation)
