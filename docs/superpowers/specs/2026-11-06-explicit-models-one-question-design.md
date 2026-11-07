@@ -1377,65 +1377,154 @@ with its own review loop.
 
 ## 17. Approved 2026-11-08: the north star for the user interface
 
-**Status.** Proposed by the owner on 2026-11-08 as a north star for the interface, separate from the technical design. The
-owner's specification (G6-UX-VALUE-001) is read here against the frozen design. The owner approved 17.4's scope on
-2026-11-08, with the interface ruling in 17.3. Codex's challenge is folded in as corrections.
+**Status.** The owner approved this north star and 17.4's scope on 2026-11-08, with the interface ruling in 17.3. Codex's
+eight challenges are folded in as corrections within that scope (Appendix E). Sections 1 to 16 stay frozen. The reference
+G6-UX-VALUE-001 and its full acceptance-test definitions are not present in this checkout; their names alone are not tests.
 
-**The north star (owner).** G6 brings the most end-to-end value to the person by studying their real workflow, finding the
-binding constraint on the value they want, and suggesting and helping deliver its removal. Its worth is what it lets the
+**The north star (owner).** G6 studies the person's real workflow to help remove the constraint on the value they want.
+It proposes a constraint hypothesis, suggests and helps make a bounded change, and measures the result. It never claims
+to have found the binding constraint. This is a design objective, not an established result. Its worth is what it lets the
 person accomplish, with the least burden on them. A person who needs G6 less afterwards counts as success.
 
 ### 17.1 What it means for every feature: the permanent gate
 
 Every slice brief and every 0.3.0 feature answers the owner's eight questions before it is built:
 1. which outcome it improves;
-2. which real workflow constraint it addresses;
-3. what evidence shows that constraint exists;
+2. which workflow constraint hypothesis it addresses;
+3. what observations support it, and what could count against it;
 4. why it is better than a simpler alternative;
 5. what effort, risk, delay, cost or uncertainty it removes;
 6. how its working is checked;
 7. how end-to-end value is measured;
 8. whether it adds a constraint of its own.
 
-A feature that cannot answer them is not prioritised for being impressive.
+A feature that cannot answer them is not prioritised for being impressive. These are the builder's questions, not eight
+questions to the person. The brief records unknown answers as hypotheses with planned checks. Required consent and
+correctness work names the prohibited outcome it prevents. This gate adds a rationale to frozen slices; it cannot remove,
+reorder or delay them in favour of section 17. Section 7's question slice still comes first.
 
 ### 17.2 The loop, mapped onto what exists
 
-The owner's loop is understand → observe → model → diagnose → recommend → implement → check → measure → learn, applied with
-the Theory of Constraints. Each stage maps onto existing code:
+The owner's loop is understand → observe → model → diagnose → recommend → implement → check → measure → learn, guided by
+the Theory of Constraints. It can reuse the following primitives. Existing behaviour, planned dependencies and new work
+are distinct; this is not a ready workflow analyser.
 
-| Stage | Existing piece | New |
+| Stage | Existing behaviour and limits | Dependencies and new work |
 |---|---|---|
-| Understand | `g6_premortem` and `intent_engine`; A's question (3.2); the Context Engine (12) for authorised context | the outcome is stated before the task |
-| Observe and model | G6's own task records: review rounds, failure rows, repair loops, question records, timings | a lightweight per-task workflow record built from them, with observed and inferred steps kept apart |
-| Diagnose | G6's constraint machinery for its own loop (`identify_constraint`, `tick_rca`, the reflexive bottleneck step), pointed at the person's records | bottleneck hypotheses, each with its evidence, counterevidence, expected end-to-end effect and a cheap test; a hypothesis is never shown as fact |
-| Recommend | the report (`harness/patch_report.py`) and section 9's repair rule | at most three ranked suggestions, which may be a step outside G6 or "do nothing" |
-| Implement and check | section 9 (automatic when the fix is clear), the client's dialog, the issuer (3.1) | technical correctness and user value are assessed apart; "checked" never means the person's outcome improved |
-| Measure and learn | section 5's rows; B (3.6) | time to a checked outcome, rework cycles, the person's effort, and one optional question ("did this make your work easier?") outside A's budget, rate-limited |
+| Understand | `g6_premortem` and `intent_engine` propose intent and questions, not confirmed outcomes | Derive the outcome from the supplied task or confirmed intent; otherwise record unknown. A (3.2) and authorised Context Engine inputs (12) are frozen dependencies, not already available workflow telemetry. No separate workflow interview. |
+| Observe and model | `src/g6/harness/completion_loop.py` retains state, review rounds, patches, reports and failure rows for invoked loops. `src/g6/mcp/review_reply.py` saves standalone assessments, unless saving fails; job handles in `src/g6/metaharness/jobs.py` do not survive restart | Explicit adapters and a versioned per-task workflow store. Claude hook coverage depends on installation; other clients need the explicit review tool path. Work outside those paths is unknown. A's persistent answer events attach only after its store is integrated. |
+| Diagnose | `identify_constraint` in `src/g6/self_maintenance/constraints.py` accepts independently measured, comparable serial-stage capacities. `src/g6/metaharness/tick_rca.py` and `src/g6/metaharness/reflex.py` read tuning ticks and their own funnel | A coding-workflow adapter with declared input semantics and counterevidence rules is new work. The two tick readers supply design patterns, not rules that can read person-task rows unchanged. The capacity calculation is not causal identification. |
+| Recommend | `src/g6/harness/patch_report.py` renders findings; `src/g6/harness/patch_review.py` assembles next actions in a fixed sequence | A fixed suggestion policy, stable intervention identities, durable decisions and suppression at rendering (17.3). No model-invented utility score. |
+| Implement and check | Section 9's repair rule, the issuer (3.1) and section 11's state bindings govern the technical result | Bind the proposed change to its hypothesis and later outcome. Technical checks and user value stay separate; neither authorises the other. |
+| Measure and learn | Execution receipts and reviews contain some durations (`src/g6/workforce/repo_tests.py`, `src/g6/harness/patch_review.py`). B (3.6) measures reproducible cases | New event clocks and friction counters; they do not measure the person's whole day. The optional feedback question needs a new interaction policy and store (17.3). Learning from outcomes is separate from learned intervention selection, which stays after 0.3.0. |
+
+**The record.** Start with G6-observed coding-review activity. Each event carries project, task, run and event identities,
+its source set and observation provenance, baseline and artefact digests, schema version, timestamps, disclosure
+dependencies, and coverage or missingness. A task can have several runs; a retry is not another task or repair. Adapters
+deduplicate retries and retain links to their original receipts. A job id or a task-hash/base pair is not a workflow-run id.
+Confirmed answers, host observations, attributed labels and model inferences remain distinct.
+
+The existing failure row describes how a loop ended, not the cause of the person's difficulty. Its task hash does not
+anonymise its other text. Existing timings cover particular G6 activities; completion state has a start time but no complete
+task-finish clock. Add explicit event boundaries. Do not infer active person effort from elapsed time, missing events from
+file modification times, or a complete workflow from G6's self-maintenance ledgers. Unobserved steps stay unknown.
+
+**A constraint hypothesis.** First report an observed obstacle with a receipt, or say observation is insufficient. A failed
+check or a slow stage alone does not name a constraint. To name a candidate, state the desired outcome and scope, the
+observed dependency that blocks it or repeated pattern that may limit it, and why removing that obstacle may change that
+outcome. State missing coverage, overlapping work, demand and waiting where observed. A serial-capacity model is used only
+when its assumptions and independent measurements hold; otherwise abstain from that calculation.
+
+Each hypothesis includes alternative explanations, counterevidence, and a bounded change or cheap check that distinguishes
+them. Record the predicted observable result under each explanation before acting. Then measure the declared outcome and
+G6's added burden against the baseline. If the result contradicts the prediction, retire or revise the hypothesis; if it
+does not distinguish the explanations, leave them unresolved. Unknown, insufficient observation and several plausible
+constraints are valid results. Do not force a winner or attach an uncalibrated probability.
+
+A reproduced failing check can establish an obstacle to one accepted expectation on one artefact. Removing it does not
+establish that it was the sole constraint, that delivery improved, or that the person's wider workflow was observed.
 
 ### 17.3 Fixed choices
 
 - **States and words.** G6's states stay `verified`, `qualified-draft` and `blocked-escalated`. The specification's other
-  spellings are not adopted. Public copy says "checked".
+  spellings are not adopted. "Checked" names the artefact, accepted expectation or standard, executed checks and limits.
+  Value results are reported separately as observed, self-reported or controlled, with their scope. Sections 10 and 11.4
+  govern public wording; fixture success admits no general benefit claim.
 - **The interface (owner, 2026-11-08).** MCP is the only interface; no GUI is built. When a visual helps, such as a
   workflow map, G6 writes it as a file (for example an HTML or SVG file) that the person opens separately, and says
-  where it is. The interface is the MCP replies and the report the agent shows. The report leads with the outcome, the most likely constraint, and the next action. Its evidence,
-  inference and recommendation are kept visibly apart.
-- **Data.** Workflow records are the person's data: local by default, under section 16's consent rule, inspectable and
-  correctable by the person, and never used to infer a person's motives.
-- **G6's own friction is counted:** its questions, approvals, time and tool calls. If G6 itself becomes the constraint, it
-  simplifies within its safeguards.
+  where it is. The interface is the MCP replies and the report the agent shows. Section 16 governs file-location replies too.
+- **Report order.** Section 9's applied repairs and their before/after evidence come first. Integrity findings remain whole
+  and ahead of other findings. Preserve requirement status, mandatory checks, caveats and unknowns. Then give the stated
+  outcome, a supported obstacle and constraint hypothesis (or unknown), and the next action. Keep observation, inference
+  and recommendation visibly apart. Optional advice cannot replace or suppress mandatory evidence.
+- **Action authority.** Workflow hypotheses grant no permission for settings changes, external actions, new data access or
+  weaker safeguards. Automatic repairs still require all four conditions in section 9 and section 11's baseline capture,
+  apply-on-match, rerun and recovery checks. Other actions remain proposals under the applicable consent rule.
+- **G6's own friction is counted:** its questions, approvals, time and tool calls, including retries, inspection and feedback.
+  If the evidence points to G6 as an obstacle, it simplifies within its safeguards and measures the result.
+
+**Workflow data and consent.** Task and outcome text, repository identities, patches, tests, answers, repair history,
+timings, interaction patterns, suggestion decisions, feedback and derived hypotheses are the person's data. Store new
+versioned records under `G6_HOME/workflow/<project-id>/`, referencing existing artefacts rather than copying raw text by
+default. Existing completion and assessment files are inputs, not an implemented project-scoped workflow store.
+
+Before a cloud diagnosis call or any MCP return, check section 16's current source/provider grants for every contributing
+source. Missing provenance denies disclosure. A grant for one repository or provider does not cover another, nor new
+feedback by implication. Revocation covers cached summaries, suggestions and generated files at their next use or return.
+With no grant, keep only authorised local records, use eligible local processing, and return only section 16's withholding
+notice. Entering a name, confirming behaviour or approving a repair is not a disclosure grant. Never infer motives.
+
+The new MCP lifecycle operations prepare local inspection exports and accept attributed corrections or deletion requests.
+Without a suitable client dialog, they can write `inspection.json` and read person-edited `corrections.json` in that project
+directory using local code, without a hosted model or echoing the contents through the client. The fixed file convention
+allows local inspection even when section 16 forbids a source-specific reply. It supplies neither a grant nor a terminal
+fallback for consent. No new GUI is built. Corrections append annotations or explicit supersessions; they never overwrite
+host receipts or confirmed answers. An answer change follows A's supersession rules.
+
+Before collection is enabled, publish finite retention periods and the expiry/deletion behaviour for records, decisions,
+exports and dependent caches in the versioned storage policy. Deletion removes those derivatives and invalidates dependent
+outputs; it does not delete separately retained source artefacts without authority, or recall prior disclosures. Retain only
+the policy's declared minimal deletion receipt. Test correction, expiry and deletion locally before release. Private reports
+and feedback never enter public fixtures or measurement corpora by default; evaluation use needs its own stated scope.
+
+**Suggestions.** Zero to three optional suggestions is valid. Admit only applicable actions supported by the record and
+allowed by the current policy. Order them by a published fixed rule: an action backed by a receipt that addresses the
+declared outcome; then a cheap reversible check distinguishing explanations; otherwise do nothing or state what observation
+is missing. Within a class, prefer an available action with known lower burden. State unknown burden and break remaining
+ties by stable intervention id. Show the reason for the order, never guessed minutes saved or a model's utility score.
+
+Persist a decision before acknowledging it. Intervention identity binds kind, target and scope, separately from wording,
+job ids, receipts and evidence versions. Dismissal defaults to this task; an explicit project-level choice is available.
+Suppression survives calls, retries, restarts, paraphrases, new receipts and policy-version changes. Reoffer only after the
+person explicitly reopens it, a person-chosen expiry, or changed applicability under a rule declared before the dismissal;
+show the reason. New mandatory findings remain visible as findings. No dismissal explanation is required. Silence,
+cancellation and an unavailable dialog mean neither adoption nor dismissal. This store and rendering policy are new work.
+
+**The optional feedback question.** It stays in 0.3.0, after the measured steps in 17.4. Initially accept unsolicited
+feedback without soliciting it. Later, ask "did this make your work easier?" only when the person has explicitly opted in,
+the task has reached its report, no needed intent question is pending, and A's shared persistent one-question budget still
+has room. Outcome, scope and behaviour questions use that same budget. Derive the starting outcome from supplied intent;
+unknown intent does not open another interview. Honour a request for no questions; only the person's explicit request for
+more can expand the budget. Use a supplied request or preference for opt-in; an opt-in question gets no extra allowance.
+The eight-question builder gate creates no user-question allowance.
+
+Reserve the question slot durably before asking. Allow at most one feedback invitation per project in seven days, with
+the cooldown and opt-out persisted across runs and restarts. Skip, cancel or unavailable elicitation is not retried. Without
+a suitable typed client dialog, do not solicit it or ask the agent to answer. A feedback response never confirms behaviour,
+gates completion or reopens the task. Record invitations, responses and missingness; count every invitation and its time as
+friction. Section 16 governs both the answer and its derivatives. The current name-based consent transport supplies neither
+this form nor its budget and cooldown store; they must be built and checked.
 
 ### 17.4 Scope (approved by the owner, 2026-11-08)
 
 **In 0.3.0:**
 - the 17.1 gate on every slice;
-- the report restructured around outcome, constraint and next action;
+- the report restructured around outcome, constraint hypothesis and next action, after the mandatory evidence in 17.3;
 - the per-task workflow record;
 - the diagnose step on the coding vertical, with hypotheses only;
 - at most three suggestions;
 - G6's own friction counters;
-- the optional feedback question;
+- the optional feedback question within A's shared budget and 17.3's opt-in and cooldown rules;
 - the specification's acceptance tests AT-003, AT-004, AT-005, AT-007 and AT-008, on fixtures.
 
 **After 0.3.0:**
@@ -1445,14 +1534,76 @@ the Theory of Constraints. Each stage maps onto existing code:
 - learned intervention selection;
 - other verticals.
 
+**Order within 0.3.0.** No approved 0.3.0 item is removed or moved to the list after 0.3.0. Recommendations to start narrowly set
+the build order. The record, diagnosis, suggestion policy, lifecycle and feedback are new subsystem work; no promise of
+no delay rests on calling them lightweight.
+
+1. **Frozen dependencies first.** Keep section 7's cohort, evidence semantics and end-to-end question slice first. Finish
+   A's persistent budget, confirmed-answer store and section 11's correspondence and repair bindings before consuming their
+   events. Complete section 16's applicable send/return consent boundary before exposing workflow data. Use section 12's
+   context only after its own admission. Section 17 is never a prerequisite for completing those frozen slices.
+2. **Observe and report narrowly.** After those dependencies, attach the project-scoped record and friction counters to the
+   report slice. Start with a receipt-backed obstacle or unknown, and a bounded next check. Use no extra diagnosis model
+   calls and solicit no feedback. First pass the record, consent, report-order and missingness fixtures in 17.5, then measure
+   this view's usefulness and burden against the existing report. This is an intermediate step, not the full release scope.
+3. **Diagnose the coding vertical.** After step 2 meets its predeclared useful-completion and burden bars, build the new
+   workflow diagnosis adapter and its counterevidence tests. Broader reasoning within the observed coding workflow, and any
+   extra diagnosis calls, follow that measured result and section 16. Unknown coverage stays explicit. Pass the diagnosis
+   fixtures and real-use gate before admitting it.
+4. **Rank and retain decisions.** After step 3's measured result, build the full suggestion policy and durable dismissal
+   lifecycle. Measure useful outcomes and burden, not uptake alone. Any use of earlier task records within the coding
+   vertical retains its source and coverage limits; learned intervention selection and new collection integrations stay
+   after 0.3.0.
+5. **Offer feedback within the budget.** After step 4 meets its usefulness and burden bars, build and check the opt-in form,
+   shared-budget reservation and persistent cooldown, then measure the opted-in flow. Run AT-003, AT-004, AT-005, AT-007 and
+   AT-008 against their bound definitions as well as the local contracts below. All eight approved scope items must meet
+   their gates before this scope is called complete for 0.3.0.
+
+A failed or inconclusive gate stops advancement to the dependent step. Repair and remeasure under a fresh frozen protocol
+where needed; do not quietly defer or delete the capability, or tune thresholds after seeing results. Unrelated frozen
+work continues in its own order. Feedback is not deferred beyond 0.3.0: the report's recommendation to do that is declined
+because the owner retained it, and its interruption risk is addressed by the shared budget and measured order.
+
 ### 17.5 What is measured (rows for section 5)
 
-| Piece | What is measured | Bar | Cost |
+**Before any run**, freeze a versioned decision manifest: cases and independently supplied labels; task/run unit and all
+eligible starts; the baseline and comparison design; agent, information and budget policy; accepted outcome and preservation
+checks; start/finish clocks; failed, abandoned, missing and censored handling; disclosures; costs; and each row's decision.
+For every empirical threshold named below, record a numeric value, unit, denominator, sample requirement and uncertainty
+rule before running. A missing field blocks the run. Thresholds may not be chosen from the results. A positive usefulness
+minimum is required, so refusing everything cannot pass. Too little evidence is inconclusive, not a pass.
+
+The full versioned definitions of G6-UX-VALUE-001's AT-003/004/005/007/008 must be attached or linked and bound to fixture
+inputs and expected outputs before their acceptance runs. The short descriptions here do not reconstruct absent definitions
+for AT-004/005/008. Missing definitions block their acceptance, not their inclusion in 0.3.0. Add the following explicit local
+contracts alongside them, and record the mapping once the definitions are available:
+- a slow noncritical stage, overlapping work and a failing noncritical check do not force a constraint winner; an explicit
+  blocking dependency gives the expected scoped obstacle; ties stay unresolved, and missing events or unknown intent require
+  abstention wherever they prevent a supported hypothesis;
+- retry/restart identities preserve distinct runs and deduplicate events; unobserved work and person effort stay unknown;
+- a dismissed intervention is not reoffered under paraphrase, retry, restart, policy change or new receipt; mandatory evidence
+  stays visible, and an allowed reopening states its reason;
+- no ungranted or revoked data reaches a cloud call or MCP return, including caches and file locations; local inspection,
+  correction, retention and deletion follow 17.3 without a hosted call;
+- applied repairs and integrity findings keep their priority; feedback never exceeds A's budget, bypasses no-questions,
+  repeats after skip/cancel, or gates completion. Opt-out, cooldown, unsupported dialogs and concurrent reservations are tested.
+
+For these deterministic contracts, compare actual output with the frozen expected output: every case must match, with zero
+unsupported definite claims, unauthorised disclosures, duplicate invitations or suppressed mandatory findings. Pass admits
+only the tested behaviour; any mismatch stops the dependent step for repair. Fixture success is not a developer-value result.
+
+| Piece | Measure and comparison | Frozen threshold and decision on each side | Costs counted |
 |---|---|---|---|
-| Diagnosis | On recorded coding tasks, how often the named constraint matches a blind reviewer's reading. A slow step that does not bind is not chosen (AT-003) | set before it runs | model calls |
-| Suggestions | Adoption, dismissal and repeats after a dismissal (AT-007) | set before it runs | people's time |
-| Value | Time to a checked outcome and rework cycles, before and after, reported as association unless controlled | reported as measured | runs |
-| Self-friction | G6's questions, approvals and time per checked outcome | reported | none |
+| Diagnosis | Expected obstacles and abstentions on the labelled fixtures above; then useful completion, wrong suggestions and blind trace-review agreement on authorised coding tasks, compared with the narrow report from step 2. Preserve disagreement and unknown labels; agreement is not causal truth | Fixtures must all match. Before the developer trial, fix a positive useful-completion minimum, maximum wrong-suggestion rate, burden caps and sample requirement. Meeting every bar admits this scoped adapter; failure requires repair; insufficient evidence holds step 4 | Local collection, model calls, elapsed G6 time and person interruptions |
+| Suggestions | Eligible, displayed, adopted, dismissed, implemented and later assessed interventions are separate events. Compare the fixed policy with the preceding report under the same task and budget policy; assess the independently declared outcome, not persuasion | Zero forbidden reoffers and zero suppression of mandatory evidence. Freeze a positive useful-outcome minimum and burden/error maxima for the trial. All bars met admits the policy; otherwise repair or hold for missing evidence. Uptake and dismissal rates alone admit nothing | Person time, storage, rendering, action and follow-up checks |
+| Value | All eligible starts and successful, failed, abandoned and censored outcomes; scoped time to the declared outcome and rework cycles. Compare matched or paired baseline/candidate tasks with correctness and preservation checks. Before/after alone is association | Freeze a positive minimum benefit on the named outcome, a positive completion floor, correctness/error limits and cost caps with the comparison rule. All bars met admits only the measured scope and, with a controlled design, its benefit claim. Failure requires repair; inconclusive data admits no improvement claim | Runs, calls, waiting, instrumentation and independently recorded person effort; unknown effort is not zero |
+| Self-friction | Deduplicated questions, approvals, logical tool/provider calls and retries separately; wall time, active G6 intervals and waits separately. Compare each step with its predecessor per eligible task and per scoped checked outcome, including zero-success periods. Measure opted-in feedback against the same flow without invitations | Freeze maxima for added time, calls and interruptions alongside the useful-completion floor. Zero budget/cooldown violations. All bars met allows the next step or the final opted-in flow; otherwise simplify and remeasure. Missing effort stays unmeasured; no division by zero or exclusion of failures | Collection, local storage and inspection costs, dialog time, retries and feedback; none is assumed free |
+
+Feedback response rates and "easier" answers are selected self-reports, not saved minutes. Report invitations, nonresponses
+and opt-outs. Remeasure the outcome and added burden after each intervention; retain, revise or retire the hypothesis within
+that scope. Record when the apparent constraint changes. B's reproducible profile does not stand in for the person's whole
+interactive environment. Cases used to tune a policy are retired from its evaluation under 3.6. Public benefit wording waits
+for its predeclared measurement and states costs and limits.
 
 ## Appendix A: Codex's challenge of version 1, and what changed
 
@@ -1549,3 +1700,19 @@ to start narrowly become measured build order, with repair after a failed gate. 
 | 14 | "Marked for agents" has no code definition and scans can miss registrations | Adopted: 14.1 adds a typed versioned manifest, offline registration recorder, route/exemption and link checks, the word cap, and corrected question/fallback guidance. |
 | 15 | Refusing everything can win the measurements without helping a developer | Adopted: 14.1 and 15.7 require right/wrong acceptance/refusal, rendering errors, missingness, useful completion, costs, independent labels and frozen pass/stop gates with positive completion bars. |
 | 16 | Wording overstates correspondence and confuses method families with languages | Adopted: 15.1 and 15.6 correct existing-code claims, add execution-boundary receipt checks and keep pre-acceptance diagnostics model-only; 14.3 removes the unchecked historical migration claim. |
+
+## Appendix E: Codex's challenge of section 17, and what changed
+
+All eight challenges were read. Their numbers below follow the challenge numbers in the report, not its presentation order.
+The owner's approved scope and MCP-only ruling govern the corrections. Sections 1 to 16 are unchanged.
+
+| # | Challenge | Change |
+|---|---|---|
+| 1 | Records are fragmentary and two diagnosis readers are tick-specific | Adopted: 17.2 separates retained inputs, frozen dependencies and new adapters; adds stable identities, clocks, retry handling and unknown coverage. Capacity arithmetic has a declared serial model; tick rules are not person-workflow rules. |
+| 2 | A failed or slow stage does not establish the binding constraint | Adopted: 17.2 requires a scoped obstacle, dependency evidence, alternatives, counterevidence and a discriminating check with predictions. Unknown and ties remain valid; the outcome and added burden are remeasured. |
+| 3 | Suggestions lack a policy, stable identities and durable dismissals | Adopted: 17.3 adds fixed qualitative ordering, zero to three suggestions, persistent scoped suppression and explicit reopening rules. Mandatory evidence stays visible; guessed utility is not used. |
+| 4 | Optional feedback still interrupts and cannot bypass A's budget | Adopted as order: 17.3 and 17.4 put the opt-in question after measured usefulness, within A's shared budget, with a durable cooldown and no completion gate. Deferral beyond 0.3.0 is declined because the owner retained the question in that release. |
+| 5 | Local storage does not settle disclosure of workflow data | Adopted: 17.3 applies section 16 at cloud calls and MCP returns, including derivatives and revocation. Adds project-scoped provenance, local inspection/correction and retention/deletion contracts; a name or repair approval grants no disclosure. |
+| 6 | The new subsystem could displace frozen slices and mandatory report content | Adopted as order: 17.1 and 17.4 keep frozen dependencies first, then gate diagnosis, suggestions and feedback on measured results. Removing approved scope is declined because the owner retained it; 17.3 preserves applied-repair and integrity priority. |
+| 7 | Measurement rows do not define pre-run decisions or executable acceptance tests | Adopted: 17.5 requires frozen measures, comparisons, numeric thresholds and pass/repair/hold decisions, with positive usefulness and burden bars. Missing AT definitions block acceptance until bound; explicit local fixture contracts supplement them. |
+| 8 | Constraint headlines and unqualified checked outcomes overstate the result | Adopted: section 17 states a design objective, proposes hypotheses and measures results. Checked outcomes name artefact, standard, checks and limits; value claims stay separate and scoped. The three reliability state names stay unchanged. |
