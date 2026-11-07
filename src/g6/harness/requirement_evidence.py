@@ -315,6 +315,7 @@ def confirmed_evidence(standard: Any, results: Sequence[Mapping[str, Any]], *, a
     counted. With an integrity problem, nothing is counted, as for the review's own requirements. The statement names
     the standard it used: its digest and its revision."""
     from g6.harness.confirmed_expectation import PERSON_CONFIRMED
+    from g6.harness import standard_publication
 
     facts = standard.facts(digest({"artifact": artifact, "base_commit": base_commit, "standard": standard.sha256}))
     environment_digest = environment_sha256(environment)
@@ -331,12 +332,16 @@ def confirmed_evidence(standard: Any, results: Sequence[Mapping[str, Any]], *, a
                       scope=f"the case the person confirmed ({one.scope}), on the working tree under review")
         for name, seq in (("patch", RECEIPT), ("again", CONFIRMED_AGAIN)):
             if name in runs:
+                # An earlier pass never supplies support when the full result is partial or unavailable.
+                if runs[name].get("result") == "passed" and found.get("result") != "passed":
+                    continue
                 records.append(SourceRecord(record_id=id_of("confirmed", name, ident), seq=seq,
                                             result=_RESULT.get(str(runs[name].get("result")), "unknown"), **common))
     if integrity:
         records = []
     try:
-        issued = issue_records(facts, Artifact(artifact, PATCH_AUTHOR, ARTEFACT), records)
+        with standard_publication.counting(standard):
+            issued = issue_records(facts, Artifact(artifact, PATCH_AUTHOR, ARTEFACT), records)
     except (CertificateRefused, ValueError, TypeError) as exc:
         return {"authority": "g6.evidence.certificate", "standard_sha256": standard.sha256,
                 "standard_revision": standard.revision, "refused_by_issuer": str(exc), "expectations": [],

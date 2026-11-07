@@ -27,7 +27,7 @@ Without ``before`` nothing here is bound to the artefact (``bound`` false) and t
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from g6.core import component_process
@@ -55,6 +55,19 @@ def _result(on_patch: dict) -> tuple[str, str]:
 def _failed(on_patch: dict) -> bool:
     """Whether a run on the patch observed the confirmed case fail (a failure G6 can read as the code's)."""
     return vs._to_a_result(on_patch) and on_patch["result"] == "failed"
+
+
+def patch_result(readings: Sequence[object]) -> tuple[str, str]:
+    """Read every patch run: an observed failure decides; anything short of all passes prevents support."""
+    failed = next((one for one in readings if isinstance(one, Mapping) and one.get("result") == FAILED
+                   and vs._to_a_result(one)), None)
+    if failed is not None:
+        return FAILED, str(failed.get("detail", ""))
+    for one in readings:
+        if not isinstance(one, Mapping) or one.get("result") != PASSED or not vs._to_a_result(one):
+            detail = one.get("detail", "an unavailable or unrecognised run") if isinstance(one, Mapping) else "a partial run"
+            return NOT_RUN, f"on the patch it did not run to a result: {detail}"
+    return (PASSED, str(readings[0].get("detail", ""))) if readings else (NOT_RUN, "no run on the patch")
 
 
 def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *, deadline: float, artifact: str,
@@ -115,6 +128,7 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
                     again = read(at_base=False)
                     on_the_patch.append(again)
                     result["runs"]["again"] = vs._summary(again)
+            result["result"], result["detail"] = patch_result(on_the_patch)
             failing = next((found for found in on_the_patch if _failed(found)), None)
             if failing is not None:   # any run on the patch that observed the case fail: a defect
                 result["result"], result["detail"] = FAILED, failing.get("detail", "")
@@ -132,4 +146,4 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
     return found
 
 
-__all__ = ["CAUTION", "COMPILED", "FAILED", "NOT_RUN", "PASSED", "run"]
+__all__ = ["CAUTION", "COMPILED", "FAILED", "NOT_RUN", "PASSED", "patch_result", "run"]

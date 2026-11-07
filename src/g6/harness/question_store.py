@@ -46,6 +46,7 @@ import re
 import stat
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from contextlib import contextmanager
 from pathlib import Path
 
 from g6.core.ledger import ChainLedger, LedgerError, digest
@@ -322,6 +323,18 @@ class TaskQuestions:
             return State(default=default, budget_note=note)
         with _locked(self.path):   # never a line another writer has half written
             return self._read(self._open(), default, note)
+
+    @contextmanager
+    def counting(self, standard: ExpectationStandard):
+        """Read the standard under the answer writer's lock, and keep it current through evidence issuance."""
+        from g6.harness.standard_publication import StandardSuperseded
+
+        default, note = default_budget()
+        with _locked(self.path):
+            current = self._read(self._open(), default, note).standard()
+            if current.sha256 != standard.sha256:
+                raise StandardSuperseded()
+            yield
 
     @staticmethod
     def _read(ledger: ChainLedger, default: int, note: str) -> State:
