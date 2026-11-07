@@ -65,12 +65,12 @@ NOT_THIS_REVIEW = "G6_E_QUESTION_REVIEW_NOT_BOUND"
 
 
 def bound(reply: Any, identity: str | None) -> Any:
-    """``reply``, a finished review's, bound to the task it reviewed (``task_identity``, ``question_store``'s): the
-    whole reply G6 saves carries it, and nothing it decides changes. A refusal, or a review of no task G6 could name,
-    is returned as it is."""
+    """Hold task custody outside the reply's fields; save publishes it in an independent record."""
+    from g6.mcp.review_binding import BoundReply
+
     if identity is None or not isinstance(reply, dict) or not isinstance(reply.get("assessment"), dict):
         return reply
-    return {**reply, "task_identity": identity}
+    return BoundReply(reply, identity)
 
 
 def identity_of(repo: str, task: str) -> str | None:
@@ -96,12 +96,15 @@ def _review_candidates(task: str, review_job: str, template_instances: Any, *, i
     from g6.harness import verification_templates
 
     try:
-        saved = json.loads(state_path("reviews", f"{review_job}.json").read_text(encoding="utf-8"))
-        completion = saved["assessment"]["completion"]
+        saved_bytes = state_path("reviews", f"{review_job}.json").read_bytes()
+        saved = json.loads(saved_bytes)
+        _completion = saved["assessment"]["completion"]
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise bq.CandidateRefused(f"G6 holds no finished review with this job id it can read ({type(exc).__name__})"
                                   ) from None
-    if saved.get("task_identity") != identity:
+    from g6.mcp import review_binding
+
+    if not review_binding.matches(state_path("reviews", f"{review_job}.json"), identity, data=saved_bytes):
         raise bq.CandidateRefused("that review is not bound to this task and repository: G6 takes a review's "
                                   "observations only for the task and repository it reviewed", NOT_THIS_REVIEW)
     if saved.get("artifact_digest") != artifact:
@@ -111,14 +114,11 @@ def _review_candidates(task: str, review_job: str, template_instances: Any, *, i
     items = template_instances or []
     named = {item.get("requirement_id") for item in items if isinstance(item, dict)}
     try:
-        instances = verification_templates.template_instances(items, named)
+        verification_templates.template_instances(items, named)
     except ValueError as exc:
         raise bq.CandidateRefused(f"template_instances: {exc}") from None
-    ranked = [q.get("check") for q in completion.get("open_questions") or [] if isinstance(q, dict)]
-    found = bq.differential_candidates(task, instances, completion.get("activities") or [], ranked)
-    return [bq.Candidate.make(**{**one.to_dict(), "evidence": [*one.to_dict()["evidence"],
-                                                               f"the review's job id: {review_job}"]})
-            for one in found]
+    bq.require_probe()
+    return []
 
 
 def _budget(state: qs.State) -> dict:
@@ -218,6 +218,8 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
         state = store.state()
     except qs.StoreUnreadable as exc:
         return blocked_reply(str(exc))
+    except bq.CandidateRefused as exc:
+        return blocked_reply(f"[{exc.code}] {exc}")
     if reading.answer is None:
         return _reply(PENDING, reading.why, state=state, asked=asked, plan=plan, reading=reading)
     status = CONFIRMED if reading.confirms else NOT_CONFIRMED

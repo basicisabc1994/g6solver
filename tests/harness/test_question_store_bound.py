@@ -275,7 +275,8 @@ def test_every_read_of_a_store_entry_or_a_saved_review_checks_its_binding():
     for name, rel in (("_review_candidates", "mcp/behaviour.py"),):
         tree = ast.parse((ROOT / "src" / "g6" / rel).read_text(encoding="utf-8"))
         body = ast.unparse(next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name))
-        assert "saved.get('task_identity') != identity" in body and "saved.get('artifact_digest') != artifact" in body
+        assert "review_binding.matches(" in body and "data=saved_bytes" in body
+        assert "saved.get('artifact_digest') != artifact" in body
     # nowhere else in the product reads a saved review or a question store's file
     elsewhere = []
     for path in sorted((ROOT / "src" / "g6").rglob("*.py")):

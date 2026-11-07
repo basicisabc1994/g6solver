@@ -51,7 +51,7 @@ from pathlib import Path
 
 from g6.core.ledger import ChainLedger, LedgerError, digest
 from g6.core.storage import state_path
-from g6.harness.behaviour_question import Candidate, decoded, encoded
+from g6.harness.behaviour_question import Candidate, encoded
 from g6.harness.confirmed_expectation import (
     NOT_CONFIRMING,
     TIME_FORMAT,
@@ -102,9 +102,8 @@ def default_budget() -> tuple[int, str]:
     raw = os.environ.get(BUDGET_ENV)
     if raw is None:
         return DEFAULT_BUDGET, ""
-    text = raw.strip()
-    if text.isdigit() and int(text) <= MAX_BUDGET:
-        return int(text), ""
+    if raw in tuple(str(value) for value in range(MAX_BUDGET + 1)):
+        return int(raw), ""
     return 0, f"{BUDGET_ENV}={raw!r} is not a whole number from 0 to {MAX_BUDGET}, so G6 asks no question"
 
 
@@ -143,7 +142,7 @@ def _kind_rules(kind: str, ident: str, body: dict, seen) -> list[str]:
                 if encoded({k: v for k, v in rule.to_dict().items() if k != "scope"}) != same:
                     return ["a rule's question asks the case's question, with another scope only"]
             data = body.get("candidate")
-            if not isinstance(data, str) or Candidate.make(**decoded(data)).data != data:
+            if not isinstance(data, str) or Candidate.from_record(data).data != data:
                 return ["an asked entry holds the candidate it came from, as G6 made it"]
             return []
         asked = {one: entry for (k, one), entry in seen.items() if k == ASKED}
@@ -365,6 +364,12 @@ class TaskQuestions:
                     return one
             if state.left < 1:
                 raise BudgetSpent(note or f"the budget of {state.allowance} question(s) for this task is spent")
+            Candidate.make(**candidate.to_dict())
+            from g6.harness.behaviour_question import CandidateRefused, competition
+
+            code, why = competition(question.outcomes)
+            if code:
+                raise CandidateRefused(f"the new question's outcomes do not compete: {why}", code)
             self._append(ledger, ASKED, question.sha256, {
                 "question": question.record.decode("ascii"), "rule": rule.record.decode("ascii") if rule is not None
                 else "", "candidate": candidate.data, "asked_at": at or now()})

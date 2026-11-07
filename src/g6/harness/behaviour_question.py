@@ -42,8 +42,8 @@ question pending (``PENDING``), reported, to be answered later.
 """
 from __future__ import annotations
 
-import builtins
 import json
+import builtins
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -83,6 +83,7 @@ _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 #: outcome twice, two that one implementation can both meet (an error and its own subtype, or two errors G6 cannot tell
 #: apart by kind), and two about different things one call can do at once (a result and an argument's value).
 INVALID = "G6_E_INPUT_VALIDATION"
+PROBE_UNAVAILABLE = "G6_E_QUESTION_PROBE_UNAVAILABLE"
 IDENTICAL, OVERLAP, INDEPENDENT = ("G6_E_QUESTION_OUTCOMES_IDENTICAL", "G6_E_QUESTION_OUTCOMES_OVERLAP",
                                    "G6_E_QUESTION_OUTCOMES_INDEPENDENT")
 #: The values differential.v1's probe writes exactly as example.v1 compares them: the types it passes through as they
@@ -96,6 +97,16 @@ class CandidateRefused(ValueError):
     def __init__(self, message: str, code: str = INVALID) -> None:
         super().__init__(message)
         self.code = code
+
+
+def require_probe() -> None:
+    """The executor currently exposes repository-owned streams, not a protected G6 observation facility.
+
+    No new or resumed differential question may label those streams as G6's own observations. Generic review
+    diagnostics retain their existing scope; they cannot cross this boundary into a behaviour dialog.
+    """
+    raise CandidateRefused("G6 has no protected probe channel for these observations; repository stdout cannot "
+                           "supply G6's own runs for a behaviour question", PROBE_UNAVAILABLE)
 
 
 # --- the one encoding of an outcome -------------------------------------------------------------------------------------
@@ -116,18 +127,11 @@ def decoded(text: str) -> Any:
 # --- candidates ---------------------------------------------------------------------------------------------------------
 
 
-def _error_type(name: str) -> type | None:
-    """The built-in exception type a bare name names, as example.v1 loads it, or None (a dotted name is the
-    repository's, whose kind G6 does not know before it runs)."""
-    found = getattr(builtins, name, None) if "." not in name else None
-    return found if isinstance(found, type) and issubclass(found, BaseException) else None
-
-
 def competition(outcomes: Mapping[str, Mapping[str, Any]]) -> tuple[str, str]:
     """("", "") when outcome A's compiled check rejects what outcome B shows and B's rejects what A shows, by
     example.v1's model; otherwise the code and why. A result against a result competes when ``encoded`` tells them
     apart; an error against a result or an effect always competes (each check rejects the other's call); two errors
-    compete when neither is a kind of the other, which G6 knows for built-in types only; two effects compete on the
+    are refused because subtype matching permits a shared multiple-inheritance witness; two effects compete on the
     same argument with values ``encoded`` tells apart. A result and an effect are independent: one call can do both."""
     a, b = outcomes["A"], outcomes["B"]
     kinds = {next(iter(a)), next(iter(b))}
@@ -138,14 +142,8 @@ def competition(outcomes: Mapping[str, Mapping[str, Any]]) -> tuple[str, str]:
     if kinds == {"raises"}:
         if a["raises"] == b["raises"]:
             return IDENTICAL, f"both outcomes raise {a['raises']}"
-        left, right = _error_type(a["raises"]), _error_type(b["raises"])
-        if left is None or right is None:
-            return OVERLAP, (f"{a['raises']} and {b['raises']} may be kinds of one another, which G6 cannot tell "
-                             "before the code runs: a check for one would accept the other")
-        if issubclass(left, right) or issubclass(right, left):
-            return OVERLAP, (f"{a['raises']} and {b['raises']} overlap: one is a kind of the other, so the check for "
-                             "the wider type accepts both")
-        return "", ""
+        return OVERLAP, (f"{a['raises']} and {b['raises']} use subtype matching; G6 cannot tell whether an exception "
+                         "could inherit from both, so these outcomes cannot be offered as competing")
     if kinds == {"effect"}:
         one, other = a["effect"], b["effect"]
         if one["argument"] != other["argument"]:
@@ -169,6 +167,40 @@ class Candidate:
     def make(cls, *, source: str, requirement_id: str, function: str, args: list, kwargs: Mapping[str, Any],
              outcomes: Mapping[str, Mapping[str, Any]], cited: str, evidence: Sequence[str],
              settled: Sequence[Mapping[str, str]] = (), scope: str = CASE_SCOPE, rule: str = "") -> Candidate:
+        made = cls._structural(source=source, requirement_id=requirement_id, function=function, args=args,
+                               kwargs=kwargs, outcomes=outcomes, cited=cited, evidence=evidence, settled=settled,
+                               scope=scope, rule=rule)
+        code, why = competition(made.to_dict()["outcomes"])
+        if code:
+            raise CandidateRefused(f"the two outcomes do not compete: {why}", code)
+        return made
+
+    @classmethod
+    def from_record(cls, data: str) -> Candidate:
+        """Restore a durable record under its original admission language, without changing a confirmed case.
+
+        Repair 1 admitted unrelated built-in error types. They remain readable historical records; new admission
+        and every pending dialog use today's stricter rule. The record and its compiled expectation never change.
+        """
+        made = cls._structural(**decoded(data))
+        if made.data != data:
+            raise CandidateRefused("a candidate record is held in its canonical encoding")
+        outcomes = made.to_dict()["outcomes"]
+        code, why = competition(outcomes)
+        if code == OVERLAP and all(set(one) == {"raises"} for one in outcomes.values()):
+            names = [one["raises"] for one in outcomes.values()]
+            types = [getattr(builtins, name, None) if "." not in name else None for name in names]
+            if (all(isinstance(one, type) and issubclass(one, BaseException) for one in types)
+                    and not issubclass(types[0], types[1]) and not issubclass(types[1], types[0])):
+                return made
+        if code:
+            raise CandidateRefused(f"the recorded outcomes do not compete: {why}", code)
+        return made
+
+    @classmethod
+    def _structural(cls, *, source: str, requirement_id: str, function: str, args: list, kwargs: Mapping[str, Any],
+                    outcomes: Mapping[str, Mapping[str, Any]], cited: str, evidence: Sequence[str],
+                    settled: Sequence[Mapping[str, str]] = (), scope: str = CASE_SCOPE, rule: str = "") -> Candidate:
         if source not in SOURCES:
             raise CandidateRefused(f"a candidate's source is one of {', '.join(SOURCES)}")
         record = {"source": source, "requirement_id": requirement_id, "function": function, "args": args,
@@ -189,9 +221,6 @@ class Candidate:
             raise CandidateRefused(f"a candidate is JSON data: {problem}")
         made = cls(encoded(record))
         made.question("0" * 64)   # every candidate is a question G6 can show: slice 2's record checks it
-        code, why = competition(record["outcomes"])
-        if code:
-            raise CandidateRefused(f"the two outcomes do not compete: {why}", code)
         return made
 
     def _get(self, name: str) -> Any:
@@ -461,6 +490,11 @@ def form(question: Question, candidate: Candidate, rule: Question | None = None)
     """The behaviour form for ``question``: the message the person reads (the exact input and setup, outcome A and
     outcome B, the cited scope, the evidence, the rule in full when one is offered, and how the answer is kept) and
     the form's schema, with standard form-schema fields only."""
+    if candidate.source == "differential":
+        require_probe()
+    code, why = competition(question.outcomes)
+    if code:
+        raise CandidateRefused(f"the pending outcomes do not compete: {why}", code)
     shown = question.to_dict()
     whose = EVIDENCE_FROM[candidate.source]
     lines = ["G6 asks one behaviour question about this task. Your answer is enforced exactly as you give it.",

@@ -167,14 +167,11 @@ def test_a_saved_review_is_taken_only_bound_to_this_task_and_tree(tmp_path, monk
     elif change == "unbound":   # a reply saved without its binding (as before this change)
         from g6.core.storage import state_path
 
-        saved = json.loads(state_path("reviews", f"{job}.json").read_text(encoding="utf-8"))
-        del saved["task_identity"]
-        state_path("reviews", f"{job}.json").write_text(json.dumps(saved), encoding="utf-8")
+        state_path("reviews", f"{job}.binding.json").unlink()
     dialog = Dialog()
     reply = ask(root, data=[], dialog=dialog, review_job=job, template_instances=[instance])
     if change == "none":
-        assert reply["status"] == "confirmed" and reply["candidate"]["source"] == "differential"
-        assert len(dialog.messages) == 1
+        assert not dialog.messages and reply["warning_card"]["code"] == bq.PROBE_UNAVAILABLE
     else:
         assert not dialog.messages and reply["warning_card"]["code"] == behaviour.NOT_THIS_REVIEW
 

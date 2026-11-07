@@ -150,7 +150,7 @@ PAIRS = [
     ({"returns": -0.0}, {"returns": 0.0}, ""),
     ({"returns": "5"}, {"returns": 5}, ""),
     ({"returns": 5}, {"returns": 5}, IDENTICAL),
-    ({"raises": "ValueError"}, {"raises": "TypeError"}, ""),
+    ({"raises": "ValueError"}, {"raises": "TypeError"}, OVERLAP),
     ({"raises": "Exception"}, {"raises": "ValueError"}, OVERLAP),
     ({"raises": "KeyError"}, {"raises": "LookupError"}, OVERLAP),
     ({"raises": "ValueError"}, {"raises": "ValueError"}, IDENTICAL),
@@ -167,10 +167,13 @@ def _stand_in(*outcomes: dict):
     """A function that shows every outcome given at once, where it can: their returned value, each argument's value
     after the call, and the narrowest error named (raised, so nothing else is shown)."""
     errors = [getattr(builtins, one["raises"]) for one in outcomes if "raises" in one]
+    witness_error = max(errors, key=lambda kind: len(kind.__mro__)) if errors else None
+    if len(errors) == 2 and not issubclass(errors[0], errors[1]) and not issubclass(errors[1], errors[0]):
+        witness_error = type("Both", tuple(errors), {})
 
     def function(*args, **kwargs):
         if errors:
-            raise max(errors, key=lambda kind: len(kind.__mro__))()
+            raise witness_error()
         for one in outcomes:
             if "effect" in one:
                 args[one["effect"]["argument"]][:] = copy.deepcopy(one["effect"]["equals"])
@@ -329,9 +332,13 @@ PLACES: dict[tuple[str, str, str], str] = {
     ("harness/behaviour_question.py", "competition", "encoded(one['equals'])"): THROUGH,
     ("harness/behaviour_question.py", "competition", "encoded(other['equals'])"): THROUGH,
     ("harness/behaviour_question.py", "competition", "f-string: encoded(one['equals'])[:80]"): THROUGH,
-    ("harness/behaviour_question.py", "make", "encoded(record)"): THROUGH,
-    ("harness/behaviour_question.py", "make", "competition(record['outcomes'])"): THROUGH,
-    ("harness/behaviour_question.py", "make", "sorted(record['outcomes']) != list(LABELS)"): (
+    ("harness/behaviour_question.py", "_structural", "encoded(record)"): THROUGH,
+    ("harness/behaviour_question.py", "make", "competition(made.to_dict()['outcomes'])"): THROUGH,
+    ("harness/behaviour_question.py", "from_record", "decoded(data)"): THROUGH,
+    ("harness/behaviour_question.py", "from_record", "made.data != data"): RECORD,
+    ("harness/behaviour_question.py", "from_record", "competition(outcomes)"): THROUGH,
+    ("harness/behaviour_question.py", "form", "competition(question.outcomes)"): THROUGH,
+    ("harness/behaviour_question.py", "_structural", "sorted(record['outcomes']) != list(LABELS)"): (
         "the outcomes' labels (text), not their values"),
     ("harness/behaviour_question.py", "settled_by", "encoded(value)"): THROUGH,
     ("harness/behaviour_question.py", "settled_by", "f-string: outcome['raises'].rsplit('.', 1)[-1]"): NAME,
@@ -372,16 +379,11 @@ PLACES: dict[tuple[str, str, str], str] = {
      "encoded({k: v for k, v in rule.to_dict().items() if k != 'scope'})"): THROUGH,
     ("harness/question_store.py", "_kind_rules",
      "encoded({k: v for k, v in rule.to_dict().items() if k != 'scope'}) != same"): THROUGH,
-    ("harness/question_store.py", "_kind_rules", "Candidate.make(**decoded(data)).data != data"): (
+    ("harness/question_store.py", "_kind_rules", "Candidate.from_record(data).data != data"): (
         "a candidate's text in the one encoding, read back and made again: compared as that text"),
-    ("harness/question_store.py", "_kind_rules", "decoded(data)"): THROUGH,
+    ("harness/question_store.py", "ask", "competition(question.outcomes)"): THROUGH,
+    ("harness/question_store.py", "ask", "one.question.sha256 == question.sha256"): RECORD,
     ("mcp/behaviour.py", "_reply", "one.answer_sha256 == reading.answer.sha256"): RECORD,
-    ("mcp/behaviour.py", "_review_candidates",
-     "json.loads(state_path('reviews', f'{review_job}.json').read_text(encoding='utf-8'))"): (
-        "a saved review's JSON file, not an outcome: the probe's text in it is read by differential_candidates, "
-        "through decoded"),
-    ("mcp/behaviour.py", "_review_candidates", "saved.get('task_identity') != identity"): RECORD,
-    ("mcp/behaviour.py", "_review_candidates", "saved.get('artifact_digest') != artifact"): RECORD,
     ("mcp/behaviour.py", "confirm", "digest(repo_tests.snapshot(root))"): "the artefact's digest, not an outcome",
     ("harness/behaviour_question.py", "_get", "decoded(self.data)"): THROUGH,
     ("harness/behaviour_question.py", "to_dict", "decoded(self.data)"): THROUGH,

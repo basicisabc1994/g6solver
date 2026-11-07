@@ -193,7 +193,13 @@ def test_a_store_g6_cannot_read_is_refused_never_read_as_empty(rig):
         behaviour.enforced(str(rig.repo), TASK)
 
 
-def test_a_candidate_from_a_review_s_differences_comes_from_g6_s_own_record(rig):
+def test_a_candidate_from_a_review_s_differences_is_refused_until_g6_has_a_protected_probe_channel(rig):
+    # Repair 2 (review 2's findings 4 and 7): a review record written into G6's home by hand is not one g6_review_patch's
+    # job bound, so it is refused before anything is asked; and even a bound review's differences come from a probe whose
+    # output the repository's code can write, so they are refused as G6_E_QUESTION_PROBE_UNAVAILABLE until G6 has a channel
+    # the repository cannot write to (tests/harness/test_confirmed_evidence_bound.py and
+    # tests/repair_question2/test_competition_channel_root.py). This pin changed on purpose: it asserted a confirmed
+    # differential candidate from a hand-written record.
     one = TemplateInstance(id="D1", template="differential.v1", requirement_id="R1", intent="change",
                            bindings={"function": "shop.prices.total", "mode": "outputs", "calls": [{"args": [[2, -3]]}]})
     from g6.core.ledger import digest
@@ -211,8 +217,9 @@ def test_a_candidate_from_a_review_s_differences_comes_from_g6_s_own_record(rig)
     (rig.home / "reviews" / f"{job}.json").write_text(json.dumps(saved), encoding="utf-8")
     instances = [{k: v for k, v in one.model_dump().items() if k != "provenance"}]
     got = rig.call(answering(choice="A", name="Ada"), review_job=job, template_instances=instances)
-    assert got["status"] == "confirmed" and got["candidate"]["source"] == "differential"
-    assert any(job in line for line in got["candidate"]["evidence"])
+    assert got["completion_state"] == "blocked-escalated"
+    assert got["warning_card"]["code"] == "G6_E_QUESTION_REVIEW_NOT_BOUND"
+    assert got.get("status") != "confirmed"
     refused = rig.call(answering(choice="A", name="Ada"), review_job="0" * 32, template_instances=instances)
     assert refused["completion_state"] == "blocked-escalated"   # a review G6 holds no record of gives nothing
 
