@@ -1268,6 +1268,10 @@ class _Fixed(FakeLLM):
     def complete(self, system, user, *, max_tokens=1024):
         return self.send(self, system, "canonical request")
 
+    def deliver(self, pair):
+        """A step of its own that sends, naming no system and user, which a function of its own calls."""
+        return _noted_and_refused(self, pair)
+
 
 def _noted_and_refused(caller, pair):
     note_model_call()
@@ -1294,9 +1298,14 @@ def _on_a_thread(caller, system, user):
     raise failed[0]
 
 
+def _between(caller, system, user):
+    """A function of the sender's own, between two of its frames: the one that names what is sent."""
+    return caller.deliver((system, user))
+
+
 SHAPES = {"a function": _by_function, "a lambda": lambda caller, system, user: _noted_and_refused(caller, (system, user)),
           "a method of another object": lambda caller, system, user: _Transport().send(caller, system, user),
-          "a function on a thread of its own": _on_a_thread}
+          "a function on a thread of its own": _on_a_thread, "a function between the sender's own frames": _between}
 
 
 @pytest.mark.parametrize("depth", [0, 1, 2])

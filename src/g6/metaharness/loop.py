@@ -253,25 +253,24 @@ def _sender(counted: Any) -> tuple[Any, str]:
     only that one is going out, and that file is bound, so both are read from the stack above the note, up to ``counted``'s
     own call, passing over this module's own frames on the way (the observer, the resend gate). The first ``self`` there is the
     sender: what calls the model, whatever holds it and whatever that declares. What it sends is what the innermost frame names
-    as a ``system`` and a ``user`` (``_named``), among the functions and methods below the sender and the sender's own frames,
-    whichever of them sends; a frame further out is a wrapper's, which names what it was asked and not what went out. With no
-    object between the note and ``counted``, a plain function noted it, or another thread did: the sender is what ``counted``
-    holds, as declared, and any frame there may name the request. ``""`` when none names it as text: then the request is not
-    sent (``_Requests.unnamed``), since once refused nothing could keep it from going out again. Tests send through each kind of
-    caller the loop accepts. A host caller is known by what its program is started with, at the step that starts it
-    (``usage.request_identity``), and not by this. What a sender does to the text below the frame that names it cannot be
-    seen."""
-    frame, sender, identity = sys._getframe(1), None, None
+    as a ``system`` and a ``user`` (``_named``), up to the sender's outermost frame: the functions and methods it called, its
+    own frames and whatever runs between them, whichever of those sends. A frame further out is a wrapper's, which names what
+    it was asked and not what went out. With no object between the note and ``counted``, a plain function noted it, or another
+    thread did: the sender is what ``counted`` holds, as declared, and any frame there may name the request. ``""`` when none
+    names it as text: then the request is not sent (``_Requests.unnamed``), since once refused nothing could keep it from going
+    out again. Tests send through each kind of caller the loop accepts. A host caller is known by what its program is started
+    with, at the step that starts it (``usage.request_identity``), and not by this. What a sender does to the text below the
+    frame that names it cannot be seen."""
+    frames, frame = [], sys._getframe(1)
     while frame is not None and not (frame.f_code is _Counted.complete.__code__ and frame.f_locals.get("self") is counted):
-        mine, own = frame.f_globals.get("__name__") == __name__, frame.f_locals.get("self")
-        if sender is not None and (mine or own is not sender):
-            break                                 # past the sender's own frames: a wrapper's, whatever it was asked
-        if identity is None:
-            identity = _named(frame)
-        if sender is None and not mine and own is not None:
-            sender = own
+        if frame.f_globals.get("__name__") != __name__:
+            frames.append((frame, frame.f_locals.get("self")))
         frame = frame.f_back
-    return (counted.inner if sender is None else sender), identity or ""
+    sender = next((own for _, own in frames if own is not None), None)
+    if sender is not None:                        # the sender's outermost frame: past it, a wrapper's, whatever it was asked
+        del frames[max(at for at, (_, own) in enumerate(frames) if own is sender) + 1:]
+    identity = next((named for named in (_named(found) for found, _ in frames) if named is not None), "")
+    return (counted.inner if sender is None else sender), identity
 
 
 #: The one lock every send in this process is admitted under, whichever meter it is reached through, and what a send held for
