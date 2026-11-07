@@ -275,6 +275,81 @@ def assess(evaluated: Sequence[Mapping[str, Any]], runs: Sequence[Mapping[str, A
             **({"integrity": list(integrity)} if integrity else {})}
 
 
-__all__ = ["ADVISORY", "ARTEFACT", "AT_BASE", "FROZEN", "INTEGRITY", "KEEPS", "NOT_IN_LEDGER", "PATCH_AUTHOR",
-           "RECEIPT", "REPOSITORY", "UNKNOWN", "assess", "codes", "observed_runs", "positions", "records_for",
-           "standard_sha256"]
+#: The ledger positions of a confirmed expectation's runs in its own certificate: frozen when the person confirmed it
+#: (G6 held it before the review read the tree), the artefact, the run on the patch, the run at the base commit (its
+#: control), and the run again on the patch.
+CONFIRMED_BASE, CONFIRMED_AGAIN = RECEIPT + 1, RECEIPT + 2
+
+
+def _confirmed_not_counted(found: Mapping[str, Any]) -> str:
+    """Why the issuer does not count a confirmed expectation, in words, from what the review ran."""
+    runs = found.get("runs") or {}
+    if found.get("result") != "passed":
+        return f"its check did not pass on the patch ({found.get('result')}: {found.get('detail', '')})"[:300]
+    base = (runs.get("base") or {}).get("result")
+    if base is None:
+        return "its check was not run at the base commit, so no run showed it can fail"
+    if base == "passed":
+        return ("its check passes at the base commit too, so no run showed it can fail: a confirmed case the base "
+                "commit already has keeps behaviour, and has no control in a review")
+    if not found.get("killed"):
+        return f"its run at the base commit gave no failure G6 can read ({base})"
+    again = (runs.get("again") or {}).get("result")
+    if again is None:
+        return "it could not run again on the patch after its control"
+    return "" if again == "passed" else f"run again on the patch after its control, it did not pass ({again})"
+
+
+def confirmed_evidence(standard: Any, results: Sequence[Mapping[str, Any]], *, artifact: str, base_commit: str,
+                       environment: Mapping[str, Any], integrity: Sequence[str] = ()) -> dict:
+    """The issuer's statement for each confirmed expectation the review enforced (slice 3, item 5), in its own
+    certificate under the expectation standard (``ExpectationStandard``): each is a predicate of that standard, its
+    check the example.v1 instance compiled from the person's answer (row ``person_confirmed``: its author is the person,
+    never the patch's producer). Each run on the patch is a receipt, in the order it ran; the run at the base commit,
+    where the check failed, is its control. ``results``: ``confirmed_checks.run``'s, in the standard's order. With an
+    integrity problem, nothing is counted, as for the review's own requirements."""
+    from g6.harness.confirmed_expectation import PERSON_CONFIRMED
+
+    facts = standard.facts(digest({"artifact": artifact, "base_commit": base_commit, "standard": standard.sha256}))
+    environment_digest = environment_sha256(environment)
+    records: list[SourceRecord] = []
+    for one, found in zip(standard.expectations, results, strict=True):
+        ident, runs = one.expectation_id, found.get("runs") or {}
+        controls = (Control(id_of("base-commit", ident), one.check_sha256, ident, "g6", CONFIRMED_BASE, True),) if (
+            found.get("killed") is True) else ()   # the runner's one rule for a control (confirmed_checks)
+        common = dict(kind=PERSON_CONFIRMED, predicates=(ident,), artefact_sha256=artifact, producer=PATCH_AUTHOR,
+                      artefact_seq=ARTEFACT, standard_sha256=standard.sha256, check_id=ident,
+                      check_sha256=one.check_sha256, author=one.answered_by, frozen_seq=FROZEN,
+                      environment_sha256=environment_digest, controls=controls,
+                      scope=f"the case the person confirmed ({one.scope}), on the working tree under review")
+        for name, seq in (("patch", RECEIPT), ("again", CONFIRMED_AGAIN)):
+            if name in runs:
+                records.append(SourceRecord(record_id=id_of("confirmed", name, ident), seq=seq,
+                                            result=_RESULT.get(str(runs[name].get("result")), "unknown"), **common))
+    if integrity:
+        records = []
+    try:
+        issued = issue_records(facts, Artifact(artifact, PATCH_AUTHOR, ARTEFACT), records)
+    except (CertificateRefused, ValueError, TypeError) as exc:
+        return {"authority": "g6.evidence.certificate", "refused_by_issuer": str(exc), "expectations": [],
+                "refused": []}
+    certificate = issued.certificate
+    artefact = Artifact(artifact, PATCH_AUTHOR, ARTEFACT)
+    expectations = []
+    for statement, found in zip(certificate.predicates, results, strict=True):
+        item = {"expectation": statement.predicate, **statement.as_dict(), "checked": statement.verified,
+                "gap": dict(certificate.gaps).get(f"predicate:{statement.predicate}", ""),
+                "codes": codes(certificate, statement, artefact)}
+        if not statement.verified and not statement.refute:
+            item["not_counted"] = (f"{INTEGRITY} ({', '.join(integrity)})" if integrity else
+                                   _confirmed_not_counted(found))
+        expectations.append(item)
+    return {"authority": "g6.evidence.certificate", "standard_sha256": standard.sha256, "state": certificate.state,
+            "certificate": certificate.as_dict(), "expectations": expectations,
+            "refused": [{"record": rid, "codes": [{"code": code, "missing": why} for code, why in found]}
+                        for rid, found in issued.refused]}
+
+
+__all__ = ["ADVISORY", "ARTEFACT", "AT_BASE", "CONFIRMED_AGAIN", "CONFIRMED_BASE", "FROZEN", "INTEGRITY", "KEEPS",
+           "NOT_IN_LEDGER", "PATCH_AUTHOR", "RECEIPT", "REPOSITORY", "UNKNOWN", "assess", "codes", "confirmed_evidence",
+           "observed_runs", "positions", "records_for", "standard_sha256"]

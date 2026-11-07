@@ -24,6 +24,12 @@ line in parts 2 and 3 also says the evidence kind of its checks and how the issu
 requirement's status, reads it: checked, refuted, conflicting, or not counted yet and why. Model results and proposed
 checks are never among them: they stay in the Tested step, where none passes a requirement.
 
+Where the review enforced cases the person confirmed (``assessment.confirmed_expectations``, G6 0.3 slice 3), a part
+of its own follows what was demonstrated: each case, the option the person chose and its outcome, the scope, who
+answered (recorded as given, not authenticated), its check's result on the patch and the issuer's statement, at most
+``CONFIRMED_SHOWN`` of them and a header (so at most ``CONFIRMED_SHOWN`` + 2 lines beyond ``MAX_LINES``). No model
+result is among them. A case that fails is a reproduced finding too. Without that field the report is as it was.
+
 A list cut at its room ends with "and N more" and names the field that holds the rest. Text the repository or the
 caller wrote (node ids, paths, requirement text, messages, commands) is shown only inside code spans fenced against
 the backticks it holds, on one line, so it can neither break the Markdown nor read as G6's own words."""
@@ -52,7 +58,12 @@ INTEGRITY = {"test_weakened": "a test or a test helper was weakened",
              "repository_changed_during_review": "the working tree changed during the review",
              "gate_shortcut": "the diff of the tests takes a shortcut"}
 FAILED = {"check_failed": "A stated check failed", "derived_test_regressed": "A test of the changed code fails",
-          "forbidden_dependency_added": "The patch adds an import a stated contract forbids"}
+          "forbidden_dependency_added": "The patch adds an import a stated contract forbids",
+          "confirmed_expectation_failed": "A case the person confirmed fails"}
+#: G6 0.3, slice 3: what the person confirmed, shown in its own part when the review enforced any, at most this many.
+CONFIRMED_SHOWN = 3
+CONFIRMED_RESULT = {"passed": "its check passes on the patch", "failed": "its check fails on the patch",
+                    "not_run": "its check was not run on the patch"}
 UNCONFIRMED = {"counterexample": "A proposed check found a counterexample, not confirmed",
                "unconfirmed_failure": "A proposed check fails on the patch, not confirmed"}
 BUDGET = {"findings": 10, "missing": 5, "shown": 3, "decide": 5}
@@ -228,6 +239,10 @@ def _findings(assessment: dict) -> list[list[str]]:
                    f"holds {code(first.get('text', ''))}; the base commit's files have no such import"
                    + (f"; the repository's own linter: {code(reproduction['command'])}" if reproduction.get("command")
                       else ""))
+        elif found.get("code") == "confirmed_expectation_failed":
+            how = (f"  - Reproduce: write its text (in {code('assessment.completion.defects_reproduced')}) to "
+                   f"{code(reproduction.get('file', ''), 80)}, then {_plain(reproduction.get('node', ''))}. G6 "
+                   f"compiled it from example.v1 and the person's answer. {EXACT}. {CAUTION}")
         else:
             base = ("passes at the base commit, fails on the patch" if found.get("code") == "derived_test_regressed"
                     else "not run at the base commit")
@@ -388,6 +403,39 @@ def _gate_note(assessment: dict) -> str:
     return f"; {count} proposed check{'s' if count != 1 else ''} could not be judged" if count else ""
 
 
+def _outcome_words(outcome: object) -> str:
+    if not isinstance(outcome, dict):
+        return "an outcome G6 cannot read"
+    if "raises" in outcome:
+        return f"raises {outcome['raises']}"
+    if "effect" in outcome:
+        return f"leaves argument {(outcome['effect'] or {}).get('argument')} as {(outcome['effect'] or {}).get('equals')}"
+    return f"returns {outcome.get('returns')}"
+
+
+def _confirmed(assessment: dict) -> list[list[str]]:
+    """G6 0.3, slice 3: each expectation the person confirmed (``assessment.confirmed_expectations``): the case asked,
+    the option chosen and its outcome, the scope, who answered (recorded as given, not authenticated), its check's
+    result on the patch and the issuer's statement. No model result is among them."""
+    held = assessment.get("confirmed_expectations") or {}
+    statements = {s.get("expectation"): s for s in (held.get("evidence") or {}).get("expectations", [])}
+    items = []
+    for one in held.get("expectations", []):
+        question, answer, check = one.get("question") or {}, one.get("answer") or {}, one.get("check") or {}
+        option = answer.get("option", "")
+        statement = statements.get(one.get("expectation_id")) or {}
+        issuer = ("checked" if statement.get("checked") else "refuted" if statement.get("refute") else
+                  f"not counted yet ({_words(statement.get('not_counted', '') or statement.get('gap', ''))})")
+        call = f"{question.get('function', '')} {question.get('args', [])}"
+        items.append([f"- {code(call, 80)}: the person chose {code(option, 20)}, "
+                      f"{code(_outcome_words((question.get('outcomes') or {}).get(option)), 60)}, scope "
+                      f"{code(question.get('scope', ''), 80)}, answered by {code(answer.get('answered_by', ''), 60)} "
+                      "(recorded as given, not authenticated); "
+                      f"{CONFIRMED_RESULT.get(check.get('result'), 'its check gave no result')}; "
+                      f"the evidence issuer: {code(issuer, 120)}"])
+    return items
+
+
 def render(assessment: dict) -> str:
     """The report of ``assessment`` (the module's order and rules), from its decided fields alone."""
     lines = [_headline(assessment), "", "## Reproduced findings"]
@@ -396,6 +444,9 @@ def render(assessment: dict) -> str:
     lines += _cut(_missing(assessment), BUDGET["missing"], "assessment.completion.not_established") or ["- None."]
     lines += ["", "## Demonstrated on the stated checks"]
     lines += _cut(_shown(assessment), BUDGET["shown"], "assessment.completion.demonstrated") or ["- None."]
+    if assessment.get("confirmed_expectations"):   # only when the review enforced any: otherwise the report is as it was
+        lines += ["", "## What the person confirmed"]
+        lines += _cut(_confirmed(assessment), CONFIRMED_SHOWN, "assessment.confirmed_expectations") or ["- None."]
     lines += ["", "## For you to decide", *_decide(assessment)[:BUDGET["decide"]]]
     lines += ["", "## How this was decided", *_steps(assessment), "", STANDING_NOTE]
     if assessment.get("not_checked"):
