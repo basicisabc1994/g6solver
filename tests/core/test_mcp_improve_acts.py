@@ -328,8 +328,10 @@ def test_a_head_that_moved_while_the_dialog_was_open_is_not_taken_back(rig):
         open_loop(rig.root, now=lambda: START)[0].demote(1, "Cy")
 
     got = rig.call("g6_improve_demote", _while_asked(moved), generation=1)
-    # refused before the act: generation 1 is no longer the head the person read, generation 2 is
-    assert _code(got) == "G6_E_LOOP_NOT_DEMOTABLE" and rig.acts == []
+    # refused before the act: generation 1 is no longer the head the person read, generation 2 is. What they agreed to
+    # is compared first once they answer, so the moved head is a changed agreement (review cons4's finding 3), where
+    # this once expected the check that runs before any dialog, G6_E_LOOP_NOT_DEMOTABLE.
+    assert _code(got) == "G6_E_LOOP_TERMS_CHANGED" and rig.acts == []
     assert len(lineage(rig.root / "workspace")["recent"]) == 2
 
 

@@ -530,6 +530,25 @@ def person_terms(act_name: str, root: Path, *, generation: int | None = None) ->
     return bound
 
 
+_ABSENT = object()
+
+
+def moved(act_name: str, root: Path, bound: Any, *, generation: int | None = None) -> list[str]:
+    """The parts of a person's binding (``person_terms``) that no longer stand on ``root``, by name: each whose value
+    moved, appeared or went, the whole folder when it no longer reads (a bound file that does not read has moved), or
+    the binding itself when what was given is none. Empty while all the person read stands. It is the one rule for
+    whether their agreement still stands: ``g6.mcp.improve`` applies it first once they have answered, before anything
+    else it checks, so a change to what they read is named as one, and the act's process applies it again under the
+    folder's lock (``act``)."""
+    if not isinstance(bound, Mapping):
+        return ["the binding its dialog was built from"]
+    try:
+        now = person_terms(act_name, root, generation=generation)
+    except (OSError, ValueError, LedgerError) as exc:
+        return [f"the folder, which no longer reads ({type(exc).__name__})"]
+    return sorted(name for name in {*bound, *now} if bound.get(name, _ABSENT) != now.get(name, _ABSENT))
+
+
 def act(request: dict[str, Any]) -> dict[str, Any]:
     """A person's act that the client's dialog agreed to (``g6.mcp.improve``), in a process like the runner's, so what an
     enrolment freezes is what a tick on that interpreter compares. ``request["binding"]`` is what the dialog showed
@@ -544,19 +563,18 @@ def act(request: dict[str, Any]) -> dict[str, Any]:
     again = "Call the tool again: the person reads what stands now, in the client's dialog."
 
     def unchanged(given: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
-        """``None`` while what the person read still stands, and ``given``, what the act is about to write, is what it
-        names: for an enrolment the bytes it freezes, for a demotion what it restores. A refusal otherwise."""
-        try:
-            same = person_terms(name, root, generation=generation) == bound
-        except (ValueError, LedgerError):
-            same = False
-        if same and given is not None:
-            same = (given.get("domain_file") == bound[FILE_SHA] if name == "enrol" else
-                    all(given.get(field) == bound.get(label) for field, label in RESTORING.items()))
-        if same:
+        """``None`` while what the person read still stands (``moved``), and ``given``, what the act is about to write,
+        is what it names: for an enrolment the bytes it freezes, for a demotion what it restores. A refusal otherwise,
+        naming what moved."""
+        changed = moved(name, root, bound, generation=generation)
+        if not changed and given is not None and not (
+                given.get("domain_file") == bound[FILE_SHA] if name == "enrol" else
+                all(given.get(field) == bound.get(label) for field, label in RESTORING.items())):
+            changed = ["what it was about to write"]
+        if not changed:
             return None
-        return _blocked(TERMS_CHANGED, "what the person read is no longer what stands, so nothing ran or was recorded",
-                        again)
+        return _blocked(TERMS_CHANGED, f"what the person read is no longer what stands ({', '.join(changed)}), so nothing "
+                        "ran or was recorded"[:500], again)
 
     try:
         with folder_lock(root):
@@ -616,5 +634,5 @@ def main(argv: list[str] | None = None) -> int:
     return _dialog_only(args.command)
 
 
-__all__ = ["FIRST_REST", "LONGEST_REST", "NAP", "Runner", "act", "act_main", "demote", "enrol", "held", "main", "open_loop",
-           "person_terms", "resume", "run"]
+__all__ = ["FIRST_REST", "LONGEST_REST", "NAP", "Runner", "act", "act_main", "demote", "enrol", "held", "main", "moved",
+           "open_loop", "person_terms", "resume", "run"]

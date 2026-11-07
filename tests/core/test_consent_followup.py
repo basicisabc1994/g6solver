@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+﻿# SPDX-License-Identifier: Apache-2.0
 """Consent through the client's dialog, the follow-up: review cons4's findings, each brought in as a test of this file and
 failing on 66f14b9, and the inventory that removes its class at the root, built from the code:
 
@@ -9,6 +9,10 @@ failing on 66f14b9, and the inventory that removes its class at the root, built 
   of the G6 it imported before it runs anything. The inventory lists, from the code, every child the MCP, metaharness and
   self-maintenance code starts, and starts each G6 child for real with a ``g6``, a ``sitecustomize`` and a ``json`` planted
   where the folder, ``.``, an empty entry and a relative entry would reach.
+- a changed agreement named as one (finding 3; nearest one_fact_two_rules): once a person has answered, the act compares
+  what they agreed to first (``runner.moved``, ``improve._still_read``), before any other check of the folder, so a
+  change to any part they read is ``G6_E_LOOP_TERMS_CHANGED`` and nothing is recorded. The inventory reads every act's
+  binding from the code and moves each part of it while the act's dialog is open.
 
 No model, no network, and no runner left running: the two real children here are the act, refused before it runs
 anything, and the runner, refused at once on a folder no person started. What is planted is under each test's own folder.
@@ -351,3 +355,206 @@ def test_a_real_act_child_refuses_a_g6_its_dialog_did_not_name(rig, monkeypatch,
     assert not marker.exists() and not (rig.root / CYCLE_LOG).is_file()
     good = improve._run_act(root, runner.read_settings(root), {**request, "binding": bound})
     assert code(good) == "G6_E_LOOP_ENROLLED", good                      # the same request, as named, enrols
+
+
+# Finding 3, a changed agreement named as one (nearest: one_fact_two_rules): what was agreed is compared first ---------
+
+@pytest.mark.parametrize("act", ["resume", "demote"])
+def test_a_domain_edited_while_the_dialog_is_open_is_a_changed_agreement(tmp_path, monkeypatch, act):
+    """Finding 3 (review cons4), as review cons4 wrote it. Failed on 66f14b9: AssertionError: resume: the bound domain
+    changed during the dialog, but got G6_E_LOOP_FROZEN_CHANGED instead of G6_E_LOOP_TERMS_CHANGED (and the same for
+    demote)."""
+    rig = Rig(tmp_path, monkeypatch)
+    assert code(rig.call("g6_improve_enrol")) == "G6_E_LOOP_ENROLLED"
+    binding._paused(rig) if act == "resume" else binding._adopted(rig)
+    before = rig.log()._chain.entries()
+
+    def edit_while_dialog_open(message):
+        assert file_digest(rig.domain) in message
+        rig.domain.write_text(rig.source + "\n# edited while consent was open\n", encoding="utf-8")
+        return SimpleNamespace(action="accept", content={"value": "Ada"})
+
+    reply = rig.call("g6_improve_" + act, handler=edit_while_dialog_open, **({"generation": 1} if act == "demote" else {}))
+    assert rig.log()._chain.entries() == before
+    assert code(reply) == improve.TERMS_CHANGED, (
+        f"{act}: the bound domain changed during the dialog, but got {code(reply)} instead of G6_E_LOOP_TERMS_CHANGED")
+
+
+def _settings(rig, **changed) -> None:
+    path = rig.root / "settings.json"
+    path.write_text(json.dumps({**json.loads(path.read_text(encoding="utf-8")), **changed}), encoding="utf-8")
+
+
+def _moved_file(rig) -> None:
+    """The settings name another Python file with the same bytes: only its path moves."""
+    other = rig.tmp / "elsewhere" / "domain.py"
+    other.parent.mkdir(exist_ok=True)
+    other.write_bytes(rig.domain.read_bytes())
+    _settings(rig, domain_file=str(other))
+
+
+def _edited(rig) -> None:
+    rig.domain.write_text(rig.source + "\n# edited while the dialog was open\n", encoding="utf-8")
+
+
+def _pinned(rig) -> None:
+    pinned = rig.tmp / "python.exe"
+    pinned.write_bytes(b"")
+    _settings(rig, python=str(pinned))
+
+
+def _other_g6_code(rig) -> None:
+    rig.patch.setattr(runner, "envelope_sha256", lambda: "f" * 64)
+
+
+def _other_g6_folder(rig) -> None:
+    rig.patch.setattr(runner, "g6", SimpleNamespace(__file__=str(rig.tmp / "another" / "g6" / "__init__.py")))
+
+
+def _another_enrolment(rig) -> None:
+    """Another person's enrolment, of another domain, recorded while the dialog is open."""
+    log = rig.log()
+    log.enrol("Cy", log.enrolled()["frozen"], domain="another domain")
+
+
+def _another_pause(rig) -> None:
+    rig.log().pause("another reason, written while the dialog was open")
+
+
+def _another_cycle(rig) -> None:
+    rig.log().cycle({"outcome": "blocked", "code": "G6_E_LOOP_TEST_CYCLE", "reason": "a cycle during the dialog"})
+
+
+def _another_demotion(rig) -> None:
+    """Another person takes generation 1 back while the dialog is open: the head and all it restores move."""
+    loop, _ = runner.open_loop(rig.root)
+    assert loop.demote(1, "Cy")["warning_card"]["code"] == "G6_E_LOOP_DEMOTED"
+
+
+def _another_stop(rig) -> None:
+    improve.stop(str(rig.root), "another stop, while the dialog was open")
+
+
+def _stop_lifted_by_hand(rig) -> None:
+    (rig.root / "STOP").unlink()
+
+
+def _another_start(rig) -> None:
+    """A start recorded while the dialog is open, which counted a stop."""
+    rig.log().start("Cy", stops=1, settings="", enrolment="")
+
+
+def _other_use(rig) -> None:
+    _settings(rig, windows=[{"provider": "claude", "allowance": 2_000_000, "week_start": binding.START.isoformat()}])
+
+
+def _other_settings(rig) -> None:
+    _settings(rig, note="edited while the dialog was open")
+
+
+#: Each part an act binds, and what moves it while the act's dialog is open. Every part of every binding is here: the
+#: inventory below reads the bindings from the code and fails on one that is not.
+CHANGERS = {
+    "Python file": _moved_file, "Python file SHA-256": _edited, "Runs on": _pinned, runner.G6_SHA: _other_g6_code,
+    runner.G6_FOLDER: _other_g6_folder, runner.SETTINGS_DIGEST: _other_settings, "It replaces the enrolment by":
+    _another_enrolment, "Enrolment it replaces": _another_enrolment, "Domain": _another_enrolment, "Enrolled by":
+    _another_enrolment, "Enrolment on record": _another_enrolment, "Paused because": _another_pause, "Cycles on record":
+    _another_cycle, "Its change": _another_demotion, "Measured": _another_demotion,
+    **{label: _another_demotion for label in runner.RESTORING.values()}, "Chain of generations": _another_demotion,
+    "Use": _other_use, improve.STOPS_COUNTED: _another_stop, "Stops the last start counted": _another_start,
+    "Stop now in place": _stop_lifted_by_hand, **{label: _another_stop for label in improve.LIFTS.values()},
+}
+#: The parts no dialog can see move: what the tool was called with.
+FIXED = {"Folder": "the folder the tool was given, resolved once: another folder is another call",
+         "Generation": "the generation the tool was given: another is another call"}
+#: Each act that a person agrees to from a binding, and what its tool is called with.
+BOUND_ACTS = {"enrol": ("g6_improve_enrol", {}), "resume": ("g6_improve_resume", {}),
+              "demote": ("g6_improve_demote", {"generation": 1}), "start": ("g6_improve_start", {})}
+
+
+def _ready(rig, act: str) -> None:
+    """The folder as each act's dialog needs it, with every part its binding can hold: an enrolment for a new one to
+    replace, a pause, an adoption to take back, and a stop for a start to lift."""
+    assert code(rig.call("g6_improve_enrol")) == "G6_E_LOOP_ENROLLED"
+    if act in ("resume", "start"):
+        binding._paused(rig)
+    if act == "demote":
+        binding._adopted(rig)
+    if act == "start":
+        improve.stop(str(rig.root), "the owner's review")
+
+
+def _binding(rig, act: str) -> dict:
+    found = improve.asked(str(rig.root)) if act == "start" else improve.asked_act(act, str(rig.root),
+                                                                                  BOUND_ACTS[act][1].get("generation"))
+    assert not isinstance(found, dict), found
+    return found[2]
+
+
+#: Each part each act's binding holds once its folder is ready (``_ready``), but for the ``FIXED`` ones: what the tests
+#: below move. The inventory reads each binding from the code and fails on a part not here.
+HOLDS = {"enrol": ("Python file", "Python file SHA-256", "Runs on", runner.G6_SHA, runner.G6_FOLDER, runner.SETTINGS_DIGEST,
+                   "It replaces the enrolment by", "Enrolment it replaces"),
+         "resume": ("Python file", "Python file SHA-256", "Runs on", runner.G6_SHA, runner.G6_FOLDER, runner.SETTINGS_DIGEST,
+                    "Domain", "Enrolled by", "Enrolment on record", "Paused because", "Cycles on record"),
+         "demote": ("Python file", "Python file SHA-256", "Runs on", runner.G6_SHA, runner.G6_FOLDER, runner.SETTINGS_DIGEST,
+                    "Domain", "Enrolled by", "Enrolment on record", "Its change", "Measured", *runner.RESTORING.values(),
+                    "Chain of generations"),
+         "start": ("Domain", "Python file", "Python file SHA-256", "Enrolled by", improve.ENROLMENT, "Use", "Runs on",
+                   improve.SETTINGS_DIGEST, improve.STOPS_COUNTED, "Stops the last start counted", "Stop now in place",
+                   *improve.LIFTS.values(), "Paused because")}
+
+
+def test_every_act_a_person_agrees_to_from_a_binding_is_listed():
+    """The acts whose dialog is built from a binding: the tools that take it from ``improve.asked`` or
+    ``improve.asked_act``, and the acts ``person_act`` is called for, read from the code."""
+    tools = binding._functions(SRC / "mcp" / "__init__.py")
+    asks = {name for name, node in tools.items() if any(ast.unparse(call.func) in ("improve.asked", "improve.asked_act")
+                                                        for call in ast.walk(node) if isinstance(call, ast.Call))}
+    acts = {call.args[1].value for node in tools.values() for call in binding._calls(node, "person_act")
+            if isinstance(call.args[1], ast.Constant)}
+    assert asks == {"g6_improve_start", "person_act", "_metaharness_tools"} and acts == {"enrol", "resume", "demote"}
+    assert set(BOUND_ACTS) == set(HOLDS) == acts | {"start"} == set(improve.DOES) | {"start"}
+    assert {part for parts in HOLDS.values() for part in parts} <= set(CHANGERS)
+
+
+@pytest.mark.parametrize("act", sorted(BOUND_ACTS))
+def test_every_part_each_act_binds_is_moved_by_a_test(tmp_path, monkeypatch, act):
+    rig = Rig(tmp_path, monkeypatch)
+    _ready(rig, act)
+    assert set(_binding(rig, act)) - set(FIXED) == set(HOLDS[act]), f"{act}'s binding is not the parts the tests move"
+
+
+@pytest.mark.parametrize("act, part", [(act, part) for act, parts in HOLDS.items() for part in parts])
+def test_a_bound_part_moved_while_the_dialog_is_open_is_a_changed_agreement_and_records_nothing(tmp_path, monkeypatch,
+                                                                                                  act, part):
+    """Whatever else the move changes, and whatever the folder's own checks would say of it, the act compares what the
+    person agreed to first: ``G6_E_LOOP_TERMS_CHANGED``, its process never starts, and nothing is recorded."""
+    rig = Rig(tmp_path, monkeypatch)
+    _ready(rig, act)
+    tool, arguments = BOUND_ACTS[act]
+    shown, seen = _binding(rig, act), {}
+    monkeypatch.setattr(improve, "_run_act", lambda *a: pytest.fail("an act's process started on a moved agreement"))
+    monkeypatch.setattr(improve, "_spawn", lambda *a: pytest.fail("a runner started on a moved agreement"))
+
+    def agree_after_move(message):
+        CHANGERS[part](rig)
+        seen["now"] = _binding_now(rig, act)
+        seen["log"] = rig.log()._chain.entries()
+        seen["chain"] = runner.lineage(rig.root / "workspace")
+        return SimpleNamespace(action="accept", content={"value": "Ada"})
+
+    rig.patch = monkeypatch
+    reply = rig.call(tool, handler=agree_after_move, **arguments)
+    assert seen["now"].get(part, "absent") != shown.get(part, "absent"), f"moving {part!r} left it as it was"
+    assert code(reply) == improve.TERMS_CHANGED, f"{act}: {part!r} moved while the dialog was open, but got {code(reply)}"
+    assert rig.log()._chain.entries() == seen["log"] and runner.lineage(rig.root / "workspace") == seen["chain"]
+    if act == "start":
+        assert (rig.log().started() or {}).get("by") != "Ada"
+
+
+def _binding_now(rig, act: str) -> dict:
+    """The act's binding as its folder stands now, read by the same rule the act reads it by, refusing nothing."""
+    if act == "start":
+        return improve._terms(rig.root)
+    return runner.person_terms(act, rig.root, generation=BOUND_ACTS[act][1].get("generation"))

@@ -336,13 +336,25 @@ def _not_what_was_read(root: Path) -> dict:
                     running=False, folder=str(root))
 
 
+def _still_read(root: Path, shown: dict[str, Any]) -> bool:
+    """Whether what a person read before a start (``_terms``) still stands: a folder that no longer reads has moved."""
+    try:
+        return _terms(root) == shown
+    except (OSError, ValueError, LedgerError):
+        return False
+
+
 def start(root: Path, who: str, shown: dict[str, Any] | None = None) -> dict:
     """Record who started it and start the runner, on the binding the person agreed to: ``shown``, which ``asked`` built
     the dialog from, or with none (a Python caller, with no dialog), what stands now, recorded as read. What the person
-    read may have moved while the dialog was up, so the start reads it again before it waits for the folder's lock, and
-    again holding the lock, immediately before it records, and any difference asks them again. It records the binding's settings digest, count of stops and ``STOP`` file, never ones
-    read afresh, so a restart holds to what was agreed and any stop since closes it. It lifts only the ``STOP`` file the
-    binding names, by recording it: any other stop stands, and nothing starts."""
+    read may have moved while the dialog was up, so the start reads it again first, before anything else it checks, so a
+    change to what they read is named as one (``TERMS_CHANGED``) whatever else changed with it; again before it waits
+    for the folder's lock, and again holding the lock, immediately before it records, and any difference asks them
+    again. It records the binding's settings digest, count of stops and ``STOP`` file, never ones read afresh, so a
+    restart holds to what was agreed and any stop since closes it. It lifts only the ``STOP`` file the binding names, by
+    recording it: any other stop stands, and nothing starts."""
+    if shown is not None and not _still_read(root, shown):
+        return _not_what_was_read(root)
     cannot = _cannot_start(root)
     if cannot is not None:
         return cannot
@@ -435,7 +447,7 @@ def asked_act(act_name: str, folder: str, generation: int | None = None) -> tupl
     """What the person reads before ``act_name`` (``enrol``, ``resume`` or ``demote``), the folder, and the binding it is
     built from (``g6.metaharness.runner.person_terms``), read once; a blocked reply when it cannot be put to them. The
     folder is read again before the dialog is shown, and a binding that moved meanwhile asks nothing."""
-    from g6.metaharness.runner import person_terms
+    from g6.metaharness.runner import moved, person_terms
 
     root = _root(folder)
     cannot = _cannot_act(act_name, root, generation)
@@ -447,7 +459,7 @@ def asked_act(act_name: str, folder: str, generation: int | None = None) -> tupl
                 "resume": f"Lift the pause on G6's self-improvement loop on {bound.get('Domain')}?",
                 "demote": f"Take generation {generation} of G6's self-improvement loop on {bound.get('Domain')} back?"}
         shown = _question(asks[act_name], bound, DOES[act_name], close=NAME_RECORDED)
-        if person_terms(act_name, root, generation=generation) != bound:
+        if moved(act_name, root, bound, generation=generation):
             return _blocked(TERMS_CHANGED, "the folder changed while its question was being read, so nothing was asked or "
                             "recorded", CHANGED_SINCE, folder=str(root))
     except (ValueError, LedgerError) as exc:
@@ -459,20 +471,25 @@ def asked_act(act_name: str, folder: str, generation: int | None = None) -> tupl
 def act(act_name: str, root: Path, who: str, shown: dict[str, Any], generation: int | None = None) -> dict:
     """Do what the person agreed to, on the binding their dialog was built from (``shown``), if it still stands: in a
     process like the runner's (``_run_act``), which reads it again under the folder's lock before it runs or records
-    anything, and runs only the bytes it names."""
-    from g6.metaharness.runner import SETTINGS_DIGEST as BOUND_SETTINGS, person_terms
+    anything, and runs only the bytes it names. What they agreed to is compared first (``runner.moved``), so any change
+    to what they read is ``TERMS_CHANGED`` and nothing is recorded, whatever else changed with it; only then is the folder
+    checked for what the binding does not cover (``_cannot_act``)."""
+    from g6.metaharness.runner import SETTINGS_DIGEST as BOUND_SETTINGS, moved
 
+    changed = moved(act_name, root, shown, generation=generation)
+    try:
+        settings = read_settings(root)
+    except ValueError:
+        changed = changed or [f"{SETTINGS_FILE}, which no longer reads"]
+    else:
+        if not changed and digest_of(settings) != shown.get(BOUND_SETTINGS):
+            changed = [BOUND_SETTINGS]
+    if changed:
+        return _blocked(TERMS_CHANGED, f"what the person read is no longer what stands ({', '.join(changed)}), so nothing "
+                        "ran or was recorded"[:500], CHANGED_SINCE, folder=str(root))
     cannot = _cannot_act(act_name, root, generation)
     if cannot is not None:
         return cannot
-    try:
-        settings = read_settings(root)
-        if (not isinstance(shown, dict) or digest_of(settings) != shown.get(BOUND_SETTINGS)
-                or person_terms(act_name, root, generation=generation) != shown):
-            return _blocked(TERMS_CHANGED, "what the person read is no longer what stands, so nothing ran or was recorded",
-                            CHANGED_SINCE, folder=str(root))
-    except (ValueError, LedgerError) as exc:
-        return _blocked(RECORDS_UNREADABLE, f"the loop's records cannot be trusted: {exc}"[:400], CHANGED_SINCE)
     request = {"act": act_name, "folder": str(root), "who": who, "binding": shown, "generation": generation}
     return {**_run_act(root, settings, request), "by": who}
 
