@@ -4,7 +4,7 @@ Status: frozen by the owner on 2026-11-08, and 0.3.0 is all of it built. Section
 2026-11-06: version 1 (178ef54) was challenged by Codex, all 16 of its challenges were read against the code and adopted, and
 appendix A lists each. Sections 11 to 15 were added on 2026-11-07 and 2026-11-08 and approved with the freeze; section 16 is the owner's ruling
 that no data reaches a cloud model without consent, which every section meets. Section 17, the owner's north star
-for the user interface (2026-11-08), is proposed and awaits the owner's approval of its scope. Codex's
+for the user interface (2026-11-08), is approved with its scope; MCP is the only interface. Codex's
 challenges of them are folded in as corrections within this scope (appendix B for section 11, C for 12 and 13, D for 14 and 15). Anything new goes to a list for
 after 0.3.0. Building follows section 7's order, with 12.9, 13.4, 14.4 and 15.8.
 
@@ -1375,11 +1375,11 @@ It comes first in every slice that sends data to a model: before the Context Eng
 before section 15's autoformaliser. The change to the existing K loop is its own change on the integration line, test first,
 with its own review loop.
 
-## 17. Proposed 2026-11-08, not approved: the north star for the user interface
+## 17. Approved 2026-11-08: the north star for the user interface
 
 **Status.** Proposed by the owner on 2026-11-08 as a north star for the interface, separate from the technical design. The
-owner's specification (G6-UX-VALUE-001) is read here against the frozen design. It needs the owner's approval of 17.4's
-scope, and Codex's challenge is folded in as corrections.
+owner's specification (G6-UX-VALUE-001) is read here against the frozen design. The owner approved 17.4's scope on
+2026-11-08, with the interface ruling in 17.3. Codex's challenge is folded in as corrections.
 
 **The north star (owner).** G6 brings the most end-to-end value to the person by studying their real workflow, finding the
 binding constraint on the value they want, and suggesting and helping deliver its removal. Its worth is what it lets the
@@ -1417,15 +1417,16 @@ the Theory of Constraints. Each stage maps onto existing code:
 
 - **States and words.** G6's states stay `verified`, `qualified-draft` and `blocked-escalated`. The specification's other
   spellings are not adopted. Public copy says "checked".
-- **The interface.** The GUI and TUI/CLI are frozen (owner, 2026-10-07), so in 0.3.0 the interface is the MCP replies and the
-  report the agent shows. The report leads with the outcome, the most likely constraint, and the next action. Its evidence,
+- **The interface (owner, 2026-11-08).** MCP is the only interface; no GUI is built. When a visual helps, such as a
+  workflow map, G6 writes it as a file (for example an HTML or SVG file) that the person opens separately, and says
+  where it is. The interface is the MCP replies and the report the agent shows. The report leads with the outcome, the most likely constraint, and the next action. Its evidence,
   inference and recommendation are kept visibly apart.
 - **Data.** Workflow records are the person's data: local by default, under section 16's consent rule, inspectable and
   correctable by the person, and never used to infer a person's motives.
 - **G6's own friction is counted:** its questions, approvals, time and tool calls. If G6 itself becomes the constraint, it
   simplifies within its safeguards.
 
-### 17.4 Scope (recommendation; the owner decides)
+### 17.4 Scope (approved by the owner, 2026-11-08)
 
 **In 0.3.0:**
 - the 17.1 gate on every slice;
@@ -1440,7 +1441,7 @@ the Theory of Constraints. Each stage maps onto existing code:
 **After 0.3.0:**
 - versioned workflow graphs from git, CI and task systems;
 - proactive suggestions;
-- a visual workflow explorer, which needs the GUI freeze lifted;
+- a visual workflow map, written as a file the person opens, never a GUI;
 - learned intervention selection;
 - other verticals.
 
