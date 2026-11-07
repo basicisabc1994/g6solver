@@ -3452,3 +3452,27 @@ unchanged.
 reads can change. The follow-up runs every capture under settings G6 fixes, with no repository or user configuration read,
 rather than closing one setting at a time. Nothing recorded so far is known to be affected; the follow-up checks the kept
 patches for each case before the cohorts are used.
+
+## 2026-11-07 (evening): the masking follow-up ended its review loop at the limit
+
+**What it was.** `claude/masking-followup`, from 01a3f83: the reviewer's copy of a patch built from the files, with the patch's
+identity kept as git's own bytes from one read, and each crossing a git name makes (into the identity, the scrubber, the disk,
+a containment check, text) given one rule. Four reviews and three repairs. Findings by round: 4, 4, 1 and 2, every one
+reproduced by a test that failed on the reviewed commit; none rejected; never clean. The last repaired commit is dcbb8f9. The
+fourth review was not run by Codex: its filter stopped the job before any finding, so a fresh Claude reviewer ran the same
+brief, as the standing rule says.
+
+**Open, for their own change** (tests in `review-maskfu4\tests\_review\`, reproduced on dcbb8f9):
+1. on Windows, an untracked `x.py.` that git lists is read through the plain Win32 path, which drops the trailing dot, so the
+   identity and the reviewer's copy carry `x.py`'s bytes under the name `x.py.`;
+2. an untracked regular file named `nul` reads as the NUL device, is taken for a folder, and gets no line in the identity, so a
+   review can end clean on a file no text binds.
+
+**What it says about the design.** Finding 1 is the third review's case again on another crossing: that repair read links by
+the literal extended path and left the file read on the plain one. So the class was patched where it was found, not removed.
+Every round since the masking was rebuilt has found a place where G6's reading of a name on disk differs from git's. The next
+change does not add a fifth crossing rule. G6 opens no name git listed: git, the producer of the listing, reads each listed
+file's bytes (raw, no filters) and each link as a link, under configuration G6 fixes, and G6 reads only git's objects. A name
+git cannot open refuses the read. The same rule is what slice 1's follow-up asks of the replay's final capture, so both
+captures should end as one at integration. Cost if wrong: one more git process per read, and a file git cannot read on Windows
+(which git also refuses to commit) refusing a review that today reads it.
