@@ -13,7 +13,10 @@ of all its dialog shows and it stands on (``g6.metaharness.runner.person_terms``
 is written from that binding alone (``g6.mcp.consent.question``), so every field it binds is shown. The binding travels
 with the act, which reads it again holding the folder's lock, immediately before it runs or records anything, and runs
 only the bytes it names. An act runs in a process like the runner's, so an enrolment freezes what a tick on that
-interpreter compares, and it records nothing if any of it moved meanwhile.
+interpreter compares, and it records nothing if any of it moved meanwhile. Both start in the loop's folder on this server's
+own import path, fixed here with no relative or empty entry, and with no path of Python's own, so a ``g6`` in the folder
+a caller names never runs in place of the server's; the act's binding names the G6 it runs, by digest, and the act
+refuses any other.
 An agreement binds what the dialog showed: if any of it moved while the dialog was up, nothing starts and the person is
 asked again. The start records the settings it agreed to, and the runner holds to them on every restart, so a changed
 settings file needs a new agreement even with no stop in between. It records the enrolment it showed too, by digest, and
@@ -37,6 +40,7 @@ from __future__ import annotations
 
 import json
 import os
+import site
 import subprocess
 import sys
 import tempfile
@@ -45,6 +49,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import g6
 from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, is_allowed
 from g6.core.ledger import LedgerError, digest as digest_of
 from g6.core.storage import g6_home
@@ -264,14 +269,37 @@ def _spawn(root: Path, settings: dict[str, Any]) -> Any:
                 else {"start_new_session": True})
     with open(root / RUNNER_LOG, "ab") as log:
         return subprocess.Popen([*_interpreter(settings), "-m", "g6.metaharness.loop", "run", str(root)],
-                                cwd=root, stdin=subprocess.DEVNULL, stdout=log, stderr=log, close_fds=True, **detached)
+                                cwd=root, stdin=subprocess.DEVNULL, stdout=log, stderr=log, close_fds=True,
+                                env=_environment(), **detached)
 
 
 def _interpreter(settings: dict[str, Any]) -> list[str]:
-    """How the runner's Python starts, for the runner and for a person's act alike (``_spawn``)."""
+    """How the runner's Python starts, for the runner and for a person's act alike (``_spawn``). ``-P`` and ``-I`` both
+    keep Python from adding a path of its own: the folder it starts in, which is the loop's, for ``-m`` and ``-c``."""
     python = _pinned_python(settings)
     cache = tempfile.mkdtemp(prefix="g6-loop-no-bytecode-")
     return [python or sys.executable, "-I" if python else "-P", "-B", "-X", f"pycache_prefix={cache}"]
+
+
+def _environment() -> dict[str, str]:
+    """The environment a G6 child starts in, for the runner and for a person's act alike: this server's, with its import
+    path fixed here, before the child starts (``_import_path``)."""
+    return {**os.environ, "PYTHONPATH": _import_path()}
+
+
+def _import_path() -> str:
+    """The ``PYTHONPATH`` of a G6 child, so it imports G6 from where this server's ``g6`` was loaded: each absolute entry
+    of the server's own ``PYTHONPATH``, in its order, behind the folder that holds the server's ``g6`` when neither those
+    entries nor this Python's own site folders hold it already (a working tree, or an editable install). It holds no
+    relative or empty entry, since Python reads those against the child's own working folder, which is the loop's folder
+    a caller named: a ``g6`` there would run in place of the server's. A site folder is never put first, where it would
+    stand in front of the standard library. A pinned interpreter starts isolated (``-I``), reads none of it, and imports
+    the G6 installed for it."""
+    given = [entry for entry in os.environ.get("PYTHONPATH", "").split(os.pathsep) if entry and os.path.isabs(entry)]
+    home = Path(g6.__file__).resolve().parent.parent
+    sites = [*site.getsitepackages(), site.getusersitepackages()]
+    reached = any(os.path.normcase(os.path.realpath(entry)) == os.path.normcase(str(home)) for entry in [*given, *sites])
+    return os.pathsep.join(given if reached else [str(home), *given])
 
 
 def _past_opening(root: Path, since: datetime) -> bool:
@@ -450,13 +478,15 @@ def act(act_name: str, root: Path, who: str, shown: dict[str, Any], generation: 
 
 
 def _run_act(root: Path, settings: dict[str, Any], request: dict[str, Any]) -> dict:
-    """The act in its own process, on the interpreter the runner uses: the request on its input, its reply as the last
-    line of its output. It never shares this server's input or output, and one that outlives ``ACT_WAIT`` is left to finish."""
+    """The act in its own process, on the interpreter and the import path the runner uses (``_interpreter``,
+    ``_environment``): the request on its input, its reply as the last line of its output. It never shares this server's
+    input or output, and one that outlives ``ACT_WAIT`` is left to finish."""
     hidden = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
     command = [*_interpreter(settings), "-c", "import sys; from g6.metaharness.runner import act_main; sys.exit(act_main())"]
     try:
         process = subprocess.Popen(command, cwd=root, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   text=True, encoding="utf-8", errors="replace", close_fds=True, **hidden)
+                                   text=True, encoding="utf-8", errors="replace", close_fds=True, env=_environment(),
+                                   **hidden)
         out, err = process.communicate(json.dumps(request), timeout=ACT_WAIT)
     except subprocess.TimeoutExpired:
         return _blocked(ACT_FAILED, f"the act did not finish in {ACT_WAIT:g} seconds; it was left to finish",

@@ -61,6 +61,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import g6
 from g6.core import stop
 from g6.core.ledger import LedgerError, digest as digest_of
 from g6.metaharness.api import _blocked
@@ -74,6 +75,7 @@ from g6.metaharness.loop import (
     STOPPED,
     LoopSettings,
     ShadowLoop,
+    envelope_sha256,
     folder_lock,
     must_stop,
 )
@@ -478,23 +480,38 @@ SETTINGS_DIGEST = "Settings digest"
 #: demotion gives each when it is about to write (``ShadowHarness.demote``).
 RESTORING = {"generation": "Goes back to generation", "profile_digest": "Profile it goes back to (SHA-256)",
              "undoes": "Takes back the adoption of generation"}
+#: The fields of a person's act's binding that name the G6 the act runs, on the Python of this server: the folder its
+#: ``g6`` is loaded from, and that code by digest, by the rule an enrolment freezes it with (``envelope_sha256``).
+G6_FOLDER = "G6 it runs"
+G6_SHA = "G6 code SHA-256"
+
+
+def _g6_terms(settings: Mapping[str, Any]) -> dict[str, str]:
+    """What a person's act's binding names of the G6 it runs (``G6_FOLDER``, ``G6_SHA``), read of the ``g6`` this process
+    imported. ``g6.mcp.improve`` starts the act on its own import path (``_import_path``), so the act's process imports
+    G6 from the folder the server's was loaded from, and reading these again there, before it runs anything, refuses
+    any other G6, or this one changed. A pinned interpreter imports the G6 installed for it, which the server cannot
+    read without running it, so the binding names it by that interpreter."""
+    if settings.get("python"):
+        return {G6_FOLDER: "the G6 installed for the Python it runs on, isolated from PYTHONPATH and the folder"}
+    return {G6_FOLDER: str(Path(g6.__file__).resolve().parent), G6_SHA: envelope_sha256()}
 
 
 def person_terms(act_name: str, root: Path, *, generation: int | None = None) -> dict[str, Any]:
     """The binding of a person's act on ``root``: all its dialog shows and the act stands on, read once from the folder as
     it is now, as the fields the dialog shows (``g6.mcp.consent.question``). That is the folder, the Python file by path
-    and digest (the only bytes the act runs), the interpreter, the whole settings file by digest, the enrolment on record,
-    what holds the ticks for a pause, and for one taken back the generation, the chain, and what taking it back restores,
-    by the one rule that decides it (``g6.metaharness.shadow.restores``). ``g6.mcp.improve`` builds the dialog from it and
-    passes it to the act, which reads it again under the folder's lock before it runs or records anything (``act``), so a
-    change in between runs and records nothing."""
+    and digest (the only bytes the act runs), the interpreter and the G6 it runs (``_g6_terms``), the whole settings file
+    by digest, the enrolment on record, what holds the ticks for a pause, and for one taken back the generation, the
+    chain, and what taking it back restores, by the one rule that decides it (``g6.metaharness.shadow.restores``).
+    ``g6.mcp.improve`` builds the dialog from it and passes it to the act, which reads it again under the folder's lock
+    before it runs or records anything (``act``), so a change in between runs and records nothing."""
     settings = read_settings(root)
     path = root / CYCLE_LOG
     log = CycleLog(path) if path.is_file() else None
     enrolled = log.enrolled() if log is not None else None
     domain_file = settings.get("domain_file")
     bound: dict[str, Any] = {"Folder": str(root), "Python file": str(domain_file), FILE_SHA: file_digest(domain_file),
-                             "Runs on": settings.get("python") or "the Python of this server",
+                             "Runs on": settings.get("python") or "the Python of this server", **_g6_terms(settings),
                              SETTINGS_DIGEST: digest_of(settings)}
     if enrolled is not None and act_name == "enrol":
         bound |= {"It replaces the enrolment by": f"{enrolled['by']} (the name they gave)",
