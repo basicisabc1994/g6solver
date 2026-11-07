@@ -42,6 +42,23 @@ def about(rec: EvidenceRecord) -> tuple[About, tuple[tuple[str, str], ...]]:
     return read_about(binding_of(rec), scope=rec.scope, standard=rec.standard_sha256, predicates=(rec.predicate_id,))
 
 
+def receipt_about(receipt: dict, provenance: dict | None) -> tuple[About, tuple[tuple[str, str], ...]]:
+    """What one of the issuer's receipts (``Certificate.as_dict``'s) is about, through the mapping's one reader
+    (``read_about``), as ``about`` reads one of ECHA's records: from the custody binding its provenance entry holds
+    (``g6.evidence.mapping.issue_records`` keeps a promoted receipt's binding there), read by the one reader of a
+    binding (``read_binding``), else from the receipt's own artefact field. A binding that does not read as one is
+    about nothing (``BINDING_UNREADABLE``); a receipt whose bytes are not its binding's is named with the code for the
+    artefact."""
+    held = (provenance or {}).get("binding") if isinstance(provenance, dict) else None
+    if held is None:
+        binding: CheckBinding | UnreadableBinding | None = None
+    elif isinstance(held, dict):
+        binding = read_binding(canonical(held))
+    else:
+        binding = UnreadableBinding("a receipt's custody binding is kept as a mapping")
+    return read_about(binding, artefact=receipt.get("artifact_sha"))
+
+
 def evaluator_of(rec: EvidenceRecord) -> tuple[str, str]:
     """The evaluator ``rec`` names, as (how it is named, the name): ("sha256", its binding's evaluator digest, the one
     the accessor gives) for a bound record; ("declared", its oracle label) for a record with no binding, which is never

@@ -149,13 +149,16 @@ def test_the_adapter_records_what_g6_observed_in_the_order_it_observed_it():
     assert negative.controls == () and negative.positive_seq == 3   # behaviour to keep: the base is the reference
     assert negative.result == "fail" and facts.predicates == ("R1", "K1")
     out = m.issue_records(facts, artefact, records)
-    # the ledger holds what was promoted in the order G6 observed it: the receipt, then the run at the base commit; the
-    # check of the behaviour to keep has no negative control, so the mapping refuses it and it never reaches the issuer
-    assert [e["kind"] for e in out.ledger.entries() if e["kind"] != m.PROVENANCE_KIND] == ["receipt", "control"]
+    # the ledger holds what G6 observed in the order it observed it: the two first runs' receipts, then the run at the
+    # base commit; the check of the behaviour to keep has no negative control, so the mapping refuses it, and (slice 2's
+    # follow-up, review 4's finding 2) its failure still reaches the issuer as a caveat, at its own position
+    assert [e["kind"] for e in out.ledger.entries() if e["kind"] != m.PROVENANCE_KIND] == [
+        "receipt", "receipt", "control"]
     assert [(rid, [code for code, _ in codes]) for rid, codes in out.refused] == [(m.id_of("stated-run", NEGATIVE),
                                                                                   [m.NO_CONTROL])]
     statements = {s.predicate: s for s in out.certificate.predicates}
     assert not statements["R1"].support and not statements["K1"].refute   # never a refutation here
+    assert statements["K1"].caveats and [rid for rid, _ in out.caveats] == [m.id_of("stated-run", NEGATIVE)]
 
 
 def test_a_check_g6_could_not_read_is_refused_with_the_part_it_lacks():

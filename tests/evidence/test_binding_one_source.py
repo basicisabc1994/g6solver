@@ -193,7 +193,11 @@ def test_a_duplicate_record_id_differing_in_any_part_is_refused_and_the_first_st
     issued = m.issue_records(facts("R1", "R2"), Artifact(A, "agent", 1), [first, replace(first, **over)])
     assert [rid for rid, _ in issued.refused] == ["run"] and refused_codes(issued) == [m.CONFLICTING], issued.refused
     assert issued.promoted == (("run", "independent_executable", "independent_executable"),)
-    assert issued.certificate.verified_predicates == ("R1",)
+    # slice 2's follow-up (review 4's finding 2): refusing a record never drops what it observed, so a duplicate that
+    # says the run failed is kept as a caveat, and the first record's pass no longer makes R1 verified by itself
+    failed = over.get("result") == "fail"
+    assert issued.certificate.verified_predicates == (() if failed else ("R1",))
+    assert bool(issued.caveats) is failed and not issued.certificate.predicates[0].refute
 
 
 def test_the_same_record_twice_is_one_record():
@@ -336,6 +340,12 @@ PLACES: dict[tuple[str, str, str], tuple[str, str]] = {
     ("evidence/mapping.py", "problems", "facts"): ("other", ISSUER),
     ("evidence/mapping.py", "issue_records", "check"): ("other", ISSUER),
     ("evidence/mapping.py", "issue_records", "receipt"): ("other", ISSUER),
+    # slice 2's follow-up (review 4's findings 2 and 3): a refused record's caveat, and one receipt read alone
+    ("evidence/mapping.py", "caveat_of", "parts"): ("through", THROUGH),
+    ("evidence/mapping.py", "caveat_of", "facts"): ("other", ISSUER),
+    ("evidence/mapping.py", "receipt_roles", "check"): ("other", ISSUER + ": a check the certificate records"),
+    ("evidence/mapping.py", "receipt_roles", "receipt"): ("other", ISSUER + ": a receipt the certificate records"),
+    ("evidence/mapping.py", "receipt_roles", "alone"): ("other", ISSUER + ": its certificate for one receipt"),
     ("harness/requirement_evidence.py", "codes", "check"): ("other", ISSUER),
     ("harness/requirement_evidence.py", "codes", "receipt"): ("other", ISSUER),
     ("harness/requirement_evidence.py", "codes", "r"): ("other", ISSUER),

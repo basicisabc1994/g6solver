@@ -13,6 +13,17 @@ body the certificate names, and the scope and environment the mapping table kept
 The view is bound to its subject's bytes: a certificate for other bytes than the subject named is refused, never shown
 as the subject's. Check the body with ``g6.evidence.verify`` first; the view reads, it does not vouch.
 
+Each receipt's role is the issuer's own reading of that receipt (review 4's finding 3, and repair 1's finding 4 before
+it): a receipt counts for the subject only when it is bound to the subject's bytes, read through ECHA's accessor
+(``custody.receipt_about``: its custody binding, where its provenance keeps one, else its own artefact), and then it
+supports, refutes or is a caveat exactly as ``issue`` decides for that receipt alone, with the check and the controls
+the certificate records (``g6.evidence.mapping.receipt_roles``, beside the issuer: the view decides nothing). So no gate
+of the issuer's rule (the bytes, the check's frozen code, the order, the grounding rule, a control before the receipt,
+the ledger) is ever lent to a receipt by another receipt of its check. Any other receipt is "not counted": ``gate``
+names the gate it did not meet, as the issuer names it in its gaps, and ``why`` says it in words (``WHY``). Offline,
+with no ledger, the issuer reads the certificate's own account of what its ledger held, as ``verify`` does without one:
+consistency, not custody.
+
 ECHA's own records are retired as a source of evidence. ``source_record`` gives one as the mapping table reads it, with
 only what ECHA holds: its artefact, standard and check only through a custody binding (one that does not read as one is
 handed on as it is, and the mapping refuses it), and no control G6 generated in the issuer's ledger, no author or
@@ -25,13 +36,24 @@ from typing import Any
 
 from g6.core.ledger import ChainLedger
 from g6.core.ledger import digest as _digest
-from g6.evidence.mapping import SourceRecord
+from g6.evidence.mapping import BINDING_UNREADABLE, SourceRecord, receipt_roles
 
-from .custody import about, binding_of
+from .custody import about, binding_of, receipt_about
 from .records import EvidenceRecord
 
 #: The issuer's statement fields the view copies, unchanged, as each predicate's status.
 STATUS_FIELDS = ("support", "refute", "supported_by", "refuted_by", "caveats")
+#: Why a receipt is not counted for the subject, in words: the view's own gate (the bytes its custody binding names),
+#: then each gate of the issuer's rule (``g6.evidence.mapping.RECEIPT_GATES``), named as the issuer names it in its gaps.
+WHY = {"not_a_receipt": "the issuer has no reading of it (its result, its position or its check is not one it reads)",
+       "binding_unreadable": "its custody binding does not read as one, so it is bound to no bytes",
+       "binding_artefact": "its bytes are not the ones its custody binding names",
+       "receipt_for_other_bytes": "it was taken on other bytes than the subject's",
+       "check_changed_after_freeze": "it was taken with other code than its check froze",
+       "receipt_before_artifact": "it was taken before the artefact existed",
+       "not_grounded": "its check is not one that can support this predicate",
+       "not_in_ledger": "a record it rests on is not in the ledger",
+       "control_after_receipt": "it was taken before a control showed its check can fail"}
 
 
 def _resolved(ledger: ChainLedger | None, kind: str, ident: str, body: Mapping[str, Any]) -> bool | None:
@@ -53,17 +75,17 @@ def _provenance(ledger: ChainLedger | None, receipt_id: str) -> dict | None:
         return None
 
 
-def _role(result: object, check_id: str, status: Mapping[str, Any]) -> str:
-    """One receipt's role, from its own result: a pass of a check the issuer counts in support supports; a failure of a
-    check it counts against refutes, and of one it keeps as a caveat is a caveat, as is a result that is none; anything
-    else is not counted. A check's other receipts never lend it theirs."""
-    if result == "pass" and check_id in status["supported_by"]:
-        return "supports"
-    if result == "fail" and check_id in status["refuted_by"]:
-        return "refutes"
-    if result in ("fail", "unknown") and check_id in status["caveats"]:
-        return "caveat"
-    return "not counted"
+def _bound(receipt: Mapping[str, Any], provenance: dict | None, artifact_sha256: str) -> str:
+    """Why ``receipt`` is bound to other bytes than the subject's ("" when it is bound to the subject's): read through
+    ECHA's accessor (``custody.receipt_about``), its custody binding where its provenance keeps one, else its own
+    artefact."""
+    parts, refused = receipt_about(dict(receipt), provenance)
+    codes = {code for code, _ in refused}
+    if BINDING_UNREADABLE in codes:
+        return "binding_unreadable"
+    if codes:
+        return "binding_artefact"
+    return "" if parts.artefact == artifact_sha256 else "receipt_for_other_bytes"
 
 
 def certificate_view(body: Mapping[str, Any], *, artifact_sha256: str, ledger: ChainLedger | None = None) -> dict:
@@ -83,26 +105,30 @@ def _view(body: Mapping[str, Any], artifact_sha256: str, ledger: ChainLedger | N
     gaps = {str(subject): str(why) for subject, why in body["gaps"]}
     receipts = list(body["receipts"])
     statements = list(body["predicates"])
+    read = {index: (roles, _provenance(ledger, receipt["receipt_id"]))   # the issuer's reading of each one alone
+            for index, (receipt, roles) in enumerate(zip(receipts, receipt_roles(body, ledger=ledger), strict=True))}
     predicates = []
     for statement in statements:
         name = statement["predicate"]
         status = {field: statement[field] for field in STATUS_FIELDS}
         counted = set(status["supported_by"]) | set(status["refuted_by"]) | set(status["caveats"])
         evidence = []
-        for receipt in receipts:
+        for index, receipt in enumerate(receipts):
             check = checks.get(receipt["check_id"], {})
             if name not in check.get("predicates", ()):
                 continue
             cid = receipt["check_id"]
-            role = _role(receipt["result"], cid, status)
+            roles, provenance = read[index]
+            other = _bound(receipt, provenance, artifact_sha256)
+            role, why = ("not counted", other) if other else roles.get(name, ("not counted", "not_a_receipt"))
             evidence.append({
                 "receipt_id": receipt["receipt_id"], "check_id": cid, "kind": check.get("kind"),
-                "result": receipt["result"], "role": role,
+                "result": receipt["result"], "role": role, "gate": why, "why": WHY.get(why, ""),
                 "receipt_in_ledger": _resolved(ledger, "receipt", receipt["receipt_id"], receipt),
                 "controls": [{"control_id": k["control_id"], "killed": k["killed"],
                               "in_ledger": _resolved(ledger, "control", k["control_id"], k)}
                              for k in check.get("controls", ()) if k.get("predicate") == name],
-                "provenance": _provenance(ledger, receipt["receipt_id"])})
+                "provenance": provenance})
         predicates.append({"predicate": name, "status": status, "gap": gaps.get(f"predicate:{name}", ""),
                            "evidence": evidence,
                            "uncounted": sorted({e["check_id"] for e in evidence} - counted)})

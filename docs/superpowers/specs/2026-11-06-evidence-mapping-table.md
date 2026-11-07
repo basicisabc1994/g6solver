@@ -46,3 +46,4 @@ Generated from `g6.evidence.mapping.MAPPING` by `render_markdown()`; a test keep
 - `G6_E_EVIDENCE_BINDING_PREDICATE`
 - `G6_E_EVIDENCE_BINDING_CHECK`
 - `G6_E_EVIDENCE_BINDING_UNREADABLE`
+- `G6_E_EVIDENCE_RUN_NOT_BELIEVED`

@@ -114,7 +114,11 @@ change between is the review's integrity problem; and a review with an integrity
 count, as the runs it does not believe are no evidence. The run again lets an operator stop and unconfirmed cleanup
 through, as every handler of the review does (``LETS_THROUGH``). Every other run of a stated check on the patch, the
 tests that touch the changed modules and their replays in a copy, adds what it saw of that check, in the order it ran
-(``_observed``), so a failure seen between two passes reaches the issuer too; none of it decides a field.
+(``_observed``), so a failure seen between two passes reaches the issuer too; none of it decides a field. Every run is
+read by phase, from the runner's own report, in one place (``phases_of``, ``body_of``; review 4's finding 1): only a call
+phase that ran and failed is a failure of a test's body. A set-up or teardown error is an error (``ERROR``): the review's
+own verdict counts it as ``failed``, as it always has, and the issuer is told it is unknown, never a control killed and
+never a pass (``observation``, ``at_base_observations``).
 
 Every in-place run asks for a test receipt (``repo_tests.run(..., receipt=True)``): the scope lists each id, and the
 coding gate, which this review builds bound to its own snapshot digest (never a digest from the request), counts a
@@ -163,6 +167,11 @@ CODE = "G6_E_PATCH_REVIEW"
 #: A stated check's verdict in a replay of its test file on the patch, in a copy, whose per-test results the replay did
 #: not keep (its tests did not match the base commit's): it ran, and nothing says how; the issuer reads it as unknown.
 NOT_READ = "not_read"
+#: What the issuer is told of a check whose run failed outside every test's body (G6 0.3, review 4's finding 1): a
+#: set-up or teardown error, a failure the runner named in no phase, or a file that failed to collect. The review's own
+#: verdict there is ``failed``, as it always has been (its status and outcome keep their meaning); for the issuer it is
+#: unknown: never a failure of the check's body, a control killed or a pass (``observation``).
+ERROR = "error"
 #: The execution-control signals the review lets through to its door, never caught as an ordinary error: an operator
 #: stop or a spent allowance, and process cleanup that could not be confirmed. Both are ``OSError``s, so every handler
 #: in the review that catches ``OSError`` or ``Exception`` lets this list through first (an inventory test lists them).
@@ -564,13 +573,67 @@ def _covers(check: str, node: str) -> bool:
     return node == check or node.startswith((check + "::", check + "[", check + "/"))
 
 
-def _node(phases: dict, failed: bool) -> str:
+def _failed_ids(ran: dict) -> set[str]:
+    """The tests the runner's own report lists as failed in ``ran`` (``failed_ids``, ``setup_errors``), by their ids
+    relative to the repository's top."""
+    full = _in_repository(ran)
+    return {full(str(node)) for node in [*(ran.get("failed_ids") or []), *(ran.get("setup_errors") or {})]}
+
+
+def phases_of(ran: dict) -> dict[str, dict[str, str]]:
+    """The one reading of a run's per-test report (G6 0.3, review 4's finding 1): each test's outcome per phase
+    (``setup``, ``call``, ``teardown``; ``collection`` for a module pytest skipped collecting), as the runner's own
+    report gives it (``repo_tests``' plugin), by the test's id relative to the repository's top. A test the runner
+    lists as failed (``_failed_ids``) that failed in no phase it reported failed in a phase it did not name
+    (``unnamed``): it failed, and nothing says its body did. Phases that do not read as a mapping of names to outcomes
+    are none."""
+    full, listed = _in_repository(ran), _failed_ids(ran)
+    found: dict[str, dict[str, str]] = {}
+    for node, phases in (ran.get("test_outcomes") or {}).items():
+        name = full(str(node))
+        mine = {str(phase): str(said) for phase, said in phases.items()} if isinstance(phases, dict) else {}
+        if name in listed and "failed" not in mine.values():
+            mine["unnamed"] = "failed"
+        found[name] = mine
+    return found
+
+
+def body_of(phases: dict[str, str]) -> str:
+    """What one test's phases (``phases_of``) show of its body: ``failed`` only when its call phase ran and failed;
+    ``ERROR`` when another phase failed and its call did not (a set-up or teardown error, or a failure the runner
+    named in no phase): unknown, never a failure of the body and never a pass; ``skipped`` when a phase was skipped
+    (an xfail too: pytest reports its call skipped); ``passed`` when its call passed and no other phase did not;
+    ``not_run`` otherwise."""
     states = set(phases.values())
-    if failed or "failed" in states:
-        return "failed"
+    if phases.get("call") == "failed":
+        return FAILED
+    if "failed" in states:
+        return ERROR
     if "skipped" in states:
         return "skipped"
     return "passed" if phases.get("call") == "passed" else "not_run"
+
+
+def observation(found: dict) -> str:
+    """What one check's verdict entry (``_verdicts``) tells the issuer: its verdict, or ``ERROR`` wherever the entry
+    names an observation. Only ``_verdicts`` names one, ``ERROR``, where the review's verdict is ``failed`` and no
+    test's body failed; whatever value one holds, it can only make the result unknown, never a failure or a pass. Every
+    reader of a run of a stated check for the issuer reads it through here."""
+    return ERROR if found.get("observation") is not None else str(found.get("verdict"))
+
+
+def at_base_observations(runs: Sequence[dict]) -> dict[str, str]:
+    """Each stated check's observation in the run at the base commit (``AT_BASE``): its outcome there, or ``ERROR``
+    where the run's record names an observation for it (``observations``), and for every check when that field is
+    there and does not read as a mapping (the record cannot say which failure was a body's). A control is killed only
+    where this is ``failed``: the check's body failed on the base commit's code."""
+    found = next((run for run in runs if run.get("check") == AT_BASE), {})
+    outcomes = dict(found.get("outcomes") or {})
+    named = found.get("observations")
+    if named is not None and not isinstance(named, dict):
+        named = dict.fromkeys(outcomes, ERROR)
+    return {str(check): observation({"verdict": said, "observation": (named or {}).get(check)})
+            for check, said in outcomes.items()}
 
 
 def _not_found(check: str, output: str) -> bool:
@@ -593,25 +656,26 @@ def _observed(checks: Sequence[str], ran: dict) -> dict[str, str]:
     """Each of ``checks`` that ``ran`` collected (a test of it is among the run's per-test outcomes, its failures or
     its set-up errors), with its verdict in that run (``_verdicts``). A check the run did not collect has none: the
     run did not observe it. G6 0.3: every run of a stated check on the patch reaches the issuer this way."""
-    full = _in_repository(ran)
-    nodes = {full(node) for node in [*(ran.get("test_outcomes") or {}), *(ran.get("failed_ids") or []),
-                                     *(ran.get("setup_errors") or {})]}
+    nodes = set(phases_of(ran)) | _failed_ids(ran)
     collected = [check for check in dict.fromkeys(checks) if any(_covers(check, node) for node in nodes)]
-    return {check: found["verdict"] for check, found in _verdicts(collected, ran).items()}
+    return {check: observation(found) for check, found in _verdicts(collected, ran).items()}
 
 
 def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
-    """Each check's own verdict in one run, read from pytest's per-test outcomes."""
+    """Each check's own verdict in one run, read from pytest's per-test outcomes by phase (``phases_of``, ``body_of``).
+    The review's verdict counts a test that failed outside its body (``ERROR``) as ``failed``, as it always has, so its
+    status and outcome keep their meaning; where that is all a ``failed`` verdict rests on, the entry says so
+    (``observation``: ``ERROR``), and the issuer is told that (``observation``)."""
     run, said, output = ran["verdict"], ran.get("said") or "", ran.get("output") or ""
     full = _in_repository(ran)
-    outcomes = {full(node): phases for node, phases in (ran.get("test_outcomes") or {}).items()}
-    failed = {full(node) for node in [*(ran.get("failed_ids") or []), *(ran.get("setup_errors") or {})]}
+    tests = phases_of(ran)
     omitted = {full(node) for node in ran.get("omitted_ids") or []}
     missing = {check for check in ids if _not_found(check, output)}
     broken = {full(rel) for rel in _collection_errors(output)}
     found: dict[str, dict] = {}
     for check in ids:
-        nodes = {node: _node(phases, node in failed) for node, phases in outcomes.items() if _covers(check, node)}
+        bodies = {node: body_of(phases) for node, phases in tests.items() if _covers(check, node)}
+        nodes = {node: FAILED if said_of == ERROR else said_of for node, said_of in bodies.items()}
         dropped = [node for node in omitted if _covers(check, node)]
         states = set(nodes.values())
         if run in UNTRUSTED:
@@ -648,6 +712,8 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
         else:
             verdict, detail = run, said
         found[check] = {"verdict": verdict, "detail": detail}
+        if verdict == FAILED and FAILED not in bodies.values():   # no test's body failed: set-up, teardown, collection
+            found[check]["observation"] = ERROR
     return found
 
 
@@ -1247,10 +1313,11 @@ def _run_again(root, change, stated, norm, verdicts, runs, deadline, artifact, r
     the base commit, came first, and the stated checks' first run came before it. This run is recorded in
     ``assessment.requirement_evidence`` only, never in ``scope.checks_run`` or the envelope's evidence, so it changes no
     decided field; G6's own failure to make it, or a result it cannot read, says why and counts nothing. {} when no
-    check qualifies (the run at the base commit did not happen, or killed no check)."""
-    at_base = next((run.get("outcomes") or {} for run in runs if run.get("check") == AT_BASE), {})
+    check qualifies (the run at the base commit did not happen, or killed no check). Both runs are read by phase
+    (``observation``): only a check whose body failed at the base commit was killed there."""
+    at_base = at_base_observations(runs)
     ids = [check for check in dict.fromkeys(norm[raw] for req in stated if req.kind != "preserve" for raw in req.checks)
-           if verdicts.get(check, {}).get("verdict") == "passed" and at_base.get(check) == "failed"]
+           if observation(verdicts.get(check, {})) == "passed" and at_base.get(check) == FAILED]
     if not ids:
         return {}
     if _left(deadline) < 1:
@@ -1266,7 +1333,7 @@ def _run_again(root, change, stated, norm, verdicts, runs, deadline, artifact, r
                                       "another working tree"}
     if ran.get("verdict") not in repo_tests.RAN:
         return {"checks": ids, "why": f"the run again gave no result ({ran.get('verdict')})"}
-    return {"checks": ids, "verdicts": {check: found["verdict"] for check, found in _verdicts(ids, ran).items()},
+    return {"checks": ids, "verdicts": {check: observation(found) for check, found in _verdicts(ids, ran).items()},
             "receipt": ran.get("receipt", ""), "seconds": ran.get("seconds", 0.0)}
 
 
@@ -1369,6 +1436,9 @@ def _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, u
                         "load the file against the base commit's code")
     if "isolation" in ran:   # each check's own verdict at the base commit, which the readable report says in words
         runs[-1]["outcomes"] = {check: found["verdict"] for check, found in at_base.items()}
+        errors = {check: found["observation"] for check, found in at_base.items() if "observation" in found}
+        if errors:   # a failure there outside every test's body: no control is killed by it (at_base_observations)
+            runs[-1]["observations"] = errors
     for check, found in at_base.items():
         if found["verdict"] != "passed":
             continue
@@ -1394,9 +1464,8 @@ def _on_base(root, change, derived, second, deadline, runs, unknowns, reason, ro
         reason("evidence", NOT_COMPARED, text)
 
     full = _in_repository(second)
-    failing = sorted({full(rel) for rel in {node.partition("::")[0] for node in [*second.get("failed_ids", []),
-                                                                              *second.get("setup_errors", {})]}
-                      | _collection_errors(second.get("output") or "")} & set(derived))
+    failing = sorted(({node.partition("::")[0] for node in _failed_ids(second)}
+                      | {full(rel) for rel in _collection_errors(second.get("output") or "")}) & set(derived))
     if not failing:
         uncompared(f"the tests that touch the changed modules failed without a test G6 can name: "
                    f"{second.get('said') or 'read their output'}")
@@ -1414,7 +1483,7 @@ def _on_base(root, change, derived, second, deadline, runs, unknowns, reason, ro
         elsewhere = _loaded_elsewhere(change, out)
         mine = [check for check in stated if _names(check, {rel})]
         unkept = out.get("baseline") == "passed" and out.get("patched", "not_run") != "not_run"   # ran, results not kept
-        seen = _observed(mine, out) if out.get("test_outcomes") else dict.fromkeys(mine if unkept else (), NOT_READ)
+        seen = _observed(mine, out) if phases_of(out) else dict.fromkeys(mine if unkept else (), NOT_READ)
         if seen:   # it ran on the patch: each stated check it ran, as it ran there
             observed.append({"run": ["replay", rel], "verdicts": dict.fromkeys(seen, NOT_LOADED) if elsewhere
                              else seen})
@@ -1485,7 +1554,7 @@ def _self_checked(evaluated: list[dict], change, root: Path, runs: list[dict]) -
     """The requirements with no independent check. A check is independent when it exists at the base commit, its file
     is unchanged, a folder holds no test the patch adds or changes, and, unless the requirement only keeps behaviour,
     it does not pass at the base commit too: an old test that passes there says nothing of the change."""
-    at_base = next((run.get("outcomes") or {} for run in runs if run.get("check") == AT_BASE), {})
+    at_base = at_base_observations(runs)
 
     def independent(req: dict, check: dict) -> bool:
         return (check["provenance"] == STATED and not _written(check["id"], change, root)

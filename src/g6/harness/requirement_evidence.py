@@ -30,7 +30,15 @@ statement for each requirement beside them, with what the mapping refused and wh
 Why the issuer does not count a requirement is given as its own codes (``codes``), read from its structured fields:
 a caveat's receipts' own results, its grounding rule's reasons for each check (``grounding``) and the records its
 ledger did not hold; never by reading the text of its gaps. A review with an integrity problem gives the issuer
-nothing to count (``integrity``): the runs the review does not believe are no evidence for it either.
+nothing to count (``integrity``): the runs the review does not believe are no evidence for it either, so the mapping
+refuses each of their records (``G6_E_EVIDENCE_RUN_NOT_BELIEVED``).
+
+Every run is read by phase, through the review's one rule (``patch_review.observation`` and
+``patch_review.at_base_observations``; review 4's finding 1): a control is killed only where the check's body failed at
+the base commit, and a set-up or teardown error is an unknown result, never a failure of the check and never a pass.
+Nothing here reads a run's verdict any other way. And an observed failure always reaches the issuer (finding 2): a
+record the mapping refuses, a missing control among the reasons, still hands what it observed on as a caveat
+(``g6.evidence.mapping.caveat_of``), so a requirement with a failure G6 saw is never checked.
 """
 from __future__ import annotations
 
@@ -49,6 +57,7 @@ from g6.evidence.certificate import (
 )
 from g6.evidence.mapping import SourceRecord, about, environment_sha256, id_of, issue_records
 from g6.harness.patch_review import AT_BASE   # the review's run of the stated checks against the base commit's code
+from g6.harness.patch_review import at_base_observations, observation   # the one rule: a run read by phase
 
 #: Who the review names as the artefact's producer, and as the author of a check the patch did not write.
 PATCH_AUTHOR, REPOSITORY = "the patch's author", "the repository"
@@ -98,10 +107,6 @@ def standard_sha256(evaluated: Sequence[Mapping[str, Any]]) -> str:
                    for req in evaluated])
 
 
-def _at_base(runs: Sequence[Mapping[str, Any]]) -> dict[str, str]:
-    return next((dict(run.get("outcomes") or {}) for run in runs if run.get("check") == AT_BASE), {})
-
-
 def records_for(evaluated: Sequence[Mapping[str, Any]], runs: Sequence[Mapping[str, Any]], *, artifact: str,
                 base_commit: str, check_sha: Mapping[str, str], written: Callable[[str], bool],
                 environment: Mapping[str, Any], again: Mapping[str, Any] | None = None,
@@ -120,7 +125,7 @@ def records_for(evaluated: Sequence[Mapping[str, Any]], runs: Sequence[Mapping[s
     facts = MissionFacts(mission_sha=digest({"artifact": artifact, "base_commit": base_commit, "standard": standard}),
                          mission_standard_sha=standard, standard_sha=standard, predicates=predicates,
                          standard_predicates=predicates)
-    at_base = _at_base(runs)
+    at_base = at_base_observations(runs)
     again_verdicts = dict((again or {}).get("verdicts") or {})
     seen = observed_runs(observed)
     base_run, again_at = positions(seen)
@@ -130,7 +135,7 @@ def records_for(evaluated: Sequence[Mapping[str, Any]], runs: Sequence[Mapping[s
     for req in evaluated:
         for found in req["checks"]:
             one = named.setdefault(found["id"], {"provenance": found.get("provenance", "stated"),
-                                                 "verdict": found.get("verdict"), "requirements": []})
+                                                 "observed": observation(found), "requirements": []})
             one["requirements"].append(req["id"])
     records = []
     for check, one in named.items():
@@ -147,7 +152,7 @@ def records_for(evaluated: Sequence[Mapping[str, Any]], runs: Sequence[Mapping[s
                       scope=f"the tests {check} names, on the working tree under review", controls=controls,
                       positive_seq=base_run if keeps else None)
         records.append(SourceRecord(record_id=id_of("stated-run", check),
-                                    result=_RESULT.get(str(one["verdict"]), "unknown"), seq=RECEIPT, **common))
+                                    result=_RESULT.get(str(one["observed"]), "unknown"), seq=RECEIPT, **common))
         if one["provenance"] != "stated":
             continue
         for at, run in enumerate(seen, start=RECEIPT + 1):   # each other run that observed it, in the order it ran
@@ -173,7 +178,7 @@ def _not_counted(req: Mapping[str, Any], at_base: Mapping[str, str], again: Mapp
     if not stated:
         return "its checks are of kinds that never count (a contract read from the files, a proposed check)"
     for found in stated:
-        check, verdict, base = found["id"], found.get("verdict"), at_base.get(found["id"])
+        check, verdict, base = found["id"], observation(found), at_base.get(found["id"])
         if verdict == "failed":
             return ("its check failed on the patch, and the review runs nothing at the base commit after a problem, so "
                     "no run showed the check can fail")
@@ -238,26 +243,29 @@ def assess(evaluated: Sequence[Mapping[str, Any]], runs: Sequence[Mapping[str, A
     review ran, and ``codes``, the issuer's own), each record the mapping refused with its codes, the other runs of the
     stated checks on the patch (``observed``) and the run again (``again``). Inputs the issuer refuses as a whole are
     said so, with its problems, and nothing is counted; the review's own fields stand. ``integrity``: the codes of the
-    review's integrity problems; with any, no run is read as evidence, so no record is made, and each requirement says
-    why."""
+    review's integrity problems; with any, no run is read as evidence, so the mapping promotes none of the records (it
+    refuses each, and what a refused record observed that is not a pass is still a caveat), and each requirement says
+    why. Each refused record whose observation reached the issuer as a caveat names it (``caveat``)."""
     again = dict(again or {})
     seen = observed_runs(observed)
     try:
         facts, artefact, records = records_for(evaluated, runs, artifact=artifact, base_commit=base_commit,
                                                check_sha=check_sha, written=written, environment=environment,
                                                again=again, observed=seen)
-        if integrity:   # the review's own rule: a run it does not believe is no evidence
-            records = []
-        issued = issue_records(facts, artefact, records)
+        # the review's own rule: a run it does not believe is no evidence
+        issued = issue_records(facts, artefact, records, not_believed=f"{INTEGRITY} ({', '.join(integrity)})"
+                               if integrity else "")
     except (CertificateRefused, ValueError, TypeError) as exc:   # CertificateRefused is a ValueError: named for readers
         return {"authority": "g6.evidence.certificate", "refused_by_issuer": str(exc), "requirements": [],
                 "refused": []}
     certificate = issued.certificate
     kinds = {check.check_id: check.kind for check in certificate.checks}
     check_of = {rec.record_id: about(rec)[0].check_id for rec in records}
+    caveats = dict(issued.caveats)
     refused = [{"check": check_of.get(rid, ""), "record": rid,
-                "codes": [{"code": code, "missing": why} for code, why in found]} for rid, found in issued.refused]
-    at_base = _at_base(runs)
+                "codes": [{"code": code, "missing": why} for code, why in found],
+                **({"caveat": caveats[rid]} if rid in caveats else {})} for rid, found in issued.refused]
+    at_base = at_base_observations(runs)
     requirements = []
     for statement, req in zip(certificate.predicates, evaluated, strict=True):
         checks = [c["id"] for c in req["checks"]]

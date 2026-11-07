@@ -168,10 +168,12 @@ def _words(text: str) -> str:
 
 
 def _at_base(assessment: dict) -> dict[str, str]:
-    """Each stated check's own verdict at the base commit, from the review's run there (empty when none ran)."""
-    runs = (assessment.get("scope") or {}).get("checks_run") or []
-    found = next((run for run in runs if run.get("check") == "stated checks at the base commit"), None)
-    return dict((found or {}).get("outcomes") or {})
+    """Each stated check's own observation at the base commit, from the review's run there (empty when none ran), read
+    by the review's one rule (``patch_review.at_base_observations``; review 4's finding 1): a set-up or teardown error
+    there is no failure of the check, so it never shows the check exercises the change."""
+    from g6.harness.patch_review import at_base_observations   # the one rule; patch_review imports this module lazily
+
+    return at_base_observations((assessment.get("scope") or {}).get("checks_run") or [])
 
 
 def code(value: object, limit: int = 140) -> str:
@@ -346,9 +348,8 @@ def _steps(assessment: dict) -> list[str]:
     shown = []
     for run in runs[:3]:
         name = RUNS.get(run.get("check"), str(run.get("check", "")))
-        outcomes = run.get("outcomes") or {}
-        if run.get("check") == "stated checks at the base commit" and outcomes:
-            shown.append(_base_words(outcomes))
+        if run.get("check") == "stated checks at the base commit" and run.get("outcomes"):
+            shown.append(_base_words(_at_base({"scope": {"checks_run": [run]}})))
         elif run.get("verdict") == "run_inconsistent":   # the owner's ruling (2026-10-29): said plainly, no accusation
             shown.append(f"{name}: passed by pytest's own count, but the process exited with an error afterwards "
                          f"({code('run_inconsistent')}), so they are not counted as passed")
