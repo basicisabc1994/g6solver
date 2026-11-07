@@ -132,6 +132,10 @@ CANNOT_RECORD = "G6_E_LOOP_CANNOT_RECORD"
 SPLIT_REUSED = "G6_E_LOOP_SPLIT_REUSED"
 UNMETERED_CALLER = "G6_E_LOOP_UNMETERED_CALLER"
 CLASSIFIER_STOP = "G6_E_LOOP_CLASSIFIER_STOP"
+UNNAMED_REQUEST = "G6_E_LOOP_UNNAMED_REQUEST"
+#: What holds the loop for a person when a request of a tick meets it: a sender the loop may not send through, or a request
+#: whose sender names nothing it could be known by once refused.
+HOLDS = (*BARRED, UNNAMED_REQUEST)
 #: What enforces the envelope, beside ``JUDGING_PATTERNS``: all of G6. The loop's own files import much of the package and those
 #: files import more, so a list of them leaves out whatever an import reaches next. It is read in a tenth of a second, and a
 #: change to what runs is a person's to enrol again, as it is theirs to merge. Every kind of file Python imports from a
@@ -230,28 +234,44 @@ def _request_digest(system: str, user: str) -> str:
     return request_digest(system, user)
 
 
-def _sender(counted: Any, asked: str) -> tuple[Any, str]:
-    """The caller sending the request being noted and the digest of that request, from ``counting``'s observer.
-    ``g6.core.model_calls`` says only that one is going out, and that file is bound, so both are read from the stack above the
-    note: the first ``self`` there is what calls the model, whatever holds it and whatever that declares, and the nearest of its
-    own frames that names a ``system`` and a ``user`` holds what it was given to send, whatever a wrapper was asked. A test holds
-    both for each built-in caller. With no object between the note and ``counted``, a plain function noted it, or another thread
-    did, and the stack cannot say: then it is what ``counted`` holds, as declared. Where no frame names that text it stays
-    ``asked``, and what a caller of a known type does to the text below those frames cannot be seen. A host caller is known by
-    what its program is started with, at the step that starts it (``usage.request_identity``), and not by this digest. This
-    module's own frames on the way (the observer, the resend gate) are passed over, up to ``counted``'s own call."""
-    frame = sys._getframe(1)
+def _named(frame: Any) -> str | None:
+    """What a frame on the way out of a send names as the request sent: the digest of its ``system`` and ``user`` when it names
+    both, as text; ``""``, which no digest is, when it names both and they are not both text, so nothing further out stands in
+    for them; and ``None`` when it does not name both, or is one of this module's own frames, which name what a call was asked.
+    The one reader of a request from frames, as it is noted or resent (``_sender``) and as it fails (``_raised_by``)."""
+    if frame.f_globals.get("__name__") == __name__:
+        return None
+    names = frame.f_locals
+    if "system" not in names or "user" not in names:
+        return None
+    system, user = names["system"], names["user"]
+    return _request_digest(system, user) if isinstance(system, str) and isinstance(user, str) else ""
+
+
+def _sender(counted: Any) -> tuple[Any, str]:
+    """The caller sending the request being noted and what it sends, from ``counting``'s observer. ``g6.core.model_calls`` says
+    only that one is going out, and that file is bound, so both are read from the stack above the note, up to ``counted``'s
+    own call, passing over this module's own frames on the way (the observer, the resend gate). The first ``self`` there is the
+    sender: what calls the model, whatever holds it and whatever that declares. What it sends is what the innermost frame names
+    as a ``system`` and a ``user`` (``_named``), among the functions and methods below the sender and the sender's own frames,
+    whichever of them sends; a frame further out is a wrapper's, which names what it was asked and not what went out. With no
+    object between the note and ``counted``, a plain function noted it, or another thread did: the sender is what ``counted``
+    holds, as declared, and any frame there may name the request. ``""`` when none names it as text: then the request is not
+    sent (``_Requests.unnamed``), since once refused nothing could keep it from going out again. Tests send through each kind of
+    caller the loop accepts. A host caller is known by what its program is started with, at the step that starts it
+    (``usage.request_identity``), and not by this. What a sender does to the text below the frame that names it cannot be
+    seen."""
+    frame, sender, identity = sys._getframe(1), None, None
     while frame is not None and not (frame.f_code is _Counted.complete.__code__ and frame.f_locals.get("self") is counted):
-        if frame.f_globals.get("__name__") != __name__ and "self" in frame.f_locals:
-            break
+        mine, own = frame.f_globals.get("__name__") == __name__, frame.f_locals.get("self")
+        if sender is not None and (mine or own is not sender):
+            break                                 # past the sender's own frames: a wrapper's, whatever it was asked
+        if identity is None:
+            identity = _named(frame)
+        if sender is None and not mine and own is not None:
+            sender = own
         frame = frame.f_back
-    found = frame.f_locals["self"] if frame is not None else counted
-    while frame is not None and frame.f_locals.get("self") is found:
-        if "system" in frame.f_locals and "user" in frame.f_locals:
-            asked = _request_digest(frame.f_locals["system"], frame.f_locals["user"])
-            break
-        frame = frame.f_back
-    return (counted.inner if found is counted else found), asked
+    return (counted.inner if sender is None else sender), identity or ""
 
 
 #: The one lock every send in this process is admitted under, whichever meter it is reached through, and what a send held for
@@ -289,21 +309,41 @@ class _Book:
     settled: int = 0
 
 
+@dataclass
+class _Folder:
+    """What this process alone knows of one loop's folder, whichever of its handles met it: each request refused there, which
+    the folder's store may not hold (``refused``); why this process sends nothing more from it (``cannot_record``), which only
+    the process's end lifts; and how many cycles in a row its log would not take (``lost_cycles``). Every handle of the folder
+    reads it, one made after it too. A restart has none of it: then only what the folder's files hold stands."""
+
+    refused: set[str] = field(default_factory=set)
+    cannot_record: str = ""
+    lost_cycles: int = 0
+
+
 class _Record:
     """Every send this process lets out to a model, nested or not, on any thread, a resend included, and every child's totals
     a call settles: the one record of what was sent. A meter keeps no count of its own: what it has taken is read from here
     (``_Requests.sent``, ``_Requests.in_flight``). It is written only under ``_LOCK``: by admission, which takes a place on each
     meter around a send and makes the send's record in one step (``_Requests.admit``), by a send's outcome
-    (``_Requests.release``), and by the end of a call, which settles what its children imported (``_Requests.settle``)."""
+    (``_Requests.release``), and by the end of a call, which settles what its children imported (``_Requests.settle``). It also
+    holds what this process alone knows of each loop's folder (``_Folder``), which admission reads, under that lock, through
+    each handle of the folder."""
 
     def __init__(self) -> None:
         self.out: dict[str, list[Send]] = {}         # each send let out whose outcome is not yet read, by what it sent
         self.taken: weakref.WeakKeyDictionary[Any, dict[int, int]] = weakref.WeakKeyDictionary()   # meter: tick: places
         self.books: dict[object, _Book] = {}         # each metered call open, by its owner
+        self.folders: dict[str, _Folder] = {}        # what this process alone knows of each loop's folder, by its path
 
     def charge(self, meter: Any, generation: int, places: int) -> None:
         held = self.taken.setdefault(meter, {})
         held[generation] = held.get(generation, 0) + places
+
+    def folder(self, root: str | Path) -> _Folder:
+        """What this process knows of the loop's folder at ``root``, however its path is spelled: it is known by the path the
+        file system resolves it to, links and short names followed, compared as the platform compares paths."""
+        return self.folders.setdefault(os.path.normcase(os.path.realpath(root)), _Folder())
 
 
 _RECORD = _Record()
@@ -349,8 +389,9 @@ class _Requests:
 
     ``halted`` is read first, and read again after any wait, so a stop, or a refusal this process could not keep, refuses
     everything after it. After a refusal nothing more of its tick goes out, and what was refused is never sent again: what
-    ``refused`` holds, every request refused in this process, and what ``on_record`` reads from the store at every admission,
-    so another handle of the same loop, in this process or another, refuses it too. ``keeping`` is told of each refusal under
+    ``refused`` holds, every request refused through this meter, and what ``on_record`` reads at every admission, which for a
+    loop's meter is the store and what this process holds for the folder (``_Folder``), so another handle of the same loop, in
+    this process or another, refuses it too. ``keeping`` is told of each refusal under
     the lock and before any other thread can see it. A send waits while an identical one is out on another thread
     (``_out_elsewhere``), so one let in before a refusal of the same bytes was kept cannot leave after it. A tick ends in one
     step under the lock (``close``), which keeps what it latched as ``closed``: a limit or a refusal is in what the tick ends
@@ -580,6 +621,16 @@ class _Requests:
             if barred is not None:
                 raise barred
 
+    def unnamed(self) -> None:
+        """Refuse a request whose sender names nothing it could be known by (``_sender``), before it goes out or takes a place:
+        once refused, nothing could keep it from going out again. In a tick it leaves the tick and holds the loop for a person
+        (``HOLDS``), as a sender the loop may not send through does; outside one it is a failed request."""
+        said = ("no frame of the caller sending this request, or of a function or method it called, names its system text and "
+                "request as a system and a user, so nothing could keep it from being sent again once refused")
+        if any(meter.limit != math.inf for meter, _ in self._around(None)):
+            raise _Halted(UNNAMED_REQUEST, said)
+        raise LLMError(f"{UNNAMED_REQUEST}: {said}")
+
     def _targets(self, request: Send | str | None, generation: int | None) -> tuple[tuple[Any, int | None], ...]:
         """The meters what a provider said of a send is about: each one the send's record took a place on, with the tick it
         took it under; or, where there is no record, each one around the request here."""
@@ -701,9 +752,10 @@ class _Gate:
 
 
 def _raised_by(failed: BaseException, sends: Sequence[Send]) -> Send | None:
-    """The send whose failure ``failed`` is, read from its own frames: the innermost frame on its way out, or on the way out of
-    what it was raised from, of a caller this call let a send out for, with what it was given to send where its caller is
-    not watched. A send that came back has no frame there. With none found, it is this call's one send, or not known."""
+    """The send whose failure ``failed`` is, read from its own frames, innermost first, on its way out or on the way out of
+    what it was raised from: a frame of a watched caller this call let a send out for, or a frame, a function's or a method's,
+    that names what an unwatched send let out in this call sent, as ``_sender`` reads it (``_named``). A send that came back
+    has no frame there. With none found, it is this call's one send, or not known."""
     seen: set[int] = set()
     error: BaseException | None = failed
     while error is not None and id(error) not in seen:
@@ -713,14 +765,10 @@ def _raised_by(failed: BaseException, sends: Sequence[Send]) -> Send | None:
             frames.append(tb.tb_frame)
             tb = tb.tb_next
         for frame in reversed(frames):
-            caller = frame.f_locals.get("self")
+            caller, named = frame.f_locals.get("self"), _named(frame)
             for record in reversed(sends):
-                if caller is None or record.sender is not caller:
-                    continue
-                if record.watched:
-                    return record
-                system, user = frame.f_locals.get("system"), frame.f_locals.get("user")
-                if isinstance(system, str) and isinstance(user, str) and _request_digest(system, user) == record.identity:
+                if (caller is not None and record.sender is caller) if record.watched else (
+                        bool(named) and named == record.identity):
                     return record
         error = error.__cause__ or error.__context__
     return sends[0] if len(sends) == 1 else None
@@ -743,11 +791,12 @@ class _Counted:
 
     Each send's record (``usage.Send``) is all that is known of it: no flag or variable here holds a send's state. What was
     refused is known by what was sent: for a host caller, what its program is started with, read where it starts (``_Gate``);
-    for any other, the system text and request its own frame names, read as it is noted. What a call raised is read by the
-    record of the send that raised it, among every send let out inside the call (``_raised_by``): a watched host caller's own
-    reading of its structured output is all that decides for it, and the text reader is for any other. Whichever way the call
-    comes back, what its tick latched decides last (``recheck``), so a wrapper that catches the limit or the refusal cannot
-    turn it into an answer.
+    for any other, the system text and request the innermost frame below its sender, or the sender's own, names, a function's
+    or a method's, read as it is noted (``_sender``), and a request no such frame names is not sent. What a call raised is
+    read by the record of the send that raised it, among every send let out inside the call (``_raised_by``): a watched host
+    caller's own reading of its structured output is all that decides for it, and the text reader is for any other. Whichever
+    way the call comes back, what its tick latched decides last (``recheck``), so a wrapper that catches the limit or the
+    refusal cannot turn it into an answer.
 
     A caller that answers with no request noted is refused, because nothing could say how often it asked. The limit of
     this: a caller that notes one request and retries unnoted looks like one request, and so do the Anthropic SDK's own
@@ -764,7 +813,6 @@ class _Counted:
         ended = threading.Event()
         call = _Call(object(), self.requests, self.requests.generation, lambda: not ended.is_set())
         self.requests.begin(call)                 # the call begins: no send of its own here
-        asked = _request_digest(system, user)
         around = (*_ACTIVE.get(), call)
 
         def innermost() -> tuple[_Call, ...] | None:
@@ -776,16 +824,20 @@ class _Counted:
             calls = innermost()
             if calls is None:
                 return                            # a call nested in this one lets this send in, for this meter too
-            sender, identity = _sender(self, asked)
+            sender, identity = _sender(self)
             self.requests.from_sender(sender)
             read_stops(sender)
             if not watched(sender):               # a watched host caller is let in where its program starts
+                if not identity:
+                    self.requests.unnamed()       # nothing names what it sends, so it does not go
                 self.requests.take(identity=identity, owner=call.owner, sender=sender)
             self.requests.noted(calls)
 
         def resend(wait: float = 0.0) -> None:
             if innermost() is not None:           # a resend is a send: what it sends again is checked again
-                sender, identity = _sender(self, asked)
+                sender, identity = _sender(self)
+                if not identity:
+                    self.requests.unnamed()
                 self.requests.take(wait, identity=identity, owner=call.owner, sender=sender)
 
         def limited(wait: dict[str, Any]) -> None:
@@ -971,13 +1023,13 @@ class ShadowLoop:
                  domain_file: str | Path | None = None) -> None:
         self.domain, self.settings, self._now, self.domain_file, self._read_now = domain, settings, now, domain_file, read_now
         self.beat_fields: dict[str, Any] = {}     # what a runner adds to every heartbeat
-        self.lost_cycles = 0                      # cycles in a row the log would not take: it cannot hold this count
-        self.cannot_record = ""                   # why this process spends no more, set at MAX_FAILED_CYCLES of those
         self.evaluating = False                   # this tick has begun its held-out evaluation
         self.waited = 0                           # ticks a budget wait turned away since the last cycle: a wait leaves no row
         self.tuned: list[dict[str, Any]] = []     # this tick's tuning cycles as they happen, for a row that a raise cut short
+        # ``lost_cycles`` and ``cannot_record`` are the process's for the folder (``_Folder``), so this handle starts with
+        # whatever another of the folder's handles met; what was refused here is read with the store at every admission
         self.requests = _Requests(lambda: self._now(), self._halted, self._barred, self._keep_refusal,
-                                  lambda: refused_requests(self.root))
+                                  lambda: refused_requests(self.root) | self._here.refused)
         self._proposer = _Counted(proposer, self.requests)
         self.root = Path(root).resolve()
         reach = _in_reach(self.root, domain)
@@ -1042,9 +1094,11 @@ class ShadowLoop:
         self.evaluating = True
 
     def _keep_refusal(self, request: str, said: str) -> None:
-        """Keep a refused request's digest on the disk before anything else happens (``note_refusal``). One no file would take
-        is held by this process alone, and a restart could send it again: so this process sends nothing more, and asks for a
-        stop a person must lift."""
+        """Keep a refused request's digest before anything else happens, under the admission lock: this process holds it for
+        the folder first, whichever handle met it (``_Folder``), and then the disk (``note_refusal``). One no file would take
+        is held by this process alone, and a restart could send it again: so this process sends nothing more from the folder,
+        on any of its handles, and asks for a stop a person must lift."""
+        self._here.refused.add(request)
         try:
             if note_refusal(self.root, request, said):
                 return
@@ -1056,7 +1110,33 @@ class ShadowLoop:
         try:
             ask_to_stop(self.root, why)
         except OSError:
-            pass                      # this process still sends nothing more
+            pass                      # every handle of the folder in this process still sends nothing more
+
+    @property
+    def _here(self) -> _Folder:
+        """What this process alone knows of this handle's folder, which every handle of the folder shares."""
+        return _RECORD.folder(self.root)
+
+    @property
+    def cannot_record(self) -> str:
+        """Why this process spends no more on this folder, or ``""``: a refusal no file would keep, or cycles its log would not
+        take. It is the process's and not the handle's (``_Folder``), so every handle of the folder stops on it at every
+        admission, one made after it too, and only the process's end lifts it."""
+        return self._here.cannot_record
+
+    @cannot_record.setter
+    def cannot_record(self, why: str) -> None:
+        if why:                       # set and never lifted: an empty value changes nothing
+            self._here.cannot_record = why
+
+    @property
+    def lost_cycles(self) -> int:
+        """Cycles in a row this folder's log would not take, counted for the process whichever handle lost them."""
+        return self._here.lost_cycles
+
+    @lost_cycles.setter
+    def lost_cycles(self, count: int) -> None:
+        self._here.lost_cycles = count
 
     def stopped_by(self) -> str:
         """Why this folder is stopped, which a tick and the runner read alike: if the runner read less, a tick refused for a
@@ -1217,7 +1297,7 @@ class ShadowLoop:
         fact, and the pause is only its note."""
         cycles = self.log.since_resumed()
         for cycle in reversed(cycles):
-            if cycle["outcome"] == "sealed_breach" or cycle.get("code") in (UNMETERED_CALLER, CLASSIFIER_STOP, *BARRED):
+            if cycle["outcome"] == "sealed_breach" or cycle.get("code") in (UNMETERED_CALLER, CLASSIFIER_STOP, *HOLDS):
                 return cycle["reason"]
         streak = self.log.failed_run()
         if len(streak) < MAX_FAILED_CYCLES:
@@ -1303,7 +1383,10 @@ class ShadowLoop:
              tick=len(self.log.cycles()), state=state, code=code)
 
     def _reserve(self) -> tuple[Admission | None, dict[str, Any] | None]:
-        """This tick's worst case on the provider its calls go to, or the wait: room on another pays for none of them."""
+        """This tick's worst case on the provider its calls go to, or the wait: room on another pays for none of them. The
+        limits on the record are read first, whichever handle or process met them, so a limit is never one handle's alone."""
+        for provider, until in self.log.limits().items():
+            self.meter.limit_reached(provider, until)
         spend = self.meter.reserve(self.provider, self._now(), self.worst_case())
         if spend.admitted:
             return spend, None
@@ -1365,7 +1448,7 @@ class ShadowLoop:
                             f"and waits until {limit.until.isoformat()}: {limit.said}",
                             "The loop waits; it runs again when the limit ends.", wait_until=limit.until.isoformat(),
                             charged=charged)
-        elif halted is not None and halted.code in BARRED:   # a fault that is on the record, and holds the loop for a person
+        elif halted is not None and halted.code in HOLDS:    # a fault that is on the record, and holds the loop for a person
             row |= {"outcome": "error", "code": halted.code, "reason": f"{halted.said}: nothing was sent, and nothing is adopted"}
         elif halted is not None:      # also no cycle: what ran is charged, and none of it counts
             return self._cut_off(halted, charged)
@@ -1420,18 +1503,22 @@ class ShadowLoop:
 
     def lost_cycle(self, exc: BaseException, *, refusal: dict[str, str] | None = None) -> dict[str, Any]:
         """A cycle the log would not take. The streak that pauses the loop is read from the log, so these leave it nothing
-        to read and are counted here, for as long as this process lives. At ``MAX_FAILED_CYCLES`` in a row the loop stops
+        to read and are counted in this process, for the folder, whichever of its handles lost them, for as long as the
+        process lives. At ``MAX_FAILED_CYCLES`` in a row the loop stops
         for good: ``STOP`` and ``stops.log`` are other files, so a restart stays closed until a person starts it again, and
         should those fail too, this process still spends no more. A cycle that is written starts the count again. A cycle
         that holds a ``refusal`` stops the loop at the first, since the pause a person must read would have stood on it."""
-        self.lost_cycles += 1
-        why = (f"{self.lost_cycles} of the {MAX_FAILED_CYCLES} cycles in a row that stop the loop could not be written to "
+        with _LOCK:                   # the process's count for the folder, whichever of its handles lost the cycle
+            self.lost_cycles += 1
+            lost = self.lost_cycles
+        why = (f"{lost} of the {MAX_FAILED_CYCLES} cycles in a row that stop the loop could not be written to "
                f"its log ({type(exc).__name__}: {exc})")[:400]
         if refusal is not None:
             why = _writable(f"a classifier or a permission stopped a request ({refusal['said']}) and the log would not take "
                             f"that cycle ({type(exc).__name__}: {exc})")[:400]
-        if refusal is not None or self.lost_cycles >= MAX_FAILED_CYCLES:
-            self.cannot_record = why
+        if refusal is not None or lost >= MAX_FAILED_CYCLES:
+            with _LOCK:               # what every admission of the folder reads, under the same lock
+                self.cannot_record = why
             try:
                 ask_to_stop(self.root, why)
             except OSError:

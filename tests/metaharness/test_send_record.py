@@ -12,6 +12,7 @@ import importlib.util
 import inspect
 import io
 import json
+import os
 import sys
 import threading
 import urllib.error
@@ -24,18 +25,21 @@ from uuid import uuid4
 import pytest
 
 import g6
-from g6.core import host_models, llm, model_calls
-from g6.core.host_models import ClaudeCodeCaller
+from g6.core import host_models, llm, model_calls, stop
+from g6.core.host_models import ClaudeCodeCaller, CodexCaller
 from g6.core.llm import RATE_LIMITED, FakeLLM, LLMError
+from g6.core.model_calls import note_model_call
 from g6.metaharness import loop as loop_module
-from g6.metaharness.loop import (BUDGET_WAIT, CLASSIFIER_STOP, LoopSettings, ShadowLoop, _AtLimit, _Counted, _Refused,
-                                 _request_digest, _Requests)
+from g6.metaharness.domain import caller_problems, sender_problems
+from g6.metaharness.loop import (BUDGET_WAIT, CLASSIFIER_STOP, LoopSettings, ShadowLoop, _AtLimit, _Counted, _Halted,
+                                 _Refused, _request_digest, _Requests)
 from g6.metaharness.method import Method
 from g6.operator.store import OperatorStore
 from g6.self_maintenance import usage
-from g6.self_maintenance.envelope import CYCLE_LOG, REFUSED_FILE, CycleLog, note_refusal, refused_requests
+from g6.self_maintenance.envelope import (CYCLE_LOG, MAX_FAILED_CYCLES, REFUSED_FILE, CycleLog, note_refusal,
+                                          refused_requests)
 from g6.self_maintenance.pacing import BudgetMeter, ProviderWindow
-from g6.self_maintenance.usage import MODEL_REFUSED, REFRESH
+from g6.self_maintenance.usage import MODEL_REFUSED, REFRESH, request_identity
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
 domains = sys.modules.setdefault(_spec.name, importlib.util.module_from_spec(_spec))
@@ -965,3 +969,551 @@ def test_the_rows_a_tick_writes_are_its_own_and_in_the_order_it_met_them(tmp_pat
     assert [row["until"] for row in rows] == [until.isoformat() for until in met] * 2
     assert rows[0]["tick"] == rows[1]["tick"] != rows[2]["tick"] == rows[3]["tick"]
     assert loop.log.limits() == {"codex": met[0]}
+
+
+# Review 1 of the refusals follow-up: its two findings, as reported (review-refu1, tests/_review/test_finding_1.py and
+# test_finding_2.py), each with the root of its class -----------------------------------------------------------------------
+
+UNNAMED = "G6_E_LOOP_UNNAMED_REQUEST"
+
+
+def _review_handle(root):
+    """A handle as review refu1's first finding builds one: enough of a loop to send through and to keep a refusal."""
+    loop = ShadowLoop.__new__(ShadowLoop)
+    loop.root = root
+    loop.log = CycleLog(root / CYCLE_LOG)
+    loop.cannot_record = loop.unreadable = ""
+    loop.requests = _Requests(halted=loop._halted, keeping=loop._keep_refusal, on_record=lambda: refused_requests(root))
+    return loop
+
+
+def _disk_full(*args, **kwargs):
+    raise OSError("disk full: neither the refusal nor the fallback stop can be written")
+
+
+def _refuses(system, user):
+    raise LLMError(f"{MODEL_REFUSED}: policy")
+
+
+def test_refu1_1_a_refusal_no_file_would_keep_stops_another_handle_of_the_folder(tmp_path, monkeypatch):
+    """The review's test as reported, in a folder of the test's own."""
+    monkeypatch.setattr(stop, "engaged", lambda: None)
+    first, second = _review_handle(tmp_path), _review_handle(tmp_path)
+    monkeypatch.setattr(loop_module, "note_refusal", _disk_full)
+    monkeypatch.setattr(loop_module, "ask_to_stop", _disk_full)
+    try:
+        _Counted(FakeLLM(_refuses), first.requests).complete("system", "request")
+    except LLMError:
+        pass
+    assert first.cannot_record
+    assert refused_requests(tmp_path) == set()
+    backend = FakeLLM(default="sent again")
+    try:
+        _Counted(backend, second.requests).complete("system", "request")
+    except LLMError:
+        pass
+    assert backend.calls == [], "the second handle resent the refusal that this process could not persist"
+
+
+def test_refu1_2_a_function_that_sends_is_known_by_what_it_sent():
+    """The review's test as reported."""
+    sent = []
+
+    def transport(system, user):
+        note_model_call()
+        sent.append((system, user))
+        raise LLMError(f"{MODEL_REFUSED}: policy")
+
+    class CanonicalCaller(FakeLLM):
+        def complete(self, system, user, *, max_tokens=1024):
+            return transport(system, "canonical request")
+
+    meter = _Requests()
+    caller = _Counted(CanonicalCaller(), meter)
+    assert caller_problems({"canonical": caller.inner}) == []
+    assert sender_problems(caller.inner, "claude") == []
+    for user in ("first wrapper input", "second wrapper input"):
+        try:
+            caller.complete("system", user)
+        except LLMError:
+            pass
+    assert sent == [("system", "canonical request")], "the same refused bytes were sent again under a wrapper alias"
+
+
+# Finding 1's class (state_not_durable): what only this process knows of a folder is the process's, for every handle -------
+
+def _open(tmp_path, domain, folder="loop"):
+    return ShadowLoop(domain, tmp_path / folder, LoopSettings(windows=(ProviderWindow("claude", 1_000_000, NOW),)),
+                      proposer=FakeLLM(), now=lambda: NOW)
+
+
+def _latch(how, first, domain, monkeypatch):
+    """The cannot-record stop, latched on ``first`` by each way there is to it, with no ``STOP`` file to stand for it."""
+    monkeypatch.setattr(loop_module, "ask_to_stop", _disk_full)
+    if how == "refusal":                         # a refusal no file would keep
+        monkeypatch.setattr(loop_module, "note_refusal", _disk_full)
+        domain.llm._responder = _refuses
+        with pytest.raises(LLMError, match=MODEL_REFUSED):
+            first.workflow.models["local"].caller.complete("system", "refused request")
+        domain.llm._responder = domain.tutor
+    elif how == "lost cycles":                   # cycles the log would not take, as many in a row as stop the loop
+        for _ in range(MAX_FAILED_CYCLES):
+            first.lost_cycle(OSError("the log is full"))
+    else:                                        # a cycle that held a refusal, which the log would not take
+        first.lost_cycle(OSError("the log is full"), refusal={"said": f"{MODEL_REFUSED}: policy", "request": "a" * 64})
+    assert first.cannot_record and not (first.root / "STOP").exists()
+
+
+@pytest.mark.parametrize("how", ["refusal", "lost cycles", "refusal cycle"])
+def test_the_cannot_record_stop_is_the_processs_on_every_handle_of_the_folder(tmp_path, monkeypatch, how):
+    """Whichever way it is latched, on one handle: that handle, one of the same folder open before it, and one made after it
+    each send nothing more, whatever they are asked to send, and say why alike; a handle of another folder sends on."""
+    domain = domains.WordProblems(tmp_path)
+    first, open_before = _open(tmp_path, domain), _open(tmp_path, domain)
+    _latch(how, first, domain, monkeypatch)
+    made_after, elsewhere = _open(tmp_path, domain), _open(tmp_path, domain, "another loop")
+    calls = len(domain.llm.calls)
+    for handle in (first, open_before, made_after):
+        assert handle.stopped_by() == first.cannot_record
+        with pytest.raises(LLMError, match="G6_E_LOOP_STOPPED"):
+            handle.workflow.models["local"].caller.complete("system", "another request")
+    assert len(domain.llm.calls) == calls
+    assert elsewhere.stopped_by() == "" and elsewhere.workflow.models["local"].caller.complete("system", "another request")
+    assert len(domain.llm.calls) == calls + 1
+
+
+def test_cycles_two_handles_of_a_folder_lost_are_one_count(tmp_path, monkeypatch):
+    """The count that stops the loop is the process's for the folder: cycles lost on two handles in turn reach it."""
+    domain = domains.WordProblems(tmp_path)
+    one, two = _open(tmp_path, domain), _open(tmp_path, domain)
+    monkeypatch.setattr(loop_module, "ask_to_stop", _disk_full)
+    one.lost_cycle(OSError("the log is full"))
+    two.lost_cycle(OSError("the log is full"))
+    assert one.lost_cycles == two.lost_cycles == 2 and not one.cannot_record
+    one.lost_cycle(OSError("the log is full"))
+    assert two.cannot_record == one.cannot_record and "3 of the 3" in two.cannot_record
+
+
+def test_a_refusal_this_process_met_stays_refused_on_every_handle_whatever_the_store_says(tmp_path):
+    """Kept in the store and then lost from it: every handle of the folder in this process, one made after too, still refuses
+    it, and a store that cannot be read sends nothing either."""
+    domain = domains.WordProblems(tmp_path)
+    first, other = _open(tmp_path, domain), _open(tmp_path, domain)
+    domain.llm._responder = _refuses
+    with pytest.raises(LLMError, match=MODEL_REFUSED):
+        first.workflow.models["local"].caller.complete("system", "refused request")
+    domain.llm._responder = domain.tutor
+    (tmp_path / "loop" / REFUSED_FILE).unlink()             # nothing on disk says it was refused
+    calls = len(domain.llm.calls)
+    for handle in (first, other, _open(tmp_path, domain)):
+        with pytest.raises(LLMError, match=CLASSIFIER_STOP):
+            handle.workflow.models["local"].caller.complete("system", "refused request")
+    (tmp_path / "loop" / REFUSED_FILE).mkdir()              # nor can anything be read there
+    for handle in (first, other):
+        with pytest.raises(LLMError, match="G6_E_LOOP_RECORDS_UNREADABLE"):
+            handle.workflow.models["local"].caller.complete("system", "another request")
+    assert len(domain.llm.calls) == calls
+
+
+def test_the_process_knows_a_folder_however_its_path_is_spelled(tmp_path, monkeypatch):
+    monkeypatch.setattr(stop, "engaged", lambda: None)
+    monkeypatch.setattr(loop_module, "note_refusal", _disk_full)
+    monkeypatch.setattr(loop_module, "ask_to_stop", _disk_full)
+    folder = tmp_path / "loop"
+    (folder / "sub").mkdir(parents=True)
+    first = _review_handle(folder)
+    with pytest.raises(LLMError, match=MODEL_REFUSED):
+        _Counted(FakeLLM(_refuses), first.requests).complete("system", "request")
+    spellings = [folder / "sub" / ".."]
+    if os.name == "nt":                                       # the case Windows ignores, and a junction to the folder
+        import _winapi
+
+        _winapi.CreateJunction(str(folder), str(tmp_path / "junction"))
+        spellings += [Path(str(folder).upper()), tmp_path / "junction"]
+    else:
+        (tmp_path / "link").symlink_to(folder, target_is_directory=True)
+        spellings.append(tmp_path / "link")
+    for spelled in spellings:
+        backend = FakeLLM(default="sent again")
+        with pytest.raises(LLMError, match="G6_E_LOOP_STOPPED"):
+            _Counted(backend, _review_handle(spelled).requests).complete("system", "another request")
+        assert backend.calls == []
+
+
+def test_a_limit_one_handle_met_holds_another_handle_of_the_folder_at_its_next_tick(tmp_path):
+    """A limit is on the record as it is met (the log), and each handle reads the record before it reserves a tick."""
+    domain = domains.WordProblems(tmp_path)
+    first, other = _handle(tmp_path, domain), _handle(tmp_path, domain)
+    assert first.enrol("Ada")["completion_state"] == "qualified-draft"
+    seen = _stops_the_third(domain, f"{RATE_LIMITED}: HTTP 429 from https://model")
+    assert first.tick()["warning_card"]["code"] == BUDGET_WAIT
+    before = len(seen)
+    got = other.tick()
+    assert got["warning_card"]["code"] == BUDGET_WAIT and got["wait_until"] == (RESTART + REFRESH).isoformat()
+    assert len(seen) == before
+
+
+def _restart(monkeypatch):
+    """A new process: nothing of this one's record of sends and folders, and only what the folder's files hold."""
+    monkeypatch.setattr(loop_module, "_RECORD", loop_module._Record())
+
+
+@pytest.mark.parametrize("written", ["nothing", "the stop", "the cycle"])
+def test_after_a_restart_a_refusal_no_file_would_keep_is_refused_only_if_the_folders_files_hold_it(
+        tmp_path, monkeypatch, written):
+    """The process holds the stop and what was refused, so a restart has only what the folder's files hold: the ``STOP`` its
+    stop asked for, or the cycle a tick then wrote, which holds the refused request. With nothing written, a restart sends it
+    again: the limit of a refusal no file would take."""
+    domain = domains.WordProblems(tmp_path)
+    loop = _handle(tmp_path, domain)
+    assert loop.enrol("Ada")["completion_state"] == "qualified-draft"
+    monkeypatch.setattr(loop_module, "note_refusal", _disk_full)
+    if written != "the stop":
+        monkeypatch.setattr(loop_module, "ask_to_stop", _disk_full)
+    if written == "the cycle":                                 # a tick meets it and its cycle is written; then it dies
+        seen = _stops_the_third(domain, f"{MODEL_REFUSED}: policy")
+        real = loop.log.cycle
+
+        def then_dies(row):
+            real(row)
+            raise Killed()
+
+        monkeypatch.setattr(loop.log, "cycle", then_dies)
+        with pytest.raises(Killed):
+            loop.tick()
+        refused = seen[2]
+    else:                                                      # between ticks, where no cycle is written
+        domain.llm._responder = _refuses
+        with pytest.raises(LLMError, match=MODEL_REFUSED):
+            loop.workflow.models["local"].caller.complete("system", "refused request")
+        refused = ("system", "refused request")
+    domain.llm._responder = domain.tutor
+    assert loop.cannot_record and _handle(tmp_path, domain).stopped_by() == loop.cannot_record   # this process: stopped
+    _restart(monkeypatch)
+    again = _handle(tmp_path, domain)
+    caller, calls = again.workflow.models["local"].caller, len(domain.llm.calls)
+    if written == "the stop":
+        assert "would not keep it" in again.stopped_by()
+        with pytest.raises(LLMError, match="G6_E_LOOP_STOPPED"):
+            caller.complete(*refused)
+        assert len(domain.llm.calls) == calls
+    elif written == "the cycle":
+        assert again.stopped_by() == ""
+        with pytest.raises(LLMError, match=CLASSIFIER_STOP):
+            caller.complete(*refused)
+        assert len(domain.llm.calls) == calls and caller.complete("system", "another request")
+    else:
+        assert again.stopped_by() == "" and refused_requests(again.root) == set()
+        assert caller.complete(*refused) and len(domain.llm.calls) == calls + 1
+
+
+#: Each attribute a handle of the loop sets on itself, and where what it holds is kept.
+HANDLE_STATE = {
+    # the process's, for the folder, in the one record (``_Folder``): every handle of the folder reads it, one made after too
+    "cannot_record": "process", "lost_cycles": "process",
+    # what the handle was given, or made from it once
+    "domain": "given", "settings": "given", "_now": "given", "domain_file": "given", "_read_now": "given", "_clock": "given",
+    "root": "given", "beat_fields": "given", "requests": "given", "_proposer": "given", "provider": "given",
+    "problems": "given", "cut": "given", "workflow": "given",
+    # the folder's files, read again before each operation (``_exclusive``), each reservation (``_reserve``) or each admission
+    "log": "files", "mh": "files", "meter": "files", "unreadable": "files",
+    # one tick's working state, which ends with the tick
+    "evaluating": "tick", "tuned": "tick", "_rca": "tick", "_tuning_failed": "tick",
+    # a count a row reports, which stops nothing
+    "waited": "reported",
+}
+
+
+def test_every_fact_a_handle_holds_is_the_processs_the_folders_files_or_its_own():
+    """Built from the code. Each attribute a handle sets on itself is listed with where it is kept, and a new one fails here
+    until it is. What only this process knows of a folder, and what stops its sends, is the process's: a view of the one record
+    for the folder (``_Folder``), kept there however the folder's path is spelled. What stops a send is read in
+    ``ShadowLoop._halted`` and ``stopped_by``, at every admission and by the runner, from nothing a handle holds alone. A
+    meter's refused requests are read, at every admission, with what the process holds for the folder, and a limit from the
+    record before each tick reserves."""
+    tree = _source_tree(loop_module)
+    assigned = {node.attr for node in ast.walk(_function(tree, "ShadowLoop")) if isinstance(node, ast.Attribute)
+                and isinstance(node.ctx, ast.Store) and ast.unparse(node.value) == "self"}
+    assert assigned == set(HANDLE_STATE)
+    for name in (name for name, kept in HANDLE_STATE.items() if kept == "process"):
+        held = inspect.getattr_static(ShadowLoop, name)
+        assert isinstance(held, property) and "self._here." in inspect.getsource(held.fget)
+    assert "_RECORD.folder(self.root)" in inspect.getsource(inspect.getattr_static(ShadowLoop, "_here").fget)
+    read = {node.attr for qualified in ("ShadowLoop._halted", "ShadowLoop.stopped_by")
+            for node in ast.walk(_function(tree, qualified)) if isinstance(node, ast.Attribute)
+            and ast.unparse(node.value) == "self" and node.attr in HANDLE_STATE}
+    assert read and {HANDLE_STATE[name] for name in read} <= {"process", "files", "given"}
+    init = ast.unparse(_function(tree, "ShadowLoop.__init__"))
+    assert "refused_requests(self.root) | self._here.refused" in init
+
+    def statements(qualified):                  # a function's statements, its docstring left out
+        return [ast.unparse(s) for s in _function(tree, qualified).body
+                if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
+
+    reserve = statements("ShadowLoop._reserve")
+    limits = next(i for i, s in enumerate(reserve) if "self.log.limits()" in s)
+    assert limits < next(i for i, s in enumerate(reserve) if "self.meter.reserve(" in s)
+    assert statements("ShadowLoop._keep_refusal")[0] == "self._here.refused.add(request)"   # before any file is tried
+
+
+# Finding 2's class (guard_covers_less_than_it_guards): a send is known by what it sent, whoever sends it -------------------
+
+class _Fixed(FakeLLM):
+    """A caller the loop accepts that sends one fixed request whatever it is asked, through ``send``, as finding 2's does."""
+
+    def __init__(self, send, sent):
+        super().__init__()
+        self.send, self.sent = send, sent
+
+    def complete(self, system, user, *, max_tokens=1024):
+        return self.send(self, system, "canonical request")
+
+
+def _noted_and_refused(caller, pair):
+    note_model_call()
+    caller.sent.append(pair)
+    raise LLMError(f"{MODEL_REFUSED}: policy")
+
+
+def _by_function(caller, system, user):
+    return _noted_and_refused(caller, (system, user))
+
+
+class _Transport:
+    def send(self, caller, system, user):
+        return _noted_and_refused(caller, (system, user))
+
+
+def _on_a_thread(caller, system, user):
+    """The send made on a thread of the wrapper's own, which it handed its context to, and its failure raised here."""
+    failed = []
+    context = contextvars.copy_context()
+    worker = threading.Thread(target=context.run, args=(lambda: failed.append(_quietly(_by_function, caller, system, user)),))
+    worker.start()
+    worker.join(10)
+    raise failed[0]
+
+
+SHAPES = {"a function": _by_function, "a lambda": lambda caller, system, user: _noted_and_refused(caller, (system, user)),
+          "a method of another object": lambda caller, system, user: _Transport().send(caller, system, user),
+          "a function on a thread of its own": _on_a_thread}
+
+
+@pytest.mark.parametrize("depth", [0, 1, 2])
+@pytest.mark.parametrize("shape", sorted(SHAPES))
+def test_a_refused_request_is_known_by_the_innermost_frame_that_names_it_whoever_sends_it(shape, depth):
+    """Whatever sends it, a function, a lambda, a method of an object of its own, or one on a thread of the wrapper's own,
+    behind a wrapper whose input varies and at any depth of metered calls: the refused bytes leave once."""
+    sent = []
+    meters = [_Requests() for _ in range(depth + 1)]
+    caller = _nested(_Fixed(SHAPES[shape], sent), meters)
+    for user in ("first wrapper input", "second wrapper input", "third wrapper input"):
+        _quietly(caller.complete, "system", user)
+    assert sent == [("system", "canonical request")]
+    assert all(meter.refused == {_request_digest("system", "canonical request")} for meter in meters)
+
+
+def test_a_refusal_raised_in_a_function_binds_the_send_it_raised_for_among_several(monkeypatch):
+    """Two sends from functions in one call, the second refused: the refusal binds the second's request, not the first's, and
+    not none."""
+    def answered(system, user):
+        note_model_call()
+        return "an answer"
+
+    def refused(system, user):
+        note_model_call()
+        raise LLMError(f"{MODEL_REFUSED}: policy")
+
+    class TwoSends(FakeLLM):
+        def complete(self, system, user, *, max_tokens=1024):
+            answered("system", "first request")
+            return refused("system", "second request")
+
+    meter = _Requests()
+    meter.open(10)
+    with pytest.raises(_Refused):
+        _Counted(TwoSends(), meter).complete("system", "asked")
+    assert meter.refused == {_request_digest("system", "second request")}
+
+
+def test_a_resend_a_function_makes_is_known_by_what_it_sends_again(monkeypatch):
+    sent = _busy_once(monkeypatch)
+    seen = []
+
+    class Admits(_Requests):
+        def admit(self, *args, **kwargs):
+            record = super().admit(*args, **kwargs)
+            if record is not None:
+                seen.append(record.identity)
+            return record
+
+    def by_http(caller, system, user):
+        llm._start_model_call()
+        return str(llm._post_json("https://model.invalid/v1/chat/completions", {"messages": [system, user]}, {}, 5))
+
+    _Counted(_Fixed(by_http, []), Admits()).complete("system", "first wrapper input")
+    assert len(sent) == 2 and seen == [_request_digest("system", "canonical request")] * 2
+
+
+class _OtherNames(FakeLLM):
+    """A caller the loop accepts whose frames name what it sends by other names."""
+
+    def complete(self, instructions, prompt, *, max_tokens=1024):
+        note_model_call()
+        self.calls.append((instructions, prompt))
+        return "an answer"
+
+
+class _NotText(FakeLLM):
+    """One whose innermost frame that names a system and a user names a user that is not text."""
+
+    def complete(self, system, user, *, max_tokens=1024):
+        return self._send(system, [{"role": "user", "content": user}])
+
+    def _send(self, system, user):
+        note_model_call()
+        self.calls.append((system, str(user)))
+        return "an answer"
+
+
+@pytest.mark.parametrize("ticking", [False, True])
+@pytest.mark.parametrize("kind", [_OtherNames, _NotText])
+def test_a_request_no_frame_names_is_not_sent_and_takes_no_place(kind, ticking):
+    """A sender the loop accepts, whose own frames and the functions it calls name no system and user as text, behind a
+    wrapper of a domain's own that does: it is not known by what the wrapper was asked, but refused with a stable code before
+    it goes out or takes a place. In a tick it leaves the tick as a sender the loop may not send through does; outside one it
+    is a failed request."""
+    backend, meter = kind(), _Requests()
+    assert caller_problems({"accepted": backend}) == [] and sender_problems(backend, "claude") == []
+    if ticking:
+        meter.open(5)
+    with pytest.raises((LLMError, _Halted)) as raised:
+        _Counted(Delegates(backend), meter).complete("system", "user")
+    if ticking:
+        assert isinstance(raised.value, _Halted) and raised.value.code == UNNAMED
+    else:
+        assert isinstance(raised.value, LLMError) and str(raised.value).startswith(UNNAMED)
+    assert backend.calls == [] and meter.sent == 0
+
+
+def test_a_tick_whose_caller_names_no_request_sends_nothing_and_holds_the_loop_for_a_person(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    domain.llm = _OtherNames()
+    loop = _handle(tmp_path, domain)
+    assert loop.enrol("Ada")["completion_state"] == "qualified-draft"
+    got = loop.tick()
+    assert got["warning_card"]["code"] == UNNAMED and domain.llm.calls == []
+    assert loop.log.cycles()[-1]["code"] == UNNAMED and loop._must_stop()
+    assert loop.tick()["warning_card"]["code"] == "G6_E_LOOP_PAUSED" and domain.llm.calls == []
+
+
+#: Each place in G6 that notes a request, and how what it sends is known: by what a frame above the note names (``frame``);
+#: by what a host program is started with (``program``); or not at all, because the loop sends nothing through it
+#: (``refused``). ``None`` is the note the others share.
+NOTES = {
+    ("core/llm.py", "_start_model_call"): None,
+    ("core/llm.py", "FakeLLM.complete"): "frame",
+    ("core/llm.py", "OllamaCaller._chat"): "frame",
+    ("core/llm.py", "OpenAICompatibleCaller._chat"): "frame",
+    ("core/llm.py", "AnthropicCaller._create"): "refused",
+    ("core/host_models.py", "_HostCaller.complete"): "program",
+    ("harness/completion_loop.py", "ToolSession.run"): "program",
+    ("grounding/judges/nli.py", "LocalNLICaller.complete"): "refused",
+    ("agents/agent_claude/adapter.py", "ClaudeCodeRuntime.run"): "refused",
+    ("agents/agent_codex/adapter.py", "CodexRuntime.run"): "refused",
+}
+
+
+def _names_pair(function) -> bool:
+    return {"system", "user"} <= {arg.arg for arg in (*function.args.args, *function.args.kwonlyargs)}
+
+
+def test_every_way_a_send_is_known_and_every_sender_the_loop_accepts_names_what_it_sent(monkeypatch, host_folders):
+    """Built from the code. What a send is known by is found in one of three ways and nowhere else: what the innermost frame
+    above its note names as a system and a user (``loop._named``, read as it is noted or resent, ``_sender``, and as it fails,
+    ``_raised_by``); what a watched host caller's program is started with (``usage.request_identity``, at ``usage._sending``);
+    and, for a reply read with no step that sends, what the bound caller hands over (``usage._received``). Every place in G6
+    that notes a request is listed with how what it sends is known, and that is checked against what the loop accepts. Then
+    each kind of caller the loop accepts is sent through bare, behind a wrapper of a domain's own, and behind one that sends a
+    fixed request whatever it is asked, and each is known by what it was given to send. A new place that notes, or a sender
+    the loop accepts that is not known by what it sent, fails here."""
+    from g6.agents.agent_claude.adapter import ClaudeCodeRuntime
+    from g6.agents.agent_codex.adapter import CodexRuntime
+    from g6.grounding.judges.nli import LocalNLICaller
+    from g6.harness.completion_loop import ToolSession
+
+    loop_tree, usage_tree = _source_tree(loop_module), _source_tree(usage)
+    assert {where for where, _ in _callers(loop_tree, {"_request_digest"})} == {"_named"}
+    assert {where for where, _ in _callers(loop_tree, {"_named"})} == {"_sender", "_raised_by"}
+    assert {where for where, node in _nodes(loop_tree) if isinstance(node, ast.Constant) and node.value in ("system", "user")
+            } == {"_named"}
+    assert {where for where, _ in _callers(usage_tree, {"request_identity"})} == {"_sending"}
+    assert {where for where, _ in _callers(usage_tree, {"request_digest"})} == {"_received"}
+    source, noting = Path(g6.__file__).resolve().parent, set()
+    for path in source.rglob("*.py"):
+        for where, node in _nodes(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Call) and ast.unparse(node.func).rsplit(".", 1)[-1] in ("note_model_call",
+                                                                                             "_start_model_call"):
+                noting.add((path.relative_to(source).as_posix(), where))
+    assert noting == set(NOTES)
+    llm_tree = _source_tree(llm)
+    for (_, qualified), how in NOTES.items():
+        if how == "frame" and not _names_pair(_function(llm_tree, qualified)):    # then every method that reaches it names it
+            owner, name = qualified.split(".")
+            reaching = [fn for fn in _function(llm_tree, owner).body if isinstance(fn, ast.FunctionDef)
+                        and any(ast.unparse(call.func) == f"self.{name}" for call in _calls_in(fn, name))]
+            assert reaching and all(_names_pair(fn) for fn in reaching), qualified
+    kinds = {"FakeLLM.complete": [FakeLLM()], "OllamaCaller._chat": [llm.OllamaCaller()],
+             "OpenAICompatibleCaller._chat": [llm.OpenAICompatibleCaller("m", base_url="http://model.invalid", api_key=None)],
+             "AnthropicCaller._create": [llm.AnthropicCaller(client=object())],
+             "_HostCaller.complete": [ClaudeCodeCaller(), CodexCaller(), usage.WatchedClaude(), usage.WatchedCodex()],
+             "ToolSession.run": [ToolSession()], "LocalNLICaller.complete": [LocalNLICaller("weights")],
+             "ClaudeCodeRuntime.run": [ClaudeCodeRuntime()], "CodexRuntime.run": [CodexRuntime()]}
+    assert set(kinds) == {qualified for (_, qualified), how in NOTES.items() if how is not None}
+    accepted = []
+    for (_, qualified), how in NOTES.items():
+        for kind in kinds.get(qualified, ()):
+            takes = any(sender_problems(kind, provider) == [] for provider in ("claude", "codex"))
+            assert takes == (how != "refused"), qualified
+            assert isinstance(kind, ClaudeCodeCaller | CodexCaller) == (how == "program"), qualified
+            if takes:
+                accepted.append(kind)
+    monkeypatch.setattr(llm, "_post_json", lambda *args: {"message": {"content": "x"}, "choices": [{"message": {"content": "x"}}]})
+    for host in (ClaudeCodeCaller, CodexCaller):
+        monkeypatch.setattr(host, "locate", lambda self: "unused-program")
+    monkeypatch.setattr(CodexCaller, "_reply", lambda self, *args: "x")
+    started: list[str] = []
+
+    def program(argv, stdin, cwd, files, *rest):
+        started.append(request_identity(argv, stdin, files.parent))
+        printed = {"type": "turn.completed"} if "exec" in argv else {"type": "result", "is_error": False, "result": "x"}
+        return 0, json.dumps(printed), ""
+
+    monkeypatch.setattr(host_models, "_run", program)
+    for kind in accepted:
+        for hold, given in ((lambda inner: inner, ("system", "asked")), (Delegates, ("system", "asked")),
+                            (Rewrites, ("fixed system", "fixed request"))):
+            seen = []
+
+            class Admits(_Requests):
+                def admit(self, *args, **kwargs):
+                    record = super().admit(*args, **kwargs)
+                    if record is not None:
+                        seen.append(record.identity)
+                    return record
+
+            started.clear()
+            _Counted(hold(kind), Admits()).complete("system", "asked")
+            known = started if isinstance(kind, ClaudeCodeCaller | CodexCaller) else [_request_digest(*given)]
+            assert seen == known and len(known) == 1, (type(kind).__name__, hold)
+
+
+class Rewrites(Delegates):
+    """A wrapper of a domain's own that sends one request whatever it is asked, through a function of its own."""
+
+    def complete(self, system, user, *, max_tokens=1024):
+        return _send_fixed(self._inner, max_tokens)
+
+
+def _send_fixed(inner, max_tokens):
+    return inner.complete("fixed system", "fixed request", max_tokens=max_tokens)

@@ -1935,6 +1935,8 @@ def test_a_refusal_the_log_would_not_take_holds_the_run_and_sends_nothing_more(t
 
 
 def test_a_refusal_the_log_would_not_take_is_not_sent_after_a_restart_either(tmp_path, monkeypatch):
+    """Changed on purpose (review 1 of the refusals follow-up): the stop is the process's, for every handle of the folder, so
+    the restart is a new process, with nothing of this one's record, and not only a new handle."""
     loop, domain = _enrolled(tmp_path)
     seen = _refuses_the_third(domain)
     with monkeypatch.context() as broken:
@@ -1942,6 +1944,8 @@ def test_a_refusal_the_log_would_not_take_is_not_sent_after_a_restart_either(tmp
         loop.tick()
     refused = seen[-1]
     _answers_again(domain, seen)
+    module = sys.modules[ShadowLoop.__module__]
+    monkeypatch.setattr(module, "_RECORD", module._Record())
     again, _ = _loop(tmp_path, domain=domain)
     again.log.start("Ada", **stop_to_lift(again.root))
     again.tick()
