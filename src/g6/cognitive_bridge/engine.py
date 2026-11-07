@@ -28,7 +28,7 @@ from returns.result import Failure, Success
 from g6.core import door
 
 from .assurance import canonical_json, sha256
-from .codes import NO_PROBE, STEP_FAILED, affirmed, claims, refusal, settled
+from .codes import NO_PROBE, OBJECTS, STEP_FAILED, affirmed, claims, refusal, settled
 from .snapshot import FrozenMap, fresh, json_reply, plain, record, returned, snapshot, text
 
 
@@ -80,24 +80,32 @@ class Updater(Protocol):
     def update(self, beliefs: Mapping[str, float], probe: Probe, positive: bool) -> dict[str, float]: ...
 
 
-def _beliefs(beliefs: dict[str, float]) -> dict[str, float]:
-    """The one rule for a belief map, whoever made it (the caller's priors, an updater's posterior): every belief
-    finite in [0, 1], and their sum one, with no implicit normalisation."""
+def _beliefs(beliefs: Mapping[str, float]) -> dict[str, float]:
+    """The one rule for a belief map, wherever it enters (the caller's priors, a belief map handed to an update, a
+    ranking or an information gain, an updater's posterior): 2 to 32 hypotheses, each named by nonempty text, each
+    belief a number (not a flag) finite in [0, 1], and their sum one, with no implicit normalisation. The beliefs as
+    numbers, or ``ValueError``. ``tests/cognitive_bridge/test_belief_inventory.py`` lists every place beliefs enter."""
+    if type(beliefs) not in OBJECTS:
+        raise ValueError("beliefs are a mapping of hypothesis IDs to probabilities")
+    if not 2 <= len(beliefs) <= 32:
+        raise ValueError("supply 2–32 competing hypotheses")
+    if any(type(h) is not str or not h for h in beliefs):
+        raise ValueError("hypothesis IDs must be nonempty and unique; statements nonempty")
+    if any(type(v) not in (int, float) for v in beliefs.values()):
+        raise ValueError("beliefs are numbers, not flags, text or null")
     if any(not math.isfinite(v) or v < 0 or v > 1 for v in beliefs.values()):
         raise ValueError("all hypothesis probabilities must be finite in [0,1]")
     if not math.isclose(sum(beliefs.values()), 1.0, abs_tol=1e-10, rel_tol=0.0):
         raise ValueError("beliefs must sum to one; no implicit normalisation")
-    return beliefs
+    return {h: float(v) for h, v in beliefs.items()}
 
 
 def check_beliefs(hypotheses: Sequence[Hypothesis]) -> dict[str, float]:
     hypotheses = snapshot(hypotheses, where="hypotheses")
-    if not 2 <= len(hypotheses) <= 32:
-        raise ValueError("supply 2–32 competing hypotheses")
     ids = [h.id for h in hypotheses]
-    if any(not h.id or not h.statement for h in hypotheses) or len(set(ids)) != len(ids):
+    if any(not h.statement for h in hypotheses) or len(set(ids)) != len(ids):
         raise ValueError("hypothesis IDs must be nonempty and unique; statements nonempty")
-    return _beliefs({h.id: float(h.prior) for h in hypotheses})
+    return _beliefs({h.id: h.prior for h in hypotheses})
 
 
 def _validate_probe(probe: Probe, beliefs: Mapping[str, float]) -> None:
@@ -127,6 +135,7 @@ def _likelihood(probe: Probe, hypothesis_id: str, positive: bool) -> float:
 def expected_information_gain(beliefs: Mapping[str, float], probe: Probe) -> float:
     """Mutual information I(H;O) under an explicitly assumed binary likelihood model."""
     beliefs = snapshot(beliefs, where="beliefs")
+    beliefs = _beliefs(beliefs)  # the rule priors follow, where the beliefs enter
     probe = snapshot(probe, where="probe")
     _validate_probe(probe, beliefs)
     before = _entropy(list(beliefs.values()))
@@ -150,6 +159,7 @@ class InformationGainSelector:
 
     def rank(self, beliefs: Mapping[str, float], probes: Sequence[Probe], budget: float) -> list[dict]:
         beliefs = snapshot(beliefs, where="beliefs")
+        beliefs = _beliefs(beliefs)  # the rule priors follow, where the beliefs enter
         probes = snapshot(probes, where="probes")
         budget = snapshot(budget, where="budget")
         if not math.isfinite(budget) or budget < 0:
@@ -167,6 +177,7 @@ class InformationGainSelector:
 class BayesianUpdater:
     def update(self, beliefs: Mapping[str, float], probe: Probe, positive: bool) -> dict[str, float]:
         beliefs = snapshot(beliefs, where="beliefs")
+        beliefs = _beliefs(beliefs)  # the rule priors follow, where the beliefs enter
         probe = snapshot(probe, where="probe")
         positive = snapshot(positive, where="positive")
         _validate_probe(probe, beliefs)
@@ -278,6 +289,7 @@ class MLAcquisitionSelector:
 
     def rank(self, beliefs: Mapping[str, float], probes: Sequence[Probe], budget: float) -> list[dict]:
         beliefs = snapshot(beliefs, where="beliefs")
+        beliefs = _beliefs(beliefs)  # the rule priors follow, where the beliefs enter
         probes = snapshot(probes, where="probes")
         budget = snapshot(budget, where="budget")
         if not math.isfinite(budget) or budget < 0:
@@ -349,13 +361,11 @@ def _selection(ranking: Any, candidates: tuple[Probe, ...]) -> tuple[Mapping[str
 
 
 def _posterior(posterior: Any, prior: Mapping[str, float]) -> FrozenMap:
-    """An updater's answer, checked as the prior was: a belief for every hypothesis and no other, each a number, by the
-    one rule for beliefs (:func:`_beliefs`)."""
+    """An updater's answer, checked as the prior was: a belief for every hypothesis and no other, by the one rule for
+    beliefs (:func:`_beliefs`)."""
     if not isinstance(posterior, dict) or set(posterior) != set(prior):
         raise ValueError("an updater returns a belief for every hypothesis and no other")
-    if any(type(v) not in (int, float) for v in posterior.values()):
-        raise ValueError("an updater's beliefs are numbers")
-    return snapshot(_beliefs({h: float(posterior[h]) for h in prior}))
+    return snapshot(_beliefs({h: posterior[h] for h in prior}))
 
 
 def _digest(beliefs: Mapping[str, float]) -> str:

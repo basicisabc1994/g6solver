@@ -6,8 +6,15 @@ artefact mappings, checker manifests, identities, selections) is converted once,
 into plain JSON data: objects with text keys, arrays, text, finite numbers, booleans and null. The conversion is a
 round trip through the bridge's own canonical encoder (:func:`canonical_json`), and it refuses (:class:`NotPlainData`,
 under ``codes.INPUT``, with the path) anything that does not survive it unchanged: a key that is not text, a subclass of
-any type, a set, any other object, a number that is not finite. An identity is text (:func:`text`). Code after the
-boundary sees only that data, so the claim rule (``codes.claims``) walks JSON alone.
+any type, a set, any other object, a number that is not finite, an integer longer than the encoder writes. Its walk
+reads each value's kind by the leaf test the claim rule reads by (``codes._read_as``), so the two never disagree on
+what is JSON data. An identity is text (:func:`text`). Code after the boundary sees only that data, so the claim rule
+(``codes.claims``) walks JSON alone.
+
+How deep a value nests is one count (``codes.DEPTH``), from where it enters: every walk here takes its depth from its
+caller and hands it on, so a subtree handed from one walk to another (to :func:`plain`, :func:`text`, :func:`view` or a
+record made again) keeps the count, and a record's fields stand one level inside the record, counted from where the
+record stands (``tests/cognitive_bridge/test_depth_inventory.py``).
 
 A record (:func:`record`) is the bridge's own frozen dataclass, and each of its fields is taken where the record is
 made, by the kind its annotation declares: data through :func:`plain`, held read-only (``codes.FrozenMap`` and tuples);
@@ -25,16 +32,16 @@ nothing is honoured.
 from __future__ import annotations
 
 import collections.abc
+import contextvars
 import dataclasses
 import hashlib
 import json
-import math
 import types
 import typing
 import weakref
 from typing import Any, Callable, TypeVar
 
-from .codes import ARRAYS, DEPTH, INPUT, LEAVES, OBJECTS, FrozenMap, unclaimed
+from .codes import ARRAYS, DEPTH, OBJECTS, FrozenMap, NotPlainData, _read_as, _unread, unclaimed
 
 T = TypeVar("T")
 
@@ -45,89 +52,90 @@ def canonical_json(value: Any) -> bytes:
                       ensure_ascii=True, allow_nan=False).encode("utf-8")
 
 
-class NotPlainData(TypeError, ValueError):
-    """A value refused where it enters the bridge: not plain JSON data, or not of the kind its place declares. It
-    carries a registered code (``codes.INPUT``) and the path of what was refused."""
-
-    code = INPUT
-
-    def __init__(self, path: str, why: str) -> None:
-        super().__init__(f"[{INPUT}] {path}: {why}", path)
-
-    @property
-    def path(self) -> str:
-        return self.args[1]
-
-    def __str__(self) -> str:
-        return self.args[0]
-
-
 def _named(value: Any) -> str:
     return f"{type(value).__module__}.{type(value).__qualname__}"
 
 
+#: Why a value standing deeper than ``codes.DEPTH`` is refused.
+_DEEPER = f"nested deeper than {DEPTH} levels"
+
+
+def _too_deep(where: str) -> NotPlainData:
+    return NotPlainData(where, _DEEPER)
+
+
 def _not_json(value: Any, path: str, depth: int) -> tuple[str, str] | None:
-    """The first place in ``value`` that is not JSON data (``codes.LEAVES``, ``codes.OBJECTS`` with text keys,
-    ``codes.ARRAYS``, by exact type: the kinds the claim rule reads), and why; None when there is none."""
+    """The first place in ``value``, standing at ``depth``, that is not JSON data, and why; None when there is none.
+    Each value's kind is read by the claim rule's own leaf test (``codes._read_as``): a leaf, an object with text keys
+    or an array, by exact type, and a number only when the encoder writes it."""
     if depth > DEPTH:
-        return path, f"nested deeper than {DEPTH} levels"
-    kind = type(value)
-    if kind in LEAVES:
-        return None if kind is not float or math.isfinite(value) else (path, "a number that is not finite")
-    if kind in OBJECTS:
+        return path, _DEEPER
+    how = _read_as(value)
+    if how in ("text", "leaf"):
+        return None
+    if how == "object":
         for key, item in value.items():
-            if type(key) is not str:
+            if _read_as(key) != "text":
                 return f"{path} (a key)", f"a {_named(key)} key is not text"
             found = _not_json(item, f"{path}.{key}", depth + 1)
             if found:
                 return found
         return None
-    if kind in ARRAYS:
+    if how == "array":
         for index, item in enumerate(value):
             found = _not_json(item, f"{path}[{index}]", depth + 1)
             if found:
                 return found
         return None
-    return path, f"a {_named(value)} is not JSON data"
+    return path, f"{_unread(value)} is not JSON data"
 
 
-def _same(value: Any, out: Any) -> bool:
-    """Whether ``out``, the canonical encoder's round trip of ``value``, is ``value`` unchanged, type for type (an
-    object read back as a dict, an array as a list)."""
+def _same(value: Any, out: Any, depth: int) -> bool:
+    """Whether ``out``, the canonical encoder's round trip of ``value`` (standing at ``depth``), is ``value``
+    unchanged, type for type (an object read back as a dict, an array as a list)."""
+    if depth > DEPTH:
+        return False
     kind = type(value)
     if kind in OBJECTS:
-        return type(out) is dict and out.keys() == value.keys() and all(_same(value[k], out[k]) for k in value)
+        return type(out) is dict and out.keys() == value.keys() and all(
+            _same(value[k], out[k], depth + 1) for k in value)
     if kind in ARRAYS:
-        return type(out) is list and len(out) == len(value) and all(_same(a, b) for a, b in zip(value, out))
+        return type(out) is list and len(out) == len(value) and all(
+            _same(a, b, depth + 1) for a, b in zip(value, out))
     return type(out) is kind and out == value
 
 
-def plain(value: Any, *, where: str) -> Any:
+def plain(value: Any, *, where: str, _depth: int = 0) -> Any:
     """``value`` as plain JSON data, the one conversion of what enters the bridge: a round trip through
     :func:`canonical_json`, refused (:class:`NotPlainData`, naming ``where`` and the path) unless ``value`` survives it
-    unchanged. A new value, which shares nothing with ``value``."""
-    found = _not_json(value, where, 0)
+    unchanged. A new value, which shares nothing with ``value``. ``_depth`` is where ``value`` stands in what it entered
+    with, when a walk hands it a subtree; the bound counts from there."""
+    found = _not_json(value, where, _depth)
     if found:
         raise NotPlainData(*found)
     out = json.loads(canonical_json(value))
-    if not _same(value, out):
+    if not _same(value, out, _depth):
         raise NotPlainData(where, "it does not survive the bridge's canonical encoder unchanged")
     return out
 
 
-def text(value: Any, *, where: str) -> str:
-    """An identity, a name or a question as the bridge takes it: text (:func:`plain`); anything else is refused."""
+def text(value: Any, *, where: str, _depth: int = 0) -> str:
+    """An identity, a name or a question as the bridge takes it: text (:func:`plain`, standing at ``_depth``); anything
+    else is refused."""
     if type(value) is not str:
         raise NotPlainData(where, f"a {_named(value)} is not text")
-    return plain(value, where=where)
+    return plain(value, where=where, _depth=_depth)
 
 
-def _frozen(value: Any) -> Any:
-    """Plain JSON data, read-only: an object a :class:`FrozenMap`, an array a tuple."""
+def _frozen(value: Any, depth: int) -> Any:
+    """Plain JSON data (what :func:`plain` made of a value standing at ``depth``), read-only: an object a
+    :class:`FrozenMap`, an array a tuple."""
+    if depth > DEPTH:
+        raise _too_deep("a value")
     if type(value) is dict:
-        return FrozenMap((key, _frozen(item)) for key, item in value.items())
+        return FrozenMap((key, _frozen(item, depth + 1)) for key, item in value.items())
     if type(value) is list:
-        return tuple(_frozen(item) for item in value)
+        return tuple(_frozen(item, depth + 1) for item in value)
     return value
 
 
@@ -188,19 +196,23 @@ def _bytes(value: Any, where: str) -> bytes:
     return bytes(value)
 
 
-def _field(kind: tuple[Any, ...], value: Any, where: str) -> Any:
-    """``value`` taken into a record field that holds ``kind``, or refused."""
+def _field(kind: tuple[Any, ...], value: Any, where: str, depth: int) -> Any:
+    """``value`` taken into a record field that holds ``kind``, standing at ``depth`` (one level inside its record), or
+    refused."""
     name = kind[0]
     if name == "data":
-        return _frozen(plain(value, where=where))
+        return _frozen(plain(value, where=where, _depth=depth), depth)
     if name == "text":
-        return text(value, where=where)
-    if name == "bytes":
-        return _bytes(value, where)
-    if name == "bytes*":
-        if type(value) not in (list, tuple):
+        return text(value, where=where, _depth=depth)
+    if name in ("bytes", "bytes*"):
+        if name == "bytes":
+            taken: Any = _bytes(value, where)
+        elif type(value) not in (list, tuple):
             raise NotPlainData(where, f"a {_named(value)} is not a list of bytes")
-        return tuple(_bytes(item, f"{where}[{index}]") for index, item in enumerate(value))
+        else:
+            taken = tuple(_bytes(item, f"{where}[{index}]") for index, item in enumerate(value))
+        plain(view(taken, _depth=depth), where=where, _depth=depth)  # where it stands, as the claim rule reads it
+        return taken
     if name == "record":
         if type(value) is kind[1] or (value is None and kind[2]):
             return value
@@ -214,18 +226,29 @@ def _field(kind: tuple[Any, ...], value: Any, where: str) -> Any:
     return value
 
 
+#: Where the record being made stands in the value it entered with: 0 when it is made on its own, else the depth
+#: :func:`_renewed` makes it again at, so its fields (one level inside it) keep the count from where the value entered.
+_AT: contextvars.ContextVar[int] = contextvars.ContextVar("g6_cognitive_bridge_record_depth", default=0)
+
+
 def record(cls: type[T]) -> type[T]:
     """A frozen dataclass whose every field is taken where it is made, by the kind its annotation declares
-    (:func:`_field`), before the class's own ``__post_init__`` checks it, so what is checked is what is kept."""
+    (:func:`_field`), before the class's own ``__post_init__`` checks it, so what is checked is what is kept. Its
+    fields stand one level inside it, counted from where it stands (:data:`_AT`)."""
     own = cls.__dict__.get("__post_init__")
 
     def __post_init__(self: Any) -> None:
-        kinds = _kinds(type(self))
-        for field in dataclasses.fields(self):
-            object.__setattr__(self, field.name, _field(kinds[field.name], getattr(self, field.name),
-                                                        f"{type(self).__name__}.{field.name}"))
-        if own is not None:
-            own(self)
+        at = _AT.get()
+        token = _AT.set(0)  # a record this one's own checks make stands on its own
+        try:
+            kinds = _kinds(type(self))
+            for field in dataclasses.fields(self):
+                object.__setattr__(self, field.name, _field(kinds[field.name], getattr(self, field.name),
+                                                            f"{type(self).__name__}.{field.name}", at + 1))
+            if own is not None:
+                own(self)
+        finally:
+            _AT.reset(token)
 
     cls.__post_init__ = __post_init__  # type: ignore[attr-defined]
     cls.__snapshot_record__ = True  # type: ignore[attr-defined]
@@ -234,19 +257,28 @@ def record(cls: type[T]) -> type[T]:
     return made
 
 
-def _renewed(value: Any) -> Any:
-    """A record made again through its boundary: every field taken anew, and every record in it made again."""
+def _renewed(value: Any, where: str, depth: int) -> Any:
+    """A record standing at ``depth``, made again through its boundary there: every field taken anew one level inside
+    it, and every record in it made again where it stands."""
+    if depth > DEPTH:
+        raise _too_deep(where)
     kinds, changes = _kinds(type(value)), {}
     for field in dataclasses.fields(value):
         if not field.init:
             continue
         item, kind = getattr(value, field.name), kinds[field.name][0]
+        at = f"{where}.{field.name}"
         if kind == "record" and _is_record(item):
-            item = _renewed(item)
+            item = _renewed(item, at, depth + 1)
         elif kind == "records" and type(item) in (list, tuple):
-            item = tuple(_renewed(x) if _is_record(x) else x for x in item)
+            item = tuple(_renewed(x, f"{at}[{index}]", depth + 2) if _is_record(x) else x
+                         for index, x in enumerate(item))
         changes[field.name] = item
-    return dataclasses.replace(value, **changes)
+    token = _AT.set(depth)
+    try:
+        return dataclasses.replace(value, **changes)
+    finally:
+        _AT.reset(token)
 
 
 def _has_record(value: Any, depth: int) -> bool:
@@ -263,17 +295,20 @@ def _has_record(value: Any, depth: int) -> bool:
 
 
 def _taken(value: Any, where: str, depth: int) -> Any:
-    """``value`` as the bridge holds it: a record made again; a list or a mapping that holds a record, item by item (a
-    mapping's keys text); anything else plain JSON data (:func:`plain`), read-only."""
+    """``value``, standing at ``depth``, as the bridge holds it: a record made again where it stands; a list or a
+    mapping that holds a record, item by item (a mapping's keys text); anything else plain JSON data (:func:`plain`),
+    read-only. Each is handed the depth it stands at."""
+    if depth > DEPTH:
+        raise _too_deep(where)
     if _is_record(value):
-        return _renewed(value)
+        return _renewed(value, where, depth)
     kind = type(value)
     if kind in ARRAYS and _has_record(value, depth):
         return tuple(_taken(item, f"{where}[{index}]", depth + 1) for index, item in enumerate(value))
     if kind in OBJECTS and _has_record(value, depth):
-        return FrozenMap((text(key, where=f"{where} (a key)"), _taken(item, f"{where}.{key}", depth + 1))
-                         for key, item in value.items())
-    return _frozen(plain(value, where=where))
+        return FrozenMap((text(key, where=f"{where} (a key)", _depth=depth + 1),
+                          _taken(item, f"{where}.{key}", depth + 1)) for key, item in value.items())
+    return _frozen(plain(value, where=where, _depth=depth), depth)
 
 
 def snapshot(value: Any, *, where: str = "a value") -> Any:
@@ -289,18 +324,22 @@ def fresh(value: Any, *, where: str = "a copy") -> Any:
     return value if type(value) is bytes else _taken(value, where, 0)
 
 
-def view(value: Any) -> Any:
+def view(value: Any, *, _depth: int = 0) -> Any:
     """``value`` as JSON, for the claim rule and for a digest: a record as an object of its fields, bytes as their
-    digest and length, a list or a mapping item by item; anything else as it is, for the rule to name."""
+    digest and length, a list or a mapping item by item; anything else as it is, for the rule to name. ``_depth`` is
+    where ``value`` stands; past ``codes.DEPTH`` it is handed back as it is, for the rule (or the boundary, counting
+    from the same depth) to refuse as too deep."""
+    if _depth > DEPTH:
+        return value
     if _is_record(value):
-        return {field.name: view(getattr(value, field.name)) for field in dataclasses.fields(value)}
+        return {field.name: view(getattr(value, field.name), _depth=_depth + 1) for field in dataclasses.fields(value)}
     kind = type(value)
     if kind is bytes:
         return {"sha256": hashlib.sha256(value).hexdigest(), "length": len(value)}
     if kind in ARRAYS:
-        return [view(item) for item in value]
+        return [view(item, _depth=_depth + 1) for item in value]
     if kind in OBJECTS:
-        return {key: view(item) for key, item in value.items()}
+        return {key: view(item, _depth=_depth + 1) for key, item in value.items()}
     return value
 
 
@@ -325,12 +364,17 @@ def _unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def json_reply(reply: Any, cap: int) -> Any:
     """A :func:`returned` check for a model's reply: text of at most ``cap`` characters, read as JSON with no repeated
     key, and taken as plain data (:func:`plain`); the value it holds (so :func:`returned` reads what is used), or a
-    ``ValueError``."""
+    ``ValueError``. A reply nested past what the JSON parser reads is far deeper than ``codes.DEPTH``, and refused as
+    too deep."""
     if type(reply) is not str:
         raise ValueError(f"a model's reply is text, not a {type(reply).__name__}")
     if len(reply) > cap:
         raise ValueError(f"a model's reply is longer than its {cap}-character cap")
-    return plain(json.loads(reply, object_pairs_hook=_unique), where="a model's reply")
+    try:
+        parsed = json.loads(reply, object_pairs_hook=_unique)
+    except RecursionError:
+        raise _too_deep("a model's reply") from None
+    return plain(parsed, where="a model's reply")
 
 
 # --- The records the bridge issued ------------------------------------------------------------------------------------

@@ -203,6 +203,12 @@ class RegistryLike(Protocol):
                *, block_sensitive: bool = False, llm: Any = None) -> Any: ...
 
 
+#: Where a step's answer stands in the run ``MixedMethodExecutor.execute`` returns (``run["steps"][i]["result"]``):
+#: the boundary counts the answer's depth from the run's root, so what a step takes, the run it is published in can
+#: carry (``codes.DEPTH``, ``tests/cognitive_bridge/test_depth_inventory.py``).
+_ANSWER_DEPTH = 3
+
+
 class MixedMethodExecutor:
     """Opt-in execution, with no uncontrolled imports, tools, models, or code evaluation.
 
@@ -236,7 +242,7 @@ class MixedMethodExecutor:
             if "result" not in reply:  # refused, or failed, before any answer: the door's error and card say why
                 return refusal(STEP_FAILED, str(reply["error"]), door=door, request_id=request_id, **head)
             try:
-                response = plain(reply["result"], where=f"{step.component}.{step.op}'s answer")
+                response = plain(reply["result"], where=f"{step.component}.{step.op}'s answer", _depth=_ANSWER_DEPTH)
             except ValueError as exc:
                 return refusal(STEP_FAILED, f"{step.component}.{step.op}: its answer is not kept: {exc}", door=door,
                                request_id=request_id, **head)
@@ -251,9 +257,11 @@ class MixedMethodExecutor:
             if claimed:
                 return refusal(STEP_FAILED, f"{step.component}.{step.op}: G6's door passed it{said}", door=door,
                                request_id=request_id, **head)
-            # The door decided the state; a composed step never claims more than qualified-draft.
-            return unclaimed({"completion_state": "qualified-draft", **head, "warning_card": card,
-                              "request_id": request_id, "result": response}, where=f"{step.component}.{step.op}'s step")
+            # The door decided the state; a composed step never claims more than qualified-draft. What it publishes
+            # (the door's card and request id beside the answer) is what the boundary made of it.
+            where = f"{step.component}.{step.op}'s step"
+            return plain(unclaimed({"completion_state": "qualified-draft", **head, "warning_card": card,
+                                    "request_id": request_id, "result": response}, where=where), where=where)
         except Exception as exc:  # registry is a trust boundary
             return refusal(STEP_FAILED, f"{type(exc).__name__}: {exc}", **head)
 

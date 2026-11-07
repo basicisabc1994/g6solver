@@ -13,11 +13,12 @@ from g6.core.ai_block import AIBlock
 from g6.core.contract_decorator import block_contract
 from g6.core.maturity import component_maturity
 from g6.core.result import Result
-from .codes import INPUT, STATES, refusal, settled
+from .codes import INPUT, STATES, refusal, settled, unclaimed
 from .engine import BayesianUpdater, Hypothesis, InformationGainSelector, Probe, check_beliefs
 from .mixed_methods import ClaimIR, MethodRouter
 from .metacognition import MetacognitiveMethodSelector, ProblemSignature, MethodVariant
 from .assurance import DOCUMENT_FIELDS
+from .snapshot import plain
 
 
 class HypothesisInput(BaseModel):
@@ -96,6 +97,12 @@ class CognitiveInput(BaseModel):
     observed_positive: bool | None = None
 
 
+def _answered(fields: dict[str, Any]) -> Result[dict]:
+    """What the block hands G6's door: a result a maker made, with the block's own name and op beside it, taken as
+    the bridge takes any result it builds (the claim rule, then ``snapshot.plain``)."""
+    return Result.ok(plain(unclaimed(fields, where="the block's answer"), where="the block's answer"))
+
+
 @component_maturity("beta", reason="new typed bridge; its proposals, likelihoods and model fidelity are not "
                                    "checked by anyone outside it")
 @block_contract(
@@ -112,13 +119,13 @@ class CognitiveBridgeBlock(AIBlock[CognitiveInput, dict, dict]):
         try:
             d = data if isinstance(data, CognitiveInput) else CognitiveInput.model_validate(data)
             if d.op == "ops":
-                return Result.ok({"component": self.name, **settled(
+                return _answered({"component": self.name, **settled(
                     None, ops=list(_OPS),
                     note="LLM research and in-memory ML adapters are Python-only; no tools are invoked via this surface.")})
             if d.op == "help":
-                return Result.ok({"component": self.name, "op": "help", **settled(None, help=list(_OPS.values()))})
+                return _answered({"component": self.name, "op": "help", **settled(None, help=list(_OPS.values()))})
             if d.op == "assurance_schema":
-                return Result.ok({"component": self.name, "op": d.op, **settled(
+                return _answered({"component": self.name, "op": d.op, **settled(
                     None, documentary_fields=list(DOCUMENT_FIELDS), levels=list(STATES),
                     note="Assurance issuance and historical trial admission require an independently owned Python evaluator; not exposed via MCP.")})
             if d.op == "rank_methods":
@@ -128,13 +135,13 @@ class CognitiveBridgeBlock(AIBlock[CognitiveInput, dict, dict]):
                 variants = [MethodVariant(**{**v.model_dump(), "expects": tuple(v.expects)}) for v in d.variants]
                 decision = MetacognitiveMethodSelector().select(context, variants,
                                      required_methods=d.required_methods)
-                return Result.ok({"component": self.name, "op": d.op, **decision.to_dict(),
+                return _answered({"component": self.name, "op": d.op, **decision.to_dict(),
                                   "evidence_note": "no past trial data admitted over stateless MCP; cold-start ranking only"})
             if d.op == "plan_methods":
                 claims = [ClaimIR(id=c.id, statement=c.statement,
                                   evidence_needs=tuple(c.evidence_needs), models=c.models,
                                   source_refs=tuple(c.source_refs), origin=c.origin) for c in d.claims]
-                return Result.ok({"component": self.name, "op": d.op,
+                return _answered({"component": self.name, "op": d.op,
                                   **MethodRouter().plan(claims).to_dict()})
             hypotheses = [Hypothesis(**h.model_dump()) for h in d.hypotheses]
             beliefs = check_beliefs(hypotheses)
@@ -150,9 +157,9 @@ class CognitiveBridgeBlock(AIBlock[CognitiveInput, dict, dict]):
                 if p is None:
                     raise ValueError("update probe_id not among probes")
                 result = BayesianUpdater().update(beliefs, p, d.observed_positive)
-            return Result.ok({"component": self.name, "op": d.op, **settled(
+            return _answered({"component": self.name, "op": d.op, **settled(
                 None, result=result, assumptions=["priors are mutually exclusive and exhaustive",
                                                   "likelihoods and predictions are caller-provided assumptions",
                                                   "does not verify the reality of any observations"])})
         except (ValidationError, ValueError, TypeError, KeyError, OverflowError) as exc:
-            return Result.ok({"component": self.name, **refusal(INPUT, str(exc))})
+            return _answered({"component": self.name, **refusal(INPUT, str(exc))})

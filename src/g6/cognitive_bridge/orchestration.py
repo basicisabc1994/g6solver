@@ -37,7 +37,7 @@ from .assurance import (CandidateDossier, DomainStandard, EvidenceArtifact,
                         FrozenVerifier, InProcessAssuranceEvaluator,
                         ProfessionalAttestation, canonical_json, evidence_sha256, sha256)
 from .codes import (ASSURANCE_BLOCKED, COMPILE_BLOCKED, EXECUTION_NOT_APPROVED, NOT_PROMOTED, PLAN_TAMPERED, STATES,
-                    affirmed, refusal, settled)
+                    affirmed, refusal, settled, unclaimed)
 from .epistemic import CrossMethodConflictGate, ScopedAssertion, assertions_sha256, checked_report, findings_state
 from .metacognition import (MethodVariant, MetacognitiveMethodSelector,
                             ProblemSignature, SelectionDecision, checked_selection)
@@ -248,9 +248,10 @@ class CognitiveAssuranceOrchestrator:
                                                    "hand, edited, or made by another instance", steps=[],
                            method_execution_coverage=0.0)
         out = MixedMethodExecutor(self.registry, allow=allow).execute(plan, approved=True)
-        result = {**out, "selection_policy_digest": compiled.decision.policy_digest,
-                  "standard_digest": compiled.standard_digest,
-                  "claim_id": ",".join(c.id for c in plan.claims)}
+        # a result built from the executor's, with the compilation's pins beside it: what the boundary made of it
+        result = plain(unclaimed({**out, "selection_policy_digest": compiled.decision.policy_digest,
+                                  "standard_digest": compiled.standard_digest,
+                                  "claim_id": ",".join(c.id for c in plan.claims)}, where="a run"), where="a run")
         if isinstance(result.get("run_id"), str):
             self._runs[result["run_id"]] = (compiled.plan_digest, _claims_digest(plan.claims), canonical_json(result))
         return result

@@ -12,8 +12,8 @@ import struct
 from dataclasses import asdict
 from typing import Any, Mapping, Sequence
 
-from .codes import settled
-from .snapshot import fresh, record, returned, snapshot, text
+from .codes import DEPTH, settled
+from .snapshot import _too_deep, fresh, record, returned, snapshot, text
 
 
 def _native(value: Any) -> Any:
@@ -110,6 +110,8 @@ def extract_tree(estimator: Any, feature_names: Sequence[str] | None = None,
     Supported: single-output classification/regression over finite numeric
     features, no preprocessing pipeline, no missing values. Comparisons first
     cast input values to float32, matching sklearn's tree input convention.
+    A tree whose nodes would nest deeper than ``codes.DEPTH`` in the record
+    made of it (or that loops) is refused, as the boundary refuses any value.
     """
     feature_names = snapshot(feature_names, where="feature_names")
     provenance = text(provenance, where="provenance")
@@ -120,7 +122,10 @@ def extract_tree(estimator: Any, feature_names: Sequence[str] | None = None,
     if is_classifier and not hasattr(estimator.classes_, "__len__"):
         raise ValueError("unsupported class labels")
 
-    def visit(node_id: int) -> TreeNode:
+    def visit(node_id: int, depth: int) -> TreeNode:
+        # ``depth`` is where this node's fields stand in the ExplicitTree made of it: its children stand there too
+        if depth > DEPTH:
+            raise _too_deep(f"the estimator's tree at node {node_id}")
         left = int(tree.children_left[node_id])
         right = int(tree.children_right[node_id])
         if left == -1 and right == -1:
@@ -135,9 +140,10 @@ def extract_tree(estimator: Any, feature_names: Sequence[str] | None = None,
         if not 0 <= feature < len(names) or left < 0 or right < 0:
             raise ValueError("invalid fitted tree structure")
         return TreeNode(feature=feature, threshold=float(tree.threshold[node_id]),
-                        left=visit(left), right=visit(right))
+                        left=visit(left, depth + 1), right=visit(right, depth + 1))
 
-    return ExplicitTree(names, visit(0), task, provenance)
+    # the tree stands at 0, its root node at 1 (its ``root`` field), and the root's own fields at 2
+    return ExplicitTree(names, visit(0, 2), task, provenance)
 
 
 def _predictions(rows: Any, count: int) -> tuple[Any, ...]:

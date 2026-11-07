@@ -10,16 +10,20 @@ and the skill names each one.
 :func:`claims` is the one rule for a claim of a state, at any depth of a value: no ``reliability_label``, no
 ``verified`` but false directly inside a warning card, and every nested result in the makers' format
 (:func:`result_faults`, the one check of that format). Everything the bridge holds is plain JSON data, taken at the
-boundary (``snapshot.plain``), so the rule walks JSON alone: a leaf (:data:`LEAVES`), an object with text keys
-(:data:`OBJECTS`) and an array (:data:`ARRAYS`); anything else is refused, its path named
-(``tests/cognitive_bridge/test_claim_kinds.py``). It is applied to every collaborator's answer as it returns
-(``snapshot.returned``), to every tool's answer the door hands on, and by both makers to what they return
-(``tests/cognitive_bridge/test_claim_inventory.py``). :func:`only_fields` adds a format's fields to it.
+boundary (``snapshot.plain``), so the rule walks JSON alone, reading each value's kind by the one leaf test the boundary
+uses too (:func:`_read_as`): a leaf (:data:`LEAVES`, a number only when the bridge's encoder writes it), an object with
+text keys (:data:`OBJECTS`) and an array (:data:`ARRAYS`); anything else is refused, its path named
+(``tests/cognitive_bridge/test_claim_kinds.py``, ``test_json_rule_inventory.py``). It is applied to every
+collaborator's answer as it returns (``snapshot.returned``), to every tool's answer the door hands on, and by both
+makers to what they return (``tests/cognitive_bridge/test_claim_inventory.py``); a value that holds what is not JSON data
+is refused as the boundary refuses it (:class:`NotPlainData`), and each maker returns what the boundary made of its
+fields (``snapshot.plain``), sharing nothing with them. :func:`only_fields` adds a format's fields to it.
 :func:`affirmed` is the one reading of a yes: ``True`` and nothing else
 (``tests/cognitive_bridge/test_approval_inventory.py``).
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from typing import Any
 
@@ -140,7 +144,9 @@ class FrozenMap(dict):
         return f"FrozenMap({dict.__repr__(self)})"
 
 
-#: How deep :func:`claims` reads a value, and how deep the boundary takes one; anything deeper is refused.
+#: How deep :func:`claims` reads a value, and how deep the boundary takes one, counted from where the value enters the
+#: bridge: every walk takes its depth from its caller (``tests/cognitive_bridge/test_depth_inventory.py``), and
+#: anything deeper is refused.
 DEPTH = 64
 #: The JSON leaves, by the value's exact type (never a subclass): text, a number, a flag and null.
 LEAVES: tuple[type, ...] = (str, int, float, bool, type(None))
@@ -151,19 +157,58 @@ OBJECTS: tuple[type, ...] = (dict, FrozenMap)
 ARRAYS: tuple[type, ...] = (list, tuple)
 
 
+class NotPlainData(TypeError, ValueError):
+    """A value refused where it enters the bridge: not plain JSON data, or not of the kind its place declares. It
+    carries a registered code (:data:`INPUT`) and the path of what was refused. The boundary (``snapshot.plain``)
+    raises it, and so does :func:`unclaimed` for a value that holds what is not JSON data: one refusal for one rule."""
+
+    code = INPUT
+
+    def __init__(self, path: str, why: str) -> None:
+        super().__init__(f"[{INPUT}] {path}: {why}", path)
+
+    @property
+    def path(self) -> str:
+        return self.args[1]
+
+    def __str__(self) -> str:
+        return self.args[0]
+
+
 def _read_as(value: Any) -> str:
-    """How :func:`claims` reads ``value``, by its exact type, the one place that says it: ``"text"`` (a leaf, and
-    the only kind an object's key may be), ``"leaf"`` (the rest of :data:`LEAVES`), ``"object"`` (:data:`OBJECTS`),
-    ``"array"`` (:data:`ARRAYS`), or ``""``: anything else, which is not JSON data, so the rule refuses it."""
+    """How a value is read as JSON data, by its exact type: the one leaf test, which :func:`claims` and the boundary's
+    walk (``snapshot.plain``) both ask. ``"text"`` (a leaf, and the only kind an object's key may be), ``"leaf"`` (the
+    rest of :data:`LEAVES`: a number only when the bridge's encoder writes it, so finite, and an integer no longer than
+    the encoder writes out), ``"object"`` (:data:`OBJECTS`), ``"array"`` (:data:`ARRAYS`), or ``""``: anything else,
+    which is not JSON data, so it is refused."""
     kind = type(value)
     if kind in LEAVES:
-        return "text" if kind is LEAVES[0] else "leaf"
+        if kind is LEAVES[0]:
+            return "text"
+        if kind is float and not math.isfinite(value):
+            return ""
+        if kind is int:
+            try:
+                int.__repr__(value)  # what the encoder writes an integer by; past Python's digit limit it raises
+            except ValueError:
+                return ""
+        return "leaf"
     return "object" if kind in OBJECTS else "array" if kind in ARRAYS else ""
 
 
 def _named(value: Any) -> str:
     """The type of ``value``, as a refusal names it."""
     return f"{type(value).__module__}.{type(value).__qualname__}"
+
+
+def _unread(value: Any) -> str:
+    """What a value :func:`_read_as` does not read is, as a refusal names it."""
+    kind = type(value)
+    if kind is float:
+        return "a number that is not finite"
+    if kind is int:
+        return "an integer longer than the bridge's encoder writes"
+    return f"a {_named(value)}"
 
 
 def _claims_nothing(card: Mapping[str, Any] | None) -> bool:
@@ -198,29 +243,36 @@ def result_faults(result: Mapping[str, Any]) -> list[str]:
     return [] if card is None or _claims_nothing(card) else ["its warning card claims more than a qualified draft"]
 
 
-def claims(value: Any, *, _card: bool = False, _at: str = "", _depth: int = 0) -> list[str]:
+def claims(value: Any, *, _card: bool = False, _at: str = "", _depth: int = 0,
+           _not_data: list[str] | None = None) -> list[str]:
     """Where ``value`` claims a reliability state the bridge did not decide, or holds what is not JSON data, each place
-    named by its path; none is an empty list. It walks JSON alone (:func:`_read_as` decides how): a leaf
-    (:data:`LEAVES`) is read as itself, an object (:data:`OBJECTS`, whose every key is text) and an array
-    (:data:`ARRAYS`) item by item; anything else, a key that is not text among them, is named with its type. What it
-    finds: a field G6 reads as a state other than ``completion_state`` (``reliability_label``) anywhere; G6's
-    ``verified`` flag anywhere but directly inside a warning card, where it may only be false (INV-ENV-2); and an
-    object that carries ``completion_state`` that is not a result in the makers' format (:func:`result_faults`). A
-    value nested deeper than :data:`DEPTH` is not read, and is named as a claim."""
+    named by its path; none is an empty list. It walks JSON alone (:func:`_read_as`, the boundary's own leaf test,
+    decides how): a leaf (:data:`LEAVES`) is read as itself, an object (:data:`OBJECTS`, whose every key is text) and
+    an array (:data:`ARRAYS`) item by item; anything else (a number the encoder does not write, a key that is not text
+    among them) is named with what it is. What it finds: a field G6 reads as a state other than ``completion_state``
+    (``reliability_label``) anywhere; G6's ``verified`` flag anywhere but directly inside a warning card, where it may
+    only be false (INV-ENV-2); and an object that carries ``completion_state`` that is not a result in the makers'
+    format (:func:`result_faults`). A value nested deeper than :data:`DEPTH`, counted from the depth its caller gives
+    (``_depth``), is not read, and is named as a claim. Each place that is not JSON data is also added to
+    ``_not_data`` when one is given."""
     where = _at or "the value"
+    odd = _not_data if _not_data is not None else []
     if _depth > DEPTH:
+        odd.append(where)
         return [f"{where} (nested deeper than {DEPTH} levels)"]
     how = _read_as(value)
     if how in ("text", "leaf"):
         return []
     if not how:
-        return [f"{where} (a {_named(value)}, which is not JSON data)"]
+        odd.append(where)
+        return [f"{where} ({_unread(value)}, which is not JSON data)"]
     found: list[str] = []
     if how == "object":
         if "completion_state" in value:
             found += [f"{where}: {fault}" for fault in result_faults(value)]
         for key, item in value.items():
             if _read_as(key) != "text":
+                odd.append(where)
                 found.append(f"{_at}.<{_named(key)} key>".lstrip(".") + " (the key, which is not text)")
                 continue
             at = f"{_at}.{key}" if _at else key
@@ -228,20 +280,24 @@ def claims(value: Any, *, _card: bool = False, _at: str = "", _depth: int = 0) -
                 found.append(at)
             elif key in STATE_FIELDS and key != "completion_state":
                 found.append(at)
-            found += claims(item, _card=key == "warning_card", _at=at, _depth=_depth + 1)
+            found += claims(item, _card=key == "warning_card", _at=at, _depth=_depth + 1, _not_data=odd)
     else:
         for index, item in enumerate(value):
-            found += claims(item, _at=f"{_at}[{index}]", _depth=_depth + 1)
+            found += claims(item, _at=f"{_at}[{index}]", _depth=_depth + 1, _not_data=odd)
     return found
 
 
 def unclaimed(value: Any, *, where: str) -> Any:
-    """``value`` when it claims no state and holds nothing but JSON data (:func:`claims`), else ``ValueError`` naming
-    each place."""
-    found = claims(value)
+    """``value`` when it claims no state and holds nothing but JSON data (:func:`claims`), else an error naming each
+    place: :class:`NotPlainData`, the boundary's refusal (its code, and ``where``), when it holds what is not JSON
+    data, and ``ValueError`` when it only claims a state."""
+    odd: list[str] = []
+    found = claims(value, _not_data=odd)
     if found:
-        raise ValueError(f"{where} claims a state the bridge did not decide, or holds what is not JSON data: "
-                         f"{'; '.join(found)[:600]}")
+        why = f"claims a state the bridge did not decide, or holds what is not JSON data: {'; '.join(found)[:600]}"
+        if odd:
+            raise NotPlainData(where, why)
+        raise ValueError(f"{where} {why}")
     return value
 
 
@@ -252,17 +308,27 @@ def affirmed(value: Any) -> bool:
     return value is True
 
 
+def _plain(value: Any, *, where: str, frozen: bool = False) -> Any:
+    """``value`` as the boundary makes it, the one conversion (``snapshot.plain``, or read-only ``snapshot.snapshot``
+    when ``frozen``): a new value that shares nothing with ``value``. The boundary imports this module, so it is
+    imported where it is used."""
+    from . import snapshot as boundary
+
+    return boundary.snapshot(value, where=where) if frozen else boundary.plain(value, where=where)
+
+
 def only_fields(value: Any, *, allowed: tuple[str, ...], required: tuple[str, ...] = (),
                 where: str) -> Mapping[str, Any]:
     """``value`` when it is a mapping with every ``required`` field, no field but ``allowed`` and no claim anywhere in it
-    (:func:`claims`), else ``ValueError``: what the bridge credits from a collaborator, and republishes, carries only
-    its format's fields, and none of them claims a state the bridge did not decide."""
+    (:func:`claims`), else ``ValueError`` (:class:`NotPlainData` for what is not JSON data): what the bridge credits
+    from a collaborator, and republishes, carries only its format's fields, and none of them claims a state the bridge
+    did not decide. What it returns is what the boundary made of it, read-only."""
     if not isinstance(value, dict):
         raise ValueError(f"{where} is a mapping of its format's fields")
     missing, extra = sorted(set(required) - set(value)), sorted(set(value) - set(allowed), key=str)
     if missing or extra:
         raise ValueError(f"{where} has only its format's fields: missing {missing}, not in the format {extra}")
-    return unclaimed(value, where=where)
+    return _plain(unclaimed(value, where=where), where=where, frozen=True)
 
 
 def _no_reserved(values: Mapping[str, Any], where: str) -> None:
@@ -286,12 +352,13 @@ def refusal(code: str, reason: str, *, card: Mapping[str, Any] | None = None, **
 
     ``code`` is one of :data:`CODES`; a supplied ``card`` must be a card for that code (:func:`result_faults`).
     ``extra`` may not set any of :data:`RESERVED`, and this function's own fields are written last. What it returns
-    claims no state anywhere (:func:`unclaimed`)."""
+    claims no state anywhere (:func:`unclaimed`) and is what the boundary made of it (``snapshot.plain``)."""
     _no_reserved(extra, "a refusal's extra fields")
     reason = str(reason)[:400]
     out = {**extra, "completion_state": "blocked-escalated", "code": code, "reason": reason,
            "warning_card": _card(code, reason, card)}
-    return unclaimed(out, where=f"a refusal under {code!r}")
+    where = f"a refusal under {code!r}"
+    return _plain(unclaimed(out, where=where), where=where)
 
 
 def settled(refused: Mapping[str, Any] | None, *, draft_card: tuple[str, str] | None = None,
@@ -299,7 +366,8 @@ def settled(refused: Mapping[str, Any] | None, *, draft_card: tuple[str, str] | 
     """``fields`` under the state a result has: ``refused`` (a refusal :func:`refusal` made, in its format and
     unchanged, made again here so a changed state, code or card is refused), or ``qualified-draft``, with a card for a
     registered code when ``draft_card`` (``(code, message)``) is given. ``fields`` may not set any of :data:`RESERVED`.
-    What it returns claims no state anywhere (:func:`unclaimed`)."""
+    What it returns claims no state anywhere (:func:`unclaimed`) and is what the boundary made of it
+    (``snapshot.plain``)."""
     _no_reserved(fields, "a result's fields")
     if refused is None:
         out = {**fields, "completion_state": "qualified-draft"}
@@ -307,19 +375,19 @@ def settled(refused: Mapping[str, Any] | None, *, draft_card: tuple[str, str] | 
             if draft_card[0] not in CODES:
                 raise ValueError(f"{draft_card[0]!r} is not a code g6.cognitive_bridge registered")
             out["warning_card"] = _card(draft_card[0], draft_card[1], None)
-        return unclaimed(out, where="a result")
+        return _plain(unclaimed(out, where="a result"), where="a result")
     if (draft_card is not None or not isinstance(refused, dict) or refused.get("completion_state") != STATES[1]
             or set(refused) & (set(RESERVED) - set(_MADE)) or result_faults(refused)):
         raise ValueError("settled takes a refusal codes.refusal made, unchanged, or None")
     rest = {k: v for k, v in refused.items() if k not in RESERVED and k != "reason"}
-    return unclaimed({**refusal(refused["code"], str(refused.get("reason", "")), card=refused["warning_card"], **rest),
-                      **fields}, where="a result")
+    return _plain(unclaimed({**refusal(refused["code"], str(refused.get("reason", "")), card=refused["warning_card"],
+                                       **rest), **fields}, where="a result"), where="a result")
 
 
 __all__ = ["ADAPTATION_REFUSED", "APPROVAL_REQUIRED", "ARRAYS", "ASSURANCE_BLOCKED", "CODES", "COMPILE_BLOCKED",
            "DEPTH", "DOSSIER_BLOCKED", "EVIDENCE_CONTESTED", "EVIDENCE_NOT_RECONCILED", "EVIDENCE_REFUTED",
            "EVIDENCE_UNDETERMINED", "EXECUTION_INCOMPLETE", "EXECUTION_NOT_APPROVED", "FrozenMap", "INPUT", "LEAVES",
-           "MADE_FIELDS", "MODEL_MISSING", "NOT_PROMOTED", "NO_PROBE", "OBJECTS", "OBLIGATION_NOT_PLANNED",
+           "MADE_FIELDS", "MODEL_MISSING", "NOT_PROMOTED", "NO_PROBE", "NotPlainData", "OBJECTS", "OBLIGATION_NOT_PLANNED",
            "PLAN_TAMPERED", "PREREQUISITE_UNMET",
            "RESERVED", "SELECTION_INCOMPLETE", "STATES", "STATE_FIELDS", "STEP_FAILED", "VERIFIED_FLAG", "affirmed",
            "claims", "only_fields", "refusal", "result_faults", "settled", "unclaimed"]
