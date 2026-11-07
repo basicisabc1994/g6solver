@@ -4,7 +4,7 @@ Status: frozen by the owner on 2026-11-08, and 0.3.0 is all of it built. Section
 2026-11-06: version 1 (178ef54) was challenged by Codex, all 16 of its challenges were read against the code and adopted, and
 appendix A lists each. Sections 11 to 15 were added on 2026-11-07 and 2026-11-08 and approved with the freeze; section 16 is the owner's ruling
 that no data reaches a cloud model without consent, which every section meets. Codex's
-challenges of them are folded in as corrections within this scope (appendix B for section 11). Anything new goes to a list for
+challenges of them are folded in as corrections within this scope (appendix B for section 11, C for 12 and 13, D for 14 and 15). Anything new goes to a list for
 after 0.3.0. Building follows section 7's order, with 12.9, 13.4, 14.4 and 15.8.
 
 ## 1. Why
@@ -999,6 +999,7 @@ control. These are concrete installation/policy decisions, not permission for an
 ## 14. Frozen 2026-11-08: the agent uses what ships; Eurisko and Experta
 
 **Status.** Part of the design the owner froze on 2026-11-08. Codex's challenge is folded in as corrections within this scope.
+All named capabilities stay in 0.3.0. Later steps depend on earlier measured results; a failed gate requires repair.
 
 ### 14.1 The skill routes to what ships
 
@@ -1011,62 +1012,103 @@ control. These are concrete installation/policy decisions, not permission for an
   - fitness reports and extensions;
   - the formal bridge (section 15).
 - **It never names a tool that has not shipped.** An agent told to call a missing tool fails worse than one never told.
-- **An inventory test, from the code.** Every MCP tool, and every component op marked for agents, is either in the skill's
-  routing or listed with why an agent does not call it. Every tool the skill names exists. The test fails on a member it
-  cannot classify.
+- **An inventory test, from the code.** There is no universal agent-op marker today. New work defines a versioned, typed
+  routing manifest keyed by fully qualified MCP tool name or `(component, op)`. Each entry has `agent_facing`, a route id
+  or an exemption with a reason, and the shipping server version. This is the code definition of "marked for agents".
+  Every typed component op needs an explicit classification; an absent entry fails, rather than meaning false.
+  An offline registration recorder enumerates actual MCP registrations, including loops, without starting a service or
+  calling a model. It joins these with typed component operations and the manifest. Each MCP tool and agent-facing op
+  must resolve to a route or reasoned exemption. Missing or unknown members, stale references and nonexistent tool names
+  fail the test. A prose mention alone is not a route.
 - **The skill routes; each component's own SKILL.md carries the detail.** The 1,800-word cap holds.
-- **Measured** (subscription runs): on development fixtures, a fresh session given a task that needs a capability calls it.
-  Each capability is counted.
+  Route ids resolve to short task instructions and linked detail files. Generic component discovery stays through
+  `g6_help`, `g6_find` and `g6_describe`. The test checks links, names and the root word count separately.
+  In the same capability commit, replace the current "at most 3 questions" guidance with A's persistent one-question
+  default. A has no terminal fallback and no agent-supplied answer. Do not copy another component's approval fallback.
+- **Measured** (rows for section 5): a frozen manifest has positive and negative tasks for every capability, fresh-session
+  setup, expected valid calls, completion criteria, and time/call/question budgets. Count valid timely calls and useful
+  completion on positive tasks, unnecessary or malformed calls on negative tasks, and recovery from a missing tool.
+  Report refusals, unavailable runs and costs with full denominators. Freeze a positive minimum completion rate and maximum
+  error rates before running; calling something or refusing everything cannot pass. Development and final cohorts stay
+  separate under 3.6. Section 16 applies to every model call in these trials.
 
 ### 14.2 Eurisko as a method kind in `cognitive_bridge`
 
 - **What exists.**
-  - `learning/seeds.py`: 16 first-party seed heuristics, loaded as unmeasured candidate theories. Nothing in the product
-    calls it.
+  - `src/g6/learning/seeds.py`: 16 first-party seed heuristics, loaded as unmeasured candidate theories. No product call was
+    found in the code survey.
   - PR #4: a bounded bootstrap and `heuristic_discovery`, with fixed mutation operators, lineage and generation caps, and
-    paired success-and-cost trials. Its promotion only checks that an approval and a shadow digest are present.
+    baseline/candidate success-and-cost fields. These are not observed paired trials. Its promotion checks a recommended
+    assessment and truthy approval/shadow fields, not an adaptation-gate decision. The bootstrap discards its returned
+    heuristic text; those calls are not an application mechanism.
   - The earlier repository's `adapt_eurisko` specialises, generalises and mutates heuristics, and synthesises them from gaps.
-    But it credits every heuristic a run names alike, and its "worth" is a fixed number, never measured.
+    But it credits every heuristic a run names alike. Its "worth" is caller-supplied or a default, with no established
+    paired measure.
   - In PR #8's `cognitive_bridge`, a `MethodVariant` declares a kind, method, representation, engine, operation, cost and
     expected evidence. Non-engine kinds are ranked but never executed, and credit comes only from evaluator-admitted trials
-    bound to the variant's definition.
+    matched to a routing-descriptor digest. That digest hashes labels, not strategy bytes. The admission hook is external;
+    the supplied scorer uses absolute resolution and regression rates and estimated cost, not paired benefit or actual cost.
+    Its in-process assurance supplies control scaffolding, not execution custody or promotion authority.
 - **The design.**
   - A heuristic is a `MethodVariant` of a non-engine kind, `heuristic`. It proposes how to search or decompose (a strategy),
-    never evidence.
-  - It ranks with the other kinds, and earns credit only from paired trials that vary that one heuristic, admitted by the
-    evaluator and bound to its definition. The archive's shared credit is not used.
-  - New heuristics come from PR #4's operators, with lineage and caps. Each starts unmeasured, and its measured worth replaces
-    any fixed one.
-  - Promotion goes through the adaptation gate with a person's approval. The mere presence of an approval is not enough.
+    never evidence. It sits beside the mandatory evidence plan and cannot satisfy or remove an engine obligation.
+  - **Bind the definition.** A new immutable strategy artefact contains instruction text or operator implementation,
+    trigger and scope, prompt/template and application mapping, implementation version and relevant configuration.
+    Its content digest joins the variant definition and evaluator receipts. Admission resolves and checks the actual bytes.
+    A changed body, trigger or mapping starts unmeasured even if its name stays. The present label digest identifies only
+    the routing descriptor.
+  - **Apply the strategy.** A new caller adapter supplies one frozen instruction to the search/decomposition stage, under
+    the same task and information budget, and records the applied digest and host-observed execution. It cannot rewrite the
+    standard, oracle, evidence plan or gate. Begin with the 16 finite seed instructions. PR #4's operator names need reviewed
+    mappings that transform actual strategy instructions; without a mapping, a child is only a proposal. The trusted adapter
+    checks lineage, generation and child caps. Do not port discarded bootstrap calls as evidence that a strategy ran.
+  - **Admit paired credit.** The new outside evaluator records pair/cohort/case and replay identities, both strategy hashes,
+    the common task, agent, information, oracle, environment and budget, and the one permitted strategy difference. It checks
+    that difference against observed execution, with a fixed randomness and order policy. Both arms carry measured success,
+    time and cost; missing, refused and interrupted arms remain visible. Caller-asserted digests or outcome fields do not
+    supply custody. The archive's shared credit is not used.
+  - **Measure worth.** Freeze the paired benefit/cost statistic, case grouping, regression limits and promotion bar before
+    trials. Retain regressions and incomplete pairs in the report. A new scorer adapter uses that statistic and measured
+    costs; do not relabel PR #8's absolute success proxy. Learning stays off and candidates stay unmeasured until admission
+    and the paired scorer exist. New instructions start unmeasured; measured worth replaces fixed worth.
+  - Promotion uses the actual adaptation gate, outside candidate control, with the paired receipts, shadow checks and the
+    person's approval bound to the exact strategy. PR #4's local `assess/promote` checks are replaced on this path.
 - **Where:** the selector's learning stage (section 7, step 5), once paired outcomes exist, with the seeds as its first
   candidates. PR #4 is harvested into it, and what is not used is retired under section 6's rule.
 
 ### 14.3 Experta: retired, its role kept
 
-The earlier repository's `adapt_experta` had four recorded defects: rule dicts that never fired, a cross-component forgery,
-evidence inversion, and a concurrency fault. It was folded into `g6.datalog`'s sessions, not ported as an engine. Rule
-reasoning is done by `g6.datalog`, `g6.prolog` and `graph_reasoning`. Under section 6's rule, Experta is retired as a
-component, with that reason.
+Experta is retired as an integration decision under section 6, with no engine port. Its rule-reasoning role is assigned to
+`g6.datalog`'s sessions, `g6.prolog` and `graph_reasoning`. Current Datalog sessions keep facts over a fixed session program;
+they do not establish a historical migration. Earlier notes name rule dicts that never fired, a cross-component forgery,
+evidence inversion and a concurrency fault. Their historical attribution is not checked here and is not the retirement's
+evidence. The current rule APIs and the decision to avoid a duplicate engine are enough to retain the role.
 
 ### 14.4 Order
 
-The skill rule applies to every slice from now on. Eurisko comes with step 5.
+The skill rule applies to every slice from now on. Define the manifest and measure routing first. Eurisko comes with
+section 7, step 5: bind and apply seeds, measure fixed-strategy baseline/candidate pairs, then build the learned scorer and
+content-changing operators against those results. Each step has a frozen gate under section 5; failure requires repair,
+not removal of a layer from 0.3.0. The paired evaluator and measured strategy application precede any learned routing.
+Section 16's consent boundary comes before model calls in operators, strategy application, evaluation or routing trials.
 
 ## 15. Frozen 2026-11-08: from intent to a formal property, with the translation checked
 
 **Status.** Part of the design the owner froze on 2026-11-08. Codex's challenge is folded in as corrections within this scope.
+The five checks, all four language adapters, the autoformaliser port and the synthesis fit stay in 0.3.0. Their build order
+does not imply equal readiness today. Public wording is "person-accepted formalisation, with named checks and limits".
 
 ### 15.1 Why
 
-A formal result is only as strong as the translation into it. A derivation of a mistranslated property certifies the wrong
-statement (owner, 2026-11-08).
+A formal result concerns its encoded statement. A mistranslated property answers the wrong question (owner, 2026-11-08).
 
 **What exists** (surveyed 2026-11-08):
-- No translation from intent to a formal statement exists in G6.
-- `harness/verification_proposer.py` drafts abstract models, marked `model_hypothesis`.
-- `harness/verification_formal.py` reports a formal result as specification, model and correspondence, and replays
-  counterexamples on the code. So the correspondence between the model and the code is checked, but the correspondence
-  between the intent and the specification is not.
+
+- `src/g6/harness/verification_proposer.py` already proposes task-based formal models, including SMT initial-state, transition and
+  invariant terms in `state_invariant.v1`, marked `model_hypothesis`. The accepted intent-to-formal bridge below is new work.
+- `src/g6/harness/verification_formal.py` reports a formal result as specification, model and correspondence, and replays
+  selected counterexample traces on supported code observations. It can report not reproduced, not replayable or not
+  replayed. No counterexample means no replay, not general model/code correspondence. Intent fidelity is not established.
 
 ### 15.2 Three layers of specification, each a hypothesis until its translation is checked
 
@@ -1075,73 +1117,199 @@ statement (owner, 2026-11-08).
 3. **Formal statements:** SMT-LIB, a Lean 4 statement, a TLA+ specification or a Datalog program. A model (the autoformaliser)
    drafts them from the confirmed intent and the properties.
 
-Authority follows where the expectation came from, as rule 2 of the verification-search rules already says.
+Authority follows where the expectation came from, as rule 2 of the verification-search rules already says. Example
+acceptance does not accept a generalisation. Preserve the confirmed executable examples even if the general rule stays
+unconfirmed. Expectation provenance, formalisation acceptance and check-result kind are separate fields.
 
 ### 15.3 The translation checks (section 11's componentry)
 
-A formal statement counts as the intent's translation only when all of these hold:
+All five checks below are required for acceptance on the declared scope. They are not a general guarantee of fidelity.
+The observation adapters, supported grammar, renderers and acceptance receipts are new work.
 
-1. **Examples.** It accepts every confirmed example and rejects each rejected-outcome witness (11.2 item 3). The engine decides
-   this, never the model.
-2. **Neither vacuous nor conflicting**, by `formal.check_contract`.
-3. **Two independent translations agree.** They come from different model families, with their independence stated, and are
-   compared by `check_equivalence`. Where they disagree, the distinguishing assignment becomes A's question to the person: for
-   this input, A or B? This is CEGIS run on the specification rather than the program.
-4. **Back-translation.** The statement is rendered in plain words and shown to the person in the behaviour form. The renderer
-   is a template where one exists, otherwise a model other than the one that wrote the statement. The person confirms or
-   rejects it, and a rule is shown in full first (3.2).
-5. **Scope and correspondence are recorded:** what the statement covers, and which observation it constrains (11.2 item 2). A
-   superseded answer reruns the evidence that depended on it (11.2 item 7).
+1. **Examples through the same observation.** A versioned, reviewed adapter binds 11.2 item 2's setup, entry point, inputs,
+   observation and assertion to typed formal terms. It covers return, error or argument effect explicitly, including
+   domains, equality/comparison semantics, accepted observations and rejected-outcome witnesses (11.2 item 3). An encoding
+   of a return cannot stand for an effect. Unsupported values or missing controls stay visible and unconfirmed.
+
+   Initial reuse is `src/g6/cegis/z3_verifier.py`'s restricted single-return int/bool path, within its grammar and finite
+   domain. This is not a general `example.v1` converter. Each language needs its own adapter and tests:
+
+   | Language | New bridge obligation |
+   |---|---|
+   | SMT-LIB | Bind typed input/output terms, return/error/effect tags and numeric/comparison semantics to the executable observation; refuse variants outside the adapter's declared support |
+   | Lean 4 | Encode reviewed values and ground propositions; bind the target and referenced definitions |
+   | TLA+ | Bind initial state, actions or trace and an observation projection, with explicit bounds |
+   | Datalog | Bind extensional facts, result relation and the declared meaning of non-derivability |
+
+   Support is advertised per tested fragment, never from a language name alone. The engine decides the formal question;
+   adapter correspondence to the executable observation needs its own tests. Missing adapter, engine or decision is
+   unconfirmed, neither a failed property nor a successful translation.
+2. **Domain, reachability and consistency.** Ask separately whether the domain is satisfiable, each guarded obligation is
+   reachable within it, and the domain and all constraints can hold jointly. Test that accepted observations satisfy the
+   relation and rejected observations violate it. State totality or uniqueness only where the function adapter requires
+   it. Keep assumptions apart from claims; a specification relation need not hold for every unconstrained output.
+
+   `formal.check_contract` checks SMT validity under premises, some validity without them, and multiple formulas' joint
+   satisfiability without the premises. Reuse it for those named entailment obligations, not as a blanket specification
+   acceptance test. Other languages need their corresponding obligations. Freeze interpretation fixtures: free
+   `result = x + 1` is a useful relation despite failing unconstrained validity; `true` without premises does not constrain
+   behaviour; `x > 100 => result = x + 1` is unreachable on `0 <= x <= 10`. Add a conflict that arises only within the domain.
+3. **Diverse candidate comparison.** Two model families draft candidates within the same accepted scope. Record family,
+   generation provenance, common sources and whether either saw the other. This is diversity, not demonstrated independence.
+   `check_equivalence` is an SMT equality/equivalence check under common sorts and premises. It says nothing by itself about
+   intent; two copies of `result = x + 2` agree while both miss an intended `x + 1`. Other languages need explicit comparison
+   adapters. This check passes when equivalence is decided in the accepted domain, or a disagreement is resolved against an
+   independently accepted criterion or the person's explicitly accepted scope. Agreement alone never accepts the intent.
+
+   A distinguishing assignment is not necessarily an executable input or two unique outputs. Only a replayable observation,
+   through check 1's adapter, can become A's question. For `result >= x` versus `result > x`, ask about the disputed observation,
+   not invented unique results. Traces, answer sets and overlapping relations retain their native meaning. Include "both
+   permitted", "neither", "premise wrong", "already specified" and skip where applicable. An assignment that cannot be
+   concretised stays a model disagreement. Lack of a witness never marks intent determined.
+4. **Back-translation with limits.** A new supported grammar/IR has an exhaustive renderer for its constructors. Render the
+   actual checked artefact and referenced definitions, with domains, guards, quantifiers, observation, frame conditions,
+   temporal bounds and exclusions. Show the formal text and digest beside its words in the behaviour form; never render
+   just the original prompt. Build restricted SMT relations, fixed Lean proposition constructors, bounded TLA+ state/trace
+   forms and finite Datalog rules in that order after measured earlier results. These renderers do not exist in the APIs.
+
+   Unsupported constructs stay unconfirmed. A different model may offer a rendering as another unconfirmed interpretation,
+   not a substitute for a supported renderer. A paraphrase can hide a changed quantifier or liveness rule; the person's
+   approval records scoped acceptance, not established semantic fidelity. Measure incorrect renderings as well as formulas.
+5. **Scope and correspondence are bound.** Record what the statement covers and the exact observation it constrains,
+   including unsupported cases. Bind statement and definition bytes, adapters, assumptions, domain/bounds, rendering and
+   standard revision. A superseded answer invalidates and reruns dependent evidence (11.2 item 7). Code correspondence is a
+   separate obligation, not supplied by agreement, rendering or confirmation.
+
+**One interaction budget.** All translation questions and rule confirmations use A's persistent budget, one per task by
+default across retries. Combine the executable scenario and full rule/rendering confirmation in the original form when
+ready. If that budget is already spent, stop unconfirmed unless the person explicitly requests more. No terminal fallback
+or agent answer is allowed. Start with one candidate per family and at most two repair attempts in total; freeze wall-clock,
+token and output caps before running. Do not regenerate until agreement. Unresolved or unavailable comparisons stay
+unconfirmed. Section 16 governs drafting, repair, comparison and model rendering, including their supplied context.
 
 What the outcomes mean:
-- **A statement that fails any check** is reported as an unconfirmed formalisation, with the reason, and checks nothing.
-- **A statement that passes checks 1 to 3** stays `model_hypothesis` until the person confirms check 4. Then it is
-  `person_confirmed`.
+
+- **An incomplete or failed acceptance check** leaves an unconfirmed formalisation, with the reason. Retain scoped solver
+  diagnostics, conflicts and confirmed examples; it cannot support intent fidelity or a code requirement.
+- **The person's confirmation** supplies normative acceptance of the displayed rule and scope, bound to the statement,
+  definitions and rendering digests. `person_confirmed` is expectation provenance, not execution evidence or an independence
+  waiver. The formal candidate and its check-result kind stay distinct.
+- **Before promotion, extend 3.1's mapping for this path.** The evidence branch's compiled `example.v1` mapping is not a
+  general formal-approval mapping. New work binds formal result/certificate, model, adapters, assumptions, accepted and
+  rejected controls, author, freeze ordering, environment and subject bytes to resolvable receipts. The issuer alone sets
+  requirement status. A model-only result supports only its explicitly modelled claim; code support also needs the stated
+  correspondence evidence. Confirmation cannot relabel a model-written check as person-authored.
 - **The autoformaliser's own acceptance is never evidence:** a parse that succeeds, or a process that exits zero.
 
 ### 15.4 Porting the earlier repository's autoformaliser (authorised under G6's licence, 2026-11-08)
 
-- **It targets** Lean 4, SMT-LIB2 and Z3 expressions, with context, retrieval from a library of earlier statements, and an
+- **The port targets** Lean 4, SMT-LIB2 and Z3 expressions, with context, retrieval from a library of earlier statements, and an
   attempt budget.
-- **Its model** is called through G6's host callers. Nothing is downloaded automatically: any local weights are read only
-  from the person's cache, as `ctx_colbert` does.
-- **Acceptance moves into G6's engines:**
-  - Z3 runs `check`;
-  - a Lean statement is bound to the expected theorem, as `g6.lean` already reports for kernel, axioms and statement;
-  - a missing TLC is unavailable, never success.
-- **The archive's four defects become refusal tests:**
-  - an SMT translation was parsed and never checked;
-  - Lean exiting zero accepted an unrelated declaration;
-  - a missing TLC reported success;
-  - the Curry–Howard checker answered valid unconditionally.
-- **Not ported:** the archive's math-reasoning and Curry–Howard format conversions, which return placeholder success.
+- **Harvest only generation/repair control flow and useful prompts.** G6's host callers replace the backend, behind
+  section 16's per-source/provider consent check at send time. Context, retrieved statements, repair diagnostics and model
+  renderings carry sources. Without a cloud grant, withhold that data; use a supported local path or report unavailable.
+  Nothing is downloaded automatically. Any local weights come only from the person's cache through the host caller.
+  Add overall wall-clock, token, attempt and output budgets, engine screens and confinement, not just an attempt count.
+- **Acceptance uses named engine questions and polarity under 3.4:**
+
+  | Question | Decision and limit |
+  |---|---|
+  | Does a domain/guard/constraint conjunction have a witness? | SMT SAT supplies a witness; UNSAT reports no witness for this encoding, including an unreachable guard or conflict as applicable |
+  | Is an obligation valid under assumptions? | Search the assumptions conjoined with the obligation's negation: SAT is a counterexample; UNSAT supports the stated entailment, with domain consistency checked separately |
+  | Do two relations differ in the domain? | SAT of the domain conjoined with their difference distinguishes them; UNSAT establishes equivalence only under those assumptions |
+  | Does a named Lean theorem match and pass the native checks? | Bind its target name and non-empty expected statement to the already accepted artefact and frozen definitions; check supplied derivation source with G6's screens, kernel and axiom report |
+  | Is a TLA+ invariant/property violated within the declared model/bounds? | Preserve the native TLC result and scope; missing TLC is unavailable |
+  | Is a Datalog goal derivable from these facts/rules? | Preserve answers and the declared non-derivability interpretation; absence alone is not arbitrary logical negation |
+
+  Witness searches are existential; validity and equivalence range over every assignment in the stated domain. Each request
+  records quantifiers, assumptions, bounds and the native query. Unknown, timeout and unavailable never become
+  a positive or negative decision. Preserve native UNSAT and conflict diagnostics; refuse unsupported evidence promotion,
+  not every inconsistent specification. Generated SMT uses G6's typed declarations and term interface, not arbitrary programs.
+  Drafting a Lean proposition, accepting its scope, generating derivation source and checking it are separate steps. Without
+  that source, report "accepted specification; derivation not supplied". A co-generated expected statement cannot replace
+  the accepted digest. No engine establishes the natural-language correspondence.
+- **Four archive defect fixtures, with exact outcomes:**
+
+  | Fixture | Required outcome |
+  |---|---|
+  | Parsed SMT `(assert false)` with no solver decision | Cannot mint evidence from parse success; a real consistency query records UNSAT |
+  | Lean exits zero on `def unrelated : Nat := 0`, with accepted target `expected` and statement `1 = 1` | Cannot satisfy the frozen target name and non-empty expected statement |
+  | Java/jar/TLC unavailable | Unavailable, with no success receipt and no automatic download |
+  | Curry–Howard application of assumptions `P` and `Q` without compatible types, and a bodyless `P => Q` | Neither enters a supported evidence path; assert absence or refusal at the exposed boundary |
+
+  The archive's Curry–Howard construction path returned success after construction; its checker did structural validation
+  and rejected empty input. It did not answer valid unconditionally. The two invalid derivations target the actual hole.
+  Excluding that code is not repairing its old checker. These fixtures test admission, not a blanket ban on UNSAT.
+- **Not ported:** the backend loader, archive success schema and acceptance helpers, confidence-based grounding labels,
+  strategy/theory credit, library trust labels, or the math-reasoning and Curry–Howard conversions. Retrieved statements
+  remain versioned untrusted context with source/content hashes and section 12's access scope; any claim of an independently
+  checked statement needs a resolvable receipt. Shared retrieval is recorded in candidate provenance. Expose no archive
+  `z3_python` conversion unless a reviewed typed adapter is supplied: its implicit integer and division semantics are not
+  general Python semantics. The SMT-LIB and typed Z3-expression targets remain in the port.
 
 ### 15.5 Program synthesis
 
-- **The coding agent synthesises the program.** G6 supplies the checked specification and checks the result.
-- **`cegis` and `algorithm_design` synthesise bounded pieces,** where an engine decides the property: D (3.4), and section 5's
-  self-improvement row.
-- **The same search for a distinguishing input** runs over candidate programs and candidate specifications (15.3, check 3).
+- **The coding agent synthesises the program.** G6 supplies a person-accepted specification with named checks and limits,
+  and checks the result only within the supported adapters and evidence rules.
+- **`cegis` fills supported sketches against an explicit oracle and domain,** optionally with the restricted single-return
+  int/bool SMT verifier. Its counterexample needs confirmation by the oracle. A's partial example table leaves other inputs
+  unanswered and may leave synthesis inconclusive. Neither candidate nor translator fills the missing expected values.
+  An accepted relation becomes an executable oracle only through a reviewed adapter with an explicit output-selection rule;
+  without it that route is unsupported. The oracle and standard stay outside candidate control, as section 5 requires.
+- **`algorithm_design` proposes catalogued compositions** and runs fixed kernels with native instance checks. Representation
+  compatibility is not semantic compatibility; neither path is a general implementation synthesiser for a formal statement.
+- **The shared idea is a distinguishing observation,** not a common implementation for program and specification search.
+  Keep model-only results, kernel limits, unanswered oracle inputs and unknown correspondence in the coding agent's report.
 - **G6 does not become a general synthesiser,** under the scope rule of 2026-10-28.
 
 ### 15.6 Its place in `cognitive_bridge`
 
-`MethodRouter` maps an evidence need to the formal kind, one of its five allowlisted engines. That kind consumes only a
-statement that passed 15.3. Until then, the plan stays `candidate_unreviewed`.
+`MethodRouter` has five evidence-method families: graph, causal, formal, predictive and optimisation. They are not five
+formal-language engines. Its current formal route uses `formal.check_validity`/`check_propositional`; it has no acceptance
+receipt input or Lean/TLC/Datalog route. New work adds explicit language adapters and receipt validation at execution.
+
+Candidate engine queries can run before acceptance as model-only diagnostics, including the queries needed for 15.3.
+The issuer-facing promotion path requires all five acceptance checks and their controls. At that boundary, resolve and
+check the statement/definitions, scope, assumptions, adapter and rendering digests and current standard revision. A
+`candidate_unreviewed` or other status string is not enforcement. Strategy recommendations in 14.2 remain beside this plan.
 
 ### 15.7 What is measured (rows for section 5)
 
 | Piece | What is measured | Bar | Cost |
 |---|---|---|---|
-| Translation fidelity | On a fixed set of confirmed specifications, with known right and mutated formalisations, by language: the share of wrong translations refused by checks 1 to 3 before the person sees them, and the share passing them that the person rejects at check 4 | set before it runs | model calls |
-| Archive defects | All four are refused | all refused | none |
-| Questions from disagreement | Unnecessary and missed questions, counted as A's are | as A's | the person's time |
-| Cost | Model calls per translation | reported | — |
+| Proposal fidelity and check detection | By supported language/fragment: right accepted/refused and wrong accepted/refused, before and after each check; proposal errors apart from detection errors; unsupported, unrun, timed-out and unavailable cases with full denominators | freeze minimum right acceptance above zero and maximum wrong acceptance/error rates before running; refusing everything fails | model calls and engine time |
+| Rendering and person acceptance | Right/wrong formulas crossed with right/wrong renderings; wrong acceptance, right refusal, abstentions and person time, including survivors of checks 1 to 3 | freeze detection, usable-completion and time bars before running; rejecting every survivor fails | model calls and person's time |
+| Observation and code correspondence | Accepted/rejected return/error/effect witnesses, unsupported adapters, and true model results paired with bad code correspondence; report preserved example enforcement separately | no promotion without required correspondence and custody on the suite; minimum supported coverage fixed beforehand | local engine/execution time |
+| Archive defects | All four fixture groups in 15.4, including both invalid Curry–Howard derivations; check native diagnostics and supported-boundary refusal separately | no unsupported evidence receipt on any fixture; expected native outcomes retained | no model calls |
+| Questions from disagreement | Replayable and non-replayable differences, unnecessary/missed/harmful questions, exhausted budgets, skips and unresolved scope; count all translation interactions | A's bars plus no extra question without the person's request; minimum useful completion fixed beforehand | person's time and replay cost |
+| Cost and completion | Calls, tokens, wall-clock, attempts and useful completed translations per eligible case; refusals and unavailable cases included | frozen caps and positive minimum completion, per language; unavailable is not detection | all model, engine and person costs |
+
+Before each row runs, freeze a fixture manifest with supported fragments, independent labels, discriminating witnesses,
+rendering/adapter versions, environment availability, denominators, numerical thresholds and a pass/stop rule. Use small
+human-authored requirements and reference formulas, exhaustive finite int/bool tables or separately written oracles.
+Deterministic AST mutations cover boundaries, omitted guards, constants, result/input swaps and supported quantifier/domain
+changes. Label a mutation wrong only with a known witness or independent checker; equivalent mutations are not wrong.
+Include cases that match A's example but fail elsewhere, and model results with bad code correspondence. Do not let one
+model write both the candidate and its labels. Keep development and final cohorts apart; retire any cohort that informs
+tuning or routing under 3.6. Failed bars require repair and a fresh final cohort, not narrower post-run denominators.
 
 ### 15.8 Order
 
 It comes after the question slice, which supplies the confirmed examples and the form, and after slice 2's evidence
-semantics. It runs beside D (section 7, step 4), as its own change with its own review loop.
+semantics. It runs beside D (section 7, step 4), as its own change with its own review loop. Section 16's consent boundary
+precedes every added model caller, including the port. Freeze the measurement protocol before each step.
+
+1. Bind examples, observations and issuer mapping; implement and measure the narrow SMT bridge, explicit query polarity
+   and deterministic renderer against right and wrong fixtures.
+2. On that measured result, build the diverse-candidate, budgeted-form and receipt path, and harvest the bounded
+   autoformaliser loop. Measure usable completion, wrong acceptance and person time together.
+3. On those results, build and measure the Lean, TLA+ and Datalog adapters, renderers and comparison obligations, one
+   supported fragment at a time, with native engines and archive fixtures. Missing engines remain visibly unavailable.
+4. Bind the accepted artefacts at `cognitive_bridge` execution and the supported synthesis/oracle adapters; measure the
+   complete developer route and update the skill in the same capability commits.
+
+All these layers remain required for 0.3.0. A failed gate requires repair before the dependent step; it is not permission
+to remove a language, the port, comparison, rendering or the synthesis fit from the frozen scope.
 
 ## 16. Ruled by the owner, 2026-11-08: no data reaches a cloud model without consent
 
@@ -1277,3 +1445,27 @@ safety requirements are adopted. No model or service was run for this document e
 | 18 | Status-line tee can fail, race or advertise stale capacity | Adopted: 13.2 requires supported fixtures, exact forwarding, failure isolation, atomic ordered writes, profile binding, unchanged last-good time, expiry and rollback; stale data never increases spend. |
 | 19 | Advice cannot ensure useful fan-out or exhaustion prevention | Adopted: 13.2 keeps advice advisory; useful work, reserve and all-window headroom are required; optional control needs a real launch seam/reservations, and provider transfer needs an executor and disclosure grant. |
 | 20 | Present-tense claims overstate readiness, checking and external facts | Adopted: sections 12–13 distinguish code survey, new work and measured admission; external assumptions stay unchecked pending supported-version checks; missing vocabulary reference is a naming prerequisite. |
+
+## Appendix D: Codex's challenge of sections 14 and 15, and what changed
+
+All sixteen challenges were read against the owner's frozen scope. Every named capability stays in 0.3.0. Recommendations
+to start narrowly become measured build order, with repair after a failed gate. Section 16 governs every added model call.
+
+| # | Challenge | Change |
+|---|---|---|
+| 1 | Examples lack an observation bridge; contract and equivalence APIs are SMT-specific | Adopted as order: 15.3 adds typed return/error/effect bindings and per-language adapters. The restricted SMT path is measured first; Lean, TLA+ and Datalog bridges remain required in 0.3.0. |
+| 2 | `check_contract` cannot accept arbitrary specification relations | Adopted: 15.3 separates domain, guard reachability, joint consistency and observation tests from entailment; adds the three interpretation fixtures and a domain-relative conflict. |
+| 3 | `person_confirmed` is normative provenance, not formal or code evidence | Adopted: 15.2–15.3 separate provenance, acceptance and result kind; add receipt mapping and correspondence obligations under the single issuer, preserving confirmed examples. |
+| 4 | A back-translation can conceal the formula's mistake | Adopted as order: 15.3 requires renderers of the actual supported artefact, visible formal text/digests and renderer-error measurement. Later language renderers follow measured SMT results; model renderings stay unconfirmed. |
+| 5 | Model-family diversity does not establish independence or intent | Adopted: 15.3 records shared sources and generation provenance; equivalence is scoped and disagreements need an accepted criterion, with unresolved comparisons left unconfirmed. |
+| 6 | Symbolic differences need not be executable questions and can exceed A's budget | Adopted: 15.3 uses replayable observations, native answer spaces and A's persistent budget for every interaction; combines rule confirmation when ready and caps candidate repair. |
+| 7 | Engine success lacks query polarity and Lean target/source obligations | Adopted: 15.4 names queries, quantifiers and SAT/UNSAT meanings; binds Lean target, expected statement and definitions to prior acceptance, with missing derivation source reported separately. |
+| 8 | The variant digest binds routing labels rather than strategy bytes | Adopted: 14.2 adds immutable strategy content, trigger, mapping and configuration binding, resolved bytes at admission and fresh measurement after changes. |
+| 9 | Absolute success and estimated cost are not paired heuristic worth | Adopted as order: 14.2 requires host-observed baseline/candidate receipts and a predeclared paired benefit/cost scorer; learning waits for the measured evaluator and remains required in 0.3.0. |
+| 10 | Ranked heuristics are not applied; operator labels do not transform instructions | Adopted as order: 14.2–14.4 add caller application and observed digests beside the evidence plan; measure seeds before content-changing operators, with trusted lineage/caps and the actual adaptation gate. |
+| 11 | The fourth archive defect was misstated and refusal needs exact fixtures | Adopted: 15.4 distinguishes structural checking from construction success; specifies parse-only SMT, unrelated Lean target, missing TLC and both invalid Curry–Howard fixtures, retaining native conflicts. |
+| 12 | The port must exclude loaders, weak trust labels and implicit numeric conversions | Adopted: 15.4 harvests only bounded generation/repair and prompts; excludes archive acceptance/trust helpers and backend loading, scopes retrieval and requires typed conversions plus section 16 consent. |
+| 13 | CEGIS needs an oracle; catalogue search is not general formal synthesis | Adopted: 15.5 states each component's actual role, explicit oracle/domain and output-selection obligations, and inconclusive partial tables; neither translator nor candidate supplies missing answers. |
+| 14 | "Marked for agents" has no code definition and scans can miss registrations | Adopted: 14.1 adds a typed versioned manifest, offline registration recorder, route/exemption and link checks, the word cap, and corrected question/fallback guidance. |
+| 15 | Refusing everything can win the measurements without helping a developer | Adopted: 14.1 and 15.7 require right/wrong acceptance/refusal, rendering errors, missingness, useful completion, costs, independent labels and frozen pass/stop gates with positive completion bars. |
+| 16 | Wording overstates correspondence and confuses method families with languages | Adopted: 15.1 and 15.6 correct existing-code claims, add execution-boundary receipt checks and keep pre-acceptance diagnostics model-only; 14.3 removes the unchecked historical migration claim. |
