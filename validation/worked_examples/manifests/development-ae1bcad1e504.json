@@ -8,8 +8,8 @@
      "task_image_id": "sha256:f0f6e76085d2ac23c5a02b2cd8a7f921156fd4c9f53eb8dd2af792d0e68d9388"
     },
     "record": {
-     "run": "control/pydantic-13243/20261106T123625698096Z",
-     "sha256": "4f6e2300801c0eb458084f56791a4eba05684d543affdf04631e369cdd7d2867"
+     "run": "control/pydantic-13243/20261106T191313484988Z",
+     "sha256": "771b9bf016d0584fb7f462a8b3f58ebd4ff9fd66b215be6ba0913424314202b4"
     },
     "round_trip": {
      "error": null,
@@ -24,7 +24,7 @@
      "known_bytes": 3136,
      "known_names_an_executable": false,
      "known_sha256": "f17b4bc12635a5142be8d0f6a53b54c7faf4409bd79d97d66098eb4620250a8d",
-     "run": "run/pydantic-13243/20261106T123640860359Z",
+     "run": "run/pydantic-13243/20261106T191332379722Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 4
@@ -50,7 +50,7 @@
       "oracle_image_id": "sha256:fc8335616742d50aa206c666a57de47dfc65392e06ddb273d7368d36e3f287f2",
       "task_image_id": "sha256:f0f6e76085d2ac23c5a02b2cd8a7f921156fd4c9f53eb8dd2af792d0e68d9388"
      },
-     "run": "selfcheck/pydantic-13243/20261106T123632937919Z"
+     "run": "selfcheck/pydantic-13243/20261106T191321779155Z"
     },
     "validate": {
      "base": {
@@ -75,7 +75,7 @@
       "task_image_id": "sha256:f0f6e76085d2ac23c5a02b2cd8a7f921156fd4c9f53eb8dd2af792d0e68d9388"
      },
      "pass_to_pass": 120,
-     "run": "validate/pydantic-13243/20261106T123625934582Z"
+     "run": "validate/pydantic-13243/20261106T191313599643Z"
     },
     "why": ""
    },
@@ -94,8 +94,8 @@
      "task_image_id": "sha256:fbbbda8f75ae8b7249b59aafdae603e77871bc16d56245654f3e0e0612e1b7c5"
     },
     "record": {
-     "run": "control/black-5144/20261106T123652633093Z",
-     "sha256": "797dd223a5391b141244a4772b8d189a2c87dc7dc1656f22a1ddc0351628fe41"
+     "run": "control/black-5144/20261106T191347680535Z",
+     "sha256": "cda7e2ebab706b4da5b18008539f847ba43f9e3f4e6b564975e56376b87cce00"
     },
     "round_trip": {
      "error": null,
@@ -110,7 +110,7 @@
      "known_bytes": 4140,
      "known_names_an_executable": false,
      "known_sha256": "8b5649617c93e4a8a465c8acd55dc7ef7cf2b027e54964189745dbfd755b6336",
-     "run": "run/black-5144/20261106T123841624970Z",
+     "run": "run/black-5144/20261106T191536440099Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 3
@@ -136,7 +136,7 @@
       "oracle_image_id": "sha256:991686599ab656bb5bcdc278169d76bb4c7c396fc71c951ebf65a3ef14a9633a",
       "task_image_id": "sha256:fbbbda8f75ae8b7249b59aafdae603e77871bc16d56245654f3e0e0612e1b7c5"
      },
-     "run": "selfcheck/black-5144/20261106T123747289469Z"
+     "run": "selfcheck/black-5144/20261106T191441733190Z"
     },
     "validate": {
      "base": {
@@ -161,7 +161,7 @@
       "task_image_id": "sha256:fbbbda8f75ae8b7249b59aafdae603e77871bc16d56245654f3e0e0612e1b7c5"
      },
      "pass_to_pass": 218,
-     "run": "validate/black-5144/20261106T123652866339Z"
+     "run": "validate/black-5144/20261106T191347811506Z"
     },
     "why": ""
    },
@@ -180,8 +180,8 @@
      "task_image_id": "sha256:cda658ae2bba18519963a7b3858511cf76834f1e4e45de2c05f27ba43e901994"
     },
     "record": {
-     "run": "control/black-5148/20261106T123850136578Z",
-     "sha256": "ac4dc33ee71461a47ae41ec7c06de363f41eef9b4731dee9f4f64466aee78f9e"
+     "run": "control/black-5148/20261106T191607332957Z",
+     "sha256": "50db4d6ca13b63d03ec9ed67dca0ae7ba807d463bcac824de1f0ac0bad9c82ce"
     },
     "round_trip": {
      "error": null,
@@ -196,7 +196,7 @@
      "known_bytes": 3945,
      "known_names_an_executable": false,
      "known_sha256": "fa2518623cccedf206869f9d7d4581d9e560f49058b737745bc34dee85d5df45",
-     "run": "run/black-5148/20261106T124046872229Z",
+     "run": "run/black-5148/20261106T191806652284Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 3
@@ -222,7 +222,7 @@
       "oracle_image_id": "sha256:d1337fc611d9dc858709562a5d06d238d4e667e5ac7e8aacf911d73bf4ad25a2",
       "task_image_id": "sha256:cda658ae2bba18519963a7b3858511cf76834f1e4e45de2c05f27ba43e901994"
      },
-     "run": "selfcheck/black-5148/20261106T123947443306Z"
+     "run": "selfcheck/black-5148/20261106T191706073975Z"
     },
     "validate": {
      "base": {
@@ -247,7 +247,7 @@
       "task_image_id": "sha256:cda658ae2bba18519963a7b3858511cf76834f1e4e45de2c05f27ba43e901994"
      },
      "pass_to_pass": 375,
-     "run": "validate/black-5148/20261106T123850363592Z"
+     "run": "validate/black-5148/20261106T191607471599Z"
     },
     "why": ""
    },
@@ -266,8 +266,8 @@
      "task_image_id": "sha256:a3dbaec91e1799604ec89add4ee9652ece559604ab10736f7c0d0535191c7a78"
     },
     "record": {
-     "run": "control/click-3434/20261106T124053664011Z",
-     "sha256": "59d7ea2be21e50706f899349f54906c1488b0f96ecd94380acebb4bd6d62bb0f"
+     "run": "control/click-3434/20261106T191815946064Z",
+     "sha256": "2f55caed35d6fa2f53f8b7184b4a2d86ee6442022fb62b46928077e9c5c34dbf"
     },
     "round_trip": {
      "error": null,
@@ -282,7 +282,7 @@
      "known_bytes": 5794,
      "known_names_an_executable": false,
      "known_sha256": "a0fe59647d3ef3fdd599742ed499104710149e03babec0352499c41048d1aefc",
-     "run": "run/click-3434/20261106T124100456722Z",
+     "run": "run/click-3434/20261106T191827127490Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 1
@@ -308,7 +308,7 @@
       "oracle_image_id": "sha256:5447ef5de8d1840cba4099f98f9261d465d12f25773bd4da0d556f80aefe4fbc",
       "task_image_id": "sha256:a3dbaec91e1799604ec89add4ee9652ece559604ab10736f7c0d0535191c7a78"
      },
-     "run": "selfcheck/click-3434/20261106T124056648406Z"
+     "run": "selfcheck/click-3434/20261106T191820427379Z"
     },
     "validate": {
      "base": {
@@ -333,7 +333,7 @@
       "task_image_id": "sha256:a3dbaec91e1799604ec89add4ee9652ece559604ab10736f7c0d0535191c7a78"
      },
      "pass_to_pass": 28,
-     "run": "validate/click-3434/20261106T124053789484Z"
+     "run": "validate/click-3434/20261106T191816079301Z"
     },
     "why": ""
    },
@@ -352,8 +352,8 @@
      "task_image_id": "sha256:d2eaf453f9dded5d316cc43ab2413e640d1f79803e2f8e9065f2f53cb442d6ad"
     },
     "record": {
-     "run": "control/click-3404/20261106T124104589731Z",
-     "sha256": "f06759102dd9baec4b1e1af66e4aa74723ce5e462c820fa914b09aab3a6b2876"
+     "run": "control/click-3404/20261106T191833070912Z",
+     "sha256": "00cde6b52ead35116baac431917e1d76bc1d78c434555afeff09287ecbd93a91"
     },
     "round_trip": {
      "error": null,
@@ -368,7 +368,7 @@
      "known_bytes": 42057,
      "known_names_an_executable": false,
      "known_sha256": "14fe4ce93b7d3c4cf4fce0d26d324584913d8d80e394d5a66e23391a2001eb77",
-     "run": "run/click-3404/20261106T124114236440Z",
+     "run": "run/click-3404/20261106T191847487970Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 1
@@ -394,7 +394,7 @@
       "oracle_image_id": "sha256:d363740854024354f757f3ce92da534eef34b0de6af16f15963264c8d4454fae",
       "task_image_id": "sha256:d2eaf453f9dded5d316cc43ab2413e640d1f79803e2f8e9065f2f53cb442d6ad"
      },
-     "run": "selfcheck/click-3404/20261106T124108656943Z"
+     "run": "selfcheck/click-3404/20261106T191840042675Z"
     },
     "validate": {
      "base": {
@@ -419,7 +419,7 @@
       "task_image_id": "sha256:d2eaf453f9dded5d316cc43ab2413e640d1f79803e2f8e9065f2f53cb442d6ad"
      },
      "pass_to_pass": 619,
-     "run": "validate/click-3404/20261106T124104722363Z"
+     "run": "validate/click-3404/20261106T191833204205Z"
     },
     "why": ""
    },
@@ -438,8 +438,8 @@
      "task_image_id": "sha256:af49e7d7faafa8c28ac3e4a0720c03c73f08e9ba63a41d1bbda50d833b782885"
     },
     "record": {
-     "run": "control/pydantic-13133/20261106T124118288287Z",
-     "sha256": "3c2c8aec73a4c0cf4cf19cad9692ea19c5e37226164f50e97667d1373b35c39b"
+     "run": "control/pydantic-13133/20261106T191853175052Z",
+     "sha256": "b00306ab5d71db87432e3e9aa1a3728e25930c3afb04d7f23e70df56f6546eb3"
     },
     "round_trip": {
      "error": null,
@@ -454,7 +454,7 @@
      "known_bytes": 24316,
      "known_names_an_executable": false,
      "known_sha256": "fac5b9c12afa51fe74866bf9f29df3a3e62930ec52a5bb5bcf4ec26ab328625a",
-     "run": "run/pydantic-13133/20261106T124133416962Z",
+     "run": "run/pydantic-13133/20261106T191913152439Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 4
@@ -480,7 +480,7 @@
       "oracle_image_id": "sha256:95711b3caee4e457b4e93ba4ac6596a1efe0a5d18251b7174e98071e029fe106",
       "task_image_id": "sha256:af49e7d7faafa8c28ac3e4a0720c03c73f08e9ba63a41d1bbda50d833b782885"
      },
-     "run": "selfcheck/pydantic-13133/20261106T124125666687Z"
+     "run": "selfcheck/pydantic-13133/20261106T191902235525Z"
     },
     "validate": {
      "base": {
@@ -505,7 +505,7 @@
       "task_image_id": "sha256:af49e7d7faafa8c28ac3e4a0720c03c73f08e9ba63a41d1bbda50d833b782885"
      },
      "pass_to_pass": 602,
-     "run": "validate/pydantic-13133/20261106T124118418251Z"
+     "run": "validate/pydantic-13133/20261106T191853310590Z"
     },
     "why": ""
    },
@@ -524,8 +524,8 @@
      "task_image_id": "sha256:b272ca7f9979873c234daa2ab5351d3370e8d99569c8be8466f2ac2c05a88716"
     },
     "record": {
-     "run": "control/starlette-3189/20261106T124144170043Z",
-     "sha256": "f969bb10834d920b9dc7950069b4188185c9349385fd613f701c9aa8c62953e0"
+     "run": "control/starlette-3189/20261106T191924594310Z",
+     "sha256": "beedcc7c58d4dec909ee2e4ac2c4159015e39cc9d29561adad6b6b57c538bc40"
     },
     "round_trip": {
      "error": null,
@@ -540,7 +540,7 @@
      "known_bytes": 8539,
      "known_names_an_executable": false,
      "known_sha256": "51d25a6ce4d35f39156b8557caf2c3b1b6d64de0653ff1decad9fe16adbce749",
-     "run": "run/starlette-3189/20261106T124154178981Z",
+     "run": "run/starlette-3189/20261106T191941056859Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 8
@@ -566,7 +566,7 @@
       "oracle_image_id": "sha256:9272f785a4fa8691a6b67c3abaf5f800fb778290a168b1ef77622659d1d2a1e7",
       "task_image_id": "sha256:b272ca7f9979873c234daa2ab5351d3370e8d99569c8be8466f2ac2c05a88716"
      },
-     "run": "selfcheck/starlette-3189/20261106T124148777303Z"
+     "run": "selfcheck/starlette-3189/20261106T191932010691Z"
     },
     "validate": {
      "base": {
@@ -591,7 +591,7 @@
       "task_image_id": "sha256:b272ca7f9979873c234daa2ab5351d3370e8d99569c8be8466f2ac2c05a88716"
      },
      "pass_to_pass": 199,
-     "run": "validate/starlette-3189/20261106T124144292363Z"
+     "run": "validate/starlette-3189/20261106T191924882126Z"
     },
     "why": ""
    },
@@ -610,8 +610,8 @@
      "task_image_id": "sha256:2fb4e3a74a47b1e86161bfec7ab37066f3cb2def353a7224d2bf634e5048d7d9"
     },
     "record": {
-     "run": "control/attrs-1509/20261106T124158603449Z",
-     "sha256": "c4c88764f0be48346d0609bfe1e7241da6aa7908b92959af42950e31d2889d77"
+     "run": "control/attrs-1509/20261106T191948223455Z",
+     "sha256": "385bccb716d3dbd0138d55a6f27b5dfff8cf08e76839f42a45a163cb51c58700"
     },
     "round_trip": {
      "error": null,
@@ -626,7 +626,7 @@
      "known_bytes": 17284,
      "known_names_an_executable": false,
      "known_sha256": "72e617cf6a9e3db374ceddf030782da5166501e4f24618a9288f904b1a58eb30",
-     "run": "run/attrs-1509/20261106T124222703517Z",
+     "run": "run/attrs-1509/20261106T192136991058Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 0
@@ -652,7 +652,7 @@
       "oracle_image_id": "sha256:686131e3fb016451c756d3b608fccccfd2d0f79fff44e47e06f0a365f5bdf33d",
       "task_image_id": "sha256:2fb4e3a74a47b1e86161bfec7ab37066f3cb2def353a7224d2bf634e5048d7d9"
      },
-     "run": "selfcheck/attrs-1509/20261106T124210107691Z"
+     "run": "selfcheck/attrs-1509/20261106T192101945290Z"
     },
     "validate": {
      "base": {
@@ -677,7 +677,7 @@
       "task_image_id": "sha256:2fb4e3a74a47b1e86161bfec7ab37066f3cb2def353a7224d2bf634e5048d7d9"
      },
      "pass_to_pass": 684,
-     "run": "validate/attrs-1509/20261106T124158722339Z"
+     "run": "validate/attrs-1509/20261106T191948352091Z"
     },
     "why": ""
    },
@@ -696,8 +696,8 @@
      "task_image_id": "sha256:d97c2ef8c6a8d85621d996a83be982abd9559bb3e4ab6c15e46f49e8c5d24b69"
     },
     "record": {
-     "run": "control/starlette-3166/20261106T141300920677Z",
-     "sha256": "b1510bedf3893a1935d8c02b10912470b60d6e820901699dd7fac011fe310141"
+     "run": "control/starlette-3166/20261106T192142655120Z",
+     "sha256": "fd879ae688e3bcff0430c7cb25fbaeff0d895cb81d7351b29117eb6798a6ea06"
     },
     "round_trip": {
      "error": null,
@@ -712,7 +712,7 @@
      "known_bytes": 8696,
      "known_names_an_executable": false,
      "known_sha256": "74df75a5d8b32f44e73486e4de1021d94c50c1b02eed1fffb7cc905ad28439f3",
-     "run": "run/starlette-3166/20261106T141312682380Z",
+     "run": "run/starlette-3166/20261106T192156343043Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 8
@@ -738,7 +738,7 @@
       "oracle_image_id": "sha256:51aef3b68bcdf740d68c7b72dcd289afbc6299f47ad2139b0f9645f0e299f756",
       "task_image_id": "sha256:d97c2ef8c6a8d85621d996a83be982abd9559bb3e4ab6c15e46f49e8c5d24b69"
      },
-     "run": "selfcheck/starlette-3166/20261106T141306947242Z"
+     "run": "selfcheck/starlette-3166/20261106T192149665174Z"
     },
     "validate": {
      "base": {
@@ -763,7 +763,7 @@
       "task_image_id": "sha256:d97c2ef8c6a8d85621d996a83be982abd9559bb3e4ab6c15e46f49e8c5d24b69"
      },
      "pass_to_pass": 0,
-     "run": "validate/starlette-3166/20261106T141301537056Z"
+     "run": "validate/starlette-3166/20261106T192142782604Z"
     },
     "why": ""
    },
@@ -782,8 +782,8 @@
      "task_image_id": "sha256:f1b7c99281ee33f148ac8680a052553ac3f9c7ad92df95a822fcb5844ee59afc"
     },
     "record": {
-     "run": "control/fastapi-14616/20261106T124231541223Z",
-     "sha256": "f8403b04b219fd3641aca23e469de615caf7a9778cfe4ccb42a0e90e6a627751"
+     "run": "control/fastapi-14616/20261106T192203756582Z",
+     "sha256": "e0af19f8041f055459dc1c8a4ae5c00e06990ce8b5ab38580850bf8e336708a6"
     },
     "round_trip": {
      "error": null,
@@ -798,7 +798,7 @@
      "known_bytes": 3278,
      "known_names_an_executable": false,
      "known_sha256": "8503c059b39c02a409f97ddfc7af4e8a05dbcd4868b59270d9f81d337b2482cb",
-     "run": "run/fastapi-14616/20261106T124243816255Z",
+     "run": "run/fastapi-14616/20261106T192220457103Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 11
@@ -824,7 +824,7 @@
       "oracle_image_id": "sha256:85734af8b73f8937f4e924b6d538624a87dfa4280db9da2ffb1d91e425a2020c",
       "task_image_id": "sha256:f1b7c99281ee33f148ac8680a052553ac3f9c7ad92df95a822fcb5844ee59afc"
      },
-     "run": "selfcheck/fastapi-14616/20261106T124237027195Z"
+     "run": "selfcheck/fastapi-14616/20261106T192211433977Z"
     },
     "validate": {
      "base": {
@@ -849,7 +849,7 @@
       "task_image_id": "sha256:f1b7c99281ee33f148ac8680a052553ac3f9c7ad92df95a822fcb5844ee59afc"
      },
      "pass_to_pass": 1,
-     "run": "validate/fastapi-14616/20261106T124231772220Z"
+     "run": "validate/fastapi-14616/20261106T192204087186Z"
     },
     "why": ""
    },
@@ -868,8 +868,8 @@
      "task_image_id": "sha256:70ee13c9543d864681746d996a16503787128dcebd161b1bf15599a76a2787db"
     },
     "record": {
-     "run": "control/fastapi-13920/20261106T124321359970Z",
-     "sha256": "13891709d51cebaa9e68362fb3ebf6bac0fa98237fd1a8c5e31151f07ee5495c"
+     "run": "control/fastapi-13920/20261106T192300411483Z",
+     "sha256": "fe878f29b9d58dd8c3daf6a26284160ccb3816a8fc0bce7cd3a43bb519a4ecf6"
     },
     "round_trip": {
      "error": null,
@@ -884,7 +884,7 @@
      "known_bytes": 3252,
      "known_names_an_executable": false,
      "known_sha256": "f2cdcad37932cad031c6001dec481da992af44355ac8eb36a2cd68d4231dd5ca",
-     "run": "run/fastapi-13920/20261106T124332523855Z",
+     "run": "run/fastapi-13920/20261106T192317040666Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 11
@@ -910,7 +910,7 @@
       "oracle_image_id": "sha256:f328d8753ba4860e3c27e87d059152fd32b1e640ec90a44d616673375dce3eca",
       "task_image_id": "sha256:70ee13c9543d864681746d996a16503787128dcebd161b1bf15599a76a2787db"
      },
-     "run": "selfcheck/fastapi-13920/20261106T124326437589Z"
+     "run": "selfcheck/fastapi-13920/20261106T192308823076Z"
     },
     "validate": {
      "base": {
@@ -935,7 +935,7 @@
       "task_image_id": "sha256:70ee13c9543d864681746d996a16503787128dcebd161b1bf15599a76a2787db"
      },
      "pass_to_pass": 0,
-     "run": "validate/fastapi-13920/20261106T124321490695Z"
+     "run": "validate/fastapi-13920/20261106T192300687463Z"
     },
     "why": ""
    },
@@ -954,8 +954,8 @@
      "task_image_id": "sha256:63f7a1b647ac59b16ef91e3a29ea7980d3bfaf3fe30a9b6acfd94a0389f13d2c"
     },
     "record": {
-     "run": "control/black-5521/20261106T124404267017Z",
-     "sha256": "9f4dc2837fe5abd97ecdb6951f22e883f70ffddb3154e8e2f3bccbe63e9e459e"
+     "run": "control/black-5521/20261106T192351056359Z",
+     "sha256": "61a2b099d30d0ccda2db7b143089f42c28a9407795c51ae9dc2d82e17fb045a4"
     },
     "round_trip": {
      "error": null,
@@ -970,7 +970,7 @@
      "known_bytes": 2969,
      "known_names_an_executable": false,
      "known_sha256": "0265b01f8facda071f228b8825680a442a6a4b678b06dbe939f9a625d6e2a882",
-     "run": "run/black-5521/20261106T124601652772Z",
+     "run": "run/black-5521/20261106T192551536669Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 2
@@ -996,7 +996,7 @@
       "oracle_image_id": "sha256:4b6c512f6166753cf04d80fe470fc6d9fefaa392470f218cda1405afd0712c73",
       "task_image_id": "sha256:63f7a1b647ac59b16ef91e3a29ea7980d3bfaf3fe30a9b6acfd94a0389f13d2c"
      },
-     "run": "selfcheck/black-5521/20261106T124502339701Z"
+     "run": "selfcheck/black-5521/20261106T192450446407Z"
     },
     "validate": {
      "base": {
@@ -1021,7 +1021,7 @@
       "task_image_id": "sha256:63f7a1b647ac59b16ef91e3a29ea7980d3bfaf3fe30a9b6acfd94a0389f13d2c"
      },
      "pass_to_pass": 294,
-     "run": "validate/black-5521/20261106T124404538687Z"
+     "run": "validate/black-5521/20261106T192351360899Z"
     },
     "why": ""
    },
@@ -1040,8 +1040,8 @@
      "task_image_id": "sha256:5cfe032770f16ace8782f6b560d856c032a24400fffffce0a0b390dde50bdf50"
     },
     "record": {
-     "run": "control/click-3769/20261106T124610111750Z",
-     "sha256": "d163e8e441d54c331c8f912dfa637562a4d4f228c203525284f9b5a675988baf"
+     "run": "control/click-3769/20261106T192602171946Z",
+     "sha256": "9cd87c48464fd0d1aea5aa704b8e1316f5b812995dee5d766a7ee715eb60da48"
     },
     "round_trip": {
      "error": null,
@@ -1056,7 +1056,7 @@
      "known_bytes": 3153,
      "known_names_an_executable": false,
      "known_sha256": "2e0fa86cfe94d281931e96b866c242baba17f047b3f466a13f9ce19c16d65831",
-     "run": "run/click-3769/20261106T124618602397Z",
+     "run": "run/click-3769/20261106T192635581050Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 1
@@ -1082,7 +1082,7 @@
       "oracle_image_id": "sha256:c45be297a0040de1f4845b5f126589978cd730921d3882a98d4b426db120b136",
       "task_image_id": "sha256:5cfe032770f16ace8782f6b560d856c032a24400fffffce0a0b390dde50bdf50"
      },
-     "run": "selfcheck/click-3769/20261106T124613860787Z"
+     "run": "selfcheck/click-3769/20261106T192628483408Z"
     },
     "validate": {
      "base": {
@@ -1107,7 +1107,7 @@
       "task_image_id": "sha256:5cfe032770f16ace8782f6b560d856c032a24400fffffce0a0b390dde50bdf50"
      },
      "pass_to_pass": 231,
-     "run": "validate/click-3769/20261106T124610238888Z"
+     "run": "validate/click-3769/20261106T192602304945Z"
     },
     "why": ""
    },
@@ -1126,8 +1126,8 @@
      "task_image_id": "sha256:681d6a18539d106648ff05dfa44ad628c70ece479a4f137d3d001fec8b73c3de"
     },
     "record": {
-     "run": "control/starlette-3718/20261106T124622855882Z",
-     "sha256": "1a0b777e6182ca61fb37548df3eb9054180547fc79834695749bdc513cf4d305"
+     "run": "control/starlette-3718/20261106T192641705319Z",
+     "sha256": "44c4cca02e0243c44fdf7e1939866e16c4ffd8237f6536c085f9e28650a624a1"
     },
     "round_trip": {
      "error": null,
@@ -1142,7 +1142,7 @@
      "known_bytes": 1639,
      "known_names_an_executable": false,
      "known_sha256": "bc915a4872003cae388ed8ebb98a7d70258117602b267e4fed28a5e065d1d22f",
-     "run": "run/starlette-3718/20261106T124633630316Z",
+     "run": "run/starlette-3718/20261106T192655288533Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 8
@@ -1168,7 +1168,7 @@
       "oracle_image_id": "sha256:095aeee35b5f0955fcb4941ab4b26549c5e461b81d0f51a3158f14f0b26e650b",
       "task_image_id": "sha256:681d6a18539d106648ff05dfa44ad628c70ece479a4f137d3d001fec8b73c3de"
      },
-     "run": "selfcheck/starlette-3718/20261106T124628235884Z"
+     "run": "selfcheck/starlette-3718/20261106T192647482251Z"
     },
     "validate": {
      "base": {
@@ -1193,7 +1193,7 @@
       "task_image_id": "sha256:681d6a18539d106648ff05dfa44ad628c70ece479a4f137d3d001fec8b73c3de"
      },
      "pass_to_pass": 12,
-     "run": "validate/starlette-3718/20261106T124623107289Z"
+     "run": "validate/starlette-3718/20261106T192641836374Z"
     },
     "why": ""
    },
@@ -1212,8 +1212,8 @@
      "task_image_id": "sha256:181e27ac7b34261e473508f99d1bf301d63089ea1d63fe5addca7e60fee6893f"
     },
     "record": {
-     "run": "control/urllib3-5347/20261106T124639624120Z",
-     "sha256": "10479b712d37fc4d4deb9074fc1f99ad2e8631ca3e4ba354f9d898a1c3749947"
+     "run": "control/urllib3-5347/20261106T192702272017Z",
+     "sha256": "d36361e3943baf31ed259bcf6bd8a9db026541b54e9eacdea99eb94134fd7384"
     },
     "round_trip": {
      "error": null,
@@ -1228,7 +1228,7 @@
      "known_bytes": 1839,
      "known_names_an_executable": false,
      "known_sha256": "d199ffc929a75d18d8f3465d0cb407de7eb49f11987648e785535eced2e640ea",
-     "run": "run/urllib3-5347/20261106T124652336439Z",
+     "run": "run/urllib3-5347/20261106T192759784639Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 3
@@ -1254,7 +1254,7 @@
       "oracle_image_id": "sha256:5bd5b3e777ed4943e85b683bf58e0a051c69d4bf368247dcd0a4ca3401515557",
       "task_image_id": "sha256:181e27ac7b34261e473508f99d1bf301d63089ea1d63fe5addca7e60fee6893f"
      },
-     "run": "selfcheck/urllib3-5347/20261106T124645667693Z"
+     "run": "selfcheck/urllib3-5347/20261106T192730755577Z"
     },
     "validate": {
      "base": {
@@ -1279,7 +1279,7 @@
       "task_image_id": "sha256:181e27ac7b34261e473508f99d1bf301d63089ea1d63fe5addca7e60fee6893f"
      },
      "pass_to_pass": 49,
-     "run": "validate/urllib3-5347/20261106T124639816870Z"
+     "run": "validate/urllib3-5347/20261106T192702401975Z"
     },
     "why": ""
    },
@@ -1298,8 +1298,8 @@
      "task_image_id": "sha256:b4d2139ab5af33133054c1ea4507063ba18c223332f4c226a706b3aa562df371"
     },
     "record": {
-     "run": "control/urllib3-5254/20261106T124657816965Z",
-     "sha256": "de06e11483228cef87dce0d8a907c058b8d5583e4958d09d784e74d01b417299"
+     "run": "control/urllib3-5254/20261106T192826841952Z",
+     "sha256": "083260f1854262cb331e7b4eb89fdfcbe200092ec87dc2b9526a4dd5a85435be"
     },
     "round_trip": {
      "error": null,
@@ -1314,7 +1314,7 @@
      "known_bytes": 1588,
      "known_names_an_executable": false,
      "known_sha256": "3afdc307ffaa061cf9b4a520f9f40e69e42927c219a0f1a7245490f72b4541fa",
-     "run": "run/urllib3-5254/20261106T124709983688Z",
+     "run": "run/urllib3-5254/20261106T192922129452Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 3
@@ -1340,7 +1340,7 @@
       "oracle_image_id": "sha256:a34ab2ec870fea156f14e13921859d8ae8540368198c4b9fee28b21cf11376f3",
       "task_image_id": "sha256:b4d2139ab5af33133054c1ea4507063ba18c223332f4c226a706b3aa562df371"
      },
-     "run": "selfcheck/urllib3-5254/20261106T124703526964Z"
+     "run": "selfcheck/urllib3-5254/20261106T192913497625Z"
     },
     "validate": {
      "base": {
@@ -1365,7 +1365,7 @@
       "task_image_id": "sha256:b4d2139ab5af33133054c1ea4507063ba18c223332f4c226a706b3aa562df371"
      },
      "pass_to_pass": 0,
-     "run": "validate/urllib3-5254/20261106T124657956993Z"
+     "run": "validate/urllib3-5254/20261106T192827817731Z"
     },
     "why": ""
    },
@@ -1384,8 +1384,8 @@
      "task_image_id": "sha256:02809ce497ca18729bdcf8883f3570ac5db4a921f7af8fa7694353f163ebc3ec"
     },
     "record": {
-     "run": "control/charset-normalizer-772/20261106T124715407309Z",
-     "sha256": "9acf3706041c1b17bb6dbf81736901c0a17921faa73780d02dca5e67efdeb029"
+     "run": "control/charset-normalizer-772/20261106T192928996997Z",
+     "sha256": "d500d41a3dbae17e8a98998ffcc53c24de64258fc1ef9f9cc39c9c18cb4be189"
     },
     "round_trip": {
      "error": null,
@@ -1400,7 +1400,7 @@
      "known_bytes": 3639,
      "known_names_an_executable": false,
      "known_sha256": "4f18154512952c9afeb024510598d5a7f55a964544875dbaf308eb37e9e86b9a",
-     "run": "run/charset-normalizer-772/20261106T124723493675Z",
+     "run": "run/charset-normalizer-772/20261106T193122020818Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 8
@@ -1426,7 +1426,7 @@
       "oracle_image_id": "sha256:20df9dad929a53bdf86a618fcd0c4e5a9fb83519dea8508fa0f471083280c9b2",
       "task_image_id": "sha256:02809ce497ca18729bdcf8883f3570ac5db4a921f7af8fa7694353f163ebc3ec"
      },
-     "run": "selfcheck/charset-normalizer-772/20261106T124718928330Z"
+     "run": "selfcheck/charset-normalizer-772/20261106T192954925243Z"
     },
     "validate": {
      "base": {
@@ -1451,7 +1451,7 @@
       "task_image_id": "sha256:02809ce497ca18729bdcf8883f3570ac5db4a921f7af8fa7694353f163ebc3ec"
      },
      "pass_to_pass": 4,
-     "run": "validate/charset-normalizer-772/20261106T124715537137Z"
+     "run": "validate/charset-normalizer-772/20261106T192929249366Z"
     },
     "why": ""
    },
@@ -1470,8 +1470,8 @@
      "task_image_id": "sha256:1c9eb27756fe6df8aaed67aded06a1a5d7d6324cc36fa7f2fb4389fdb1b5c127"
     },
     "record": {
-     "run": "control/charset-normalizer-715/20261106T124727815306Z",
-     "sha256": "56a9464595ff9ac5d119090e8db5fa0f7457bad697d9b9108e9999b886e0f943"
+     "run": "control/charset-normalizer-715/20261106T193127156811Z",
+     "sha256": "c8ec56b6e03f19f4e7a20c60f1ece67295aee0daa091074ee3aac2f99e121ff5"
     },
     "round_trip": {
      "error": null,
@@ -1486,7 +1486,7 @@
      "known_bytes": 94528,
      "known_names_an_executable": false,
      "known_sha256": "79a7b85845c096ead5f55d24b66dfef002178ca7edf03ccdd369a00d307cd615",
-     "run": "run/charset-normalizer-715/20261106T124737205056Z",
+     "run": "run/charset-normalizer-715/20261106T193140552633Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 8
@@ -1512,7 +1512,7 @@
       "oracle_image_id": "sha256:ac6dc202339d02da5f55ead78c70a1813c298e6119792331bcb90a57b0783074",
       "task_image_id": "sha256:1c9eb27756fe6df8aaed67aded06a1a5d7d6324cc36fa7f2fb4389fdb1b5c127"
      },
-     "run": "selfcheck/charset-normalizer-715/20261106T124732093603Z"
+     "run": "selfcheck/charset-normalizer-715/20261106T193132707205Z"
     },
     "validate": {
      "base": {
@@ -1537,7 +1537,7 @@
       "task_image_id": "sha256:1c9eb27756fe6df8aaed67aded06a1a5d7d6324cc36fa7f2fb4389fdb1b5c127"
      },
      "pass_to_pass": 46,
-     "run": "validate/charset-normalizer-715/20261106T124728137694Z"
+     "run": "validate/charset-normalizer-715/20261106T193127287385Z"
     },
     "why": ""
    },
@@ -1556,8 +1556,8 @@
      "task_image_id": "sha256:f156dcde992f9dedbca73a988ad9047f054130e6bc5e3449b6bfdb66310c106b"
     },
     "record": {
-     "run": "control/setuptools-5362/20261106T141317480590Z",
-     "sha256": "1d41cabb210469da4673b93e3375429db1dd3b30bb2cb1ef3ac50bbad9b0e7c2"
+     "run": "control/setuptools-5362/20261106T193205776061Z",
+     "sha256": "00796e2eaa290cf338257adaa46a23c5b728a50bf01349bc9656ef3a8566d9c8"
     },
     "round_trip": {
      "error": null,
@@ -1572,7 +1572,7 @@
      "known_bytes": 23179,
      "known_names_an_executable": false,
      "known_sha256": "57c0566050b00012c282aa74378d6f0ce08c401991cb898b6f05d2077f20c190",
-     "run": "run/setuptools-5362/20261106T141337365164Z",
+     "run": "run/setuptools-5362/20261106T193308204494Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 2
@@ -1598,7 +1598,7 @@
       "oracle_image_id": "sha256:9e7d9da0fb58a9d46961ef122fda43c884d04a5c2df63fbaf543db9920dc05ca",
       "task_image_id": "sha256:f156dcde992f9dedbca73a988ad9047f054130e6bc5e3449b6bfdb66310c106b"
      },
-     "run": "selfcheck/setuptools-5362/20261106T141327145222Z"
+     "run": "selfcheck/setuptools-5362/20261106T193256558129Z"
     },
     "validate": {
      "base": {
@@ -1623,7 +1623,7 @@
       "task_image_id": "sha256:f156dcde992f9dedbca73a988ad9047f054130e6bc5e3449b6bfdb66310c106b"
      },
      "pass_to_pass": 0,
-     "run": "validate/setuptools-5362/20261106T141317608988Z"
+     "run": "validate/setuptools-5362/20261106T193206200463Z"
     },
     "why": ""
    },
@@ -1642,8 +1642,8 @@
      "task_image_id": "sha256:fd5fcf34f18977e072829c9ef834d8dbd91ace90a71836df56f2cf61f5335ddf"
     },
     "record": {
-     "run": "control/setuptools-5352/20261106T124750986630Z",
-     "sha256": "1b049df7f51064d4f91110f2030f1a2da7b1e368186d861d31f4da14d9c19cc0"
+     "run": "control/setuptools-5352/20261106T193400324320Z",
+     "sha256": "a007450eb242cf489794099aa1dcf1f23304b2558faceda27d0b25395220d64c"
     },
     "round_trip": {
      "error": null,
@@ -1658,7 +1658,7 @@
      "known_bytes": 8545,
      "known_names_an_executable": false,
      "known_sha256": "247b16a574fe344288abd70e209fe3ae45006e917f8d861f2803167e31f129cc",
-     "run": "run/setuptools-5352/20261106T124812723211Z",
+     "run": "run/setuptools-5352/20261106T193804951493Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 2
@@ -1684,7 +1684,7 @@
       "oracle_image_id": "sha256:7be9f0df62b2ec452960cc2fcb24cfb94c50259401322255e524f2d315fcae21",
       "task_image_id": "sha256:fd5fcf34f18977e072829c9ef834d8dbd91ace90a71836df56f2cf61f5335ddf"
      },
-     "run": "selfcheck/setuptools-5352/20261106T124801845730Z"
+     "run": "selfcheck/setuptools-5352/20261106T193711447647Z"
     },
     "validate": {
      "base": {
@@ -1709,7 +1709,7 @@
       "task_image_id": "sha256:fd5fcf34f18977e072829c9ef834d8dbd91ace90a71836df56f2cf61f5335ddf"
      },
      "pass_to_pass": 36,
-     "run": "validate/setuptools-5352/20261106T124751114229Z"
+     "run": "validate/setuptools-5352/20261106T193400603321Z"
     },
     "why": ""
    },
@@ -1728,8 +1728,8 @@
      "task_image_id": "sha256:5db850feada2843bd7b4527fb94e7e6b801d5c50e18d7b3cb1e6a456716e6217"
     },
     "record": {
-     "run": "control/pygments-3204/20261106T124823661058Z",
-     "sha256": "df154b9a4740440aa08496a40595693bf879bac6ab691be79a1c26eab09c12cd"
+     "run": "control/pygments-3204/20261106T193836940871Z",
+     "sha256": "20a3d9e7eb0d314ecf448243cedf4cfa4ec7377c437b880a055302be83bedf10"
     },
     "round_trip": {
      "error": null,
@@ -1744,7 +1744,7 @@
      "known_bytes": 2597,
      "known_names_an_executable": false,
      "known_sha256": "b699a0fae1bf8121e9be007f8b3c65c64d0f0a8bea6d5101474dd8040a704c3b",
-     "run": "run/pygments-3204/20261106T124831630009Z",
+     "run": "run/pygments-3204/20261106T193848672875Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 8
@@ -1770,7 +1770,7 @@
       "oracle_image_id": "sha256:d9e6d99c2b6748439db88da82d72741cf3fd0116b843b2f4f99ad7d9bbf8af58",
       "task_image_id": "sha256:5db850feada2843bd7b4527fb94e7e6b801d5c50e18d7b3cb1e6a456716e6217"
      },
-     "run": "selfcheck/pygments-3204/20261106T124827126087Z"
+     "run": "selfcheck/pygments-3204/20261106T193842739397Z"
     },
     "validate": {
      "base": {
@@ -1795,7 +1795,7 @@
       "task_image_id": "sha256:5db850feada2843bd7b4527fb94e7e6b801d5c50e18d7b3cb1e6a456716e6217"
      },
      "pass_to_pass": 3,
-     "run": "validate/pygments-3204/20261106T124823886549Z"
+     "run": "validate/pygments-3204/20261106T193837225531Z"
     },
     "why": ""
    },
@@ -1814,8 +1814,8 @@
      "task_image_id": "sha256:5c473ad139e5d2b6367704c778c0262b1c390de200c35205ac43b34b3f97fbb8"
     },
     "record": {
-     "run": "control/pygments-3158/20261106T124915489151Z",
-     "sha256": "11b4adecb814fe073dbe1993285eac9ffe156245118846a632f707e7e350cc97"
+     "run": "control/pygments-3158/20261106T194113649553Z",
+     "sha256": "6d8bd63d0ac9c2992180c67e0a6bef2e272a666e8ef5fe6a98524f78b47c33f3"
     },
     "round_trip": {
      "error": null,
@@ -1830,7 +1830,7 @@
      "known_bytes": 4749,
      "known_names_an_executable": false,
      "known_sha256": "bc9c22382aa23ae4862c68a97d7611f2fd1433ecb8d6d3653fdae5b61fbafc72",
-     "run": "run/pygments-3158/20261106T124923860469Z",
+     "run": "run/pygments-3158/20261106T194245975832Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 8
@@ -1856,7 +1856,7 @@
       "oracle_image_id": "sha256:3fe51b934199b2d6ae8efcfdc83b3c0e5ab16c73bb2fb3461ebd22464878d1f9",
       "task_image_id": "sha256:5c473ad139e5d2b6367704c778c0262b1c390de200c35205ac43b34b3f97fbb8"
      },
-     "run": "selfcheck/pygments-3158/20261106T124918748929Z"
+     "run": "selfcheck/pygments-3158/20261106T194158784880Z"
     },
     "validate": {
      "base": {
@@ -1881,7 +1881,7 @@
       "task_image_id": "sha256:5c473ad139e5d2b6367704c778c0262b1c390de200c35205ac43b34b3f97fbb8"
      },
      "pass_to_pass": 0,
-     "run": "validate/pygments-3158/20261106T124915725901Z"
+     "run": "validate/pygments-3158/20261106T194113778642Z"
     },
     "why": ""
    },
@@ -1900,8 +1900,8 @@
      "task_image_id": "sha256:5a69ea020b23a9ce9bdb511af8fd5ff3b0dc6412edf754b5e50c04c0dbd747a8"
     },
     "record": {
-     "run": "control/pluggy-809/20261106T125002309005Z",
-     "sha256": "eba92d2ac02c866050893e26d43991939cbeeb93c04217983c6cfa2ad54e7a85"
+     "run": "control/pluggy-809/20261106T194903222075Z",
+     "sha256": "a8e691a43261134a933fc70ff4b091d1a87fbb62e2eefe6abf0c3f3967757bbf"
     },
     "round_trip": {
      "error": null,
@@ -1916,7 +1916,7 @@
      "known_bytes": 2546,
      "known_names_an_executable": false,
      "known_sha256": "abc7189608286ae86ecc94ac9f4bba87053fca68d1e15977cc7677faccb8d682",
-     "run": "run/pluggy-809/20261106T125010743288Z",
+     "run": "run/pluggy-809/20261106T195332809725Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 1
@@ -1942,7 +1942,7 @@
       "oracle_image_id": "sha256:33715da00ef3d51b616813c24f84eef2d37c7a999d07b8c2b93c5a5cf42f4a7d",
       "task_image_id": "sha256:5a69ea020b23a9ce9bdb511af8fd5ff3b0dc6412edf754b5e50c04c0dbd747a8"
      },
-     "run": "selfcheck/pluggy-809/20261106T125006074177Z"
+     "run": "selfcheck/pluggy-809/20261106T195307446221Z"
     },
     "validate": {
      "base": {
@@ -1967,7 +1967,7 @@
       "task_image_id": "sha256:5a69ea020b23a9ce9bdb511af8fd5ff3b0dc6412edf754b5e50c04c0dbd747a8"
      },
      "pass_to_pass": 78,
-     "run": "validate/pluggy-809/20261106T125002445023Z"
+     "run": "validate/pluggy-809/20261106T194903362354Z"
     },
     "why": ""
    },
@@ -1986,8 +1986,8 @@
      "task_image_id": "sha256:dd123a89da74e11f1b999da23f911199b79b5b7835263febc8bb5eb5a5907bcc"
     },
     "record": {
-     "run": "control/pluggy-799/20261106T125014849714Z",
-     "sha256": "fd607a73c6e9e92d2c81d9206dbc1743f6e3b4294f120d359212debf57ac99f4"
+     "run": "control/pluggy-799/20261106T195336997820Z",
+     "sha256": "3e78f1f2a105c4b1e9bbf76da14325e3628c771203cef1a2f200fc7c2a2ab920"
     },
     "round_trip": {
      "error": null,
@@ -2002,7 +2002,7 @@
      "known_bytes": 7401,
      "known_names_an_executable": false,
      "known_sha256": "ed285225aba7866747ea2d4f5076ecd5d83ad04385b3483a60035d6b79b8d51b",
-     "run": "run/pluggy-799/20261106T125023195882Z",
+     "run": "run/pluggy-799/20261106T195408726855Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 1
@@ -2028,7 +2028,7 @@
       "oracle_image_id": "sha256:0179da481c49f1b82e18341e87481d51e208d6819e49539bab688511ca7150e0",
       "task_image_id": "sha256:dd123a89da74e11f1b999da23f911199b79b5b7835263febc8bb5eb5a5907bcc"
      },
-     "run": "selfcheck/pluggy-799/20261106T125018507621Z"
+     "run": "selfcheck/pluggy-799/20261106T195341337813Z"
     },
     "validate": {
      "base": {
@@ -2053,7 +2053,7 @@
       "task_image_id": "sha256:dd123a89da74e11f1b999da23f911199b79b5b7835263febc8bb5eb5a5907bcc"
      },
      "pass_to_pass": 29,
-     "run": "validate/pluggy-799/20261106T125014974264Z"
+     "run": "validate/pluggy-799/20261106T195337312511Z"
     },
     "why": ""
    },
@@ -2072,8 +2072,8 @@
      "task_image_id": "sha256:f06b676d8cbb5bd8c9fcbc0012d169529201e1e1807150c18c9189d37c59eb48"
     },
     "record": {
-     "run": "control/botocore-3852/20261106T125026852375Z",
-     "sha256": "6c053dc6b3e8215e0f8bcbfd97b08d9b44f1a1d9f49842536acc27d93e0c2dbb"
+     "run": "control/botocore-3852/20261106T195412976458Z",
+     "sha256": "9b1237121492b168f2042990e395579bf0d76dcd0026bd7ee3ba3a3db4ba8f5f"
     },
     "round_trip": {
      "error": null,
@@ -2088,7 +2088,7 @@
      "known_bytes": 1263,
      "known_names_an_executable": false,
      "known_sha256": "ae801879506bfb0bda0563871e71c0ffb05146a46967e47a0032ff136d414f1c",
-     "run": "run/botocore-3852/20261106T125100913602Z",
+     "run": "run/botocore-3852/20261106T195726288606Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 8
@@ -2114,7 +2114,7 @@
       "oracle_image_id": "sha256:cd3ef2d998accbf8321bfb325f7521fede7da24d3f22ce4bdb17c181bc5f4b91",
       "task_image_id": "sha256:f06b676d8cbb5bd8c9fcbc0012d169529201e1e1807150c18c9189d37c59eb48"
      },
-     "run": "selfcheck/botocore-3852/20261106T125043068254Z"
+     "run": "selfcheck/botocore-3852/20261106T195628976397Z"
     },
     "validate": {
      "base": {
@@ -2139,7 +2139,7 @@
       "task_image_id": "sha256:f06b676d8cbb5bd8c9fcbc0012d169529201e1e1807150c18c9189d37c59eb48"
      },
      "pass_to_pass": 72,
-     "run": "validate/botocore-3852/20261106T125027024610Z"
+     "run": "validate/botocore-3852/20261106T195413103469Z"
     },
     "why": ""
    },
@@ -2158,8 +2158,8 @@
      "task_image_id": "sha256:6f169606488172ecfc05bb8b7a7a427715e9ed52ce9f7b729d3024164a5fd693"
     },
     "record": {
-     "run": "control/botocore-3835/20261106T125245292685Z",
-     "sha256": "97ebe8041c02b1887d1424717725785e5360ae8e481204df94371c6fc567457e"
+     "run": "control/botocore-3835/20261106T202708322723Z",
+     "sha256": "062f87391bab6f96ad16493c994b009e91c0d24ae35da96b3016f86863d70361"
     },
     "round_trip": {
      "error": null,
@@ -2174,7 +2174,7 @@
      "known_bytes": 5743,
      "known_names_an_executable": false,
      "known_sha256": "5f3531bc0e648fe22c99d0cff163205c59120e1ffc1e475bbab560a77ac79af2",
-     "run": "run/botocore-3835/20261106T125321971048Z",
+     "run": "run/botocore-3835/20261106T203605737434Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 8
@@ -2200,7 +2200,7 @@
       "oracle_image_id": "sha256:e41ad1b3511bc5df7cba217c5e7070c0f27341132a0d6ae645cc66b31ff79cfc",
       "task_image_id": "sha256:6f169606488172ecfc05bb8b7a7a427715e9ed52ce9f7b729d3024164a5fd693"
      },
-     "run": "selfcheck/botocore-3835/20261106T125302952652Z"
+     "run": "selfcheck/botocore-3835/20261106T202905642223Z"
     },
     "validate": {
      "base": {
@@ -2225,7 +2225,7 @@
       "task_image_id": "sha256:6f169606488172ecfc05bb8b7a7a427715e9ed52ce9f7b729d3024164a5fd693"
      },
      "pass_to_pass": 194,
-     "run": "validate/botocore-3835/20261106T125245422298Z"
+     "run": "validate/botocore-3835/20261106T202708441608Z"
     },
     "why": ""
    },
@@ -2244,8 +2244,8 @@
      "task_image_id": "sha256:4fd16c38856fca625ff94fc1368753cae77647cb35b2088e280a11fa963543d1"
     },
     "record": {
-     "run": "control/anyio-1424/20261106T125502163450Z",
-     "sha256": "a12027eeaa2149aabe618574f9aebc8d89b9f7471c8a1347b763c94e2e2a49b4"
+     "run": "control/anyio-1424/20261106T204504021483Z",
+     "sha256": "01188ffe99e4d92382c71a742d08aed14cb78e13ac9fa903633cdbbd673c3518"
     },
     "round_trip": {
      "error": null,
@@ -2260,7 +2260,7 @@
      "known_bytes": 1984,
      "known_names_an_executable": false,
      "known_sha256": "09e96ea9a7bce4edb9e39e49a158d214e8b191eb97df8918d49691897bdfc85a",
-     "run": "run/anyio-1424/20261106T125718287105Z",
+     "run": "run/anyio-1424/20261106T204720727137Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 0
@@ -2286,7 +2286,7 @@
       "oracle_image_id": "sha256:3485f2dff8298a1c3ed313cb61ed1e6ba5e7e9efddae31165fa8458c3ae149c8",
       "task_image_id": "sha256:4fd16c38856fca625ff94fc1368753cae77647cb35b2088e280a11fa963543d1"
      },
-     "run": "selfcheck/anyio-1424/20261106T125609814401Z"
+     "run": "selfcheck/anyio-1424/20261106T204611538253Z"
     },
     "validate": {
      "base": {
@@ -2311,7 +2311,7 @@
       "task_image_id": "sha256:4fd16c38856fca625ff94fc1368753cae77647cb35b2088e280a11fa963543d1"
      },
      "pass_to_pass": 1279,
-     "run": "validate/anyio-1424/20261106T125502339794Z"
+     "run": "validate/anyio-1424/20261106T204504144018Z"
     },
     "why": ""
    },
@@ -2330,8 +2330,8 @@
      "task_image_id": "sha256:c5f7119665316a179a96f308ed676aec980b9d7ab96c01084361f1355df56101"
     },
     "record": {
-     "run": "control/anyio-1354/20261106T125723241573Z",
-     "sha256": "4871efb6b851d32cf8744fa56dbd0bec1e046f916855014b584e07703f5aa337"
+     "run": "control/anyio-1354/20261106T204725703717Z",
+     "sha256": "7ae7e7f69b4686489c9add38478ab1d05ed13e50375d941b949465457b4a42e9"
     },
     "round_trip": {
      "error": null,
@@ -2346,7 +2346,7 @@
      "known_bytes": 3257,
      "known_names_an_executable": false,
      "known_sha256": "a3d00b173e6b2df102403fdfe31e9f28a51ff6059e41b23435ba5ed679fbb760",
-     "run": "run/anyio-1354/20261106T125809496932Z",
+     "run": "run/anyio-1354/20261106T204810947909Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 0
@@ -2372,7 +2372,7 @@
       "oracle_image_id": "sha256:ab487d65b10b7fcb43ca65da65e52aabd24fc1c0a7e3cb074f05e88be727b934",
       "task_image_id": "sha256:c5f7119665316a179a96f308ed676aec980b9d7ab96c01084361f1355df56101"
      },
-     "run": "selfcheck/anyio-1354/20261106T125744596311Z"
+     "run": "selfcheck/anyio-1354/20261106T204748144223Z"
     },
     "validate": {
      "base": {
@@ -2397,7 +2397,7 @@
       "task_image_id": "sha256:c5f7119665316a179a96f308ed676aec980b9d7ab96c01084361f1355df56101"
      },
      "pass_to_pass": 40,
-     "run": "validate/anyio-1354/20261106T125723464043Z"
+     "run": "validate/anyio-1354/20261106T204725991431Z"
     },
     "why": ""
    },
@@ -2416,8 +2416,8 @@
      "task_image_id": "sha256:2b2bcd1fcd9849cb8434b2276f88f99f491a23f6f3f8c53bc357f0167ccf21f2"
     },
     "record": {
-     "run": "control/s3transfer-423/20261106T125813916288Z",
-     "sha256": "c9ed59181b92eac9f5dd9ec61cbe98f4d71c53852c4d1e39072d227d7eff0571"
+     "run": "control/s3transfer-423/20261106T204816240916Z",
+     "sha256": "a95e9e387583600ceb24eca588c81dd81cfcde7ba581bcdee13efd3d6d3c6b6b"
     },
     "round_trip": {
      "error": null,
@@ -2432,7 +2432,7 @@
      "known_bytes": 6553,
      "known_names_an_executable": false,
      "known_sha256": "ea129eb46e36b40dbd4d0f627e104e341c8bac9e2dca1950961790b5789b8610",
-     "run": "run/s3transfer-423/20261106T125842294883Z",
+     "run": "run/s3transfer-423/20261106T204906189655Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 14
@@ -2458,7 +2458,7 @@
       "oracle_image_id": "sha256:5088f4e163d1e9f3b1ee1bb96ee1aa2377757e5a8a018cbb357e4f315d8469dc",
       "task_image_id": "sha256:2b2bcd1fcd9849cb8434b2276f88f99f491a23f6f3f8c53bc357f0167ccf21f2"
      },
-     "run": "selfcheck/s3transfer-423/20261106T125827564220Z"
+     "run": "selfcheck/s3transfer-423/20261106T204850734551Z"
     },
     "validate": {
      "base": {
@@ -2483,7 +2483,7 @@
       "task_image_id": "sha256:2b2bcd1fcd9849cb8434b2276f88f99f491a23f6f3f8c53bc357f0167ccf21f2"
      },
      "pass_to_pass": 193,
-     "run": "validate/s3transfer-423/20261106T125814198079Z"
+     "run": "validate/s3transfer-423/20261106T204816541363Z"
     },
     "why": ""
    },
@@ -2502,8 +2502,8 @@
      "task_image_id": "sha256:f2bbd64df1b824ecb7cd8b50923ca535103f001b74b28b1707f08902b9517ad8"
     },
     "record": {
-     "run": "control/python-dotenv-711/20261106T125847002651Z",
-     "sha256": "1f84e79348c8dca5c59b9adf8bd87ea9a8c0464117db7d698772afb9c4a9c34a"
+     "run": "control/python-dotenv-711/20261106T204912309347Z",
+     "sha256": "21a424ae3c72f2b727c399f121201053daf6571dcafe6895a593d035587985ab"
     },
     "round_trip": {
      "error": null,
@@ -2518,7 +2518,7 @@
      "known_bytes": 6289,
      "known_names_an_executable": false,
      "known_sha256": "5a2c53c8e67437a5cafcc9dafa86a65de81efff22c0d537fcbcfaca118d4078f",
-     "run": "run/python-dotenv-711/20261106T125858286056Z",
+     "run": "run/python-dotenv-711/20261106T204926736365Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 0
@@ -2544,7 +2544,7 @@
       "oracle_image_id": "sha256:c90269b95c786229bc3cf54789d973cb92459afa479898818234d3be27fa64fa",
       "task_image_id": "sha256:f2bbd64df1b824ecb7cd8b50923ca535103f001b74b28b1707f08902b9517ad8"
      },
-     "run": "selfcheck/python-dotenv-711/20261106T125851957693Z"
+     "run": "selfcheck/python-dotenv-711/20261106T204918474977Z"
     },
     "validate": {
      "base": {
@@ -2569,7 +2569,7 @@
       "task_image_id": "sha256:f2bbd64df1b824ecb7cd8b50923ca535103f001b74b28b1707f08902b9517ad8"
      },
      "pass_to_pass": 181,
-     "run": "validate/python-dotenv-711/20261106T125847213283Z"
+     "run": "validate/python-dotenv-711/20261106T204912434411Z"
     },
     "why": ""
    },
@@ -2588,8 +2588,8 @@
      "task_image_id": "sha256:e7608b380499960ad92d1e274586a0388a8eaf0e9e4244ca9febea6fe1f5dc17"
     },
     "record": {
-     "run": "control/python-dotenv-700/20261106T125901733244Z",
-     "sha256": "cb99e51f3d02b1ac32bfd20db094968210e3133cea031e85a7dea33c96c89acb"
+     "run": "control/python-dotenv-700/20261106T204930608520Z",
+     "sha256": "4e39ea552d02ba495b39e1ba7df0d2a4d21d5011ecfb233cc2baf9d8f742f9eb"
     },
     "round_trip": {
      "error": null,
@@ -2604,7 +2604,7 @@
      "known_bytes": 3137,
      "known_names_an_executable": false,
      "known_sha256": "935204c7e4f8eddcb32342846999e0d5d9f8c987521a209142201ad96a5b56d9",
-     "run": "run/python-dotenv-700/20261106T125911828661Z",
+     "run": "run/python-dotenv-700/20261106T204943182929Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 0
@@ -2630,7 +2630,7 @@
       "oracle_image_id": "sha256:a1e7baf237f835bb9856ef29c6f9421a73aa6f5f00f84e5d32b481e5fc29a903",
       "task_image_id": "sha256:e7608b380499960ad92d1e274586a0388a8eaf0e9e4244ca9febea6fe1f5dc17"
      },
-     "run": "selfcheck/python-dotenv-700/20261106T125905989576Z"
+     "run": "selfcheck/python-dotenv-700/20261106T204935922989Z"
     },
     "validate": {
      "base": {
@@ -2655,7 +2655,7 @@
       "task_image_id": "sha256:e7608b380499960ad92d1e274586a0388a8eaf0e9e4244ca9febea6fe1f5dc17"
      },
      "pass_to_pass": 43,
-     "run": "validate/python-dotenv-700/20261106T125901860789Z"
+     "run": "validate/python-dotenv-700/20261106T204930734565Z"
     },
     "why": ""
    },
@@ -2674,8 +2674,8 @@
      "task_image_id": "sha256:5a8e0a87960cce7df5592fe33666570e1db1896673057a6f464436d0a28e8667"
     },
     "record": {
-     "run": "control/pyjwt-1216/20261106T125914987458Z",
-     "sha256": "8d1e2205aedbcf76c7a8633e0646b89bec48c074252fe90b284cc395d570024e"
+     "run": "control/pyjwt-1216/20261106T204947517398Z",
+     "sha256": "d9b3d26bbe7e9948076cf1e06a1fb219488bf1cb88e80ac16af45b0a104c64cb"
     },
     "round_trip": {
      "error": null,
@@ -2690,7 +2690,7 @@
      "known_bytes": 5793,
      "known_names_an_executable": false,
      "known_sha256": "042619512c7a03b00588aa48097f8dee363b96593c3632e0a0e6c231beee0bf3",
-     "run": "run/pyjwt-1216/20261106T125924697213Z",
+     "run": "run/pyjwt-1216/20261106T204959969646Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 0
@@ -2716,7 +2716,7 @@
       "oracle_image_id": "sha256:90bc521f4055de41c2c15b5aab13cc199839c5e412bdb61618786de1ee47096a",
       "task_image_id": "sha256:5a8e0a87960cce7df5592fe33666570e1db1896673057a6f464436d0a28e8667"
      },
-     "run": "selfcheck/pyjwt-1216/20261106T125918826551Z"
+     "run": "selfcheck/pyjwt-1216/20261106T204953195517Z"
     },
     "validate": {
      "base": {
@@ -2741,7 +2741,7 @@
       "task_image_id": "sha256:5a8e0a87960cce7df5592fe33666570e1db1896673057a6f464436d0a28e8667"
      },
      "pass_to_pass": 197,
-     "run": "validate/pyjwt-1216/20261106T125915112473Z"
+     "run": "validate/pyjwt-1216/20261106T204948050526Z"
     },
     "why": ""
    },
@@ -2760,8 +2760,8 @@
      "task_image_id": "sha256:9503da3cec0ab8ca19d69e1831d0fa5c2ac4f8ca60c3380b1357d1c37f923ec4"
     },
     "record": {
-     "run": "control/pyjwt-1201/20261106T125928714030Z",
-     "sha256": "7294a45d29f263cc27212a09298b25f60822b247caf0936b92cfcb3f7634fbbf"
+     "run": "control/pyjwt-1201/20261106T205004828876Z",
+     "sha256": "72f12b4ce80d4751bda0d3bfcd3c49d60ce2e1e8074aff6c061790f566c1c816"
     },
     "round_trip": {
      "error": null,
@@ -2776,7 +2776,7 @@
      "known_bytes": 3638,
      "known_names_an_executable": false,
      "known_sha256": "1d4dc647305efd1be85e01853153147ed3f1a481bb869e3979656bec4d3e8e7c",
-     "run": "run/pyjwt-1201/20261106T125955431059Z",
+     "run": "run/pyjwt-1201/20261106T205116718179Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 0
@@ -2802,7 +2802,7 @@
       "oracle_image_id": "sha256:91ec1a6c9d1d1582bad9f53b64a822d7082c1b9edafe7522572d08dc49b8db57",
       "task_image_id": "sha256:9503da3cec0ab8ca19d69e1831d0fa5c2ac4f8ca60c3380b1357d1c37f923ec4"
      },
-     "run": "selfcheck/pyjwt-1201/20261106T125941843909Z"
+     "run": "selfcheck/pyjwt-1201/20261106T205059950441Z"
     },
     "validate": {
      "base": {
@@ -2827,7 +2827,7 @@
       "task_image_id": "sha256:9503da3cec0ab8ca19d69e1831d0fa5c2ac4f8ca60c3380b1357d1c37f923ec4"
      },
      "pass_to_pass": 46,
-     "run": "validate/pyjwt-1201/20261106T125929047533Z"
+     "run": "validate/pyjwt-1201/20261106T205005409312Z"
     },
     "why": ""
    },
@@ -2846,8 +2846,8 @@
      "task_image_id": "sha256:89120efcd24f3481317b2b99486de91ce9fd471c873465b6f0cf970e9a1581eb"
     },
     "record": {
-     "run": "control/platformdirs-666/20261106T125959274929Z",
-     "sha256": "0fcdca4a3e034b58279bda79130a9565b7adc04fc30b4f7cd8a1a8bbf73770ef"
+     "run": "control/platformdirs-666/20261106T205121123197Z",
+     "sha256": "e84c33eea72d098bb49ff349655bb6b2fec2a25620c0f458305b18c1fb3c4942"
     },
     "round_trip": {
      "error": null,
@@ -2862,7 +2862,7 @@
      "known_bytes": 21408,
      "known_names_an_executable": false,
      "known_sha256": "ae07135daafdd025590d69f7573ae9265193ec52729a1d3c0cbee6a2c1dc13b9",
-     "run": "run/platformdirs-666/20261106T130045236633Z",
+     "run": "run/platformdirs-666/20261106T205209118666Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 0
@@ -2888,7 +2888,7 @@
       "oracle_image_id": "sha256:af797366727bfb13b268b6858e043cd9733b96d4016fbcbeaa8cf9a02425b8bc",
       "task_image_id": "sha256:89120efcd24f3481317b2b99486de91ce9fd471c873465b6f0cf970e9a1581eb"
      },
-     "run": "selfcheck/platformdirs-666/20261106T130021392176Z"
+     "run": "selfcheck/platformdirs-666/20261106T205143351156Z"
     },
     "validate": {
      "base": {
@@ -2913,7 +2913,7 @@
       "task_image_id": "sha256:89120efcd24f3481317b2b99486de91ce9fd471c873465b6f0cf970e9a1581eb"
      },
      "pass_to_pass": 1640,
-     "run": "validate/platformdirs-666/20261106T125959398274Z"
+     "run": "validate/platformdirs-666/20261106T205121248145Z"
     },
     "why": ""
    },
@@ -2932,8 +2932,8 @@
      "task_image_id": "sha256:e6f3287c750f05a29eb988df546872bcaf0fb27974170f7d1381c4e8c694063e"
     },
     "record": {
-     "run": "control/pydantic-settings-1089/20261106T130049413341Z",
-     "sha256": "4bc74161956ff0944d9d590cac2d749b5097bdc50a3b9e5593b24624a2f62fa0"
+     "run": "control/pydantic-settings-1089/20261106T205213893481Z",
+     "sha256": "cf20105fc0dad2977b39f72cd0c1b75a5f5e003fb6b227fc75119be9db18fbc3"
     },
     "round_trip": {
      "error": null,
@@ -2948,7 +2948,7 @@
      "known_bytes": 4266,
      "known_names_an_executable": false,
      "known_sha256": "0912464a4f1130f7d5e35b95c765d89f28049287412308ad9dd3ce288c584b9e",
-     "run": "run/pydantic-settings-1089/20261106T130103782085Z",
+     "run": "run/pydantic-settings-1089/20261106T205231007832Z",
      "same_bytes": true,
      "status": "finished",
      "tree_executables": 0
@@ -2974,7 +2974,7 @@
       "oracle_image_id": "sha256:3e70e8a378d57ad7c7e29f0795d9a799c9e8c33a0482dbfa501ddfca7eb7f1f6",
       "task_image_id": "sha256:e6f3287c750f05a29eb988df546872bcaf0fb27974170f7d1381c4e8c694063e"
      },
-     "run": "selfcheck/pydantic-settings-1089/20261106T130055684917Z"
+     "run": "selfcheck/pydantic-settings-1089/20261106T205221787408Z"
     },
     "validate": {
      "base": {
@@ -2999,7 +2999,7 @@
       "task_image_id": "sha256:e6f3287c750f05a29eb988df546872bcaf0fb27974170f7d1381c4e8c694063e"
      },
      "pass_to_pass": 479,
-     "run": "validate/pydantic-settings-1089/20261106T130049539736Z"
+     "run": "validate/pydantic-settings-1089/20261106T205214175605Z"
     },
     "why": ""
    },
@@ -3017,11 +3017,12 @@
   "the maintainers' fix, as a patch, is seen to pass them (selfcheck)",
   "an empty patch is seen to fail them (selfcheck)",
   "the base and the empty patch by one rule: a failure in a test result, or a collection error, in pytest's own report, of a fail-to-pass test's module where the gold patch's run on the same image ids saw it pass",
+  "each test known by the node id pytest's own report gives it, never by its junit key",
   "a known patch written through the host executor's runner is read back byte for byte in the kept patch (round trip)",
   "each ran on both of the bug's image ids here, read again after them; a result not known is no pass and no failure, and excludes the bug"
  ],
  "design": "docs/superpowers/specs/2026-11-06-explicit-models-one-question-design.md, sections 3.6 and 7.1",
- "digest": "b5b14ae81db04a458354d31c6e74235fcca57a182a9e33911efde4e615367f2b",
+ "digest": "ae1bcad1e5042ca568a1d376333841dd6ee6ca6c75d33fc77a10fd22213a6d9c",
  "excluded": [],
  "g6_commit": "c53d310d65a5b5ba02c64c3faf6682dcf048888e",
  "left_out": [],
