@@ -73,8 +73,9 @@ def compiled(monkeypatch, *verdicts):
     "failed"; what each run was given is recorded."""
     given, left = [], list(verdicts)
 
-    def run_check(change, placed, source, node, *, at_base, timeout_s, roots=()):
-        given.append({"at_base": at_base, "node": node, "source": source})
+    def run_check(change, placed, source, node, *, at_base, timeout_s, roots=(), artefact=None):
+        # artefact: the review's snapshot, which the real executor checks each copy on the patch against
+        given.append({"at_base": at_base, "node": node, "source": source, "bound": artefact is not None})
         test = f"{node}::test_example"
         if left.pop(0) == "passed":
             return {**result([test]), "source_before": "d" * 64}
@@ -132,6 +133,7 @@ def test_the_confirmed_case_is_its_one_example_v1_check_run_on_the_patch_and_cou
     got = review(repo, confirmed=held)
     assert decided(got) == decided(review(repo))   # a case that holds changes no decided field
     assert [g["at_base"] for g in given[:3]] == [False, True, False]
+    assert [g["bound"] for g in given[:3]] == [True, False, True]   # each run on the patch, bound to the artefact
     assert "'cases': [{'args': [2, 3], 'kwargs': {}, 'expect': 'returns', 'value': 5}]" in given[0]["source"]
     assert "TEMPLATE = 'example.v1'" in given[0]["source"]
     held_out = got["assessment"]["confirmed_expectations"]
@@ -205,7 +207,7 @@ def test_the_report_shows_the_question_the_answer_and_the_result_apart_from_mode
     report = review(repo, confirmed=standard())["assessment"]["report"]
     part = report.split("## What the person confirmed", 1)[1].split("##", 1)[0]
     [line] = [one for one in part.splitlines() if one.startswith("- ")]
-    for said in ("calc.add [2, 3]", "the person chose `A`", "returns 5", "person:Ada",
+    for said in ("calc.add(2, 3)", "the person chose `A`", "returns 5", "person:Ada",
                  "recorded as given, not authenticated", "its check passes on the patch", "the evidence issuer"):
         assert said in line, said
     assert "proposed" not in part and "model" not in part

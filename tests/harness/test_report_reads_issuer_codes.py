@@ -145,9 +145,6 @@ PLACES: dict[tuple[str, str], tuple[str, str]] = {
     ("_steps", "str(r.get('stage', '')).startswith"): ("search", "the stage G6 gave one of the review's own reasons"),
     ("_steps", "outcome.replace"): ("search", "the review's own outcome code, its underscores put as spaces"),
     ("_latest", "file in run['results']"): ("membership", MEMBERSHIP),
-    # G6 0.3, slice 3: which of example.v1's outcome fields a confirmed question's outcome states (a key of a mapping)
-    ("_outcome_words", "'raises' in outcome"): ("membership", "a key of the outcome a question G6 made states"),
-    ("_outcome_words", "'effect' in outcome"): ("membership", "a key of the outcome a question G6 made states"),
 }
 
 

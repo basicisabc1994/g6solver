@@ -196,8 +196,13 @@ def test_a_store_g6_cannot_read_is_refused_never_read_as_empty(rig):
 def test_a_candidate_from_a_review_s_differences_comes_from_g6_s_own_record(rig):
     one = TemplateInstance(id="D1", template="differential.v1", requirement_id="R1", intent="change",
                            bindings={"function": "shop.prices.total", "mode": "outputs", "calls": [{"args": [[2, -3]]}]})
+    from g6.core.ledger import digest
+    from g6.workforce import repo_tests
+
     job = "f" * 32
-    saved = {"assessment": {"completion": {"open_questions": [{"check": "D1"}], "activities": [{
+    # a review G6 saved for this task, bound to it, of this tree (question slice, repair 1: finding 4)
+    saved = {"task_identity": qs.task_identity(rig.repo, TASK), "artifact_digest": digest(repo_tests.snapshot(rig.repo)),
+             "assessment": {"completion": {"open_questions": [{"check": "D1"}], "activities": [{
         "activity": "template instance", "check": "D1", "template": "differential.v1", "result": "behaviour_changed",
         "instance_sha256": instance_digest(one), "differences": [{
             "input": json.dumps({"args": [[2, -3]], "kwargs": {}}, sort_keys=True), "base": '{"returned": -1}',

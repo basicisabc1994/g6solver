@@ -429,22 +429,47 @@ def reproduce(node: str, ran: dict) -> dict:
             **{key: ran[key] for key in ("python", "interpreter_source") if key in ran}}
 
 
+#: A run on the patch that was not made on the artefact's bytes (``_run_check``'s ``artefact``): what it says, and the
+#: key its record holds, so the review reads it as the tree changing while it ran.
+NOT_THE_ARTEFACT = ("the working tree changed while G6 copied it to run the check, so the copy is not the tree under "
+                    "review (its digest is not the artifact digest): nothing was run on it")
+NOT_THE_ARTEFACT_KEY = "not_the_artefact"
+
+
+def _copy_differs(copy: Path, artefact: dict[str, str], placed: str) -> bool:
+    """Whether the copy holds other bytes than the review's snapshot ``artefact`` holds, for any file it holds bytes
+    for (each changed and untracked file, ``repo_tests.snapshot``), the check G6 placed aside."""
+    return any(repo_tests._digest(copy / rel) != value for rel, value in artefact.items()
+               if not rel.startswith("\0") and rel != placed)
+
+
 def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *, at_base: bool,
-               timeout_s: int, roots: tuple[str, ...] = ()) -> dict:
+               timeout_s: int, roots: tuple[str, ...] = (), artefact: dict[str, str] | None = None) -> dict:
     """One run of a proposed check, confined, with no network, in a fresh scratch copy with no git metadata and only
     that check overlaid at ``placed``: of the patched tree, or at the base commit's code (``repo_tests.run_at_base``).
     It runs as the stated checks do: ``roots`` (the review's import roots) first on the import path, the Python
     ``repo_tests.interpreter`` chooses (``G6_REPO_PYTHON``, else the repository's own), and the variables
-    ``G6_REPO_ENV`` gives. A run no backend confines is refused (raised), never run unconfined."""
+    ``G6_REPO_ENV`` gives. A run no backend confines is refused (raised), never run unconfined.
+
+    ``artefact``: the review's snapshot of the tree (``repo_tests.snapshot``, whose digest is the artifact digest), for
+    a run on the patch whose result counts as evidence about that artefact. Nothing runs, and the record says so
+    (``NOT_THE_ARTEFACT_KEY``), unless the working tree is still that snapshot before the copy is made and after, and
+    the copy holds the snapshot's bytes of every file the snapshot holds bytes for."""
     overlay = {placed: source}
     if at_base:
         return repo_tests.run_at_base(change, [node], roots=roots, timeout_s=timeout_s, overlay=overlay,
                                       require_isolation=True)
     deadline = time.monotonic() + timeout_s
+    refused = {"verdict": "not_run", "said": NOT_THE_ARTEFACT, NOT_THE_ARTEFACT_KEY: True}
     try:
         report: dict = {}
+        if artefact is not None and repo_tests._moved(artefact, repo_tests.snapshot(change.repo)):
+            return refused
         with repo_tests.repository_copy(change.repo, deadline=deadline, before=overlay, report=report,
                                         base=change.base_commit) as copy:
+            if artefact is not None and (repo_tests._moved(artefact, repo_tests.snapshot(change.repo))
+                                         or _copy_differs(copy, artefact, placed)):
+                return refused
             return repo_tests._run(copy, [node], roots=roots, timeout_s=timeout_s, network=False, copied=True,
                                    python=repo_tests.interpreter(change.repo), scratch_dir=copy.parent,
                                    deadline=deadline, require_isolation=True, links=report)

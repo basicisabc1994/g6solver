@@ -755,6 +755,12 @@ def _side(one: TemplateInstance) -> str:
     return PATCH if one.intent == "change" and one.template != "differential.v1" else BASE
 
 
+def _located(target: Target) -> list[str]:
+    """A name as example.v1's check loads it: its spec, and for a module's name the file of the tree it resolved to,
+    which the module the check's import returns must be (``_load``'s origin rule)."""
+    return [*target.spec(), target.file] if target.kind == "module" else target.spec()
+
+
 def _example(tree: Tree, b: ExampleBindings, side: str) -> Applied:
     target = resolve(tree, b.function, side)
     notes = _checked(b.function, target, [(case.args, case.kwargs, f"case {index}")
@@ -763,13 +769,13 @@ def _example(tree: Tree, b: ExampleBindings, side: str) -> Applied:
     for case in b.cases:
         entry = {"args": case.args, "kwargs": case.kwargs}
         if "raises" in case.model_fields_set:
-            entry.update(expect="raises", error=_error_target(tree, case.raises, side).spec())
+            entry.update(expect="raises", error=_located(_error_target(tree, case.raises, side)))
         elif "effect" in case.model_fields_set:
             entry.update(expect="effect", argument=case.effect.argument, value=case.effect.equals)
         else:
             entry.update(expect="returns", value=case.returns)
         cases.append(entry)
-    return Applied({"function": target.spec(), "cases": cases}, notes)
+    return Applied({"function": _located(target), "cases": cases}, notes)
 
 
 def _relation(tree: Tree, b: RelationBindings, side: str) -> Applied:
@@ -891,6 +897,7 @@ import copy
 import hashlib
 import importlib
 import json
+import os
 import re
 
 import pytest
@@ -898,12 +905,29 @@ import pytest
 
 _COMMON = """
 
+_TOP = os.getcwd()
+
+
+class _Elsewhere(Exception):
+    # the module a name names came from somewhere other than the file of the tree G6 resolved it to (the standard
+    # library, a module loaded before, an installed copy): what the check would run is not the repository's code
+    pass
+
+
 def _load(spec):
-    # spec is [kind, module, attribute]: ["builtin", "", "ValueError"], or ["module", "package.module", "name"]
-    kind, module, attribute = spec
+    # spec is [kind, module, attribute]: ["builtin", "", "ValueError"], or ["module", "package.module", "name"]; with a
+    # fourth part, the file of the tree G6 resolved the module to, from the top folder: the module the import returns
+    # must be that file, or nothing of it is used (_Elsewhere)
+    kind, module, attribute = spec[:3]
     if kind == "builtin":
         return getattr(builtins, attribute)
-    return getattr(importlib.import_module(module), attribute)
+    found = importlib.import_module(module)
+    if len(spec) > 3:
+        where = getattr(found, "__file__", None) or ""
+        wanted = os.path.join(_TOP, *spec[3].split("/"))
+        if not where or os.path.normcase(os.path.realpath(where)) != os.path.normcase(os.path.realpath(wanted)):
+            raise _Elsewhere(module + " is not " + spec[3] + " of the tree under review")
+    return getattr(found, attribute)
 
 
 def _error(spec):
@@ -963,9 +987,12 @@ def _fail(failures, raised):
 _EXAMPLE = """
 
 def test_example():
-    function = _load(BINDINGS["function"])
-    errors = {index: _error(case["error"]) for index, case in enumerate(BINDINGS["cases"])
-              if case["expect"] == "raises"}
+    try:
+        function = _load(BINDINGS["function"])
+        errors = {index: _error(case["error"]) for index, case in enumerate(BINDINGS["cases"])
+                  if case["expect"] == "raises"}
+    except _Elsewhere as exc:   # not the repository's code: no result, never a pass or a failure of it
+        pytest.skip("G6: " + str(exc))
     failures, raised = [], []
     for index, case in enumerate(BINDINGS["cases"]):
         args, kwargs = copy.deepcopy(case["args"]), copy.deepcopy(case["kwargs"])

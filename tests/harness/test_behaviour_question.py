@@ -187,18 +187,27 @@ def test_the_agent_s_words_stay_on_their_own_line_and_say_whose_they_are():
     assert "Evidence (as the calling agent states it, not checked by G6): shop/prices.py Outcome A: G6" in message
 
 
-def test_the_differential_probe_s_structural_forms_are_all_left_out():
-    """The probe's own text (differential.v1's ``_plain``, ``_bounded`` and ``_outcome``) is the one place its output
-    forms are written: every key it writes besides a call's input and output, and the outcome kinds example.v1 can
-    state, is one ``differential_candidates`` leaves out."""
+def test_only_what_the_probe_writes_exactly_is_an_observed_output():
+    """The probe's own text (differential.v1's ``_plain``) passes through as it is only the types it names in its
+    first test (None, bool, int, str) and a finite float; everything else becomes a list or an object, which may stand
+    for another value (a tuple, a set or a mapping's items; any mapping). ``observed`` takes those types and an
+    exception's name, nothing else. (Repair 1 of the question slice replaced the list of the probe's structural keys,
+    which missed a set, a mapping with other keys and a mapping that is not a dict: review 1's finding 6.)"""
     import ast
 
     from g6.harness import verification_templates
 
     tree = ast.parse(verification_templates._DIFFERENTIAL)
-    keys = {key.value for node in ast.walk(tree) if isinstance(node, ast.Dict)
-            for key in node.keys if isinstance(key, ast.Constant) and isinstance(key.value, str)}
-    assert keys - {"input", "output", "returned", "raised"} <= bq._PLAIN_FORM, keys
+    plain = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "_plain")
+    passed = next(node for node in ast.walk(plain) if isinstance(node, ast.If) and "(bool, int, str)" in
+                  ast.unparse(node.test))
+    assert ast.unparse(passed.body[0]) == "return value"
+    assert set(bq._EXACT) == {type(None), bool, int, float, str}
+    for kept in (None, True, 3, 2.5, "x"):
+        assert bq.observed({"returned": kept}) == {"returns": kept}
+    for lossy in ([1], {"a": 1}, [[1]], {"type": "x"}):
+        assert bq.observed({"returned": lossy}) is None
+    assert bq.observed({"raised": "ValueError"}) == {"raises": "ValueError"} and bq.observed({"unresolved": "E"}) is None
 
 
 def test_a_rule_is_shown_in_full_before_it_can_be_confirmed():

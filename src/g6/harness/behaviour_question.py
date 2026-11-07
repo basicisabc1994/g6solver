@@ -15,6 +15,18 @@ sources in this version:
   instance states, whose two outputs example.v1 can state, is one candidate (outcome A the base commit's, B the
   patch's).
 
+Every outcome is held, compared and shown in one encoding (``encoded``, read back by ``decoded``): JSON text with
+sorted keys, as the differential.v1 probe writes what it observed and verification search compares it, and as example.v1
+compares a result with what it expects. It tells 1, 1.0 and true apart, -0.0 from 0.0, and 5 from "5". A probe
+observation is an outcome only when the probe writes it exactly as example.v1 compares it (``observed``): an exception
+raised, by its name, or a returned None, boolean, number or text. A list the probe writes may stand for a tuple, a set or a
+mapping's items, and an object for any mapping, so neither is offered, at any depth.
+
+A candidate's two outcomes compete (``competition``): outcome A's compiled check rejects what outcome B shows, and B's
+rejects what A shows, by example.v1's own model (a result is compared as JSON writes it; an error matches an instance of
+the type named, so of a subtype too; an effect is an argument's value after a call that returned). Identical, overlapping
+and independent outcomes are refused, each with its code (``IDENTICAL``, ``OVERLAP``, ``INDEPENDENT``).
+
 ``choose`` takes one by a fixed priority (``PRIORITY``). Coverage stays unknown and no candidate marks the task as
 determined: ``plan`` says so in every reply. The question G6 shows is slice 2's record (``Question``), made from the
 candidate and the digest of the artefact it is asked about; a candidate that offers a stated rule gives a second
@@ -30,13 +42,14 @@ question pending (``PENDING``), reported, to be answered later.
 """
 from __future__ import annotations
 
+import builtins
 import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from g6.core.ledger import canonical
+from g6.harness import verification_search as vs
 from g6.harness.confirmed_expectation import NOT_CONFIRMING, Answer, Question, Unconfirmed
 from g6.harness.verification_templates import ExampleCase, TemplateInstance, instance_digest, literal_problem
 
@@ -66,27 +79,89 @@ COVERAGE_NOTE = ("G6 proposes candidates from the sources it has; it does not kn
 #: The dialog's statuses: an answer G6 recorded, or a question left pending to be answered later.
 ANSWERED, PENDING = "answered", "pending"
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
-#: Every key differential.v1's probe writes for a value JSON cannot hold, or in place of one (a test reads the probe's
-#: text and keeps this the same list).
-_PLAIN_FORM = frozenset({"type", "class", "attributes", "repr", "float", "deeper", "sha256", "start", "unreadable",
-                         "unresolved"})
+#: The refusal of a candidate that lacks a part, and of two outcomes that do not compete (``competition``): the same
+#: outcome twice, two that one implementation can both meet (an error and its own subtype, or two errors G6 cannot tell
+#: apart by kind), and two about different things one call can do at once (a result and an argument's value).
+INVALID = "G6_E_INPUT_VALIDATION"
+IDENTICAL, OVERLAP, INDEPENDENT = ("G6_E_QUESTION_OUTCOMES_IDENTICAL", "G6_E_QUESTION_OUTCOMES_OVERLAP",
+                                   "G6_E_QUESTION_OUTCOMES_INDEPENDENT")
+#: The values differential.v1's probe writes exactly as example.v1 compares them: the types it passes through as they
+#: are. A list it writes may be a tuple, a set or a mapping's items, and an object any mapping: neither is exact.
+_EXACT = (type(None), bool, int, float, str)
 
 
 class CandidateRefused(ValueError):
-    """A candidate that does not carry what a candidate must, named."""
+    """A candidate that does not carry what a candidate must, or whose outcomes do not compete, named, with its code."""
+
+    def __init__(self, message: str, code: str = INVALID) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+# --- the one encoding of an outcome -------------------------------------------------------------------------------------
+
+
+def encoded(value: Any) -> str:
+    """The one encoding of an outcome's value (the module's docstring): the probe's own (``verification_search``'s,
+    which compares what differential.v1 observed), and example.v1's for a result it compares. A ``TypeError`` or
+    ``ValueError`` for a value JSON cannot write."""
+    return vs._canonical(value)
+
+
+def decoded(text: str) -> Any:
+    """A value ``encoded`` wrote, read back: the one reader of the probe's text."""
+    return json.loads(text)
 
 
 # --- candidates ---------------------------------------------------------------------------------------------------------
 
 
-def _json(value: Any) -> Any:
-    """``value`` as JSON data, copied: nothing a caller holds is shared with a candidate."""
-    return json.loads(canonical(value))
+def _error_type(name: str) -> type | None:
+    """The built-in exception type a bare name names, as example.v1 loads it, or None (a dotted name is the
+    repository's, whose kind G6 does not know before it runs)."""
+    found = getattr(builtins, name, None) if "." not in name else None
+    return found if isinstance(found, type) and issubclass(found, BaseException) else None
+
+
+def competition(outcomes: Mapping[str, Mapping[str, Any]]) -> tuple[str, str]:
+    """("", "") when outcome A's compiled check rejects what outcome B shows and B's rejects what A shows, by
+    example.v1's model; otherwise the code and why. A result against a result competes when ``encoded`` tells them
+    apart; an error against a result or an effect always competes (each check rejects the other's call); two errors
+    compete when neither is a kind of the other, which G6 knows for built-in types only; two effects compete on the
+    same argument with values ``encoded`` tells apart. A result and an effect are independent: one call can do both."""
+    a, b = outcomes["A"], outcomes["B"]
+    kinds = {next(iter(a)), next(iter(b))}
+    if kinds == {"returns"}:
+        if encoded(a["returns"]) == encoded(b["returns"]):
+            return IDENTICAL, f"both outcomes return {encoded(a['returns'])[:80]}"
+        return "", ""
+    if kinds == {"raises"}:
+        if a["raises"] == b["raises"]:
+            return IDENTICAL, f"both outcomes raise {a['raises']}"
+        left, right = _error_type(a["raises"]), _error_type(b["raises"])
+        if left is None or right is None:
+            return OVERLAP, (f"{a['raises']} and {b['raises']} may be kinds of one another, which G6 cannot tell "
+                             "before the code runs: a check for one would accept the other")
+        if issubclass(left, right) or issubclass(right, left):
+            return OVERLAP, (f"{a['raises']} and {b['raises']} overlap: one is a kind of the other, so the check for "
+                             "the wider type accepts both")
+        return "", ""
+    if kinds == {"effect"}:
+        one, other = a["effect"], b["effect"]
+        if one["argument"] != other["argument"]:
+            return INDEPENDENT, "the outcomes are about different arguments, which one call can leave as both say"
+        if encoded(one["equals"]) == encoded(other["equals"]):
+            return IDENTICAL, f"both outcomes leave argument {one['argument']} as {encoded(one['equals'])[:80]}"
+        return "", ""
+    if "raises" in kinds:
+        return "", ""
+    return INDEPENDENT, "one outcome is a result and the other an argument's value, which one call can give both"
 
 
 @dataclass(frozen=True)
 class Candidate:
-    """One candidate choice, held as its canonical JSON text (``data``): every field read from it is a fresh copy."""
+    """One candidate choice, held as its text in the one encoding (``data``): every field read from it is a fresh
+    copy."""
 
     data: str
 
@@ -112,12 +187,15 @@ class Candidate:
         problem = literal_problem(record)
         if problem:
             raise CandidateRefused(f"a candidate is JSON data: {problem}")
-        made = cls(canonical(record))
+        made = cls(encoded(record))
         made.question("0" * 64)   # every candidate is a question G6 can show: slice 2's record checks it
+        code, why = competition(record["outcomes"])
+        if code:
+            raise CandidateRefused(f"the two outcomes do not compete: {why}", code)
         return made
 
     def _get(self, name: str) -> Any:
-        return json.loads(self.data)[name]
+        return decoded(self.data)[name]
 
     @property
     def source(self) -> str:
@@ -132,7 +210,7 @@ class Candidate:
         return self._get("rule")
 
     def to_dict(self) -> dict:
-        return json.loads(self.data)
+        return decoded(self.data)
 
     def question(self, baseline_sha256: str, *, scope: str | None = None) -> Question:
         """The question of this candidate as the person is shown it, about the artefact ``baseline_sha256`` names."""
@@ -158,7 +236,7 @@ def _words(text: str) -> set[str]:
 
 def settled_by(task: str, outcomes: Mapping[str, Mapping[str, Any]]) -> list[dict]:
     """Evidence that the task already settles a choice: each outcome the task names literally (the exception's name,
-    or the returned value as JSON writes it, or a returned text itself). Evidence only: it decides nothing, and it
+    or the returned value in the one encoding, or a returned text itself). Evidence only: it decides nothing, and it
     reorders candidates (``PRIORITY``)."""
     found = []
     words = _words(task)
@@ -168,7 +246,7 @@ def settled_by(task: str, outcomes: Mapping[str, Mapping[str, Any]]) -> list[dic
             found.append({"outcome": label, "by": f"the task names {outcome['raises'].rsplit('.', 1)[-1]}"})
         elif "returns" in outcome:
             value = outcome["returns"]
-            text = json.dumps(value, sort_keys=True)
+            text = encoded(value)
             if (isinstance(value, str) and len(value) >= 2 and value in task) or (
                     re.search(rf"(?<![\w.]){re.escape(text)}(?![\w.])", task)):
                 found.append({"outcome": label, "by": f"the task names {text[:80]}"})
@@ -219,20 +297,21 @@ def caller_candidates(task: str, items: object) -> list[Candidate]:
                 settled=[*given, *(settled_by(task, outcomes) if isinstance(outcomes, dict) else [])],
                 scope=item.get("scope", CASE_SCOPE), rule=item.get("rule", "")))
         except (CandidateRefused, TypeError, AttributeError) as exc:
-            raise CandidateRefused(f"{where}: {exc}") from exc
+            raise CandidateRefused(f"{where}: {exc}", getattr(exc, "code", INVALID)) from exc
     return found
 
 
-def _outcome(observed: object) -> dict | None:
-    """A differential observation's output as an example.v1 outcome, or None when example.v1 cannot state it: a
-    raised exception by its name, or a returned value that is JSON data in its own right (not one of the probe's
-    structural forms of an object, a set member's type, a float JSON cannot hold, or a value cut to its digest)."""
-    if not isinstance(observed, dict) or len(observed) != 1:
+def observed(output: object) -> dict | None:
+    """A differential observation's output as an example.v1 outcome, or None when G6 cannot state exactly what the
+    probe observed: a raised exception by its name, or a returned value of a type the probe writes as it is (None, a
+    boolean, a whole number, a finite float, text). A list or an object the probe writes, at any depth, may stand for
+    another value (a tuple, a set or a mapping's items; any mapping), so it is never offered as an observed output."""
+    if not isinstance(output, dict) or len(output) != 1:
         return None
-    (kind, value), = observed.items()
+    (kind, value), = output.items()
     if kind == "raised" and isinstance(value, str):
         candidate = {"raises": value}
-    elif kind == "returned" and not _structural(value):
+    elif kind == "returned" and type(value) in _EXACT:
         candidate = {"returns": value}
     else:
         return None
@@ -241,17 +320,6 @@ def _outcome(observed: object) -> dict | None:
     except ValueError:
         return None
     return candidate
-
-
-def _structural(value: object) -> bool:
-    """Whether a probe output may be its structural form of something JSON cannot hold: a mapping with one of the
-    keys the probe writes for an object, a class, a float, a value nested too deeply or cut to its digest. Read
-    conservatively: a real mapping with such a key is left out too (fewer candidates, never a wrong one)."""
-    if isinstance(value, dict):
-        return bool(_PLAIN_FORM & set(value)) or any(_structural(item) for item in value.values())
-    if isinstance(value, list):
-        return any(_structural(item) for item in value)
-    return False
 
 
 def _citation(task: str, function: str) -> str:
@@ -268,9 +336,9 @@ def differential_candidates(task: str, instances: Iterable[TemplateInstance], ac
     """The candidates base-and-patch differences give: each ``behaviour_changed`` activity of a review whose check is
     a ``differential.v1`` instance with intent ``change`` (one whose intent is ``preserve`` reads a difference as a
     counterexample, never a question), held to the instance it names by its digest (``instance_sha256``, which the
-    review recorded), and each of its differences whose two outputs example.v1 can state (``_outcome``). Ranked by
-    ``ranked`` (the review's open questions' check ids, verification search's question ranking), then in the
-    activities' own order."""
+    review recorded), and each of its differences whose two outputs G6 can state exactly (``observed``) and which
+    compete (``competition``, in the one encoding). Ranked by ``ranked`` (the review's open questions' check ids,
+    verification search's question ranking), then in the activities' own order."""
     by_id = {one.id: one for one in instances if isinstance(one, TemplateInstance)}
     chosen = [a for a in activities if isinstance(a, Mapping) and a.get("activity") == "template instance"
               and a.get("template") == "differential.v1" and a.get("result") == "behaviour_changed"]
@@ -285,11 +353,11 @@ def differential_candidates(task: str, instances: Iterable[TemplateInstance], ac
         function = one.bindings.get("function", "")
         for difference in activity.get("differences") or []:
             try:
-                call = json.loads(difference["input"])
-                base, patch = _outcome(json.loads(difference["base"])), _outcome(json.loads(difference["patch"]))
+                call = decoded(difference["input"])
+                base, patch = observed(decoded(difference["base"])), observed(decoded(difference["patch"]))
             except (KeyError, TypeError, ValueError):
                 continue
-            if base is None or patch is None or base == patch or not isinstance(call, dict):
+            if base is None or patch is None or not isinstance(call, dict):   # the same outcome twice: refused below
                 continue
             evidence = [f"differential.v1 instance {one.id} (sha256 {instance_digest(one)}), run by G6 in the review: "
                         f"at the base commit it observed {difference['base']}, on the patch {difference['patch']}"]
@@ -348,20 +416,45 @@ def _line(text: object) -> str:
     return " ".join(str(text).split())
 
 
+def _value(value: Any) -> str:
+    """A value as the form and the report show it: in the one encoding, or a note when JSON cannot write it."""
+    try:
+        return encoded(value)
+    except (TypeError, ValueError, RecursionError):
+        return "(a value G6 cannot write)"
+
+
+def shown_call(question: Mapping[str, Any]) -> str:
+    """A question's call as the form and the report show it: the function, each positional argument, then each
+    keyword argument by name in sorted order, every value in the one encoding."""
+    args, kwargs = question.get("args"), question.get("kwargs")
+    positional = ", ".join(_value(one) for one in (args if isinstance(args, list) else []))
+    named = ", ".join(f"{key}={_value(value)}" for key, value in sorted(
+        (kwargs if isinstance(kwargs, Mapping) else {}).items(), key=lambda item: str(item[0])))
+    return f"{question.get('function', '')}({', '.join(part for part in (positional, named) if part)})"
+
+
+def shown_outcome(outcome: object) -> str:
+    """An outcome as the form and the report show it, its value in the one encoding."""
+    if not isinstance(outcome, Mapping) or len(outcome) != 1:
+        return "an outcome G6 cannot read"
+    if "raises" in outcome:   # an exception type's name, as example.v1 resolves it
+        name = outcome["raises"]
+        return f"raises {name}" if isinstance(name, str) else f"raises {_value(name)}"
+    if "effect" in outcome:
+        effect = outcome["effect"] if isinstance(outcome["effect"], Mapping) else {}
+        return f"leaves argument {_value(effect.get('argument'))} as {_value(effect.get('equals'))}"
+    if "returns" in outcome:
+        return f"returns {_value(outcome['returns'])}"
+    return "an outcome G6 cannot read"
+
+
 def _call(question: Question) -> str:
-    shown = question.to_dict()
-    args = ", ".join(json.dumps(one, sort_keys=True) for one in shown["args"])
-    kwargs = ", ".join(f"{key}={json.dumps(value, sort_keys=True)}" for key, value in sorted(shown["kwargs"].items()))
-    return f"{shown['function']}({', '.join(part for part in (args, kwargs) if part)})"
+    return shown_call(question.to_dict())
 
 
 def _said(outcome: Mapping[str, Any]) -> str:
-    if "raises" in outcome:
-        return f"raises {outcome['raises']}"
-    if "effect" in outcome:
-        effect = outcome["effect"]
-        return f"leaves argument {effect['argument']} as {json.dumps(effect['equals'], sort_keys=True)}"
-    return f"returns {json.dumps(outcome['returns'], sort_keys=True)}"
+    return shown_outcome(outcome)
 
 
 def form(question: Question, candidate: Candidate, rule: Question | None = None) -> tuple[str, dict]:
@@ -460,5 +553,7 @@ def read(action: str, content: object, question: Question, rule: Question | None
 
 
 __all__ = ["ANSWERED", "CALLER_FIELDS", "CASE_SCOPE", "CHOICES", "COVERAGE_NOTE", "Candidate", "CandidateRefused",
-           "FIELDS", "LABELS", "PENDING", "PRIORITY", "RULE_SCOPE", "Reading", "SETUP", "SOURCES", "UNKNOWN",
-           "caller_candidates", "choose", "differential_candidates", "form", "plan", "ranked", "read", "settled_by"]
+           "FIELDS", "IDENTICAL", "INDEPENDENT", "INVALID", "LABELS", "OVERLAP", "PENDING", "PRIORITY", "RULE_SCOPE",
+           "Reading", "SETUP", "SOURCES", "UNKNOWN", "caller_candidates", "choose", "competition", "decoded",
+           "differential_candidates", "encoded", "form", "observed", "plan", "ranked", "read", "settled_by",
+           "shown_call", "shown_outcome"]

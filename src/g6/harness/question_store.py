@@ -18,26 +18,39 @@ lock). Its entries, in the order G6 wrote them:
   the store accepts answers only for questions G6 asked.
 - ``more``: the person let G6 ask one more question on this task, in a form G6 showed them.
 
+Every entry is bound to the task it was written for: its body names the task's identity (``task``), and an entry read
+under another identity is refused, so a ledger copied to another task's or repository's name enforces nothing there.
+
 The budget is one question per task by default (owner, 2026-11-06), persistent across retries and MCP calls: the
 person sets another default where the server is registered (``G6_QUESTIONS_PER_TASK``, 0 for none; the agent cannot
-set it, as the server reads it from its own environment), and asks for one more in the form. A question asked and
-not answered (declined, cancelled, skipped, or never shown) stays pending and is shown again before any new one, so
-it costs nothing more. The standard of confirmed expectations is derived from the answers, in order, every time it is
-read: an answer that contradicts an accepted one starts a superseding standard, as slice 2 decided. A store whose
-chain does not check out (a torn last line after a crash, an edit) is unreadable, never read as empty.
+set it, as the server reads it from its own environment), and asks for one more in the form. A value that is set and
+cannot be read, a blank one included, allows none. A question asked and not answered (declined, cancelled, skipped, or
+never shown) stays pending and is shown again before any new one, so it costs nothing more. The standard of confirmed
+expectations is derived from the answers, in order, every time it is read: an answer that contradicts an accepted one
+starts a superseding standard, as slice 2 decided.
+
+After each write G6 keeps the chain's head beside the store (``<identity>.head``), and every open checks the chain
+against it. A store whose chain does not check out (a torn last line after a crash, an edit), a file emptied or cut
+back to an earlier valid prefix, a head with no store, or anything but a regular file where the store or its head
+belongs (a folder, a link) is unreadable, never read as empty. The one gap allowed is a stop between a write and its
+head: a chain one entry past the head it kept, from that head, is taken and the head catches up.
+
+The limit, as the receipt store states its own: the store and its head are files on this computer, owned by the same
+user as G6. They defend against a store damaged, cut back, replaced or copied from another task, not against a process
+running as that user that rewrites the store and its head together (or removes both).
 """
 from __future__ import annotations
 
-import json
 import os
 import re
+import stat
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
 from g6.core.ledger import ChainLedger, LedgerError, digest
 from g6.core.storage import state_path
-from g6.harness.behaviour_question import Candidate
+from g6.harness.behaviour_question import Candidate, decoded, encoded
 from g6.harness.confirmed_expectation import (
     NOT_CONFIRMING,
     TIME_FORMAT,
@@ -83,10 +96,10 @@ def task_identity(root: Path, task: str) -> str:
 
 def default_budget() -> tuple[int, str]:
     """The questions per task the person allows by default (``G6_QUESTIONS_PER_TASK``, 0 to ``MAX_BUDGET``; one when
-    unset), and why a value that is set could not be read. A value G6 cannot read allows none: G6 never asks more
-    than the person said."""
+    unset), and why a value that is set could not be read. A value G6 cannot read, a blank one included, allows none:
+    G6 never asks more than the person said."""
     raw = os.environ.get(BUDGET_ENV)
-    if raw is None or not raw.strip():
+    if raw is None:
         return DEFAULT_BUDGET, ""
     text = raw.strip()
     if text.isdigit() and int(text) <= MAX_BUDGET:
@@ -106,8 +119,18 @@ def _answer(text: object) -> Answer:
     return Answer.from_record(text.encode("ascii"))
 
 
-def _rules(kind: str, ident: str, body: dict, seen) -> list[str]:
-    """The store's own rules for an entry, given the entries before it (on every write and every read)."""
+def _rules(kind: str, ident: str, body: dict, seen, identity: str) -> list[str]:
+    """The store's own rules for an entry, given the entries before it (on every write and every read), and last
+    that it is bound to this task's identity."""
+    found = _kind_rules(kind, ident, body, seen)
+    if not found and body.get("task") != identity:
+        found = [f"a {kind} entry bound to another task (its task is not this store's identity), as a store copied "
+                 "from another task or repository holds: refused"]
+    return found
+
+
+def _kind_rules(kind: str, ident: str, body: dict, seen) -> list[str]:
+    """The rules for each kind of entry, given the entries before it."""
     try:
         if kind == ASKED:
             asked = _question(body.get("question"))
@@ -115,11 +138,11 @@ def _rules(kind: str, ident: str, body: dict, seen) -> list[str]:
                 return ["an asked entry's id is its question's digest"]
             if body.get("rule"):
                 rule = _question(body["rule"])
-                same = {k: v for k, v in asked.to_dict().items() if k != "scope"}
-                if {k: v for k, v in rule.to_dict().items() if k != "scope"} != same:
+                same = encoded({k: v for k, v in asked.to_dict().items() if k != "scope"})   # never Python's ==
+                if encoded({k: v for k, v in rule.to_dict().items() if k != "scope"}) != same:
                     return ["a rule's question asks the case's question, with another scope only"]
             data = body.get("candidate")
-            if not isinstance(data, str) or Candidate.make(**json.loads(data)).data != data:
+            if not isinstance(data, str) or Candidate.make(**decoded(data)).data != data:
                 return ["an asked entry holds the candidate it came from, as G6 made it"]
             return []
         asked = {one: entry for (k, one), entry in seen.items() if k == ASKED}
@@ -229,15 +252,68 @@ class TaskQuestions:
             raise ValueError("a task's identity is the SHA-256 task_identity gives")
         self.identity = identity
         self.path = state_path("questions", f"{identity}.jsonl")
+        self.head = state_path("questions", f"{identity}.head")
 
     def exists(self) -> bool:
-        return self.path.is_file()
+        """Whether anything is in the store's place or its head's: a store G6 opens (and refuses if it is not one)."""
+        return os.path.lexists(self.path) or os.path.lexists(self.head)
+
+    def _validate(self, kind: str, ident: str, body: dict, seen) -> list[str]:
+        return _rules(kind, ident, body, seen, self.identity)
+
+    def _regular(self, path: Path) -> bool:
+        """Whether ``path`` holds a regular file (never followed through a link); False when nothing is there."""
+        try:
+            return stat.S_ISREG(os.lstat(path).st_mode)
+        except FileNotFoundError:
+            return False
+
+    def _kept(self) -> str | None:
+        """The head G6 kept after its last write: None when there is none; ``StoreUnreadable`` for anything else."""
+        if not os.path.lexists(self.head):
+            return None
+        try:
+            if not self._regular(self.head):
+                raise OSError("its head's place holds something that is not a file")
+            text = self.head.read_text(encoding="ascii").strip()
+        except (OSError, UnicodeError) as exc:
+            raise StoreUnreadable(self.path, f"its head cannot be read: {exc}"[:300]) from None
+        if not _HEX64.match(text):
+            raise StoreUnreadable(self.path, "its head is not the SHA-256 of a ledger entry")
+        return text
+
+    def _keep(self, head: str) -> None:
+        """Keep ``head``, the chain's last entry, beside the store: written whole and then moved into place."""
+        part = self.head.with_name(self.head.name + ".part")
+        with part.open("w", encoding="ascii", newline="\n") as handle:
+            handle.write(head + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(part, self.head)
 
     def _open(self) -> ChainLedger:
+        """The store's chain, checked against the head G6 kept (the module's docstring); ``StoreUnreadable`` when it
+        does not check out."""
+        kept = self._kept()
+        if os.path.lexists(self.path) and not self._regular(self.path):
+            raise StoreUnreadable(self.path, "the store's place holds something that is not a file")
         try:
-            return ChainLedger(self.path, validate=_rules)
+            ledger = ChainLedger(self.path, validate=self._validate)
         except (LedgerError, OSError, UnicodeError) as exc:
             raise StoreUnreadable(self.path, str(exc)[:300]) from None
+        if ledger.head() != (kept or ""):
+            entries = ledger.entries()
+            before = entries[-2]["entry_sha256"] if len(entries) >= 2 else ""
+            if not entries or before != (kept or ""):
+                raise StoreUnreadable(self.path, "its chain does not end at the head G6 kept after its last write: "
+                                                 "it was emptied, cut back to an earlier prefix, or replaced")
+            self._keep(ledger.head())   # a stop between a write and its head: the head catches up
+        return ledger
+
+    def _append(self, ledger: ChainLedger, kind: str, ident: str, body: dict) -> None:
+        """One entry, bound to this task, then its head kept."""
+        ledger.append(kind, ident, {**body, "task": self.identity})
+        self._keep(ledger.head())
 
     def state(self) -> State:
         """What the store holds now; ``StoreUnreadable`` when it cannot be read."""
@@ -276,9 +352,9 @@ class TaskQuestions:
                     return one
             if state.left < 1:
                 raise BudgetSpent(note or f"the budget of {state.allowance} question(s) for this task is spent")
-            ledger.append(ASKED, question.sha256, {"question": question.record.decode("ascii"),
-                                                   "rule": rule.record.decode("ascii") if rule is not None else "",
-                                                   "candidate": candidate.data, "asked_at": at or now()})
+            self._append(ledger, ASKED, question.sha256, {
+                "question": question.record.decode("ascii"), "rule": rule.record.decode("ascii") if rule is not None
+                else "", "candidate": candidate.data, "asked_at": at or now()})
             return self._read(ledger, default, note).asked[-1]
 
     def show(self, asked: Asked, result: str, *, shown_at: str, back_at: str, seconds: float) -> None:
@@ -286,8 +362,8 @@ class TaskQuestions:
         with _locked(self.path):
             ledger = self._open()
             ident = digest(["shown", asked.question.sha256, len(ledger.entries())])
-            ledger.append(SHOWN, ident, {"question_sha256": asked.question.sha256, "result": result,
-                                         "shown_at": shown_at, "back_at": back_at, "seconds": round(seconds, 3)})
+            self._append(ledger, SHOWN, ident, {"question_sha256": asked.question.sha256, "result": result,
+                                                "shown_at": shown_at, "back_at": back_at, "seconds": round(seconds, 3)})
 
     def answer(self, answer: Answer) -> State:
         """Record the person's answer; ``AnswerRefused`` when its question is not one G6 asked, or was answered."""
@@ -297,7 +373,7 @@ class TaskQuestions:
         with _locked(self.path):
             ledger = self._open()
             try:
-                ledger.append(ANSWER, answer.sha256, {"answer": answer.record.decode("ascii")})
+                self._append(ledger, ANSWER, answer.sha256, {"answer": answer.record.decode("ascii")})
             except LedgerError as exc:
                 raise AnswerRefused(f"[{REFUSED}] {exc}") from None
             return self._read(ledger, default, note)
@@ -307,7 +383,7 @@ class TaskQuestions:
         with _locked(self.path):
             ledger = self._open()
             ident = digest(["more", asked.question.sha256, len(ledger.entries())])
-            ledger.append(MORE, ident, {"question_sha256": asked.question.sha256, "by": by, "at": at or now()})
+            self._append(ledger, MORE, ident, {"question_sha256": asked.question.sha256, "by": by, "at": at or now()})
 
 
 __all__ = ["ANSWER", "ASKED", "AnswerRefused", "Asked", "BUDGET_ENV", "BudgetSpent", "DEFAULT_BUDGET", "MAX_BUDGET",

@@ -1182,7 +1182,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     if confirmed is not None:
         from g6.harness import confirmed_checks
         enforced = _stage(stopped, "the confirmed expectations", confirmed_checks.run, root, change, confirmed,
-                          deadline=deadline, artifact=artifact, roots=roots,
+                          deadline=deadline, artifact=artifact, roots=roots, before=before,
                           skip=INTEGRITY_SKIP if any(r["stage"] == "integrity" for r in reasons) else "")
         enforced = enforced if enforced is not None else [
             {"expectation_id": one.expectation_id, "result": confirmed_checks.NOT_RUN, "runs": {},
@@ -1190,6 +1190,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             for one in confirmed.expectations]
         for found in enforced:
             said = f"the case the person confirmed ({found['expectation_id'][:12]})"
+            if found.get("tree_changed"):   # review I4's rule, for a copy: a run that began on another tree
+                reason("integrity", "repository_changed_during_review", f"the run of {said} was to begin on a "
+                       "working tree other than the one under review (its digest is not the artifact digest)")
             if found["result"] == confirmed_checks.FAILED:
                 detail = f"{said} fails on the patch: {found.get('detail', '')}"
                 reasons.append({"stage": "tier_1", "code": CONFIRMED_FAILED, "detail": detail})

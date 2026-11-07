@@ -403,20 +403,25 @@ def _gate_note(assessment: dict) -> str:
     return f"; {count} proposed check{'s' if count != 1 else ''} could not be judged" if count else ""
 
 
-def _outcome_words(outcome: object) -> str:
-    if not isinstance(outcome, dict):
-        return "an outcome G6 cannot read"
-    if "raises" in outcome:
-        return f"raises {outcome['raises']}"
-    if "effect" in outcome:
-        return f"leaves argument {(outcome['effect'] or {}).get('argument')} as {(outcome['effect'] or {}).get('equals')}"
-    return f"returns {outcome.get('returns')}"
+def _question_sha256(question: object) -> str:
+    """The digest of a question's record as the assessment holds it (its canonical JSON), which is its identity."""
+    from g6.core.ledger import digest
+
+    try:
+        return digest(question)
+    except (TypeError, ValueError, RecursionError):
+        return "(a question G6 cannot write)"
 
 
 def _confirmed(assessment: dict) -> list[list[str]]:
-    """G6 0.3, slice 3: each expectation the person confirmed (``assessment.confirmed_expectations``): the case asked,
-    the option chosen and its outcome, the scope, who answered (recorded as given, not authenticated), its check's
-    result on the patch and the issuer's statement. No model result is among them."""
+    """G6 0.3, slice 3: each expectation the person confirmed (``assessment.confirmed_expectations``): the case asked
+    (its positional and keyword arguments) and the outcome chosen, shown as the behaviour form shows them, in the one
+    encoding of an outcome (``behaviour_question.shown_call``, ``shown_outcome``), the question's digest, so two cases
+    that differ never read alike even where a long one is cut, the option chosen, the scope, who answered (recorded as
+    given, not authenticated), its check's result on the patch and the issuer's statement. No model result is among
+    them."""
+    from g6.harness import behaviour_question as bq
+
     held = assessment.get("confirmed_expectations") or {}
     statements = {s.get("expectation"): s for s in (held.get("evidence") or {}).get("expectations", [])}
     items = []
@@ -426,11 +431,11 @@ def _confirmed(assessment: dict) -> list[list[str]]:
         statement = statements.get(one.get("expectation_id")) or {}
         issuer = ("checked" if statement.get("checked") else "refuted" if statement.get("refute") else
                   f"not counted yet ({_words(statement.get('not_counted', '') or statement.get('gap', ''))})")
-        call = f"{question.get('function', '')} {question.get('args', [])}"
-        items.append([f"- {code(call, 80)}: the person chose {code(option, 20)}, "
-                      f"{code(_outcome_words((question.get('outcomes') or {}).get(option)), 60)}, scope "
-                      f"{code(question.get('scope', ''), 80)}, answered by {code(answer.get('answered_by', ''), 60)} "
-                      "(recorded as given, not authenticated); "
+        outcomes = question.get("outcomes") if isinstance(question.get("outcomes"), dict) else {}
+        items.append([f"- {code(bq.shown_call(question), 200)}: the person chose {code(option, 20)}, "
+                      f"{code(bq.shown_outcome(outcomes.get(option)), 120)} (question SHA-256 "
+                      f"{code(_question_sha256(question), 70)}), scope {code(question.get('scope', ''), 80)}, answered "
+                      f"by {code(answer.get('answered_by', ''), 60)} (recorded as given, not authenticated); "
                       f"{CONFIRMED_RESULT.get(check.get('result'), 'its check gave no result')}; "
                       f"the evidence issuer: {code(issuer, 120)}"])
     return items

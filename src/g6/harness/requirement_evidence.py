@@ -284,6 +284,9 @@ CONFIRMED_BASE, CONFIRMED_AGAIN = RECEIPT + 1, RECEIPT + 2
 def _confirmed_not_counted(found: Mapping[str, Any]) -> str:
     """Why the issuer does not count a confirmed expectation, in words, from what the review ran."""
     runs = found.get("runs") or {}
+    if found.get("bound") is not True:
+        return ("its runs were not bound to the artefact: G6 ran them without the review's snapshot of the tree, so "
+                "nothing shows they ran on the bytes the artifact digest names")
     if found.get("result") != "passed":
         return f"its check did not pass on the patch ({found.get('result')}: {found.get('detail', '')})"[:300]
     base = (runs.get("base") or {}).get("result")
@@ -306,15 +309,19 @@ def confirmed_evidence(standard: Any, results: Sequence[Mapping[str, Any]], *, a
     certificate under the expectation standard (``ExpectationStandard``): each is a predicate of that standard, its
     check the example.v1 instance compiled from the person's answer (row ``person_confirmed``: its author is the person,
     never the patch's producer). Each run on the patch is a receipt, in the order it ran; the run at the base commit,
-    where the check failed, is its control. ``results``: ``confirmed_checks.run``'s, in the standard's order. With an
-    integrity problem, nothing is counted, as for the review's own requirements."""
+    where the check failed, is its control. ``results``: ``confirmed_checks.run``'s, in the standard's order. The
+    artefact digest reaches the issuer only for a result whose runs on the patch were bound to that artefact's bytes
+    (``bound``: the executor refused any copy that was not the tree the review snapshot); for any other, nothing is
+    counted. With an integrity problem, nothing is counted, as for the review's own requirements. The statement names
+    the standard it used: its digest and its revision."""
     from g6.harness.confirmed_expectation import PERSON_CONFIRMED
 
     facts = standard.facts(digest({"artifact": artifact, "base_commit": base_commit, "standard": standard.sha256}))
     environment_digest = environment_sha256(environment)
     records: list[SourceRecord] = []
     for one, found in zip(standard.expectations, results, strict=True):
-        ident, runs = one.expectation_id, found.get("runs") or {}
+        ident = one.expectation_id
+        runs = (found.get("runs") or {}) if found.get("bound") is True else {}   # only runs bound to the artefact
         controls = (Control(id_of("base-commit", ident), one.check_sha256, ident, "g6", CONFIRMED_BASE, True),) if (
             found.get("killed") is True) else ()   # the runner's one rule for a control (confirmed_checks)
         common = dict(kind=PERSON_CONFIRMED, predicates=(ident,), artefact_sha256=artifact, producer=PATCH_AUTHOR,
@@ -331,7 +338,8 @@ def confirmed_evidence(standard: Any, results: Sequence[Mapping[str, Any]], *, a
     try:
         issued = issue_records(facts, Artifact(artifact, PATCH_AUTHOR, ARTEFACT), records)
     except (CertificateRefused, ValueError, TypeError) as exc:
-        return {"authority": "g6.evidence.certificate", "refused_by_issuer": str(exc), "expectations": [],
+        return {"authority": "g6.evidence.certificate", "standard_sha256": standard.sha256,
+                "standard_revision": standard.revision, "refused_by_issuer": str(exc), "expectations": [],
                 "refused": []}
     certificate = issued.certificate
     artefact = Artifact(artifact, PATCH_AUTHOR, ARTEFACT)
@@ -344,7 +352,8 @@ def confirmed_evidence(standard: Any, results: Sequence[Mapping[str, Any]], *, a
             item["not_counted"] = (f"{INTEGRITY} ({', '.join(integrity)})" if integrity else
                                    _confirmed_not_counted(found))
         expectations.append(item)
-    return {"authority": "g6.evidence.certificate", "standard_sha256": standard.sha256, "state": certificate.state,
+    return {"authority": "g6.evidence.certificate", "standard_sha256": standard.sha256,
+            "standard_revision": standard.revision, "state": certificate.state,
             "certificate": certificate.as_dict(), "expectations": expectations,
             "refused": [{"record": rid, "codes": [{"code": code, "missing": why} for code, why in found]}
                         for rid, found in issued.refused]}

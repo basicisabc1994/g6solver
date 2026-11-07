@@ -14,9 +14,15 @@ the issuer has a pass its control (the run at the base commit) came before (``re
 stated check). A copy's run has no test receipt from the receipt store (only a run in place has one); the issuer's
 receipt binds the review's artefact digest.
 
-Its result is the review's like a stated check's: ``failed`` when it fails on the patch (a defect the review
-reproduces: what the person confirmed does not hold), ``passed`` when it passes there, and ``not_run`` with why
-otherwise. Nothing here decides the review's outcome; ``patch_review`` reads these results.
+Its result is the review's like a stated check's, read from every run on the patch: ``failed`` when any of them
+fails there (a defect the review reproduces: what the person confirmed does not hold), the first such run its
+reproduction; ``passed`` when it passes there and no run on the patch failed; and ``not_run`` with why otherwise.
+Nothing here decides the review's outcome; ``patch_review`` reads these results.
+
+Each run on the patch is bound to the bytes the issuer is told about: given the review's snapshot of the tree
+(``before``, whose digest is ``artifact``), the executor refuses a copy that is not that tree
+(``verification_search._run_check``'s ``artefact``), and such a refusal is recorded (``tree_changed``), never run.
+Without ``before`` nothing here is bound to the artefact (``bound`` false) and the issuer counts none of it.
 """
 from __future__ import annotations
 
@@ -46,11 +52,18 @@ def _result(on_patch: dict) -> tuple[str, str]:
     return NOT_RUN, f"on the patch it did not run to a result: {on_patch.get('detail', '')}"
 
 
+def _failed(on_patch: dict) -> bool:
+    """Whether a run on the patch observed the confirmed case fail (a failure G6 can read as the code's)."""
+    return vs._to_a_result(on_patch) and on_patch["result"] == "failed"
+
+
 def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *, deadline: float, artifact: str,
-        roots: Sequence[str] = (), skip: str = "") -> list[dict]:
+        roots: Sequence[str] = (), skip: str = "", before: dict[str, str] | None = None) -> list[dict]:
     """One result per expectation of ``standard``, in its order (the module's docstring). ``skip``: why none runs (an
-    integrity problem, say), each then ``not_run`` with that reason."""
+    integrity problem, say), each then ``not_run`` with that reason. ``before``: the review's snapshot of the tree,
+    whose digest is ``artifact``, to which each run on the patch is bound."""
     rooted = {"roots": tuple(roots)} if roots else {}
+    binding = {"artefact": before} if before is not None else {}
     found: list[dict] = []
     prepared = None
     if not skip:
@@ -61,7 +74,8 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
         result = {"expectation_id": ident, "question_sha256": one.question_sha256, "answer_sha256": one.answer_sha256,
                   "option": one.option, "answered_by": one.answered_by, "requirement_id": one.requirement_id,
                   "scope": one.scope, "template": "example.v1", "provenance": one.provenance,
-                  "check_sha256": one.check_sha256, "compiled": COMPILED, "runs": {}, "killed": False}
+                  "check_sha256": one.check_sha256, "compiled": COMPILED, "runs": {}, "killed": False,
+                  "bound": before is not None}
         found.append(result)
         if skip:
             result.update(result=NOT_RUN, detail=skip)
@@ -78,7 +92,9 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
 
         def read(at_base: bool) -> dict:
             ran = vs._run_check(change, placed, check.source, node, at_base=at_base,
-                                timeout_s=vs._bound(deadline - vs._clock()), **rooted)
+                                timeout_s=vs._bound(deadline - vs._clock()), **rooted, **({} if at_base else binding))
+            if ran.get(vs.NOT_THE_ARTEFACT_KEY):   # the executor refused a copy that is not the tree under review
+                result["tree_changed"] = ran.get("said", vs.NOT_THE_ARTEFACT)
             return vs._guarded(change, ran, vs.reading(ran, node))
 
         try:
@@ -86,6 +102,7 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
                 result.update(result=NOT_RUN, detail=vs.OUT_OF_TIME)
                 continue
             on_patch = read(at_base=False)
+            on_the_patch = [on_patch]   # every run on the patch, in the order it ran: each one's result is read
             result["runs"]["patch"] = vs._summary(on_patch)
             result["result"], result["detail"] = _result(on_patch)
             if deadline - vs._clock() >= vs.MIN_RUN_S:
@@ -95,15 +112,19 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
                 # failed outside the repository's own code is no failure of it); the issuer's adapter reads this
                 killed = result["killed"] = vs._to_a_result(at_base) and at_base["result"] == "failed"
                 if result["result"] == PASSED and killed and deadline - vs._clock() >= vs.MIN_RUN_S:
-                    result["runs"]["again"] = vs._summary(read(at_base=False))
-            if result["result"] == FAILED:
+                    again = read(at_base=False)
+                    on_the_patch.append(again)
+                    result["runs"]["again"] = vs._summary(again)
+            failing = next((found for found in on_the_patch if _failed(found)), None)
+            if failing is not None:   # any run on the patch that observed the case fail: a defect
+                result["result"], result["detail"] = FAILED, failing.get("detail", "")
                 result["reproduction"] = {"check": ident, "file": placed, "text": check.source,
                                           "sha256": result["source_sha256"], "node": node,
-                                          **vs.reproduce(node, on_patch), "how": vs.HOW, "caution": CAUTION,
-                                          "patched_tree_digest": on_patch.get("tree_digest", ""),
+                                          **vs.reproduce(node, failing), "how": vs.HOW, "caution": CAUTION,
+                                          "patched_tree_digest": failing.get("tree_digest", ""),
                                           "artifact_digest": artifact, "base_commit": change.base_commit,
                                           "template": "example.v1", "compiled": COMPILED,
-                                          "on_patch": f"{on_patch['result']}: {on_patch.get('detail', '')}"}
+                                          "on_patch": f"{failing['result']}: {failing.get('detail', '')}"}
         except (component_process.ExecutionInterrupted, component_process.ContainmentFailure, repo_tests.RepoRefused):
             raise   # an operator stop, unconfirmed cleanup or a refusal (no boundary) still reaches the door
         except Exception as exc:   # G6's own work: this expectation is not enforced, and says why

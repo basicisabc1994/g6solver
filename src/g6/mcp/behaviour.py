@@ -17,6 +17,10 @@ so the person can answer when the tool is called again. With no candidate the qu
 
 ``enforced`` is what ``g6_review_patch`` reads: the standard of the expectations the person confirmed for the task, or
 None when G6 asked nothing about it; a store it cannot read refuses the review rather than enforcing nothing.
+``reviewed`` runs a queued review with the standard read when the review executes, never when it was queued, so an
+answer given while it waited is the one enforced; and it binds the reply G6 saves to the task (``task_identity``). A
+saved review gives candidates only when it is bound to this task and repository and its artefact digest is the digest
+of the tree the question is asked about.
 """
 from __future__ import annotations
 
@@ -56,10 +60,35 @@ NEXT = {
 _JOB = re.compile(r"[0-9a-f]{32}\Z")
 
 
-def _review_candidates(task: str, review_job: str, template_instances: Any) -> list[bq.Candidate]:
+#: The refusal of a saved review that is not about the task, repository and tree the question is asked about.
+NOT_THIS_REVIEW = "G6_E_QUESTION_REVIEW_NOT_BOUND"
+
+
+def bound(reply: Any, identity: str | None) -> Any:
+    """``reply``, a finished review's, bound to the task it reviewed (``task_identity``, ``question_store``'s): the
+    whole reply G6 saves carries it, and nothing it decides changes. A refusal, or a review of no task G6 could name,
+    is returned as it is."""
+    if identity is None or not isinstance(reply, dict) or not isinstance(reply.get("assessment"), dict):
+        return reply
+    return {**reply, "task_identity": identity}
+
+
+def identity_of(repo: str, task: str) -> str | None:
+    """The task's identity (``question_store.task_identity``), or None for a task or repository the review refuses."""
+    if not isinstance(task, str) or not task.strip():
+        return None
+    try:
+        return qs.task_identity(repo_tests.checked_repo(repo), task)
+    except (repo_tests.RepoRefused, OSError, ValueError):
+        return None
+
+
+def _review_candidates(task: str, review_job: str, template_instances: Any, *, identity: str,
+                       artifact: str) -> list[bq.Candidate]:
     """The candidates a finished review's differences give: G6 reads its own saved reply (``reviews/<job>.json``) for
-    what it observed, and takes the instances' bindings from ``template_instances``, each held to the review's record
-    of it by its digest."""
+    what it observed, only when the reply is bound to this task's ``identity`` (its repository and text) and its
+    artefact digest is ``artifact``, the tree the question is asked about; and takes the instances' bindings from
+    ``template_instances``, each held to the review's record of it by its digest."""
     if not review_job:
         return []
     if not isinstance(review_job, str) or not _JOB.match(review_job):
@@ -72,6 +101,13 @@ def _review_candidates(task: str, review_job: str, template_instances: Any) -> l
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise bq.CandidateRefused(f"G6 holds no finished review with this job id it can read ({type(exc).__name__})"
                                   ) from None
+    if saved.get("task_identity") != identity:
+        raise bq.CandidateRefused("that review is not bound to this task and repository: G6 takes a review's "
+                                  "observations only for the task and repository it reviewed", NOT_THIS_REVIEW)
+    if saved.get("artifact_digest") != artifact:
+        raise bq.CandidateRefused("that review observed another tree: the working tree changed after it, so its "
+                                  "observations are not about the tree the question is asked about; review again",
+                                  NOT_THIS_REVIEW)
     items = template_instances or []
     named = {item.get("requirement_id") for item in items if isinstance(item, dict)}
     try:
@@ -140,16 +176,19 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
         root = repo_tests.checked_repo(repo)
     except repo_tests.RepoRefused as exc:
         return blocked_reply(f"[{exc.code}] {exc}")
-    store = qs.TaskQuestions(qs.task_identity(root, task))
+    identity = qs.task_identity(root, task)
+    store = qs.TaskQuestions(identity)
     try:
         state = store.state()
         asked, plan = state.pending, None
         if asked is None:
+            # the tree the question is asked about, which a saved review must have observed
+            artifact = digest(repo_tests.snapshot(root)) if review_job else ""
             try:
-                made = [*bq.caller_candidates(task, candidates), *_review_candidates(task, review_job,
-                                                                                     template_instances)]
+                made = [*bq.caller_candidates(task, candidates), *_review_candidates(
+                    task, review_job, template_instances, identity=identity, artifact=artifact)]
             except bq.CandidateRefused as exc:
-                return blocked_reply(f"[G6_E_INPUT_VALIDATION] {exc}")
+                return blocked_reply(f"[{exc.code}] {exc}")
             plan = bq.plan(made)
             chosen = bq.choose(made)
             if chosen is None:
@@ -157,7 +196,7 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
             if state.left < 1:
                 return _reply(SPENT, state.budget_note or "the task's budget is spent", state=state,
                               candidate=chosen, plan=plan)
-            case, rule = chosen.questions(digest(repo_tests.snapshot(root)))
+            case, rule = chosen.questions(artifact or digest(repo_tests.snapshot(root)))
             try:
                 asked = store.ask(case, rule, chosen)
             except qs.BudgetSpent as exc:
@@ -201,5 +240,17 @@ def enforced(repo: str, task: str) -> Any:
     return standard if standard.expectations else None
 
 
-__all__ = ["CODES", "CONFIRMED", "HELD", "IDENTITY", "NOT_CONFIRMED", "PENDING", "SPENT", "WHO", "confirm",
-           "enforced"]
+def reviewed(review: Any, repo: str, task: str, **kwargs: Any) -> Any:
+    """A queued ``g6_review_patch``, as its job runs it: the standard the person confirmed for the task read now, when
+    the review executes (``enforced``), so an answer given while it waited is the one enforced; a store G6 cannot read
+    refuses the review. The reply is bound to the task (``bound``)."""
+    try:
+        confirmed = enforced(repo, task)
+    except qs.StoreUnreadable as exc:
+        return blocked_reply(str(exc))
+    held = {"confirmed": confirmed} if confirmed is not None else {}
+    return bound(review(repo, task=task, **kwargs, **held), identity_of(repo, task))
+
+
+__all__ = ["CODES", "CONFIRMED", "HELD", "IDENTITY", "NOT_CONFIRMED", "NOT_THIS_REVIEW", "PENDING", "SPENT", "WHO",
+           "bound", "confirm", "enforced", "identity_of", "reviewed"]

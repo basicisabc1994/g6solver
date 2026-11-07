@@ -271,17 +271,17 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         from g6.mcp import behaviour
         from g6.mcp.review_reply import finish, review
 
-        try:   # what the person confirmed for this task (g6_confirm_behaviour), read from G6's store, never an argument
-            confirmed = behaviour.enforced(repo, task)
+        try:   # a store G6 cannot read refuses the review at once; what it holds is read again when the review runs
+            behaviour.enforced(repo, task)
         except StoreUnreadable as exc:
             return blocked_reply(str(exc))
-        held = {"confirmed": confirmed} if confirmed is not None else {}
-        return jobs.start(lambda: review(repo, task=task, requirements=requirements or [], tests=tests or [],
-                                         claim=claim, sources=sources, base=base,
-                                         expected_artifact_digest=expected_artifact_digest, timeout_s=timeout_s,
-                                         intent=intent, proposed_checks=proposed_checks,
-                                         template_instances=template_instances, search=search,
-                                         import_roots=import_roots or [], **held), compact=finish)
+        # what the person confirmed for this task (g6_confirm_behaviour), read from G6's store, never an argument, and
+        # read when the review executes, so an answer given while it waits is the one enforced
+        return jobs.start(lambda: behaviour.reviewed(
+            review, repo, task, requirements=requirements or [], tests=tests or [], claim=claim, sources=sources,
+            base=base, expected_artifact_digest=expected_artifact_digest, timeout_s=timeout_s, intent=intent,
+            proposed_checks=proposed_checks, template_instances=template_instances, search=search,
+            import_roots=import_roots or []), compact=finish)
 
     @server.tool()
     def g6_review_until_clean(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
@@ -462,8 +462,9 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         outcomes {A: {returns|raises|effect}, B: {...}}, cited (a verbatim quote of the task), evidence (lines of
         repository evidence), optional settled [{outcome, by: a quote of the task}], scope, rule (a stated rule the
         person may confirm instead of the one case)}], taken first; and from a finished g6_review_patch job
-        (review_job) whose differential.v1 instances with intent change, given again as template_instances, G6 saw
-        the base commit and the patch disagree on. G6 picks one by a fixed priority and says why; coverage and whether
+        (review_job) of the same repo, task and working tree, whose differential.v1 instances with intent change,
+        given again as template_instances, G6 saw the base commit and the patch disagree on. A candidate's two
+        outcomes must compete. G6 picks one by a fixed priority and says why; coverage and whether
         the task decides the behaviour stay unknown. One question per task by default, kept across calls: a question
         not yet answered is shown again first; with no candidate the question is held. The person may choose A or B,
         neither, the premise is wrong, the task already says, or skip, add text, confirm the case or the rule shown,
