@@ -240,7 +240,10 @@ def result_faults(result: Mapping[str, Any]) -> list[str]:
     :func:`settled` make, or ``[]`` when it is: the one check of that format, which the makers and :func:`claims` both
     read. A ``blocked-escalated`` result carries a code g6.cognitive_bridge registered (:data:`CODES`) and a warning
     card for that code that claims nothing; a ``qualified-draft`` one claims nothing more: a card, if it has one,
-    claims nothing. Any other ``completion_state`` is not one of the bridge's states."""
+    claims nothing. Any other ``completion_state`` is not one of the bridge's states. ``result`` is read by its exact
+    type (:data:`OBJECTS`): a mapping subclass, whose own methods would answer the reads, is not a result."""
+    if type(result) not in OBJECTS:
+        return [f"a {_named(result)} is not a result: a JSON object"]
     state, card = result.get("completion_state"), result.get("warning_card")
     if state not in STATES:
         return [f"completion_state {state!r} is not one of the bridge's states"]
@@ -341,8 +344,11 @@ def only_fields(value: Any, *, allowed: tuple[str, ...], required: tuple[str, ..
     """``value`` when it is a mapping with every ``required`` field, no field but ``allowed`` and no claim anywhere in it
     (:func:`claims`), else ``ValueError`` (:class:`NotPlainData` for what is not JSON data): what the bridge credits
     from a collaborator, and republishes, carries only its format's fields, and none of them claims a state the bridge
-    did not decide. What it returns is what the boundary made of it, read-only."""
-    if not isinstance(value, dict):
+    did not decide. It is read once, by the boundary, before any check reads it (``snapshot.plain``: a mapping subclass,
+    whose own methods would answer the checks, is refused there); what it returns is what the boundary made of it,
+    read-only."""
+    value = _plain(value, where=where)
+    if type(value) is not dict:
         raise ValueError(f"{where} is a mapping of its format's fields")
     missing, extra = sorted(set(required) - set(value)), sorted(set(value) - set(allowed), key=str)
     if missing or extra:
@@ -356,11 +362,28 @@ def _no_reserved(values: Mapping[str, Any], where: str) -> None:
         raise ValueError(f"{where} may not set {', '.join(taken)}: only codes.refusal and codes.settled write them")
 
 
-def _card(code: str, reason: str, card: Mapping[str, Any] | None) -> dict[str, Any]:
-    """The warning card a refusal carries: a new one for ``code``, or a supplied card as the bridge reads one
-    (:func:`_read_card`: the boundary first, then a strict ``WarningCard``). Whether it is a card for a registered code
-    that claims nothing is :func:`result_faults`' to say."""
-    return warning_card(code, reason) if card is None else _read_card(card)
+def _card(code: Any, reason: Any, card: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The warning card a result carries, read the one way the bridge reads a card (:func:`_read_card`: the boundary
+    first, then a strict ``WarningCard``): a supplied card; or a new one for ``code`` and ``reason``, which G6's own
+    constructor (``warning_card``) is handed only once the boundary has taken both as text (``snapshot.text``: bytes, a
+    number or a set is refused, never decoded or made text), so it converts nothing. Whether it is a card for a
+    registered code that claims nothing is :func:`result_faults`' to say."""
+    if card is not None:
+        return _read_card(card)
+    return _read_card(warning_card(_text(code, where="a card's code"), _text(reason, where="a card's message")))
+
+
+def _draft_card(draft_card: Any) -> dict[str, Any]:
+    """A draft's card, ``(code, message)``, as the bridge takes it: read once by the boundary (``snapshot.plain``:
+    bytes, a set or any other object is refused there), a pair of text (``snapshot.text``) whose code is one
+    g6.cognitive_bridge registered; the card :func:`_card` makes of them."""
+    taken = _plain(draft_card, where="a draft's card")
+    if type(taken) is not list or len(taken) != 2:
+        raise ValueError("a draft's card is a pair: (code, message)")
+    code, message = _text(taken[0], where="a draft card's code"), _text(taken[1], where="a draft card's message")
+    if code not in CODES:
+        raise ValueError(f"{code!r} is not a code g6.cognitive_bridge registered")
+    return _card(code, message, None)
 
 
 def refusal(code: str, reason: str, *, card: Mapping[str, Any] | None = None, **extra: Any) -> dict[str, Any]:
@@ -384,18 +407,18 @@ def settled(refused: Mapping[str, Any] | None, *, draft_card: tuple[str, str] | 
             **fields: Any) -> dict[str, Any]:
     """``fields`` under the state a result has: ``refused`` (a refusal :func:`refusal` made, in its format and
     unchanged, made again here so a changed state, code or card is refused), or ``qualified-draft``, with a card for a
-    registered code when ``draft_card`` (``(code, message)``) is given. ``fields`` may not set any of :data:`RESERVED`.
-    What it returns claims no state anywhere (:func:`unclaimed`) and is what the boundary made of it
-    (``snapshot.plain``)."""
+    registered code when ``draft_card`` (``(code, message)``, :func:`_draft_card`) is given. ``refused`` and
+    ``draft_card`` are each read once, by the boundary, before anything reads them (``snapshot.plain``). ``fields`` may
+    not set any of :data:`RESERVED`. What it returns claims no state anywhere (:func:`unclaimed`) and is what the
+    boundary made of it (``snapshot.plain``)."""
     _no_reserved(fields, "a result's fields")
     if refused is None:
         out = {**fields, "completion_state": "qualified-draft"}
         if draft_card is not None:
-            if draft_card[0] not in CODES:
-                raise ValueError(f"{draft_card[0]!r} is not a code g6.cognitive_bridge registered")
-            out["warning_card"] = _card(draft_card[0], draft_card[1], None)
+            out["warning_card"] = _draft_card(draft_card)
         return _plain(unclaimed(out, where="a result"), where="a result")
-    if (draft_card is not None or not isinstance(refused, dict) or refused.get("completion_state") != STATES[1]
+    refused = _plain(refused, where="a refusal handed to settled")
+    if (draft_card is not None or type(refused) is not dict or refused.get("completion_state") != STATES[1]
             or set(refused) & (set(RESERVED) - set(_MADE)) or result_faults(refused)):
         raise ValueError("settled takes a refusal codes.refusal made, unchanged, or None")
     rest = {k: v for k, v in refused.items() if k not in RESERVED and k != "reason"}

@@ -4,11 +4,15 @@
 No arbitrary model or tool code crosses this door. Agentic calls and in-memory
 ML predictor adapters are deliberately Python-only dependency injection.
 
-The block's arguments are read by the bridge's boundary first, in their raw form (``snapshot.plain``, in
-:meth:`CognitiveBridgeBlock.screen_raw` at G6's door and in :meth:`CognitiveBridgeBlock.infer` for a Python caller),
-and only then by its models, which are strict: no field is converted from another kind (a flag, numeric text or null
-where a number is due is refused, not read as one). ``tests/cognitive_bridge/test_conversion_inventory.py`` lists every
-model and every conversion in the package from the code.
+The block's arguments are read once, by the bridge's boundary, in their raw form (:func:`_arguments`:
+``snapshot.plain`` of what they are as given, an exact :class:`CognitiveInput` by its fields as the caller set them and
+never serialized first), and everything after reads only that read: at G6's door,
+:meth:`CognitiveBridgeBlock.screen_raw` takes the read and :meth:`CognitiveBridgeBlock.infer` answers from it, refusing
+the call when the typed input G6's registry then rebuilt from the caller's objects no longer reads the same; from Python,
+``infer`` reads what it is handed. The models are strict: no field is converted from another kind (a flag, numeric text
+or null where a number is due is refused, not read as one). ``tests/cognitive_bridge/test_conversion_inventory.py`` lists
+every model and every conversion in the package from the code, and ``tests/cognitive_bridge/test_read_inventory.py``
+every function between the boundary and typed validation.
 """
 from __future__ import annotations
 
@@ -24,7 +28,7 @@ from .engine import BayesianUpdater, Hypothesis, InformationGainSelector, Probe,
 from .mixed_methods import ClaimIR, MethodRouter
 from .metacognition import MetacognitiveMethodSelector, ProblemSignature, MethodVariant
 from .assurance import DOCUMENT_FIELDS
-from .snapshot import plain
+from .snapshot import canonical_json, plain
 
 #: Every model here reads a caller's data, after the boundary has read it raw: strict (no field converted from another
 #: kind) and closed (no field it does not declare).
@@ -113,10 +117,57 @@ def _answered(fields: dict[str, Any]) -> Result[dict]:
     return Result.ok(plain(unclaimed(fields, where="the block's answer"), where="the block's answer"))
 
 
-def _arguments(raw: Any) -> Any:
-    """The block's arguments as the boundary reads them, raw, before any model does (``snapshot.plain``): plain JSON
-    data, or :class:`NotPlainData` (a NaN, a set, bytes, a subclass, any other object)."""
-    return plain(raw, where="the block's arguments")
+#: The models a :class:`CognitiveInput` holds, each read by its fields as the caller set them (:func:`_as_given`); a
+#: value of any other class, a subclass among them, is handed to the boundary as it is, and refused there.
+_NESTED: tuple[type[BaseModel], ...] = (HypothesisInput, ProbeInput, ClaimInput, ProblemSignatureInput,
+                                        MethodVariantInput)
+
+
+def _fields(model: BaseModel) -> dict[str, Any]:
+    """An input model's fields as the caller set them, each read by its name: never serialized, so nothing in them is
+    made another kind before the boundary reads it. A field the model no longer holds is refused."""
+    try:
+        return {name: getattr(model, name) for name in type(model).model_fields}
+    except AttributeError as exc:
+        raise ValueError(f"an input model does not hold its fields: {exc}") from None
+
+
+def _as_given(given: Any) -> Any:
+    """What the block was handed, as the boundary reads it: an exact :class:`CognitiveInput` as its fields, each exact
+    nested model (:data:`_NESTED`, alone or an item of an exact list) as its fields, and anything else as it is, for the
+    boundary to take or refuse. Nothing is serialized: ``model_dump`` turned a dict subclass into a dict before the
+    boundary saw it (review 3 of PR #8's second follow-up, finding 2)."""
+    if type(given) is not CognitiveInput:
+        return given
+    out = {}
+    for name, item in _fields(given).items():
+        if type(item) is list:
+            out[name] = [_fields(x) if type(x) in _NESTED else x for x in item]
+        else:
+            out[name] = _fields(item) if type(item) in _NESTED else item
+    return out
+
+
+def _arguments(given: Any) -> Any:
+    """The block's arguments as the boundary reads them, once, raw, before any model does: ``snapshot.plain`` of what
+    they are as given (:func:`_as_given`), a new value that shares nothing with the caller's, or :class:`NotPlainData`
+    (a NaN, a set, bytes, a subclass, any other object)."""
+    return plain(_as_given(given), where="the block's arguments")
+
+
+def _unchanged(given: CognitiveInput, held: CognitiveInput) -> CognitiveInput:
+    """``held``, the typed input validated from what G6's door screened (:meth:`CognitiveBridgeBlock.screen_raw`),
+    when ``given``, the typed input the door's registry then rebuilt from the caller's objects and the boundary read in
+    ``infer``, reads the same by the bridge's canonical encoder; else the call is refused, since what was screened is
+    no longer what was asked (review 3, finding 5: a change between the two reads was what got planned). Each is
+    compared, and ``held`` answered from, with every default written out (validated once more from its own fields:
+    pydantic leaves a default unvalidated, so ``budget``'s ``0`` reads ``0.0`` once written out, as the registry's own
+    typed input carries it)."""
+    given = CognitiveInput.model_validate(_arguments(given))
+    held = CognitiveInput.model_validate(_arguments(held))
+    if canonical_json(_arguments(given)) != canonical_json(_arguments(held)):
+        raise ValueError("the block's arguments changed after G6's door screened them; nothing was answered")
+    return held
 
 
 @component_maturity("beta", reason="new typed bridge; its proposals, likelihoods and model fidelity are not "
@@ -129,27 +180,42 @@ def _arguments(raw: Any) -> Any:
 class CognitiveBridgeBlock(AIBlock[CognitiveInput, dict, dict]):
     def __init__(self, name: str = "cognitive_bridge", state: dict | None = None) -> None:
         super().__init__(name=name, state=state or {})
+        #: What :meth:`screen_raw` read at G6's door, for the call :meth:`infer` answers next (:meth:`_held`), or None.
+        self._screened: Any = None
 
     def screen_raw(self, raw: dict[str, Any]) -> Result[dict] | None:
         """Before typed validation, on every door (``g6.core.registry``): the raw arguments as the boundary reads them
-        (:func:`_arguments`). What it refuses is the block's refusal under ``codes.INPUT``; otherwise ``None``, and the
-        strict models decide, so a value is read raw by the boundary before any model reads it."""
+        (:func:`_arguments`), the one read of them. What it refuses is the block's refusal under ``codes.INPUT``;
+        otherwise ``None``, and the read is kept for :meth:`infer`, which answers from it (G6's registry, a bound file,
+        hands ``infer`` only the typed input it rebuilds from the caller's objects)."""
+        self._screened = None
         try:
-            _arguments(raw)
+            screened = _arguments(raw)
         except NotPlainData as exc:
             return self._refused(exc)
+        self._screened = screened
         return None
+
+    def _held(self) -> Any:
+        """What :meth:`screen_raw` read for the call :meth:`infer` now answers, taken once (None when it read
+        nothing): the boundary's snapshot, which no one else holds."""
+        screened, self._screened = getattr(self, "_screened", None), None
+        return screened
 
     def _refused(self, exc: Exception) -> Result[dict]:
         """The block's refusal of its input, under ``codes.INPUT``, saying why."""
         return _answered({"component": self.name, **refusal(INPUT, str(exc))})
 
     def infer(self, data: CognitiveInput) -> Result[dict]:
-        # The registry hands a CognitiveInput its strict models read after screen_raw; a Python caller may pass the
-        # plain dict. Either way the arguments are read raw by the boundary, then by the strict models.
+        # At G6's door the registry hands a CognitiveInput it rebuilt from the caller's objects after screen_raw read
+        # them: the answer is made from screen_raw's read, and the call refused when the two no longer read alike. A
+        # Python caller may pass the plain dict or a CognitiveInput: its one read is here. Either way the arguments are
+        # read raw by the boundary first, then by the strict models.
+        screened = self._held()  # taken first, so a read is never left for another call
         try:
-            raw = data.model_dump() if type(data) is CognitiveInput else data
-            d = CognitiveInput.model_validate(_arguments(raw))
+            d = CognitiveInput.model_validate(_arguments(data))
+            if screened is not None:
+                d = _unchanged(d, CognitiveInput.model_validate(screened))
             if d.op == "ops":
                 return _answered({"component": self.name, **settled(
                     None, ops=list(_OPS),

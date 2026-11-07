@@ -9,13 +9,15 @@ screen at G6's door, and ``infer`` for a Python caller) and every model in the p
 field by the kind its annotation declares (a number, an integer, a flag).
 
 This lists from the code every pydantic model and every model validation in the package; every ``str()``,
-``float()``, ``int()`` and ``bool()`` call, and every other conversion (``bytes()``, ``complex()``, ``.item()`` and
-``_native``, ``.decode()``, ``.encode()``, ``json.loads``, ``struct.pack``) on a value derived from a parameter of the
+``float()``, ``int()`` and ``bool()`` call, and every other conversion (``bytes()``, ``complex()``, ``.item()``,
+``.tolist()``, ``.decode()``, ``.encode()``, ``json.loads``, ``struct.pack``) on a value derived from a parameter of the
 function it is in; every record field that declares a number, an integer or a flag; and every public parameter that
 declares one. Each conversion is the boundary itself, or reads only the bridge's own value, or comes after a rule (or
-an estimator's value made Python's own before its rule); each is named here with which. Then a flag, numeric text,
-null, NaN, a set and bytes are planted at each place a caller's value reaches, and each is refused unless it is that
-place's own kind."""
+an estimator's value made Python's own and handed straight to the boundary); each is named here with which. Then a
+flag, numeric text, null, NaN, a set and bytes are planted at each place a caller's value reaches, and each is refused
+unless it is that place's own kind. Review 3 of PR #8's second follow-up made ``xai._native`` the one reader of an
+estimator's values (``tolist``, then ``snapshot.plain``), so the places an estimator's name or class label enters are
+planted in ``test_read_inventory.py``, each with its own kind."""
 from __future__ import annotations
 
 import ast
@@ -106,8 +108,10 @@ def models() -> set[tuple[str, str]]:
 
 EXPECTED_MODELS = {("block.py", name) for name in ("HypothesisInput", "ProbeInput", "ClaimInput", "ProblemSignatureInput",
                                                     "MethodVariantInput", "CognitiveInput")}
-#: The boundary's conversion, by the names a validation's input may be made by.
-BOUNDARY = {"plain", "_plain", "_arguments", "snapshot"}
+#: The boundary's conversion, by the names a validation's input may be made by. ``_held`` hands ``infer`` the read
+#: ``screen_raw`` took through ``_arguments`` at G6's door, once (``test_read_inventory.py`` checks it holds nothing
+#: else).
+BOUNDARY = {"plain", "_plain", "_arguments", "snapshot", "_held"}
 
 
 def test_the_models_are_listed_from_the_code():
@@ -137,8 +141,12 @@ def validations():
     return found
 
 
-EXPECTED_VALIDATIONS = {("block.py", "CognitiveBridgeBlock.infer", "CognitiveInput.model_validate(_arguments(raw))"),
-                        ("codes.py", "_read_card", "WarningCard.model_validate(taken, strict=True)")}
+EXPECTED_VALIDATIONS = {
+    ("block.py", "CognitiveBridgeBlock.infer", "CognitiveInput.model_validate(_arguments(data))"),
+    ("block.py", "CognitiveBridgeBlock.infer", "CognitiveInput.model_validate(screened)"),
+    ("block.py", "_unchanged", "CognitiveInput.model_validate(_arguments(given))"),
+    ("block.py", "_unchanged", "CognitiveInput.model_validate(_arguments(held))"),
+    ("codes.py", "_read_card", "WarningCard.model_validate(taken, strict=True)")}
 
 
 def _made_by(fn, node, names) -> bool:
@@ -294,8 +302,8 @@ def test_the_raw_screen_reads_what_the_models_never_see():
 # --- 2. Every conversion, from the code ------------------------------------------------------------------------------
 
 #: The calls that make a value of one kind from another, by name, by method, and as module functions.
-CONVERTERS = {"str", "float", "int", "bool", "bytes", "complex", "_native"}
-METHODS = {"item", "decode", "encode"}
+CONVERTERS = {"str", "float", "int", "bool", "bytes", "complex"}
+METHODS = {"item", "tolist", "decode", "encode"}
 MODULE_FUNCTIONS = {("json", "loads"), ("struct", "pack")}
 
 
@@ -370,8 +378,8 @@ def conversions():
 _DUMPS = "json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=True, allow_nan=False)"
 #: Every conversion the code holds, compared whole, with how it stands to the boundary: ``boundary`` (the boundary's own
 #: conversion), ``own`` (it reads only a value the bridge made), ``ruled`` (what it converts was read by a rule first:
-#: the number or text rule, or an exact type test) or ``estimator`` (a fitted estimator's array item made Python's own
-#: value, read next by its rule or taken by a record).
+#: the number or text rule, or an exact type test) or ``estimator`` (a fitted estimator's array or scalar made Python's
+#: own values, handed straight to the boundary, ``snapshot.plain``, and read next by the rule for its kind).
 EXPECTED_CONVERSIONS = {
     ("assurance.py", "CandidateDossier.__post_init__", "bool", "blockers"):
         ("ruled", "the payload's blockers, tested first to be an array (a tuple): bool reads whether it is empty"),
@@ -404,21 +412,18 @@ EXPECTED_CONVERSIONS = {
         ("boundary", "a field a record declares as bytes: its exact type (bytes, bytearray, memoryview) tested first"),
     ("snapshot.py", "json_reply", "json.loads", "reply"):
         ("boundary", "a model's reply, tested first to be text, read as JSON with no repeated key, then by plain"),
-    ("xai.py", "_native", "item", "value"):
-        ("estimator", "numpy's scalar made Python's own value; every call of _native hands it to a rule or a record"),
-    ("xai.py", "_estimated", "_native", "value"): ("estimator", "read next by the number rule"),
+    ("xai.py", "_native", "tolist", "value"):
+        ("estimator", "numpy's array or scalar made Python's own values, handed straight to the boundary "
+                      "(snapshot.plain) in _native, the one reader of an estimator's values"),
     ("xai.py", "_float32", "struct.pack", "number(value, where='a tree input')"):
         ("ruled", "a tree input read by the number rule, as a float32"),
-    ("xai.py", "_distinct_names", "_native", "name"): ("estimator", "read next by the text rule"),
-    ("xai.py", "extract_tree.visit", "_native", "estimator.classes_[class_index]"):
-        ("estimator", "a class label, taken as data by the TreeNode record (plain, then the claim rule)"),
-    ("xai.py", "extract_tree.visit", "float", "_estimated(tree.value[node_id][0][0], where=f'{at}: its value')"):
-        ("ruled", "a regression leaf's value, read by the number rule: an integer read as its float"),
-    ("xai.py", "extract_tree.visit", "float", "_estimated(tree.threshold[node_id], where=f'{at}: its threshold')"):
+    ("xai.py", "extract_tree.visit", "float", "scores[0]"):
+        ("ruled", "a regression leaf's value, read by the number rule (_numbers): an integer read as its float"),
+    ("xai.py", "extract_tree.visit", "float", "_estimated(item('threshold', node_id), where=f'{at}: its threshold')"):
         ("ruled", "a split's threshold, read by the number rule: an integer read as its float"),
 }
-#: The rules a ruled conversion's value is read by first.
-RULES = {"number", "text", "_estimated", "type", "isinstance"}
+#: The rules a ruled conversion's value is read by first (``_numbers`` reads each item of a list by the number rule).
+RULES = {"number", "text", "_estimated", "_numbers", "type", "isinstance"}
 
 
 def test_the_conversions_are_listed_from_the_code():
@@ -455,21 +460,20 @@ def test_every_ruled_conversion_converts_what_a_rule_read_first(key):
     assert _ruled(fn, call), f"{key}: what it converts is not read by a rule first"
 
 
-def test_every_estimator_value_goes_straight_to_its_rule_or_a_record():
-    # every call of _native (numpy's scalar made Python's) is a rule's argument, or bound to a name a record takes
-    records = set(_record_classes())
-    for (module, name, converter, _), (call, fn) in conversions().items():
-        if converter != "_native":
-            continue
+def test_every_estimator_value_goes_straight_to_the_boundary():
+    # numpy's array or scalar made Python's own values (tolist) is the boundary's own first argument (snapshot.plain),
+    # in _native, the one reader of an estimator's values; test_read_inventory.py lists every read of an estimator, a
+    # learner and a black box, and the rule each value is read by next
+    found = [key for key, value in EXPECTED_CONVERSIONS.items() if value[0] == "estimator"]
+    assert found, "no estimator conversion listed"
+    for key in found:
+        call, fn = conversions()[key]
         parent = {c: p for p in ast.walk(fn) for c in ast.iter_child_nodes(p)}
         up = parent[call]
-        if isinstance(up, ast.Call) and getattr(up.func, "id", "") in RULES:
-            continue
-        assert isinstance(up, ast.Assign) and len(up.targets) == 1, f"{name}: {ast.unparse(up)}"
-        target = up.targets[0].id
-        assert any(isinstance(c, ast.Call) and getattr(c.func, "id", "") in records
-                   and any(isinstance(n, ast.Name) and n.id == target for n in ast.walk(c)) for c in ast.walk(fn)), \
-            f"{name}: {target} is not taken by a record"
+        while isinstance(up, ast.IfExp):
+            up = parent[up]
+        assert isinstance(up, ast.Call) and getattr(up.func, "id", "") == "plain" and any(
+            call in ast.walk(arg) for arg in up.args[:1]), f"{key[1]}: {ast.unparse(up)[:100]}"
 
 
 # --- 2b. A flag, numeric text, null, NaN, a set and bytes planted at each place a caller's value reaches --------------
@@ -534,21 +538,13 @@ PLANTS: dict[tuple[str, str, str, str], tuple[set[str], dict[str, Any]]] = {
     ("xai.py", "_float32", "struct.pack", "number(value, where='a tree input')"): (set(), {
         "a sample's feature": lambda v: ExplicitTree(("x",), TreeNode(value=1), "regression", "t").explain_one([v]),
         "a training row's feature": lambda v: distill_blackbox(None, [[v, 1.]] + ROWS[1:12], ROWS[12:], ["x", "y"])}),
-    ("xai.py", "_distinct_names", "_native", "name"): ({"numeric-text"}, {  # a name is text: "0.5" is one
-        "a feature name": lambda v: extract_tree(_Estimator(), [v]),
-        "a surrogate's feature name": lambda v: distill_blackbox(None, ROWS[:12], ROWS[12:], [v, "y"])}),
-    ("xai.py", "extract_tree.visit", "float", "_estimated(tree.threshold[node_id], where=f'{at}: its threshold')"):
-        (set(), {"a fitted threshold": lambda v: extract_tree(_Estimator(at="threshold", value=v), ["x"])}),
-    ("xai.py", "extract_tree.visit", "float", "_estimated(tree.value[node_id][0][0], where=f'{at}: its value')"):
+    ("xai.py", "extract_tree.visit", "float", "_estimated(item('threshold', node_id), where=f'{at}: its threshold')"):
+        (set(), {"a fitted threshold":lambda v: extract_tree(_Estimator(at="threshold", value=v), ["x"])}),
+    ("xai.py", "extract_tree.visit", "float", "scores[0]"):
         (set(), {"a fitted leaf value": lambda v: extract_tree(_Estimator(at="value", value=v), ["x"])}),
-    ("xai.py", "_estimated", "_native", "value"): (set(), {
+    ("xai.py", "_native", "tolist", "value"): (set(), {
         f"a fitted {name}": (lambda v, name=name: extract_tree(_Estimator(at=name, value=v), ["x"]))
-        for name in ("children_left", "children_right", "feature")}),
-    ("xai.py", "_native", "item", "value"):
-        (set(), {"a fitted array item": lambda v: extract_tree(_Estimator(at="threshold", value=v), ["x"])}),
-    ("xai.py", "extract_tree.visit", "_native", "estimator.classes_[class_index]"): (
-        {"flag", "numeric-text", "null"},  # a class label is any JSON leaf, kept as its kind
-        {"a fitted class label": lambda v: extract_tree(_Estimator(regression=False, label=v), ["x"])}),
+        for name in ("children_left", "children_right", "feature", "threshold")}),
 }
 #: The conversions not planted here, with why: those that read only the bridge's own value, and the boundary's own round
 #: trip (``plain`` and its encoder), which every planting here reaches first.

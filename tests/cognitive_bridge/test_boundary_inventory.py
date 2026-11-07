@@ -594,7 +594,12 @@ def test_a_decision_another_selector_issued_is_not_compiled(research):
 JSON_TYPES = {"dict", "list", "tuple", "str", "int", "float", "bool", "None", "NoneType", "bytes", "FrozenMap"}
 #: Where a type other than those is tested, with why: the boundary itself, and the MCP block's pydantic input.
 OUTSIDE = {"snapshot.py": "the boundary: it is where a caller's value is tested and converted",
-           "block.py:CognitiveInput": "the MCP door's block: what MCP sends, validated by its pydantic model"}
+           "block.py:CognitiveInput": "the MCP door's block: what MCP sends, validated by its pydantic model",
+           "block.py:_NESTED": "the MCP door's block: an exact CognitiveInput, and each exact model it holds, read by "
+                               "its fields for the boundary (block._as_given, review 3 of PR #8's second follow-up, "
+                               "finding 2); any other class is handed to the boundary as it is, and refused there"}
+#: The names block.py may test a type against, from OUTSIDE.
+_BLOCK_MODELS = {key.split(":", 1)[1] for key in OUTSIDE if key.startswith("block.py:")}
 
 
 def _type_tests():
@@ -617,6 +622,6 @@ def _type_tests():
 def test_nothing_after_the_boundary_tests_a_type_other_than_the_json_ones():
     allowed = JSON_TYPES | set(_record_classes()) | {"LEAVES", "OBJECTS", "ARRAYS"}
     bad = [f"{m}:{line} {sorted(names - allowed)}" for m, line, names in _type_tests()
-           if m != "snapshot.py" and names - allowed and not (m == "block.py" and names == {"CognitiveInput"})]
+           if m != "snapshot.py" and names - allowed and not (m == "block.py" and names <= _BLOCK_MODELS)]
     assert bad == [], "a type test after the boundary: " + "; ".join(bad)
     assert {kind.__name__ for kind in codes.LEAVES + codes.OBJECTS + codes.ARRAYS} <= JSON_TYPES

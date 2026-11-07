@@ -4,6 +4,16 @@
 This does not import a pickle or reconstruct arbitrary Python source. An exact
 structural transcription of a supported scikit-learn tree is different from
 an approximate surrogate of an arbitrary black-box model.
+
+Every value the bridge takes from an estimator, a learner or a black box (code
+it does not own) is read where it is taken, before anything uses it, by the
+reader for its kind: an estimator's value by :func:`_native` (the boundary,
+``snapshot.plain``), then a number by the number rule (:func:`_estimated`,
+``snapshot.number``), a name as text (``snapshot.text``) and a class label as
+a JSON leaf (:func:`_label`); a black box's predictions, training and held-out
+alike, the same way (:func:`_predictions`).
+``tests/cognitive_bridge/test_read_inventory.py`` lists every such read from
+the code.
 """
 from __future__ import annotations
 
@@ -12,24 +22,43 @@ import struct
 from dataclasses import asdict
 from typing import Any, Mapping, Sequence
 
-from .codes import DEPTH, NotPlainData, settled, unclaimed
-from .snapshot import _too_deep, fresh, number, record, returned, snapshot, text
+from .codes import DEPTH, NotPlainData, _read_as, settled, unclaimed
+from .snapshot import _too_deep, canonical_json, fresh, number, plain, record, returned, snapshot, text
 
 
-def _native(value: Any) -> Any:
-    """A fitted estimator's array item as Python's own value (numpy's ``item()``), for its rule to read next; nothing
-    else reads an estimator's values."""
-    return value.item() if hasattr(value, "item") else value
+def _native(value: Any, *, where: str) -> Any:
+    """A value a fitted estimator holds (an array, or one item of one) as the bridge reads it, the one reader of an
+    estimator's values: Python's own values (numpy's ``tolist``, for an array or a numpy scalar), taken by the boundary
+    (``snapshot.plain``: a NaN, a set, bytes, a subclass of a JSON type or any other object is refused, never
+    converted). Each value is then read by the rule for its kind."""
+    return plain(value.tolist() if hasattr(value, "tolist") else value, where=where)
 
 
 def _estimated(value: Any, *, where: str, index: bool = False) -> int | float:
-    """A number a fitted estimator's tree holds, as the record made of it takes it: Python's own value
-    (:func:`_native`), read by the number rule (``snapshot.number``: a flag, text or null is refused, never converted);
-    an index (a child or a feature) an integer."""
-    taken = number(_native(value), where=where)
+    """A number a fitted estimator holds, as the bridge takes it: read by :func:`_native`, then by the number rule
+    (``snapshot.number``: a flag, text or null is refused, never converted); an index or a count (a child, a feature,
+    the number of features or outputs) an integer."""
+    taken = number(_native(value, where=where), where=where)
     if index and type(taken) is not int:
-        raise NotPlainData(where, f"a {type(taken).__name__} is not an index")
+        raise NotPlainData(where, f"a {type(taken).__name__} is not an integer")
     return taken
+
+
+def _label(value: Any, *, where: str) -> Any:
+    """A class label (a fitted classifier's class, or a black box's prediction of one) as the bridge takes it: a JSON
+    leaf (text, a number, a flag or null, by the boundary's own leaf test, ``codes._read_as``), kept as its kind; an
+    object, an array or anything else is refused."""
+    taken = plain(value, where=where)
+    if _read_as(taken) not in ("text", "leaf"):
+        raise NotPlainData(where, f"a {type(taken).__name__} is not a class label: text, a number, a flag or null")
+    return taken
+
+
+def _numbers(value: Any, *, where: str) -> list[int | float]:
+    """A list a fitted estimator holds, each item read by the number rule (``snapshot.number``)."""
+    if type(value) is not list:
+        raise NotPlainData(where, f"a {type(value).__name__} is not a list of numbers")
+    return [number(item, where=f"{where}[{index}]") for index, item in enumerate(value)]
 
 
 def _float32(value: Any) -> float:
@@ -92,10 +121,12 @@ class ExplicitTree:
 
 
 def _distinct_names(names: Sequence[Any]) -> tuple[str, ...]:
-    """The feature names as the tree uses them: text (``snapshot.text``, after an estimator's own array item is made
-    Python's value), never a number or a flag made text, so ``1`` and ``True`` are refused, not read as ``"1"`` and
-    ``"True"``; and unique."""
-    used = tuple(text(_native(name), where=f"feature name {index}") for index, name in enumerate(names))
+    """The feature names as the tree uses them: a list of text (``snapshot.text``), never a number or a flag made
+    text, so ``1`` and ``True`` are refused, not read as ``"1"`` and ``"True"``; and unique. ``names`` is what the
+    boundary already took (the caller's snapshot, or an estimator's array read by :func:`_native`)."""
+    if type(names) not in (list, tuple):
+        raise NotPlainData("feature names", f"a {type(names).__name__} is not a list of names")
+    used = tuple(text(name, where=f"feature name {index}") for index, name in enumerate(names))
     if len(set(used)) != len(used):
         raise ValueError("feature names must be unique as the strings the tree reads them by")
     return used
@@ -104,13 +135,14 @@ def _distinct_names(names: Sequence[Any]) -> tuple[str, ...]:
 def _feature_names(estimator: Any, names: Sequence[str] | None) -> tuple[str, ...]:
     if not hasattr(estimator, "tree_") or not hasattr(estimator, "n_features_in_"):
         raise TypeError("estimator must be an already fitted, supported sklearn decision tree")
+    features = _estimated(estimator.n_features_in_, where="the estimator's n_features_in_", index=True)
     if names is None:
-        names = list(getattr(estimator, "feature_names_in_", [])) or [
-            f"x{i}" for i in range(estimator.n_features_in_)]
+        names = _native(getattr(estimator, "feature_names_in_", []), where="the estimator's feature_names_in_") or [
+            f"x{i}" for i in range(features)]
     used = _distinct_names(names)
-    if len(used) != estimator.n_features_in_:
+    if len(used) != features:
         raise ValueError("feature names must match fitted tree and be unique")
-    if getattr(estimator, "n_outputs_", 1) != 1:
+    if _estimated(getattr(estimator, "n_outputs_", 1), where="the estimator's n_outputs_", index=True) != 1:
         raise ValueError("multi-output trees not supported in explicit export")
     return used
 
@@ -131,40 +163,71 @@ def extract_tree(estimator: Any, feature_names: Sequence[str] | None = None,
     tree = estimator.tree_
     is_classifier = hasattr(estimator, "classes_")
     task = "classification" if is_classifier else "regression"
-    if is_classifier and not hasattr(estimator.classes_, "__len__"):
-        raise ValueError("unsupported class labels")
+    classes: list[Any] = []
+    if is_classifier:
+        listed = _native(estimator.classes_, where="the estimator's classes_")
+        if type(listed) is not list:
+            raise ValueError("unsupported class labels")
+        classes = [_label(label, where=f"the estimator's class {index}") for index, label in enumerate(listed)]
+
+    arrays: dict[str, list[Any]] = {}
+
+    def item(name: str, node_id: int) -> Any:
+        """Node ``node_id``'s item of the fitted tree's array ``name``: the whole array read once, when first used,
+        through :func:`_native` (so a container subclass, a NaN, a set or bytes anywhere in it is refused there), and
+        the item taken from what the boundary made of it."""
+        if name not in arrays:
+            listed = _native(getattr(tree, name), where=f"the estimator's tree_.{name}")
+            if type(listed) is not list:
+                raise NotPlainData(f"the estimator's tree_.{name}", f"a {type(listed).__name__} is not an array")
+            arrays[name] = listed
+        if not 0 <= node_id < len(arrays[name]):
+            raise ValueError("invalid fitted tree structure")
+        return arrays[name][node_id]
 
     def visit(node_id: int, depth: int) -> TreeNode:
         # ``depth`` is where this node's fields stand in the ExplicitTree made of it: its children stand there too
         if depth > DEPTH:
             raise _too_deep(f"the estimator's tree at node {node_id}")
         at = f"the estimator's tree at node {node_id}"
-        left = _estimated(tree.children_left[node_id], where=f"{at}: its left child", index=True)
-        right = _estimated(tree.children_right[node_id], where=f"{at}: its right child", index=True)
+        left = _estimated(item("children_left", node_id), where=f"{at}: its left child", index=True)
+        right = _estimated(item("children_right", node_id), where=f"{at}: its right child", index=True)
         if left == -1 and right == -1:
+            # a leaf's value: one row of numbers for the tree's one output, every score read by the number rule
+            # whether the tree classifies or regresses (review 3 of PR #8's second follow-up, finding 1)
+            row = item("value", node_id)
+            if type(row) is not list or len(row) != 1:
+                raise ValueError(f"{at}: its value is not one row for one output")
+            scores = _numbers(row[0], where=f"{at}: its value[0]")
             if is_classifier:
-                proportions = tree.value[node_id][0]
-                class_index = max(range(len(proportions)), key=lambda i: proportions[i])
-                prediction = _native(estimator.classes_[class_index])  # a label, kept as its kind: the record takes it
+                if len(scores) != len(classes):
+                    raise ValueError(f"{at}: its value has {len(scores)} scores for {len(classes)} classes")
+                prediction = classes[max(range(len(scores)), key=scores.__getitem__)]
             else:
-                prediction = float(_estimated(tree.value[node_id][0][0], where=f"{at}: its value"))
+                if len(scores) != 1:
+                    raise ValueError(f"{at}: a regression leaf holds one value")
+                prediction = float(scores[0])
             return TreeNode(value=prediction)
-        feature = _estimated(tree.feature[node_id], where=f"{at}: its feature", index=True)
+        feature = _estimated(item("feature", node_id), where=f"{at}: its feature", index=True)
         if not 0 <= feature < len(names) or left < 0 or right < 0:
             raise ValueError("invalid fitted tree structure")
-        threshold = float(_estimated(tree.threshold[node_id], where=f"{at}: its threshold"))
+        threshold = float(_estimated(item("threshold", node_id), where=f"{at}: its threshold"))
         return TreeNode(feature=feature, threshold=threshold, left=visit(left, depth + 1), right=visit(right, depth + 1))
 
     # the tree stands at 0, its root node at 1 (its ``root`` field), and the root's own fields at 2
     return ExplicitTree(names, visit(0, 2), task, provenance)
 
 
-def _predictions(rows: Any, count: int) -> tuple[Any, ...]:
-    """A black box's answer as the surrogate uses it (a ``snapshot.returned`` check): one prediction for each of the
-    ``count`` rows it was handed."""
-    if not isinstance(rows, tuple) or len(rows) != count:
+def _predictions(rows: Any, count: int, task: str) -> tuple[Any, ...]:
+    """A black box's answer as the surrogate uses it (a ``snapshot.returned`` check), its training and its held-out
+    predictions alike: one prediction for each of the ``count`` rows it was handed, each read where it is taken, before
+    anything fits or scores on it, by the rule for its kind: a regression's a number (``snapshot.number``), a
+    classification's a class label (:func:`_label`). Review 3 of PR #8's second follow-up, finding 4: the training
+    predictions were counted, not read."""
+    if type(rows) is not tuple or len(rows) != count:
         raise ValueError("black-box predictor returned mismatched rows")
-    return rows
+    read = number if task == "regression" else _label
+    return tuple(read(row, where=f"a black-box prediction [{index}]") for index, row in enumerate(rows))
 
 
 def distill_blackbox(blackbox: Any, X_train: Sequence[Sequence[float]],
@@ -208,8 +271,8 @@ def distill_blackbox(blackbox: Any, X_train: Sequence[Sequence[float]],
         raise ImportError("scikit-learn is not installed: pip install 'g6[ml] @ "
                           "git+https://github.com/basicisabc1994/g6solver'") from exc
 
-    observed_train = returned(blackbox.predict(fresh(train)), _predictions, len(train))
-    observed_holdout = returned(blackbox.predict(fresh(holdout)), _predictions, len(holdout))
+    observed_train = returned(blackbox.predict(fresh(train)), _predictions, len(train), task)
+    observed_holdout = returned(blackbox.predict(fresh(holdout)), _predictions, len(holdout), task)
     cls = DecisionTreeClassifier if task == "classification" else DecisionTreeRegressor
     tree = cls(max_depth=max_depth, min_samples_leaf=min_samples_leaf, random_state=seed)
     tree.fit(train, observed_train)
@@ -222,7 +285,8 @@ def distill_blackbox(blackbox: Any, X_train: Sequence[Sequence[float]],
         "caveat": "fidelity measures agreement with model output, not accuracy against real outcomes",
     }
     if task == "classification":
-        matches = sum(a == b for a, b in zip(observed_holdout, predicted))
+        # two labels agree when the bridge's encoder writes them alike, as an identity is read: true is not 1
+        matches = sum(canonical_json(a) == canonical_json(b) for a, b in zip(observed_holdout, predicted))
         report.update({"metric": "agreement", "fidelity": matches / len(holdout),
                        "disagreements": len(holdout) - matches})
     else:  # a regression's predictions are numbers, as the black box and the tree wrote them (snapshot.number)
