@@ -3,6 +3,7 @@
 import json
 import threading
 from contextlib import contextmanager
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -266,10 +267,12 @@ def test_a_host_handoff_uses_the_snapshot_without_opening_the_input_again(tmp_pa
     path.write_bytes(b"changed later")
     argv.append("changed argument")
     frozen_argv, stdin = request.handoff()
-    assert frozen_argv == ["fake", str(path)]
+    assert frozen_argv[0] == "fake" and frozen_argv[1] != str(path)
     assert stdin == "admitted user"
-    assert path.read_bytes() == b"admitted system"
+    assert path.read_bytes() == b"changed later"
+    assert Path(frozen_argv[1]).read_bytes() == b"admitted system"
     assert usage.request_identity(frozen_argv, stdin, tmp_path) == request.identity
+    request.close()
 
 
 def test_an_unreadable_host_input_is_not_identified_as_an_absent_output(tmp_path, monkeypatch):
@@ -277,14 +280,14 @@ def test_an_unreadable_host_input_is_not_identified_as_an_absent_output(tmp_path
 
     path = tmp_path / "system_prompt.md"
     path.write_bytes(b"system")
-    real_read = Path.read_bytes
+    real_open = Path.open
 
-    def read(where):
+    def read(where, *args, **kwargs):
         if where == path:
             raise PermissionError("input cannot be read")
-        return real_read(where)
+        return real_open(where, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "read_bytes", read)
+    monkeypatch.setattr(Path, "open", read)
     with pytest.raises(PermissionError, match="input cannot be read"):
         usage.Request.host(["fake", str(path)], "user", tmp_path)
 
@@ -334,7 +337,14 @@ def test_every_send_identity_producer_and_reader_is_classified_from_the_code():
         ("metaharness/loop.py", "_Counted.complete", "_raised_by"): "external multi-send errors only",
         ("metaharness/loop.py", "_Counted.complete", "ProviderStop"): "owned single-send error carries its record",
         ("metaharness/loop.py", "_Counted.complete", ".record"): "owned exception's record is read directly",
-        ("self_maintenance/usage.py", "Request.text", "request_digest"): "immutable text snapshot",
+        ("self_maintenance/usage.py", "Request.text", "_text_bytes"): "text encoding made at admission",
+        ("self_maintenance/usage.py", "Request.text", "_digest"): "digest of the one text encoding",
+        ("self_maintenance/usage.py", "request_digest", "_text_bytes"): "compatibility text encoding",
+        ("self_maintenance/usage.py", "request_digest", "_digest"): "compatibility encoded-bytes digest",
+        ("self_maintenance/usage.py", "request_identity", "_digest"): "digest of the one host encoding",
+        ("self_maintenance/usage.py", "request_identity", ".encoded"): "captured host encoding, no rereading",
+        ("self_maintenance/usage.py", "Request.host", ".encoded"): "record retains the encoding it names",
+        ("self_maintenance/usage.py", "_host_input", "_digest"): "file content digest in the encoded host manifest",
         ("self_maintenance/usage.py", "Request.host", "request_identity"): "immutable host snapshot",
         ("self_maintenance/usage.py", "ProviderStop.identity", ".identity"): "exception reads its record",
         ("self_maintenance/usage.py", "ProviderStop.__init__", ".record"): "exception carries its record",
@@ -343,12 +353,13 @@ def test_every_send_identity_producer_and_reader_is_classified_from_the_code():
         ("self_maintenance/usage.py", "_sending", "Send"): "host record outside a meter",
         ("self_maintenance/usage.py", "_sending", ".identity"): "host record outside a meter",
         ("self_maintenance/usage.py", "_sending", ".request"): "handoff uses only the admitted snapshot",
+        ("self_maintenance/usage.py", "_finish_record", ".request"): "private delivery copies released with their record",
         ("self_maintenance/usage.py", "_received", "request_digest"): "reply without admission: compatibility only",
         ("self_maintenance/usage.py", "_stopped", "_received"): "reply without admission: compatibility only",
         ("self_maintenance/usage.py", "_stopped", "ProviderStop"): "owned host error carries its record",
     }
     apis = {**{f"g6.self_maintenance.usage.{name}": name for name in (
-        "request_digest", "request_identity", "Request.text", "Request.host", "Send", "_received", "ProviderStop")},
+        "request_digest", "request_identity", "_digest", "_text_bytes", "Request.text", "Request.host", "Send", "_received", "ProviderStop")},
         **{f"g6.metaharness.loop.{name}": name for name in ("_request_digest", "_named", "_sender", "_raised_by")}}
     found = set()
 
@@ -365,7 +376,7 @@ def test_every_send_identity_producer_and_reader_is_classified_from_the_code():
                 found.add((file, where, apis[name]))
         holds_records = module in {"g6.metaharness.loop", "g6.self_maintenance.usage"} or any(
             name in apis for name in imports.values())
-        if isinstance(node, ast.Attribute) and node.attr in {"identity", "record", "request"} and holds_records:
+        if isinstance(node, ast.Attribute) and node.attr in {"identity", "record", "request", "encoded"} and holds_records:
             found.add((file, where, f".{node.attr}"))
         for child in ast.iter_child_nodes(node):
             walk(child, file, module, imports, where)

@@ -100,6 +100,7 @@ from g6.self_maintenance.usage import (
     Send,
     limit_ends,
     read_stops,
+    plain_text,
     refused_by,
     request_digest,
     telling_stops,
@@ -826,6 +827,7 @@ class _Counted:
         self.inner, self.requests = inner, requests
 
     def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
+        system, user = plain_text(system), plain_text(user)
         ended = threading.Event()
         call = _Call(object(), self.requests, self.requests.generation, lambda: not ended.is_set())
         self.requests.begin(call)                 # the call begins: no send of its own here

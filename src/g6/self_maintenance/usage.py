@@ -31,8 +31,9 @@ the start of what the request raised: ``MODEL_REFUSED`` (``refused_by``), ``G6_E
   A caller of a domain's own is read only if it raises ``LLMError`` with such words.
 * ``g6.core.host_models`` is bound, and its callers raise no code of their own for any of these: they keep the last 300
   characters of what the program printed, flattened. So the loop has each host caller read its program's own output whole,
-  before it is cut: as a request goes out, the caller really sending it becomes a ``WatchedClaude`` or a ``WatchedCodex``
-  (``read_stops``), whatever holds it. What that reads goes straight to the loop (``telling_stops``) before anything else
+  before it is cut: construction chooses a dormant ``WatchedClaude`` or ``WatchedCodex`` cleanup wrapper; ``read_stops``
+  enables its observation without changing a live object's class. What that reads goes to the loop (``telling_stops``)
+  before anything else
   sees it, so a wrapper that catches failed requests cannot retry it or hide it. For a watched caller only those structured
   fields decide: the older text pattern (``_LIMIT``) is never applied to what it raises, stderr included.
 * **What a host request is.** A refused request is known by one identity, ``request_identity``: the digest of the captured
@@ -41,10 +42,10 @@ the start of what the request raised: ``MODEL_REFUSED`` (``refused_by``), ``G6_E
   own, as ``ToolSession`` is). The loop checks it there, against what was refused and against an identical request still out,
   under one lock (``telling_stops``' gate), which hands back the send's one record (``Send``), made once it may leave from the
   bytes as they are after the stop reads and waits. That immutable ``Request`` is held on the record; the wrapper hands
-  back its captured arguments and stdin, and restores its captured file bytes before returning to the bound launcher.
-  The record stays with the call's own folder until the reply that reads its outcome, which alone releases it. A writer
-  after the handoff can still change a file before the program opens it: closing that window needs the bound launcher to
-  accept immutable input itself, at an issuance window.
+  back built-in text and arguments naming G6's private copies. File identity, rather than pathname, keys capture, so aliases
+  share a snapshot and a private copy. A reply releases its record; the invocation's finally releases unanswered sends.
+  The canonical encoded manifest is kept with the request. The bound launcher still encodes OS arguments/stdin and opens
+  files itself: exact wire encoding and custody through that open need the bound seam at an issuance window.
 * Claude Code: its JSON result (``host_models._result``). A refusal is ``stop_reason`` ``refusal``, an ``api_error`` of
   ``_STOPPED_BY`` or a ``permission_denials`` entry; on an error result, a limit is ``api_error_status`` 429 or ``api_error``
   ``usage_limit_reached``, and capacity is ``api_error_status`` 529 (``overloaded_error``). Read from the text of Claude Code
@@ -73,15 +74,18 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import stat
 import subprocess
 import tempfile
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
+from uuid import uuid4
 
 from g6.core import component_process, host_models
 from g6.core.llm import RATE_LIMITED, LLMError
@@ -311,22 +315,38 @@ def codex_said(printed: str) -> str:
     return _codex_turn(printed)[0]
 
 
-def request_digest(system: str, user: str) -> str:
-    """What a request to a model is known by once refused, when no host program's input can be seen: no text of it is kept.
-    A pair with no NUL and no lone surrogate in it is digested as it always was, its two parts joined by one NUL, so what was
-    refused before is still known. Any other pair is digested from its bytes, each part as UTF-8 with its surrogates kept as
-    they are and framed by its length, behind two NULs, which no such join can begin with: no two pairs share a digest, and a
-    surrogate pair is not the character it would stand for."""
+def plain_text(value: str) -> str:
+    """Own the underlying text, bypassing a subclass's rendering and encoding hooks."""
+    if not isinstance(value, str):
+        raise LLMError("G6_E_LOOP_UNNAMED_REQUEST: a request must be text")
+    return str.__str__(value)
+
+
+def _digest(encoded: bytes) -> str:
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _text_bytes(system: str, user: str) -> bytes:
+    system, user = plain_text(system), plain_text(user)
     try:
         if "\0" not in system and "\0" not in user:
-            return hashlib.sha256(f"{system}\0{user}".encode("utf-8")).hexdigest()
+            return (system + "\0" + user).encode("utf-8")
     except UnicodeEncodeError:
         pass
     framed = b"\0\0"
     for part in (system, user):
         data = part.encode("utf-8", "surrogatepass")
         framed += len(data).to_bytes(8, "big") + data
-    return hashlib.sha256(framed).hexdigest()
+    return framed
+
+
+def request_digest(system: str, user: str) -> str:
+    """What a request to a model is known by once refused, when no host program's input can be seen: no text of it is kept.
+    A pair with no NUL and no lone surrogate in it is digested as it always was, its two parts joined by one NUL, so what was
+    refused before is still known. Any other pair is digested from its bytes, each part as UTF-8 with its surrogates kept as
+    they are and framed by its length, behind two NULs, which no such join can begin with: no two pairs share a digest, and a
+    surrogate pair is not the character it would stand for."""
+    return _digest(_text_bytes(system, user))
 
 
 def request_identity(argv: Sequence[str], stdin: str, root: str | Path | None) -> str:
@@ -334,8 +354,8 @@ def request_identity(argv: Sequence[str], stdin: str, root: str | Path | None) -
     of its input, exactly as given. A path in the call's own folder (``root``) stands for the bytes of the file there, which
     G6 wrote for the program to read, or for its place in that folder where there is no file yet, as where the program
     writes; any other argument stands as it is. So the same bytes are one request, whichever call or rendering made them."""
-    captured = argv if isinstance(argv, _HostInput) else _host_input(argv, root)
-    return hashlib.sha256(json.dumps(["host", captured.parts, stdin]).encode("ascii")).hexdigest()
+    captured = argv if isinstance(argv, _HostInput) else _host_input(argv, root, stdin)
+    return _digest(captured.encoded)
 
 
 @dataclass(frozen=True)
@@ -345,6 +365,8 @@ class _HostInput(Sequence[str]):
     arguments: tuple[str, ...]
     parts: tuple[tuple[str, ...], ...]
     files: tuple[tuple[str, bytes], ...]
+    aliases: tuple[tuple[str, str], ...]
+    encoded: bytes
 
     def __getitem__(self, index: Any) -> Any:
         return self.arguments[index]
@@ -353,11 +375,20 @@ class _HostInput(Sequence[str]):
         return len(self.arguments)
 
 
+@dataclass
+class _Delivery:
+    folders: list[Path] = field(default_factory=list)
+    argv: tuple[str, ...] | None = None
+    lock: Any = field(default_factory=threading.Lock)
+
+
 @dataclass(frozen=True)
 class Request:
-    """The immutable input admitted for one send. Only the digest is persisted. Host files are captured once with the
-    arguments and stdin, after stop reads and waits; the wrapper returns these arguments and restores these bytes before
-    handing control back to the bound launcher. A writer after that handoff remains outside this seam's custody."""
+    """An admitted immutable input and its canonical encoding; only its digest is persisted.
+
+    Private delivery copies belong to this request and are released with its send. The bound transport's wire encoding
+    remains outside this seam, rather than being claimed as this canonical manifest's encoding.
+    """
 
     identity: str
     system: str = ""
@@ -365,46 +396,121 @@ class Request:
     argv: tuple[str, ...] = ()
     stdin: str = ""
     files: tuple[tuple[str, bytes], ...] = ()
+    aliases: tuple[tuple[str, str], ...] = ()
+    encoded: bytes = b""
+    _delivery: _Delivery = field(default_factory=_Delivery, compare=False, repr=False)
 
     @classmethod
     def text(cls, system: str, user: str) -> Request:
-        return cls(request_digest(system, user), system, user)
+        system, user = plain_text(system), plain_text(user)
+        encoded = _text_bytes(system, user)
+        return cls(_digest(encoded), system, user, encoded=encoded)
 
     @classmethod
     def host(cls, argv: Sequence[str], stdin: str, root: str | Path | None) -> Request:
-        arguments = tuple(argv)
-        captured = _host_input(arguments, root)
-        return cls(request_identity(captured, stdin, root), argv=arguments, stdin=stdin, files=captured.files)
+        arguments, stdin = tuple(plain_text(arg) for arg in argv), plain_text(stdin)
+        captured = _host_input(arguments, root, stdin)
+        return cls(request_identity(captured, stdin, root), argv=arguments, stdin=stdin, files=captured.files,
+                   aliases=captured.aliases, encoded=captured.encoded)
 
     def handoff(self) -> tuple[list[str], str]:
-        """Use the captured input, never a second reading after admission. The bound launcher still opens these paths:
-        closing that last window requires it to accept an immutable input at issuance."""
-        for path, data in self.files:
-            Path(path).write_bytes(data)
-        return list(self.argv), self.stdin
+        """Hand off private copies without writing into any shared input or its aliases.
+
+        The bound launcher encodes argv/stdin itself and reopens paths. Custody through that final open needs issuance.
+        """
+        with self._delivery.lock:
+            if self._delivery.argv is None:
+                copies = {}
+                for path, data in self.files:
+                    original = Path(path)
+                    folder = original.parent / (".g6-input-" + uuid4().hex)
+                    folder.mkdir()
+                    self._delivery.folders.append(folder)
+                    target = folder / original.name
+                    with target.open("xb") as stream:
+                        stream.write(data)
+                    copies[path] = str(target)
+                for alias, primary in self.aliases:
+                    if alias not in copies:
+                        original = Path(alias)
+                        folder = original.parent / (".g6-input-" + uuid4().hex)
+                        folder.mkdir()
+                        self._delivery.folders.append(folder)
+                        target = folder / original.name
+                        # Preserve each argument's logical name, with just one private file per captured identity.
+                        os.link(copies[primary], target)
+                        copies[alias] = str(target)
+                self._delivery.argv = tuple(copies.get(arg, arg) for arg in self.argv)
+            return list(self._delivery.argv), self.stdin
+
+    def close(self) -> None:
+        with self._delivery.lock:
+            for folder in self._delivery.folders:
+                shutil.rmtree(folder, ignore_errors=True)
 
 
-def _host_input(argv: Sequence[str], root: str | Path | None) -> _HostInput:
+# Input roles emitted by the two host command producers: ClaudeCodeCaller and ToolSession.
+_INPUT_FLAGS = frozenset({"--system-prompt-file", "--mcp-config", "--settings"})
+
+
+def _host_input(argv: Sequence[str], root: str | Path | None, stdin: str = "") -> _HostInput:
     """The existing host identity format, and the exact file bytes it names, read together once."""
     base = os.path.normcase(os.path.abspath(root)) if root is not None else None
     parts: list[list[str]] = []
     files: list[tuple[str, bytes]] = []
-    for arg in list(argv)[1:]:
+    aliases: list[tuple[str, str]] = []
+    by_file: dict[tuple[int, int], tuple[str, bytes, tuple[int, int, int]]] = {}
+    arguments = tuple(plain_text(arg) for arg in argv)
+    required = set()
+    for index, arg in enumerate(arguments):
+        if arg in _INPUT_FLAGS:
+            if index + 1 == len(arguments) or arguments[index + 1].startswith("--"):
+                raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input flag has no path")
+            required.add(arguments[index + 1])
+    for arg in arguments[1:]:
         where = os.path.normcase(os.path.abspath(arg)) if os.path.isabs(arg) else ""
-        if base and where and (where == base or where.startswith(base + os.sep)):
+        owned = base and where and (where == base or where.startswith(base + os.sep))
+        if arg in required and not owned:
+            raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input is outside its admitted folder")
+        if owned:
             place = os.path.relpath(where, base).replace(os.sep, "/")
-            if Path(arg).is_dir():
+            place = "/".join(part for part in place.split("/") if not part.startswith(".g6-input-"))
+            try:
+                path = Path(arg)
+                # Windows cannot open directories with Path.open; they are output/work locations, not captured inputs.
+                if path.is_dir():
+                    if arg in required:
+                        raise LLMError("G6_E_LOOP_INPUT_CHANGED: required host input is a directory")
+                    parts.append(["path", place])
+                    continue
+                stream = path.open("rb")
+            except FileNotFoundError:
+                if arg in required:
+                    raise LLMError("G6_E_LOOP_INPUT_CHANGED: required host input is missing") from None
                 parts.append(["path", place])
                 continue
-            try:
-                data = Path(arg).read_bytes()
-                parts.append(["file", place, hashlib.sha256(data).hexdigest()])
-                files.append((arg, data))
-            except (FileNotFoundError, IsADirectoryError):
-                parts.append(["path", place])
+            with stream:
+                before = os.fstat(stream.fileno())
+                if not stat.S_ISREG(before.st_mode) or not before.st_ino:
+                    raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input has no regular file identity")
+                key = (before.st_dev, before.st_ino)
+                stamp = (before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                if key not in by_file:
+                    data = stream.read()
+                    after = os.fstat(stream.fileno())
+                    if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (*key, *stamp):
+                        raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input changed during capture")
+                    by_file[key] = (arg, data, stamp)
+                    files.append((arg, data))
+                primary, data, captured_stamp = by_file[key]
+                if stamp != captured_stamp:
+                    raise LLMError("G6_E_LOOP_INPUT_CHANGED: aliased host input changed during capture")
+                parts.append(["file", place, _digest(data)])
+                aliases.append((arg, primary))
         else:
             parts.append(["arg", arg])
-    return _HostInput(tuple(argv), tuple(tuple(part) for part in parts), tuple(files))
+    encoded = json.dumps(["host", parts, plain_text(stdin)]).encode("ascii")
+    return _HostInput(arguments, tuple(tuple(part) for part in parts), tuple(files), tuple(aliases), encoded)
 
 
 @dataclass(frozen=True, eq=False)
@@ -465,15 +571,16 @@ def _sending(caller: Any, argv: Sequence[str], stdin: str, files: Any) -> tuple[
         record = Send(request.identity, True, None, 0, threading.get_ident(), caller, request=request)
     else:
         record = gate.sending(lambda: Request.host(argv, stdin, root), caller)
-    with _SENT_LOCK:
-        _SENT[str(files)] = (record, gate)
-    opened = _OPEN.get()
-    if opened is not None:
-        opened.append(str(files))
     try:
+        with _SENT_LOCK:
+            _SENT[str(files)] = (record, gate)
+        opened = _OPEN.get()
+        if opened is not None:
+            opened.append(str(files))
         return record.request.handoff()
     except BaseException:
-        _released((str(files),))
+        _forget(files)
+        _finish_record(record, gate)
         raise
 
 
@@ -482,6 +589,15 @@ def _forget(files: Any) -> tuple[Send | None, Gate | None]:
     with _SENT_LOCK:
         record, gate = _SENT.pop(str(files), (None, None))
     return record, gate
+
+
+def _finish_record(record: Send | None, gate: Gate | None) -> None:
+    try:
+        if record is not None and record.request is not None:
+            record.request.close()
+    finally:
+        if record is not None and gate is not None:
+            gate.done(record)
 
 
 def _received(hide: tuple[str, ...]) -> str:
@@ -502,28 +618,45 @@ def _stopped(said: str, files: Any, hide: tuple[str, ...]) -> None:
                 told.told(said, what)
             raise ProviderStop(said, what)
     finally:
-        if record is not None and gate is not None:
-            gate.done(record)
+        _finish_record(record, gate)
 
 
 def _released(files_keys: Sequence[str]) -> None:
     """Sends of a call that ended with no reply read: each is released by that outcome, and no other send is."""
+    failed = None
     for key in files_keys:
         record, gate = _forget(key)
-        if record is not None and gate is not None:
-            gate.done(record)
+        try:
+            _finish_record(record, gate)
+        except BaseException as exc:
+            failed = failed or exc
+    if failed is not None:
+        raise failed
 
 
 class _Watched:
     """What both watched callers do around the bound call: a send whose program never answers is released as the call ends."""
 
-    def complete(self, *args: Any, **kwargs: Any) -> str:
+    _observe_stops = True
+
+    @contextmanager
+    def _invocation(self) -> Iterator[None]:
         token = _OPEN.set([])
         try:
-            return super().complete(*args, **kwargs)
+            yield
         finally:
-            _released(_OPEN.get())
-            _OPEN.reset(token)
+            try:
+                _released(_OPEN.get())
+            finally:
+                _OPEN.reset(token)
+
+    def complete(self, system: str, user: str, **kwargs: Any) -> str:
+        with self._invocation():
+            return super().complete(plain_text(system), plain_text(user), **kwargs)
+
+    def run(self, *args: Any, **kwargs: Any) -> str:
+        with self._invocation():
+            return super().run(*args, **kwargs)
 
 
 class WatchedClaude(_Watched, host_models.ClaudeCodeCaller):
@@ -532,10 +665,12 @@ class WatchedClaude(_Watched, host_models.ClaudeCodeCaller):
 
     def _command(self, program: str, system: str, user: str, work: Path, files: Path) -> tuple[list[str], str]:
         argv, stdin = super()._command(program, system, user, work, files)
-        return _sending(self, argv, stdin, files)
+        return _sending(self, argv, stdin, files) if watched(self) else (argv, stdin)
 
     def _launch(self, argv: list[str], stdin: str, cwd: Path, files: Path, env: dict[str, str], seconds: float) -> Any:
         """A session of a caller's own that starts its program itself names that step ``_launch`` (``ToolSession``)."""
+        if not watched(self):
+            return super()._launch(argv, stdin, cwd, files, env, seconds)
         argv, stdin = _sending(self, argv, stdin, files)
         try:
             return super()._launch(argv, stdin, cwd, files, env, seconds)
@@ -544,7 +679,8 @@ class WatchedClaude(_Watched, host_models.ClaudeCodeCaller):
             raise
 
     def _reply(self, code: int, printed: str, errors: str, files: Any, hide: tuple[str, ...]) -> str:
-        _stopped(claude_said(host_models._result(printed) or {}), files, hide)
+        if watched(self):
+            _stopped(claude_said(host_models._result(printed) or {}), files, hide)
         return super()._reply(code, printed, errors, files, hide)
 
 
@@ -554,16 +690,18 @@ class WatchedCodex(_Watched, host_models.CodexCaller):
 
     def argv(self, program: str, *, work: str, last_message: str) -> list[str]:
         args = super().argv(program, work=work, last_message=last_message)
-        if "exec" not in args:            # no command of Codex's that prints events: nothing it prints is read
+        if not watched(self) or "exec" not in args:
             return args
         at = args.index("exec") + 1
         return [*args[:at], "--json", *args[at:]]
 
     def _command(self, program: str, system: str, user: str, work: Path, files: Path) -> tuple[list[str], str]:
         argv, stdin = super()._command(program, system, user, work, files)
-        return _sending(self, argv, stdin, files)
+        return _sending(self, argv, stdin, files) if watched(self) else (argv, stdin)
 
     def _reply(self, code: int, printed: str, errors: str, files: Any, hide: tuple[str, ...]) -> str:
+        if not watched(self):
+            return super()._reply(code, printed, errors, files, hide)
         said, failed = _codex_turn(printed)
         _stopped(said, files, hide)
         if failed:
@@ -576,19 +714,31 @@ class WatchedCodex(_Watched, host_models.CodexCaller):
 _WATCHED = ((host_models.ClaudeCodeCaller, WatchedClaude), (host_models.CodexCaller, WatchedCodex))
 
 
+def _new_host(kind: type, *args: Any, **kwargs: Any) -> Any:
+    """Choose the cleanup wrapper at construction, before any bound complete can enter.
+
+    Plain callers stay dormant until read_stops enables observation. The bound constructor needs a native hook at issuance.
+    """
+    if not issubclass(kind, _Watched):
+        observer = next(wrapper for host, wrapper in _WATCHED if issubclass(kind, host))
+        kind = type(kind.__name__, (observer, kind), {"_observe_stops": False})
+    return object.__new__(kind)
+
+
+host_models._HostCaller.__new__ = staticmethod(_new_host)
+
+
 def read_stops(sender: Any) -> None:
-    """Have ``sender``, when it is any kind of Claude Code or Codex caller, read its program's whole output. It is done to the
-    caller that is sending, as it sends, so what holds it does not matter. Its class changes and nothing else does: a
-    subclass of a domain's own keeps all it has, and reads the output first."""
-    kind = type(sender)
-    for host, watched_kind in _WATCHED:
-        if isinstance(sender, host) and not isinstance(sender, watched_kind):
-            sender.__class__ = type(kind.__name__, (watched_kind, kind), {})
+    """Enable the observer selected at construction. A live caller's class and send methods are never changed."""
+    if isinstance(sender, tuple(host for host, _ in _WATCHED)):
+        if not isinstance(sender, _Watched):
+            raise LLMError("G6_E_LOOP_UNWATCHED_HOST: host caller predates the construction wrapper")
+        sender._observe_stops = True
 
 
 def watched(sender: Any) -> bool:
     """Whether ``sender`` reads its program's output itself, so only what it reads from the structured fields decides."""
-    return isinstance(sender, WatchedClaude | WatchedCodex)
+    return isinstance(sender, WatchedClaude | WatchedCodex) and sender._observe_stops
 
 
 def _number(value: Any) -> bool:
@@ -721,5 +871,5 @@ class AccountReader:
 
 __all__ = ["AT_CAPACITY", "AccountReader", "Gate", "MODEL_REFUSED", "NOT_REPORTED", "ProviderStop", "REFRESH", "Request",
            "UsageUnavailable", "WatchedClaude", "WatchedCodex", "claude_said", "codex_limits", "codex_said", "limit_ends",
-           "limits_reading", "read_limits", "read_stops", "refused_by", "request_digest", "request_identity",
+           "limits_reading", "plain_text", "read_limits", "read_stops", "refused_by", "request_digest", "request_identity",
            "Send", "telling_stops", "watched"]
