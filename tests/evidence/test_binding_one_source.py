@@ -343,6 +343,11 @@ PLACES: dict[tuple[str, str, str], tuple[str, str]] = {
     ("harness/requirement_evidence.py", "assess", "check"): ("other", ISSUER),
     ("harness/requirement_evidence.py", "assess", "certificate"): ("other", ISSUER),
     ("harness/requirement_evidence.py", "assess", "about(rec)[0]"): ("through", THROUGH),
+    # G6 0.3, slice 3: the issuer's statement for the confirmed expectations the review enforced
+    ("harness/requirement_evidence.py", "confirmed_evidence", "certificate"): ("other", ISSUER),
+    ("harness/requirement_evidence.py", "confirmed_evidence", "one"): (
+        "other", "a confirmed expectation's own value (slice 2's record, derived from the question's bytes), from "
+                 "which the record is built; not a record"),
     ("research/echa/custody.py", "about", "rec"): ("accessor", "ECHA's accessor: compares the fields with the binding"),
     ("research/echa/custody.py", "checked_evidence", "expected"): ("binding", BINDING),
     ("research/echa/view.py", "source_record", "parts"): ("through", THROUGH),
