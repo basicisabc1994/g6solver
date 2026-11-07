@@ -356,6 +356,9 @@ def readers() -> dict[tuple[str, str], set[str]]:
                 elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get"
                       and node.args and isinstance(node.args[0], ast.Constant)):
                     keys.add(node.args[0].value)
+                elif (isinstance(node, ast.Call) and ast.unparse(node.func) == "_listing" and len(node.args) > 1
+                      and isinstance(node.args[1], ast.Constant)):   # the one reader of a listing (_listing)
+                    keys.add(node.args[1].value)
             if keys & KEYS:
                 found[(name, function.name)] = keys & KEYS
     return found

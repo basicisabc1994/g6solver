@@ -26,11 +26,14 @@ its code, goes through one step: a refused record that observed anything but a p
 predicate of the standard, reaches the issuer as a caveat (``caveat_of``), the issuer's own input for one: a check with
 no control, so it can neither support nor refute, and its failing or unknown receipt. A requirement with an observed
 failure is then never verified, whatever another check showed. A pass that is refused withholds nothing, and one taken
-on other bytes says nothing of these, as the issuer itself reads one.
+on other bytes says nothing of these, as the issuer itself reads one. A caveat's id is checked, once every record is
+read, against every accepted check and receipt id, and made anew from itself and a count where one has it (``_fresh``;
+review 1 of slice 2's follow-up, finding 3): a record may name itself anything, so no id it states stops issuance.
 
 What one receipt of a certificate counts for is the issuer's own reading of that receipt alone (``receipt_roles``;
 review 4's finding 3), which ECHA's audit view shows: no receipt is lent the role of another receipt of its check, at
-any gate of the issuer's rule (``RECEIPT_GATES``).
+any gate of the issuer's rule (``RECEIPT_GATES``), and the gate named for a predicate is the issuer's own reason for that
+predicate, never one it gives for another (``_gate``; review 1 of slice 2's follow-up, finding 4).
 
 ``CheckBinding`` is ECHA custody's binding of one evaluator receipt to its request, task, predicate, artefact, standard,
 fixture and evaluator, graduated here so a receipt keeps that binding when it becomes the issuer's (``from_binding``).
@@ -65,7 +68,7 @@ import json
 import math
 import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 from g6.core.ledger import ChainLedger
 from g6.core.ledger import canonical as _canonical
@@ -80,7 +83,6 @@ from g6.evidence.certificate import (
     Control,
     MissionFacts,
     Receipt,
-    grounding,
     issue,
     record,
 )
@@ -620,6 +622,23 @@ class Issued:
     caveats: tuple[tuple[str, str], ...] = ()
 
 
+def _fresh(taken: set[str], ident: str) -> str:
+    """``ident`` when no id in ``taken`` is it, else the first id made of it and a count (``id_of``) that none is; the
+    id given then joins ``taken`` (G6 0.3, review 1 of slice 2's follow-up, finding 3). An id a record states may be any
+    text, so an id the mapping makes is checked against every accepted one, never assumed apart from them."""
+    found, count = ident, 0
+    while found in taken:
+        count += 1
+        found = id_of(ident, count)
+    taken.add(found)
+    return found
+
+
+def _named(check: Check, receipt: Receipt, ident: str) -> tuple[Check, Receipt]:
+    """A caveat's check and receipt (``caveat_of``) under the id ``ident``."""
+    return replace(check, check_id=ident), replace(receipt, receipt_id=ident, check_id=ident)
+
+
 def _merged(old: Check, new: Check) -> Check | None:
     """One check from two records of the same check (each a receipt of it, with the controls each saw), or None when
     they disagree about what the check is, its predicates included: two records about other predicates are never one
@@ -695,6 +714,9 @@ def issue_records(facts: MissionFacts, artifact: Artifact, records: Iterable[Sou
         checks[check.check_id] = merged
         receipts[receipt.receipt_id] = (receipt, rec)
         controls.update({c.control_id: c for c in check.controls})
+    # every record read: each caveat keeps the id refuse() gave it unless an accepted check or receipt has it (_fresh)
+    taken = {*checks, *receipts}
+    kept = [(*_named(check, receipt, _fresh(taken, check.check_id)), rec, codes) for check, receipt, rec, codes in kept]
     ledger = ChainLedger()
     # the ledger's own order is the order G6 observed things in, the one each record's position states
     record(ledger, *sorted([*controls.values(), *(r for r, _ in receipts.values()), *(r for _, r, _, _ in kept)],
@@ -739,19 +761,16 @@ def _held(body: Mapping[str, object], check: Check, receipt: Receipt) -> ChainLe
     return ledger
 
 
-def _gate(check: Check, artifact: Artifact, predicate: str, receipt: Receipt, alone: Certificate) -> str:
-    """The gate of the issuer's rule ``receipt`` did not meet when the issuer, reading it alone, neither counts it for
-    or against ``predicate`` nor keeps it as a caveat, in the issuer's order: the bytes, its check's frozen code, the
-    artefact before it, then (a pass) the grounding rule, the ledger, and a control before it."""
-    if receipt.artifact_sha != artifact.sha256:
-        return "receipt_for_other_bytes"
-    if receipt.check_sha != check.check_sha:
-        return "check_changed_after_freeze"
-    if receipt.seq < artifact.seq:
-        return "receipt_before_artifact"
-    if grounding(check, artifact, predicate):
-        return "not_grounded"
-    return "not_in_ledger" if alone.unresolved else "control_after_receipt"
+def _gate(predicate: str, alone: Certificate) -> str:
+    """The gate of the issuer's rule a receipt did not meet for ``predicate`` when the issuer, reading it alone
+    (``alone``: its certificate from that one receipt), neither counts it for or against ``predicate`` nor keeps it as a
+    caveat: the issuer's own reason for that predicate, its gap, which begins with the gate's name (G6 0.3, review 1 of
+    slice 2's follow-up, finding 4). Nothing the certificate says of another predicate, or of all of them, is read, and
+    the rest of the reason (ids, which may hold any text) is never parsed. ``not_a_receipt`` when that reason names no
+    gate (the issuer has no reading this table knows)."""
+    why = dict(alone.gaps).get(f"predicate:{predicate}", "")
+    named = [gate for gate in RECEIPT_GATES if why.startswith(gate + ":")]
+    return named[0] if len(named) == 1 else "not_a_receipt"
 
 
 def receipt_roles(body: Mapping[str, object], *, ledger: ChainLedger | None = None,
@@ -794,8 +813,7 @@ def receipt_roles(body: Mapping[str, object], *, ledger: ChainLedger | None = No
             elif receipt.check_id in statement.caveats:
                 roles[statement.predicate] = ("caveat", "")
             else:
-                roles[statement.predicate] = ("not counted", _gate(check, artifact, statement.predicate, receipt,
-                                                                   alone))
+                roles[statement.predicate] = ("not counted", _gate(statement.predicate, alone))
         found.append(roles)
     return found
 

@@ -118,7 +118,9 @@ tests that touch the changed modules and their replays in a copy, adds what it s
 read by phase, from the runner's own report, in one place (``phases_of``, ``body_of``; review 4's finding 1): only a call
 phase that ran and failed is a failure of a test's body. A set-up or teardown error is an error (``ERROR``): the review's
 own verdict counts it as ``failed``, as it always has, and the issuer is told it is unknown, never a control killed and
-never a pass (``observation``, ``at_base_observations``).
+never a pass (``observation``, ``at_base_observations``). The reading is total over what the runner reports (review 1 of
+slice 2's follow-up): every test any listing of its report names is read (``LISTINGS``), and a report, or a test's
+phases, that is partial, unrecognised, contradictory or unreadable is unknown, never a pass and never a killed control.
 
 Every in-place run asks for a test receipt (``repo_tests.run(..., receipt=True)``): the scope lists each id, and the
 coding gate, which this review builds bound to its own snapshot digest (never a digest from the request), counts a
@@ -573,45 +575,94 @@ def _covers(check: str, node: str) -> bool:
     return node == check or node.startswith((check + "::", check + "[", check + "/"))
 
 
-def _failed_ids(ran: dict) -> set[str]:
-    """The tests the runner's own report lists as failed in ``ran`` (``failed_ids``, ``setup_errors``), by their ids
-    relative to the repository's top."""
+#: The fields of the runner's report (``repo_tests.run``'s result) that list tests, each by the id pytest gave it, with
+#: the container each is (G6 0.3, review 1 of slice 2's follow-up): the tests of a run are their union, and every one
+#: of them is read (``phases_of``, ``_verdicts``). An inventory test lists every field of the runner's report from the
+#: runner's own code, each read here or named with why it is not.
+LISTINGS = {"test_outcomes": dict, "failed_ids": (list, tuple), "setup_errors": dict, "omitted_ids": (list, tuple),
+            "collected_ids": (list, tuple)}
+#: The listings that name a test as failed: the runner's plugin adds every failed report to one of the two.
+FAILURE_LISTINGS = ("failed_ids", "setup_errors")
+#: The phases of one test the runner's plugin reports (pytest's ``report.when``), in pytest's order, and the outcomes
+#: pytest gives a phase (``report.outcome``). A module pytest skipped collecting reports ``collection`` alone.
+PHASES, OUTCOMES = ("setup", "call", "teardown"), frozenset({"passed", "failed", "skipped"})
+
+
+def _listing(ran: dict, key: str) -> tuple[list[str], bool]:
+    """The ids the listing ``key`` of ``ran`` names (``LISTINGS``), relative to the repository's top, and whether it reads
+    as one. None, and readable, when the report has none (absent, or None as the runner gives one its plugin never
+    wrote); none, and unreadable, when it is another container or names a test by anything but text."""
+    value = ran.get(key)
+    if value is None:
+        return [], True
+    if not isinstance(value, LISTINGS[key]) or not all(isinstance(node, str) for node in value):
+        return [], False
     full = _in_repository(ran)
-    return {full(str(node)) for node in [*(ran.get("failed_ids") or []), *(ran.get("setup_errors") or {})]}
+    return [full(node) for node in value], True
+
+
+def _failed_ids(ran: dict) -> set[str]:
+    """The tests the runner's own report lists as failed in ``ran`` (``FAILURE_LISTINGS``), by their ids relative to
+    the repository's top; none from a listing that does not read as one."""
+    return {*_listing(ran, "failed_ids")[0], *_listing(ran, "setup_errors")[0]}
 
 
 def phases_of(ran: dict) -> dict[str, dict[str, str]]:
-    """The one reading of a run's per-test report (G6 0.3, review 4's finding 1): each test's outcome per phase
-    (``setup``, ``call``, ``teardown``; ``collection`` for a module pytest skipped collecting), as the runner's own
-    report gives it (``repo_tests``' plugin), by the test's id relative to the repository's top. A test the runner
-    lists as failed (``_failed_ids``) that failed in no phase it reported failed in a phase it did not name
-    (``unnamed``): it failed, and nothing says its body did. Phases that do not read as a mapping of names to outcomes
-    are none."""
+    """The one reading of a run's per-test report (G6 0.3, review 4's finding 1): every test the runner's report names
+    as run or failed (``test_outcomes``, ``FAILURE_LISTINGS``), with its outcome per phase as the report gives it
+    (``repo_tests``' plugin), by the test's id relative to the repository's top. A test listed only as failed is there
+    too (review 1 of slice 2's follow-up, finding 2); ``_verdicts`` reads those only collected or left out.
+
+    What the report does not say is marked, never filled in (findings 1 and 5), and ``body_of`` reads every mark as
+    unknown: a test's phases that do not read as a mapping of names to outcomes are none; a test the runner lists as
+    failed whose phases show no failure failed in a phase it did not name (``unnamed``), and one whose phases show a
+    failure no listing of failures names has a failure the runner did not list (``unlisted``); and when a listing, or
+    the report's root folder, does not read as one, every test's ``report`` is ``unreadable``."""
+    outcomes, read = ran.get("test_outcomes"), {key: _listing(ran, key)[1] for key in LISTINGS}
+    failures_read = all(read[key] for key in FAILURE_LISTINGS)
+    whole = all(read.values()) and isinstance(ran.get("rootdir") or "", str)
     full, listed = _in_repository(ran), _failed_ids(ran)
     found: dict[str, dict[str, str]] = {}
-    for node, phases in (ran.get("test_outcomes") or {}).items():
-        name = full(str(node))
-        mine = {str(phase): str(said) for phase, said in phases.items()} if isinstance(phases, dict) else {}
-        if name in listed and "failed" not in mine.values():
+    for node, phases in (outcomes.items() if read["test_outcomes"] and outcomes else ()):
+        named = isinstance(phases, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in phases.items())
+        found[full(node)] = dict(phases) if named else {}
+    for node in sorted(listed):
+        found.setdefault(node, {})
+    for node, mine in found.items():
+        shows = "failed" in mine.values()
+        if node in listed and not shows:
             mine["unnamed"] = "failed"
-        found[name] = mine
+        elif shows and node not in listed and failures_read:
+            mine["unlisted"] = "failed"
+        if not whole:
+            mine["report"] = "unreadable"
     return found
 
 
+def _whole(phases: dict[str, str]) -> bool:
+    """Whether ``phases`` hold every phase a test needs, each one pytest names and each with an outcome pytest gives:
+    its set-up and teardown, and its call after a set-up that passed; or a module's skipped collection alone."""
+    if phases == {"collection": "skipped"}:
+        return True
+    return (set(phases) <= set(PHASES) and set(phases.values()) <= OUTCOMES and "setup" in phases
+            and "teardown" in phases and (phases["setup"] != "passed" or "call" in phases))
+
+
 def body_of(phases: dict[str, str]) -> str:
-    """What one test's phases (``phases_of``) show of its body: ``failed`` only when its call phase ran and failed;
-    ``ERROR`` when another phase failed and its call did not (a set-up or teardown error, or a failure the runner
-    named in no phase): unknown, never a failure of the body and never a pass; ``skipped`` when a phase was skipped
-    (an xfail too: pytest reports its call skipped); ``passed`` when its call passed and no other phase did not;
-    ``not_run`` otherwise."""
+    """What one test's phases (``phases_of``) show of its body: ``failed`` only when every phase it needs is there and
+    one pytest names (``_whole``), its set-up passed and its call failed; ``ERROR`` when anything else failed (a set-up
+    or teardown error, a failure the runner named in no phase): unknown, never a failure of the body and never a pass;
+    ``skipped`` when a phase was skipped (an xfail too: pytest reports its call skipped); ``passed`` only when every
+    phase it needs is there and passed. Anything partial, unrecognised, contradictory or unreadable (review 1 of slice 2's
+    follow-up, findings 1 and 5) is ``ERROR`` where a failure shows and ``not_run`` where none does: unknown either way."""
     states = set(phases.values())
-    if phases.get("call") == "failed":
+    if not _whole(phases):
+        return ERROR if "failed" in states else "not_run"
+    if phases.get("setup") == "passed" and phases.get("call") == "failed":
         return FAILED
     if "failed" in states:
         return ERROR
-    if "skipped" in states:
-        return "skipped"
-    return "passed" if phases.get("call") == "passed" else "not_run"
+    return "skipped" if "skipped" in states else "passed"
 
 
 def observation(found: dict) -> str:
@@ -647,8 +698,10 @@ def _not_found(check: str, output: str) -> bool:
 
 def _in_repository(ran: dict):
     """A function from a test id or file as pytest named it in ``ran``, relative to its root folder, to the same id
-    relative to the repository's top, as checks name them (review I9: a pytest config below the top moves the root)."""
-    prefix = (ran.get("rootdir") or "").strip("/")
+    relative to the repository's top, as checks name them (review I9: a pytest config below the top moves the root). A
+    root folder that is not text places nothing (``phases_of`` reads every test of such a report as unknown)."""
+    root = ran.get("rootdir") or ""
+    prefix = root.strip("/") if isinstance(root, str) else ""
     return (lambda node: f"{prefix}/{node}") if prefix else (lambda node: node)
 
 
@@ -656,7 +709,7 @@ def _observed(checks: Sequence[str], ran: dict) -> dict[str, str]:
     """Each of ``checks`` that ``ran`` collected (a test of it is among the run's per-test outcomes, its failures or
     its set-up errors), with its verdict in that run (``_verdicts``). A check the run did not collect has none: the
     run did not observe it. G6 0.3: every run of a stated check on the patch reaches the issuer this way."""
-    nodes = set(phases_of(ran)) | _failed_ids(ran)
+    nodes = set(phases_of(ran))
     collected = [check for check in dict.fromkeys(checks) if any(_covers(check, node) for node in nodes)]
     return {check: observation(found) for check, found in _verdicts(collected, ran).items()}
 
@@ -665,16 +718,21 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
     """Each check's own verdict in one run, read from pytest's per-test outcomes by phase (``phases_of``, ``body_of``).
     The review's verdict counts a test that failed outside its body (``ERROR``) as ``failed``, as it always has, so its
     status and outcome keep their meaning; where that is all a ``failed`` verdict rests on, the entry says so
-    (``observation``: ``ERROR``), and the issuer is told that (``observation``)."""
+    (``observation``: ``ERROR``), and the issuer is told that (``observation``). A test of a check that started which
+    pytest collected and neither ran to a reported phase nor left out never finished (review 1 of slice 2's follow-up,
+    finding 2): the check did not pass."""
     run, said, output = ran["verdict"], ran.get("said") or "", ran.get("output") or ""
     full = _in_repository(ran)
     tests = phases_of(ran)
-    omitted = {full(node) for node in ran.get("omitted_ids") or []}
+    omitted = set(_listing(ran, "omitted_ids")[0])
+    unfinished = [node for node in _listing(ran, "collected_ids")[0] if node not in tests and node not in omitted]
     missing = {check for check in ids if _not_found(check, output)}
     broken = {full(rel) for rel in _collection_errors(output)}
     found: dict[str, dict] = {}
     for check in ids:
         bodies = {node: body_of(phases) for node, phases in tests.items() if _covers(check, node)}
+        if bodies:   # it started: one of its tests that never reported a phase never finished
+            bodies.update({node: "not_run" for node in unfinished if _covers(check, node)})
         nodes = {node: FAILED if said_of == ERROR else said_of for node, said_of in bodies.items()}
         dropped = [node for node in omitted if _covers(check, node)]
         states = set(nodes.values())
