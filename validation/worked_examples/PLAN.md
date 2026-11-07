@@ -3409,3 +3409,26 @@ the whole old and new file.
 to the next change as design questions, not as fifth patches: the layers reader reads whole files where they are held, and
 says it cannot read a change where they are not; every process a session starts is owned by one object whose cleanup runs
 every step.
+
+## 2026-11-07 (afternoon): slice 1's cohorts read again after its third repair; the same bugs, new manifest digests
+
+**Why.** Slice 1's third review found that a test was known by its JUnit key, which two pytest node ids can share, so another
+test's failure could admit a bug. The repair (`claude/replay-cohort` ec2aae1) knows each test by its node id, from pytest's
+own report. The records kept before held JUnit keys only, and cannot decide under that rule. So all four controls ran again on
+real containers for all 56 development and selection bugs, on the repaired code. The admission rule (all four controls
+behave, on observed results, with the collection-error ruling of this morning) is unchanged. Only how a test is named changed.
+
+**What came out.** The same bugs as before:
+- development: 35 of 35 usable (`development-ae1bcad1e504`, was `development-b5b14ae81db0`);
+- selection: 20 of 21 (`selection-c15a59002c6a`, was `selection-7f68ad0e3101`), tenacity-660 excluded because its base run
+  ran out of time with no report;
+- final: unchanged (`final-6ac8cc5298e7`), strix-1116 still not usable.
+
+The same four bugs are admitted only by the collection-error rule. They are starlette-3166 and setuptools-5362 (development),
+and opentelemetry-python-5823 and pip-14218 (selection).
+
+**A defect the first pass showed.** Under pytest-xdist every worker wrote the one report file, so it came back torn, and four
+bugs (uvicorn-3236, uvicorn-3199, openai-python-4166, openai-python-3982) were excluded for G6's own fault. That was repaired
+(084ca72) and every bug ran again, so all kept records come from the same code.
+
+Nothing was scored. No final-cohort bug was read beyond its name and image ids.
