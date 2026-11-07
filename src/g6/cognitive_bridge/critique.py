@@ -13,7 +13,7 @@ from typing import Any, Mapping, Sequence
 
 from .codes import settled
 from .mixed_methods import ENGINE_SPECS
-from .snapshot import fresh, json_reply, record, returned, snapshot, text
+from .snapshot import fresh, json_reply, number, record, returned, snapshot, text
 
 
 @record
@@ -57,7 +57,7 @@ class LLMMetacognitiveCritic:
     """Bounded JSON-only critical inquiry, compatible with G6 core.llm.LLMCaller."""
     def __init__(self, llm: Any, *, max_items: int = 6) -> None:
         self.llm, self.max_items = llm, snapshot(max_items, where="max_items")
-        if not 1 <= self.max_items <= 12:
+        if not 1 <= number(self.max_items, where="max_items") <= 12:
             raise ValueError("max items must be 1..12")
 
     def propose(self, objective: str, model_summary: str,

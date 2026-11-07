@@ -26,7 +26,7 @@ from g6.reasoning import sign_test_p
 
 from .assurance import CandidateDossier
 from .codes import ADAPTATION_REFUSED, affirmed, refusal, settled
-from .snapshot import fresh, record, snapshot
+from .snapshot import fresh, number, record, snapshot
 
 HEX = re.compile(r"^[0-9a-f]{64}$")
 
@@ -268,6 +268,8 @@ class AdaptationPromotionGate:
         self.min_discordant = snapshot(min_discordant, where="min_discordant")
         self.alpha = snapshot(alpha, where="alpha")
         self.max_evaluations = snapshot(max_evaluations, where="max_evaluations")
+        for name in ("min_cases", "min_discordant", "alpha", "max_evaluations"):  # numbers, by the one number rule
+            number(getattr(self, name), where=name)
         if not 1 <= self.min_cases <= 100000 or not 1 <= self.min_discordant <= self.min_cases:
             raise ValueError("invalid minimum sample sizes")
         if not 0 < self.alpha < 1 or not 1 <= self.max_evaluations <= 100:

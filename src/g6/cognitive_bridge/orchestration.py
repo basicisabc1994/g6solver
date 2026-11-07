@@ -42,7 +42,7 @@ from .epistemic import CrossMethodConflictGate, ScopedAssertion, assertions_sha2
 from .metacognition import (MethodVariant, MetacognitiveMethodSelector,
                             ProblemSignature, SelectionDecision, checked_selection)
 from .mixed_methods import (ENGINE_SPECS, ClaimIR, MethodPlan, MethodRouter, MixedMethodExecutor, step_digest)
-from .snapshot import fresh, issue, issued, plain, record, returned, snapshot, text
+from .snapshot import fresh, issue, issued, number, plain, record, returned, snapshot, text
 
 
 def _dossier(dossier: Any, subject: str) -> tuple[CandidateDossier, str]:
@@ -169,6 +169,7 @@ class CognitiveAssuranceOrchestrator:
         variants = snapshot(variants, where="variants")
         variant_models = snapshot(variant_models, where="variant_models")
         max_supplemental = snapshot(max_supplemental, where="max_supplemental")
+        number(max_supplemental, where="max_supplemental")
         if context.risk < standard.risk or context.domain != standard.id:
             raise ValueError("the problem context cannot weaken its standard's risk tier or domain")
         mandatory = {m for criterion in standard.criteria for m in criterion.required_methods}
@@ -200,10 +201,11 @@ class CognitiveAssuranceOrchestrator:
                 continue
             # A method's chosen representation becomes declarative, reviewed
             # input to the canonical router; no arbitrary generated code. It is
-            # a deep copy, so the caller's dictionaries cannot change what runs.
+            # what the boundary makes of it (a new value), so the caller's
+            # dictionaries cannot change what runs.
             try:
-                model = json.loads(canonical_json(dict(source)))
-            except (TypeError, ValueError) as exc:
+                model = plain(source, where=f"the {method} model of {vid!r}")
+            except ValueError as exc:
                 raise ValueError(f"the {method} model of {vid!r} is not declarative JSON data") from exc
             variant_op = row["op"]
             if variant_op != ENGINE_SPECS[method]["op"]:
@@ -259,7 +261,8 @@ class CognitiveAssuranceOrchestrator:
     def _executed(self, compiled: CompiledResearch, run_result: Mapping[str, Any]) -> dict[str, Any] | None:
         """This orchestrator's own record of the run ``run_result`` names, when it ran this compiled plan for the
         claim the compiled research names, and the caller's copy is that record unchanged; else None."""
-        record = self._runs.get(str(run_result.get("run_id", ""))) if isinstance(run_result, dict) else None
+        run_id = run_result.get("run_id") if isinstance(run_result, dict) else None
+        record = self._runs.get(run_id) if type(run_id) is str else None  # a run's id is text; nothing is made text
         if record is None or record[0] != compiled.plan_digest or compiled.changed_since_compiled():
             return None
         try:

@@ -211,17 +211,28 @@ def _unread(value: Any) -> str:
     return f"a {_named(value)}"
 
 
+def _read_card(card: Any) -> dict[str, Any]:
+    """A warning card as the bridge reads one, the one reading :func:`refusal` and :func:`result_faults` share: taken
+    by the boundary first, in its raw form (``snapshot.plain``: a set, bytes or any other object is refused there,
+    never converted), then read as a ``WarningCard`` in strict mode (no field converted from another kind). The card
+    that reading makes, or ``ValueError`` (:class:`NotPlainData` for what is not JSON data)."""
+    taken = _plain(card, where="a warning card")
+    if type(taken) is not dict:
+        raise ValueError("a warning card is a G6 warning card, a mapping")
+    return WarningCard.model_validate(taken, strict=True).model_dump()
+
+
 def _claims_nothing(card: Mapping[str, Any] | None) -> bool:
-    """Whether ``card`` is a G6 warning card that claims nothing of its own: a mapping with a stable ``G6_E_*`` code
-    that reads as a ``WarningCard``, no field G6 reads as a state, and ``verified`` false (INV-ENV-2)."""
-    if (not isinstance(card, dict) or not ERROR_CODE_PATTERN.match(str(card.get("code", "")))
-            or set(card) & set(STATE_FIELDS) or card.get(VERIFIED_FLAG, False) is not False):
+    """Whether ``card`` is a G6 warning card that claims nothing of its own: a mapping with no field G6 reads as a
+    state and ``verified`` false (INV-ENV-2), that reads as a ``WarningCard`` (:func:`_read_card`) with a stable
+    ``G6_E_*`` code."""
+    if type(card) not in OBJECTS or set(card) & set(STATE_FIELDS) or card.get(VERIFIED_FLAG, False) is not False:
         return False
     try:
-        WarningCard.model_validate(dict(card))
+        read = _read_card(card)
     except ValueError:
         return False
-    return True
+    return bool(ERROR_CODE_PATTERN.match(read["code"]))
 
 
 def result_faults(result: Mapping[str, Any]) -> list[str]:
@@ -235,7 +246,7 @@ def result_faults(result: Mapping[str, Any]) -> list[str]:
         return [f"completion_state {state!r} is not one of the bridge's states"]
     if state == STATES[1]:
         code = result.get("code")
-        faults = [] if code in CODES and ERROR_CODE_PATTERN.match(str(code)) else [
+        faults = [] if type(code) is str and code in CODES and ERROR_CODE_PATTERN.match(code) else [
             f"{code!r} is not a code g6.cognitive_bridge registered"]
         if not _claims_nothing(card) or card.get("code") != code:
             faults.append(f"it has no warning card for its code {code!r} that claims nothing")
@@ -287,12 +298,12 @@ def claims(value: Any, *, _card: bool = False, _at: str = "", _depth: int = 0,
     return found
 
 
-def unclaimed(value: Any, *, where: str) -> Any:
-    """``value`` when it claims no state and holds nothing but JSON data (:func:`claims`), else an error naming each
-    place: :class:`NotPlainData`, the boundary's refusal (its code, and ``where``), when it holds what is not JSON
-    data, and ``ValueError`` when it only claims a state."""
+def unclaimed(value: Any, *, where: str, _depth: int = 0) -> Any:
+    """``value`` when it claims no state and holds nothing but JSON data (:func:`claims`, counted from ``_depth``,
+    where ``value`` stands), else an error naming each place: :class:`NotPlainData`, the boundary's refusal (its code,
+    and ``where``), when it holds what is not JSON data, and ``ValueError`` when it only claims a state."""
     odd: list[str] = []
-    found = claims(value, _not_data=odd)
+    found = claims(value, _depth=_depth, _not_data=odd)
     if found:
         why = f"claims a state the bridge did not decide, or holds what is not JSON data: {'; '.join(found)[:600]}"
         if odd:
@@ -317,6 +328,14 @@ def _plain(value: Any, *, where: str, frozen: bool = False) -> Any:
     return boundary.snapshot(value, where=where) if frozen else boundary.plain(value, where=where)
 
 
+def _text(value: Any, *, where: str) -> str:
+    """``value`` as the boundary takes text (``snapshot.text``): text, and nothing else, never converted. The boundary
+    imports this module, so it is imported where it is used."""
+    from . import snapshot as boundary
+
+    return boundary.text(value, where=where)
+
+
 def only_fields(value: Any, *, allowed: tuple[str, ...], required: tuple[str, ...] = (),
                 where: str) -> Mapping[str, Any]:
     """``value`` when it is a mapping with every ``required`` field, no field but ``allowed`` and no claim anywhere in it
@@ -338,23 +357,23 @@ def _no_reserved(values: Mapping[str, Any], where: str) -> None:
 
 
 def _card(code: str, reason: str, card: Mapping[str, Any] | None) -> dict[str, Any]:
-    """The warning card a refusal carries: a new one for ``code``, or a supplied card read as a ``WarningCard``. Whether
-    it is a card for a registered code that claims nothing is :func:`result_faults`' to say."""
-    if card is None:
-        return warning_card(str(code), reason)
-    if not isinstance(card, dict):
-        raise ValueError("a supplied card is a G6 warning card, a mapping")
-    return WarningCard.model_validate(dict(card)).model_dump()
+    """The warning card a refusal carries: a new one for ``code``, or a supplied card as the bridge reads one
+    (:func:`_read_card`: the boundary first, then a strict ``WarningCard``). Whether it is a card for a registered code
+    that claims nothing is :func:`result_faults`' to say."""
+    return warning_card(code, reason) if card is None else _read_card(card)
 
 
 def refusal(code: str, reason: str, *, card: Mapping[str, Any] | None = None, **extra: Any) -> dict[str, Any]:
     """A ``blocked-escalated`` answer that says why, under ``code`` and in a warning card with the same code.
 
-    ``code`` is one of :data:`CODES`; a supplied ``card`` must be a card for that code (:func:`result_faults`).
-    ``extra`` may not set any of :data:`RESERVED`, and this function's own fields are written last. What it returns
-    claims no state anywhere (:func:`unclaimed`) and is what the boundary made of it (``snapshot.plain``)."""
+    ``code`` is one of :data:`CODES`; ``reason`` is text, taken as the boundary takes text (``snapshot.text``: a number,
+    a set or bytes is refused, never converted); a supplied ``card`` is read by the boundary, then as a strict
+    ``WarningCard`` (:func:`_read_card`), and must be a card for that code (:func:`result_faults`). ``extra`` may not
+    set any of :data:`RESERVED`, and this function's own fields are written last. What it returns claims no state
+    anywhere (:func:`unclaimed`) and is what the boundary made of it (``snapshot.plain``)."""
     _no_reserved(extra, "a refusal's extra fields")
-    reason = str(reason)[:400]
+    code = _text(code, where="a refusal's code")
+    reason = _text(reason, where="a refusal's reason")[:400]
     out = {**extra, "completion_state": "blocked-escalated", "code": code, "reason": reason,
            "warning_card": _card(code, reason, card)}
     where = f"a refusal under {code!r}"
@@ -380,7 +399,7 @@ def settled(refused: Mapping[str, Any] | None, *, draft_card: tuple[str, str] | 
             or set(refused) & (set(RESERVED) - set(_MADE)) or result_faults(refused)):
         raise ValueError("settled takes a refusal codes.refusal made, unchanged, or None")
     rest = {k: v for k, v in refused.items() if k not in RESERVED and k != "reason"}
-    return _plain(unclaimed({**refusal(refused["code"], str(refused.get("reason", "")), card=refused["warning_card"],
+    return _plain(unclaimed({**refusal(refused["code"], refused.get("reason", ""), card=refused["warning_card"],
                                        **rest), **fields}, where="a result"), where="a result")
 
 

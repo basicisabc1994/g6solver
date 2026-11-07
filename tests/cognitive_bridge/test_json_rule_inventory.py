@@ -143,8 +143,11 @@ def makers():
     return found
 
 
-#: What the code lists, compared whole: a new maker is listed here and run below.
-EXPECTED_MAKERS = {("block.py", "CognitiveBridgeBlock.infer"), ("codes.py", "refusal"), ("codes.py", "settled"),
+#: What the code lists, compared whole: a new maker is listed here and run below. (``CognitiveBridgeBlock._refused``:
+#: the block's one refusal of its input, which its raw screen at G6's door and ``infer`` both return, since repair 2 of
+#: follow-up 2.)
+EXPECTED_MAKERS = {("block.py", "CognitiveBridgeBlock._refused"), ("block.py", "CognitiveBridgeBlock.infer"),
+                   ("codes.py", "refusal"), ("codes.py", "settled"),
                    ("mixed_methods.py", "MixedMethodExecutor._run"),
                    ("orchestration.py", "CognitiveAssuranceOrchestrator.execute")}
 #: The boundary's conversion, by the names a maker may call it by.

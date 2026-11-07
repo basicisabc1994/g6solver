@@ -426,7 +426,12 @@ def test_no_claim_planted_in_a_makers_fields_leaves_it(maker, mark):
 
 
 def test_the_rule_walks_records_sets_and_depth():
-    assert codes.claims(Probe("p", "q", "t", {"A": True}, .8, arguments={"k": [{"verified": False}]}))
+    # since repair 2 of follow-up 2 a record's data field runs the rule where the record is made, so a claim in its
+    # data is refused there (it used to be made, and found when the record was handed to the rule); a record handed to
+    # the rule is not JSON data, and is named
+    with pytest.raises(ValueError, match="claims a state"):
+        Probe("p", "q", "t", {"A": True}, .8, arguments={"k": [{"verified": False}]})
+    assert codes.claims(Probe("p", "q", "t", {"A": True}, .8))
     assert codes.claims(frozenset({snapshot.FrozenMap({"verified": True})}))
     assert codes.claims((("ok",), {"x": ({"reliability_label": "x"},)}))
     deep: dict = {}

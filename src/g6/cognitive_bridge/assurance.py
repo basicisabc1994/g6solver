@@ -13,7 +13,7 @@ import re
 from dataclasses import field, fields
 from typing import Any, Mapping, Protocol
 
-from .codes import DOSSIER_BLOCKED, MADE_FIELDS, STATES, affirmed, only_fields, refusal, settled
+from .codes import DOSSIER_BLOCKED, MADE_FIELDS, STATES, affirmed, only_fields, refusal, settled, unclaimed
 from .snapshot import canonical_json, fresh, issue, plain, record, returned, snapshot, text
 
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
@@ -94,10 +94,10 @@ class DomainStandard:
     def manifest(self) -> dict[str, Any]:
         """A new copy each call, never a view of what the standard holds (each criterion's fields, not its own
         ``__dict__``)."""
-        return {"id": self.id, "edition": self.edition, "jurisdiction": self.jurisdiction,
-                "authority": self.authority, "source_sha256": self.source_sha256,
-                "criteria": [{f.name: getattr(c, f.name) for f in fields(c)} for c in self.criteria],
-                "risk": self.risk}
+        return unclaimed({"id": self.id, "edition": self.edition, "jurisdiction": self.jurisdiction,
+                          "authority": self.authority, "source_sha256": self.source_sha256,
+                          "criteria": [{f.name: getattr(c, f.name) for f in fields(c)} for c in self.criteria],
+                          "risk": self.risk}, where="a standard's manifest")
 
     @property
     def digest(self) -> str:
@@ -128,9 +128,9 @@ class EvidenceArtifact:
         return sha256(self.content)
 
     def manifest(self) -> dict[str, Any]:
-        return {"id": self.id, "kind": self.kind, "claimed_by": self.claimed_by,
-                "source_ref": self.source_ref, "claim_id": self.claim_id,
-                "sha256": self.digest, "length": len(self.content)}
+        return unclaimed({"id": self.id, "kind": self.kind, "claimed_by": self.claimed_by,
+                          "source_ref": self.source_ref, "claim_id": self.claim_id,
+                          "sha256": self.digest, "length": len(self.content)}, where="an artifact's manifest")
 
 
 class Check(Protocol):
@@ -162,9 +162,10 @@ class FrozenVerifier:
             raise ValueError("controls must be non-empty bytes")
 
     def manifest(self) -> dict[str, Any]:
-        return {"id": self.id, "owner": self.owner, "version_sha256": self.version_sha256,
-                "positive_control_hashes": [sha256(x) for x in self.positive_controls],
-                "negative_control_hashes": [sha256(x) for x in self.negative_controls]}
+        return unclaimed({"id": self.id, "owner": self.owner, "version_sha256": self.version_sha256,
+                          "positive_control_hashes": [sha256(x) for x in self.positive_controls],
+                          "negative_control_hashes": [sha256(x) for x in self.negative_controls]},
+                         where="a checker's manifest")
 
 
 @record
@@ -207,7 +208,7 @@ class CandidateDossier:
         return sha256(canonical_json(self.payload)) == self.content_sha256
 
     def to_dict(self) -> dict[str, Any]:
-        return {**self.payload, "content_sha256": self.content_sha256}
+        return unclaimed({**self.payload, "content_sha256": self.content_sha256}, where="a dossier")
 
 
 def _evidence(*, standard: DomainStandard, artifacts: Mapping[str, EvidenceArtifact],

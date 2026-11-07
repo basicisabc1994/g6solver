@@ -83,8 +83,10 @@ def _record_classes() -> dict[str, type]:
 
 #: The public API's classes that are not entry points of their own, with why.
 NOT_ENTRIES = {
-    "CognitiveBridgeBlock": "the MCP door's block: its input is pydantic-validated JSON (CognitiveInput, extra=forbid) "
-                            "and every record it builds goes through the record boundary",
+    "CognitiveBridgeBlock": "the MCP door's block: its arguments are read raw by the boundary (snapshot.plain, in "
+                            "screen_raw at G6's door and in infer), then by strict models (CognitiveInput, extra=forbid,"
+                            " strict), listed and planted in test_conversion_inventory.py; every record it builds goes "
+                            "through the record boundary",
 }
 
 

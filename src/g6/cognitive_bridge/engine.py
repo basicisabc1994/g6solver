@@ -28,8 +28,8 @@ from returns.result import Failure, Success
 from g6.core import door
 
 from .assurance import canonical_json, sha256
-from .codes import NO_PROBE, OBJECTS, STEP_FAILED, affirmed, claims, refusal, settled
-from .snapshot import FrozenMap, fresh, json_reply, plain, record, returned, snapshot, text
+from .codes import NO_PROBE, OBJECTS, STEP_FAILED, affirmed, claims, refusal, settled, unclaimed
+from .snapshot import FrozenMap, fresh, json_reply, number, plain, record, returned, snapshot, text
 
 
 @record
@@ -83,21 +83,21 @@ class Updater(Protocol):
 def _beliefs(beliefs: Mapping[str, float]) -> dict[str, float]:
     """The one rule for a belief map, wherever it enters (the caller's priors, a belief map handed to an update, a
     ranking or an information gain, an updater's posterior): 2 to 32 hypotheses, each named by nonempty text, each
-    belief a number (not a flag) finite in [0, 1], and their sum one, with no implicit normalisation. The beliefs as
-    numbers, or ``ValueError``. ``tests/cognitive_bridge/test_belief_inventory.py`` lists every place beliefs enter."""
+    belief a number (``snapshot.number``: never a flag, text or null, never converted) finite in [0, 1], and their sum
+    one, with no implicit normalisation. The beliefs as floats, or ``ValueError``.
+    ``tests/cognitive_bridge/test_belief_inventory.py`` lists every place beliefs enter."""
     if type(beliefs) not in OBJECTS:
         raise ValueError("beliefs are a mapping of hypothesis IDs to probabilities")
     if not 2 <= len(beliefs) <= 32:
         raise ValueError("supply 2–32 competing hypotheses")
     if any(type(h) is not str or not h for h in beliefs):
         raise ValueError("hypothesis IDs must be nonempty and unique; statements nonempty")
-    if any(type(v) not in (int, float) for v in beliefs.values()):
-        raise ValueError("beliefs are numbers, not flags, text or null")
-    if any(not math.isfinite(v) or v < 0 or v > 1 for v in beliefs.values()):
+    numbers = {h: number(v, where=f"the belief in {h!r}") for h, v in beliefs.items()}
+    if any(v < 0 or v > 1 for v in numbers.values()):
         raise ValueError("all hypothesis probabilities must be finite in [0,1]")
-    if not math.isclose(sum(beliefs.values()), 1.0, abs_tol=1e-10, rel_tol=0.0):
+    if not math.isclose(sum(numbers.values()), 1.0, abs_tol=1e-10, rel_tol=0.0):
         raise ValueError("beliefs must sum to one; no implicit normalisation")
-    return {h: float(v) for h, v in beliefs.items()}
+    return {h: float(v) for h, v in numbers.items()}  # an integer belief (0 or 1) read as the float it is
 
 
 def check_beliefs(hypotheses: Sequence[Hypothesis]) -> dict[str, float]:
@@ -105,7 +105,7 @@ def check_beliefs(hypotheses: Sequence[Hypothesis]) -> dict[str, float]:
     ids = [h.id for h in hypotheses]
     if any(not h.statement for h in hypotheses) or len(set(ids)) != len(ids):
         raise ValueError("hypothesis IDs must be nonempty and unique; statements nonempty")
-    return _beliefs({h.id: h.prior for h in hypotheses})
+    return unclaimed(_beliefs({h.id: h.prior for h in hypotheses}), where="the beliefs")
 
 
 def _validate_probe(probe: Probe, beliefs: Mapping[str, float]) -> None:
@@ -115,6 +115,7 @@ def _validate_probe(probe: Probe, beliefs: Mapping[str, float]) -> None:
         raise ValueError(f"probe {probe.id!r} must predict a binary outcome for every hypothesis")
     if any(type(p) is not bool for p in probe.positive_if.values()):
         raise ValueError("probe predictions must be booleans")
+    # its likelihood, cost and novelty are numbers: the Probe record took each by the number rule where it was made
     if not math.isfinite(probe.assumed_match_probability) or not (0.5 <= probe.assumed_match_probability <= 1):
         raise ValueError("assumed match probability must be in [0.5,1]")
     if not math.isfinite(probe.cost) or probe.cost < 0:
@@ -145,7 +146,7 @@ def expected_information_gain(beliefs: Mapping[str, float], probe: Probe) -> flo
         if mass > 0:
             posterior = [prior * _likelihood(probe, h, outcome) / mass for h, prior in beliefs.items()]
             after += mass * _entropy(posterior)
-    return max(0.0, before - after)
+    return unclaimed(max(0.0, before - after), where="an information gain")
 
 
 class InformationGainSelector:
@@ -154,7 +155,8 @@ class InformationGainSelector:
     def __init__(self, *, novelty_weight: float = 1e-6, min_gain: float = 1e-9) -> None:
         self.novelty_weight = snapshot(novelty_weight, where="novelty_weight")
         self.min_gain = snapshot(min_gain, where="min_gain")
-        if not 0 <= self.novelty_weight <= 1 or not 0 <= self.min_gain:
+        if (not 0 <= number(self.novelty_weight, where="novelty_weight") <= 1
+                or not 0 <= number(self.min_gain, where="min_gain")):
             raise ValueError("invalid selector configuration")
 
     def rank(self, beliefs: Mapping[str, float], probes: Sequence[Probe], budget: float) -> list[dict]:
@@ -162,7 +164,7 @@ class InformationGainSelector:
         beliefs = _beliefs(beliefs)  # the rule priors follow, where the beliefs enter
         probes = snapshot(probes, where="probes")
         budget = snapshot(budget, where="budget")
-        if not math.isfinite(budget) or budget < 0:
+        if number(budget, where="budget") < 0:
             raise ValueError("budget must be finite and nonnegative")
         scored = []
         for probe in probes:
@@ -171,7 +173,7 @@ class InformationGainSelector:
                 scored.append({"id": probe.id, "expected_information_bits": gain, "cost": probe.cost,
                                "novelty_preference": probe.novelty,
                                "score": gain / (1 + probe.cost) + self.novelty_weight * probe.novelty})
-        return sorted(scored, key=lambda row: (-row["score"], row["id"]))
+        return unclaimed(sorted(scored, key=lambda row: (-row["score"], row["id"])), where="a ranking")
 
 
 class BayesianUpdater:
@@ -188,7 +190,7 @@ class BayesianUpdater:
         if denominator <= 0:
             raise ValueError("observation has zero probability under every proposed hypothesis: revise model")
         # Floating point sum is ~1.0; the explicit assumption and evidence remain visible.
-        return {h: weight / denominator for h, weight in weights.items()}
+        return unclaimed({h: weight / denominator for h, weight in weights.items()}, where="a posterior")
 
 
 class StaticProposer:
@@ -209,7 +211,7 @@ class LLMProposer:
     def __init__(self, llm: Any, tools: Mapping[str, ToolSpec], *, max_probes: int = 8) -> None:
         self.llm, self.tools = llm, snapshot(tools, where="tools")
         self.max_probes = snapshot(max_probes, where="max_probes")
-        if not 1 <= self.max_probes <= 12:
+        if not 1 <= number(self.max_probes, where="max_probes") <= 12:
             raise ValueError("max_probes must be 1–12")
 
     def propose(self, objective: str, hypotheses: Sequence[Hypothesis], history: Sequence[dict]) -> list[Probe]:
@@ -249,9 +251,11 @@ class LLMProposer:
                 raise ValueError("model tool arguments invalid or too large")
             if not isinstance(item["positive_if"], dict) or set(item["positive_if"]) != hypotheses_ids:
                 raise ValueError("model must predict all hypotheses")
-            probe = Probe(id=str(item["id"]), question=str(item["question"]), tool=tool.name,
+            # the model's id and question are text and its novelty a number, as it wrote them: the record and the
+            # probe check refuse any other kind, and nothing here converts one
+            probe = Probe(id=item["id"], question=item["question"], tool=tool.name,
                           arguments=item["arguments"], positive_if=item["positive_if"],
-                          novelty=float(item["novelty"]), cost=tool.cost,
+                          novelty=item["novelty"], cost=tool.cost,
                           assumed_match_probability=tool.assumed_match_probability)
             _validate_probe(probe, {h.id: h.prior for h in hypotheses})
             if len(probe.id) > 100 or len(probe.question) > 1000:
@@ -266,13 +270,10 @@ def _scores(predictions: Any, count: int) -> tuple[float, ...]:
     """A predictor's answer as the selector uses it: one finite number for each of the ``count`` feature rows."""
     if not isinstance(predictions, tuple) or len(predictions) != count:
         raise ValueError("model returned incorrect number of experiment scores")
-    try:
-        scores = tuple(float(score) for score in predictions)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("model emitted a score that is not a number") from exc
-    if not all(math.isfinite(score) for score in scores):
-        raise ValueError("model emitted non-finite score")
-    return scores
+    try:  # each score a number as the predictor wrote it (snapshot.number): a flag or text is refused, not converted
+        return tuple(number(score, where=f"score {index}") for index, score in enumerate(predictions))
+    except ValueError as exc:
+        raise ValueError(f"model emitted a score that is not a number: {exc}") from exc
 
 
 class MLAcquisitionSelector:
@@ -286,18 +287,19 @@ class MLAcquisitionSelector:
     def __init__(self, predictor: Any, *, min_gain: float = 1e-9):
         self.predictor = predictor
         self.min_gain = snapshot(min_gain, where="min_gain")
+        number(self.min_gain, where="min_gain")
 
     def rank(self, beliefs: Mapping[str, float], probes: Sequence[Probe], budget: float) -> list[dict]:
         beliefs = snapshot(beliefs, where="beliefs")
         beliefs = _beliefs(beliefs)  # the rule priors follow, where the beliefs enter
         probes = snapshot(probes, where="probes")
         budget = snapshot(budget, where="budget")
-        if not math.isfinite(budget) or budget < 0:
+        if number(budget, where="budget") < 0:
             raise ValueError("invalid budget")
         viable = [(p, expected_information_gain(beliefs, p)) for p in probes if p.cost <= budget]
         viable = [(p, ig) for p, ig in viable if ig >= self.min_gain]
         if not viable:
-            return []
+            return unclaimed([], where="a ranking")
         features = tuple((ig, p.cost, p.novelty, p.assumed_match_probability) for p, ig in viable)
         predictions = returned(self.predictor.predict(fresh(features)), _scores, len(viable))
         result = []
@@ -305,7 +307,7 @@ class MLAcquisitionSelector:
             result.append({"id": p.id, "expected_information_bits": ig, "score": score,
                            "cost": p.cost, "novelty_preference": p.novelty,
                            "selector": "caller_supplied_quantitative_ml"})
-        return sorted(result, key=lambda row: (-row["score"], row["id"]))
+        return unclaimed(sorted(result, key=lambda row: (-row["score"], row["id"])), where="a ranking")
 
 
 class _ToolDoor:
@@ -413,7 +415,9 @@ class CognitiveAgent:
             allow=door.allowed_sensitive() | frozenset(self.allow), registry=_ToolDoor(tool),
             how_to_allow=f"Allow it in your own code with CognitiveAgent(..., allow=('tool:{tool.name}',)).")
         if not affirmed(reply.get("ok")):
-            return None, reply, str(reply.get("error") or f"{tool.name}: G6's door did not pass the tool step")
+            error = reply.get("error")  # the door's own text; anything else is not read as a reason
+            return None, reply, error if type(error) is str and error else f"{tool.name}: G6's door did not pass the " \
+                                                                            "tool step"
         try:
             result = plain(reply.get("result"), where=f"{tool.name}'s answer")
         except ValueError as exc:
@@ -431,7 +435,7 @@ class CognitiveAgent:
         hypotheses = snapshot(hypotheses, where="hypotheses")
         budget = snapshot(budget, where="budget")
         max_steps = snapshot(max_steps, where="max_steps")
-        if not 1 <= max_steps <= 20 or not math.isfinite(budget) or budget < 0:
+        if not 1 <= number(max_steps, where="max_steps") <= 20 or number(budget, where="budget") < 0:
             raise ValueError("invalid step or budget limit")
         # What the agent checked is held here only, with the digest taken when it was checked; a collaborator is handed
         # a fresh copy of it, and what a collaborator returns is a fresh copy checked against it (snapshot.returned).
@@ -440,7 +444,7 @@ class CognitiveAgent:
         initial = beliefs
         seen: set[str] = set()
         history: list[FrozenMap] = []  # written only by _credited, from a tool step G6's door passed
-        remaining = float(budget)
+        remaining = budget  # a number, as the rule above read it
         refused: dict[str, Any] | None = None
         for step in range(max_steps):
             # Proposer is advisory; calls to actual tools occur only here.
@@ -471,9 +475,9 @@ class CognitiveAgent:
                 raise ValueError("tool must return an Observation with a boolean outcome")
             if not observation.source_ref:
                 raise ValueError("tool observation must include a source reference")
-            if observation.measured_utility is not None:
-                if not observation.evaluator_ref or not math.isfinite(float(observation.measured_utility)):
-                    raise ValueError("measured utility requires a finite score and evaluator provenance")
+            # a measured utility is a finite number or null: the Observation record took it by the number rule
+            if observation.measured_utility is not None and not observation.evaluator_ref:
+                raise ValueError("measured utility requires a finite score and evaluator provenance")
             prior = _prior(beliefs, checked)  # the update uses the beliefs as checked, by their digest
             posterior = returned(self.updater.update(fresh(prior), fresh(chosen), fresh(observation.positive)),
                                  _posterior, prior)
@@ -519,7 +523,7 @@ class LLMIdeaGenerator:
 
     def __init__(self, llm: Any, *, max_ideas: int = 5):
         self.llm, self.max_ideas = llm, snapshot(max_ideas, where="max_ideas")
-        if not 1 <= self.max_ideas <= 10:
+        if not 1 <= number(self.max_ideas, where="max_ideas") <= 10:
             raise ValueError("max_ideas must be 1–10")
 
     def generate(self, objective: str, observations: Sequence[dict]) -> list[IdeaHypothesis]:

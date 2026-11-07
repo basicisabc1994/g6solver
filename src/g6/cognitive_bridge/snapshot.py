@@ -8,7 +8,9 @@ round trip through the bridge's own canonical encoder (:func:`canonical_json`), 
 under ``codes.INPUT``, with the path) anything that does not survive it unchanged: a key that is not text, a subclass of
 any type, a set, any other object, a number that is not finite, an integer longer than the encoder writes. Its walk
 reads each value's kind by the leaf test the claim rule reads by (``codes._read_as``), so the two never disagree on
-what is JSON data. An identity is text (:func:`text`). Code after the boundary sees only that data, so the claim rule
+what is JSON data. An identity is text (:func:`text`), and a number is an integer or a float (:func:`number`): read
+raw by the boundary first, then by its rule, and never converted from another kind
+(``tests/cognitive_bridge/test_conversion_inventory.py``). Code after the boundary sees only that data, so the claim rule
 (``codes.claims``) walks JSON alone.
 
 How deep a value nests is one count (``codes.DEPTH``), from where it enters: every walk here takes its depth from its
@@ -17,8 +19,9 @@ record made again) keeps the count, and a record's fields stand one level inside
 record stands (``tests/cognitive_bridge/test_depth_inventory.py``).
 
 A record (:func:`record`) is the bridge's own frozen dataclass, and each of its fields is taken where the record is
-made, by the kind its annotation declares: data through :func:`plain`, held read-only (``codes.FrozenMap`` and tuples);
-text as text; bytes only in a field declared ``bytes``, which the record fills itself; another record only of its
+made, by the kind its annotation declares: data through :func:`plain`, claiming no state anywhere (``codes.unclaimed``:
+a claim is refused where it enters), held read-only (``codes.FrozenMap`` and tuples); text as text; a number, an
+integer or a flag (``float``, ``int``, ``bool``) by its rule, never converted from another kind; bytes only in a field declared ``bytes``, which the record fills itself; another record only of its
 declared type; code (a callable) by reference. :func:`snapshot` takes a caller's value (data, and records in lists and
 mappings), making each record again so it shares nothing; :func:`fresh` is the same copy, handed to a collaborator; and
 what a collaborator returns is used only through :func:`returned`. ``tests/cognitive_bridge/test_boundary_inventory.py``
@@ -127,6 +130,17 @@ def text(value: Any, *, where: str, _depth: int = 0) -> str:
     return plain(value, where=where, _depth=_depth)
 
 
+def number(value: Any, *, where: str, _depth: int = 0) -> int | float:
+    """A number as the bridge takes it: an integer or a float, by exact type, as the boundary takes it (:func:`plain`,
+    standing at ``_depth``: finite, and an integer the encoder writes); anything else (a flag, text, null, a set,
+    bytes) is refused, never converted. The one number rule: every place the bridge reads a caller's or a
+    collaborator's value as a number reads it through this (``tests/cognitive_bridge/test_conversion_inventory.py``)."""
+    if type(value) not in (int, float):
+        raise NotPlainData(where, f"a {_named(value)} is not a number: numbers are integers and finite floats, not "
+                                  "flags, text or null")
+    return plain(value, where=where, _depth=_depth)
+
+
 def _frozen(value: Any, depth: int) -> Any:
     """Plain JSON data (what :func:`plain` made of a value standing at ``depth``), read-only: an object a
     :class:`FrozenMap`, an array a tuple."""
@@ -154,9 +168,19 @@ def _is_record(value: Any) -> bool:
     return _record_type(type(value))
 
 
+#: The leaf kinds a record field may declare beside text, by its annotation: a number (``float``: an integer or a
+#: float), an integer (``int``) and a flag (``bool``), each read by its rule where the record is made (:func:`_leaf`).
+_LEAF_KINDS: tuple[tuple[type, str], ...] = ((float, "number"), (int, "integer"), (bool, "flag"))
+
+
+def _leaf_kind(hint: Any) -> str:
+    return next((name for kind, name in _LEAF_KINDS if hint is kind), "")
+
+
 def _kind(hint: Any) -> tuple[Any, ...]:
-    """What a record field annotated ``hint`` holds: text, bytes, a tuple of bytes, a record of one type (or None), a
-    tuple of records of one type, code, or data (everything else)."""
+    """What a record field annotated ``hint`` holds: text, bytes, a tuple of bytes, a number, an integer or a flag (or
+    None, when the annotation allows it), a record of one type (or None), a tuple of records of one type, code, or data
+    (everything else)."""
     origin, args = typing.get_origin(hint), typing.get_args(hint)
     if hint is str:
         return ("text",)
@@ -164,10 +188,14 @@ def _kind(hint: Any) -> tuple[Any, ...]:
         return ("bytes",)
     if origin is tuple and args == (bytes, Ellipsis):
         return ("bytes*",)
+    if _leaf_kind(hint):
+        return (_leaf_kind(hint), False)
     if _record_type(hint):
         return ("record", hint, False)
     if origin in (typing.Union, types.UnionType) and len(args) == 2 and type(None) in args:
         other = args[0] if args[1] is type(None) else args[1]
+        if _leaf_kind(other):
+            return (_leaf_kind(other), True)
         if _record_type(other):
             return ("record", other, True)
     if origin is tuple and len(args) == 2 and args[1] is Ellipsis and _record_type(args[0]):
@@ -196,14 +224,31 @@ def _bytes(value: Any, where: str) -> bytes:
     return bytes(value)
 
 
+def _leaf(kind: str, value: Any, where: str, depth: int) -> Any:
+    """``value`` taken into a field that declares a leaf kind (:data:`_LEAF_KINDS`), standing at ``depth``: a number by
+    the number rule (:func:`number`), an integer that is an ``int``, a flag that is ``True`` or ``False``. Anything else
+    is refused, never converted."""
+    if kind == "flag":
+        if type(value) is not bool:
+            raise NotPlainData(where, f"a {_named(value)} is not a flag (true or false)")
+        return plain(value, where=where, _depth=depth)
+    taken = number(value, where=where, _depth=depth)
+    if kind == "integer" and type(taken) is not int:
+        raise NotPlainData(where, f"a {_named(value)} is not an integer")
+    return taken
+
+
 def _field(kind: tuple[Any, ...], value: Any, where: str, depth: int) -> Any:
     """``value`` taken into a record field that holds ``kind``, standing at ``depth`` (one level inside its record), or
-    refused."""
+    refused. Data is what the boundary made of it (:func:`plain`), and claims no state anywhere (``codes.unclaimed``,
+    counted from the same depth): a claim is refused where it enters, in whatever the record later publishes."""
     name = kind[0]
     if name == "data":
-        return _frozen(plain(value, where=where, _depth=depth), depth)
+        return _frozen(unclaimed(plain(value, where=where, _depth=depth), where=where, _depth=depth), depth)
     if name == "text":
         return text(value, where=where, _depth=depth)
+    if name in ("number", "integer", "flag"):
+        return None if value is None and kind[1] else _leaf(name, value, where, depth)
     if name in ("bytes", "bytes*"):
         if name == "bytes":
             taken: Any = _bytes(value, where)
@@ -412,5 +457,5 @@ def issued(maker: Any, value: Any) -> bool:
         return False
 
 
-__all__ = ["FrozenMap", "NotPlainData", "canonical_json", "digest", "fresh", "issue", "issued", "json_reply", "plain",
-           "record", "returned", "snapshot", "text", "view"]
+__all__ = ["FrozenMap", "NotPlainData", "canonical_json", "digest", "fresh", "issue", "issued", "json_reply", "number",
+           "plain", "record", "returned", "snapshot", "text", "view"]

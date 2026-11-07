@@ -18,7 +18,7 @@ from typing import Any, Callable, Mapping, Sequence
 from .assurance import canonical_json, is_risk, sha256
 from .codes import MODEL_MISSING, OBLIGATION_NOT_PLANNED, SELECTION_INCOMPLETE, affirmed, only_fields, refusal, settled
 from .mixed_methods import ENGINE_SPECS, ENGINE_OP_VARIANTS, ClaimIR, MethodRouter, MethodPlan
-from .snapshot import fresh, issue, record, returned, snapshot
+from .snapshot import fresh, issue, number, record, returned, snapshot
 
 CAPABILITIES = frozenset(ENGINE_SPECS)
 #: The splits a trial can come from (``EvaluatedTrial.split``); a selector learns from the ones its ``learn_from`` names.
@@ -221,7 +221,8 @@ class MetacognitiveMethodSelector:
         self.exploration_weight = snapshot(exploration_weight, where="exploration_weight")
         self.seed = snapshot(seed, where="seed")
         learn_from = snapshot(learn_from, where="learn_from")
-        if not math.isfinite(self.exploration_weight) or not 0 <= self.exploration_weight <= 1:
+        number(self.seed, where="seed")
+        if not 0 <= number(self.exploration_weight, where="exploration_weight") <= 1:
             raise ValueError("exploration weight invalid")
         learn = tuple(dict.fromkeys(learn_from))
         if not learn or set(learn) - set(SPLITS):
@@ -291,7 +292,7 @@ class MetacognitiveMethodSelector:
         variants = snapshot(variants, where="variants")
         required_methods = snapshot(required_methods, where="required_methods")
         max_optional = snapshot(max_optional, where="max_optional")
-        if max_optional < 0 or max_optional > 10:
+        if not 0 <= number(max_optional, where="max_optional") <= 10:
             raise ValueError("max optional methods invalid")
         required = tuple(dict.fromkeys(required_methods))
         # A required method is a G6 solver capability or the method a non-engine variant names (a review, an arm).

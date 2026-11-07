@@ -3,6 +3,12 @@
 
 No arbitrary model or tool code crosses this door. Agentic calls and in-memory
 ML predictor adapters are deliberately Python-only dependency injection.
+
+The block's arguments are read by the bridge's boundary first, in their raw form (``snapshot.plain``, in
+:meth:`CognitiveBridgeBlock.screen_raw` at G6's door and in :meth:`CognitiveBridgeBlock.infer` for a Python caller),
+and only then by its models, which are strict: no field is converted from another kind (a flag, numeric text or null
+where a number is due is refused, not read as one). ``tests/cognitive_bridge/test_conversion_inventory.py`` lists every
+model and every conversion in the package from the code.
 """
 from __future__ import annotations
 
@@ -13,23 +19,27 @@ from g6.core.ai_block import AIBlock
 from g6.core.contract_decorator import block_contract
 from g6.core.maturity import component_maturity
 from g6.core.result import Result
-from .codes import INPUT, STATES, refusal, settled, unclaimed
+from .codes import INPUT, STATES, NotPlainData, refusal, settled, unclaimed
 from .engine import BayesianUpdater, Hypothesis, InformationGainSelector, Probe, check_beliefs
 from .mixed_methods import ClaimIR, MethodRouter
 from .metacognition import MetacognitiveMethodSelector, ProblemSignature, MethodVariant
 from .assurance import DOCUMENT_FIELDS
 from .snapshot import plain
 
+#: Every model here reads a caller's data, after the boundary has read it raw: strict (no field converted from another
+#: kind) and closed (no field it does not declare).
+_STRICT = ConfigDict(extra="forbid", strict=True)
+
 
 class HypothesisInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = _STRICT
     id: str = Field(min_length=1, max_length=100)
     statement: str = Field(min_length=1, max_length=1500)
     prior: float = Field(ge=0, le=1)
 
 
 class ProbeInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = _STRICT
     id: str = Field(min_length=1, max_length=100)
     question: str = Field(min_length=1, max_length=1500)
     tool: str = Field(min_length=1, max_length=150)
@@ -41,7 +51,7 @@ class ProbeInput(BaseModel):
 
 
 class ClaimInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = _STRICT
     id: str = Field(min_length=1, max_length=100)
     statement: str = Field(min_length=1, max_length=3000)
     evidence_needs: list[Literal["graph", "causal", "formal", "predictive", "optimisation"]] = Field(min_length=1, max_length=5)
@@ -51,7 +61,7 @@ class ClaimInput(BaseModel):
 
 
 class ProblemSignatureInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = _STRICT
     domain: str = Field(min_length=1, max_length=200)
     uncertainty: str = Field(min_length=1, max_length=200)
     claim_kind: str = Field(min_length=1, max_length=200)
@@ -61,7 +71,7 @@ class ProblemSignatureInput(BaseModel):
 
 
 class MethodVariantInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = _STRICT
     id: str = Field(min_length=1, max_length=100)
     method: Literal["graph", "causal", "formal", "predictive", "optimisation"]
     representation: str = Field(min_length=1, max_length=100)
@@ -84,7 +94,7 @@ _OPS: dict[str, str] = {
 
 
 class CognitiveInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = _STRICT
     op: Literal["ops", "help", "rank", "update", "plan_methods", "rank_methods", "assurance_schema"] = "ops"
     claims: list[ClaimInput] = Field(default_factory=list, max_length=20)
     context: ProblemSignatureInput | None = None
@@ -103,6 +113,12 @@ def _answered(fields: dict[str, Any]) -> Result[dict]:
     return Result.ok(plain(unclaimed(fields, where="the block's answer"), where="the block's answer"))
 
 
+def _arguments(raw: Any) -> Any:
+    """The block's arguments as the boundary reads them, raw, before any model does (``snapshot.plain``): plain JSON
+    data, or :class:`NotPlainData` (a NaN, a set, bytes, a subclass, any other object)."""
+    return plain(raw, where="the block's arguments")
+
+
 @component_maturity("beta", reason="new typed bridge; its proposals, likelihoods and model fidelity are not "
                                    "checked by anyone outside it")
 @block_contract(
@@ -114,10 +130,26 @@ class CognitiveBridgeBlock(AIBlock[CognitiveInput, dict, dict]):
     def __init__(self, name: str = "cognitive_bridge", state: dict | None = None) -> None:
         super().__init__(name=name, state=state or {})
 
-    def infer(self, data: CognitiveInput) -> Result[dict]:
-        # The registry hands a validated CognitiveInput; a Python caller may still pass the plain dict.
+    def screen_raw(self, raw: dict[str, Any]) -> Result[dict] | None:
+        """Before typed validation, on every door (``g6.core.registry``): the raw arguments as the boundary reads them
+        (:func:`_arguments`). What it refuses is the block's refusal under ``codes.INPUT``; otherwise ``None``, and the
+        strict models decide, so a value is read raw by the boundary before any model reads it."""
         try:
-            d = data if isinstance(data, CognitiveInput) else CognitiveInput.model_validate(data)
+            _arguments(raw)
+        except NotPlainData as exc:
+            return self._refused(exc)
+        return None
+
+    def _refused(self, exc: Exception) -> Result[dict]:
+        """The block's refusal of its input, under ``codes.INPUT``, saying why."""
+        return _answered({"component": self.name, **refusal(INPUT, str(exc))})
+
+    def infer(self, data: CognitiveInput) -> Result[dict]:
+        # The registry hands a CognitiveInput its strict models read after screen_raw; a Python caller may pass the
+        # plain dict. Either way the arguments are read raw by the boundary, then by the strict models.
+        try:
+            raw = data.model_dump() if type(data) is CognitiveInput else data
+            d = CognitiveInput.model_validate(_arguments(raw))
             if d.op == "ops":
                 return _answered({"component": self.name, **settled(
                     None, ops=list(_OPS),
@@ -162,4 +194,4 @@ class CognitiveBridgeBlock(AIBlock[CognitiveInput, dict, dict]):
                                                   "likelihoods and predictions are caller-provided assumptions",
                                                   "does not verify the reality of any observations"])})
         except (ValidationError, ValueError, TypeError, KeyError, OverflowError) as exc:
-            return _answered({"component": self.name, **refusal(INPUT, str(exc))})
+            return self._refused(exc)

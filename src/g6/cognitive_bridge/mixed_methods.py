@@ -18,7 +18,7 @@ from g6.core.door import SENSITIVE_ENV, allowed_sensitive, invoke_checked
 from .assurance import canonical_json, sha256
 from .codes import (APPROVAL_REQUIRED, EXECUTION_INCOMPLETE, MODEL_MISSING, PLAN_TAMPERED, PREREQUISITE_UNMET,
                     STEP_FAILED, affirmed, claims, refusal, settled, unclaimed)
-from .snapshot import fresh, json_reply, plain, record, returned, snapshot, text
+from .snapshot import fresh, json_reply, number, plain, record, returned, snapshot, text
 
 # Every name resolves to an existing G6 component and a fixed, documented op.
 # Models are declarative data, never arbitrary modules, code or pickle paths.
@@ -240,7 +240,9 @@ class MixedMethodExecutor:
             card, request_id = reply["warning_card"], reply["request_id"]
             door = {"warning_card": dict(card), "request_id": request_id}
             if "result" not in reply:  # refused, or failed, before any answer: the door's error and card say why
-                return refusal(STEP_FAILED, str(reply["error"]), door=door, request_id=request_id, **head)
+                error = reply.get("error")  # the door's own text; anything else is not read as a reason
+                return refusal(STEP_FAILED, error if type(error) is str else "G6's door refused the step", door=door,
+                               request_id=request_id, **head)
             try:
                 response = plain(reply["result"], where=f"{step.component}.{step.op}'s answer", _depth=_ANSWER_DEPTH)
             except ValueError as exc:
@@ -323,7 +325,7 @@ class LLMClaimCompiler:
     """
     def __init__(self, llm: Any, *, max_claims: int = 5) -> None:
         self.llm, self.max_claims = llm, snapshot(max_claims, where="max_claims")
-        if not 1 <= self.max_claims <= 10:
+        if not 1 <= number(self.max_claims, where="max_claims") <= 10:
             raise ValueError("max_claims must be 1–10")
 
     def draft(self, question: str, context: Sequence[Mapping[str, Any]] = ()) -> MethodPlan:

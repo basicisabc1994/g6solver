@@ -12,21 +12,32 @@ import struct
 from dataclasses import asdict
 from typing import Any, Mapping, Sequence
 
-from .codes import DEPTH, settled
-from .snapshot import _too_deep, fresh, record, returned, snapshot, text
+from .codes import DEPTH, NotPlainData, settled, unclaimed
+from .snapshot import _too_deep, fresh, number, record, returned, snapshot, text
 
 
 def _native(value: Any) -> Any:
+    """A fitted estimator's array item as Python's own value (numpy's ``item()``), for its rule to read next; nothing
+    else reads an estimator's values."""
     return value.item() if hasattr(value, "item") else value
 
 
+def _estimated(value: Any, *, where: str, index: bool = False) -> int | float:
+    """A number a fitted estimator's tree holds, as the record made of it takes it: Python's own value
+    (:func:`_native`), read by the number rule (``snapshot.number``: a flag, text or null is refused, never converted);
+    an index (a child or a feature) an integer."""
+    taken = number(_native(value), where=where)
+    if index and type(taken) is not int:
+        raise NotPlainData(where, f"a {type(taken).__name__} is not an index")
+    return taken
+
+
 def _float32(value: Any) -> float:
+    """A tree input, a number (``snapshot.number``: a flag, text or null is refused, never converted), as sklearn
+    compares it: a float32."""
     try:
-        number = float(value)
-        if not math.isfinite(number):
-            raise ValueError("explicit tree only handles finite numerical inputs")
-        converted = struct.unpack("f", struct.pack("f", number))[0]
-    except (OverflowError, struct.error, TypeError) as exc:
+        converted = struct.unpack("f", struct.pack("f", number(value, where="a tree input")))[0]
+    except (OverflowError, struct.error) as exc:
         raise ValueError("invalid or out-of-range numeric tree input") from exc
     if not math.isfinite(converted):
         raise ValueError("tree input overflows float32")
@@ -69,21 +80,22 @@ class ExplicitTree:
             conditions.append({"feature": self.features[node.feature], "operator": "<=" if less else ">",
                                "threshold": node.threshold, "observed": values[node.feature]})
             node = node.left if less else node.right
-        return {"prediction": node.value, "conditions": conditions, "provenance": self.provenance,
-                "caveat": "explains this explicit model's decision, not causality"}
+        return unclaimed({"prediction": node.value, "conditions": conditions, "provenance": self.provenance,
+                          "caveat": "explains this explicit model's decision, not causality"}, where="an explanation")
 
     def predict(self, samples: Sequence[Mapping[str, Any] | Sequence[Any]]) -> list[Any]:
         samples = snapshot(samples, where="samples")
-        return [self.explain_one(sample)["prediction"] for sample in samples]
+        return unclaimed([self.explain_one(sample)["prediction"] for sample in samples], where="the predictions")
 
     def to_dict(self) -> dict:
-        return asdict(self)  # inspectable data, not arbitrary executable code
+        return unclaimed(asdict(self), where="a tree")  # inspectable data, not arbitrary executable code
 
 
 def _distinct_names(names: Sequence[Any]) -> tuple[str, ...]:
-    """The feature names as the tree uses them (strings), compared as they will be used: two names that read the
-    same once made strings (``1`` and ``"1"``) are one name, so they are refused rather than merged."""
-    used = tuple(str(_native(name)) for name in names)
+    """The feature names as the tree uses them: text (``snapshot.text``, after an estimator's own array item is made
+    Python's value), never a number or a flag made text, so ``1`` and ``True`` are refused, not read as ``"1"`` and
+    ``"True"``; and unique."""
+    used = tuple(text(_native(name), where=f"feature name {index}") for index, name in enumerate(names))
     if len(set(used)) != len(used):
         raise ValueError("feature names must be unique as the strings the tree reads them by")
     return used
@@ -126,21 +138,22 @@ def extract_tree(estimator: Any, feature_names: Sequence[str] | None = None,
         # ``depth`` is where this node's fields stand in the ExplicitTree made of it: its children stand there too
         if depth > DEPTH:
             raise _too_deep(f"the estimator's tree at node {node_id}")
-        left = int(tree.children_left[node_id])
-        right = int(tree.children_right[node_id])
+        at = f"the estimator's tree at node {node_id}"
+        left = _estimated(tree.children_left[node_id], where=f"{at}: its left child", index=True)
+        right = _estimated(tree.children_right[node_id], where=f"{at}: its right child", index=True)
         if left == -1 and right == -1:
             if is_classifier:
                 proportions = tree.value[node_id][0]
-                class_index = int(max(range(len(proportions)), key=lambda i: proportions[i]))
-                prediction = _native(estimator.classes_[class_index])
+                class_index = max(range(len(proportions)), key=lambda i: proportions[i])
+                prediction = _native(estimator.classes_[class_index])  # a label, kept as its kind: the record takes it
             else:
-                prediction = float(tree.value[node_id][0][0])
+                prediction = float(_estimated(tree.value[node_id][0][0], where=f"{at}: its value"))
             return TreeNode(value=prediction)
-        feature = int(tree.feature[node_id])
+        feature = _estimated(tree.feature[node_id], where=f"{at}: its feature", index=True)
         if not 0 <= feature < len(names) or left < 0 or right < 0:
             raise ValueError("invalid fitted tree structure")
-        return TreeNode(feature=feature, threshold=float(tree.threshold[node_id]),
-                        left=visit(left, depth + 1), right=visit(right, depth + 1))
+        threshold = float(_estimated(tree.threshold[node_id], where=f"{at}: its threshold"))
+        return TreeNode(feature=feature, threshold=threshold, left=visit(left, depth + 1), right=visit(right, depth + 1))
 
     # the tree stands at 0, its root node at 1 (its ``root`` field), and the root's own fields at 2
     return ExplicitTree(names, visit(0, 2), task, provenance)
@@ -173,7 +186,9 @@ def distill_blackbox(blackbox: Any, X_train: Sequence[Sequence[float]],
     seed = snapshot(seed, where="seed")
     if task not in {"classification", "regression"}:
         raise ValueError("task must be classification or regression")
-    if not 1 <= max_depth <= 12 or not 1 <= min_samples_leaf <= 1000:
+    number(seed, where="seed")
+    if (not 1 <= number(max_depth, where="max_depth") <= 12
+            or not 1 <= number(min_samples_leaf, where="min_samples_leaf") <= 1000):
         raise ValueError("surrogate complexity outside supported bounds")
     names = _distinct_names(feature_names)
     if not 1 <= len(names) <= 100:
@@ -210,8 +225,9 @@ def distill_blackbox(blackbox: Any, X_train: Sequence[Sequence[float]],
         matches = sum(a == b for a, b in zip(observed_holdout, predicted))
         report.update({"metric": "agreement", "fidelity": matches / len(holdout),
                        "disagreements": len(holdout) - matches})
-    else:
-        errors = [float(a) - float(b) for a, b in zip(observed_holdout, predicted)]
+    else:  # a regression's predictions are numbers, as the black box and the tree wrote them (snapshot.number)
+        errors = [number(a, where="a black-box prediction") - number(b, where="a tree prediction")
+                  for a, b in zip(observed_holdout, predicted)]
         if not all(math.isfinite(err) for err in errors):
             raise ValueError("non-finite surrogate predictions")
         report.update({"metric": "rmse", "fidelity": math.sqrt(sum(x*x for x in errors)/len(errors)),

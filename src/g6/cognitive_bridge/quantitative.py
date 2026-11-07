@@ -2,10 +2,10 @@
 """Bridge evaluator-scored research traces into G6's existing quantitative ML rows."""
 from __future__ import annotations
 
-import math
 from typing import Any, Sequence
 
-from .snapshot import snapshot, text
+from .codes import unclaimed
+from .snapshot import number, snapshot, text
 
 #: Exactly the features passed to MLAcquisitionSelector.predict(...).
 ACQUISITION_FEATURES = ("expected_information_bits", "cost", "novelty_preference",
@@ -19,21 +19,20 @@ def evaluated_trace_rows(history: Sequence[dict[str, Any]]) -> list[dict[str, fl
     The caller must supply a separate evaluator and its provenance; this
     adapter cannot independently establish that evaluator's correctness.
     Absent or non-finite evidence refuses the whole export rather than inventing
-    a success target from the LLM's opinion or its own Bayesian posterior.
+    a success target from the LLM's opinion or its own Bayesian posterior. Each
+    feature and the target is a number as the trace holds it (``snapshot.number``):
+    a flag, text or null is refused, never converted.
     """
     history = snapshot(history, where="history")
     if not history:
         raise ValueError("no observed research episodes")
     result = []
-    for row in history:
+    for index, row in enumerate(history):
         if row.get("measured_utility") is None or not row.get("evaluator_ref"):
             raise ValueError("every exported episode needs externally scored utility and evaluator_ref")
-        extracted = {name: float(row[name]) for name in ACQUISITION_FEATURES}
-        extracted[UTILITY_TARGET] = float(row[UTILITY_TARGET])
-        if not all(math.isfinite(v) for v in extracted.values()):
-            raise ValueError("non-finite training data")
-        result.append(extracted)
-    return result
+        result.append({name: float(number(row[name], where=f"history[{index}].{name}"))  # a number, as a float
+                       for name in (*ACQUISITION_FEATURES, UTILITY_TARGET)})
+    return unclaimed(result, where="the trace rows")
 
 
 def sklearn_payload(history: Sequence[dict[str, Any]], *, seed: int = 7,
@@ -47,6 +46,7 @@ def sklearn_payload(history: Sequence[dict[str, Any]], *, seed: int = 7,
     history = snapshot(history, where="history")
     seed = snapshot(seed, where="seed")
     estimator = text(estimator, where="estimator")
-    return {"op": "fit_eval", "rows": evaluated_trace_rows(history),
-            "target": UTILITY_TARGET, "features": list(ACQUISITION_FEATURES),
-            "task": "regression", "seed": seed, "estimator": estimator}
+    return unclaimed({"op": "fit_eval", "rows": evaluated_trace_rows(history),
+                      "target": UTILITY_TARGET, "features": list(ACQUISITION_FEATURES),
+                      "task": "regression", "seed": number(seed, where="seed"), "estimator": estimator},
+                     where="a payload")

@@ -79,10 +79,13 @@ def checked_report(report: Any) -> Mapping[str, Any]:
 
 def findings_state(report: Mapping[str, Any]) -> str:
     """The state a report's own fields give, by the rule ``reconcile`` decides by: ``blocked-escalated`` when an
-    assertion was not admitted, there is no finding, or a finding is not ``qualified-draft``; else ``qualified-draft``."""
+    assertion was not admitted (its ``unadmitted_evidence_refs`` an array that is not empty, or not an array at all: a
+    flag, text or null there is not read as "none"), there is no finding, or a finding is not ``qualified-draft``; else
+    ``qualified-draft``."""
     findings = report.get("scoped_findings", ())
+    unadmitted = report.get("unadmitted_evidence_refs", ())
     unsettled = (not isinstance(findings, (list, tuple)) or not findings
-                 or bool(report.get("unadmitted_evidence_refs"))
+                 or not isinstance(unadmitted, (list, tuple)) or len(unadmitted) > 0
                  or any(not isinstance(f, dict) or f.get("completion_state") != STATES[0] for f in findings))
     return STATES[unsettled]  # STATES is (qualified-draft, blocked-escalated)
 
@@ -127,7 +130,9 @@ class CrossMethodConflictGate:
             # G6_E_ code). A passing result is a status the bridge maps to a pass, an ALLOW disposition and no failure.
             result = adjudicator.adjudicate_claim(proposition_id, evidence_records=records)
             status, disposition = result.claim.epistemic_status, result.claim.disposition
-            failures = [t for t in result.triggered if ERROR_CODE_PATTERN.match(str(t))]
+            # a trigger that is a G6_E_ code is a failure, and so is one that is not text: it is not made text to be read
+            failures = [t if type(t) is str else f"a {type(t).__name__} trigger" for t in result.triggered
+                        if type(t) is not str or ERROR_CODE_PATTERN.match(t)]
             label, code = _STATUS.get(status, ("not_reconciled", EVIDENCE_NOT_RECONCILED))
             if code is None and (disposition not in _PASSING or failures):
                 label, code = "not_reconciled", EVIDENCE_NOT_RECONCILED

@@ -74,8 +74,10 @@ class _Named:
 
 @pytest.mark.parametrize("names", [[1, "1"], [True, "True"], [_Named("age"), "age"]], ids=["int", "bool", "str-like"])
 def test_names_that_read_alike_as_strings_are_refused_in_export_and_surrogate(names):
-    # since follow-up 2 of PR #8 an object that only reads as text is refused where it enters, as not JSON data
-    refused = "not JSON data" if isinstance(names[0], _Named) else "unique"
+    # since follow-up 2 of PR #8 an object that only reads as text is refused where it enters, as not JSON data; since
+    # its repair 2 a feature name is text (snapshot.text), so a number or a flag is refused as not text, never made the
+    # text it reads as (it used to be refused only when that text repeated another name)
+    refused = "not JSON data" if isinstance(names[0], _Named) else "not text"
     estimator = SimpleNamespace(n_features_in_=2, n_outputs_=1, tree_=SimpleNamespace())
     with pytest.raises(ValueError, match=refused):
         extract_tree(estimator, names)
@@ -89,5 +91,8 @@ def test_distinct_names_are_kept_as_the_strings_the_tree_reads():
         n_features_in_=2, n_outputs_=1,
         tree_=SimpleNamespace(children_left=[1, -1, -1], children_right=[2, -1, -1], feature=[0, -2, -2],
                               threshold=[.5, -2., -2.], value=[[[0.]], [[10.]], [[20.]]]))
-    tree = extract_tree(estimator, [1, 2])
+    tree = extract_tree(estimator, ["1", "2"])
     assert tree.features == ("1", "2") and tree.predict([{"1": 0., "2": 1.}]) == [10.]
+    # since repair 2 of follow-up 2 the names 1 and 2 are refused as not text; they used to be made "1" and "2"
+    with pytest.raises(ValueError, match="not text"):
+        extract_tree(estimator, [1, 2])
