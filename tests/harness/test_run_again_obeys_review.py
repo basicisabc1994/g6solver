@@ -28,6 +28,7 @@ import pytest
 
 import g6
 from g6.core.component_process import ContainmentFailure, ExecutionInterrupted
+from g6.evidence.mapping import id_of
 from g6.harness import patch_report, patch_review, requirement_evidence
 
 NODE = "test_calc.py::test_add"
@@ -128,7 +129,7 @@ def statement(reply: dict) -> dict:
 def test_a_clean_review_counts_the_check_by_the_bytes_its_runs_executed(repo, monkeypatch):
     calls: list[str] = []
     recorded(monkeypatch, calls)
-    frozen = hashlib.sha256(NODE.encode() + b"\0" + (repo / "test_calc.py").read_bytes()).hexdigest()
+    frozen = id_of(NODE, hashlib.sha256((repo / "test_calc.py").read_bytes()).hexdigest(), digest=True)
     reply = review(repo)
     assert calls[-2:] == ["base", "patch"], calls   # the run again comes after the run at the base commit
     assert statement(reply)["checked"] is True   # the positive control for every refusal below
@@ -139,7 +140,7 @@ def test_finding_10_a_check_changed_after_the_final_snapshot_is_not_certified_on
     # review 1's reproduction: the test replaced once every run, the run again included, had finished
     calls: list[str] = []
     recorded(monkeypatch, calls)
-    frozen = hashlib.sha256(NODE.encode() + b"\0" + (repo / "test_calc.py").read_bytes()).hexdigest()
+    frozen = id_of(NODE, hashlib.sha256((repo / "test_calc.py").read_bytes()).hexdigest(), digest=True)
     hasher = patch_review._check_shas
 
     def change_between(root, checks):

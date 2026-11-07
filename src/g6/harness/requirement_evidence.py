@@ -9,10 +9,16 @@ working tree the review digested, and each check a requirement lists becomes one
 table's row for its provenance (``g6.evidence.mapping``). A ``stated`` check is the repository's test when its file
 exists unchanged at the base commit, and the patch author's when the patch adds or changes it. Its negative control is
 G6's own run of it at the base commit, where it failed, for a requirement that asks for new behaviour. Every position is
-the order G6 observed things in: the check frozen in the base commit, the patch, the stated checks' run, the run at the
-base commit, then the run of the checks it killed again on the patch (``patch_review._run_again``), the receipt the
-issuer can count because its control came first. A structural, derived or proposed check, a template instance and a
-model's result are leads under the table and never promoted.
+the order G6 observed things in: the check frozen in the base commit, the patch, the stated checks' run, each other run
+of the review that collected a stated check on the patch before the run at the base commit (``observed``: the tests
+that touch the changed modules, and their replays on the patch in a copy), the run at the base commit, then the run of
+the checks it killed again on the patch (``patch_review._run_again``), the receipt the issuer can count because its
+control came first. Every run of a stated check on the patch adds its receipt, in the order it ran, so a failure seen
+between two passes reaches the issuer (review 2's finding 5). A structural, derived or proposed check, a template
+instance and a model's result are leads under the table and never promoted.
+
+Every id made from parts here (a record's, a control's) is ``g6.evidence.mapping.id_of`` of the parts: a structure,
+never a joined string, so two pytest node ids can never give two checks or two requirements one id (finding 6).
 
 A requirement to keep behaviour has no negative control in a review: the base commit's code is its known-good reference
 (a positive control), and no run of the review seeds a defect for its checks to catch. Nothing stands in for one, so it
@@ -41,14 +47,40 @@ from g6.evidence.certificate import (
     PredicateStatement,
     grounding,
 )
-from g6.evidence.mapping import SourceRecord, about, environment_sha256, issue_records
+from g6.evidence.mapping import SourceRecord, about, environment_sha256, id_of, issue_records
 from g6.harness.patch_review import AT_BASE   # the review's run of the stated checks against the base commit's code
 
 #: Who the review names as the artefact's producer, and as the author of a check the patch did not write.
 PATCH_AUTHOR, REPOSITORY = "the patch's author", "the repository"
-#: Ledger positions, in the order G6 observes them in a review.
-FROZEN, ARTEFACT, RECEIPT, BASE_RUN, AGAIN = 0, 1, 2, 3, 4
+#: Ledger positions, in the order G6 observes them in a review: the freeze, the patch and the stated checks' run; the
+#: runs after it come next, in the order they ran (``positions``).
+FROZEN, ARTEFACT, RECEIPT = 0, 1, 2
 _RESULT = {"passed": "pass", "failed": "fail"}
+#: What each other run on the patch is called when a requirement says why it is not counted.
+_RUNS = {"derived": "the run of the tests that touch the changed modules",
+         "replay": "the replay of its test file on the patch, in a copy"}
+
+
+def observed_runs(observed: Sequence[Mapping[str, Any]] | None) -> list[dict]:
+    """The other runs of the stated checks on the patch, in the order they ran, each that observed one: its name
+    (``run``, a list of parts) and each stated check's verdict in it (``verdicts``)."""
+    found = []
+    for one in observed or ():
+        name = one.get("run")
+        parts = list(name) if isinstance(name, (list, tuple)) else [str(name)]
+        verdicts = {str(check): str(said) for check, said in dict(one.get("verdicts") or {}).items()}
+        if verdicts:
+            found.append({"run": parts, "verdicts": verdicts})
+    return found
+
+
+def positions(observed: Sequence[Mapping[str, Any]]) -> tuple[int, int]:
+    """The ledger positions of the run at the base commit and of the run again: after the stated checks' run and each
+    of the ``observed`` runs (``observed_runs``), which came before the run at the base commit."""
+    base_run = RECEIPT + 1 + len(observed)
+    return base_run, base_run + 1
+
+
 #: Why a requirement to keep behaviour is never counted in a review (the mapping table's ``stated`` row).
 KEEPS = ("it keeps behaviour: the base commit's code is its known-good reference, not a control, and no run seeded a "
          "defect for its checks to catch, so none was shown able to fail")
@@ -73,13 +105,16 @@ def _at_base(runs: Sequence[Mapping[str, Any]]) -> dict[str, str]:
 def records_for(evaluated: Sequence[Mapping[str, Any]], runs: Sequence[Mapping[str, Any]], *, artifact: str,
                 base_commit: str, check_sha: Mapping[str, str], written: Callable[[str], bool],
                 environment: Mapping[str, Any], again: Mapping[str, Any] | None = None,
+                observed: Sequence[Mapping[str, Any]] = (),
                 ) -> tuple[MissionFacts, Artifact, list[SourceRecord]]:
-    """The issuer's mission facts and artefact for the review, and one record for each check a requirement lists, and
-    one more for each check that ran again on the patch after the run at the base commit (``again``).
+    """The issuer's mission facts and artefact for the review, and one record for each check a requirement lists, one
+    more for each other run on the patch that observed a stated check before the run at the base commit
+    (``observed``), and one more for each check that ran again on the patch after that run (``again``).
 
     ``check_sha``: each stated check's SHA-256 (its node id and its file's bytes; absent when G6 could not read it);
     ``written``: whether the patch adds or changes a check's file; ``environment``: the stated checks' run's record;
-    ``again``: ``patch_review._run_again``'s result."""
+    ``again``: ``patch_review._run_again``'s result; ``observed``: the review's other runs of its stated checks on the
+    patch, in the order they ran (``observed_runs``)."""
     predicates = tuple(req["id"] for req in evaluated)
     standard = standard_sha256(evaluated)
     facts = MissionFacts(mission_sha=digest({"artifact": artifact, "base_commit": base_commit, "standard": standard}),
@@ -87,6 +122,8 @@ def records_for(evaluated: Sequence[Mapping[str, Any]], runs: Sequence[Mapping[s
                          standard_predicates=predicates)
     at_base = _at_base(runs)
     again_verdicts = dict((again or {}).get("verdicts") or {})
+    seen = observed_runs(observed)
+    base_run, again_at = positions(seen)
     environment_digest = environment_sha256(environment)
     kinds = {req["id"]: req.get("kind", "requirement") for req in evaluated}
     named: dict[str, dict[str, Any]] = {}   # check id -> its record's parts, the requirements naming it gathered
@@ -99,7 +136,7 @@ def records_for(evaluated: Sequence[Mapping[str, Any]], runs: Sequence[Mapping[s
     for check, one in named.items():
         mine = one["provenance"] == "stated" and written(check)
         sha = check_sha.get(check, "")
-        controls = tuple(Control(f"base-commit:{check}#{rid}", sha, rid, "g6", BASE_RUN, True)
+        controls = tuple(Control(id_of("base-commit", check, rid), sha, rid, "g6", base_run, True)
                          for rid in one["requirements"]
                          if kinds[rid] != "preserve" and at_base.get(check) == "failed" and sha)
         keeps = all(kinds[rid] == "preserve" for rid in one["requirements"]) and at_base.get(check) == "passed"
@@ -108,19 +145,26 @@ def records_for(evaluated: Sequence[Mapping[str, Any]], runs: Sequence[Mapping[s
                       check_sha256=sha, author=PATCH_AUTHOR if mine else REPOSITORY,
                       frozen_seq=ARTEFACT if mine else FROZEN, environment_sha256=environment_digest,
                       scope=f"the tests {check} names, on the working tree under review", controls=controls,
-                      positive_seq=BASE_RUN if keeps else None)
-        records.append(SourceRecord(record_id=f"stated-run:{check}", result=_RESULT.get(str(one["verdict"]), "unknown"),
-                                    seq=RECEIPT, **common))
-        if one["provenance"] == "stated" and check in again_verdicts:
-            records.append(SourceRecord(record_id=f"again:{check}", seq=AGAIN,
+                      positive_seq=base_run if keeps else None)
+        records.append(SourceRecord(record_id=id_of("stated-run", check),
+                                    result=_RESULT.get(str(one["verdict"]), "unknown"), seq=RECEIPT, **common))
+        if one["provenance"] != "stated":
+            continue
+        for at, run in enumerate(seen, start=RECEIPT + 1):   # each other run that observed it, in the order it ran
+            if check in run["verdicts"]:
+                records.append(SourceRecord(record_id=id_of(*run["run"], check), seq=at,
+                                            result=_RESULT.get(run["verdicts"][check], "unknown"), **common))
+        if check in again_verdicts:
+            records.append(SourceRecord(record_id=id_of("again", check), seq=again_at,
                                         result=_RESULT.get(str(again_verdicts[check]), "unknown"), **common))
     return facts, Artifact(artifact, PATCH_AUTHOR, ARTEFACT), records
 
 
 def _not_counted(req: Mapping[str, Any], at_base: Mapping[str, str], again: Mapping[str, Any],
-                 check_sha: Mapping[str, str]) -> str:
+                 check_sha: Mapping[str, str], observed: Sequence[Mapping[str, Any]] = ()) -> str:
     """Why the issuer does not count ``req``, in words, from what the review ran ("" when the issuer's own gap is all
-    there is to say): the first reason among its stated checks."""
+    there is to say): the first reason among its stated checks. ``observed``: the other runs of its checks on the
+    patch (``observed_runs``)."""
     if req.get("kind") == "preserve":
         return KEEPS
     stated = [c for c in req["checks"] if c.get("provenance", "stated") == "stated"]
@@ -135,6 +179,12 @@ def _not_counted(req: Mapping[str, Any], at_base: Mapping[str, str], again: Mapp
                     "no run showed the check can fail")
         if verdict != "passed":
             return f"its check did not run to a pass on the patch ({verdict})"
+        other = next(((run, run["verdicts"][check]) for run in observed
+                      if run["verdicts"].get(check, "passed") != "passed"), None)
+        if other is not None:
+            run, said = other
+            return (f"its check passed on the patch, and in {_RUNS.get(run['run'][0], 'another run on the patch')} it "
+                    f"did not ({said}), so a failure G6 saw stands")
         if not check_sha.get(check):
             return "G6 could not read its check's file to name the check's code"
         if base == "passed":
@@ -182,18 +232,20 @@ def codes(certificate: Certificate, statement: PredicateStatement, artifact: Art
 def assess(evaluated: Sequence[Mapping[str, Any]], runs: Sequence[Mapping[str, Any]], *, artifact: str,
            base_commit: str, check_sha: Mapping[str, str], written: Callable[[str], bool],
            environment: Mapping[str, Any], again: Mapping[str, Any] | None = None,
-           integrity: Sequence[str] = ()) -> dict:
+           integrity: Sequence[str] = (), observed: Sequence[Mapping[str, Any]] = ()) -> dict:
     """``assessment.requirement_evidence``: the issuer's certificate for the review, each requirement's statement from
     it with the issuer kinds of its checks and, when it is not counted, why (``not_counted`` in G6's words from what the
-    review ran, and ``codes``, the issuer's own), each record the mapping refused with its codes, and the run again
-    (``again``). Inputs the issuer refuses as a whole are said so, with its problems, and nothing is counted; the
-    review's own fields stand. ``integrity``: the codes of the review's integrity problems; with any, no run is read as
-    evidence, so no record is made, and each requirement says why."""
+    review ran, and ``codes``, the issuer's own), each record the mapping refused with its codes, the other runs of the
+    stated checks on the patch (``observed``) and the run again (``again``). Inputs the issuer refuses as a whole are
+    said so, with its problems, and nothing is counted; the review's own fields stand. ``integrity``: the codes of the
+    review's integrity problems; with any, no run is read as evidence, so no record is made, and each requirement says
+    why."""
     again = dict(again or {})
+    seen = observed_runs(observed)
     try:
         facts, artefact, records = records_for(evaluated, runs, artifact=artifact, base_commit=base_commit,
                                                check_sha=check_sha, written=written, environment=environment,
-                                               again=again)
+                                               again=again, observed=seen)
         if integrity:   # the review's own rule: a run it does not believe is no evidence
             records = []
         issued = issue_records(facts, artefact, records)
@@ -215,12 +267,14 @@ def assess(evaluated: Sequence[Mapping[str, Any]], runs: Sequence[Mapping[str, A
                  "codes": codes(certificate, statement, artefact)}
         if not statement.verified and not statement.refute:
             found["not_counted"] = (f"{INTEGRITY} ({', '.join(integrity)})" if integrity else
-                                    _not_counted(req, at_base, again, check_sha))
+                                    _not_counted(req, at_base, again, check_sha, seen))
         requirements.append(found)
     return {"authority": "g6.evidence.certificate", "state": certificate.state,
             "certificate": certificate.as_dict(), "requirements": requirements, "refused": refused,
-            **({"again": again} if again else {}), **({"integrity": list(integrity)} if integrity else {})}
+            **({"observed": seen} if seen else {}), **({"again": again} if again else {}),
+            **({"integrity": list(integrity)} if integrity else {})}
 
 
-__all__ = ["ADVISORY", "AGAIN", "ARTEFACT", "AT_BASE", "BASE_RUN", "FROZEN", "INTEGRITY", "KEEPS", "NOT_IN_LEDGER",
-           "PATCH_AUTHOR", "RECEIPT", "REPOSITORY", "UNKNOWN", "assess", "codes", "records_for", "standard_sha256"]
+__all__ = ["ADVISORY", "ARTEFACT", "AT_BASE", "FROZEN", "INTEGRITY", "KEEPS", "NOT_IN_LEDGER", "PATCH_AUTHOR",
+           "RECEIPT", "REPOSITORY", "UNKNOWN", "assess", "codes", "observed_runs", "positions", "records_for",
+           "standard_sha256"]

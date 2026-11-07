@@ -247,7 +247,7 @@ def test_the_patch_review_adapter_reads_each_refused_record_s_check_through_the_
     got = requirement_evidence.assess([req], [], artifact=A, base_commit="0" * 40, check_sha={},
                                       written=lambda _check: False, environment={})
     assert [(r["check"], r["record"]) for r in got["refused"]] == [("tests/test_x.py::test_a",
-                                                                     "stated-run:tests/test_x.py::test_a")]
+                                                                     m.id_of("stated-run", "tests/test_x.py::test_a"))]
 
 
 # --- the inventory: every place a record's part is read, from the code ----------------------------------------------

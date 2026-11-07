@@ -45,6 +45,7 @@ from typing import Any, Literal
 
 from g6.core.ledger import digest
 from g6.evidence.certificate import Check, Control, MissionFacts
+from g6.evidence.mapping import id_of
 from g6.harness.patch_review import NORMATIVE
 from g6.harness.verification_templates import (
     Call,
@@ -246,7 +247,7 @@ def confirm(question: Question, answer: str, *, answered_by: str) -> ConfirmedEx
         raise Unconfirmed("only a person confirms an expectation; no agent or model answers on their behalf")
     if answer in NOT_CONFIRMING or answer not in question.outcomes:
         raise Unconfirmed(f"{answer!r} confirms none of the outcomes shown, so the expectation stays unconfirmed")
-    ident = "confirmed-" + digest({"question": question.sha256, "answer": answer})[:16]
+    ident = id_of("confirmed", question.sha256, answer, digest=True)   # an id is a structure (id_of), never a join
     instance = TemplateInstance(id=ident, template="example.v1", requirement_id=question.requirement_id,
                                 intent=question.intent, provenance=PERSON_CONFIRMED,
                                 bindings={"function": question.function, "cases": [question._case(answer)]})

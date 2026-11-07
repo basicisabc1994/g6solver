@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from g6.evidence.mapping import id_of
 from g6.harness import patch_review, requirement_evidence
 from g6.harness.patch_review import review_patch
 
@@ -112,9 +113,12 @@ def test_a_new_behaviour_check_that_fails_at_base_and_passes_on_the_patch_is_che
     assert runs.calls == [("in_place", (ADD, NEGATIVE)), ("in_place", ("test_calc.py",)), ("base", (ADD, NEGATIVE)),
                           ("in_place", (ADD, NEGATIVE))]
     body = got["assessment"]["requirement_evidence"]["certificate"]
+    # every run of each check on the patch, in the order it ran (repair 2): the stated checks' run, the run of the tests
+    # that touch the changed modules (which collects both), then, after the run at the base commit, the run again
     assert [(r["receipt_id"], r["seq"]) for r in body["receipts"]] == [
-        (f"stated-run:{ADD}", 2), (f"again:{ADD}", 4), (f"stated-run:{NEGATIVE}", 2), (f"again:{NEGATIVE}", 4)]
-    assert {k["seq"] for c in body["checks"] for k in c["controls"]} == {3}   # the base run, between the two
+        (id_of("stated-run", ADD), 2), (id_of("derived", ADD), 3), (id_of("again", ADD), 5),
+        (id_of("stated-run", NEGATIVE), 2), (id_of("derived", NEGATIVE), 3), (id_of("again", NEGATIVE), 5)]
+    assert {k["seq"] for c in body["checks"] for k in c["controls"]} == {4}   # the base run, before the run again
 
 
 def test_a_check_that_passes_at_the_base_commit_too_is_not_counted_and_the_report_says_why(repo, monkeypatch):

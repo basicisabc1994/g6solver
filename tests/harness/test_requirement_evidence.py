@@ -152,7 +152,7 @@ def test_the_adapter_records_what_g6_observed_in_the_order_it_observed_it():
     # the ledger holds what was promoted in the order G6 observed it: the receipt, then the run at the base commit; the
     # check of the behaviour to keep has no negative control, so the mapping refuses it and it never reaches the issuer
     assert [e["kind"] for e in out.ledger.entries() if e["kind"] != m.PROVENANCE_KIND] == ["receipt", "control"]
-    assert [(rid, [code for code, _ in codes]) for rid, codes in out.refused] == [(f"stated-run:{NEGATIVE}",
+    assert [(rid, [code for code, _ in codes]) for rid, codes in out.refused] == [(m.id_of("stated-run", NEGATIVE),
                                                                                   [m.NO_CONTROL])]
     statements = {s.predicate: s for s in out.certificate.predicates}
     assert not statements["R1"].support and not statements["K1"].refute   # never a refutation here

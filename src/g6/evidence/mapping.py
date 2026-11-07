@@ -39,6 +39,9 @@ with the code that names the part (``OTHER_ARTEFACT``, ``OTHER_PRODUCER``, ``OTH
 has one body wherever it appears: two controls with one id and two bodies inside one record are refused, as a record,
 check or control id another record gives another body is.
 
+An id made from parts is a structure, never a joined string: ``id_of`` gives the canonical JSON of the parts (or its
+digest), and every id this module and the patch review's adapter make from parts goes through it (review 2's finding 6).
+
 A custody binding kept as text (ECHA's ``source_ref``) is read by one reader, ``read_binding``, and what a record is
 about by one, ``read_about``, which both accessors (``about`` here and ECHA's ``custody.about``) use: no binding and a
 binding that does not read as one (``UnreadableBinding``) are different results, and the second is always refused
@@ -53,6 +56,7 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 
 from g6.core.ledger import ChainLedger
+from g6.core.ledger import canonical as _canonical
 from g6.core.ledger import digest as _digest
 from g6.evidence.certificate import (
     A4_KINDS,
@@ -315,11 +319,19 @@ def read_binding(text: object) -> CheckBinding | UnreadableBinding | None:
         return UnreadableBinding(f"a field is not valid ({exc})")
 
 
+def id_of(*parts: object, digest: bool = False) -> str:
+    """The one way an id is made from parts (review 2's finding 6): the canonical JSON of the parts, in order (the
+    ledger's own canonical form), or with ``digest`` its SHA-256, where an id must be a short token. An id is a
+    structure, never a joined string: two different lists of parts never give one id, whatever characters a part
+    holds, as joining them with a separator would (a pytest node id can hold any separator)."""
+    return _digest(list(parts)) if digest else _canonical(list(parts))
+
+
 def check_id_of(binding: CheckBinding) -> str:
-    """The id of the check a custody binding names: its task, then the digest of every part of the binding (request,
-    task, predicate, artefact, standard, fixture and evaluator), so two bindings that differ in any part never name one
-    check."""
-    return f"{binding.task_id}:{_digest(binding.to_dict())}"
+    """The id of the check a custody binding names (``id_of``): its task, then the digest of every part of the
+    binding (request, task, predicate, artefact, standard, fixture and evaluator), so two bindings that differ in any
+    part never name one check."""
+    return id_of(binding.task_id, _digest(binding.to_dict()))
 
 
 @dataclass(frozen=True)
@@ -664,5 +676,5 @@ __all__ = ["BINDING_ARTEFACT", "BINDING_CHECK", "BINDING_PREDICATE", "BINDING_ST
            "NO_ENVIRONMENT", "NO_INDEPENDENCE", "NO_MODEL", "NO_ORDER", "NO_RESULT", "NO_SCOPE", "NO_STANDARD",
            "OTHER_ARTEFACT", "OTHER_ORDER", "OTHER_PRODUCER", "OTHER_STANDARD", "PROVENANCE_KIND", "UNMAPPED", "About",
            "CheckBinding", "Issued", "PromotionRefused", "Row", "SourceRecord", "UnreadableBinding", "about",
-           "bound_parts", "check_id_of", "environment_sha256", "issue_records", "issuer_kind", "problems", "promote",
-           "read_about", "read_binding", "render_markdown", "strict_json"]
+           "bound_parts", "check_id_of", "environment_sha256", "id_of", "issue_records", "issuer_kind", "problems",
+           "promote", "read_about", "read_binding", "render_markdown", "strict_json"]
