@@ -42,7 +42,8 @@ Every refusal is `blocked-escalated` with its code in `code` and in its `warning
 (`codes.refusal`), which writes those fields itself and refuses a caller's value for them, for `verified`, and for
 every field G6's door reads as a state (`codes.STATE_FIELDS`, taken from the door, `reliability_label` among
 them). A
-parameter an op does not take is `G6_E_INPUT_VALIDATION`; input the op cannot use (priors that
+parameter an op does not take, or a value of another kind than its field's (`true`, `"0.5"` or `null` as a prior: nothing
+is converted), is `G6_E_INPUT_VALIDATION`; input the op cannot use (priors that
 do not sum to one, a probe that does not predict every hypothesis, a plan with no claim) is
 `G6_E_COGNITIVE_BRIDGE_INPUT`. A need with no typed model is `G6_E_COGNITIVE_MODEL_MISSING`; a mandatory method with no
 affordable variant `G6_E_COGNITIVE_SELECTION_INCOMPLETE`; a required method no claim needs
