@@ -554,6 +554,8 @@ def moved(act_name: str, root: Path, bound: Any, *, generation: int | None = Non
 #: What each person's act replies when it is done (``g6.mcp.improve.ACT_DONE`` names the same), and the parts it
 #: writes, as its reply names them in ``recorded``: the act's own effect first, which is what counts, then any note.
 DONE = {"enrol": ENROLLED, "resume": RESUMED, "demote": DEMOTED}
+#: The keys every reply's envelope carries, beside what a reply adds of its own.
+_ENVELOPE_KEYS = frozenset(_blocked("G6_E_LOOP_STATUS", "", "-")) | {"recorded"}
 ACT_PARTS = {"enrol": ("the enrolment",), "resume": ("the lifted pause",),
              "demote": ("the demotion", "its note in the constraint log")}
 
@@ -562,9 +564,9 @@ def on_record(request: Mapping[str, Any]) -> dict[str, bool]:
     """Each part of a person's act (``ACT_PARTS``) with whether its folder holds it now, read back from the folder's
     files afresh, as a reopened folder shows it, and never from which of the act's steps raised. The enrolment is a
     new one by the person, freezing the bytes the binding names; the lifted pause, a folder nothing holds; the demotion,
-    a head one generation on from the one named, the person's rollback; its note, a constraint log that has seen that
-    generation. ``OSError``, ``ValueError`` or ``LedgerError`` when the request names no act on a folder or the records
-    do not read, and then nothing can say what of the act counts."""
+    a head one generation on from the one named, the person's rollback; its note, the constraint log's row of that
+    demotion, by the person, at that generation. ``OSError``, ``ValueError`` or ``LedgerError`` when the request names no
+    act on a folder or the records do not read, and then nothing can say what of the act counts."""
     name, folder, bound = request.get("act"), request.get("folder"), request.get("binding")
     if name not in ACT_PARTS or not folder or not isinstance(bound, Mapping):
         raise ValueError("the request names no person's act on a folder")
@@ -581,7 +583,9 @@ def on_record(request: Mapping[str, Any]) -> dict[str, bool]:
     chain = lineage(root / "workspace", last=1)
     head = chain["recent"][-1] if chain["recent"] else {}
     return {"the demotion": chain["current"] == after and head.get("kind") == "rollback" and head.get("asked_by") == who,
-            "its note in the constraint log": log is not None and log.generation() >= after}
+            "its note in the constraint log": log is not None and any(
+                kind == "demoted" and body.get("by") == who and body.get("head_version") == after
+                for kind, body in log._rows())}
 
 
 def as_recorded(request: Mapping[str, Any], reply: dict[str, Any] | None, failed: BaseException | None = None) -> dict:
@@ -589,17 +593,23 @@ def as_recorded(request: Mapping[str, Any], reply: dict[str, Any] | None, failed
     which of its steps raised. With the act's effect on record it is the act done, whatever failed after, naming any
     part that is not; without it, the act's own refusal as it was, or what failed, which says nothing counts only when
     no part of the act is on record. ``reply``: what the act returned, or ``None`` when it raised ``failed``. Records that
-    do not read back say so, and claim nothing either way. Either way the reply names each part in ``recorded``."""
+    do not read back say so, and claim nothing either way: the act's own reply keeps its code, done or refused, and one
+    that raised says it did not finish. Either way the reply names each part in ``recorded``."""
     name = request["act"]
     why = f"{type(failed).__name__}: {failed}" if failed is not None else str((reply or {}).get("message", ""))
     done = reply is not None and reply.get("completion_state") == "qualified-draft" and reply.get("code") == DONE[name]
     try:
         found = on_record(request)
     except (OSError, ValueError, LedgerError) as exc:
+        unknown = f"its folder's records do not read back now ({type(exc).__name__}), so what of it counts is not known"
         if done:
             return {**reply, "recorded": None}
-        return _blocked(CANNOT_RECORD, f"the act did not finish ({why}), and its folder's records do not read back now "
-                        f"({type(exc).__name__}), so what of it counts is not known"[:500],
+        if reply is not None:                   # its refusal stands, and what of the act is on record is not known
+            own = {key: value for key, value in reply.items() if key not in _ENVELOPE_KEYS}
+            return _envelope(reply["completion_state"], reply["warning_card"]["code"], f"{why}; {unknown}"[:500],
+                             next_action=reply.get("next_action") or "g6_improve_status says what the folder's records "
+                             "hold.", **own, recorded=None)
+        return _blocked(CANNOT_RECORD, f"the act did not finish ({why}), and {unknown}"[:500],
                         "g6_improve_status says what the folder's records hold.", recorded=None)
     effect = ACT_PARTS[name][0]
     stands = [part for part, held in found.items() if held]
@@ -608,9 +618,9 @@ def as_recorded(request: Mapping[str, Any], reply: dict[str, Any] | None, failed
         return {**reply, "recorded": found}
     if found[effect]:
         late = f"; not on record: {', '.join(missing)}" if missing else ""
-        return _envelope("qualified-draft", DONE[name], f"{effect} is on record, so the act counts, though a step after it "
-                         f"failed ({why}){late}"[:500], next_action="g6_improve_status shows where the loop stands.",
-                         recorded=found)
+        return _envelope("qualified-draft", DONE[name], f"{effect} is on record, read back from its folder, so the act "
+                         f"counts, though the act did not end as done ({why}){late}"[:500],
+                         next_action="g6_improve_status shows where the loop stands.", recorded=found)
     if reply is not None and not done and not stands:
         return {**reply, "recorded": found}
     if not stands:
@@ -629,9 +639,10 @@ def act(request: dict[str, Any]) -> dict[str, Any]:
     write, and refuses on any difference. It runs only the Python file's bytes the binding names, by digest, never the
     current enrolment's, and the enrolment it records freezes those bytes. A demotion writes only the generation and the
     profile the binding names (``RESTORING``): what the harness would restore is checked against them just before its
-    row is written. Its reply is decided by what the folder holds once it is over (``as_recorded``), whichever step
-    failed. Like the start, this is a check and not a boundary: a process with the owner's rights can reach this
-    code, and an editor that takes no lock can still write the folder's files between the last read and the write."""
+    row is written. Every reply it gives, done, refused or failed, is decided by what the folder holds once it is over,
+    read back (``as_recorded``), so none says what is on record from which step it reached. Like the start, this is a
+    check and not a boundary: a process with the owner's rights can reach this code, and an editor that takes no lock
+    can still write the folder's files between the last read and the write."""
     name, root, who = request["act"], Path(request["folder"]).resolve(), str(request["who"])
     generation, bound = request.get("generation"), request["binding"]
     again = "Call the tool again: the person reads what stands now, in the client's dialog."
@@ -639,7 +650,7 @@ def act(request: dict[str, Any]) -> dict[str, Any]:
     def unchanged(given: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
         """``None`` while what the person read still stands (``moved``), and ``given``, what the act is about to write,
         is what it names: for an enrolment the bytes it freezes, for a demotion what it restores. A refusal otherwise,
-        naming what moved."""
+        naming what moved, which reaches the person only through ``as_recorded``."""
         changed = moved(name, root, bound, generation=generation)
         if not changed and given is not None and not (
                 given.get("domain_file") == bound[FILE_SHA] if name == "enrol" else
@@ -647,24 +658,25 @@ def act(request: dict[str, Any]) -> dict[str, Any]:
             changed = ["what it was about to write"]
         if not changed:
             return None
-        return _blocked(TERMS_CHANGED, f"what the person read is no longer what stands ({', '.join(changed)}), so nothing "
-                        "ran or was recorded"[:500], again)
+        return _blocked(TERMS_CHANGED, f"what the person read is no longer what stands ({', '.join(changed)}), so the act "
+                        "went no further"[:500], again)
 
     try:
         with folder_lock(root):
             refused = unchanged()
             if refused is not None:
-                return refused
+                return as_recorded(request, refused)
             try:
                 settings = read_settings(root)
                 if digest_of(settings) != bound[SETTINGS_DIGEST]:
-                    return _blocked(TERMS_CHANGED, f"{SETTINGS_FILE} changed after the person read it, so nothing ran or "
-                                    "was recorded", again)
+                    return as_recorded(request, _blocked(TERMS_CHANGED, f"{SETTINGS_FILE} changed after the person read "
+                                                         "it, so the act went no further", again))
                 loop, _ = open_loop(root, pinned=bound[FILE_SHA], settings=settings)
             except DomainChanged as exc:
-                return _blocked(FROZEN_CHANGED, f"{exc}: nothing was recorded"[:500], again)
+                return as_recorded(request, _blocked(FROZEN_CHANGED, str(exc)[:500], again))
             except Exception as exc:  # noqa: BLE001 - the domain file is the person's own code: say why
-                return _blocked(CANNOT_OPEN, f"The loop could not be opened: {type(exc).__name__}: {exc}"[:500])
+                return as_recorded(request, _blocked(CANNOT_OPEN, f"The loop could not be opened: {type(exc).__name__}: "
+                                                     f"{exc}"[:500]))
             try:
                 if name == "enrol":
                     reply = loop.enrol(who, last_check=unchanged)
@@ -676,18 +688,21 @@ def act(request: dict[str, Any]) -> dict[str, Any]:
                 return as_recorded(request, None, exc)
             return as_recorded(request, reply)
     except WorkspaceRefused:
-        return _blocked(BUSY, "another operation is running on this folder, so nothing ran or was recorded", again)
+        return as_recorded(request, _blocked(BUSY, "another operation is running on this folder, so this act went no "
+                                             "further", again))
 
 
 def act_main() -> int:
     """The entry ``g6.mcp.improve`` starts: the request on standard input, the reply as the last line of standard output.
-    It refuses, as ``run`` does, where cached bytecode could run in place of G6's source."""
+    It refuses, as ``run`` does, where cached bytecode could run in place of G6's source. Each reply it writes says what
+    its folder holds of the act, read back (``as_recorded``), or, for a request that names no folder to read, that this
+    is not known (``recorded`` is ``None``)."""
     unsafe = _launch_risk()
     try:
         request = json.loads(sys.stdin.read())
-        reply = _blocked(CACHED_BYTECODE, unsafe[:500]) if unsafe else act(request)
+        reply = as_recorded(request, _blocked(CACHED_BYTECODE, unsafe[:500])) if unsafe else act(request)
     except (ValueError, KeyError, TypeError) as exc:
-        reply = _blocked(CANNOT_OPEN, f"the request could not be read: {type(exc).__name__}")
+        reply = _blocked(CANNOT_OPEN, f"the request could not be read: {type(exc).__name__}", recorded=None)
     sys.stdout.write(json.dumps(reply, default=str) + "\n")
     return 1 if reply["completion_state"] == "blocked-escalated" else 0
 

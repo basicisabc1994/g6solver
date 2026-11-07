@@ -30,6 +30,8 @@ import asyncio
 import importlib.util
 import json
 import os
+import re
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -606,11 +608,13 @@ class _Writes:
     (``ChainLedger.append``), a record under G6's state folder (``api._write_state``), and what a stop adds to ``stops.log``
     and ``STOP`` (``envelope.open``, writing). Heartbeats, locks and the meter's store are left out: no reply is decided
     by them. ``fail``: the index of the one write to fail; ``how``: ``refused``, written nowhere, ``written``, on disk and
-    then raising (a ``fsync`` that fails after the line is out), or ``killed``, on disk and then the process ends."""
+    then raising (a ``fsync`` that fails after the line is out), ``killed``, on disk and then the process ends, or
+    ``dies``, the process ends before it is written. ``onward``: every write from ``fail`` on fails the same way."""
 
-    def __init__(self, monkeypatch, fail: int | None = None, how: str = "refused", error: type = OSError) -> None:
+    def __init__(self, monkeypatch, fail: int | None = None, how: str = "refused", error: type = OSError,
+                 onward: bool = False) -> None:
         self.seen: list[str] = []
-        self.fail, self.how, self.error = fail, how, error
+        self.fail, self.how, self.error, self.onward = fail, how, error, onward
         real_append, real_state, real_open = ChainLedger.append, api._write_state, open
 
         def append(ledger, kind, ident, body):
@@ -624,14 +628,17 @@ class _Writes:
                 return real_open(file, mode, *args, **kwargs)
             label, index = f"file {Path(file).name}", len(self.seen)
             self.seen.append(label)
-            if index == self.fail and self.how == "refused":
-                raise OSError(f"no room for {label}")
+            if self._fails(index) and self.how in ("refused", "dies"):
+                raise _Killed(label) if self.how == "dies" else OSError(f"no room for {label}")
             handle = real_open(file, mode, *args, **kwargs)
-            return _RaisesOnClose(handle, self._raised(label)) if index == self.fail else handle
+            return _RaisesOnClose(handle, self._raised(label)) if self._fails(index) else handle
 
         monkeypatch.setattr(ChainLedger, "append", append)
         monkeypatch.setattr(api, "_write_state", state)
         monkeypatch.setattr(envelope_module, "open", opened, raising=False)
+
+    def _fails(self, index: int) -> bool:
+        return self.fail is not None and (index == self.fail or self.onward and index > self.fail)
 
     def _raised(self, label: str) -> BaseException:
         return _Killed(label) if self.how == "killed" else self.error(f"{label} could not be finished")
@@ -639,8 +646,10 @@ class _Writes:
     def _write(self, label: str, write):
         index = len(self.seen)
         self.seen.append(label)
-        if index != self.fail:
+        if not self._fails(index):
             return write()
+        if self.how == "dies":
+            raise _Killed(label)
         if self.how == "refused":
             raise self.error(f"no room for {label}")
         write()
@@ -715,7 +724,13 @@ def _readied(rig, act: str) -> dict:
         for tick in (1, 2):
             log.cycle({"outcome": "error", "code": "G6_E_LOOP_TEST_FAILED", "reason": f"failure {tick}"})
     log = rig.log()
-    return {"stops": stops_asked(rig.root), "started": log.started() if log.start_in_force() else None}
+    return {"stops": stops_asked(rig.root), "started": log.started() if log.start_in_force() else None,
+            "notes": _stop_notes(log)}
+
+
+def _stop_notes(log) -> int:
+    """How many stop notes the constraint log holds, read from its rows."""
+    return sum(1 for entry in log._chain.entries() if entry["kind"] == "stopped") if log is not None else 0
 
 
 def _act(rig, act: str, monkeypatch) -> dict:
@@ -755,7 +770,7 @@ def _on_disk(rig, act: str, ready: dict) -> dict[str, bool]:
     if act == "stop":
         stop_file = rig.root / "STOP"
         line = stop_file.exists() and "the owner's review" in stop_file.read_text(encoding="utf-8")
-        before, noted = ready["started"], not log.start_in_force()
+        before, noted = ready["started"], _stop_notes(log) > ready["notes"]       # its own row, read, not a rule
         ended = before is not None and (noted or stops_asked(rig.root) != before["stops"])
         return {"the stop": line or ended, "its line in the STOP file": line,
                 "its count in stops.log": stops_asked(rig.root) > ready["stops"], "its note in the constraint log": noted}
@@ -877,6 +892,707 @@ def test_records_that_do_not_read_back_after_a_failed_write_claim_nothing_either
     assert reply["recorded"] is None and code(reply) != "G6_E_LOOP_DEMOTED", reply
     said = f"{reply['message']} {reply['next_action']}"
     assert "not known" in said and not any(word in said for word in NOTHING), said
+
+
+# Review cfu1: a reply after an act says only what was read back ------------------------------------------------------
+#
+# Finding 1's class is failure_read_as_success, met in this change's loop and in the one before it; finding 2's is other:
+# a part reported from a rule, not read. Both are removed at one root: every value in ``recorded``, and every sentence of
+# a reply that says what is or is not on record, comes from reading the folder after the act, through the read-back
+# functions, and only a process that never started may say nothing was recorded, and only when the folder agrees. The
+# three inventories below are read from the code: every handler and return around an act's process, every key
+# ``recorded`` can hold with the read that sets it, and a failure at each point after each act's process started.
+
+def test_a_pipe_that_breaks_after_an_enrolment_is_durable_does_not_say_nothing_was_recorded(tmp_path, monkeypatch):
+    """Finding 1 (review cfu1), as review cfu1 wrote it, in this test's own folder. Failed on 9738d69: AssertionError: MCP
+    claims Nothing was recorded after the child's enrolment is durable."""
+    rig = Rig(tmp_path, monkeypatch)
+
+    class Child:
+        returncode = 0
+
+        def communicate(self, request, timeout):
+            reply = runner.act(json.loads(request))
+            assert code(reply) == "G6_E_LOOP_ENROLLED", reply
+            raise OSError("act reply pipe read failed")       # the parent's read fails after the child finished
+
+    monkeypatch.setattr(improve, "_run_act", real_run_act)
+    monkeypatch.setattr(improve, "_interpreter", lambda settings: ["fake-python"])
+    monkeypatch.setattr(improve.subprocess, "Popen", lambda *args, **kwargs: Child())
+    reply = rig.call("g6_improve_enrol")
+    assert rig.log().enrolled()["by"] == "Ada"
+    said = reply["message"] + " " + reply["next_action"]
+    assert "Nothing was recorded" not in said, "MCP claims Nothing was recorded after the child's enrolment is durable"
+    assert reply.get("recorded") == {"the enrolment": True}
+
+
+def test_a_stop_on_a_folder_with_no_constraint_log_names_no_note_in_it(tmp_path, monkeypatch):
+    """Finding 2 (review cfu1), as review cfu1 wrote it. Failed on 9738d69: AssertionError: stop reports a durable
+    constraint-log note although no constraint log exists."""
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    (tmp_path / "settings.json").write_text("{}", encoding="utf-8")
+    reply = improve.stop(str(tmp_path), "stop before first enrolment")
+    assert reply["code"] == improve.STOP_ASKED
+    assert not (tmp_path / CYCLE_LOG).exists()
+    assert reply["recorded"]["its note in the constraint log"] is False, (
+        "stop reports a durable constraint-log note although no constraint log exists")
+
+
+def _defs(rel: str) -> dict[str, ast.AST]:
+    """Each function of a module by name, a nested one as ``outer.inner``, a class's methods left out."""
+    found: dict[str, ast.AST] = {}
+
+    def visit(node: ast.AST, prefix: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                found[prefix + child.name] = child
+                visit(child, f"{prefix}{child.name}.")
+            elif not isinstance(child, ast.ClassDef):
+                visit(child, prefix)
+
+    visit(ast.parse((SRC / rel).read_text(encoding="utf-8")), "")
+    return found
+
+
+def _own(function: ast.AST):
+    """The nodes that are a function's own, a nested function's or lambda's left out."""
+    stack = list(ast.iter_child_nodes(function))
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            yield node
+            stack.extend(ast.iter_child_nodes(node))
+
+
+def _text(node: ast.AST, width: int = 70) -> str:
+    return " ".join(ast.unparse(node).split())[:width]
+
+
+def _assigned(function: ast.AST) -> dict[str, list[ast.AST]]:
+    """Each local name a function assigns, with every value it is given there."""
+    found: dict[str, list[ast.AST]] = {}
+    for node in _own(function):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    found.setdefault(target.id, []).append(node.value)
+                elif isinstance(target, ast.Tuple):
+                    paired = isinstance(node.value, ast.Tuple) and len(node.value.elts) == len(target.elts)
+                    for i, element in enumerate(target.elts):
+                        if isinstance(element, ast.Name):
+                            found.setdefault(element.id, []).append(node.value.elts[i] if paired else node.value)
+    return found
+
+
+def _reads(expression: ast.AST, assigned: dict[str, list[ast.AST]], seen: set[str] | None = None) -> set[str]:
+    """Every call an expression's value comes through, following the local names it reads to what they were given."""
+    seen = set() if seen is None else seen
+    found: set[str] = set()
+    for node in ast.walk(expression):
+        if isinstance(node, ast.Call):
+            found.add(ast.unparse(node.func))
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in assigned and node.id not in seen:
+            seen.add(node.id)
+            for value in assigned[node.id]:
+                found |= _reads(value, assigned, seen)
+    return found
+
+
+#: The modules around an act's process: the server's tools, the server's side of each act, and the act's own process.
+AROUND_MODULES = ("mcp/__init__.py", "mcp/improve.py", "metaharness/runner.py")
+#: What makes a function part of the path around an act's process: it starts one, talks to one, runs the act in one, or
+#: reads its folder back after it. Every function that calls one of these is in ``AROUND``, with each of its exits.
+_PATH = {"subprocess.Popen", "process.communicate", "_run_act", "_read_act", "_spawn", "_watch", "improve.act",
+         "improve.start", "improve.stop", "act", "as_recorded", "on_record", "_on_record", "_read_back",
+         "_start_on_record", "_start_as_recorded", "_stop_on_record", "ask_to_stop", "loop.enrol", "loop.resume",
+         "loop.demote"}
+#: Where, in a function that has one, the act's process starts or the act first writes: an exit before it is ``BEFORE``.
+MARKERS = {("mcp/improve.py", "act"): "_run_act", ("mcp/improve.py", "_run_act"): "process.communicate",
+           ("mcp/improve.py", "start"): "CycleLog(root / CYCLE_LOG).start", ("mcp/improve.py", "stop"): "ask_to_stop",
+           ("mcp/__init__.py", "_metaharness_tools.person_act"): "asyncio.to_thread",
+           ("mcp/__init__.py", "_metaharness_tools.g6_improve_start"): "asyncio.to_thread"}
+
+
+def _marker_line(rel: str, name: str, function: ast.AST) -> int:
+    """The line of the act's start or first write in ``function``; 0 when it has none, so nothing in it is before."""
+    call = MARKERS.get((rel, name))
+    lines = [node.lineno for node in _own(function) if isinstance(node, ast.Call) and ast.unparse(node.func) == call]
+    return min(lines) if call else 0
+
+
+def _exits(rel: str, name: str, function: ast.AST) -> list[tuple[str, ast.AST, ast.AST | None]]:
+    """Each exception handler and each return of a function, as it reads in the code, with the ``try`` a handler is in."""
+    found = []
+    for node in _own(function):
+        if isinstance(node, ast.Return):
+            found.append((f"return {_text(node.value) if node.value is not None else 'None'}", node, None))
+        elif isinstance(node, ast.Try):
+            for handler in node.handlers:
+                caught = ast.unparse(handler.type) if handler.type is not None else "everything"
+                found.append((f"except {caught} around {_text(node.body[0], 40)}", handler, node))
+    return found
+
+
+def _on_path() -> dict[tuple[str, str], ast.AST]:
+    """Each function of ``AROUND_MODULES`` on the path around an act's process (``_PATH``), read from the code: one that
+    is named so, calls one, or hands one to a call (``asyncio.to_thread(improve.act, ...)``), and every function nested
+    in one of them."""
+    found = {}
+    for rel in AROUND_MODULES:
+        defs = _defs(rel)
+        for name, node in defs.items():
+            calls = [n for n in _own(node) if isinstance(n, ast.Call)]
+            if name.rpartition(".")[2] in _PATH or any(ast.unparse(part) in _PATH for call in calls
+                                                       for part in (call.func, *call.args)):
+                found[(rel, name)] = node
+        found |= {(rel, name): node for name, node in defs.items()
+                  if any(name.startswith(f"{outer}.") for (where, outer) in found if where == rel)}
+    return found
+
+
+#: The read-backs themselves: each reads the folder after an act, or builds a reply from what was read.
+READBACKS = {"_on_record", "_read_back", "_start_on_record", "_start_as_recorded", "_stop_on_record", "on_record",
+             "as_recorded"}
+#: Handed on: a value another exit in this table reads back, by a rule the test below checks from the code.
+HANDED, ITSELF, NOT_KNOWN = "handed", "itself", "not known"
+_TOOLS = "_metaharness_tools"
+#: Every exception handler and return around an act's process, as it reads in the code: ``before`` the process starts
+#: or the act first writes (``MARKERS``), so no part of it can be on record, or ``after``, with the read-back it goes
+#: through: a function that reads the folder back, ``itself`` for a read-back, ``handed`` for a value handed to an exit
+#: that reads back, or ``not known`` where nothing names a folder to read.
+AROUND = {
+    ("mcp/__init__.py", f"{_TOOLS}.g6_improve_start", "return denied"): ("before", ""),
+    ("mcp/__init__.py", f"{_TOOLS}.g6_improve_start", "return found"): ("before", ""),
+    ("mcp/__init__.py", f"{_TOOLS}.g6_improve_start", "return refusal(consent, nothing='Nothing started.')"): ("before", ""),
+    ("mcp/__init__.py", f"{_TOOLS}.g6_improve_start",
+     "return await asyncio.to_thread(improve.start, root, consent.answer, shown)"): ("after", HANDED),
+    ("mcp/__init__.py", f"{_TOOLS}.g6_improve_stop", "return improve.stop(folder, reason)"): ("after", HANDED),
+    ("mcp/__init__.py", f"{_TOOLS}.person_act", "return denied"): ("before", ""),
+    ("mcp/__init__.py", f"{_TOOLS}.person_act", "return found"): ("before", ""),
+    ("mcp/__init__.py", f"{_TOOLS}.person_act", "return refusal(consent, nothing='Nothing was recorded.')"): ("before", ""),
+    ("mcp/__init__.py", f"{_TOOLS}.person_act",
+     "return await asyncio.to_thread(improve.act, act, root, consent.answer, shown,"): ("after", HANDED),
+    ("mcp/improve.py", "_on_record", "return on_record(request)"): ("after", ITSELF),
+    ("mcp/improve.py", "_read_act", "return reply"): ("after", HANDED),
+    ("mcp/improve.py", "_read_act",
+     "return _blocked(ACT_FAILED, f\"{what}, {read}{(': ' + tail[-300:] if tail else"): ("after", "_read_back"),
+    ("mcp/improve.py", "_read_back",
+     "except (OSError, ValueError, LedgerError, KeyError, TypeError) around found = _on_record(request)"): ("after", ITSELF),
+    ("mcp/improve.py", "_read_back",
+     "return (None, f\"its folder's records do not read back ({type(exc).__name__}),"): ("after", ITSELF),
+    ("mcp/improve.py", "_read_back",
+     "return (held, said + (': its process may still be running' if None in held.va"): ("after", ITSELF),
+    ("mcp/improve.py", "_run_act", "except (OSError, ValueError, subprocess.SubprocessError) around process = "
+     "subprocess.Popen(command, cwd="): ("before", "_read_back"),
+    ("mcp/improve.py", "_run_act",
+     "return _blocked(ACT_FAILED, f\"the act's process could not be started ({type(e"): ("before", "_read_back"),
+    ("mcp/improve.py", "_run_act",
+     "except subprocess.TimeoutExpired around out, err = process.communicate(json.dump"): ("after", "_read_act"),
+    ("mcp/improve.py", "_run_act", "except (OSError, ValueError, subprocess.SubprocessError) around out, err = "
+     "process.communicate(json.dump"): ("after", "_read_act"),
+    ("mcp/improve.py", "_run_act",
+     "return _read_act(process.returncode, out, err, act_name=request.get('act'), r"): ("after", "_read_act"),
+    ("mcp/improve.py", "_spawn",
+     "return subprocess.Popen([*_interpreter(settings), '-m', 'g6.metaharness.loop'"): ("after", HANDED),
+    ("mcp/improve.py", "_start_as_recorded",
+     "except (OSError, LedgerError) around found = _start_on_record(root, at)"): ("after", ITSELF),
+    ("mcp/improve.py", "_start_as_recorded", "return {**reply, 'recorded': None}"): ("after", ITSELF),
+    ("mcp/improve.py", "_start_as_recorded",
+     "return _restated(reply, f\"{reply['message']}; the folder's records do not rea"): ("after", ITSELF),
+    ("mcp/improve.py", "_start_as_recorded",
+     "return _restated(reply, f\"{reply['message']}. The start is on record, so the "): ("after", ITSELF),
+    ("mcp/improve.py", "_start_as_recorded", "return {**reply, 'recorded': found}"): ("after", ITSELF),
+    ("mcp/improve.py", "_start_on_record",
+     "return {'the start': bool(ours) and (not stop_standing(root, started))}"): ("after", ITSELF),
+    ("mcp/improve.py", "_stop_on_record", "except (OSError, LedgerError) around log = _log(root)"): ("after", ITSELF),
+    ("mcp/improve.py", "_stop_on_record",
+     "return {'the stop': stands, 'its line in the STOP file': line, 'its count in "): ("after", ITSELF),
+    ("mcp/improve.py", "_watch",
+     "return _blocked(START_FAILED, f'the runner ended as it started, with exit cod"): ("after", HANDED),
+    ("mcp/improve.py", "_watch",
+     "return _envelope('qualified-draft', STARTED, f'the runner is alive on {root}'"): ("after", HANDED),
+    ("mcp/improve.py", "_watch",
+     "return _envelope('qualified-draft', STARTED, f'the runner was started on {roo"): ("after", HANDED),
+    ("mcp/improve.py", "act", "except ValueError around settings = read_settings(root)"): ("before", ""),
+    ("mcp/improve.py", "act",
+     "return _blocked(TERMS_CHANGED, f\"what the person read is no longer what stand"): ("before", ""),
+    ("mcp/improve.py", "act", "return cannot"): ("before", ""),
+    ("mcp/improve.py", "act", "return {**_run_act(root, settings, request), 'by': who}"): ("after", "_run_act"),
+    ("mcp/improve.py", "start", "return _not_what_was_read(root)"): ("before", ""),
+    ("mcp/improve.py", "start", "return cannot"): ("before", ""),
+    ("mcp/improve.py", "start",
+     "except (OSError, LedgerError, WorkspaceRefused, ValueError) around now = _terms(root)"): ("after", "_start_as_recorded"),
+    ("mcp/improve.py", "start", "return _start_as_recorded(root, at, reply) if at else reply"): ("after", "_start_as_recorded"),
+    ("mcp/improve.py", "stop", "return _not_a_loop(root)"): ("before", ""),
+    ("mcp/improve.py", "stop", "except OSError around why = ask_to_stop(root, reason)"): ("after", "_stop_on_record"),
+    ("mcp/improve.py", "stop",
+     "return _blocked(STOP_FAILED, f'the stop is not known to stand; {_record_said("): ("after", "_stop_on_record"),
+    ("mcp/improve.py", "stop",
+     "return _envelope('qualified-draft', STOP_ASKED, f'{said}; {_record_said(found"): ("after", "_stop_on_record"),
+    ("metaharness/runner.py", "act", "return as_recorded(request, refused)"): ("after", "as_recorded"),
+    ("metaharness/runner.py", "act",
+     "return as_recorded(request, _blocked(TERMS_CHANGED, f'{SETTINGS_FILE} changed"): ("after", "as_recorded"),
+    ("metaharness/runner.py", "act", "except DomainChanged around settings = read_settings(root)"): ("after", "as_recorded"),
+    ("metaharness/runner.py", "act",
+     "return as_recorded(request, _blocked(FROZEN_CHANGED, str(exc)[:500], again))"): ("after", "as_recorded"),
+    ("metaharness/runner.py", "act", "except Exception around settings = read_settings(root)"): ("after", "as_recorded"),
+    ("metaharness/runner.py", "act",
+     "return as_recorded(request, _blocked(CANNOT_OPEN, f'The loop could not be ope"): ("after", "as_recorded"),
+    ("metaharness/runner.py", "act",
+     "except Exception around if name == 'enrol': reply = loop.enrol(w"): ("after", "as_recorded"),
+    ("metaharness/runner.py", "act", "return as_recorded(request, None, exc)"): ("after", "as_recorded"),
+    ("metaharness/runner.py", "act", "return as_recorded(request, reply)"): ("after", "as_recorded"),
+    ("metaharness/runner.py", "act",
+     "except WorkspaceRefused around with folder_lock(root): refused = unchan"): ("after", "as_recorded"),
+    ("metaharness/runner.py", "act",
+     "return as_recorded(request, _blocked(BUSY, 'another operation is running on t"): ("after", "as_recorded"),
+    ("metaharness/runner.py", "act.unchanged", "return None"): ("after", HANDED),
+    ("metaharness/runner.py", "act.unchanged",
+     "return _blocked(TERMS_CHANGED, f\"what the person read is no longer what stand"): ("after", HANDED),
+    ("metaharness/runner.py", "act_main",
+     "except (ValueError, KeyError, TypeError) around request = json.loads(sys.stdin.read())"): ("after", NOT_KNOWN),
+    ("metaharness/runner.py", "act_main",
+     "return 1 if reply['completion_state'] == 'blocked-escalated' else 0"): ("after", HANDED),
+    ("metaharness/runner.py", "as_recorded",
+     "except (OSError, ValueError, LedgerError) around found = on_record(request)"): ("after", ITSELF),
+    ("metaharness/runner.py", "as_recorded", "return {**reply, 'recorded': None}"): ("after", ITSELF),
+    ("metaharness/runner.py", "as_recorded",
+     "return _envelope(reply['completion_state'], reply['warning_card']['code'], f'"): ("after", ITSELF),
+    ("metaharness/runner.py", "as_recorded",
+     "return _blocked(CANNOT_RECORD, f'the act did not finish ({why}), and {unknown"): ("after", ITSELF),
+    ("metaharness/runner.py", "as_recorded", "return {**reply, 'recorded': found}"): ("after", ITSELF),
+    ("metaharness/runner.py", "as_recorded",
+     "return _envelope('qualified-draft', DONE[name], f'{effect} is on record, read"): ("after", ITSELF),
+    ("metaharness/runner.py", "as_recorded",
+     "return _blocked(CANNOT_RECORD, f'the act could not be recorded ({why}): read "): ("after", ITSELF),
+    ("metaharness/runner.py", "as_recorded",
+     "return _blocked(CANNOT_RECORD, f\"the act could not be recorded ({why}): read "): ("after", ITSELF),
+    ("metaharness/runner.py", "on_record",
+     "return {'the enrolment': row.get('by') == who and (row.get('frozen') or {}).g"): ("after", ITSELF),
+    ("metaharness/runner.py", "on_record",
+     "return {'the lifted pause': log is not None and (not held(log))}"): ("after", ITSELF),
+    ("metaharness/runner.py", "on_record",
+     "return {'the demotion': chain['current'] == after and head.get('kind') == 'ro"): ("after", ITSELF),
+}
+
+
+def _reaches(function: ast.AST, node: ast.AST, through: str) -> bool:
+    return through in _reads(node, _assigned(function))
+
+
+def _shown_to_read_back(function: ast.AST, exit_node: ast.AST, around: ast.AST | None, through: str) -> bool:
+    """Whether an exit goes through ``through``: a return's value does, or a handler's returns do, or, for a handler that
+    returns nothing, every return after its ``try``, of which there is one at least."""
+    if isinstance(exit_node, ast.Return):
+        return _reaches(function, exit_node.value, through)
+    returns = [n for n in ast.walk(exit_node) if isinstance(n, ast.Return)]
+    if not returns:
+        returns = [n for n in _own(function) if isinstance(n, ast.Return) and n.lineno > around.end_lineno]
+    return bool(returns) and all(_reaches(function, n.value, through) for n in returns)
+
+
+def test_every_handler_and_return_around_an_acts_process_is_before_it_started_or_reads_the_folder_back():
+    """The class's first inventory. Each function on the path around an act's process, read from the code, and each of
+    its exception handlers and returns: before the process started or the act first wrote, by the code's own lines, or
+    after, and then shown to go through a read-back. One this cannot classify fails."""
+    found, wrong = {}, []
+    for (rel, name), function in _on_path().items():
+        marker = _marker_line(rel, name, function)
+        for text, exit_node, around in _exits(rel, name, function):
+            key = (rel, name, text)
+            found[key] = exit_node
+            if key not in AROUND:
+                wrong.append(f"not classified: {key}")
+                continue
+            side, through = AROUND[key]
+            if side == "before" and not exit_node.lineno < marker:
+                wrong.append(f"said to be before {MARKERS.get((rel, name))!r}, but is not: {key}")
+            if side == "after" and not through:
+                wrong.append(f"after the process started, and names no read-back: {key}")
+            if through == ITSELF and name.rpartition(".")[2] not in READBACKS:
+                wrong.append(f"said to be a read-back, but is not one: {key}")
+            if through == NOT_KNOWN and "recorded=None" not in ast.unparse(exit_node):
+                wrong.append(f"said to be not known, but does not say so: {key}")
+            if through not in ("", ITSELF, HANDED, NOT_KNOWN) and not _shown_to_read_back(function, exit_node, around,
+                                                                                         through):
+                wrong.append(f"does not go through {through}: {key}")
+    assert not wrong, "\n".join(wrong)
+    assert set(found) == set(AROUND), f"listed but not in the code: {sorted(set(AROUND) - set(found))}"
+
+
+def test_what_is_handed_on_after_an_acts_process_started_reaches_a_read_back():
+    """The ``handed`` exits above, each by the rule that hands it on: a reply of the act's own process went through its
+    read-back (``runner.as_recorded``) or says that nothing can be read; the runner's process and what watching it says
+    reach the start only after the start's record, and its reply reads the folder back; the tools hand each reply on
+    whole."""
+    runs = _defs("metaharness/runner.py")
+    act_fn, main = runs["act"], runs["act_main"]
+    assert all(_reaches(act_fn, n.value, "as_recorded") for n in _own(act_fn) if isinstance(n, ast.Return))
+    users = {(rel, name) for rel in AROUND_MODULES for name, f in _defs(rel).items() for n in _own(f)
+             if isinstance(n, ast.Name) and n.id == "unchanged"}
+    assert users == {("metaharness/runner.py", "act")}, "a refusal of unchanged reaches a reply some other way"
+    replies = _assigned(main)["reply"]
+    assert replies and all("recorded=None" in ast.unparse(value) or {"as_recorded", "act"} & _reads(value, {})
+                           for value in replies)
+    improves = _defs("mcp/improve.py")
+    start = improves["start"]
+    marker = _marker_line("mcp/improve.py", "start", start)
+    for helper in ("_spawn", "_watch"):
+        callers = {name for name, f in improves.items() for n in _own(f)
+                   if isinstance(n, ast.Call) and ast.unparse(n.func) == helper}
+        lines = [n.lineno for n in _own(start) if isinstance(n, ast.Call) and ast.unparse(n.func) == helper]
+        assert callers == {"start"} and lines and min(lines) > marker, helper
+    last = max((n for n in _own(start) if isinstance(n, ast.Return)), key=lambda n: n.lineno)
+    assert _reaches(start, last.value, "_start_as_recorded")
+    tools = _defs("mcp/__init__.py")
+    for name in ("g6_improve_start", "g6_improve_stop", "person_act"):
+        handed = [n for n in _own(tools[f"{_TOOLS}.{name}"]) if isinstance(n, ast.Return)
+                  and AROUND.get(("mcp/__init__.py", f"{_TOOLS}.{name}", f"return {_text(n.value)}"), ("", ""))[1] == HANDED]
+        assert len(handed) == 1, name
+        value = handed[0].value.value if isinstance(handed[0].value, ast.Await) else handed[0].value
+        assert isinstance(value, ast.Call), f"{name} reads its act's reply before handing it on"
+
+
+#: What a reply may say of what is on record only through a read-back: words that claim a part is, or is not, there.
+_RECORD_WORDS = re.compile(r"\b(?:was|were|is|are|be|been) (?:not )?recorded\b|\bon record\b|\bnothing counts\b|"
+                           r"\bact counts\b", re.IGNORECASE)
+
+
+def test_no_sentence_after_an_acts_process_started_says_what_is_on_record_but_a_read_back():
+    """Every string in an exit's code after the act's process started, outside the read-backs, read from the code: none
+    says what is or is not on record, so each sentence that does is written by a read-back from what it read."""
+    wrong = []
+    for (rel, name), function in _on_path().items():
+        if name.rpartition(".")[2] in READBACKS:
+            continue
+        marker = _marker_line(rel, name, function)
+        documented = {id(n.value) for n in function.body[:1] if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)}
+        for node in _own(function):
+            if (isinstance(node, ast.Constant) and isinstance(node.value, str) and node.lineno >= marker
+                    and id(node) not in documented):
+                if _RECORD_WORDS.search(node.value):
+                    wrong.append(f"{rel} {name}:{node.lineno}: {node.value[:80]!r}")
+    assert not wrong, "\n".join(wrong)
+
+
+#: Each part a reply after an act names in ``recorded``, by the function that reads it back, with the reads its value
+#: must come through. One set any other way, from a constant or a rule that does not read that part, fails.
+PARTS = {
+    ("metaharness/runner.py", "on_record", "the enrolment"): {"log.enrolled", "enrolment_digest"},
+    ("metaharness/runner.py", "on_record", "the lifted pause"): {"held"},
+    ("metaharness/runner.py", "on_record", "the demotion"): {"lineage"},
+    ("metaharness/runner.py", "on_record", "its note in the constraint log"): {"log._rows"},
+    ("mcp/improve.py", "_start_on_record", "the start"): {"log.started", "log.start_in_force", "stop_standing"},
+    ("mcp/improve.py", "_stop_on_record", "the stop"): {"_stop_file_size", "stop_standing", "log._rows"},
+    ("mcp/improve.py", "_stop_on_record", "its line in the STOP file"): {"_stop_file_size"},
+    ("mcp/improve.py", "_stop_on_record", "its count in stops.log"): {"stops_asked"},
+    ("mcp/improve.py", "_stop_on_record", "its note in the constraint log"): {"log._rows"},
+}
+#: What a reply's ``recorded`` may be set from: a read-back's result, or ``None``, which is not known.
+_SOURCES = {"on_record", "_on_record", "_start_on_record", "_stop_on_record", "_read_back"}
+
+
+def _recorded_sites():
+    """Every place in the modules around an act's process that sets a reply's ``recorded``, read from the code: a
+    keyword, a key of a dict display, or an item assigned."""
+    for rel in AROUND_MODULES:
+        for name, function in _defs(rel).items():
+            for node in _own(function):
+                if isinstance(node, ast.Call):
+                    yield from ((rel, name, function, k.value) for k in node.keywords if k.arg == "recorded")
+                elif isinstance(node, ast.Dict):
+                    yield from ((rel, name, function, v) for k, v in zip(node.keys, node.values)
+                                if isinstance(k, ast.Constant) and k.value == "recorded")
+                elif isinstance(node, ast.Assign) and any(isinstance(t, ast.Subscript) and ast.unparse(t.slice) == "'recorded'"
+                                                          for t in node.targets):
+                    yield rel, name, function, None
+
+
+def test_every_key_a_replys_recorded_holds_is_set_by_the_read_of_its_part():
+    """The class's second inventory. Each dict a read-back returns, read from the code, holds only the parts listed,
+    each from its own read, never a constant; and every place that sets a reply's ``recorded`` sets it from a read-back
+    or to ``None``, never any other way."""
+    wrong, keys = [], set()
+    for rel, name in sorted({(rel, name) for rel, name, _ in PARTS}):
+        function = _defs(rel)[name]
+        assigned = _assigned(function)
+        for node in _own(function):
+            if not (isinstance(node, ast.Return) and isinstance(node.value, ast.Dict)):
+                continue
+            for k, v in zip(node.value.keys, node.value.values):
+                part = k.value if isinstance(k, ast.Constant) else ast.unparse(k)
+                keys.add((rel, name, part))
+                if (rel, name, part) not in PARTS:
+                    wrong.append(f"{rel} {name}: {part!r} is not a part listed with its read")
+                elif isinstance(v, ast.Constant) or not PARTS[(rel, name, part)] <= _reads(v, assigned):
+                    wrong.append(f"{rel} {name}: {part!r} is not set by {sorted(PARTS[(rel, name, part)])}: {_text(v)}")
+                elif any(isinstance(value, ast.Constant) and value.value is not None
+                         for n in ast.walk(v) if isinstance(n, ast.Name) for value in assigned.get(n.id, [])):
+                    wrong.append(f"{rel} {name}: {part!r} can be set from a constant")
+    assert keys == set(PARTS), f"listed but not read: {sorted(set(PARTS) - keys)}"
+    for rel, name, function, value in _recorded_sites():
+        if value is None or isinstance(value, ast.Constant):
+            if value is None or value.value is not None:
+                wrong.append(f"{rel} {name}: recorded is set to {ast.unparse(value) if value else 'an item'}")
+            continue
+        given = _assigned(function).get(value.id, []) if isinstance(value, ast.Name) else [value]
+        if not given or not all(isinstance(g, ast.Constant) and g.value is None or _reads(g, _assigned(function)) & _SOURCES
+                                for g in given):
+            wrong.append(f"{rel} {name}: recorded is set from {_text(value)}, not a read-back")
+    back = _defs("mcp/improve.py")["_read_back"]
+    assert "_on_record" in _reads(_assigned(back)["held"][0], _assigned(back))
+    assert not wrong, "\n".join(wrong)
+    named = {part for _, _, part in PARTS}
+    assert named == {p for parts, _ in WRITING_ACTS.values() for p in parts} - {"the pause"}
+    assert {part for parts in runner.ACT_PARTS.values() for part in parts} == {
+        part for rel, name, part in PARTS if name == "on_record"}
+
+
+#: Each way the server's talk with an act's process can fail once the process has started, with the exit status the
+#: process then shows: a number once it has ended, ``None`` while it may still be running.
+TALK_FAILS = {
+    "its pipe breaks": (lambda: OSError("the act's reply pipe broke"), 1),
+    "its output does not decode": (lambda: UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"), 1),
+    "the wait for it fails": (lambda: OSError("the wait for the act's process failed"), None),
+    "it outlives ACT_WAIT": (lambda: subprocess.TimeoutExpired("act", improve.ACT_WAIT), None),
+    "its reply is cut off": (None, 1),
+}
+
+
+def _expected(held: dict[str, bool], status: int | None) -> dict[str, bool | None]:
+    """What a reply may name of each part: on record as it is; not on record only once the process has ended, and
+    otherwise not known, since a process that may still run may still write it."""
+    return {part: True if kept else False if status is not None else None for part, kept in held.items()}
+
+
+def _said(reply: dict) -> str:
+    return f"{reply['message']} {reply.get('next_action', '')}"
+
+
+@pytest.mark.parametrize("act", ["enrol", "resume", "demote"])
+def test_a_failure_talking_to_an_acts_process_after_it_started_says_only_what_the_reopened_folder_holds(
+        tmp_path, monkeypatch, act):
+    """The class's third inventory, for the acts a person agrees to. Each act's process writes its first ``landed`` writes
+    and ends (all, a part, or none of them, read from a run of the act), and then the server's talk with it fails each
+    way it can once the process started. The folder is reopened, and the reply must name each part as it holds it,
+    never say nothing was recorded, and never say nothing counts with a part on record."""
+    writes, wrong = _writes(tmp_path, monkeypatch, act), []
+    for landed in range(len(writes) + 1):
+        for way, (error, status) in TALK_FAILS.items():
+            with monkeypatch.context() as patch:
+                rig = _rig(tmp_path / f"{landed}-{list(TALK_FAILS).index(way)}", patch)
+                ready = _readied(rig, act)
+                spy = _Writes(patch, fail=writes[landed][0] if landed < len(writes) else None, how="dies")
+
+                class Child:
+                    returncode = status
+
+                    def communicate(self, request, timeout, error=error):
+                        try:
+                            runner.act(json.loads(request))
+                        except _Killed:
+                            pass
+                        if error is None:
+                            return '{"completion_state": "qualified-dr', ""
+                        raise error()
+
+                patch.setattr(improve, "_run_act", real_run_act)
+                patch.setattr(improve, "_interpreter", lambda settings: ["fake-python"])
+                patch.setattr(improve.subprocess, "Popen", lambda *a, **k: Child())
+                reply = _act(rig, act, patch)
+            assert spy.seen, "the act's process wrote nothing"
+            held = _on_disk(rig, act, ready)
+            label = f"{landed} of {len(writes)} writes landed, then {way}"
+            if code(reply) != improve.ACT_FAILED:
+                wrong.append(f"{label}: replied {code(reply)}")
+            if reply.get("recorded") != _expected(held, status):
+                wrong.append(f"{label}: names {reply.get('recorded')}, the folder holds {held}")
+            if "Nothing was recorded" in _said(reply) or any(held.values()) and any(w in _said(reply) for w in NOTHING):
+                wrong.append(f"{label}: says nothing was recorded or counts with {held} on record: {_said(reply)}")
+    assert not wrong, "\n".join(wrong)
+
+
+@pytest.mark.parametrize("act", ["enrol", "resume", "demote"])
+@pytest.mark.parametrize("ran", [False, True])
+def test_an_acts_process_that_never_started_says_nothing_was_recorded_only_when_the_folder_agrees(
+        tmp_path, monkeypatch, act, ran):
+    """Starting the act's process fails. With nothing of the act on record the reply may say nothing was recorded; when
+    the folder holds a part of it (here, a start that ran the act and then raised), it says what it holds instead."""
+    rig = _rig(tmp_path / "rig", monkeypatch)
+    ready = _readied(rig, act)
+    generation = 1 if act == "demote" else None
+    root, _, bound = improve.asked_act(act, str(rig.root), generation)
+    request = {"act": act, "folder": str(root), "who": "Ada", "binding": bound, "generation": generation}
+
+    def popen(*args, **kwargs):
+        if ran:
+            runner.act(request)                   # the act ran, and creating its process raised after
+        raise OSError("the act's process could not be created")
+
+    monkeypatch.setattr(improve.subprocess, "Popen", popen)
+    monkeypatch.setattr(improve, "_interpreter", lambda settings: ["fake-python"])
+    reply = real_run_act(root, runner.read_settings(root), request)
+    held = _on_disk(rig, act, ready)
+    assert any(held.values()) == ran and code(reply) == improve.ACT_FAILED, (held, reply)
+    assert reply["recorded"] == held, (reply["recorded"], held)
+    assert ("Nothing was recorded" in _said(reply)) == (not ran), _said(reply)
+    assert ("nothing of it ran" in reply["message"]) == (not ran), reply["message"]
+
+
+def test_a_refusal_in_the_acts_process_whose_folder_no_longer_reads_keeps_its_code_and_claims_nothing(tmp_path,
+                                                                                                    monkeypatch):
+    """The act's own refusal goes through its read-back like every reply of its process. With records that stop reading
+    between the server's check and the act's lock, it is still the refusal, and says what of it counts is not known."""
+    rig = _rig(tmp_path / "rig", monkeypatch)
+    _readied(rig, "resume")
+
+    def broken_then_act(root, settings, request):
+        _damaged(rig)
+        return runner.act(request)
+
+    monkeypatch.setattr(improve, "_run_act", broken_then_act)
+    reply = rig.call("g6_improve_resume")
+    assert code(reply) == improve.TERMS_CHANGED and reply["recorded"] is None, reply
+    assert "not known" in reply["message"] and not any(word in _said(reply) for word in NOTHING), _said(reply)
+
+
+class _Runner:
+    """The runner's process as ``_watch`` sees it once it has started: ``then`` runs at its first poll, and it fails one
+    way (``RUNNER_FAILS``)."""
+
+    def __init__(self, way: str, then) -> None:
+        self.way, self.then, self.polls = way, then, 0
+
+    def poll(self):
+        if not self.polls:
+            self.then()
+        self.polls += 1
+        if self.way == "polling it raises":
+            raise OSError("the runner's process could not be polled")
+        return 1 if self.way == "it ends at once" else None
+
+
+RUNNER_FAILS = ("polling it raises", "it ends at once", "it never opens its folder")
+
+
+def _damaged(rig) -> None:
+    path = rig.root / CYCLE_LOG
+    path.write_text(path.read_text(encoding="utf-8").replace('"Ada"', '"Cy"'), encoding="utf-8")
+
+
+#: What happens to the start's record while its runner is being watched: nothing, a stop that ends it, or records
+#: that no longer read back.
+MEANWHILE = {"nothing": lambda rig: None, "a stop": lambda rig: improve.stop(str(rig.root), "a stop while it starts"),
+             "records that no longer read": _damaged}
+
+
+@pytest.mark.parametrize("way", RUNNER_FAILS)
+@pytest.mark.parametrize("meanwhile", sorted(MEANWHILE))
+def test_a_failure_after_the_runners_process_started_says_only_what_the_reopened_folder_holds_of_the_start(
+        tmp_path, monkeypatch, way, meanwhile):
+    """The class's third inventory, for a start: its one write, the start's record, has landed when its process starts,
+    so what follows can only change whether it stands. Each way watching the runner fails, with the start standing,
+    ended by a stop, or its records unreadable, and the reply names what the reopened folder holds."""
+    rig = _rig(tmp_path / "rig", monkeypatch)
+    _readied(rig, "start")
+    monkeypatch.setattr(improve, "START_WAIT", 0.3)
+    monkeypatch.setattr(improve, "_spawn", lambda root, settings: _Runner(way, lambda: MEANWHILE[meanwhile](rig)))
+    reply = rig.call("g6_improve_start")
+    try:
+        log = CycleLog(rig.root / CYCLE_LOG)
+        started = log.started() or {}
+        held = {"the start": log.start_in_force() and started.get("by") == "Ada" and not stop_standing(rig.root, started)}
+    except LedgerError:
+        held = None
+    assert reply["recorded"] == held, (reply["recorded"], held, reply["message"])
+    if held is None:
+        assert code(reply) == improve.STARTED or "not known" in reply["message"], reply["message"]
+    elif held["the start"]:
+        assert code(reply) == improve.STARTED or "The start is on record" in reply["message"], reply["message"]
+        assert not any(word in _said(reply) for word in NOTHING), _said(reply)
+    else:
+        assert code(reply) != improve.STARTED or meanwhile == "a stop", reply
+
+
+#: What the stop's read-back may not be able to read afterwards, and what makes it so.
+STOP_UNREADABLE = ("nothing", "its STOP file", "its stops.log", "its constraint log")
+
+
+@pytest.mark.parametrize("unreadable", STOP_UNREADABLE)
+def test_a_stop_names_each_part_as_the_reopened_folder_holds_it_and_none_it_cannot_read(tmp_path, monkeypatch,
+                                                                                       unreadable):
+    """The class's third inventory, for a stop: its writes (its count, its line, its note) land all, in part or not at
+    all, and then a part may not read back. The reply names each part as the reopened folder holds it, one it cannot
+    read as not known, and is a stop asked only when the stop is on record."""
+    writes, wrong = _writes(tmp_path, monkeypatch, "stop"), []
+    real_stat, real_read, real_log = Path.stat, Path.read_bytes, CycleLog.__init__
+    for landed in range(len(writes) + 1):
+        armed = {"on": False}
+
+        def stat(self, *args, **kwargs):
+            if armed["on"] and unreadable == "its STOP file" and self.name == "STOP":
+                raise PermissionError("STOP cannot be read")
+            return real_stat(self, *args, **kwargs)
+
+        def read_bytes(self):
+            if armed["on"] and unreadable == "its stops.log" and self.name == "stops.log":
+                raise PermissionError("stops.log cannot be read")
+            return real_read(self)
+
+        def opened(self, path):
+            if armed["on"] and unreadable == "its constraint log":
+                raise LedgerError("the constraint log does not check out")
+            real_log(self, path)
+
+        with monkeypatch.context() as patch:
+            rig = _rig(tmp_path / f"{landed}", patch)
+            ready = _readied(rig, "stop")
+            _Writes(patch, fail=writes[landed][0] if landed < len(writes) else None, onward=True)
+            patch.setattr(Path, "stat", stat)
+            patch.setattr(Path, "read_bytes", read_bytes)
+            patch.setattr(CycleLog, "__init__", opened)
+            patch.setattr(improve, "runner_alive", lambda root: armed.update(on=True) or False)
+            reply = improve.stop(str(rig.root), "the owner's review")
+            rule = bool(stop_standing(rig.root, ready["started"])) if ready["started"] else False
+            armed["on"] = False
+        held = _on_disk(rig, "stop", ready)
+        log = rig.log()
+        expected = {**held, "its line in the STOP file": None if unreadable == "its STOP file" else held[
+                        "its line in the STOP file"],
+                    "its count in stops.log": None if unreadable == "its stops.log" else held["its count in stops.log"],
+                    "its note in the constraint log": None if unreadable == "its constraint log" else held[
+                        "its note in the constraint log"]}
+        line, note = expected["its line in the STOP file"], expected["its note in the constraint log"]
+        ended = None if note is None else bool(note) or ready["started"] is not None and (not log.start_in_force() or rule)
+        expected["the stop"] = True if line or ended else None if line is None or ended is None else False
+        label = f"{landed} of {len(writes)} writes landed, {unreadable} unreadable"
+        if reply.get("recorded") != expected:
+            wrong.append(f"{label}: names {reply.get('recorded')}, the folder holds {expected}")
+        if (code(reply) == improve.STOP_ASKED) != (expected["the stop"] is True):
+            wrong.append(f"{label}: replied {code(reply)} with the stop {expected['the stop']}")
+        if any(expected.values()) and any(word in _said(reply) for word in NOTHING):
+            wrong.append(f"{label}: says nothing counts with {expected}: {_said(reply)}")
+    assert not wrong, "\n".join(wrong)
+
+
+def test_the_loops_own_pause_reads_as_the_reopened_folder_holds_it_whatever_its_process_wrote(tmp_path, monkeypatch):
+    """The class's third inventory, for the loop's own pause: the runner's process records the third failed cycle and
+    the pause, and ends after all, a part or none of those writes. The status, the reply that says the pause, reads
+    the reopened folder: paused exactly when something on record holds the ticks."""
+    writes, wrong = _writes(tmp_path, monkeypatch, "pause"), []
+    for landed in range(len(writes) + 1):
+        with monkeypatch.context() as patch:
+            rig = _rig(tmp_path / f"{landed}", patch)
+            ready = _readied(rig, "pause")
+            _Writes(patch, fail=writes[landed][0] if landed < len(writes) else None, how="dies")
+            try:
+                _act(rig, "pause", patch)
+            except _Killed:
+                pass
+        reply, held = improve.status(str(rig.root)), _on_disk(rig, "pause", ready)
+        if (reply["pause"] is not None) != held["the pause"]:
+            wrong.append(f"{landed} of {len(writes)} writes landed: the status says pause {reply['pause']}, held {held}")
+    assert not wrong, "\n".join(wrong)
 
 
 real_run_act = improve._run_act

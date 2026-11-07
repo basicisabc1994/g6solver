@@ -401,15 +401,22 @@ def _restated(reply: dict[str, Any], message: str, next_action: str, **more: Any
                      **own, **more)
 
 
+def _start_on_record(root: Path, at: str) -> dict[str, bool]:
+    """Whether the start written ``at`` stands, read back afresh from the folder: the start on record is that one, it is in
+    force, and nothing stops it by G6's own rule (``stop_standing``). ``OSError`` or ``LedgerError`` when the records do
+    not read."""
+    log = _log(root)
+    started = (log.started() if log is not None else None) or {}
+    ours = log is not None and log.start_in_force() and started.get("at") == at
+    return {"the start": bool(ours) and not stop_standing(root, started)}
+
+
 def _start_as_recorded(root: Path, at: str, reply: dict[str, Any]) -> dict[str, Any]:
     """The reply to a start that tried to record, as the folder holds it now: ``recorded`` says whether the start written
-    ``at`` stands, in force and not stopped, read back. One on record whose runner did not start says so, since the next
+    ``at`` stands, read back (``_start_on_record``). One on record whose runner did not start says so, since the next
     runner on the folder carries on it until a stop; records that do not read say that, and claim nothing either way."""
     try:
-        log = _log(root)
-        started = (log.started() if log is not None else None) or {}
-        ours = log is not None and log.start_in_force() and started.get("at") == at
-        found = {"the start": bool(ours) and not stop_standing(root, started)}
+        found = _start_on_record(root, at)
     except (OSError, LedgerError) as exc:
         if reply["warning_card"]["code"] == STARTED:
             return {**reply, "recorded": None}
@@ -535,21 +542,30 @@ def act(act_name: str, root: Path, who: str, shown: dict[str, Any], generation: 
 def _run_act(root: Path, settings: dict[str, Any], request: dict[str, Any]) -> dict:
     """The act in its own process, on the interpreter and the import path the runner uses (``_interpreter``,
     ``_environment``): the request on its input, its reply as the last line of its output. It never shares this server's
-    input or output, and one that outlives ``ACT_WAIT`` is left to finish."""
+    input or output, and one that outlives ``ACT_WAIT`` is left to finish. Starting the process and talking to it fail
+    apart. Only a process that never started may say nothing was recorded, and only when the folder, read back, agrees
+    (``_read_back``). Any failure once it started (the pipe, its output, the wait, a timeout) goes to the one reader
+    (``_read_act``), which reads the folder back as it does for a reply it does not recognise."""
     hidden = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
     command = [*_interpreter(settings), "-c", "import sys; from g6.metaharness.runner import act_main; sys.exit(act_main())"]
     try:
         process = subprocess.Popen(command, cwd=root, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    text=True, encoding="utf-8", errors="replace", close_fds=True, env=_environment(),
                                    **hidden)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        held, read = _read_back(request, ended=True)       # it never started, so nothing of it is still to come
+        agrees = held is not None and not any(held.values())
+        return _blocked(ACT_FAILED, f"the act's process could not be started ({type(exc).__name__}: {exc})"
+                        f"{', so nothing of it ran' if agrees else ''}; {read}"[:500], "Nothing was recorded." if agrees else
+                        "g6_improve_status says what the folder's records hold.", folder=str(root), recorded=held)
+    out, err, failed = "", "", ""
+    try:
         out, err = process.communicate(json.dumps(request), timeout=ACT_WAIT)
     except subprocess.TimeoutExpired:
-        return _blocked(ACT_FAILED, f"the act did not finish in {ACT_WAIT:g} seconds; it was left to finish",
-                        "g6_improve_status says what the folder's records hold.", folder=str(root))
-    except OSError as exc:
-        return _blocked(ACT_FAILED, f"the act could not be started: {type(exc).__name__}: {exc}"[:500],
-                        "Nothing was recorded.", folder=str(root))
-    return _read_act(process.returncode, out, err, act_name=request.get("act"), recorded=lambda: _on_record(request))
+        failed = f"the act did not finish in {ACT_WAIT:g} seconds and was left to finish"
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        failed = f"talking to the act's process failed once it had started ({type(exc).__name__}: {exc})"
+    return _read_act(process.returncode, out, err, act_name=request.get("act"), request=request, failed=failed)
 
 
 def _on_record(request: dict[str, Any]) -> dict[str, bool]:
@@ -557,6 +573,37 @@ def _on_record(request: dict[str, Any]) -> dict[str, bool]:
     from g6.metaharness.runner import on_record
 
     return on_record(request)
+
+
+def _be(parts: list[str]) -> str:
+    return "is" if len(parts) == 1 else "are"
+
+
+def _record_said(held: dict[str, bool | None]) -> str:
+    """The sentence that says what a read-back found (``held``): what is on record, what is not, and what is not known.
+    Nothing here decides a part: each is as it was read."""
+    on = [part for part, kept in held.items() if kept]
+    off = [part for part, kept in held.items() if kept is False]
+    unknown = [part for part, kept in held.items() if kept is None]
+    if not on and not unknown:
+        return "read back from its folder, none of it is on record"
+    said = [f"{', '.join(on)} {_be(on)} on record"] if on else []
+    said += [f"{', '.join(off)} {_be(off)} not" + ("" if on else " on record")] if off else []
+    said += [f"whether {', '.join(unknown)} {_be(unknown)} on record is not known"] if unknown else []
+    return "read back from its folder, " + (f"{', '.join(said[:-1])} and {said[-1]}" if len(said) > 1 else said[0])
+
+
+def _read_back(request: dict[str, Any], *, ended: bool) -> tuple[dict[str, bool | None] | None, str]:
+    """What the folder holds of a person's act, read back afresh (``_on_record``), and the sentence that says it. While its
+    process may still be running (``ended`` false: no exit status was read), a part not on record yet may still be
+    written, so it is not known. Records that do not read back are not known at all. It does not raise."""
+    try:
+        found = _on_record(request)
+    except (OSError, ValueError, LedgerError, KeyError, TypeError) as exc:
+        return None, f"its folder's records do not read back ({type(exc).__name__}), so what of it counts is not known"
+    held = {part: True if kept else False if ended else None for part, kept in found.items()}
+    said = _record_said(held)
+    return held, said + (": its process may still be running" if None in held.values() else "")
 
 
 #: What each person's act replies when it did what it was asked, and nothing else does.
@@ -617,16 +664,17 @@ def _recognised(out: Any) -> tuple[dict[str, Any] | None, str]:
 
 
 def _read_act(code: int | None, out: str, err: str = "", *, act_name: str | None = None,
-              recorded: Any = None) -> dict:
-    """The one reader of a person's act as its process ended (``g6.metaharness.runner.act_main``). It did what it was
+              request: dict[str, Any] | None = None, failed: str = "") -> dict:
+    """The one reader of a person's act once its process started (``g6.metaharness.runner.act_main``). It did what it was
     asked only on exit status 0 with a recognised reply (``_recognised``) that is a qualified draft whose code is that
     act's own (``ACT_DONE``; any of them when no act is named). It refused only on exit status 1 with a recognised blocked
-    reply, which is passed on as it is: recognised, its code is a G6 code by G6's own rule. Anything else is
-    ``ACT_FAILED`` and names the exit status and what was found, and nothing in it raises: a reply that does not read or
-    is not the act's shape, a code that is not a G6 code, one that claims more than a qualified draft, a success with a
-    failing status, and a status never seen before, of any type. A process that ended so may have ended between two of
-    its writes, so ``recorded``, given, reads the folder back (``_on_record``) and the reply says what of the act is on
-    record (``recorded``); with none it claims nothing it did."""
+    reply, which is passed on as it is: recognised, its code is a G6 code by G6's own rule, and the act read its folder
+    back before it wrote it (``runner.as_recorded``). Anything else is ``ACT_FAILED`` and names the exit status and what
+    was found, or what ``failed`` says went wrong talking to the process, and nothing in it raises: a reply that does not
+    read or is not the act's shape, a code that is not a G6 code, one that claims more than a qualified draft, a success
+    with a failing status, a status never seen before, of any type, a broken pipe and a timeout. A process that ended so
+    may have ended between two of its writes, so with its ``request`` the reply says what the folder holds of the act,
+    read back (``_read_back``, ``recorded``); with none it claims nothing it did."""
     reply, found = _recognised(out)
     if reply is not None and type(code) is int:
         state, said = reply["completion_state"], reply["warning_card"]["code"]
@@ -637,89 +685,88 @@ def _read_act(code: int | None, out: str, err: str = "", *, act_name: str | None
             return reply
     tail = next((text for text in (err, out) if isinstance(text, str) and text), "")
     held, read = None, "so nothing it did is claimed"
-    if recorded is not None:
-        try:
-            held = recorded()
-        except (OSError, ValueError, LedgerError, KeyError, TypeError) as exc:
-            read = f"and its folder's records do not read back ({type(exc).__name__}), so what of it counts is not known"
-        else:
-            on = [part for part, kept in held.items() if kept]
-            off = [part for part, kept in held.items() if not kept]
-            read = (f"read back from its folder, {', '.join(on)} is on record" + (f" and {', '.join(off)} is not" if off
-                    else "") if on else "read back from its folder, none of it is on record")
-    extra = {"recorded": held} if recorded is not None else {}
-    return _blocked(ACT_FAILED, f"the act ended with exit status {code!r} and {found}, which is neither the act done nor "
-                    f"its refusal, {read}: {tail[-300:]}"[:500],
+    if request is not None:
+        held, read = _read_back(request, ended=type(code) is int)
+    what = (f"{failed}, with exit status {code!r}" if failed else f"the act ended with exit status {code!r} and {found}, "
+            "which is neither the act done nor its refusal")
+    extra = {"recorded": held} if request is not None else {}
+    return _blocked(ACT_FAILED, f"{what}, {read}{': ' + tail[-300:] if tail else ''}"[:500],
                     "g6_improve_status says what the folder's records hold.", exit_status=code,
                     reply_state=reply["completion_state"] if reply is not None else None, **extra)
 
 
-def _stop_file_size(root: Path) -> int:
+def _stop_file_size(root: Path) -> int | None:
+    """The ``STOP`` file's length, ``-1`` with no file, or ``None`` when it cannot be read."""
     try:
         return (root / STOP_FILE).stat().st_size
-    except OSError:
+    except (FileNotFoundError, NotADirectoryError):
         return -1
+    except OSError:
+        return None
 
 
-def _stop_on_record(root: Path, before: dict[str, Any]) -> dict[str, bool]:
-    """What the folder holds of a stop, read back afresh against what stood ``before`` it: its line in the ``STOP`` file,
-    its count in ``stops.log``, and its note that ends the start in force, if one was. The stop itself stands when its line
-    does, or when the start it found in force no longer stands, by its note or by G6's own rule for what stops a start
-    (``stop_standing``), which a runner reads too. ``LedgerError`` or ``OSError`` when the records do not read."""
-    log = _log(root)
-    in_force = log is not None and log.start_in_force()
-    started, line = before["started"], _stop_file_size(root) > before["size"]
-    ended = started is not None and (not in_force or bool(stop_standing(root, started)))
-    return {"the stop": line or ended, "its line in the STOP file": line,
-            "its count in stops.log": before["stops"] >= 0 and stops_asked(root) > before["stops"],
-            "its note in the constraint log": not in_force}
+def _stop_before(root: Path) -> dict[str, Any]:
+    """What stands before a stop, for its read-back to compare with (``_stop_on_record``): the ``STOP`` file's length, the
+    count of stops, and the start in force, if the records read (``records``)."""
+    try:
+        log = _log(root)
+        started, records = (log.started() if log is not None and log.start_in_force() else None), True
+    except (OSError, LedgerError):
+        started, records = None, False
+    return {"size": _stop_file_size(root), "stops": stops_asked(root), "started": started, "records": records}
+
+
+def _stop_on_record(root: Path, before: dict[str, Any], at: str) -> dict[str, bool | None]:
+    """What the folder holds of a stop, read back afresh against what stood ``before`` it (``_stop_before``), each part on
+    its own: its line in the ``STOP`` file (the file grew), its count in ``stops.log`` (the count grew), and its note in
+    the constraint log (the row this stop wrote, which ``at`` names). The stop itself stands when its line does, or when
+    the start it found in force no longer stands, by G6's own rule for what stops a start (``stop_standing``), which a
+    runner reads too. A part that cannot be read, now or before, is not known (``None``), never on record or not. It
+    does not raise."""
+    size, stops = _stop_file_size(root), stops_asked(root)
+    line = None if size is None or before["size"] is None else size > before["size"]
+    count = None if stops < 0 or before["stops"] < 0 else stops > before["stops"]
+    started = before["started"]
+    try:
+        log = _log(root)
+        note = log is not None and any(kind == "stopped" and body.get("at") == at for kind, body in log._rows())
+        in_force = log is not None and log.start_in_force()
+        ended = True if note else (started is not None and (not in_force or bool(stop_standing(root, started)))
+                                   if before["records"] else None)          # its note is written only to end a start
+    except (OSError, LedgerError):
+        note = ended = None
+    stands = True if line or ended else None if line is None or ended is None else False
+    return {"the stop": stands, "its line in the STOP file": line, "its count in stops.log": count,
+            "its note in the constraint log": note}
 
 
 def stop(folder: str, reason: str = "") -> dict:
     """Write the stop and say whether the runner has gone, as the folder holds the stop once it is written, read back
-    (``_stop_on_record``), whichever of its writes failed: a stop is asked when it stands, and failed when it does not."""
+    (``_stop_on_record``), whichever of its writes failed: a stop is asked when it is on record, and failed when it is not
+    or cannot be read, since a stop asked again is safe and one taken for standing that does not is not."""
     root = _root(folder)
     if not _is_a_loop(root):
         return _not_a_loop(root)
-    try:
-        log = _log(root)
-        before = {"size": _stop_file_size(root), "stops": stops_asked(root),
-                  "started": log.started() if log is not None and log.start_in_force() else None}
-    except (OSError, LedgerError):
-        before = None
+    before = _stop_before(root)
+    at = datetime.now().astimezone().isoformat()   # names this stop's note, which is read back by it
     failed, why = None, ""
     try:
         why = ask_to_stop(root, reason)
     except OSError as exc:
         failed = exc
-    why = why or (stop_standing(root, before["started"]) if before and before["started"] else "")
+    why = why or (stop_standing(root, before["started"]) if before["started"] else "")
     if why:
-        record_stop(root, why, at=datetime.now().astimezone().isoformat())
+        record_stop(root, why, at=at)
     running = runner_alive(root)
-    try:
-        found = _stop_on_record(root, before) if before is not None else None
-    except (OSError, LedgerError):
-        found = None
-    stands = bool(found["the stop"]) if found is not None else failed is None
-    if not stands:
-        said = (f"the stop could not be written: {type(failed).__name__}: {failed}" if failed is not None else
-                "the stop's line is not in the STOP file, and no start was in force for it to end")
-        return _blocked(STOP_FAILED, said[:400], running=running, folder=str(root), recorded=found)
+    found = _stop_on_record(root, before, at)
+    raised = f"; writing it raised {type(failed).__name__}: {failed}" if failed is not None else ""
+    if found["the stop"] is not True:
+        return _blocked(STOP_FAILED, f"the stop is not known to stand; {_record_said(found)}{raised}"[:400],
+                        running=running, folder=str(root), recorded=found)
     said = ("the runner has been asked to stop and is still alive: it ends once it sees the STOP file, at its next model "
-            "call, or within a minute while it waits" if running else "the STOP file is in place and no runner is alive")
-    if failed is not None and found is not None and found["its line in the STOP file"]:
-        said += f", though writing it raised {type(failed).__name__}: {failed}"
-    elif failed is not None:
-        said = (f"the STOP file could not be written ({type(failed).__name__}: {failed}), but the stop stands: the start "
-                "in force is ended, which a runner reads as a stop, and "
-                f"{'the runner is still alive' if running else 'no runner is alive'}")
-    missing = [part for part, kept in (found or {}).items() if not kept]
-    if missing:
-        said += f". Not on record: {', '.join(missing)}"
-    if found is None:
-        said += ". The folder's records do not read back, so what of the stop they hold is not known"
-    return _envelope("qualified-draft", STOP_ASKED, said[:500], running=running, stopped=not running, stop=why,
-                     folder=str(root), recorded=found,
+            "call, or within a minute while it waits" if running else "no runner is alive")
+    return _envelope("qualified-draft", STOP_ASKED, f"{said}; {_record_said(found)}{raised}"[:500], running=running,
+                     stopped=not running, stop=why, folder=str(root), recorded=found,
                      next_action="g6_improve_status says when it has gone." if running else
                      "g6_improve_start starts it again, and lifts the stop once the person agrees.")
 
