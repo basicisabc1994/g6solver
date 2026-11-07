@@ -10,25 +10,34 @@ class Consent:
     error_type: str = ""
 
 
-async def request_consent(ctx: Any, question: str) -> Consent:
+async def elicit(ctx: Any, message: str, schema: dict) -> tuple[str, Any, str]:
+    """The client's own dialog (MCP elicitation), the one transport every question to the person goes through: the
+    client's action (``accept``, ``decline`` or ``cancel``), the content it returned, and "" ; or ``("unavailable",
+    None, the error's type)`` when the client cannot show it or the request failed, which never answers anything."""
     # FastMCP's primitive wrapper adds a root `title`; Codex 0.164 rejects it.
-    # Use the SDK directly with only standard form-schema fields. Keep a required
-    # string: an empty-schema confirmation may be auto-accepted by client policy.
+    # Use the SDK directly with only standard form-schema fields.
+    try:
+        result = await ctx.session.elicit_form(
+            message=message, requestedSchema=schema, related_request_id=ctx.request_id)
+    except Exception as exc:  # noqa: BLE001 - unavailable consent must never authorize
+        return "unavailable", None, type(exc).__name__
+    return str(result.action), getattr(result, "content", None), ""
+
+
+async def request_consent(ctx: Any, question: str) -> Consent:
+    # Keep a required string: an empty-schema confirmation may be auto-accepted by client policy.
     schema = {"type": "object", "properties": {
         "value": {"type": "string", "description": "Your name (recorded as supplied, not authenticated)"}},
         "required": ["value"]}
-    try:
-        result = await ctx.session.elicit_form(
-            message=question, requestedSchema=schema, related_request_id=ctx.request_id)
-    except Exception as exc:  # noqa: BLE001 - unavailable consent must never authorize
-        return Consent("unavailable", error_type=type(exc).__name__)
-    if result.action == "decline":
+    action, content, error_type = await elicit(ctx, question, schema)
+    if action == "unavailable":
+        return Consent("unavailable", error_type=error_type)
+    if action == "decline":
         return Consent("declined")
-    if result.action == "cancel":
+    if action == "cancel":
         return Consent("cancelled")
-    content = getattr(result, "content", None)
     value = content.get("value") if isinstance(content, dict) else None
-    if result.action == "accept" and isinstance(value, str) and value.strip():
+    if action == "accept" and isinstance(value, str) and value.strip():
         return Consent("accepted", value.strip())
     return Consent("invalid")
 

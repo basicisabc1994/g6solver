@@ -6,7 +6,9 @@ Six discovery tools: ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, `
 ``g6_review_until_clean``, one step of the completion loop for a client the plugin's hook cannot reach (``g6.mcp.review_loop``),
 as a job; ``g6_premortem`` and six ``g6_mission_*`` tools (``_create``, ``_clarify``, ``_confirm``, ``_submit``, ``_status``,
 ``_certificate``) for a coding mission (``g6.mcp.mission``), where what a person allows and confirms goes through the
-client's own dialog and nowhere else, and the check step is the patch review; three ``g6_improve_*`` tools (``_start``,
+client's own dialog and nowhere else, and the check step is the patch review; ``g6_confirm_behaviour``, one behaviour
+question about a task shown in the client's own dialog, whose confirmed answer each later ``g6_review_patch`` of the
+task enforces (``g6.mcp.behaviour``); three ``g6_improve_*`` tools (``_start``,
 ``_stop``, ``_status``) for the self-improvement loop (``g6.mcp.improve``), whose start asks the person the same way; and
 thirteen meta-harness tools (``metaharness_start``, ``_confirm``, ``_propose_code``, ``_evaluate_start``, ``_job``, ``_run``,
 ``_inspect``, ``_propose``, ``_evaluate``, ``_decide``, ``_diagnose``, ``_approve``, ``_rollback``) for the workflows
@@ -262,14 +264,21 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         from g6.core.door import blocked_reply
         if not _allowed("patch_review", "review", allowed_sensitive()):
             return blocked_reply(f"{_DENIED} patch_review.review runs repository code; the host must allow it")
+        from g6.harness.question_store import StoreUnreadable
+        from g6.mcp import behaviour
         from g6.mcp.review_reply import finish, review
 
+        try:   # what the person confirmed for this task (g6_confirm_behaviour), read from G6's store, never an argument
+            confirmed = behaviour.enforced(repo, task)
+        except StoreUnreadable as exc:
+            return blocked_reply(str(exc))
+        held = {"confirmed": confirmed} if confirmed is not None else {}
         return jobs.start(lambda: review(repo, task=task, requirements=requirements or [], tests=tests or [],
                                          claim=claim, sources=sources, base=base,
                                          expected_artifact_digest=expected_artifact_digest, timeout_s=timeout_s,
                                          intent=intent, proposed_checks=proposed_checks,
                                          template_instances=template_instances, search=search,
-                                         import_roots=import_roots or []), compact=finish)
+                                         import_roots=import_roots or [], **held), compact=finish)
 
     @server.tool()
     def g6_review_until_clean(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
@@ -441,6 +450,28 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         from g6.mcp import mission
         return mission.premortem(repo, task, intent)
 
+    async def g6_confirm_behaviour(repo: str, task: str, ctx: Any, candidates: list[dict] | None = None,
+                                   review_job: str = "", template_instances: list[dict] | None = None) -> dict:
+        """Ask the person one behaviour question about a task, in the client's own dialog, where the task may not decide
+        the behaviour; what they confirm is enforced on each later g6_review_patch of the same repo and task, as its
+        one example.v1 check. repo: the repository's folder; task: the task's text, exactly as you pass it to
+        g6_review_patch. Candidates come from you, candidates [{requirement_id, function (a dotted name), args, kwargs,
+        outcomes {A: {returns|raises|effect}, B: {...}}, cited (a verbatim quote of the task), evidence (lines of
+        repository evidence), optional settled [{outcome, by: a quote of the task}], scope, rule (a stated rule the
+        person may confirm instead of the one case)}], taken first; and from a finished g6_review_patch job
+        (review_job) whose differential.v1 instances with intent change, given again as template_instances, G6 saw
+        the base commit and the patch disagree on. G6 picks one by a fixed priority and says why; coverage and whether
+        the task decides the behaviour stay unknown. One question per task by default, kept across calls: a question
+        not yet answered is shown again first; with no candidate the question is held. The person may choose A or B,
+        neither, the premise is wrong, the task already says, or skip, add text, confirm the case or the rule shown,
+        and allow one more question. Only the person answers: no argument answers, you never answer for them, and there
+        is no terminal fallback; a decline, a cancel, a skip or a client without a dialog leaves it unconfirmed, and
+        the reply shows the question so they can answer later. The name they give is recorded as given and is not
+        authenticated. Runs no code."""
+        from g6.mcp import behaviour
+        return await behaviour.confirm(ctx, repo, task, candidates=candidates, review_job=review_job,
+                                       template_instances=template_instances)
+
     async def g6_mission_create(repo: str, objective: str, ctx: Any, module: str = "", function: str = "",
                                 helpers: list[str] | None = None, risk: str = "R2", budget_cents: int = 0) -> dict:
         """Start a coding mission on a clean git repository (repo: its full path): G6 freezes what counts as done
@@ -577,7 +608,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
     for tool in (metaharness_inspect, metaharness_propose, metaharness_evaluate, metaharness_decide,
                  metaharness_diagnose, metaharness_approve, metaharness_rollback, metaharness_start,
                  metaharness_confirm, metaharness_propose_code, metaharness_evaluate_start, metaharness_job,
-                 metaharness_run, g6_premortem, g6_mission_create, g6_mission_clarify, g6_mission_confirm,
+                 metaharness_run, g6_premortem, g6_confirm_behaviour, g6_mission_create, g6_mission_clarify,
+                 g6_mission_confirm,
                  g6_mission_submit, g6_mission_status, g6_mission_certificate, g6_improve_start, g6_improve_stop,
                  g6_improve_status):
         if "ctx" in tool.__annotations__:  # the real Context type, so the server injects it (annotations are strings)
