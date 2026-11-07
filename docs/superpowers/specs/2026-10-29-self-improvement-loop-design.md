@@ -902,6 +902,22 @@ outcome before the call ends, so one beside it on another thread does not wait a
 inside one that is out never waits for it. Tests built from the code list every place a request can leave, every writer of the
 record, and the one step that closes a tick.
 
+**What only the process knows, and what was sent (2026-11-08, review 1 of the refusals follow-up).** A refusal no file would
+keep latched its stop on the one handle that met it, so another open handle of the same folder sent the refused request again.
+And a request was known by the frames of an object only, so a function that sent one fixed request behind a wrapper whose input
+varied gave the refused bytes a new identity each time. Now what only this process knows of a folder is the process's, kept for
+the folder in the one record (`_Folder`), whichever handle met it and however the folder's path is spelled, links followed: each
+request refused there, the cannot-record stop, and the count of cycles in a row its log would not take. Every handle of the
+folder, one made after it too, reads it at every admission under the admission lock, and only the process's end lifts the stop.
+Each handle reads the log's limits before it reserves a tick, so a limit another handle met holds it too. A restart has none of
+this, only what the folder's files hold: the `STOP` the stop asked for, `refused.log`, or a cycle that holds the refusal. If all
+of them refused their write, a restart can send the refused request again. A send is known by what the innermost frame names as a
+system and a user, among the sender's own frames and the functions and methods it called, never a wrapper's further out; a
+failure is matched to its send the same way. A request no such frame names as text is not sent, with
+`G6_E_LOOP_UNNAMED_REQUEST`, which in a tick ends it and holds the loop for a person. Tests built from the code list every
+attribute a handle sets with where it is kept, and every place G6 notes a request with how what it sends is known, and send
+through each kind of caller the loop accepts.
+
 No failure of the records can undo this. A refused request is kept as it happens, by its identity, in `refused.log`, a file no lock
 stands in front of, flushed to the disk before any other thread can see the refusal and before any record of the tick is written,
 and this process holds it too, for good. A handle reads `refused.log` and the cycles' records as it is built, before its first
