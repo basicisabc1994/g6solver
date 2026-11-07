@@ -89,6 +89,11 @@ Merging stays your decision.
 
 ## What has been measured
 
+Before optional fan-out, both agents can read `g6_allowances`. The prompt hook adds one line only when cached advice
+changes; it never refreshes a provider. Advice blocks nothing and implies no provider switch or source disclosure grant.
+Claude Code support is not established until a real sanitised capture is checked. The optional status-line wrapper is
+installed only by the person after [previewing its settings and rollback](../../docs/allowances.md).
+
 This loop is the worked examples' arm K, and it has been measured on seven training bugs only. It has no measurement on a bug
 kept out of training. It also differs from what was measured:
 

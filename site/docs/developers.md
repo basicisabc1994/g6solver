@@ -97,7 +97,8 @@ packages in the project's folder never replace G6's own, installs the `using-g6`
 `g6`, setup stops; remove it with `claude mcp remove --scope user g6` (or `codex mcp remove g6`) and run setup again.
 For another client, register `g6-mcp` and give it `G6_MCP_SENSITIVE=patch_review.review` in its environment.
 
-Six discovery tools: `g6_help`, `g6_components`, `g6_find`, `g6_describe`, `g6_invoke` and `g6_compose`; `g6_review_patch`;
+32 MCP tools: six discovery tools, `g6_help`, `g6_components`, `g6_find`, `g6_describe`, `g6_invoke` and `g6_compose`;
+`g6_allowances` for both providers' quota windows and advisory pacing; `g6_review_patch`;
 `g6_review_until_clean`; `g6_premortem` and six `g6_mission_*` tools for a coding mission; three `g6_improve_*` tools for G6's self-improvement loop;
 and thirteen `metaharness_*` tools for [tuning](#tune-g6-to-your-workflow). The agent finds a component
 by describing its task, reads what the component can do and how mature it is, then calls one op. Every reply carries

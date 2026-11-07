@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """g6-mcp — a stdio MCP server exposing G6's progressive discovery surface.
 
-Six discovery tools: ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
+32 tools: six discovery tools, ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
+``g6_allowances`` for both providers' quota windows and advisory pacing (``g6.allowance``);
 ``g6_review_patch``, which assesses a Python patch against stated requirements in confined test runs, as a job;
 ``g6_review_until_clean``, one step of the completion loop for a client the plugin's hook cannot reach (``g6.mcp.review_loop``),
 as a job; ``g6_premortem`` and six ``g6_mission_*`` tools (``_create``, ``_clarify``, ``_confirm``, ``_submit``, ``_status``,
@@ -134,6 +135,20 @@ def build_server(surface: Any = None) -> Any:
     def g6_help() -> str:
         """How to use G6 from an agent. Call this first."""
         return discovery.HELP
+
+    @server.tool()
+    def g6_allowances(useful_parallel_work: bool = False) -> dict:
+        """Read both providers' quota windows and advisory pacing before optional fan-out.
+
+        No model call, launch admission, provider switch or disclosure grant. Codex
+        refresh is bounded and asynchronous; hooks/renderers use only cached state.
+        Unknown, stale or unbound readings never recommend increased optional use.
+        useful_parallel_work is the caller's assertion of useful independent work.
+        Claude Code support is not established until a real sanitised capture is checked.
+        """
+        from g6.allowance import report
+
+        return report(useful_parallel_work=useful_parallel_work)
 
     @server.tool()
     def g6_components() -> list[str]:

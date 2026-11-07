@@ -5,17 +5,17 @@ description: Use when finishing a Python coding task (review the patch with G6 b
 
 # Using G6
 
-G6 is a library of primitives for AI building AI. Treat improved performance as a hypothesis, never a consequence of
-composition. The evaluator, authorization rules and promotion gate remain outside the candidate's writable scope.
+Treat improved performance as a hypothesis. The evaluator, authorization rules and promotion gate remain outside
+the candidate's writable scope.
 
 ## Deliver a coding task with G6
 
 For a Python task, work in this order.
 
-1. **Intent.** Read the task, the project's docs and the code. Write the person's most likely intended design and
-   goals in a few lines, as numbered `requirements`, `{"id": "R1", "text": ..., "checks": [...]}`, each check a pytest
+1. **Intent.** Read the task, docs and code. Write intended goals as numbered `requirements`,
+   `{"id": "R1", "text": ..., "checks": [...]}`, each check a pytest
    node id.
-2. **This project's risks**, a premortem, not a generic list: edge cases, behaviour that must stay the same, who may do
+2. **This project's risks**: edge cases, behaviour that must stay the same, who may do
    what, data or money that must never be lost, state that must never go wrong, tests too weak to catch a defect, a
    misleading environment, and G6 misreading the intent. Map each risk to a check: a repository test, a new
    acceptance test, or one of G6's templates in `template_instances`: `example.v1` (a stated input gives a stated
@@ -25,15 +25,14 @@ For a Python task, work in this order.
    valid instance: `references/templates.md`.
 3. **Hidden constraints.** Ask the person at most 3 questions, each a concrete scenario with the competing outcomes:
    "for this input the original does A and the change would do B; which do you intend?" Probe the code for the rest.
-   Never assume an answer: an unanswered question stays open in the report.
+   Unanswered questions stay open in the report.
 4. **Acceptance first, then test first.** Write acceptance tests for what the person's own users must be able to do,
    through the product's real interface, and for usability and fitness for purpose
    wherever a test can show it. They become the numbered requirements, each with its stated check. Then unit tests,
    then the code.
 5. **Critical parts, formally.** Model them with `state_invariant.v1` (its `model` states the variables, actions and
    invariants; its `actions` bind them to the code's operations; its `observe` reads each variable from the real
-   state). G6 searches the model and replays each trace on the real code. Only a reproduced trace is a finding about
-   the code; a model never proves the code correct.
+   state). G6 searches the model and replays traces on real code. Only a reproduced trace is a code finding.
 6. **Review.** Call `g6_review_patch` with the folder, the task and the requirements, then poll `metaharness_job`.
    Add optional inputs (`intent`, `template_instances`, `proposed_checks`) only in the shapes the tool's description
    gives; a refused call names the field to fix. It needs host permission
@@ -47,7 +46,7 @@ For a Python task, work in this order.
    acceptance tests and the person's confirmation do. The report's not-established list is the to-do list.
 
 The outcome is one of: test integrity compromised, defect detected, insufficient evidence, or supported within scope
-(every stated requirement passed a stated check the patch did not write; never proof the patch is complete).
+(every stated requirement passed a stated check the patch did not write; completeness is not established).
 If no check the patch did not write fails at the base commit, the outcome is insufficient evidence.
 Tell the person the result rests on your own tests. Do not rewrite tests to change it.
 Loop: `g6_review_until_clean` (`references/lifecycle.md`).
@@ -57,6 +56,10 @@ When what counts as done must be fixed before the work, run a mission instead: `
 (`references/lifecycle.md`).
 
 ## Find
+
+Read `g6_allowances` before optional fan-out. Declare useful independent work honestly. Respect every window, reserve
+and owner cap. Stale, missing or unbound data never justifies more use. Advice implies no provider switch or disclosure
+grant. Claude support awaits a checked real sanitised capture.
 
 Call `g6_help`, then `g6_find` with the task or failure mode. Read `g6_describe` before choosing fields or an operation.
 Use grounding for source support, coding_agent_gate for declared coding evidence, action_gating before consequential
@@ -70,12 +73,12 @@ g6_invoke("grounding", "check_claims", {"text": "The limit is 42 units.", "sourc
 g6_invoke("grounding", "coverage", {"text": "The limit is 42 units.", "sources": sources})
 ```
 
-Here `sources` maps source names to supplied text. These are lexical source checks, not proof of factual truth.
+Here `sources` maps source names to supplied text. These lexical checks do not establish factual truth.
 
 ## Compose
 
 Use `g6_compose` with data-only stages. Connect downstream fields explicitly with `0.field` or `caller.field`.
-Evidence kinds must match; similar field names prove nothing. Code transformations require
+Evidence kinds must match; similar field names establish no equivalence. Code transformations require
 reviewed Python adapters. A contract-checked report establishes structural checks, not application correctness.
 Read the assurance gaps and preserve all upstream limitations.
 

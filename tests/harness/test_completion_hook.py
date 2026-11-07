@@ -344,6 +344,11 @@ def hooks() -> dict:
     return plugin_json("hooks", "hooks.json")["hooks"]
 
 
+def completion_hooks(event: str) -> list[dict]:
+    return [entry for entry in hooks()[event]
+            if any("g6.harness.completion_hook" in one.get("args", []) for one in entry["hooks"])]
+
+
 def test_the_manifest_names_the_plugin_and_this_version():
     manifest = plugin_json(".claude-plugin", "plugin.json")
     assert manifest["name"] == "g6" and manifest["version"] == g6.__version__
@@ -361,8 +366,12 @@ def test_the_repository_is_a_marketplace_for_the_plugin():
 def test_the_hooks_are_exec_form_with_no_shell_so_they_read_the_same_on_windows_and_linux():
     events = hooks()
     assert set(events) == {"UserPromptSubmit", "Stop"}
+    prompt = [one for entry in events["UserPromptSubmit"] for one in entry["hooks"]]
+    assert [one["args"][2] for one in prompt] == ["g6.harness.completion_hook", "g6._allowance.hook"]
+    assert prompt[1]["command"] == "python" and prompt[1]["args"] == ["-P", "-m", "g6._allowance.hook"]
+    assert prompt[1]["timeout"] <= 2
     for event, name in (("UserPromptSubmit", "prompt"), ("Stop", "stop")):
-        [[one]] = [entry["hooks"] for entry in events[event]]
+        [[one]] = [entry["hooks"] for entry in completion_hooks(event)]
         assert (one["type"], one["command"]) == ("command", "python")
         assert one["args"] == ["-P", "-m", "g6.harness.completion_hook", name]
         assert name in hook.HOOKS
@@ -371,13 +380,13 @@ def test_the_hooks_are_exec_form_with_no_shell_so_they_read_the_same_on_windows_
 def test_the_stop_hooks_timeout_leaves_room_for_what_follows_the_scouts():
     """A hook that times out loses its report, so the last scout's end, the critic and the review must fit, with 15
     minutes for the probes' runs."""
-    [[one]] = [entry["hooks"] for entry in hooks()["Stop"]]
+    [[one]] = [entry["hooks"] for entry in completion_hooks("Stop")]
     assert one["timeout"] >= loop.STOP_S + 60
     assert loop.STOP_S >= loop.SCOUTS_S + loop.CRITIC_SECONDS + loop.REVIEW_S + 300
 
 
 def test_the_prompt_hooks_timeout_outlasts_the_scouts_window():
-    [[one]] = [entry["hooks"] for entry in hooks()["UserPromptSubmit"]]
+    [[one]] = [entry["hooks"] for entry in completion_hooks("UserPromptSubmit")]
     assert one["timeout"] >= loop.SCOUTS_S + 60
 
 
@@ -422,7 +431,7 @@ def test_the_docs_name_the_tool_a_client_without_the_hook_calls():
 
 
 def test_a_prompt_hook_says_nothing_of_scouts_where_none_may_run():
-    [[one]] = [entry["hooks"] for entry in hooks()["UserPromptSubmit"]]
+    [[one]] = [entry["hooks"] for entry in completion_hooks("UserPromptSubmit")]
     assert "scout" not in one["statusMessage"].lower()      # it shows at every prompt, and by default none runs there
 
 
