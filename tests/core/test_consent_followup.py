@@ -1,4 +1,4 @@
-﻿# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: Apache-2.0
 """Consent through the client's dialog, the follow-up: review cons4's findings, each brought in as a test of this file and
 failing on 66f14b9, and the inventory that removes its class at the root, built from the code:
 
@@ -13,6 +13,12 @@ failing on 66f14b9, and the inventory that removes its class at the root, built 
   what they agreed to first (``runner.moved``, ``improve._still_read``), before any other check of the folder, so a
   change to any part they read is ``G6_E_LOOP_TERMS_CHANGED`` and nothing is recorded. The inventory reads every act's
   binding from the code and moves each part of it while the act's dialog is open.
+- failure_read_as_success (finding 2): a reply after a person's act, a start or a stop is decided by reading the folder
+  back (``runner.on_record``, ``runner.as_recorded``, ``improve._start_as_recorded``, ``improve._stop_on_record``), never
+  by which step raised, and names each part in ``recorded``; the status says a pause by what holds the ticks
+  (``runner.held``). The inventory lists every act on a loop's folder from the code, fails each durable write in turn,
+  refused or after it is on disk, ends the act's process between two writes, and checks each reply against the folder
+  reopened.
 
 No model, no network, and no runner left running: the two real children here are the act, refused before it runs
 anything, and the runner, refused at once on a folder no person started. What is planted is under each test's own folder.
@@ -31,11 +37,13 @@ from types import SimpleNamespace
 import pytest
 
 import g6
+from g6.core.ledger import ChainLedger, LedgerError
 from g6.mcp import _metaharness_tools, improve
-from g6.metaharness import runner
+from g6.metaharness import api, runner
 from g6.metaharness.api import _envelope
 from g6.metaharness.loop import envelope_sha256
-from g6.self_maintenance.envelope import CYCLE_LOG, file_digest, heartbeat
+from g6.self_maintenance import envelope as envelope_module
+from g6.self_maintenance.envelope import CYCLE_LOG, CycleLog, file_digest, heartbeat, stop_standing, stops_asked
 
 _spec = importlib.util.spec_from_file_location("followup_binding_helpers", Path(__file__).with_name("test_consent_binding.py"))
 binding = importlib.util.module_from_spec(_spec)
@@ -558,3 +566,317 @@ def _binding_now(rig, act: str) -> dict:
     if act == "start":
         return improve._terms(rig.root)
     return runner.person_terms(act, rig.root, generation=BOUND_ACTS[act][1].get("generation"))
+
+
+# Finding 2, failure_read_as_success: a reply says what the folder holds after the act ---------------------------------
+
+def test_a_demotion_committed_before_its_note_failed_is_not_said_to_count_for_nothing(tmp_path, monkeypatch):
+    """Finding 2 (review cons4), as review cons4 wrote it. Failed on 66f14b9: AssertionError: MCP says 'Nothing counts.'
+    although Ada's demotion is durable as generation 2 and the loop now restores generation 0."""
+    rig = Rig(tmp_path, monkeypatch)
+    assert code(rig.call("g6_improve_enrol")) == "G6_E_LOOP_ENROLLED"
+    binding._adopted(rig)
+    assert runner.lineage(rig.root / "workspace")["current"] == 1
+
+    def log_cannot_write(self, *args, **kwargs):
+        raise OSError("constraint log disk unavailable")
+
+    monkeypatch.setattr(CycleLog, "demote", log_cannot_write)
+    reply = rig.call("g6_improve_demote", generation=1)
+    after = runner.lineage(rig.root / "workspace")
+    committed = after["current"] == 2
+    if committed:
+        recorded = after["recent"][-1]
+        assert recorded["kind"] == "rollback" and recorded["asked_by"] == "Ada" and recorded["restores"] == 0
+        reopened, _ = runner.open_loop(rig.root)
+        assert reopened.mh._head()[0] == 2
+    assert not (committed and "Nothing counts." in reply["next_action"]), (
+        "MCP says 'Nothing counts.' although Ada's demotion is durable as generation 2 and the loop now restores "
+        "generation 0")
+    assert committed and code(reply) == "G6_E_LOOP_DEMOTED" and reply["recorded"] == {
+        "the demotion": True, "its note in the constraint log": False}, reply
+
+
+class _Killed(BaseException):
+    """The act's process ending between two writes: nothing in it catches this."""
+
+
+class _Writes:
+    """Every durable write an act makes, in order, through what makes them: a row of a hash-chained ledger
+    (``ChainLedger.append``), a record under G6's state folder (``api._write_state``), and what a stop adds to ``stops.log``
+    and ``STOP`` (``envelope.open``, writing). Heartbeats, locks and the meter's store are left out: no reply is decided
+    by them. ``fail``: the index of the one write to fail; ``how``: ``refused``, written nowhere, ``written``, on disk and
+    then raising (a ``fsync`` that fails after the line is out), or ``killed``, on disk and then the process ends."""
+
+    def __init__(self, monkeypatch, fail: int | None = None, how: str = "refused", error: type = OSError) -> None:
+        self.seen: list[str] = []
+        self.fail, self.how, self.error = fail, how, error
+        real_append, real_state, real_open = ChainLedger.append, api._write_state, open
+
+        def append(ledger, kind, ident, body):
+            return self._write(f"{Path(ledger.path).name} {kind}", lambda: real_append(ledger, kind, ident, body))
+
+        def state(target, data):
+            return self._write(f"state {Path(target).parent.name}", lambda: real_state(target, data))
+
+        def opened(file, mode="r", *args, **kwargs):
+            if not set(mode) & set("aw+x"):
+                return real_open(file, mode, *args, **kwargs)
+            label, index = f"file {Path(file).name}", len(self.seen)
+            self.seen.append(label)
+            if index == self.fail and self.how == "refused":
+                raise OSError(f"no room for {label}")
+            handle = real_open(file, mode, *args, **kwargs)
+            return _RaisesOnClose(handle, self._raised(label)) if index == self.fail else handle
+
+        monkeypatch.setattr(ChainLedger, "append", append)
+        monkeypatch.setattr(api, "_write_state", state)
+        monkeypatch.setattr(envelope_module, "open", opened, raising=False)
+
+    def _raised(self, label: str) -> BaseException:
+        return _Killed(label) if self.how == "killed" else self.error(f"{label} could not be finished")
+
+    def _write(self, label: str, write):
+        index = len(self.seen)
+        self.seen.append(label)
+        if index != self.fail:
+            return write()
+        if self.how == "refused":
+            raise self.error(f"no room for {label}")
+        write()
+        raise self._raised(label)
+
+
+class _RaisesOnClose:
+    def __init__(self, handle, error: BaseException) -> None:
+        self.handle, self.error = handle, error
+
+    def __enter__(self):
+        return self.handle.__enter__()
+
+    def __exit__(self, *exc):
+        self.handle.__exit__(*exc)
+        raise self.error
+
+
+#: Each act on a loop's folder that writes, read from the code below, with the parts its reply names (``recorded``),
+#: its own effect first, and what its reply says when that is on record.
+WRITING_ACTS = {
+    "enrol": (("the enrolment",), "G6_E_LOOP_ENROLLED"),
+    "resume": (("the lifted pause",), "G6_E_LOOP_RESUMED"),
+    "demote": (("the demotion", "its note in the constraint log"), "G6_E_LOOP_DEMOTED"),
+    "start": (("the start",), improve.STARTED),
+    "stop": (("the stop", "its line in the STOP file", "its count in stops.log", "its note in the constraint log"),
+             improve.STOP_ASKED),
+    "pause": (("the pause",), improve.PAUSED),
+}
+#: What a person reads as the loop's own pause: no dialog leads to it, and the status is the reply that says it.
+READS_ONLY = {"status"}
+#: What a reply may never say while any part of its act is on record.
+NOTHING = ("Nothing counts", "nothing was recorded", "Nothing was recorded", "Nothing started", "nothing was started",
+           "nothing it did is claimed", "none of it is on record")
+
+
+def test_every_act_on_a_loops_folder_is_in_the_inventory():
+    """The loop's tools, read from the code (``g6_improve_*``), and the loop's own pause (each caller of
+    ``CycleLog.pause``): every one but the status writes, and the status writes nothing."""
+    tools = {name.removeprefix("g6_improve_") for name in binding._functions(SRC / "mcp" / "__init__.py")
+             if name.startswith("g6_improve_")}
+    pausing = {name for rel in ("metaharness/loop.py", "metaharness/runner.py", "mcp/improve.py")
+               for name, node in binding._functions(SRC / rel).items()
+               if any(ast.unparse(call.func).endswith("log.pause") for call in ast.walk(node) if isinstance(call, ast.Call))}
+    assert pausing == {"_pause_if_failing"}
+    assert tools | {"pause"} == set(WRITING_ACTS) | READS_ONLY
+
+
+def _rig(folder: Path, patch) -> Rig:
+    """A rig of its own, in a folder of this test's own."""
+    folder.mkdir(parents=True)
+    rig = Rig(folder, patch)
+    rig.patch = patch
+    return rig
+
+
+def _readied(rig, act: str) -> dict:
+    """The folder each act needs, and what it is about: a first enrolment, a pause, an adoption, an enrolment to
+    start, a start to stop, and two failed cycles before the one that pauses."""
+    if act != "enrol":
+        assert code(rig.call("g6_improve_enrol")) == "G6_E_LOOP_ENROLLED"
+    if act == "resume":
+        binding._paused(rig)
+    if act == "demote":
+        binding._adopted(rig)
+    if act == "stop":
+        rig.patch.setattr(improve, "_spawn", lambda root, settings: SimpleNamespace(poll=lambda: None))
+        rig.patch.setattr(improve, "_watch", lambda *a: _envelope("qualified-draft", improve.STARTED, "a fake runner"))
+        assert code(rig.call("g6_improve_start")) == improve.STARTED
+    if act == "pause":
+        log = rig.log()
+        for tick in (1, 2):
+            log.cycle({"outcome": "error", "code": "G6_E_LOOP_TEST_FAILED", "reason": f"failure {tick}"})
+    log = rig.log()
+    return {"stops": stops_asked(rig.root), "started": log.started() if log.start_in_force() else None}
+
+
+def _act(rig, act: str, monkeypatch) -> dict:
+    """The act, through what a person or the loop uses: its MCP tool, or for the pause the loop's own tick that records
+    the third failed cycle, and then the status, the reply that says the pause."""
+    if act == "start":
+        monkeypatch.setattr(improve, "_spawn", lambda root, settings: SimpleNamespace(poll=lambda: None))
+        monkeypatch.setattr(improve, "_watch", lambda *a: _envelope("qualified-draft", improve.STARTED, "a fake runner",
+                                                                    running=True))
+        return rig.call("g6_improve_start")
+    if act == "stop":
+        return improve.stop(str(rig.root), "the owner's review")
+    if act == "pause":
+        loop, _ = runner.open_loop(rig.root)
+        loop._record({"at": binding.START.isoformat(), "domain": loop.domain.name, "outcome": "error",
+                      "code": "G6_E_LOOP_TEST_FAILED", "reason": "failure 3"})
+        return improve.status(str(rig.root))
+    return rig.call(f"g6_improve_{act}", **({"generation": 1} if act == "demote" else {}))
+
+
+def _on_disk(rig, act: str, ready: dict) -> dict[str, bool]:
+    """What the folder holds of the act, read afresh from its files, by this test's own reading of each part."""
+    log = CycleLog(rig.root / CYCLE_LOG) if (rig.root / CYCLE_LOG).is_file() else None
+    if act == "enrol":
+        row = (log.enrolled() if log is not None else None) or {}
+        return {"the enrolment": row.get("by") == "Ada" and row["frozen"]["domain_file"] == file_digest(rig.domain)}
+    if act == "resume":
+        return {"the lifted pause": not runner.held(log)}
+    if act == "demote":
+        chain = runner.lineage(rig.root / "workspace")
+        head = chain["recent"][-1]
+        return {"the demotion": chain["current"] == 2 and head["kind"] == "rollback" and head["asked_by"] == "Ada",
+                "its note in the constraint log": any(e["kind"] == "demoted" for e in log._chain.entries())}
+    if act == "start":
+        started = log.started() or {}
+        return {"the start": log.start_in_force() and started.get("by") == "Ada" and not stop_standing(rig.root, started)}
+    if act == "stop":
+        stop_file = rig.root / "STOP"
+        line = stop_file.exists() and "the owner's review" in stop_file.read_text(encoding="utf-8")
+        before, noted = ready["started"], not log.start_in_force()
+        ended = before is not None and (noted or stops_asked(rig.root) != before["stops"])
+        return {"the stop": line or ended, "its line in the STOP file": line,
+                "its count in stops.log": stops_asked(rig.root) > ready["stops"], "its note in the constraint log": noted}
+    return {"the pause": bool(runner.held(log))}
+
+
+def _writes(tmp_path, monkeypatch, act: str) -> list[tuple[int, str]]:
+    """Each durable write the act makes, in order, from a run with none failing, read from what the code does, with
+    where it falls among all the run's writes: for the pause, those of the constraint log, the tick's other rows left
+    to their own tests."""
+    with monkeypatch.context() as patch:
+        rig = _rig(tmp_path / "count", patch)
+        rig.patch = patch
+        ready = _readied(rig, act)
+        writes = _Writes(patch)
+        reply = _act(rig, act, patch)
+    assert act == "pause" or code(reply) == WRITING_ACTS[act][1], reply
+    assert all(_on_disk(rig, act, ready).values()), "with nothing failing, every part is on record"
+    found = [(i, w) for i, w in enumerate(writes.seen) if act != "pause" or w.startswith("constraint_log.jsonl")]
+    assert found, f"{act} wrote nothing"
+    return found
+
+
+def _check(reply: dict, held: dict[str, bool], act: str) -> None:
+    """The reply as the reopened folder holds the act: its parts as they are on disk, the act's own code only when its
+    effect is there, and no word that nothing counts while any part of it is."""
+    parts, done = WRITING_ACTS[act]
+    if act == "pause":
+        assert (reply["pause"] is not None) == held["the pause"], f"the status says pause {reply['pause']}, held {held}"
+        return
+    said = f"{reply['message']} {reply.get('next_action', '')}"
+    if code(reply) == done:
+        assert held[parts[0]], f"{act} replied {done} with {parts[0]} not on record"
+    elif act != "start":                      # a start on record whose runner did not start is START_FAILED, saying so
+        assert not held[parts[0]], f"{act}'s effect is on record, but it replied {code(reply)}: {reply['message']}"
+    if any(held.values()):
+        assert not any(word in said for word in NOTHING), f"{act} says nothing counts with {held} on record: {said}"
+    if act == "start" and held["the start"] and code(reply) != done:
+        assert "The start is on record" in reply["message"], f"start on record unsaid: {reply['message']}"
+    assert reply.get("recorded") == held, f"{act} names {reply.get('recorded')}, the folder holds {held}"
+
+
+@pytest.mark.parametrize("how, error", [("refused", OSError), ("written", OSError), ("refused", LedgerError),
+                                        ("written", LedgerError)])
+@pytest.mark.parametrize("act", sorted(WRITING_ACTS))
+def test_each_durable_write_of_each_act_failed_in_turn_leaves_a_reply_that_says_what_the_folder_holds(
+        tmp_path, monkeypatch, act, how, error):
+    """Each write the act makes is failed, one at a time, refused or after its line is on disk; then the folder is
+    reopened, and the reply must say what it holds. Every write is tried, and each that fails the rule is named."""
+    wrong = []
+    for position, label in _writes(tmp_path, monkeypatch, act):
+        if error is LedgerError and label.startswith("file "):
+            continue                          # a file that cannot be written raises OSError, never a ledger's refusal
+        with monkeypatch.context() as patch:
+            rig = _rig(tmp_path / f"{position}", patch)
+            rig.patch = patch
+            ready = _readied(rig, act)
+            _Writes(patch, fail=position, how=how, error=error)
+            reply = _act(rig, act, patch)
+        try:
+            _check(reply, _on_disk(rig, act, ready), act)
+        except AssertionError as exc:
+            wrong.append(f"{label}: {str(exc).splitlines()[0]}")
+    assert not wrong, "\n".join(wrong)
+
+
+@pytest.mark.parametrize("act", ["enrol", "resume", "demote"])
+def test_an_acts_process_that_ends_between_two_writes_leaves_a_reply_read_back_from_its_folder(tmp_path, monkeypatch,
+                                                                                                 act):
+    """The act's process ends after each write in turn, before it can reply: the server reads the folder back, and says
+    what is on record. Every write is tried, and each that fails the rule is named."""
+    wrong = []
+    for index, label in _writes(tmp_path, monkeypatch, act):
+        with monkeypatch.context() as patch:
+            rig = _rig(tmp_path / f"{index}", patch)
+            rig.patch = patch
+            ready = _readied(rig, act)
+            writes = _Writes(patch, how="killed")
+
+            class Child:
+                returncode = 1
+
+                def communicate(self, request, timeout):
+                    try:
+                        writes.fail = len(writes.seen) + index
+                        runner.act(json.loads(request))
+                    except _Killed:
+                        return "", "the act's process ended"
+                    return "", "the act's process ended"
+
+            patch.setattr(improve, "_run_act", real_run_act)
+            patch.setattr(improve, "_interpreter", lambda settings: ["fake-python"])
+            patch.setattr(improve.subprocess, "Popen", lambda *a, **k: Child())
+            reply = _act(rig, act, patch)
+        held = _on_disk(rig, act, ready)
+        if code(reply) != improve.ACT_FAILED:
+            wrong.append(f"{label}: replied {code(reply)}")
+        elif any(held.values()) and any(word in reply["message"] for word in NOTHING):
+            wrong.append(f"{label}: says nothing counts with {held} on record: {reply['message']}")
+        elif reply.get("recorded") != held:
+            wrong.append(f"{label}: names {reply.get('recorded')}, the folder holds {held}")
+    assert not wrong, "\n".join(wrong)
+
+
+def test_records_that_do_not_read_back_after_a_failed_write_claim_nothing_either_way(tmp_path, monkeypatch):
+    """The demotion's note fails and the log is then damaged: what of the act counts cannot be read, so the reply says
+    that, and neither that it counts nor that nothing does."""
+    rig = Rig(tmp_path, monkeypatch)
+    assert code(rig.call("g6_improve_enrol")) == "G6_E_LOOP_ENROLLED"
+    binding._adopted(rig)
+
+    def note_then_damage(self, *args, **kwargs):
+        path = rig.root / CYCLE_LOG
+        path.write_text(path.read_text(encoding="utf-8").replace('"Ada"', '"Cy"'), encoding="utf-8")
+        raise OSError("constraint log disk unavailable")
+
+    monkeypatch.setattr(CycleLog, "demote", note_then_damage)
+    reply = rig.call("g6_improve_demote", generation=1)
+    assert reply["recorded"] is None and code(reply) != "G6_E_LOOP_DEMOTED", reply
+    said = f"{reply['message']} {reply['next_action']}"
+    assert "not known" in said and not any(word in said for word in NOTHING), said
+
+
+real_run_act = improve._run_act

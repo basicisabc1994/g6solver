@@ -64,13 +64,15 @@ from typing import Any
 import g6
 from g6.core import stop
 from g6.core.ledger import LedgerError, digest as digest_of
-from g6.metaharness.api import _blocked
+from g6.metaharness.api import _blocked, _envelope
 from g6.metaharness.loop import (
     BUDGET_WAIT,
     BUSY,
     CANNOT_RECORD,
     CYCLE_FAILED,
+    ENROLLED,
     FROZEN_CHANGED,
+    RESUMED,
     STATUS_LINE,
     STOPPED,
     LoopSettings,
@@ -81,7 +83,7 @@ from g6.metaharness.loop import (
 )
 from g6.metaharness import reflex
 from g6.metaharness.schema import CONSENT_DIALOG_ONLY
-from g6.metaharness.shadow import lineage, restores
+from g6.metaharness.shadow import DEMOTED, lineage, restores
 from g6.self_maintenance import digest
 from g6.self_maintenance.envelope import (
     CYCLE_LOG,
@@ -549,6 +551,77 @@ def moved(act_name: str, root: Path, bound: Any, *, generation: int | None = Non
     return sorted(name for name in {*bound, *now} if bound.get(name, _ABSENT) != now.get(name, _ABSENT))
 
 
+#: What each person's act replies when it is done (``g6.mcp.improve.ACT_DONE`` names the same), and the parts it
+#: writes, as its reply names them in ``recorded``: the act's own effect first, which is what counts, then any note.
+DONE = {"enrol": ENROLLED, "resume": RESUMED, "demote": DEMOTED}
+ACT_PARTS = {"enrol": ("the enrolment",), "resume": ("the lifted pause",),
+             "demote": ("the demotion", "its note in the constraint log")}
+
+
+def on_record(request: Mapping[str, Any]) -> dict[str, bool]:
+    """Each part of a person's act (``ACT_PARTS``) with whether its folder holds it now, read back from the folder's
+    files afresh, as a reopened folder shows it, and never from which of the act's steps raised. The enrolment is a
+    new one by the person, freezing the bytes the binding names; the lifted pause, a folder nothing holds; the demotion,
+    a head one generation on from the one named, the person's rollback; its note, a constraint log that has seen that
+    generation. ``OSError``, ``ValueError`` or ``LedgerError`` when the request names no act on a folder or the records
+    do not read, and then nothing can say what of the act counts."""
+    name, folder, bound = request.get("act"), request.get("folder"), request.get("binding")
+    if name not in ACT_PARTS or not folder or not isinstance(bound, Mapping):
+        raise ValueError("the request names no person's act on a folder")
+    root, who = Path(str(folder)).resolve(), str(request.get("who", "")).strip()
+    path = root / CYCLE_LOG
+    log = CycleLog(path) if path.is_file() else None
+    if name == "enrol":
+        row = (log.enrolled() if log is not None else None) or {}
+        return {"the enrolment": row.get("by") == who and (row.get("frozen") or {}).get("domain_file") == bound.get(FILE_SHA)
+                and enrolment_digest(log) != bound.get("Enrolment it replaces")}
+    if name == "resume":
+        return {"the lifted pause": log is not None and not held(log)}
+    after = int(request.get("generation") or 0) + 1
+    chain = lineage(root / "workspace", last=1)
+    head = chain["recent"][-1] if chain["recent"] else {}
+    return {"the demotion": chain["current"] == after and head.get("kind") == "rollback" and head.get("asked_by") == who,
+            "its note in the constraint log": log is not None and log.generation() >= after}
+
+
+def as_recorded(request: Mapping[str, Any], reply: dict[str, Any] | None, failed: BaseException | None = None) -> dict:
+    """The reply to a person's act, decided by what its folder holds once the act is over (``on_record``), never by
+    which of its steps raised. With the act's effect on record it is the act done, whatever failed after, naming any
+    part that is not; without it, the act's own refusal as it was, or what failed, which says nothing counts only when
+    no part of the act is on record. ``reply``: what the act returned, or ``None`` when it raised ``failed``. Records that
+    do not read back say so, and claim nothing either way. Either way the reply names each part in ``recorded``."""
+    name = request["act"]
+    why = f"{type(failed).__name__}: {failed}" if failed is not None else str((reply or {}).get("message", ""))
+    done = reply is not None and reply.get("completion_state") == "qualified-draft" and reply.get("code") == DONE[name]
+    try:
+        found = on_record(request)
+    except (OSError, ValueError, LedgerError) as exc:
+        if done:
+            return {**reply, "recorded": None}
+        return _blocked(CANNOT_RECORD, f"the act did not finish ({why}), and its folder's records do not read back now "
+                        f"({type(exc).__name__}), so what of it counts is not known"[:500],
+                        "g6_improve_status says what the folder's records hold.", recorded=None)
+    effect = ACT_PARTS[name][0]
+    stands = [part for part, held in found.items() if held]
+    missing = [part for part, held in found.items() if not held]
+    if found[effect] and done and not missing:
+        return {**reply, "recorded": found}
+    if found[effect]:
+        late = f"; not on record: {', '.join(missing)}" if missing else ""
+        return _envelope("qualified-draft", DONE[name], f"{effect} is on record, so the act counts, though a step after it "
+                         f"failed ({why}){late}"[:500], next_action="g6_improve_status shows where the loop stands.",
+                         recorded=found)
+    if reply is not None and not done and not stands:
+        return {**reply, "recorded": found}
+    if not stands:
+        return _blocked(CANNOT_RECORD, f"the act could not be recorded ({why}): read back from its folder, none of it is "
+                        "on record"[:500], "Nothing counts. Free the folder, then call the tool again: the person agrees "
+                        "again.", recorded=found)
+    return _blocked(CANNOT_RECORD, f"the act could not be recorded ({why}): read back from its folder, {', '.join(stands)} "
+                    f"is on record and {', '.join(missing)} is not"[:500], "g6_improve_status shows what stands.",
+                    recorded=found)
+
+
 def act(request: dict[str, Any]) -> dict[str, Any]:
     """A person's act that the client's dialog agreed to (``g6.mcp.improve``), in a process like the runner's, so what an
     enrolment freezes is what a tick on that interpreter compares. ``request["binding"]`` is what the dialog showed
@@ -556,7 +629,8 @@ def act(request: dict[str, Any]) -> dict[str, Any]:
     write, and refuses on any difference. It runs only the Python file's bytes the binding names, by digest, never the
     current enrolment's, and the enrolment it records freezes those bytes. A demotion writes only the generation and the
     profile the binding names (``RESTORING``): what the harness would restore is checked against them just before its
-    row is written. Like the start, this is a check and not a boundary: a process with the owner's rights can reach this
+    row is written. Its reply is decided by what the folder holds once it is over (``as_recorded``), whichever step
+    failed. Like the start, this is a check and not a boundary: a process with the owner's rights can reach this
     code, and an editor that takes no lock can still write the folder's files between the last read and the write."""
     name, root, who = request["act"], Path(request["folder"]).resolve(), str(request["who"])
     generation, bound = request.get("generation"), request["binding"]
@@ -593,13 +667,14 @@ def act(request: dict[str, Any]) -> dict[str, Any]:
                 return _blocked(CANNOT_OPEN, f"The loop could not be opened: {type(exc).__name__}: {exc}"[:500])
             try:
                 if name == "enrol":
-                    return loop.enrol(who, last_check=unchanged)
-                if name == "resume":
-                    return loop.resume(who, last_check=unchanged)
-                return loop.demote(int(generation), who, last_check=unchanged)
-            except Exception as exc:  # noqa: BLE001 - a write that failed: nothing it began counts, and they may ask again
-                return _blocked(CANNOT_RECORD, f"the act could not be recorded: {type(exc).__name__}: {exc}"[:500],
-                                "Nothing counts. Free the folder, then call the tool again: the person agrees again.")
+                    reply = loop.enrol(who, last_check=unchanged)
+                elif name == "resume":
+                    reply = loop.resume(who, last_check=unchanged)
+                else:
+                    reply = loop.demote(int(generation), who, last_check=unchanged)
+            except Exception as exc:  # noqa: BLE001 - a step failed: what counts is what the folder holds, read back
+                return as_recorded(request, None, exc)
+            return as_recorded(request, reply)
     except WorkspaceRefused:
         return _blocked(BUSY, "another operation is running on this folder, so nothing ran or was recorded", again)
 
@@ -634,5 +709,5 @@ def main(argv: list[str] | None = None) -> int:
     return _dialog_only(args.command)
 
 
-__all__ = ["FIRST_REST", "LONGEST_REST", "NAP", "Runner", "act", "act_main", "demote", "enrol", "held", "main", "moved",
-           "open_loop", "person_terms", "resume", "run"]
+__all__ = ["FIRST_REST", "LONGEST_REST", "NAP", "Runner", "act", "act_main", "as_recorded", "demote", "enrol", "held", "main",
+           "moved", "on_record", "open_loop", "person_terms", "resume", "run"]
