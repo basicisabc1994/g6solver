@@ -12,6 +12,7 @@ scenario never answers the question.
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 
 import pytest
 
@@ -75,17 +76,19 @@ def test_the_question_s_keyword_arguments_are_kept_and_never_an_outcome_s():
 
 
 def test_a_confirmed_expectation_whose_check_runs_another_scenario_does_not_answer_the_question():
+    # repair 3: an answer never carries a check, so none can run another scenario; what it means is compiled from the
+    # question's bytes and the chosen option every time (this test held the earlier shape, which carried one)
     shown = question()
     honest = confirm(shown, "A", answered_by="person:owner")
     elsewhere = TemplateInstance(id=honest.instance.id, template="example.v1", requirement_id="R1", intent="change",
                                  provenance="person_confirmed",
                                  bindings={"function": "shop.total", "cases": [{"args": [[100]], "returns": 5}]})
-    forged = ConfirmedExpectation(honest.expectation_id, "R1", shown.sha256, shown.options_sha256, "A", BASE,
-                                  shown.scope, elsewhere, "person:owner")
+    with pytest.raises(ValueError, match="instance"):
+        ConfirmedExpectation(shown, honest.answer, instance=elsewhere)
     with pytest.raises(ValueError, match="scenario"):
-        forged.for_question(shown)
-    other_outcome = ConfirmedExpectation(honest.expectation_id, "R1", shown.sha256, shown.options_sha256, "B", BASE,
-                                         shown.scope, honest.instance, "person:owner")
-    with pytest.raises(ValueError, match="scenario"):   # an answer whose check states another outcome than it chose
-        other_outcome.for_question(shown)
+        replace(honest, instance=elsewhere)
+    # an answer that chose B means the question's scenario with outcome B: it can state no other outcome than it chose
+    other_outcome = ConfirmedExpectation(shown, replace(honest.answer, option="B"))
+    assert other_outcome.instance.bindings == {"function": "shop.total", "cases": [{"args": [[2, 3]], "returns": 6}]}
+    assert other_outcome.for_question(shown) is other_outcome
     assert honest.for_question(shown) is honest   # the positive control

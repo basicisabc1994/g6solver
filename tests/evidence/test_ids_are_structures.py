@@ -180,8 +180,10 @@ def test_the_ids_this_change_builds_call_the_one_function():
     calls = {(rel, function) for rel in ("evidence/mapping.py", "harness/requirement_evidence.py",
                                          "harness/confirmed_expectation.py", "harness/patch_review.py")
              for function in _callers((SRC / rel).read_text(encoding="utf-8"), "id_of")}
+    # a confirmed expectation's id is derived from its question's digest and the chosen option (repair 3)
     assert {("evidence/mapping.py", "check_id_of"), ("harness/requirement_evidence.py", "records_for"),
-            ("harness/confirmed_expectation.py", "confirm"), ("harness/patch_review.py", "_check_shas")} <= calls
+            ("harness/confirmed_expectation.py", "_expectation_id"),
+            ("harness/patch_review.py", "_check_shas")} <= calls
 
 
 def _callers(text: str, name: str) -> set[str]:
