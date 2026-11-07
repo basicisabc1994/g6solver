@@ -1,9 +1,10 @@
 # G6 0.3: explicit models, one question, measured — design
 
-Status: version 2, approved by the owner on 2026-11-06. Version 1 (178ef54) was challenged by Codex. All 16 of its challenges
-were read against the code, all 16 are adopted, and appendix A lists each. Building follows section 7's order. Section 11 is
-a proposed amendment (2026-11-07, version 2 after Codex's challenge in appendix B) and is not approved. Sections 12 (the
-Context Engine) and 13 (both agents know both allowances) are proposed on 2026-11-08 and are not approved.
+Status: frozen by the owner on 2026-11-08, and 0.3.0 is all of it built. Sections 1 to 10 are version 2, approved on
+2026-11-06: version 1 (178ef54) was challenged by Codex, all 16 of its challenges were read against the code and adopted, and
+appendix A lists each. Sections 11 to 15 were added on 2026-11-07 and 2026-11-08 and approved with the freeze. Codex's
+challenges of them are folded in as corrections within this scope (appendix B for section 11). Anything new goes to a list for
+after 0.3.0. Building follows section 7's order, with 12.9, 13.4, 14.4 and 15.8.
 
 ## 1. Why
 
@@ -397,11 +398,11 @@ The site describes the product within these limits:
 
 Study statistics carry their denominators, their cohorts and how to reproduce them.
 
-## 11. Proposed 2026-11-07, not approved: the rigour architecture as a test of what works in practice
+## 11. Approved with the freeze, 2026-11-08: the rigour architecture as a test of what works in practice
 
-**Status.** Version 2, proposed for the owner's approval. Version 1 (8e72041) was challenged by Codex; all twelve challenges
-were read against the code and adopted, and appendix B lists each. Nothing here is built until the owner approves it, except
-where an item restates what sections 3.1 and 3.2 already require, and it changes no step's order in section 7.
+**Status.** Version 2, proposed on 2026-11-07 and approved with the freeze on 2026-11-08. Version 1 (8e72041) was challenged
+by Codex; all twelve challenges were read against the code and adopted, and appendix B lists each. It changes no step's order
+in section 7.
 
 **Source.** The owner's architecture for intellectual rigour and metacognition (six subsystems under one controller), read
 with Dörner, *The logic of failure* (Phil. Trans. R. Soc. B 327, 1990), and Shankar et al., *Who validates the validators?*
@@ -546,10 +547,10 @@ confidence or status mapping changes a requirement's status on its own (3.1).
 - **The architecture's state names:** G6 keeps its internal state names. Public copy says "checked" or "challenged", never
   "verified" as a claim (owner, 2026-11-05), and each statement carries its artefact, standard, check and scope.
 
-## 12. Proposed 2026-11-08, not approved: the Context Engine, a person's own knowledge searched three ways
+## 12. Frozen 2026-11-08: the Context Engine, a person's own knowledge searched three ways
 
-**Status.** Version 1, proposed for the owner's approval. Nothing here is built until the owner approves it and Codex's
-challenge has been read and answered. It changes no step's order in section 7.
+**Status.** Part of the design the owner froze on 2026-11-08. Codex's challenge is folded in as corrections within this
+scope. It changes no step's order in section 7.
 
 **Source.** The owner's direction of 2026-11-08:
 - `ctx.elastic` as a capability for onboarding and specialisation;
@@ -793,13 +794,13 @@ This runs beside section 7's steps, not ahead of them:
 
 ### 12.11 The owner's decisions
 
-1. Approve this section.
-2. Whether step 1 of 12.9 starts now, in a free builder slot beside the trust loops.
+1. Approved with the freeze (2026-11-08).
+2. Step 1 of 12.9 starts once the frozen design is committed, in a free builder slot.
 3. A first private corpus for the usefulness rows besides g6solver, if any. It stays on this machine.
 
-## 13. Proposed 2026-11-08, not approved: both agents know both allowances
+## 13. Frozen 2026-11-08: both agents know both allowances
 
-**Status.** Version 1, proposed for the owner's approval, and built only once the owner approves it.
+**Status.** Part of the design the owner froze on 2026-11-08. Codex's challenge is folded in as corrections within this scope.
 
 **Source.** The owner, 2026-11-08: Claude Code and Codex should each know how much of both weekly allowances is left, so the
 agent can scale how many subagents it uses and use the allowance fully without running out early under day-to-day work.
@@ -870,9 +871,156 @@ It is one small change, test first, with its own Codex review loop. It touches n
 go first.
 
 The owner decides:
-1. whether to approve this section;
+1. approved with the freeze (2026-11-08);
 2. whether to install the status-line wrapper on this machine, which is one line in the Claude Code settings;
 3. the thresholds, or the stated defaults.
+
+## 14. Frozen 2026-11-08: the agent uses what ships; Eurisko and Experta
+
+**Status.** Part of the design the owner froze on 2026-11-08. Codex's challenge is folded in as corrections within this scope.
+
+### 14.1 The skill routes to what ships
+
+- **The skill changes with the capability.** `using-g6`, and the guidance Codex reads through its plugin and `AGENTS.md`,
+  changes in the same commit as each capability an agent should use:
+  - A's behaviour question and the report;
+  - D's exact checks;
+  - the Context Engine's tools;
+  - the allowance advice;
+  - fitness reports and extensions;
+  - the formal bridge (section 15).
+- **It never names a tool that has not shipped.** An agent told to call a missing tool fails worse than one never told.
+- **An inventory test, from the code.** Every MCP tool, and every component op marked for agents, is either in the skill's
+  routing or listed with why an agent does not call it. Every tool the skill names exists. The test fails on a member it
+  cannot classify.
+- **The skill routes; each component's own SKILL.md carries the detail.** The 1,800-word cap holds.
+- **Measured** (subscription runs): on development fixtures, a fresh session given a task that needs a capability calls it.
+  Each capability is counted.
+
+### 14.2 Eurisko as a method kind in `cognitive_bridge`
+
+- **What exists.**
+  - `learning/seeds.py`: 16 first-party seed heuristics, loaded as unmeasured candidate theories. Nothing in the product
+    calls it.
+  - PR #4: a bounded bootstrap and `heuristic_discovery`, with fixed mutation operators, lineage and generation caps, and
+    paired success-and-cost trials. Its promotion only checks that an approval and a shadow digest are present.
+  - The earlier repository's `adapt_eurisko` specialises, generalises and mutates heuristics, and synthesises them from gaps.
+    But it credits every heuristic a run names alike, and its "worth" is a fixed number, never measured.
+  - In PR #8's `cognitive_bridge`, a `MethodVariant` declares a kind, method, representation, engine, operation, cost and
+    expected evidence. Non-engine kinds are ranked but never executed, and credit comes only from evaluator-admitted trials
+    bound to the variant's definition.
+- **The design.**
+  - A heuristic is a `MethodVariant` of a non-engine kind, `heuristic`. It proposes how to search or decompose (a strategy),
+    never evidence.
+  - It ranks with the other kinds, and earns credit only from paired trials that vary that one heuristic, admitted by the
+    evaluator and bound to its definition. The archive's shared credit is not used.
+  - New heuristics come from PR #4's operators, with lineage and caps. Each starts unmeasured, and its measured worth replaces
+    any fixed one.
+  - Promotion goes through the adaptation gate with a person's approval. The mere presence of an approval is not enough.
+- **Where:** the selector's learning stage (section 7, step 5), once paired outcomes exist, with the seeds as its first
+  candidates. PR #4 is harvested into it, and what is not used is retired under section 6's rule.
+
+### 14.3 Experta: retired, its role kept
+
+The earlier repository's `adapt_experta` had four recorded defects: rule dicts that never fired, a cross-component forgery,
+evidence inversion, and a concurrency fault. It was folded into `g6.datalog`'s sessions, not ported as an engine. Rule
+reasoning is done by `g6.datalog`, `g6.prolog` and `graph_reasoning`. Under section 6's rule, Experta is retired as a
+component, with that reason.
+
+### 14.4 Order
+
+The skill rule applies to every slice from now on. Eurisko comes with step 5.
+
+## 15. Frozen 2026-11-08: from intent to a formal property, with the translation checked
+
+**Status.** Part of the design the owner froze on 2026-11-08. Codex's challenge is folded in as corrections within this scope.
+
+### 15.1 Why
+
+A formal result is only as strong as the translation into it. A derivation of a mistranslated property certifies the wrong
+statement (owner, 2026-11-08).
+
+**What exists** (surveyed 2026-11-08):
+- No translation from intent to a formal statement exists in G6.
+- `harness/verification_proposer.py` drafts abstract models, marked `model_hypothesis`.
+- `harness/verification_formal.py` reports a formal result as specification, model and correspondence, and replays
+  counterexamples on the code. So the correspondence between the model and the code is checked, but the correspondence
+  between the intent and the specification is not.
+
+### 15.2 Three layers of specification, each a hypothesis until its translation is checked
+
+1. **Confirmed examples:** the person's, from A, compiled as `example.v1`.
+2. **Properties:** `relation`, `differential` and `state_invariant`, drafted by the caller or a model.
+3. **Formal statements:** SMT-LIB, a Lean 4 statement, a TLA+ specification or a Datalog program. A model (the autoformaliser)
+   drafts them from the confirmed intent and the properties.
+
+Authority follows where the expectation came from, as rule 2 of the verification-search rules already says.
+
+### 15.3 The translation checks (section 11's componentry)
+
+A formal statement counts as the intent's translation only when all of these hold:
+
+1. **Examples.** It accepts every confirmed example and rejects each rejected-outcome witness (11.2 item 3). The engine decides
+   this, never the model.
+2. **Neither vacuous nor conflicting**, by `formal.check_contract`.
+3. **Two independent translations agree.** They come from different model families, with their independence stated, and are
+   compared by `check_equivalence`. Where they disagree, the distinguishing assignment becomes A's question to the person: for
+   this input, A or B? This is CEGIS run on the specification rather than the program.
+4. **Back-translation.** The statement is rendered in plain words and shown to the person in the behaviour form. The renderer
+   is a template where one exists, otherwise a model other than the one that wrote the statement. The person confirms or
+   rejects it, and a rule is shown in full first (3.2).
+5. **Scope and correspondence are recorded:** what the statement covers, and which observation it constrains (11.2 item 2). A
+   superseded answer reruns the evidence that depended on it (11.2 item 7).
+
+What the outcomes mean:
+- **A statement that fails any check** is reported as an unconfirmed formalisation, with the reason, and checks nothing.
+- **A statement that passes checks 1 to 3** stays `model_hypothesis` until the person confirms check 4. Then it is
+  `person_confirmed`.
+- **The autoformaliser's own acceptance is never evidence:** a parse that succeeds, or a process that exits zero.
+
+### 15.4 Porting the earlier repository's autoformaliser (authorised under G6's licence, 2026-11-08)
+
+- **It targets** Lean 4, SMT-LIB2 and Z3 expressions, with context, retrieval from a library of earlier statements, and an
+  attempt budget.
+- **Its model** is called through G6's host callers. Nothing is downloaded automatically: any local weights are read only
+  from the person's cache, as `ctx_colbert` does.
+- **Acceptance moves into G6's engines:**
+  - Z3 runs `check`;
+  - a Lean statement is bound to the expected theorem, as `g6.lean` already reports for kernel, axioms and statement;
+  - a missing TLC is unavailable, never success.
+- **The archive's four defects become refusal tests:**
+  - an SMT translation was parsed and never checked;
+  - Lean exiting zero accepted an unrelated declaration;
+  - a missing TLC reported success;
+  - the Curry–Howard checker answered valid unconditionally.
+- **Not ported:** the archive's math-reasoning and Curry–Howard format conversions, which return placeholder success.
+
+### 15.5 Program synthesis
+
+- **The coding agent synthesises the program.** G6 supplies the checked specification and checks the result.
+- **`cegis` and `algorithm_design` synthesise bounded pieces,** where an engine decides the property: D (3.4), and section 5's
+  self-improvement row.
+- **The same search for a distinguishing input** runs over candidate programs and candidate specifications (15.3, check 3).
+- **G6 does not become a general synthesiser,** under the scope rule of 2026-10-28.
+
+### 15.6 Its place in `cognitive_bridge`
+
+`MethodRouter` maps an evidence need to the formal kind, one of its five allowlisted engines. That kind consumes only a
+statement that passed 15.3. Until then, the plan stays `candidate_unreviewed`.
+
+### 15.7 What is measured (rows for section 5)
+
+| Piece | What is measured | Bar | Cost |
+|---|---|---|---|
+| Translation fidelity | On a fixed set of confirmed specifications, with known right and mutated formalisations, by language: the share of wrong translations refused by checks 1 to 3 before the person sees them, and the share passing them that the person rejects at check 4 | set before it runs | model calls |
+| Archive defects | All four are refused | all refused | none |
+| Questions from disagreement | Unnecessary and missed questions, counted as A's are | as A's | the person's time |
+| Cost | Model calls per translation | reported | — |
+
+### 15.8 Order
+
+It comes after the question slice, which supplies the confirmed examples and the form, and after slice 2's evidence
+semantics. It runs beside D (section 7, step 4), as its own change with its own review loop.
 
 ## Appendix A: Codex's challenge of version 1, and what changed
 
