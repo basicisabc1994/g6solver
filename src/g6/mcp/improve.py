@@ -14,9 +14,9 @@ is written from that binding alone (``g6.mcp.consent.question``), so every field
 with the act, which reads it again holding the folder's lock, immediately before it runs or records anything, and runs
 only the bytes it names. An act runs in a process like the runner's, so an enrolment freezes what a tick on that
 interpreter compares, and it records nothing if any of it moved meanwhile. Both start in the loop's folder on this server's
-own import path, fixed here with no relative or empty entry, and with no path of Python's own, so a ``g6`` in the folder
-a caller names never runs in place of the server's; the act's binding names the G6 it runs, by digest, and the act
-refuses any other.
+own import path, fixed here with no entry read against where the child stands, and with no path of Python's own, so a
+``g6`` in the folder a caller names never runs in place of the server's; the act's binding names the G6 it runs, by
+digest, and the act refuses any other.
 An agreement binds what the dialog showed: if any of it moved while the dialog was up, nothing starts and the person is
 asked again. The start records the settings it agreed to, and the runner holds to them on every restart, so a changed
 settings file needs a new agreement even with no stop in between. It records the enrolment it showed too, by digest, and
@@ -46,7 +46,7 @@ import sys
 import tempfile
 import time
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 import g6
@@ -159,12 +159,26 @@ def _log(root: Path) -> CycleLog | None:
     return CycleLog(root / CYCLE_LOG) if (root / CYCLE_LOG).is_file() else None
 
 
+def _stands_alone(entry: str, windows: bool = os.name == "nt") -> bool:
+    r"""Whether a path names one place wherever a process stands: the one rule for each path a G6 child starts with, its
+    interpreter (``_pinned_python``) and its import path (``_import_path``). On Windows only a drive or a UNC share with a
+    root does (``C:\x``, ``\\server\share\x``, ``\\?\C:\x``): ``\x`` is read against the drive the process stands on,
+    ``C:x`` against its folder on that drive, and an empty entry, ``.`` and any other relative path against its folder.
+    Elsewhere only a root does. It is read from ``PureWindowsPath``'s drive and root, which Python 3.12 and 3.13 parse
+    alike, never from a predicate whose answer moved between them: ``os.path.isabs`` takes ``\x`` on 3.12, and
+    ``PurePath.is_absolute`` takes ``\\server`` on 3.13."""
+    if windows:
+        path = PureWindowsPath(entry)
+        return bool(path.drive and path.root)
+    return bool(PurePosixPath(entry).root)
+
+
 def _pinned_python(settings: dict[str, Any]) -> str:
     """The interpreter a folder pins its runner to, or ``""`` with none named. A ``ValueError`` says what is wrong with it."""
     if "python" not in settings:
         return ""
     python = settings["python"]
-    if not isinstance(python, str) or not Path(python).is_absolute() or not Path(python).is_file():
+    if not isinstance(python, str) or not _stands_alone(python) or not Path(python).is_file():
         raise ValueError(f"{SETTINGS_FILE}: python must be the full path of an interpreter, not {python!r}")
     return python
 
@@ -289,14 +303,14 @@ def _environment() -> dict[str, str]:
 
 
 def _import_path() -> str:
-    """The ``PYTHONPATH`` of a G6 child, so it imports G6 from where this server's ``g6`` was loaded: each absolute entry
-    of the server's own ``PYTHONPATH``, in its order, behind the folder that holds the server's ``g6`` when neither those
-    entries nor this Python's own site folders hold it already (a working tree, or an editable install). It holds no
-    relative or empty entry, since Python reads those against the child's own working folder, which is the loop's folder
-    a caller named: a ``g6`` there would run in place of the server's. A site folder is never put first, where it would
-    stand in front of the standard library. A pinned interpreter starts isolated (``-I``), reads none of it, and imports
-    the G6 installed for it."""
-    given = [entry for entry in os.environ.get("PYTHONPATH", "").split(os.pathsep) if entry and os.path.isabs(entry)]
+    r"""The ``PYTHONPATH`` of a G6 child, so it imports G6 from where this server's ``g6`` was loaded: each entry of the
+    server's own ``PYTHONPATH`` that stands on its own (``_stands_alone``), in its order, behind the folder that holds the
+    server's ``g6`` when neither those entries nor this Python's own site folders hold it already (a working tree, or an
+    editable install). It holds no entry Python would read against where the child stands, which is the loop's folder a
+    caller named, on its drive: an empty or a relative entry, ``\x`` or ``C:x``. A ``g6`` there would run in place of the
+    server's. A site folder is never put first, where it would stand in front of the standard library. A pinned
+    interpreter starts isolated (``-I``), reads none of it, and imports the G6 installed for it."""
+    given = [entry for entry in os.environ.get("PYTHONPATH", "").split(os.pathsep) if _stands_alone(entry)]
     home = Path(g6.__file__).resolve().parent.parent
     sites = [*site.getsitepackages(), site.getusersitepackages()]
     reached = any(os.path.normcase(os.path.realpath(entry)) == os.path.normcase(str(home)) for entry in [*given, *sites])

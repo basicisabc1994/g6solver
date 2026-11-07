@@ -296,7 +296,7 @@ def test_a_g6_childs_import_path_is_absolute_and_fixed_whatever_the_servers_pyth
     assert len(seen) == 2
     for argv, kwargs in seen:
         entries = kwargs["env"]["PYTHONPATH"].split(os.pathsep)
-        assert entries and all(entry and os.path.isabs(entry) for entry in entries), entries
+        assert entries and all(improve._stands_alone(entry) for entry in entries), entries   # review cfu2: one rule
         assert not any(Path(entry).resolve().is_relative_to(root.resolve()) for entry in entries), entries
         first = next(Path(entry) for entry in entries if (Path(entry) / "g6" / "__init__.py").is_file())
         assert first.resolve() == HOME
@@ -1596,3 +1596,388 @@ def test_the_loops_own_pause_reads_as_the_reopened_folder_holds_it_whatever_its_
 
 
 real_run_act = improve._run_act
+
+
+# Review cfu2: whether a path stands on its own is decided by one rule ------------------------------------------------
+
+# Finding 1's class is boundary_case. On Python 3.12 on Windows ``os.path.isabs`` takes ``\x``, a root with no drive, for a
+# full path, so ``_import_path`` kept it, both launchers forwarded it, and each child read it against its own drive: a
+# ``g6`` planted at that drive's root ran ahead of the server's. The root is that "does not depend on where the child
+# stands" was decided by a library predicate whose answer moves with the platform and the Python version
+# (``PurePath.is_absolute`` moved with 3.13 as well). One rule now decides it, ``improve._stands_alone``: on Windows a drive
+# or a UNC share and a root, read from ``PureWindowsPath``'s drive and root; elsewhere a root. Each place that builds or
+# filters a G6 child's import path, or names its interpreter, decides by it. The inventory reads every place under
+# ``src/g6`` that names ``isabs``, ``is_absolute``, ``PYTHONPATH`` or ``sys.path``, and each launcher's real child is
+# started with each form of entry planted.
+
+@pytest.mark.skipif(os.name != "nt", reason="a root with no drive is a Windows path")
+def test_a_rooted_pythonpath_entry_with_no_drive_reaches_neither_child(tmp_path, monkeypatch):
+    """Finding 1 (review cfu2), as review cfu2 wrote it, in this test's own folder. Failed on 9034d73: AssertionError: 2
+    child import probes executed foreign G6 through drive-relative PYTHONPATH."""
+    planted = tmp_path / "planted"
+    (planted / "g6").mkdir(parents=True)
+    marker = tmp_path / "foreign-g6-ran"
+    (planted / "g6" / "__init__.py").write_text(
+        "from pathlib import Path\n"
+        f"with Path({str(marker)!r}).open('a', encoding='utf-8') as out:\n"
+        "    out.write('foreign G6 imported\\n')\n", encoding="utf-8")
+    rooted = str(planted)[len(planted.drive):]
+    assert not Path(rooted).is_absolute()
+    server_source = str(Path(improve.__file__).resolve().parents[2])
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([rooted, server_source]))
+    seen, children = [], []
+    real_popen = improve.subprocess.Popen
+
+    def popen(argv, **kwargs):
+        # each launcher's interpreter, flags, folder and environment, with an import-only probe for its entry point: no
+        # runner and no act runs
+        seen.append(kwargs["env"]["PYTHONPATH"].split(os.pathsep))
+        entry = argv.index("-c") if "-c" in argv else argv.index("-m")
+        child = real_popen([*argv[:entry], "-c", "import g6; print(g6.__file__)"], **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(improve.subprocess, "Popen", popen)
+    try:
+        improve._run_act(tmp_path, {}, {"act": "enrol", "folder": str(tmp_path), "binding": {}, "who": "Ada"})
+        improve._spawn(tmp_path, {}).wait(timeout=20)
+    finally:
+        for child in children:                  # this test started them, so it ends them
+            if child.poll() is None:
+                child.terminate()
+            child.wait(timeout=20)
+    assert len(seen) == 2
+    bad = [entry for entries in seen for entry in entries if not Path(entry).is_absolute()]
+    ran = marker.read_text(encoding="utf-8").splitlines() if marker.exists() else []
+    assert not ran and not bad, f"{len(ran)} child import probes executed foreign G6 through drive-relative PYTHONPATH"
+
+
+#: Each form of path the rule decides on Windows, with whether it stands on its own: the nine the brief names first, then
+#: other spellings of a drive, a share and a device, then each form ``PurePath.is_absolute`` answers differently on 3.12
+#: and 3.13 (a share or a device named with no root: absolute on 3.13 only). Measured on 3.12.11 and 3.13.5:
+#: ``PureWindowsPath``'s drive and root read the same on both for every form here.
+WINDOWS_FORMS = {
+    "\\x": False, "C:x": False, "\\\\server\\share\\x": True, "\\\\?\\C:\\x": True, "C:\\x": True, "": False, ".": False,
+    "..\\x": False, "C:\\x\\": True,
+    "C:/x": True, "/x": False, "C:": False, "x": False, "x\\": False, "\\\\server\\share": True, "//server/share/x": True,
+    "\\\\.\\C:\\x": True, "\\\\?\\UNC\\server\\share\\x": True,
+    "\\\\server": False, "\\\\": False, "\\\\\\x": False, "\\\\?\\C:": False, "\\\\?\\": False, "\\\\?\\x": False,
+    "\\\\.\\x": False,
+}
+#: The same elsewhere, where only a root makes a path stand on its own.
+POSIX_FORMS = {"/x": True, "//x": True, "/": True, "x": False, "": False, ".": False, "./x": False, "../x": False,
+               "\\x": False, "C:\\x": False}
+
+
+@pytest.mark.parametrize(("entry", "alone"), list(WINDOWS_FORMS.items()))
+def test_on_windows_a_path_stands_on_its_own_only_with_a_drive_or_a_share_and_a_root(entry, alone):
+    assert improve._stands_alone(entry, windows=True) is alone
+
+
+@pytest.mark.parametrize(("entry", "alone"), list(POSIX_FORMS.items()))
+def test_elsewhere_a_path_stands_on_its_own_only_with_a_root(entry, alone):
+    assert improve._stands_alone(entry, windows=False) is alone
+
+
+#: The forms a real child of each launcher is started with, with whether each stands on its own. ``\\server\share\x`` is
+#: not among them: a child would look the share up on the network, so its test below stops at what each launcher hands on.
+CHILD_FORMS = {"\\x": False, "C:x": False, "\\\\?\\C:\\x": True, "C:\\x": True, "": False, ".": False, "..\\x": False,
+               "C:\\x\\": True}
+#: An import-only probe in place of each launcher's entry point, so no runner and no act runs: it writes where ``g6`` came
+#: from, and where a module planted only in the folder an entry names would come from ("" when the child cannot reach it).
+PROBE = ("import sys, importlib.util, g6; found = importlib.util.find_spec('g6_cfu2_probe'); "
+         "open(sys.argv[1], 'w', encoding='utf-8').write(g6.__file__ + '\\n' + (found.origin if found else ''))")
+
+
+def _spelled(form: str, tmp_path: Path, root: Path) -> tuple[str, Path]:
+    """The entry of ``form`` and the folder it names for a child standing in ``root``, the loop's folder, on its drive."""
+    if form in ("", "."):
+        return form, root
+    if form == "..\\x":
+        return "..\\up", root.parent / "up"
+    if form == "C:x":
+        return f"{root.drive}beside", root / "beside"
+    folder = tmp_path / "named"
+    whole = str(folder)
+    return {"\\x": whole[len(folder.drive):], "\\\\?\\C:\\x": "\\\\?\\" + whole, "C:\\x": whole,
+            "C:\\x\\": whole + "\\"}[form], folder
+
+
+def _probed(monkeypatch, launcher: str, root: Path, out: Path) -> list[list[str]]:
+    """Start ``launcher``'s real child on its own interpreter, flags, folder and environment, with ``PROBE`` for its
+    entry point, and end it; the ``PYTHONPATH`` it was given."""
+    seen, children = [], []
+    real_popen = improve.subprocess.Popen
+
+    def popen(argv, **kwargs):
+        seen.append(kwargs["env"]["PYTHONPATH"].split(os.pathsep))
+        start = argv.index("-c") if "-c" in argv else argv.index("-m")
+        children.append(real_popen([*argv[:start], "-c", PROBE, str(out)], **kwargs))
+        return children[-1]
+
+    monkeypatch.setattr(improve.subprocess, "Popen", popen)
+    try:
+        if launcher == "act":
+            improve._run_act(root, {}, {"act": "enrol", "folder": str(root), "binding": {}, "who": "Ada"})
+        else:
+            improve._spawn(root, {}).wait(timeout=60)
+    finally:
+        for child in children:                  # this test started them, so it ends them
+            if child.poll() is None:
+                child.terminate()
+            child.wait(timeout=60)
+    return seen
+
+
+@pytest.mark.skipif(os.name != "nt", reason="drives and shares are Windows paths")
+@pytest.mark.parametrize("launcher", ["act", "runner"])
+@pytest.mark.parametrize("form", list(CHILD_FORMS))
+def test_each_launchers_real_child_reaches_an_entry_only_when_it_stands_on_its_own(tmp_path, monkeypatch, form,
+                                                                                    launcher):
+    """Each form planted ahead of the server's own source in the server's ``PYTHONPATH``, and the launcher's real child
+    started on it. One that does not stand on its own names a folder holding a ``g6``, a ``sitecustomize`` and a
+    ``json``: it is not handed on, and nothing of it runs. One that does is handed on as it is, and the child reaches the
+    folder it names. Either way the child's ``g6`` is the server's."""
+    root, marker, out = tmp_path / "loop", tmp_path / "planted-ran", tmp_path / "probe.txt"
+    root.mkdir()
+    entry, folder = _spelled(form, tmp_path, root)
+    alone = CHILD_FORMS[form]
+    if not alone:
+        _plant(folder, marker)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "g6_cfu2_probe.py").write_text("", encoding="utf-8")
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([entry, str(HOME)]))
+    [given] = _probed(monkeypatch, launcher, root, out)
+    assert given == [*([entry] if alone else []), str(HOME)], f"{entry!r} stands on its own: {alone}; given {given}"
+    assert out.is_file(), "the probe did not run"
+    imported, found = out.read_text(encoding="utf-8").split("\n")
+    assert not marker.exists(), f"the child ran what was planted in {marker.read_text(encoding='utf-8')}"
+    assert os.path.samefile(imported, HOME / "g6" / "__init__.py"), imported
+    if alone:
+        assert found and os.path.samefile(found, folder / "g6_cfu2_probe.py"), found
+    else:
+        assert not found, found
+
+
+#: A share no child looks up here.
+SHARE = "\\\\server\\share\\x"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="drives and shares are Windows paths")
+@pytest.mark.parametrize("settings", [{}, {"python": sys.executable}])
+def test_a_share_stands_on_its_own_and_both_launchers_hand_it_on(tmp_path, monkeypatch, settings):
+    r"""``\\server\share\x`` names one folder wherever a child stands, so both launchers hand it on as it is. A real
+    child would look the share up on the network, so none is started, and the parent does not open it either:
+    ``realpath`` answers for this share as it does for any it cannot reach, with the path itself."""
+    root = tmp_path / "loop"
+    root.mkdir()
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([SHARE, str(HOME)]))
+    real = os.path.realpath
+    monkeypatch.setattr(os.path, "realpath",
+                        lambda path, *args, **kwargs: path if str(path).startswith(SHARE) else real(path, *args, **kwargs))
+    seen = []
+
+    class Child:
+        returncode = 1
+
+        def communicate(self, request, timeout):
+            return "", ""
+
+        def poll(self):
+            return 1
+
+    def popen(argv, **kwargs):
+        seen.append(kwargs["env"]["PYTHONPATH"].split(os.pathsep))
+        return Child()
+
+    monkeypatch.setattr(improve.subprocess, "Popen", popen)
+    improve._run_act(root, settings, {"act": "enrol"})
+    improve._spawn(root, settings)
+    assert seen == [[SHARE, str(HOME)]] * 2
+
+
+@pytest.mark.skipif(os.name != "nt", reason="drives and shares are Windows paths")
+def test_a_pinned_interpreter_is_named_by_a_path_that_stands_on_its_own():
+    """The interpreter a folder pins is a path a G6 child starts from, so the one rule decides it too: this Python by its
+    full path or its device path is taken; by its root with no drive, or by its drive and a path relative to the folder
+    this process stands in on that drive, it is refused, though each names a file from here."""
+    python = sys.executable
+    drive = Path(python).drive
+    taken = [python, "\\\\?\\" + python]
+    refused = [python[len(drive):]]
+    if Path.cwd().drive == drive:
+        refused.append(drive + os.path.relpath(python))
+    assert all(Path(each).is_file() for each in [*taken, *refused])
+    assert [improve._pinned_python({"python": each}) for each in taken] == taken
+    for each in refused:
+        with pytest.raises(ValueError, match="full path"):
+            improve._pinned_python({"python": each})
+
+
+#: What a place that names ``isabs``, ``is_absolute``, ``PYTHONPATH`` or ``sys.path`` under ``src/g6`` is: the rule
+#: itself; a place that decides by it; one that takes its path from such a place; a child's import path built from a
+#: folder the parent made whole (``MADE`` says how, from the code); a sandboxed run's own folder, which its code is
+#: meant to import from; a child's import path in a file a certificate binds, offered for the issuance window; a command
+#: printed for a person; words; or a path that is no child's import path.
+THE_RULE, BY_RULE, FROM_RULE, MADE_WHOLE, RUN_FOLDER, BOUND, PRINTED, WORDS, NOT_IMPORT = (
+    "the rule", "decides by the rule", "takes its path from the rule", "made whole in the parent",
+    "a sandboxed run's own folder", "bound", "printed for a person", "words", "not a child's import path")
+#: Each place under ``src/g6`` that names one of the four, by module and innermost function or class, with how many
+#: times it names them, what it is, and why. Any other, or a count that moves, fails the inventory.
+PATH_PLACES = {
+    ("mcp/improve.py", "_stands_alone"): (THE_RULE, 2, "names the two predicates it does not use, and why"),
+    ("mcp/improve.py", "_import_path"): (BY_RULE, 3, "a G6 child's PYTHONPATH: an entry is kept only by the rule"),
+    ("mcp/improve.py", "_environment"): (FROM_RULE, 1, "a G6 child's environment: its PYTHONPATH is _import_path's"),
+    ("mcp/improve.py", "_spawn"): (WORDS, 1, "why a pinned runner starts isolated"),
+    ("metaharness/runner.py", "_g6_terms"): (WORDS, 1, "what a pinned interpreter's act names as its G6"),
+    ("cegis/runner.py", "<module>"): (MADE_WHOLE, 2, "the cegis child (-I) appends the folder of the server's g6, "
+                                                     "resolved in the parent"),
+    ("workforce/truth.py", "<module>"): (MADE_WHOLE, 8, "a repository's tests (-I) put the repository first, resolved in "
+                                                        "the parent"),
+    ("workforce/truth.py", "run_isolated"): (WORDS, 1, "says the test's child runs -I"),
+    ("workforce/repo_tests.py", "<module>"): (MADE_WHOLE, 3, "a repository's tests (-I) put the resolved repository's "
+                                                             "folders first, after dropping '' and their own folder"),
+    ("core/promotion_custody.py", "<module>"): (BOUND, 1, "what the evaluator child's extra PYTHONPATH is"),
+    ("core/promotion_custody.py", "_service_env"): (BOUND, 1, "the evaluator child's PYTHONPATH keeps every non-empty "
+                                                              "extra entry, relative ones too, and the child starts with "
+                                                              "-m, in the server's folder; a certificate binds this file"),
+    ("metaharness/executor.py", "<module>"): (RUN_FOLDER, 1, "a workflow's code imports main from its sandbox's folder"),
+    ("metaharness/steps.py", "<module>"): (RUN_FOLDER, 1, "a step's code imports from its sandbox's folder"),
+    ("code/meta_programming/runner.py", "<module>"): (RUN_FOLDER, 1, "your tests import your code from the sandbox's "
+                                                                     "folder"),
+    ("code/adapt_library_synthesizer/backend.py", "checks_for"): (RUN_FOLDER, 1, "a check imports the implementation "
+                                                                                 "from its sandbox's folder"),
+    ("code/adapt_django/checks.py", "<module>"): (RUN_FOLDER, 1, "a Django check imports the project from its sandbox's "
+                                                                 "folder"),
+    ("harness/verification_search.py", "<module>"): (PRINTED, 1, "what the printed command puts on the path"),
+    ("harness/verification_search.py", "reproduce"): (PRINTED, 6, "the plain pytest command a person runs from the top "
+                                                                  "of a copy, relative to it on purpose"),
+    ("algebra/runner.py", "<module>"): (WORDS, 1, "says its child runs -I"),
+    ("cli/setup.py", "<module>"): (WORDS, 1, "why the server itself starts -P"),
+    ("mcp/__init__.py", "g6_review_patch"): (WORDS, 1, "what a review's run put on the import path"),
+    ("action_gating/normalizer.py", "_checkpoint"): (NOT_IMPORT, 1, "a file an action names, read in this process"),
+    ("agents/_runtime/model.py", "_homes"): (NOT_IMPORT, 1, "the home folders a workspace may not be"),
+    ("agents/_runtime/model.py", "workspace_problem"): (NOT_IMPORT, 1, "a declared workspace folder"),
+    ("agents/_runtime/model.py", "resolve_in"): (NOT_IMPORT, 1, "a path inside the workspace"),
+    ("algorithm_design/autonomous.py", "_relative"): (NOT_IMPORT, 1, "a file name in a design, which must be relative"),
+    ("code/_build.py", "write_files"): (NOT_IMPORT, 1, "a folder a build writes into"),
+    ("code/_roots.py", "parse"): (NOT_IMPORT, 1, "a configured root folder"),
+    ("code/_roots.py", "_given"): (NOT_IMPORT, 1, "a configured root folder"),
+    ("core/component_certificate.py", "inside"): (NOT_IMPORT, 1, "a file a certificate names"),
+    ("core/confine.py", "child_environment"): (NOT_IMPORT, 1, "a confined child's home and tool folders, never its "
+                                                              "import path"),
+    ("core/executor_contracts.py", "_paths"): (NOT_IMPORT, 1, "a file name an executor contract names"),
+    ("core/snapshots.py", "_safe_members"): (NOT_IMPORT, 1, "a member of a snapshot archive"),
+    ("core/storage.py", "confined_path"): (NOT_IMPORT, 1, "G6's own state"),
+    ("core/storage.py", "contained"): (NOT_IMPORT, 4, "G6's own state"),
+    ("core/storage.py", "open_db"): (NOT_IMPORT, 1, "G6's own state"),
+    ("integrations/database/config.py", "location"): (NOT_IMPORT, 1, "a database file"),
+    ("media/_types.py", "_only_what_passed_inspection_inside_the_media_folder"): (NOT_IMPORT, 1, "a media artifact"),
+    ("self_maintenance/controller.py", "run_one_cycle"): (NOT_IMPORT, 1, "a repository folder"),
+    ("self_maintenance/kernel.py", "allowed_source"): (NOT_IMPORT, 1, "a relative source path an edit names"),
+    ("self_training/persistence.py", "_resolve_store_dir"): (NOT_IMPORT, 1, "a scorecard store folder"),
+    ("sources/australian_legal_corpus/block.py", "_register"): (NOT_IMPORT, 1, "a downloaded file"),
+    ("sources/ctx_git/config.py", "parse"): (NOT_IMPORT, 1, "a git repository's own paths"),
+    ("sources/ctx_git/config.py", "repository"): (NOT_IMPORT, 2, "a git repository's own paths"),
+    ("sources/ctx_git/config.py", "_common"): (NOT_IMPORT, 1, "a git repository's own paths"),
+    ("sources/ctx_git/config.py", "_alternates"): (NOT_IMPORT, 1, "a git repository's own paths"),
+    ("sources/ctx_git/config.py", "destination"): (NOT_IMPORT, 1, "a git repository's own paths"),
+    ("sources/ctx_git/config.py", "inside"): (NOT_IMPORT, 1, "a git repository's own paths"),
+    ("workforce/bench.py", "_inside"): (NOT_IMPORT, 1, "a file inside a repository copy"),
+    ("workforce/receipt_store.py", "_executable"): (NOT_IMPORT, 1, "the interpreter a receipt names, never started"),
+    ("workforce/repo_tests.py", "checked_repo"): (NOT_IMPORT, 1, "the repository a caller names, resolved before a child "
+                                                                 "sees it"),
+    ("workforce/repo_tests.py", "_chosen_python"): (NOT_IMPORT, 1, "the interpreter a repository's tests run on (-I)"),
+    ("workforce/repo_tests.py", "_file_here"): (NOT_IMPORT, 1, "a file inside the repository"),
+}
+#: Each place that builds a G6 child's import path or names its interpreter, which decides by the rule.
+RULED = (("mcp/improve.py", "_import_path"), ("mcp/improve.py", "_pinned_python"))
+#: How each child's import path built from a folder made whole is made, read from the code: the function, and what in it
+#: makes the folder whole before any child sees it.
+MADE = {
+    ("cegis/runner.py", "<module>"): [("cegis/runner.py", "_call", "Path(g6.__file__).resolve()")],
+    ("workforce/truth.py", "<module>"): [("workforce/truth.py", "run_isolated", "Path(repo).resolve()"),
+                                         ("workforce/truth.py", "run_suite", "Path(repo).resolve()")],
+    ("workforce/repo_tests.py", "<module>"): [("workforce/repo_tests.py", "checked_repo", "given.resolve()"),
+                                              ("workforce/repo_tests.py", "run", "checked_repo(repo)")],
+}
+#: What names a path's standing for a child, as the brief searches for it: no word boundary, so ``\nsys.path`` in a
+#: script held in a string is found too.
+_PATH_WORDS = re.compile(r"isabs|is_absolute|PYTHONPATH|sys\.path")
+
+
+def _path_places() -> dict[tuple[str, str], int]:
+    """Each place under ``src/g6`` that names one of ``_PATH_WORDS``, by module and innermost function or class, with
+    how many times, read from the code: its words, its strings and its comments alike."""
+    found: dict[tuple[str, str], int] = {}
+    for path in sorted(SRC.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        spans = [(n.lineno, n.end_lineno, n.name) for n in ast.walk(ast.parse(text))
+                 if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
+        for number, line in enumerate(text.split("\n"), 1):
+            hits = len(_PATH_WORDS.findall(line))
+            if hits:
+                owner = max((s for s in spans if s[0] <= number <= s[1]), default=(0, 0, "<module>"))[2]
+                key = (path.relative_to(SRC).as_posix(), owner)
+                found[key] = found.get(key, 0) + hits
+    return found
+
+
+def _calls(node: ast.AST) -> set[str]:
+    return {ast.unparse(n.func) for n in ast.walk(node) if isinstance(n, ast.Call)}
+
+
+def test_each_place_that_builds_a_g6_childs_import_path_or_names_its_interpreter_decides_by_the_one_rule():
+    """Read from the code: each place in ``RULED`` calls the rule and no other predicate; the rule reads a path's drive
+    and root and calls no predicate either; nothing else calls it, so a new caller is listed; and a G6 child's
+    environment takes its import path from ``_import_path``."""
+    for rel, name in RULED:
+        calls = _calls(_functions(rel)[name])
+        assert "_stands_alone" in calls, f"{rel}: {name} does not decide by the one rule ({sorted(calls)})"
+        assert not [c for c in calls if c.endswith(("isabs", "is_absolute"))], (rel, name, sorted(calls))
+    rules = [(path, n) for path in SRC.rglob("*.py") for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+             if isinstance(n, ast.FunctionDef) and n.name == "_stands_alone"]
+    assert [path.relative_to(SRC).as_posix() for path, _ in rules] == ["mcp/improve.py"], "one rule, in one place"
+    rule = rules[0][1]
+    assert {"drive", "root"} <= {n.attr for n in ast.walk(rule) if isinstance(n, ast.Attribute)}
+    assert not [c for c in _calls(rule) if c.endswith(("isabs", "is_absolute"))], sorted(_calls(rule))
+    callers = set()
+    for path in SRC.rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and "_stands_alone" in _calls(node):
+                callers.add((path.relative_to(SRC).as_posix(), node.name))
+    assert callers == set(RULED), callers
+    assert "_import_path" in _calls(_functions("mcp/improve.py")["_environment"])
+
+
+def test_every_place_under_src_that_names_a_paths_standing_is_listed_with_what_it_is():
+    """The inventory, read from the code: every place under ``src/g6`` that names ``isabs``, ``is_absolute``,
+    ``PYTHONPATH`` or ``sys.path``, by module and innermost function or class, is in ``PATH_PLACES`` with as many
+    mentions as it has, and nothing listed is gone."""
+    found, listed = _path_places(), {key: count for key, (_, count, _) in PATH_PLACES.items()}
+    unlisted = {key: count for key, count in found.items() if listed.get(key) != count}
+    gone = {key: count for key, count in listed.items() if key not in found}
+    assert not unlisted and not gone, f"name each with what it is: unlisted or moved {unlisted}; gone {gone}"
+    assert {kind for kind, _, _ in PATH_PLACES.values()} <= {THE_RULE, BY_RULE, FROM_RULE, MADE_WHOLE, RUN_FOLDER, BOUND,
+                                                              PRINTED, WORDS, NOT_IMPORT}
+    assert {key for key, (kind, _, _) in PATH_PLACES.items() if kind == BY_RULE} <= set(RULED)
+    assert {key for key, (kind, _, _) in PATH_PLACES.items() if kind == MADE_WHOLE} == set(MADE)
+
+
+def test_a_childs_import_path_made_whole_is_made_whole_in_the_parent_and_stands_on_its_own():
+    """For each child's import path built from a folder the parent made whole: the code that makes it whole, read from
+    each function ``MADE`` names; and the folder the cegis child is handed, as this server makes it, stands on its own."""
+    for _, made in MADE.items():
+        for rel, name, whole in made:
+            assert whole in ast.unparse(_functions(rel)[name]), (rel, name, whole)
+    assert improve._stands_alone(str(Path(g6.__file__).resolve().parents[1]))
+
+
+def test_a_childs_import_path_that_does_not_decide_by_the_rule_is_in_a_file_a_certificate_binds():
+    """The one child's import path left to a later window, ``promotion_custody``, is listed as bound: if no certificate
+    binds its file any longer, the rule applies to it and this fails."""
+    certificates = [path.read_text(encoding="utf-8") for path in SRC.rglob("certificate.json")
+                    if path.parent.name == "certificate"]
+    for (rel, _), (kind, _, _) in PATH_PLACES.items():
+        if kind == BOUND:
+            assert any(f'"g6/{rel}"' in text for text in certificates), f"no certificate binds {rel}: apply the rule"
