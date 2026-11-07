@@ -3,7 +3,8 @@
 Status: frozen by the owner on 2026-11-08, and 0.3.0 is all of it built. Sections 1 to 10 are version 2, approved on
 2026-11-06: version 1 (178ef54) was challenged by Codex, all 16 of its challenges were read against the code and adopted, and
 appendix A lists each. Sections 11 to 15 were added on 2026-11-07 and 2026-11-08 and approved with the freeze; section 16 is the owner's ruling
-that no data reaches a cloud model without consent, which every section meets. Codex's
+that no data reaches a cloud model without consent, which every section meets. Section 17, the owner's north star
+for the user interface (2026-11-08), is proposed and awaits the owner's approval of its scope. Codex's
 challenges of them are folded in as corrections within this scope (appendix B for section 11, C for 12 and 13, D for 14 and 15). Anything new goes to a list for
 after 0.3.0. Building follows section 7's order, with 12.9, 13.4, 14.4 and 15.8.
 
@@ -1373,6 +1374,84 @@ users do not want to share with non-local model; this must be implemented for tr
 It comes first in every slice that sends data to a model: before the Context Engine's tools are exposed (12.9, step 1), and
 before section 15's autoformaliser. The change to the existing K loop is its own change on the integration line, test first,
 with its own review loop.
+
+## 17. Proposed 2026-11-08, not approved: the north star for the user interface
+
+**Status.** Proposed by the owner on 2026-11-08 as a north star for the interface, separate from the technical design. The
+owner's specification (G6-UX-VALUE-001) is read here against the frozen design. It needs the owner's approval of 17.4's
+scope, and Codex's challenge is folded in as corrections.
+
+**The north star (owner).** G6 brings the most end-to-end value to the person by studying their real workflow, finding the
+binding constraint on the value they want, and suggesting and helping deliver its removal. Its worth is what it lets the
+person accomplish, with the least burden on them. A person who needs G6 less afterwards counts as success.
+
+### 17.1 What it means for every feature: the permanent gate
+
+Every slice brief and every 0.3.0 feature answers the owner's eight questions before it is built:
+1. which outcome it improves;
+2. which real workflow constraint it addresses;
+3. what evidence shows that constraint exists;
+4. why it is better than a simpler alternative;
+5. what effort, risk, delay, cost or uncertainty it removes;
+6. how its working is checked;
+7. how end-to-end value is measured;
+8. whether it adds a constraint of its own.
+
+A feature that cannot answer them is not prioritised for being impressive.
+
+### 17.2 The loop, mapped onto what exists
+
+The owner's loop is understand → observe → model → diagnose → recommend → implement → check → measure → learn, applied with
+the Theory of Constraints. Each stage maps onto existing code:
+
+| Stage | Existing piece | New |
+|---|---|---|
+| Understand | `g6_premortem` and `intent_engine`; A's question (3.2); the Context Engine (12) for authorised context | the outcome is stated before the task |
+| Observe and model | G6's own task records: review rounds, failure rows, repair loops, question records, timings | a lightweight per-task workflow record built from them, with observed and inferred steps kept apart |
+| Diagnose | G6's constraint machinery for its own loop (`identify_constraint`, `tick_rca`, the reflexive bottleneck step), pointed at the person's records | bottleneck hypotheses, each with its evidence, counterevidence, expected end-to-end effect and a cheap test; a hypothesis is never shown as fact |
+| Recommend | the report (`harness/patch_report.py`) and section 9's repair rule | at most three ranked suggestions, which may be a step outside G6 or "do nothing" |
+| Implement and check | section 9 (automatic when the fix is clear), the client's dialog, the issuer (3.1) | technical correctness and user value are assessed apart; "checked" never means the person's outcome improved |
+| Measure and learn | section 5's rows; B (3.6) | time to a checked outcome, rework cycles, the person's effort, and one optional question ("did this make your work easier?") outside A's budget, rate-limited |
+
+### 17.3 Fixed choices
+
+- **States and words.** G6's states stay `verified`, `qualified-draft` and `blocked-escalated`. The specification's other
+  spellings are not adopted. Public copy says "checked".
+- **The interface.** The GUI and TUI/CLI are frozen (owner, 2026-10-07), so in 0.3.0 the interface is the MCP replies and the
+  report the agent shows. The report leads with the outcome, the most likely constraint, and the next action. Its evidence,
+  inference and recommendation are kept visibly apart.
+- **Data.** Workflow records are the person's data: local by default, under section 16's consent rule, inspectable and
+  correctable by the person, and never used to infer a person's motives.
+- **G6's own friction is counted:** its questions, approvals, time and tool calls. If G6 itself becomes the constraint, it
+  simplifies within its safeguards.
+
+### 17.4 Scope (recommendation; the owner decides)
+
+**In 0.3.0:**
+- the 17.1 gate on every slice;
+- the report restructured around outcome, constraint and next action;
+- the per-task workflow record;
+- the diagnose step on the coding vertical, with hypotheses only;
+- at most three suggestions;
+- G6's own friction counters;
+- the optional feedback question;
+- the specification's acceptance tests AT-003, AT-004, AT-005, AT-007 and AT-008, on fixtures.
+
+**After 0.3.0:**
+- versioned workflow graphs from git, CI and task systems;
+- proactive suggestions;
+- a visual workflow explorer, which needs the GUI freeze lifted;
+- learned intervention selection;
+- other verticals.
+
+### 17.5 What is measured (rows for section 5)
+
+| Piece | What is measured | Bar | Cost |
+|---|---|---|---|
+| Diagnosis | On recorded coding tasks, how often the named constraint matches a blind reviewer's reading. A slow step that does not bind is not chosen (AT-003) | set before it runs | model calls |
+| Suggestions | Adoption, dismissal and repeats after a dismissal (AT-007) | set before it runs | people's time |
+| Value | Time to a checked outcome and rework cycles, before and after, reported as association unless controlled | reported as measured | runs |
+| Self-friction | G6's questions, approvals and time per checked outcome | reported | none |
 
 ## Appendix A: Codex's challenge of version 1, and what changed
 
