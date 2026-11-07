@@ -136,6 +136,7 @@ from g6.core.block_contract import BlockContract
 from g6.core.compose import Stage, compose
 from g6.core.door import blocked_reply
 from g6.core.errors import ISOLATION_UNAVAILABLE
+from g6.core.git_name import shown
 from g6.core.ledger import digest
 from g6.core.reliability_envelope import envelope_fields, warning_card
 from g6.core.result import Result
@@ -261,10 +262,10 @@ def _ignored_asks(scan: repo_tests.Ignored) -> list[str]:
     asks = []
     for files, ask in ((named, IGNORED_NAMED_ASK), (rest, IGNORED_OTHER_ASK)):
         if files:
-            shown = ", ".join(code(rel, 200) for rel in files[:IGNORED_SHOWN]) + (
+            listed = ", ".join(code(shown(rel), 200) for rel in files[:IGNORED_SHOWN]) + (
                 f" and {len(files) - IGNORED_SHOWN} more (git status --ignored lists them all)"
                 if len(files) > IGNORED_SHOWN else "")
-            asks.append(ask.format(files=shown))
+            asks.append(ask.format(files=listed))
     return asks
 
 
@@ -404,7 +405,7 @@ def _runner_changes(change: repo_tests.Change) -> list[str]:
                                                   if PurePosixPath(rel).name.lower() in RUNNER_FILES}):
         name = PurePosixPath(rel).name.lower()
         if name not in PYTEST_SECTIONS or rel in change.outside_links:   # a link outside is never read (review M1)
-            found.append(rel)
+            found.append(shown(rel))
             continue
         reader = "pytest.ini" if name == "tox.ini" else name   # tox.ini's [pytest] section reads as pytest.ini's does
         path = change.repo / rel
@@ -425,11 +426,12 @@ def _runner_changes(change: repo_tests.Change) -> list[str]:
             now = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else None
             old, new = settings(before), settings(now)
         except ValueError as exc:
-            found.append(f"{rel}: could not be read ({exc}), so its {PYTEST_SECTIONS[name]} settings may have changed")
+            found.append(f"{shown(rel)}: could not be read ({exc}), so its {PYTEST_SECTIONS[name]} settings may have "
+                         "changed")
             continue
         if old != new:
             how = "added" if old is None else "removed" if new is None else "changed"
-            found.append(f"{rel}: its {PYTEST_SECTIONS[name]} settings {how}")
+            found.append(f"{shown(rel)}: its {PYTEST_SECTIONS[name]} settings {how}")
     return found
 
 
@@ -628,7 +630,8 @@ _SEEN_KEYS = ("links_left_out", "links_materialised", "loaded_outside", "submodu
 
 
 def _record(tier: int, kind: str, ids: list[str], ran: dict, command: str = "", provenance: str = STATED) -> dict:
-    found = {"tier": tier, "check": kind, "command": command or "pytest " + " ".join(ids), "tests": list(ids),
+    found = {"tier": tier, "check": kind, "command": command or "pytest " + " ".join(shown(one) for one in ids),
+             "tests": list(ids),
              "verdict": ran.get("verdict"), "seconds": ran.get("seconds", 0.0), "passed": ran.get("passed", 0),
              "failed": ran.get("failed", 0), "skipped": ran.get("not_passed", 0), "said": ran.get("said", ""),
              "receipt": ran.get("receipt", ""), "provenance": provenance}
@@ -900,8 +903,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             unknowns.append(said)
             return True
         for rel, where in found.items():
-            reason("evidence", "changed_code_not_loaded", SHADOW_REASON.format(tier=tier, path=rel, **where))
-            unknowns.append(SHADOW_UNKNOWN.format(tier=tier, path=rel, **where))
+            reason("evidence", "changed_code_not_loaded", SHADOW_REASON.format(tier=tier, path=shown(rel), **where))
+            unknowns.append(SHADOW_UNKNOWN.format(tier=tier, path=shown(rel), **where))
         return bool(found)
 
     # Integrity, before anything runs: every changed test-related file through G6's weakening detector (review C2); a
@@ -919,14 +922,14 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     loadable = list(repo_tests.loadable_changes(change, roots).items())
     if loadable:
         reason("integrity", "changed_file_can_change_tests", "the patch adds or changes files that could change what "
-               "the tests load: " + "; ".join(f"{rel}: {why}" for rel, why in loadable[:10])
+               "the tests load: " + "; ".join(f"{shown(rel)}: {why}" for rel, why in loadable[:10])
                + (f"; and {len(loadable) - 10} more" if len(loadable) > 10 else ""))
     scan = repo_tests.ignored_inputs(root)   # review I2: outside git's view, so outside the digest
     if scan.loadable:
         hidden = scan.loadable
         reason("integrity", "ignored_file_can_change_tests", "git ignores files that could change the tests: "
-               + ", ".join(hidden[:10]) + (f" and {len(hidden) - 10} more" if len(hidden) > 10 else ""))
-    unknowns.extend(f"an ignored file G6 did not judge: {rel}" for rel in scan.other)
+               + ", ".join(shown(rel) for rel in hidden[:10]) + (f" and {len(hidden) - 10} more" if len(hidden) > 10 else ""))
+    unknowns.extend(f"an ignored file G6 did not judge: {shown(rel)}" for rel in scan.other)
     if not scan.complete:
         reason("evidence", "ignored_files_not_checked", "the scan for git-ignored files pytest could load stopped "
                f"at its limit of {repo_tests.IGNORED_SCAN_LIMIT} entries")
@@ -935,21 +938,21 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     # A submodule folder git does not look into: G6 hashes it into the digest, but nothing says what it held at the
     # base. A changed gitlink entry, or a folder G6 could not hash, leaves the evidence short; neither is an accusation.
     for rel in change.submodule_changes:
-        reason("evidence", "change_inside_submodule", SUBMODULE_CHANGED.format(path=rel))
-    unknowns.extend(SUBMODULE_UNKNOWN.format(path=rel) for rel in change.submodules)
+        reason("evidence", "change_inside_submodule", SUBMODULE_CHANGED.format(path=shown(rel)))
+    unknowns.extend(SUBMODULE_UNKNOWN.format(path=shown(rel)) for rel in change.submodules)
     for rel, why in repo_tests.submodules_not_hashed(before).items():
-        reason("evidence", "submodule_not_hashed", SUBMODULE_NOT_HASHED.format(path=rel, why=why))
+        reason("evidence", "submodule_not_hashed", SUBMODULE_NOT_HASHED.format(path=shown(rel), why=why))
     if change.unseen:   # review C2: a file git's index flags hide that is not on the disk is never "unchanged"
-        shown = ", ".join(change.unseen[:10]) + (f" and {len(change.unseen) - 10} more" if len(change.unseen) > 10
-                                                 else "")
-        reason("evidence", "file_not_in_working_tree", UNSEEN_REASON.format(paths=shown))
-        unknowns.extend(UNSEEN_UNKNOWN.format(path=rel) for rel in change.unseen[:10])
+        paths = ", ".join(shown(rel) for rel in change.unseen[:10]) + (
+            f" and {len(change.unseen) - 10} more" if len(change.unseen) > 10 else "")
+        reason("evidence", "file_not_in_working_tree", UNSEEN_REASON.format(paths=paths))
+        unknowns.extend(UNSEEN_UNKNOWN.format(path=shown(rel)) for rel in change.unseen[:10])
     data = _test_data(change)   # the launch review's I3: ask, don't accuse
     if data:
-        shown = ", ".join(data[:10]) + (f" and {len(data) - 10} more" if len(data) > 10 else "")
-        reason("evidence", "test_data_changed", TEST_DATA_REASON.format(paths=shown))
+        paths = ", ".join(shown(rel) for rel in data[:10]) + (f" and {len(data) - 10} more" if len(data) > 10 else "")
+        reason("evidence", "test_data_changed", TEST_DATA_REASON.format(paths=paths))
     asks = [*_ignored_asks(scan),
-            *(TEST_DATA_ASK.format(base=change.base_commit[:12], path=rel) for rel in data[:10])]
+            *(TEST_DATA_ASK.format(base=change.base_commit[:12], path=shown(rel)) for rel in data[:10])]
 
     # Tier 1: the stated checks and the extra tests, in one confined run.
     present = [i for i in ids if (root / i.partition("::")[0]).exists()]
@@ -1108,7 +1111,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             *(prepared.activities if prepared is not None else []), *(search.activities if search else []),
             *(adequacy[1] if adequacy is not None else []), *stopped]))
     for rel in change.outside_links:   # review M1: G6 never reads one in its own process
-        unknowns.append(f"{rel} is a link to a path outside the repository: G6 did not read it in its own process, "
+        unknowns.append(f"{shown(rel)} is a link to a path outside the repository: G6 did not read it in its own process, "
                         "and the copies leave it out")
     for found in (proposals.activities if proposals else []):   # a proposer that failed says so, with G6's reason
         if found.get("activity") == "proposer stage" and found.get("result") == "failed":
@@ -1120,7 +1123,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         reason("integrity", "repository_changed_during_review", "the working tree changed while G6 reviewed it")
     for rel, why in repo_tests.submodules_not_hashed(final).items():
         if rel not in repo_tests.submodules_not_hashed(before):
-            reason("evidence", "submodule_not_hashed", SUBMODULE_NOT_HASHED.format(path=rel, why=why))
+            reason("evidence", "submodule_not_hashed", SUBMODULE_NOT_HASHED.format(path=shown(rel), why=why))
     in_place = [(tier, ran) for tier, ran in ((1, first), (2, second)) if ran]
     for tier, ran in in_place:   # review I4: changed and changed back around a run, the snapshots above still match
         if ran.get("source_before") and ran["source_before"] != artifact:
@@ -1207,7 +1210,7 @@ def _loaded_elsewhere(change, ran) -> str:
     found = repo_tests.shadowed(change.sources, ran)
     if found is None:
         return "G6 cannot say which code it loaded"
-    return "; ".join(f"{rel} is changed, but it loaded {where['module']} from {where['file']}"
+    return "; ".join(f"{shown(rel)} is changed, but it loaded {where['module']} from {where['file']}"
                      for rel, where in found.items())
 
 
@@ -1285,43 +1288,44 @@ def _on_base(root, change, derived, second, deadline, runs, unknowns, reason, ro
         reason("evidence", NOT_COMPARED, text)
 
     full = _in_repository(second)
-    failing = sorted({full(rel) for rel in {node.partition("::")[0] for node in [*second.get("failed_ids", []),
-                                                                              *second.get("setup_errors", {})]}
-                      | _collection_errors(second.get("output") or "")} & set(derived))
+    named = ({full(rel) for rel in {node.partition("::")[0] for node in [*second.get("failed_ids", []),
+                                                                        *second.get("setup_errors", {})]}}
+             | _collection_errors(second.get("output") or ""))
+    failing = sorted(rel for rel in set(derived) if rel in named)   # the derived files themselves, as git named them
     if not failing:
         uncompared(f"the tests that touch the changed modules failed without a test G6 can name: "
                    f"{second.get('said') or 'read their output'}")
         return
     if _left(deadline) < 1:
         for rel in failing:
-            uncompared(f"{rel} fails on the patch; the time budget was spent before it ran at the base commit")
+            uncompared(f"{shown(rel)} fails on the patch; the time budget was spent before it ran at the base commit")
         return
     replays = _execute(root, failing, timeout_s=max(1, _left(deadline)), change=change, **_rooted(roots))
     for rel in failing:
         out = _confined(replays.get(rel) or {"verdict": "not_run", "said": "not replayed"})
-        runs.append(_record(2, "base-commit comparison", [rel], out, command=f"pytest {rel} at the base commit "
+        runs.append(_record(2, "base-commit comparison", [rel], out, command=f"pytest {shown(rel)} at the base commit "
                                                                               "and on the patch, in a copy",
                             provenance=DERIVED))
         elsewhere = _loaded_elsewhere(change, out)
         if elsewhere:   # review C1: a replay of code the patch did not change says nothing of the patch
-            uncompared(f"{rel} fails on the patch, and its replay in a copy is not read: {elsewhere}")
+            uncompared(f"{shown(rel)} fails on the patch, and its replay in a copy is not read: {elsewhere}")
         elif out.get("verdict") == repo_tests.FAILED:
-            reason("tier_2", "derived_test_regressed", f"{rel} passed at the base commit and fails on the patch: "
-                   + ", ".join(out.get("failed_ids", [])[:5]), node=rel, ran=out)
+            reason("tier_2", "derived_test_regressed", f"{shown(rel)} passed at the base commit and fails on the patch: "
+                   + ", ".join(out.get("failed_ids", [])[:5]), node=shown(rel), ran=out)
         elif out.get("baseline") == "passed" and out.get("patched") in (repo_tests.FAILED, "collection_error"):
-            reason("tier_2", "derived_test_regressed", f"{rel} collects and passes at the base commit, and fails to "
-                   f"collect or run on the patch ({out.get('said') or out.get('patched')})", node=rel, ran=out)
+            reason("tier_2", "derived_test_regressed", f"{shown(rel)} collects and passes at the base commit, and fails to "
+                   f"collect or run on the patch ({out.get('said') or out.get('patched')})", node=shown(rel), ran=out)
         elif out.get("verdict") == "passed":
-            uncompared(f"{rel} failed in place on the patch but passed when replayed in a copy")
+            uncompared(f"{shown(rel)} failed in place on the patch but passed when replayed in a copy")
         elif out.get("baseline") == "passed":
-            uncompared(f"{rel} fails on the patch, and its run there could not be compared with its passing run at "
+            uncompared(f"{shown(rel)} fails on the patch, and its run there could not be compared with its passing run at "
                        f"the base commit ({out.get('said') or out.get('patched')})")
         elif out.get("baseline"):
-            unknowns.append(f"{rel} fails on the patch and did not pass at the base commit either "
+            unknowns.append(f"{shown(rel)} fails on the patch and did not pass at the base commit either "
                             f"({out['baseline']}), so G6 does not count it as a defect of this patch"
                             + (f" ({out['said']})" if out.get("said") else ""))
         else:   # review I6: the base run never happened, so nothing says the file failed there
-            uncompared(f"{rel} fails on the patch and could not be run at the base commit, so G6 cannot say whether "
+            uncompared(f"{shown(rel)} fails on the patch and could not be run at the base commit, so G6 cannot say whether "
                        f"the patch broke it ({out.get('said') or out.get('verdict')})")
 
 

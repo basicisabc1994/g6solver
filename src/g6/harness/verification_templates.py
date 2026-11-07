@@ -82,6 +82,7 @@ from typing import Annotated, Any, Callable, Literal
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from g6.core import component_process
+from g6.core.git_name import shown
 from g6.harness import verification_search as vs
 from g6.workforce import repo_tests
 
@@ -555,20 +556,20 @@ class Tree:
         (review C2)."""
         key = (rel, side)
         if self._texts.get(key, "") is None:
-            raise ValueError(f"{rel} is not a file of at most {MAX_MODULE_BYTES} bytes at the base commit")
+            raise ValueError(f"{shown(rel)} is not a file of at most {MAX_MODULE_BYTES} bytes at the base commit")
         if key not in self._texts:
             if side == PATCH:
                 parts = Path(rel).parts
                 if any(repo_tests._linked(self.root.joinpath(*parts[:end])) for end in range(1, len(parts) + 1)):
-                    raise ValueError(f"{rel} is a link")
+                    raise ValueError(f"{shown(rel)} is a link")
                 path = self.root / rel
                 if not path.is_file() or path.stat().st_size > MAX_MODULE_BYTES:
-                    raise ValueError(f"{rel} is not a file of at most {MAX_MODULE_BYTES} bytes")
+                    raise ValueError(f"{shown(rel)} is not a file of at most {MAX_MODULE_BYTES} bytes")
                 text = path.read_text(encoding="utf-8", errors="replace")
             else:
                 text = repo_tests.read_at(self.root, self.change.base_commit, rel)
                 if text is None or len(text) > MAX_MODULE_BYTES:
-                    raise ValueError(f"{rel} is not a file of at most {MAX_MODULE_BYTES} bytes at the base commit")
+                    raise ValueError(f"{shown(rel)} is not a file of at most {MAX_MODULE_BYTES} bytes at the base commit")
             self._texts[key] = text
         return self._texts[key]
 
@@ -1879,10 +1880,11 @@ def _read_contracts(roots: list[str], raw: list[dict], options: dict) -> tuple[l
     return found, out
 
 
-def _package_files(tree: Tree, package: str, side: str) -> tuple[dict[str, str], str] | None:
+def _package_files(tree: Tree, package: str, side: str) -> tuple[dict[str, str], str, dict[str, str]] | None:
     """The package's Python files on ``side``, by path relative to the folder that holds it (as design_governance reads
     them), and that folder's prefix (an import root's, "" or "src/"); None when it has none there. The same rule on
-    both sides: a package that more than one of those folders holds is an ``Inapplicable``, never a silent choice."""
+    both sides: a package that more than one of those folders holds is an ``Inapplicable``, never a silent choice. Also
+    each file's name as git listed it, by that relative path, so what is said of a file names it by the one rule."""
     from g6.code.design_governance import graph
 
     stem = package.replace(".", "/")
@@ -1912,7 +1914,7 @@ def _package_files(tree: Tree, package: str, side: str) -> tuple[dict[str, str],
         size += len(text)
         if size > MAX_PACKAGE_CHARS:
             raise Inapplicable(f"{package} holds more than {MAX_PACKAGE_CHARS} characters {WHERE[side]}")
-    return files, folder
+    return files, folder, {rel[len(folder):]: rel for rel in names}
 
 
 def _matches(pattern: str, name: str) -> bool:
@@ -2110,8 +2112,8 @@ def structural(tree: Tree, one: TemplateInstance) -> dict:
                 files = _package_files(tree, contract.package, side)
                 tree.in_time()
                 graphs[contract.package, side] = (graph.build(files[0], contract.package, before_each=tree.in_time),
-                                                  files[1]) if files else (None, "")
-        (before, _), (after, folder) = graphs[contract.package, BASE], graphs[contract.package, PATCH]
+                                                  files[1], files[2]) if files else (None, "", {})
+        (before, _, _), (after, _, listed) = graphs[contract.package, BASE], graphs[contract.package, PATCH]
         if after is None or not after.modules:
             out.append(f"{contract.name}: the package {contract.package} has no module {WHERE[PATCH]}")
             continue
@@ -2128,9 +2130,9 @@ def structural(tree: Tree, one: TemplateInstance) -> dict:
             vacuous.append(f"{contract.name}: {why}")
         seen = {(item["rule"], item["from"], item["to"]) for item in old}
         for item in found:
-            located = {**item, "file": folder + item["file"], "contract": contract.name}
+            located = {**item, "file": listed[item["file"]], "contract": contract.name}   # the name git listed
             (already if (item["rule"], item["from"], item["to"]) in seen else new).append(located)
-        unparsed += [folder + entry["file"] for entry in after.unparsed]
+        unparsed += [listed[entry["file"]] for entry in after.unparsed]
         limits.append(f"{after.external} import(s) of modules outside the package {contract.package} "
                       f"{WHERE[PATCH]} were not checked")
     if not checked:
@@ -2152,15 +2154,15 @@ def structural(tree: Tree, one: TemplateInstance) -> dict:
     elif unparsed:
         verdict = "not_run"
         limits.append(f"{len(unparsed)} file(s) of the package do not parse {WHERE[PATCH]}, so their imports are "
-                      f"not seen: {', '.join(unparsed[:5])}")
+                      f"not seen: {', '.join(shown(unread) for unread in unparsed[:5])}")
     elif len(vacuous) == checked:   # no contract the patch could have broken: it does not exercise the change
         verdict = VACUOUS
     else:
         verdict = "passed" if normative else "not_refuted"
     if vacuous and verdict != VACUOUS:
         limits += [f"{item}; it does not exercise the change" for item in vacuous]
-    shown = "; ".join(f"{v['from']} imports {v['to']} ({v['file']}:{v['line']})" for v in violations[:5])
-    detail = (f"{one.id}: the patch adds {len(violations)} import(s) that {source} forbids: {shown}" if violations
+    imports = "; ".join(f"{v['from']} imports {v['to']} ({shown(v['file'])}:{v['line']})" for v in violations[:5])
+    detail = (f"{one.id}: the patch adds {len(violations)} import(s) that {source} forbids: {imports}" if violations
               else f"{one.id}: no import the patch adds breaks {source}")
     activity = {**_listing(one), "provenance": "structural", "contract_provenance": provenance,
                 "contract_source": source, "result": verdict if verdict != "not_run" else "not_established",

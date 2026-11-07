@@ -37,6 +37,7 @@ from g6.core.door import (
     is_allowed,
     said_state,
 )
+from g6.core.git_name import shown
 from g6.core.ledger import digest
 from g6.harness import verification_search
 from g6.harness.patch_review import DEFECT, INTEGRITY
@@ -166,7 +167,7 @@ def register(wf: Any, repo: str) -> str:
     root = repo_tests.checked_repo(repo)
     changed = _changed(repo_tests.change(root, "HEAD"))
     if changed:
-        raise repo_tests.RepoRefused("G6_E_GIT_REPO_DIRTY", DIRTY.format(files=", ".join(changed[:10])))
+        raise repo_tests.RepoRefused("G6_E_GIT_REPO_DIRTY", DIRTY.format(files=", ".join(shown(rel) for rel in changed[:10])))
     target = api.repository_dir(wf) / _name(root)
     target.mkdir(parents=True, exist_ok=True)
     with git_env.safe_git(root) as env:
@@ -282,7 +283,8 @@ def submit(mission_id: str, repo: str, *, claim: str = "", timeout_s: int = 300)
         # a link that leaves the repository is never read in G6's own process (``repo_tests.links_outside``)
         outside = [rel for rel in changed if rel not in allowed or rel in found.outside_links]
         if outside:
-            return blocked_reply(OUT_OF_SCOPE.format(files=", ".join(outside[:10]), allowed=", ".join(allowed)))
+            return blocked_reply(OUT_OF_SCOPE.format(files=", ".join(shown(rel) for rel in outside[:10]),
+                                                      allowed=", ".join(allowed)))
         if not changed:
             return blocked_reply(NO_CHANGE)
         files = {rel: (root / rel).read_bytes().decode("utf-8") for rel in changed}

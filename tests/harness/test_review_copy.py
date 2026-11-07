@@ -56,9 +56,11 @@ def blob_id(rel: str) -> str:
 
 def link_read(link: Path, target, real=os.readlink):
     """``os.readlink`` with the placeholder ``link`` read as a link naming ``target()``, for an account that cannot make one,
-    called as ``repo_tests._link_inside`` calls it: by its path, or by its name in the folder it holds (``dir_fd``)."""
+    called as ``repo_tests._link_inside`` calls it: by its path (on Windows the held folder's own, in the extended form the
+    system gives since review-maskfu3's finding 1, so compared in that form), or by its name in the folder it holds
+    (``dir_fd``)."""
     def readlink(path, *, dir_fd=None):
-        if Path(path) == link or (dir_fd is not None and path == link.name):
+        if repo_tests._extended(Path(path)) == repo_tests._extended(link) or (dir_fd is not None and path == link.name):
             return target()
         return real(path) if dir_fd is None else real(path, dir_fd=dir_fd)
     return readlink

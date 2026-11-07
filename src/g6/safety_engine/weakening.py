@@ -40,6 +40,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from g6.core.git_name import shown
 from g6.core.reliability_envelope import envelope_fields, warning_card
 
 DETECTED = "G6_E_TEST_WEAKENING_DETECTED"
@@ -174,7 +175,7 @@ def detect_test_weakening(before: Source, after: Source, *, tests: Collection[st
         if a == b:
             continue
         if kind == "runner":
-            reasons.append(f"{path}: test-runner or CI configuration {_how(a, b)}: it decides whether and how the "
+            reasons.append(f"{shown(path)}: test-runner or CI configuration {_how(a, b)}: it decides whether and how the "
                            "tests run")
         elif kind == "config":
             reasons += _config_reasons(path, a, b, unread)
@@ -182,7 +183,7 @@ def detect_test_weakening(before: Source, after: Source, *, tests: Collection[st
             reasons += _python_reasons(path, kind, a, b, imported, unread)
     not_checked = list(unread)
     if data:
-        listed = ", ".join(data[:5]) + (", ..." if len(data) > 5 else "")
+        listed = ", ".join(shown(rel) for rel in data[:5]) + (", ..." if len(data) > 5 else "")
         not_checked.append(f"{len(data)} non-Python file(s) under a test directory changed and were not compared "
                            f"(expected outputs, fixtures): {listed}")
     if others:
@@ -218,7 +219,10 @@ def read_snapshot(root: str | os.PathLike) -> dict[str, str]:
 # --- what a path is --------------------------------------------------------------------------------------------------
 
 def _normal(path: str) -> str:
-    return posixpath.normpath(path.replace("\\", "/"))
+    """``path`` with forward slashes, ``.`` and ``..`` folded; one already so as it is (a name git listed keeps its type,
+    ``g6.core.git_name.GitName``, and so is shown by its one rule)."""
+    normal = posixpath.normpath(path.replace("\\", "/"))
+    return path if normal == path else normal
 
 
 def _kind(path: str) -> str:
@@ -296,16 +300,16 @@ def _config_reasons(path: str, a: str | None, b: str | None, unread: list[str]) 
     try:
         settings_after = None if b is None else _pytest_settings(path, b)
     except ValueError as exc:
-        return [f"{path}: cannot be read after the change ({exc}); a static scan cannot tell what pytest would do"]
+        return [f"{shown(path)}: cannot be read after the change ({exc}); a static scan cannot tell what pytest would do"]
     try:
         settings_before = None if a is None else _pytest_settings(path, a)
     except ValueError:
-        unread.append(f"{path}: could not be read before the change, so its pytest settings were not compared")
+        unread.append(f"{shown(path)}: could not be read before the change, so its pytest settings were not compared")
         return []
     if settings_before == settings_after:
         return []
     how = "added" if settings_before is None else "removed" if settings_after is None else "changed"
-    return [f"{path}: pytest configuration {how}: it decides what pytest collects and how it runs"]
+    return [f"{shown(path)}: pytest configuration {how}: it decides what pytest collects and how it runs"]
 
 
 # --- Python files ----------------------------------------------------------------------------------------------------
@@ -316,33 +320,33 @@ def _python_reasons(path: str, kind: str, a: str | None, b: str | None, imported
     if kind == "startup":
         name = posixpath.basename(path)
         where = f"{posixpath.dirname(path)}/" if posixpath.dirname(path) else "the root"
-        head.append(f"{path}: {name} {_how(a, b)}: {_STARTUP[name.lower()].format(where=where)}")
+        head.append(f"{shown(path)}: {name} {_how(a, b)}: {_STARTUP[name.lower()].format(where=where)}")
     if b is None:
-        return head + ([f"{path}: test file deleted"] if kind == "test" else [])
+        return head + ([f"{shown(path)}: test file deleted"] if kind == "test" else [])
     try:
         new_tree = ast.parse(b)
     except SyntaxError as exc:
-        return head + [f"{path}: does not parse after the change (line {exc.lineno}: {exc.msg}); its tests cannot be "
+        return head + [f"{shown(path)}: does not parse after the change (line {exc.lineno}: {exc.msg}); its tests cannot be "
                        "collected or compared"]
     try:
         old_tree = ast.parse(a) if a is not None else ast.Module(body=[], type_ignores=[])
     except SyntaxError:
-        unread.append(f"{path}: did not parse before the change, so it was not compared")
+        unread.append(f"{shown(path)}: did not parse before the change, so it was not compared")
         return head
     if a is not None and ast.dump(old_tree) == ast.dump(new_tree):
         return []  # only comments or layout changed
     old, new = _facts(old_tree), _facts(new_tree)
     found = head
     if kind == "startup":
-        found += [f"{path}: adds or changes {name}, which {_HOOK_EFFECT.get(name, _effect_of(name))}"
+        found += [f"{shown(path)}: adds or changes {name}, which {_HOOK_EFFECT.get(name, _effect_of(name))}"
                   for name, src in new.hooks.items() if old.hooks.get(name) != src]
-    found += [f"{path}: module-level patch added ({_short(stmt)}): it runs when the file is imported, before the "
+    found += [f"{shown(path)}: module-level patch added ({_short(stmt)}): it runs when the file is imported, before the "
               "tests" for stmt in new.patches - old.patches]
     if a is None and kind == "test":
         # audit 007, SE-005: the archive never read a file that did not exist before the change.
         stem = posixpath.basename(path)[:-3]
         if stem != "__init__" and stem in imported:
-            found.append(f"{path}: new module named like {stem!r}, which the existing tests import: it can shadow "
+            found.append(f"{shown(path)}: new module named like {stem!r}, which the existing tests import: it can shadow "
                          "the module they test")
         return found  # a new test cannot weaken an old one; its own skips and mocks are its own
     return found + _test_reasons(path, old, new) + _marker_reasons(path, old, new)
@@ -515,23 +519,23 @@ _MARKER_NOTE = {**{n: "a skip or expected failure: the tests it reaches stop cou
 
 
 def _test_reasons(path: str, old: _Facts, new: _Facts) -> list[str]:
-    out = [f"{path}: test removed or renamed: {t}" for t in old.tests if t not in new.tests]
+    out = [f"{shown(path)}: test removed or renamed: {t}" for t in old.tests if t not in new.tests]
     if len(new.tests) < len(old.tests):
-        out.append(f"{path}: fewer tests: {len(old.tests)} -> {len(new.tests)}")
+        out.append(f"{shown(path)}: fewer tests: {len(old.tests)} -> {len(new.tests)}")
     for scope, before in old.checks.items():
         if scope in old.tests and scope not in new.tests:
             continue  # reported above
         after = new.checks.get(scope)
         if after is None:
             if before:
-                out.append(f"{path}: {scope} removed, and its {sum(before.values())} check(s) with it")
+                out.append(f"{shown(path)}: {scope} removed, and its {sum(before.values())} check(s) with it")
             continue
         lost = before - after
         if lost:
             more = sum(lost.values()) - 1
-            out.append(f"{path}: {scope}: a check was removed, changed or can no longer fail: {_short(next(iter(lost)))}"
+            out.append(f"{shown(path)}: {scope}: a check was removed, changed or can no longer fail: {_short(next(iter(lost)))}"
                        + (f" (and {more} more)" if more else ""))
-    out += [f"{path}: {t}: early return added" for t, n in old.tests.items() if t in new.tests and new.tests[t] > n]
+    out += [f"{shown(path)}: {t}: early return added" for t, n in old.tests.items() if t in new.tests and new.tests[t] > n]
     return out
 
 
@@ -540,7 +544,7 @@ def _marker_reasons(path: str, old: _Facts, new: _Facts) -> list[str]:
     for test, markers in new.test_markers.items():
         if test not in old.tests:
             now -= markers  # a new test's own skip or mock weakens no test that existed
-    return [f"{path}: adds {name} ({_MARKER_NOTE[name]})" for name in sorted(now) if now[name] > old.markers[name]]
+    return [f"{shown(path)}: adds {name} ({_MARKER_NOTE[name]})" for name in sorted(now) if now[name] > old.markers[name]]
 
 
 def _imported(files: Mapping[str, str], named: frozenset[str] = frozenset()) -> frozenset[str]:

@@ -175,7 +175,9 @@ def _diff_as_it_was(change) -> str:
     new = set(repo_tests._paths(others)) | repo_tests._tracked_new(change.repo, change.base_commit)
     for rel in sorted(new & set(change.files) - set(change.outside_links)):
         lines = (change.repo / rel).read_text(encoding="utf-8", errors="replace")[:repo_tests.DIFF_FILE_CHARS].splitlines()
-        text += f"--- /dev/null\n+++ b/{rel}\n@@ -0,0 +1,{len(lines)} @@\n" + "".join(f"+{line}\n" for line in lines)
+        # a name git listed is put into text by its one rule (repair 3: the type raises where it is formatted as it is)
+        text += (f"--- /dev/null\n+++ {repo_tests.shown_name(rel, 'b/')}\n@@ -0,0 +1,{len(lines)} @@\n"
+                 + "".join(f"+{line}\n" for line in lines))
     return text
 
 

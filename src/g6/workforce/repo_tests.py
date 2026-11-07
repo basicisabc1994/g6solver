@@ -82,6 +82,8 @@ from xml.etree import ElementTree
 
 from g6.core import component_process, confine, git_env, ledger
 from g6.core.errors import ISOLATION_UNAVAILABLE
+# A path git names is a ``GitName``, put into text only by ``shown_name`` (re-exported here, where it always was)
+from g6.core.git_name import _ESCAPED, _UNESCAPED, GitName, GitNameAsText, _octal, shown, shown_name, unquoted_name  # noqa: F401
 from g6.core.outside import find_program
 from g6.workforce import receipt_store, verify
 
@@ -231,16 +233,44 @@ _GIT = (_GIT_PROGRAM, "--no-optional-locks", "--literal-pathspecs", "--no-replac
         "-c", "core.sparseCheckout=false")
 
 
-def _git(repo: Path, *args: str, ok: tuple[int, ...] = (0,), timeout_s: float = GIT_TIMEOUT_S,
+def _carried(value: bytes) -> bool:
+    """Whether a command line carries ``value`` to git here byte for byte: anywhere a system passes bytes; on Windows, which
+    passes UTF-16, only UTF-8 (git for Windows reads a lone surrogate on its command line as U+FFFD, so a name's WTF-8
+    bytes, and bytes that are not UTF-8, would ask it of another name)."""
+    if os.name != "nt":
+        return True
+    try:
+        value.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+def _argument(value: str | bytes) -> str | bytes:
+    """One argument for git: text as it is; bytes (a name's, ``GitName.raw``, given by an explicit call) as they are where
+    the system passes bytes, and on Windows as the UTF-8 they are, or a refusal where no command line can carry them to git
+    there (``_carried``): git would be asked of another name."""
+    if not isinstance(value, bytes) or os.name != "nt":
+        return value
+    if not _carried(value):
+        named = shown_name(value.decode("utf-8", "surrogateescape"))
+        raise RepoRefused("G6_E_GIT_COMMAND_FAILED", f"git here cannot be given the name {named} on its command line, so "
+                                                     "G6 did not ask it about that file"[:200])
+    return value.decode("utf-8")
+
+
+def _git(repo: Path, *args: str | bytes, ok: tuple[int, ...] = (0,), timeout_s: float = GIT_TIMEOUT_S,
          index: Path | None = None) -> bytes:
     """One read-only git command in ``repo`` (``_GIT``'s options first), in ``git_env.safe_git_env``'s clean
     environment (none of git's own redirections such as GIT_DIR, no transport, no lazy fetch) with every config key
     that would start a program switched off, the drivers any config defines included (one ``git_env.DRIVER_QUERY``
     first, in the same window), and a ``status`` or ``diff`` never entering a submodule (``git_env.safe_git_args``):
     the repository's .git/config may be the agent's (conformance K1, review B2-C1 and B2-C2). ``index``: a private
-    index file G6 made (``_private``) in place of the repository's own."""
+    index file G6 made (``_private``) in place of the repository's own. A name is given as its bytes (``GitName.raw``,
+    ``_argument``), never as text."""
     if find_program("git") is None:
         raise RepoRefused("G6_E_GIT_MISSING_BINARY", SAID["no_git"])
+    args = tuple(_argument(arg) for arg in args)
     try:
         with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors, \
                 tempfile.TemporaryDirectory(prefix="g6-git-") as scratch:
@@ -301,8 +331,8 @@ def _tracked_new(repo: Path, commit: str, spec: list[str] | tuple[str, ...] = ()
     entry written into the index can add a file to the change, never take one out; one naming a path git never stages
     refuses the change (``_index_path``)."""
     linked: dict[Path, bool] = {}
-    staged = {_index_path(repo, entry.partition("\t")[2], linked)
-              for entry in _paths(_git(repo, "ls-files", "--stage", "-z", *spec)) if not entry.startswith("160000 ")}
+    staged = {_index_path(repo, rel, linked)
+              for meta, rel in _entries(_git(repo, "ls-files", "--stage", "-z", *spec)) if not meta.startswith("160000 ")}
     base = set(_paths(_git(repo, "ls-tree", "-r", "-z", "--name-only", commit, *spec))) if commit else set()
     present = set()
     for rel in staged - base:       # looked for where git looks (``_on_disk``); one G6 cannot look for so is kept, to refuse
@@ -324,12 +354,11 @@ def _gitlinks(repo: Path, index: bytes | None = None) -> tuple[str, ...]:
     if not records:
         return ()
     linked: dict[Path, bool] = {}
-    paths = {record: _index_path(repo, record.partition(b"\t")[2].decode("utf-8", "surrogateescape"), linked)
-             for record in records}
+    paths = {record: _index_path(repo, GitName(record.partition(b"\t")[2]), linked) for record in records}
     folders = _git(repo, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir").decode(
         "utf-8", "surrogateescape").splitlines()
     modules = any(_holds_anything(Path(folder) / "modules") for folder in folders if folder)
-    set_up = [record for record, rel in paths.items() if modules or os.path.lexists(repo / rel / ".git")]
+    set_up = [record for record, rel in paths.items() if modules or os.path.lexists(repo / _on_disk(rel)[0] / ".git")]
     if set_up:
         try:
             git_env.refuse_gitlinks(b"\0".join(set_up))
@@ -349,15 +378,33 @@ def _holds_anything(folder: Path) -> bool:
 def _gitlink_entries(listing: bytes, field: int) -> dict[str, str]:
     """Each gitlink of a ``ls-files --stage`` (``field`` 1) or ``ls-tree`` (``field`` 2) listing: path to commit."""
     found = {}
-    for record in _paths(listing):
-        meta, _, rel = record.partition("\t")
+    for meta, rel in _entries(listing):
         if meta.startswith("160000 "):
             found[rel] = meta.split()[field]
     return found
 
 
-def _paths(raw: bytes) -> list[str]:
-    return [path for path in raw.decode("utf-8", "surrogateescape").split("\0") if path]
+def _paths(raw: bytes) -> list[GitName]:
+    """The paths of a git listing that names paths alone (``-z``: each ended by a NUL), each a ``GitName`` of git's own
+    bytes: the listing's reader, where the type is made."""
+    return [GitName(path) for path in raw.split(b"\0") if path]
+
+
+def _entries(raw: bytes) -> list[tuple[str, GitName]]:
+    """The records of a git listing whose path follows git's own fields and a tab (``ls-files --stage``, ``ls-tree``), each
+    those fields as text and the path, a ``GitName`` of git's own bytes: the path is never read out of text."""
+    found = []
+    for record in raw.split(b"\0"):
+        if record:
+            meta, _, path = record.partition(b"\t")
+            found.append((meta.decode("utf-8", "surrogateescape"), GitName(path)))
+    return found
+
+
+def _tagged(raw: bytes) -> list[tuple[str, GitName]]:
+    """The records of ``ls-files -v -z``: each its one-letter tag and the path after the tag and a space, a ``GitName`` of
+    git's own bytes, read at those places as the listing has always been read."""
+    return [(record[:1].decode("utf-8", "surrogateescape"), GitName(record[2:])) for record in raw.split(b"\0") if record]
 
 
 def _text(raw: bytes) -> str:
@@ -376,11 +423,11 @@ def shape_problem(value: object, what: str) -> str:
     with no control character anywhere (after ``::`` too), not empty, not shaped like an option, a pytest argument file
     (``@name``) or a git pathspec, not absolute, never above the folder it starts in."""
     if not isinstance(value, str) or _control(value):
-        return SAID["outside"].format(what=what, value=value)
+        return SAID["outside"].format(what=what, value=shown(value) if isinstance(value, str) else value)
     head = value.partition("::")[0].replace("\\", "/")
     if (not head.strip() or value.startswith(("-", ":", "@")) or head.startswith("/") or re.match(r"[A-Za-z]:", head)
             or ".." in PurePosixPath(head).parts):
-        return SAID["outside"].format(what=what, value=value)
+        return SAID["outside"].format(what=what, value=shown(value))
     return ""
 
 
@@ -405,14 +452,15 @@ def _index_path(repo: Path, rel: str, linked: dict[Path, bool] | None = None) ->
     windows = {part.partition(":")[0].rstrip(". ") for part in lower}
     if (not rel or _control(rel) or re.match(r"[A-Za-z]:", rel) or lower & _UNSTAGED_PARTS
             or windows & _NTFS_GIT):
-        raise RepoRefused("G6_E_GIT_REPO_INVALID", SAID["index_entry"].format(value=rel))
+        raise RepoRefused("G6_E_GIT_REPO_INVALID", SAID["index_entry"].format(value=shown_name(rel)))
     linked = {} if linked is None else linked
+    disk = _on_disk(rel)[0].replace("\\", "/").split("/")    # each folder looked at where git looks (``_on_disk``)
     for end in range(1, len(parts)):   # git never stages a path beyond a link
-        folder = repo.joinpath(*parts[:end])
+        folder = repo.joinpath(*disk[:end])
         if folder not in linked:
             linked[folder] = _linked(folder)
         if linked[folder]:
-            raise RepoRefused("G6_E_GIT_REPO_INVALID", SAID["index_entry"].format(value=rel))
+            raise RepoRefused("G6_E_GIT_REPO_INVALID", SAID["index_entry"].format(value=shown_name(rel)))
     return rel
 
 
@@ -446,7 +494,7 @@ def inside(repo: Path, value: str, what: str) -> str:
     head, sep, rest = value.partition("::")
     head = head.replace("\\", "/")
     if isinstance(verify.contained(repo, head), str):
-        raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["outside"].format(what=what, value=value))
+        raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["outside"].format(what=what, value=shown(value)))
     return head + sep + rest
 
 
@@ -594,14 +642,15 @@ def change(repo: Path, base: str = "HEAD", paths: tuple[str, ...] = (), *,
     files = tuple(sorted((set(_paths(diffed)) | set(_paths(others)) | _tracked_new(repo, commit, spec) | set(held))
                          - set(unseen)))
     tests = [rel for rel in files if is_test_file(rel)]
-    existed = set(_paths(_git(repo, "ls-tree", "-r", "-z", "--name-only", commit, "--", *tests))) if tests else set()
-    before = {rel: _text(_git(repo, "show", f"{commit}:{rel}")) for rel in sorted(existed)}
+    before = _texts_listed(repo, commit, tests)
     reader = read_file or (lambda path: path.read_text(encoding="utf-8", errors="replace"))
     outside = tuple(rel for rel in files if links_outside(repo, rel))
-    after = {rel: reader(repo / rel) for rel in tests   # a caller's own ``read_file`` judges a link itself
-             if (read_file is not None or rel not in outside) and (repo / rel).is_file()}
+    disk = {rel: _disk(repo, rel) for rel in files}    # each read where git looks (``_on_disk``), or never
+    after = {rel: reader(disk[rel]) for rel in tests   # a caller's own ``read_file`` judges a link itself
+             if (read_file is not None or rel not in outside) and disk[rel] is not None and disk[rel].is_file()}
     sources = tuple(rel for rel in files if rel.endswith(".py") and not is_test_file(rel)
-                    and PurePosixPath(rel).name != "conftest.py" and rel not in outside and (repo / rel).is_file())
+                    and PurePosixPath(rel).name != "conftest.py" and rel not in outside and disk[rel] is not None
+                    and disk[rel].is_file())
     runner = tuple(rel for rel in files if PurePosixPath(rel).name.lower() in RUNNER_FILES or rel.endswith(".pth"))
     gone, new = [rel for rel in before if rel not in after], [rel for rel in after if rel not in before]
     moved = _moves(repo, commit, gone, new, before, after) if gone and new else {}
@@ -622,12 +671,14 @@ def change(repo: Path, base: str = "HEAD", paths: tuple[str, ...] = (), *,
 def links_outside(repo: Path, rel: str) -> bool:
     """Whether ``rel``, or a folder on its way, is a link or junction and the path resolves outside ``repo`` (or
     cannot be resolved): the rule copies follow (a link is kept only when it resolves inside), so G6 never reads such
-    a file in its own process either (review M1)."""
-    parts = PurePosixPath(rel).parts
+    a file in its own process either (review M1). Each folder is looked at where git looks (``_on_disk``), and inside is
+    ``_within``'s, the one containment rule (repair 3, item 3)."""
+    on_disk = _on_disk(rel)[0]
+    parts = PurePosixPath(on_disk).parts
     if not any(_linked(repo.joinpath(*parts[:end])) for end in range(1, len(parts) + 1)):
         return False
     try:
-        return not (repo / rel).resolve().is_relative_to(repo.resolve())
+        return not _within(repo.resolve(), (repo / on_disk).resolve())
     except (OSError, RuntimeError):
         return True
 
@@ -638,17 +689,17 @@ def _held(repo: Path, commit: str, spec: list[str], gitlinks: set[str]) -> tuple
     that differ, or that ``commit`` does not hold, or that are a link; and, apart, those not in the working tree (a
     sparse checkout), which cannot be compared. Change detection never depends on git's index flags."""
     linked: dict[Path, bool] = {}
-    marked = [_index_path(repo, entry[2:], linked) for entry in _paths(_git(repo, "ls-files", "-v", "-z", *spec))
-              if (entry[:1].islower() or entry[:1] == "S") and entry[2:] not in gitlinks]
+    marked = [_index_path(repo, rel, linked) for tag, rel in _tagged(_git(repo, "ls-files", "-v", "-z", *spec))
+              if (tag[:1].islower() or tag[:1] == "S") and rel not in gitlinks]
     if not marked:
         return set(), ()
-    unseen = tuple(sorted(rel for rel in marked if not os.path.lexists(repo / rel)))
+    unseen = tuple(sorted(rel for rel in marked if not os.path.lexists(repo / _on_disk(rel)[0])))
     present = [rel for rel in marked if rel not in unseen]
     then = texts_at(repo, commit, present, limit=None)
     changed = set()
-    for rel in present:   # a link is changed, and never read (review M1)
-        path = repo / rel
-        if (then.get(rel) is None or links_outside(repo, rel) or _linked(path) or not path.is_file()
+    for rel in present:   # a link is changed, and never read (review M1); one G6 cannot open by its name is changed
+        path = _disk(repo, rel)
+        if (then.get(rel) is None or path is None or links_outside(repo, rel) or _linked(path) or not path.is_file()
                 or _text(path.read_bytes()) != then[rel]):
             changed.add(rel)
     return changed, unseen
@@ -659,7 +710,8 @@ def _moves(repo: Path, commit: str, gone: list[str], new: list[str], before: dic
     """Test files moved since the base, old path to new: as git pairs them (``-M``: a move git can see, such as
     ``git mv``, with the text unchanged or mostly so), then a test file deleted whose text, unchanged, is now at a new
     untracked path (a move on the disk alone, which git's diff cannot see)."""
-    tokens = _paths(_git(repo, "diff", "-M", "--name-status", "-z", "--no-textconv", commit, "--", *gone, *new))
+    named = [_raw(rel) for rel in (*gone, *new) if _carried(_raw(rel))]   # one git cannot be given pairs by its text below
+    tokens = _paths(_git(repo, "diff", "-M", "--name-status", "-z", "--no-textconv", commit, "--", *named)) if named else []
     found: dict[str, str] = {}
     index = 0
     while index < len(tokens):
@@ -687,10 +739,10 @@ def related_texts(change: Change, related: Iterable[str] | None = None) -> tuple
     related = [rel for rel in change.files if (is_test_related(rel) if wanted is None else rel in wanted)]
     if not related:
         return {}, {}
-    existed = set(_paths(_git(change.repo, "ls-tree", "-r", "-z", "--name-only", change.base_commit, "--", *related)))
-    before = {rel: _text(_git(change.repo, "show", f"{change.base_commit}:{rel}")) for rel in sorted(existed)}
-    after = {rel: (change.repo / rel).read_text(encoding="utf-8", errors="replace") for rel in related
-             if rel not in change.outside_links and (change.repo / rel).is_file()}
+    before = _texts_listed(change.repo, change.base_commit, related)
+    disk = {rel: _disk(change.repo, rel) for rel in related}   # each read where git looks (``_on_disk``), or never
+    after = {rel: disk[rel].read_text(encoding="utf-8", errors="replace") for rel in related
+             if rel not in change.outside_links and disk[rel] is not None and disk[rel].is_file()}
     gone, new = [rel for rel in before if rel not in after], [rel for rel in after if rel not in before]
     moved = _moves(change.repo, change.base_commit, gone, new, before, after) if gone and new else {}
     return {moved.get(rel, rel): text for rel, text in before.items()}, after
@@ -706,10 +758,11 @@ def changed_lines(change: Change, rel: str) -> set[int]:
     if rel not in change.sources:
         return set()
     [diffed] = _private(change.repo, change.base_commit,   # never the repository's index (the review of VS-4)
-                        ("diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--", rel))
+                        ("diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--", _raw(rel)))
     text = diffed.decode("utf-8", "replace")
     if not text.strip():  # untracked: new since the base
-        return set(range(1, len((change.repo / rel).read_text(encoding="utf-8", errors="replace").splitlines()) + 1))
+        path = _disk(change.repo, rel)     # a source is one G6 could open by its name (``change``)
+        return set(range(1, len(path.read_text(encoding="utf-8", errors="replace").splitlines()) + 1)) if path else set()
     found: set[int] = set()
     for start, count in _HUNK.findall(text):
         found.update(range(int(start), int(start) + (int(count) if count != "" else 1)))
@@ -725,7 +778,7 @@ def derive_tests(change: Change, limit: int = MAX_DERIVED, *,
              + _paths(_git(change.repo, "ls-files", "--others", "--exclude-standard", "-z")))
     options = {"read_file": read_file} if read_file is not None else {}
     found = [rel for rel in verify.run_set(change.repo, list(change.files), candidates=known, **options)
-             if (change.repo / rel).is_file()]
+             if (path := _disk(change.repo, rel)) is not None and path.is_file()]
     ordered = [rel for rel in found if rel in change.files] + [rel for rel in found if rel not in change.files]
     return ordered[:limit], max(0, len(ordered) - limit)
 
@@ -837,65 +890,6 @@ def now_line(one: FileRead, name: str) -> str:
     return _link_line(name, one.digest) if one.added and one.modes[1] == LINK_MODE else _part_line(name, one.digest)
 
 
-#: How git's C-style quoting (``quote_c_style``) writes each character it names; ``_octal`` writes the others it escapes.
-_ESCAPED = {"\a": "\\a", "\b": "\\b", "\t": "\\t", "\n": "\\n", "\v": "\\v", "\f": "\\f", "\r": "\\r", '"': '\\"', "\\": "\\\\"}
-
-
-def _octal(ch: str) -> str:
-    """``ch`` written as an octal escape for each of its bytes, where git's quoting writes it so, or a line break would cut a
-    name: a control character (C0, DEL or C1), U+2028 or U+2029 (``str.splitlines`` ends a line at each), and a byte that is
-    not UTF-8 (a lone surrogate as ``_listing`` and ``_paths`` read it); else ``ch`` itself."""
-    code = ord(ch)
-    if not (code < 0x20 or 0x7F <= code <= 0x9F or code in (0x2028, 0x2029) or 0xD800 <= code <= 0xDFFF):
-        return ch
-    raw = ch.encode("utf-8", "surrogateescape" if 0xDC80 <= code <= 0xDCFF else "surrogatepass")
-    return "".join(f"\\{byte:03o}" for byte in raw)
-
-
-def shown_name(rel: str, prefix: str = "") -> str:
-    """A path git gave, as text: the one rule by which a name is put into what the patch is known by and into what a reader
-    is shown. It is git's C-style quoting (``core.quotePath``'s, with UTF-8 kept as it is): a name holding a quote, a
-    backslash, a control character, a line break or a byte that is not UTF-8 is written in double quotes, each of those
-    escaped as git escapes it (``\\n``, ``\\"``, ``\\\\``, an octal escape for each byte of the others: ``_octal``); any
-    other name as it is. ``prefix`` (``a/``, ``b/``) goes inside the quotes, as in git's own patch. So a name is always one
-    line, two names with different bytes are always different text, and no name can make a header, a hunk or a G6 line."""
-    path = prefix + rel
-    shown = "".join(_ESCAPED.get(ch) or _octal(ch) for ch in path)
-    return path if shown == path else f'"{shown}"'
-
-
-#: Each character ``shown_name`` writes as a letter's escape, by that letter.
-_UNESCAPED = {escaped[1]: ch for ch, escaped in _ESCAPED.items()}
-
-
-def unquoted_name(shown: str) -> str:
-    """A name as ``shown_name`` writes it, read back: the one reader of the one quoting rule, its exact inverse, so that
-    ``unquoted_name(shown_name(rel, prefix)) == prefix + rel`` for every name a listing gives (repair 1's open item B). A
-    bare name is itself; a quoted one has each escape read back (a letter to its character, an octal escape to its byte),
-    and its bytes are then read as a listing's are (UTF-8, each byte that is not a lone surrogate). Text the rule never
-    writes, such as an escape it has no use for, a quote or a control character left bare, or a quote left open, raises
-    ``ValueError``: what it would name is not known."""
-    name = shown
-    if len(shown) >= 2 and shown[0] == shown[-1] == '"':
-        body, out, at = shown[1:-1], bytearray(), 0
-        while at < len(body):
-            if body[at] != "\\":
-                out += body[at].encode("utf-8")       # a lone surrogate here raises (UnicodeEncodeError is a ValueError)
-                at += 1
-            elif body[at + 1:at + 2] in _UNESCAPED:
-                out += _UNESCAPED[body[at + 1]].encode("utf-8")
-                at += 2
-            elif re.fullmatch("[0-3][0-7]{2}", body[at + 1:at + 4]):
-                out.append(int(body[at + 1:at + 4], 8))
-                at += 4
-            else:
-                raise ValueError(f"an escape the name rule never writes: {body[at:at + 4]!r}")
-        name = bytes(out).decode("utf-8", "surrogateescape")
-    if shown_name(name) != shown:
-        raise ValueError(f"text the name rule never writes: {shown[:80]!r}")
-    return name
-
-
 def name_line(rel: str) -> str:
     """The line naming the bytes of a name ``shown_name`` quotes, else ``""``. No text G6 writes holds it any more, as the
     quoting itself names each byte; it is kept for callers of this module outside those texts."""
@@ -937,7 +931,7 @@ def _listing(output: bytes, length: int = 40) -> tuple[list[tuple[str, str, str,
             if len(fields) != 5:
                 raise ValueError(f"a record of {len(fields)} fields")
             old, now, before, _, status = fields
-            path = output[meta + 1:end].decode("utf-8", "surrogateescape")
+            path = GitName(output[meta + 1:end])    # the name, of git's own bytes: never read out of text
             if old not in _RAW_MODES or now not in _RAW_MODES:
                 raise ValueError(f"a mode git does not write ({old} {now})")
             if not all(hexes.fullmatch(name) for name in fields[2:4]):
@@ -1025,7 +1019,7 @@ def _left_none_out(diffed: bytes, unseen: bytes, length: int) -> None:
         found = re.fullmatch(rb"([HR]) ([0-7]{6}) [0-9a-f]+ [0-3]\t(.+)", record, re.S)
         if found is None:
             raise RepoRefused("G6_E_GIT_COMMAND_FAILED", "git ls-files gave a listing G6 cannot read")
-        rel = found[3].decode("utf-8", "surrogateescape")
+        rel = GitName(found[3])
         if found[1] == b"R" and found[2] != b"160000" and rel not in listed:
             left.append(rel)
     if left:
@@ -1043,7 +1037,10 @@ def blob_bytes(repo: Path, name: str, *, timeout_s: float = GIT_TIMEOUT_S) -> by
 
 
 def _where(fd: int) -> Path:
-    """Where the file G6 holds open as ``fd`` is, as the operating system says of the open file itself, not of a path."""
+    """Where the file G6 holds open as ``fd`` is, as the operating system says of the open file itself, not of a path. On
+    Windows that is its final path exactly as the system gives it, in the extended form (``\\\\?\\``), which Win32 reads
+    literally: a lookup made by it is never normalised (a trailing dot or space dropped, a device name read as the device), so
+    it names the folder held and no other (review-maskfu3, finding 1)."""
     if os.name == "nt":
         import ctypes
         import msvcrt
@@ -1052,8 +1049,7 @@ def _where(fd: int) -> Path:
         size = ctypes.windll.kernel32.GetFinalPathNameByHandleW(ctypes.c_void_p(msvcrt.get_osfhandle(fd)), buffer, 32768, 0)
         if not 0 < size < 32768:
             raise OSError("the system could not say where an open file is")
-        name = buffer.value
-        return Path("\\\\" + name[8:] if name.startswith("\\\\?\\UNC\\") else name[4:] if name.startswith("\\\\?\\") else name)
+        return Path(buffer.value)
     if os.path.isdir("/proc/self/fd"):
         return Path(os.readlink(f"/proc/self/fd/{fd}"))
     import fcntl
@@ -1061,12 +1057,29 @@ def _where(fd: int) -> Path:
     return Path(fcntl.fcntl(fd, 50, b"\0" * 1024).split(b"\0", 1)[0].decode("utf-8", "surrogateescape"))  # F_GETPATH
 
 
+_LONG, _LONG_UNC = "\\\\?\\", "\\\\?\\UNC\\"   # the prefixes of the extended form
+
+
+def _extended(path: Path) -> Path:
+    """``path``, a full path, in the form ``_where`` gives one: on Windows the extended form, ``\\\\?\\`` before a drive and
+    ``\\\\?\\UNC\\`` before a share (as it stands where it has it already); elsewhere ``path`` itself. The characters of each
+    part are kept as they are, so a path and its extended form name the same parts."""
+    if os.name != "nt":
+        return path
+    text = str(path)
+    if text.startswith(_LONG):
+        return path
+    return Path(_LONG_UNC + text[2:] if text.startswith("\\\\") else _LONG + text)
+
+
 def _within(root: Path, where: Path) -> bool:
     """Whether ``where``, a path the system gave for what G6 looked at or holds, lies in ``root``, the repository's top as the
-    system gives it: part by part, each as the system writes it, with no case folded. The system writes a folder's name as
-    it is stored, so one folder is always one text and two folders two, under a folder whose names may differ by case alone
-    (a case-sensitive NTFS folder) as under any other. ``PurePath.is_relative_to`` folds case on Windows, which let a sibling
-    ``Repo`` pass as inside ``repo`` (review-maskfu2, finding 4)."""
+    system gives it: both in the one form a held file's final path has (``_extended``), part by part, each as the system
+    writes it, with no case folded. The system writes a folder's name as it is stored, so one folder is always one text and
+    two folders two, under a folder whose names may differ by case alone (a case-sensitive NTFS folder) as under any other.
+    ``PurePath.is_relative_to`` folds case on Windows, which let a sibling ``Repo`` pass as inside ``repo`` (review-maskfu2,
+    finding 4)."""
+    root, where = _extended(root), _extended(where)
     return where.parts[:len(root.parts)] == root.parts
 
 
@@ -1077,13 +1090,54 @@ def _on_disk(rel: str) -> tuple[str, bool]:
     those bytes read back that way are the file's name. Bytes that do not read back so name, for git there, another file
     (its own fallback for them, which G6 does not copy): G6 may look at the folders on the way (``exact`` False, ``rel`` as
     given) but never opens such a file. Elsewhere a name is its bytes, as the system takes them (``os.fsdecode``)."""
-    raw = rel.encode("utf-8", "surrogateescape")
+    raw = _raw(rel)
     if os.name != "nt":
         return os.fsdecode(raw), True
     try:
         return raw.decode("utf-8", "surrogatepass"), True
     except UnicodeDecodeError:
-        return rel, False
+        return str.__str__(rel), False
+
+
+def _disk(repo: Path, rel: str) -> Path | None:
+    """``rel`` in ``repo`` as the system is given it (``_on_disk``), or None where those bytes name, for git there, another
+    file, which G6 never opens: every path G6 opens or reads for a name git gave is made here (repair 3, item 3)."""
+    on_disk, exact = _on_disk(rel)
+    return repo / on_disk if exact else None
+
+
+def _in(rel: str) -> str:
+    """The name the system is given for a path of a tree: a name git listed (``GitName``) as ``_on_disk`` gives it, a
+    path the scan, a caller or a model gave as it is."""
+    return _on_disk(rel)[0] if isinstance(rel, GitName) else rel
+
+
+def _raw(rel: str) -> bytes:
+    """The bytes git is given for a name: a ``GitName``'s own (``GitName.raw``), or a path held as text (a caller's, or a
+    name a test made) as the listing's reader would have read it from those bytes."""
+    return rel.raw if isinstance(rel, GitName) else rel.encode("utf-8", "surrogateescape")
+
+
+def _listed_at(repo: Path, commit: str, rels: Iterable[str], *, timeout_s: float = GIT_TIMEOUT_S) -> dict[str, tuple]:
+    """Each of ``rels`` ``commit`` holds, name to (mode, kind, object name, size) as ``ls-tree -r -l`` gives them, the name
+    matched by git's own bytes: asked by the names themselves where a command line carries them (``_carried``), else read
+    from the whole tree. A text at the base is then read by its object name, which any command line carries."""
+    wanted = set(rels)
+    if not wanted:
+        return {}
+    spec = ["--", *map(_raw, wanted)] if all(_carried(_raw(rel)) for rel in wanted) else []
+    found = {}
+    for meta, rel in _entries(_git(repo, "ls-tree", "-r", "-l", "-z", commit, *spec, timeout_s=timeout_s)):
+        if rel in wanted:
+            found[rel] = tuple(meta.split())
+    return found
+
+
+def _texts_listed(repo: Path, commit: str, rels: Iterable[str]) -> dict[str, str]:
+    """The text at ``commit`` of each of ``rels`` it holds as a blob (``_listed_at``), with the line endings
+    ``Path.read_text`` gives, read by object name (``blob_bytes``)."""
+    return {rel: _text(blob_bytes(repo, entry[2])) for rel, entry in sorted(_listed_at(repo, commit, rels).items())
+            if entry[1] == "blob"}
 
 
 def _read_inside(root: Path, path: Path) -> bytes | None:
@@ -1111,7 +1165,10 @@ def _link_inside(root: Path, path: Path) -> bytes | None:
     check and the read cannot make G6 read a link outside the repository. Where ``readlink`` takes a folder (``dir_fd``),
     the link is read in the folder held. Windows takes none, so there it is read by the held folder's own final path, which
     names no link: the folder is held for listing, shared for reading and writing but never for being moved or removed, and
-    Windows moves no folder above one held so, so that path is the folder decided on."""
+    Windows moves no folder above one held so, so that path is the folder decided on. That path is the one the decision
+    compared, in the extended form the system gave (``_where``), with the link's own name after it as given: Win32 reads it
+    literally, so neither the folder's name nor the link's can be read as another's (a trailing dot or space dropped, a
+    device name; review-maskfu3, finding 1)."""
     if os.name != "nt":
         held = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     else:
@@ -1503,18 +1560,19 @@ def snapshot(repo: Path, untracked: list[str] | tuple[str, ...] | None = None) -
              _INDEX: hashlib.sha256(index).hexdigest(), _MARKS: hashlib.sha256(marks).hexdigest()}
     # ``ls-files -v``: a lowercase tag is assume-unchanged, "S" skip-worktree.
     linked: dict[Path, bool] = {}
-    held = [_index_path(repo, entry[2:], linked) for entry in _paths(marks) if entry[:1].islower() or entry[:1] == "S"]
+    held = [_index_path(repo, rel, linked) for tag, rel in _tagged(marks) if tag[:1].islower() or tag[:1] == "S"]
     # The review of VS-4: what differs from HEAD's tree by content, through a private index, so no entry written into
     # the repository's own index keeps a changed file's bytes out of the snapshot (receipts bind the bytes that ran);
     # and each file the index holds that HEAD does not, a staged one, as before.
     diffed, others = _private(repo, head.decode().strip(), ("diff", "--name-only", "-z", "--no-renames",
                                                              "--no-textconv"),
                               ("ls-files", "--others", "--exclude-standard", "-z"))
-    staged = (set(_paths(others)) & {entry.partition("\t")[2] for entry in _paths(index)}) | _tracked_new(
+    staged = (set(_paths(others)) & {rel for _, rel in _entries(index)}) | _tracked_new(
         repo, head.decode().strip())   # a file force-added under an ignored path too (F4)
     for rel in (*_paths(_git(repo, "diff", "--name-only", "-z")), *_paths(diffed), *sorted(staged), *held,
                 *(_untracked(repo) if untracked is None else untracked)):
-        found[rel] = _digest(repo / rel)
+        path = _disk(repo, rel)    # read where git looks (``_on_disk``); one G6 cannot open by its name reads as unread
+        found[rel] = _digest(path) if path is not None else "unreadable"
     budget = {"files": 0, "bytes": 0, "until": time.monotonic() + SUBMODULE_HASH_S}
     for rel in gitlinks:
         found[_SUBMODULE + rel] = _submodule(repo, rel, budget)
@@ -1535,8 +1593,9 @@ def _submodule(repo: Path, rel: str, budget: dict) -> str:
     file's bytes and each link's own text, never followed (nor is a link on the way to the folder); "" when nothing is
     there. ``NOT_HASHED`` and why, never a hash of part of it, when this
     snapshot's submodule folders together (``budget``) hold more than ``COPY_MAX_FILES`` files or ``COPY_MAX_BYTES``
-    bytes, take longer than ``SUBMODULE_HASH_S`` seconds, or cannot be read."""
-    parts = PurePosixPath(rel).parts
+    bytes, take longer than ``SUBMODULE_HASH_S`` seconds, or cannot be read. The folders are looked at where git looks
+    (``_on_disk``), and what the digest is of names the folder by the name git gave."""
+    named, parts = PurePosixPath(rel).parts, PurePosixPath(_on_disk(rel)[0]).parts
     top = repo.joinpath(*parts)
     entries: list[tuple[str, str, str]] = []
 
@@ -1555,7 +1614,7 @@ def _submodule(repo: Path, rel: str, budget: dict) -> str:
         for end in range(1, len(parts) + 1):
             here = repo.joinpath(*parts[:end])
             if _linked(here):
-                return hashlib.sha256(json.dumps(["link", "/".join(parts[:end]), os.readlink(here)]).encode()).hexdigest()
+                return hashlib.sha256(json.dumps(["link", "/".join(named[:end]), os.readlink(here)]).encode()).hexdigest()
         if not top.is_dir():
             return _digest(top)
         for folder, dirs, files in os.walk(top, onerror=failed):
@@ -1587,15 +1646,16 @@ def _submodule(repo: Path, rel: str, budget: dict) -> str:
     except _OverCap as cap:
         return NOT_HASHED + str(cap)
     except OSError as exc:
-        where = Path(exc.filename).relative_to(repo).as_posix() if exc.filename and Path(exc.filename).is_relative_to(
-            repo) else rel
+        where = (Path(exc.filename).relative_to(repo).as_posix() if exc.filename and _within(repo, Path(exc.filename))
+                 else shown_name(rel))
         return NOT_HASHED + HASH_UNREADABLE.format(path=where)
     return hashlib.sha256(json.dumps(sorted(entries)).encode("utf-8")).hexdigest()
 
 
 def submodules_not_hashed(found: dict[str, str]) -> dict[str, str]:
-    """The submodule folders a ``snapshot`` did not hash (``_submodule``), path to why: a change there is not seen."""
-    return {key[len(_SUBMODULE):]: value[len(NOT_HASHED):] for key, value in found.items()
+    """The submodule folders a ``snapshot`` did not hash (``_submodule``), path to why: a change there is not seen. Each
+    path is the name git gave (a ``GitName`` of the bytes the snapshot's key holds)."""
+    return {GitName(_raw(key[len(_SUBMODULE):])): value[len(NOT_HASHED):] for key, value in found.items()
             if key.startswith(_SUBMODULE) and value.startswith(NOT_HASHED)}
 
 
@@ -1604,10 +1664,10 @@ def _moved(before: dict[str, str], after: dict[str, str]) -> list[str]:
     names = {_HEAD: "the commit checked out (HEAD)", _INDEX: "the staged files (the index)",
              _MARKS: "git's assume-unchanged and skip-worktree marks"}
 
-    def name(key: str) -> str:
+    def name(key: str) -> str:    # what changed, as text: a name git gave by its one rule
         if key.startswith(_SUBMODULE):
-            return SAID["submodule_name"].format(path=key[len(_SUBMODULE):])
-        return names.get(key, key)
+            return SAID["submodule_name"].format(path=shown_name(key[len(_SUBMODULE):]))
+        return names.get(key) or shown(key)
 
     def differs(key: str) -> bool:
         # review I2: a folder G6 did not hash on either side is not hashed (submodules_not_hashed), never changed
@@ -2164,6 +2224,21 @@ def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), time
                 require_isolation=require_isolation)
 
 
+def _test_id(repo: Path, test: str, what: str = "test") -> str:
+    """A test (or, ``what``, a module) as pytest, which opens it, is given it: a file git listed (``GitName``) as the system
+    is given it (``_on_disk``), its shape judged on the name and inside by ``_within``, the one containment rule (repair 3,
+    item 3); a caller's id as ``inside`` accepts it."""
+    if not isinstance(test, GitName):
+        return inside(repo, test, what)
+    problem = shape_problem(test, what)
+    if problem:
+        raise RepoRefused("G6_E_INPUT_VALIDATION", problem)
+    on_disk = _on_disk(test)[0]
+    if not _within(repo.resolve(), (repo / on_disk).resolve()):
+        raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["outside"].format(what=what, value=shown_name(test)))
+    return on_disk
+
+
 def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int, network: bool,
          mutant: tuple[str, str] | None = None, copied: bool = False, python: str = "",
          scratch_dir: Path | None = None, deadline: float | None = None, receipt: bool = False,
@@ -2174,10 +2249,10 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
     ``report``) left out or copied in a link's place, added to the result as it is."""
     if not tests:
         raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["no_tests"])
-    ids = [inside(repo, test, "test") for test in tests]
-    missing = [test for test in ids if not (repo / test.partition("::")[0]).exists()]
+    ids = [_test_id(repo, test) for test in tests]
+    missing = [test for test, one in zip(tests, ids) if not (repo / one.partition("::")[0]).exists()]
     if missing:
-        raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["missing"].format(value=missing[0]))
+        raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["missing"].format(value=shown(missing[0])))
     # the import roots first, then the top and src: a package in a root wins over one of the same name at the top
     entries = [*(str(repo / inside(repo, root, "import root")) for root in roots), str(repo),
                *([str(repo / "src")] if (repo / "src").is_dir() else [])]
@@ -2233,8 +2308,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         # report), and reads the repository, the interpreter's folders and ``top``, which holds the two (pytest checks
         # the report's folder before writing). A copy G6 made is writable.
         report, counted, log, target, source = own / "report.xml", own / "counted.json", own / "output.log", "", ""
-        if mutant is not None:
-            target, source = str(repo / inside(repo, mutant[0], "module")), str(own / "mutant.py")
+        if mutant is not None:   # the module's file where the system holds it (``_test_id``: a name git listed by its rule)
+            target, source = str(repo / _test_id(repo, mutant[0], "module")), str(own / "mutant.py")
             Path(source).write_text(mutant[1], encoding="utf-8")
         # the variables the bootstrap sets, in a file only this user may read: values never go on a command line
         store = work / "hypothesis"
@@ -2315,7 +2390,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         if scan.loadable or not scan.complete:   # review I2: the digest leaves ignored files out, and pytest loads them
             found["ignored_loadable"] = list(scan.loadable)
             found["receipt_withheld"] = (
-                "no test receipt: git ignores files that could change this run, " + ", ".join(scan.loadable[:10])
+                "no test receipt: git ignores files that could change this run, "
+                + ", ".join(shown(rel) for rel in scan.loadable[:10])
                 if scan.loadable else
                 f"no test receipt: the scan for git-ignored files stopped at its limit of {IGNORED_SCAN_LIMIT} entries")
             return found
@@ -2360,10 +2436,11 @@ IGNORED_SCAN_LIMIT = 20_000
 
 
 def _unscanned(repo: Path, rel: str) -> bool:
-    """Whether ``rel`` is, or is inside, a folder the scan does not enter (``_UNSCANNED``, or a virtual environment)."""
-    parts = PurePosixPath(rel).parts
+    """Whether ``rel`` is, or is inside, a folder the scan does not enter (``_UNSCANNED``, or a virtual environment). A
+    name git listed is looked for where git looks (``_on_disk``)."""
+    parts, disk = PurePosixPath(rel).parts, PurePosixPath(_in(rel)).parts
     return any(part in _UNSCANNED for part in parts) or any(
-        (repo.joinpath(*parts[:end]) / "pyvenv.cfg").is_file() for end in range(1, len(parts) + 1))
+        (repo.joinpath(*disk[:end]) / "pyvenv.cfg").is_file() for end in range(1, len(disk) + 1))
 
 
 def _linked(path: Path) -> bool:
@@ -2432,18 +2509,19 @@ def loadable_changes(change: Change, roots: tuple[str, ...] = ()) -> dict[str, s
     import_roots = (*roots, ".", "src", *sorted(basedirs))
     held: dict[str, set[str]] = {}
     for rel in base:   # the base commit's modules the patch kept (one it deleted or moved can no longer be shadowed)
-        if rel.endswith(".py") and os.path.lexists(change.repo / rel):
+        if rel.endswith(".py") and os.path.lexists(change.repo / _on_disk(rel)[0]):
             for name in _import_names(rel, import_roots):
                 held.setdefault(name, set()).add(rel)
     found: dict[str, str] = {}
-    for rel in change.files:
-        path, full = PurePosixPath(rel), change.repo / rel
+    for rel in change.files:     # each looked at where git looks (``_on_disk``), and read only where G6 can open it
+        path, full, readable = PurePosixPath(rel), change.repo / _on_disk(rel)[0], _disk(change.repo, rel)
         name = path.name.lower()
         if not os.path.lexists(full):
             continue   # deleted
         inside = next((index for index, part in enumerate(path.parts[:-1]) if part.endswith(_METADATA)), None)
         if inside is not None:
-            if inside == len(path.parts) - 2 and name == "entry_points.txt" and _declares_plugin(full):
+            if inside == len(path.parts) - 2 and name == "entry_points.txt" and (
+                    readable is None or _declares_plugin(readable)):   # unread, it may declare one
                 found[rel] = "it declares a pytest plugin, which pytest loads at start-up"
         elif _linked(full):
             if not path.suffix or name.endswith((".py", ".pyc", ".pth", *_EXTENSIONS)):
@@ -2456,7 +2534,7 @@ def loadable_changes(change: Change, roots: tuple[str, ...] = ()) -> dict[str, s
             clash = sorted(other for module in _import_names(rel, import_roots)
                            for other in held.get(module, ()) if other != rel)
             if clash:
-                found[rel] = f"a new module named like {clash[0]}, which it can shadow on the import path"
+                found[rel] = f"a new module named like {shown(clash[0])}, which it can shadow on the import path"
     return found
 
 
@@ -2486,29 +2564,38 @@ def ignored_inputs(repo: Path, *, timeout_s: float = GIT_TIMEOUT_S) -> Ignored:
     other: dict[str, str] = {}
     seen = 0
 
+    def looked(rel: str) -> Path:
+        """Where a path is looked at: a name git listed where git looks (``_on_disk``), one the scan found as found."""
+        return repo / (_on_disk(rel)[0] if isinstance(rel, GitName) else rel)
+
+    def opened(rel: str) -> Path | None:
+        """Where a path is read: a name git listed only where G6 can open it by that name (``_disk``)."""
+        return _disk(repo, rel) if isinstance(rel, GitName) else repo / rel
+
     def judge(rel: str) -> None:
         path = PurePosixPath(rel)
         name = path.name.lower()
         inside = next((index for index, part in enumerate(path.parts[:-1]) if part.endswith(_METADATA)), None)
         if inside is not None:   # a metadata folder's files: only its own entry_points.txt can load code
-            if inside == len(path.parts) - 2 and name == "entry_points.txt" and _declares_plugin(repo / rel):
+            if inside == len(path.parts) - 2 and name == "entry_points.txt" and (
+                    opened(rel) is None or _declares_plugin(opened(rel))):   # unread, it may declare one
                 loadable.append(rel)
-        elif _linked(repo / rel) or name in _LOADABLE or name.endswith((".pth", ".pyc", *_EXTENSIONS)) or (
+        elif _linked(looked(rel)) or name in _LOADABLE or name.endswith((".pth", ".pyc", *_EXTENSIONS)) or (
                 path.suffix == ".py" and (name.startswith("test_") or name.endswith("_test.py"))):
             loadable.append(rel)
         elif path.suffix == ".py" and _module(path) in modules:
             loadable.append(rel)
             named.append(rel)
         elif path.suffix == ".py":
-            other[rel] = _digest(repo / rel)
+            other[rel] = _digest(opened(rel)) if opened(rel) is not None else "unreadable"
 
     def folder(rel: str) -> bool:
         """Judge a folder the scan would enter: True when its files are to be read."""
-        if _linked(repo / rel):
+        if _linked(looked(rel)):
             loadable.append(rel)
         elif rel.endswith(_METADATA):
-            if (repo / rel / "entry_points.txt").is_file():
-                judge(f"{rel}/entry_points.txt")
+            if (looked(rel) / "entry_points.txt").is_file():
+                judge(GitName(rel.raw + b"/entry_points.txt") if isinstance(rel, GitName) else f"{rel}/entry_points.txt")
         else:
             return True
         return False
@@ -2520,7 +2607,7 @@ def ignored_inputs(repo: Path, *, timeout_s: float = GIT_TIMEOUT_S) -> Ignored:
         seen += 1
         if seen > IGNORED_SCAN_LIMIT:
             return found(False)
-        rel = entry.rstrip("/")
+        rel = GitName(entry.raw.rstrip(b"/"))     # the name git listed, without the slash it ends a folder's with
         if _unscanned(repo, rel):
             continue
         if not entry.endswith("/"):
@@ -2528,7 +2615,7 @@ def ignored_inputs(repo: Path, *, timeout_s: float = GIT_TIMEOUT_S) -> Ignored:
             continue
         if not folder(rel):
             continue
-        for top, dirs, files in os.walk(repo / rel):   # never through a link: os.walk does not follow one
+        for top, dirs, files in os.walk(looked(rel)):   # never through a link: os.walk does not follow one
             here = Path(top).relative_to(repo).as_posix()
             dirs[:] = sorted(name for name in dirs if name not in _UNSCANNED
                              and not (Path(top) / name / "pyvenv.cfg").is_file() and folder(f"{here}/{name}"))
@@ -2543,11 +2630,14 @@ def ignored_inputs(repo: Path, *, timeout_s: float = GIT_TIMEOUT_S) -> Ignored:
 def read_at(repo: Path, commit: str, rel: str, *, timeout_s: float = GIT_TIMEOUT_S) -> str | None:
     """``rel``'s text at ``commit`` (None when it was not there), with the line endings ``Path.read_text`` gives,
     read with the hardened git call (``_git``: the repository's own configuration may be the agent's), each git call
-    within ``timeout_s``."""
-    rel = inside(repo, rel, "path")
-    if not _git(repo, "ls-tree", "-r", "-z", "--name-only", commit, "--", rel, timeout_s=timeout_s).strip(b"\0"):
+    within ``timeout_s``. A name git listed (``GitName``) is given to git as its bytes; any other path is first one
+    ``inside`` accepts."""
+    if not isinstance(rel, GitName):
+        rel = inside(repo, rel, "path")
+    entry = _listed_at(repo, commit, [rel], timeout_s=timeout_s).get(rel)
+    if entry is None or entry[1] != "blob":
         return None
-    return _text(_git(repo, "show", f"{commit}:{rel}", timeout_s=timeout_s))
+    return _text(blob_bytes(repo, entry[2], timeout_s=timeout_s))
 
 
 #: The most paths one ``texts_at`` git call names.
@@ -2560,17 +2650,17 @@ def texts_at(repo: Path, commit: str, rels: list[str], *, limit: int | None) -> 
     from git's tree before any blob is read; the blobs, from one ``git show`` per batch, are cut by those sizes."""
     found: dict[str, str] = {}
     for start in range(0, len(rels), _TEXTS_AT_BATCH):
-        batch = [inside(repo, rel, "path") for rel in rels[start:start + _TEXTS_AT_BATCH]]
+        batch = [rel if isinstance(rel, GitName) else inside(repo, rel, "path")
+                 for rel in rels[start:start + _TEXTS_AT_BATCH]]
         sizes: dict[str, int] = {}
-        for entry in _paths(_git(repo, "ls-tree", "-r", "-l", "-z", commit, "--", *batch)):
-            meta, _, rel = entry.partition("\t")
-            mode, kind, _, size = meta.split()
+        listed = _listed_at(repo, commit, batch)
+        for rel, (mode, kind, _, size) in listed.items():
             if kind == "blob" and mode in ("100644", "100755") and (limit is None or int(size) <= limit):
                 sizes[rel] = int(size)
         wanted = [rel for rel in batch if rel in sizes]
         if not wanted:
             continue
-        raw = _git(repo, "show", "--no-textconv", *(f"{commit}:{rel}" for rel in wanted))
+        raw = _git(repo, "show", "--no-textconv", *(listed[rel][2] for rel in wanted))   # by object name
         if len(raw) != sum(sizes[rel] for rel in wanted):   # never cut a text G6 cannot account for
             found.update({rel: text for rel in wanted if (text := read_at(repo, commit, rel)) is not None})
             continue
@@ -2614,8 +2704,11 @@ def _resolve_inside(root: Path, rel: str, virtual: dict[str, str]) -> list[str] 
     """The components below ``root`` that ``rel`` resolves to, one component at a time: each link on the way is
     replaced by its own text (read from the disk below ``root``, or from ``virtual`` for a link that is not there), so
     nothing outside ``root`` is ever read. None when the path leaves ``root`` (a ``..`` above it, a link naming an
-    absolute path) or follows more than ``_MAX_HOPS`` links (a loop)."""
-    pending, done, hops = list(PurePosixPath(rel).parts), [], 0
+    absolute path) or follows more than ``_MAX_HOPS`` links (a loop). Each part of a name git listed is looked for where
+    git looks (``_on_disk``, by ``_in``); a link's own text is the system's."""
+    named = isinstance(rel, GitName)
+    pending = [GitName(_raw(part)) if named else part for part in PurePosixPath(rel).parts]
+    done, hops = [], 0
     while pending:
         part = pending.pop(0)
         if part in ("", "."):
@@ -2625,7 +2718,7 @@ def _resolve_inside(root: Path, rel: str, virtual: dict[str, str]) -> list[str] 
                 return None
             done.pop()
             continue
-        here, path = "/".join([*done, part]), root.joinpath(*done, part)
+        here, path = "/".join([*done, part]), _joined(root, [*done, part])
         text = virtual[here] if here in virtual else os.readlink(path) if _linked(path) else None
         if text is None:
             done.append(part)
@@ -2635,6 +2728,11 @@ def _resolve_inside(root: Path, rel: str, virtual: dict[str, str]) -> list[str] 
             return None
         pending[:0] = PurePosixPath(text.replace("\\", "/")).parts
     return done
+
+
+def _joined(root: Path, parts: list[str]) -> Path:
+    """``root`` with ``parts`` below it (``_resolve_inside``'s), each as the system is given it (``_in``)."""
+    return root.joinpath(*(_in(part) for part in parts))
 
 
 def _copy_links(copy: Path, links: dict[str, tuple[str, bool]], left: dict[str, str],
@@ -2652,14 +2750,14 @@ def _copy_links(copy: Path, links: dict[str, tuple[str, bool]], left: dict[str, 
         if _absolute(text):
             left[rel] = LINK_ABSOLUTE
             continue
-        (copy / rel).parent.mkdir(parents=True, exist_ok=True)
+        (copy / _in(rel)).parent.mkdir(parents=True, exist_ok=True)
         made = text
         if _WINDOWS:   # CI run 40780356106: a Windows link resolves no forward slash, and a folder's link is its own
             made = text.replace("/", "\\")
             resolved = _resolve_inside(copy, rel, texts)
-            folder = folder or (resolved is not None and copy.joinpath(*resolved).is_dir())
+            folder = folder or (resolved is not None and _joined(copy, resolved).is_dir())
         try:
-            os.symlink(made, copy / rel, target_is_directory=folder)
+            os.symlink(made, copy / _in(rel), target_is_directory=folder)
         except OSError as exc:
             if getattr(exc, "winerror", None) == _PRIVILEGE_NOT_HELD:
                 deferred[rel] = text
@@ -2668,27 +2766,27 @@ def _copy_links(copy: Path, links: dict[str, tuple[str, bool]], left: dict[str, 
     outside = [rel for rel in sorted(links)
                if rel not in left and rel not in deferred and _resolve_inside(copy, rel, deferred) is None]
     for rel in outside:   # judged all together first: a link may resolve through another
-        os.unlink(copy / rel)
+        os.unlink(copy / _in(rel))
         left[rel] = LINK_OUTSIDE
     materialised: dict[str, str] = {}
     for rel in sorted(deferred):
         resolved = _resolve_inside(copy, rel, deferred)
-        source = copy.joinpath(*resolved) if resolved is not None else copy
+        source = _joined(copy, resolved) if resolved is not None else copy
         if resolved is None:
             left[rel] = LINK_OUTSIDE
         elif tuple(resolved) == PurePosixPath(rel).parts[:len(resolved)]:
             left[rel] = LINK_LOOP
         elif source.is_file() and not _linked(source):
-            put(source, copy / rel)
+            put(source, copy / _in(rel))
             materialised[rel] = "/".join(resolved)
         elif source.is_dir() and not _linked(source):
-            (copy / rel).mkdir(parents=True, exist_ok=True)
+            (copy / _in(rel)).mkdir(parents=True, exist_ok=True)
             for folder, dirs, files in os.walk(source):
                 here = Path(folder)
                 dirs[:] = sorted(name for name in dirs if not _linked(here / name))
                 for name in sorted(files):
                     if not _linked(here / name) and (here / name).is_file():
-                        put(here / name, copy / rel / here.relative_to(source) / name)
+                        put(here / name, copy / _in(rel) / here.relative_to(source) / name)
             materialised[rel] = "/".join(resolved)
         else:
             left[rel] = LINK_NO_TARGET
@@ -2807,7 +2905,7 @@ def _generated_files(repo: Path, base: str | None = None,
         return {}, {}
     taken: dict[str, bytes] = {}
     left: dict[str, str] = {}
-    for rel in sorted(set(scan.other) & named):
+    for rel in sorted(rel for rel in named if rel in scan.other):   # read by the configuration's own spelling of it
         try:
             if _linked(repo / rel):
                 continue
@@ -2872,7 +2970,19 @@ def repository_copy(repo: Path, *, deadline: float, before: dict[str, str] | Non
     before = before or {}
     stage = _git(repo, "ls-files", "--stage", "-z", timeout_s=min(GIT_TIMEOUT_S, _copy_remaining(deadline)))
     gitlinks = _gitlinks(repo, stage)
-    tracked_links = {entry.partition("\t")[2] for entry in _paths(stage) if entry.startswith("120000 ")}
+    tracked_links = {rel for meta, rel in _entries(stage) if meta.startswith("120000 ")}
+    root = repo.resolve()
+
+    def source_of(rel: str) -> Path | None:
+        """Where a file of the tree is read: a name git listed where git looks (``_on_disk``), inside by ``_within`` (the
+        one containment rule), and never where G6 cannot open it by its name; a caller's or a model's path as ``inside``
+        accepts it (its shape, then where it resolves)."""
+        if not isinstance(rel, GitName):
+            return repo / inside(repo, rel, "file")
+        source = _disk(repo, rel)
+        if source is not None and not _within(root, source.resolve()):
+            raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["outside"].format(what="file", value=shown_name(rel)))
+        return source
     known = _paths(_git(repo, "ls-files", "-co", "--exclude-standard", "-z",
                         timeout_s=min(GIT_TIMEOUT_S, _copy_remaining(deadline))))
     # git-ignored files the project's build writes, as read and checked once (SECURITY-SENSITIVE, see there)
@@ -2910,28 +3020,28 @@ def repository_copy(repo: Path, *, deadline: float, before: dict[str, str] | Non
         left: dict[str, str] = {}
         for rel in sorted(set(known) | set(before)):
             _copy_caps(*tally, deadline)
-            parts = PurePosixPath(rel).parts
+            parts = PurePosixPath(_in(rel)).parts     # the folders looked at, where git looks (``_on_disk``)
             skipped = [part in _copy_ignored(str(repo.joinpath(*parts[:index])), [part])
                        for index, part in enumerate(parts)]
             if (rel in tracked_links and rel not in before and not any(skipped[:-1])
-                    and not _SKIPPED(str(repo.joinpath(*parts[:-1])), [parts[-1]]) and _linked(repo / rel)):
-                links[rel] = _link_of(repo / rel)
+                    and not _SKIPPED(str(repo.joinpath(*parts[:-1])), [parts[-1]]) and _linked(repo / _in(rel))):
+                links[rel] = _link_of(repo / _in(rel))
                 continue
             if any(skipped) or rel in gitlinks:   # a submodule folder is copied below
                 continue
-            source = repo / inside(repo, rel, "file")
-            if rel not in before and not source.is_file():
+            source = source_of(rel)
+            if rel not in before and (source is None or not source.is_file()):
                 continue
-            put(source, copy / rel, before[rel].encode("utf-8") if rel in before else generated.get(rel))
+            put(source, copy / _in(rel), before[rel].encode("utf-8") if rel in before else generated.get(rel))
         for rel in gitlinks:
-            parts = PurePosixPath(rel).parts
+            parts = PurePosixPath(_in(rel)).parts
             if any(_linked(repo.joinpath(*parts[:end])) for end in range(1, len(parts) + 1)):
                 left[rel] = LINK_FOLDER
                 continue
             if any(part in _copy_ignored(str(repo.joinpath(*parts[:index])), [part])
-                   for index, part in enumerate(parts)) or not (repo / rel).is_dir():
+                   for index, part in enumerate(parts)) or not (repo / _in(rel)).is_dir():
                 continue
-            for folder, dirs, files in os.walk(repo / rel, onerror=failed):
+            for folder, dirs, files in os.walk(repo / _in(rel), onerror=failed):
                 here = Path(folder)
                 at = here.relative_to(repo).as_posix()
                 skipped_here = _copy_ignored(folder, dirs + files)
@@ -2998,25 +3108,26 @@ def _base_revision(change: Change, copy: Path, deadline: float, keep: frozenset[
     changed = set(_paths(diffed)) | set(_paths(others)) | _tracked_new(change.repo, change.base_commit)   # F4
     changed.update(change.held)   # changed, though git's index flags hide them from its diff (review C2)
     changed = {rel for rel in changed if not any(rel == kept or rel.startswith(kept + "/") for kept in keep)}
-    entries = _paths(_git(change.repo, "ls-tree", "-r", "-l", "-z", change.base_commit))
     base = {}
-    for entry in entries:
-        meta, rel = entry.split("\t", 1)
+    for meta, rel in _entries(_git(change.repo, "ls-tree", "-r", "-l", "-z", change.base_commit)):
         mode, kind, oid, size = meta.split()
         if rel in changed:
             base[rel] = (mode, kind, oid, size)
     count, size = 0, 0
     copied_in = [path for pair in (materialised or {}).items() for path in pair]
+    root = copy.resolve()
     with ExitStack() as restore:
         for rel in sorted(changed):
-            if (base.get(rel, ("",))[0] == "120000" or _linked(copy / rel)
+            if (base.get(rel, ("",))[0] == "120000" or _linked(copy / _in(rel))
                     or any(rel == path or rel.startswith(path + "/") for path in copied_in)):
                 raise CopyNotRun(OLD_BASELINE_NOT_RUN)
-            parts = PurePosixPath(rel).parts
+            parts = PurePosixPath(_in(rel)).parts     # looked at, and written, where git looks (``_on_disk``)
             if any(part in _copy_ignored(str(change.repo.joinpath(*parts[:index])), [part])
                    for index, part in enumerate(parts)):
                 continue
-            target = copy / inside(copy, rel, "file")
+            target = _disk(copy, rel) if isinstance(rel, GitName) else copy / inside(copy, rel, "file")
+            if target is None or not _within(root, target.resolve()):   # inside the copy, by the one containment rule
+                raise CopyNotRun(OLD_BASELINE_NOT_RUN)
             current = target.read_bytes() if target.is_file() else None
             count += 1
             size += len(current) if current is not None else 0

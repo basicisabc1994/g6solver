@@ -44,6 +44,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from g6.core.llm import (AnthropicCaller, EmptyRetry, LLMCaller, LLMError, NoModel, UnusableModel,
                          complete_structured)
+from g6.core.git_name import shown
 from g6.harness import verification_search as vs
 from g6.harness import verification_templates as vt
 from g6.reasoning.budget import Budget, BudgetExhausted, MeteredCaller
@@ -162,20 +163,21 @@ def context(change: repo_tests.Change, requirements, *, max_chars: int) -> Repos
     if len(body["diff"]) < len(diff):
         left.append(f"the diff after its first {len(body['diff'])} characters (the context's room)")
     for rel in change.outside_links:
-        left.append(f"{rel}: a link to a path outside the repository, never read")
+        left.append(f"{shown(rel)}: a link to a path outside the repository, never read")
     for rel in sorted(change.sources):
         try:
             text = (change.repo / rel).read_text(encoding="utf-8", errors="replace")[:vt.MAX_MODULE_BYTES]
         except OSError:
-            left.append(f"{rel}: could not be read")
+            left.append(f"{shown(rel)}: could not be read")
             continue
-        free = max_chars - len(json.dumps(body)) - len(json.dumps(rel)) - 4
+        named = shown(rel)    # the model reads each file by the name's one rule, never by JSON's own escaping of it
+        free = max_chars - len(json.dumps(body)) - len(json.dumps(named)) - 4
         if free < 64:
-            left.append(f"{rel}: no room left")
+            left.append(f"{named}: no room left")
             continue
-        body["files"][rel] = _cut(text, free)
-        if len(body["files"][rel]) < len(text):
-            left.append(f"{rel} after its first {len(body['files'][rel])} characters (the context's room)")
+        body["files"][named] = _cut(text, free)
+        if len(body["files"][named]) < len(text):
+            left.append(f"{named} after its first {len(body['files'][named])} characters (the context's room)")
     text = json.dumps(body, ensure_ascii=False)
     return RepositoryContext(text, tuple(body["files"]), tuple(left))
 

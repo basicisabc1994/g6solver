@@ -246,7 +246,9 @@ def test_the_copy_reads_nothing_and_is_made_from_the_read_alone():
             assert callee not in READS, f"{name} reads ({ast.unparse(call)})"
     assert used == {"_decoded", "shown_name", "_normal", "_cut_lines", "_bytes_line", "now_line"}, used
     for name in used - {"_decoded", "_normal", "_cut_lines"}:      # the name and bytes rules read nothing either
-        assert not {_callee(call) for _, call in _own_calls(_functions(repo_tests)[name])} & READS
+        # each where it is defined: the name rule in g6.core.git_name since repair 3, re-exported by repo_tests
+        module = inspect.getmodule(getattr(repo_tests, name))
+        assert not {_callee(call) for _, call in _own_calls(_functions(module)[name])} & READS
 
 
 def _bare_path(expr: ast.AST) -> bool:

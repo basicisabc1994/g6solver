@@ -112,6 +112,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from g6.core import component_process
 from g6.core.errors import ISOLATION_UNAVAILABLE
+from g6.core.git_name import shown
 from g6.harness import verification_controller
 from g6.harness.patch_review import (
     NORMATIVE,
@@ -1046,14 +1047,14 @@ def measure_adequacy(change: repo_tests.Change, requirements, norm: dict[str, st
 
     for rel in change.outside_links:   # review M1: never read, as a copy never holds one
         if rel.endswith(".py"):
-            left_out(rel, LINK_LEFT_OUT.format(rel=rel))
+            left_out(rel, LINK_LEFT_OUT.format(rel=shown(rel)))
     files = [rel for rel in change.sources if repo_tests.changed_lines(change, rel)]
     for rel in files[ADEQUACY_FILES:]:
         left_out(rel, f"test adequacy mutates at most {ADEQUACY_FILES} changed files")
     for rel in files[:ADEQUACY_FILES]:
         text = (change.repo / rel).read_text(encoding="utf-8", errors="replace")
         if len(text) > ADEQUACY_FILE_CHARS:
-            left_out(rel, TOO_BIG.format(rel=rel, size=len(text)))
+            left_out(rel, TOO_BIG.format(rel=shown(rel), size=len(text)))
             continue
         lines = repo_tests.changed_lines(change, rel)
         try:   # the mutants are made in G6's own process, within the review's deadline (review I4)
@@ -1064,7 +1065,7 @@ def measure_adequacy(change: repo_tests.Change, requirements, norm: dict[str, st
         except Exception as exc:   # RecursionError, MemoryError, any other: an activity's error (review I2)
             why = stopped(exc)
             activities.append({"activity": "mutation run", "file": rel, "mutant": "", "result": "error",
-                               "reason": why, "stopped": f"test adequacy on {rel}", "seconds": 0.0, "model_calls": 0})
+                               "reason": why, "stopped": f"test adequacy on {shown(rel)}", "seconds": 0.0, "model_calls": 0})
             left_out(rel, f"G6 could not make its mutants: {why}")
             continue
         runs: dict[str, dict] = {}

@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from g6.context.redact import MASK
+from g6.core import git_name
 from g6.core.ledger import digest
 from g6.harness import completion_loop as loop
 from g6.workforce import repo_tests
@@ -174,7 +175,8 @@ def test_finding_4_filename_cannot_inject_a_second_file_into_patch_identity(tmp_
 NAME_SINKS = {"shown_name", "_name", "_found", "found", "_on_disk", "_leads_out", "FileRead"}
 #: The functions that put text into what the patch is known by (``diff_read``) and into the copy (``_shown``), with each
 #: helper either calls to write a line.
-BUILDERS = ((repo_tests, ("diff_read", "now_line", "_link_line", "_part_line", "_bytes_line", "shown_name")),
+BUILDERS = ((repo_tests, ("diff_read", "now_line", "_link_line", "_part_line", "_bytes_line")),
+            (git_name, ("shown_name",)),     # the one rule, in g6.core.git_name since repair 3 (re-exported by repo_tests)
             (loop, ("_shown", "_modes", "_name", "_remasked", "_masked_pack", "_sent_head", "_issue")))
 
 
