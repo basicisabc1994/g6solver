@@ -35,14 +35,16 @@ the start of what the request raised: ``MODEL_REFUSED`` (``refused_by``), ``G6_E
   (``read_stops``), whatever holds it. What that reads goes straight to the loop (``telling_stops``) before anything else
   sees it, so a wrapper that catches failed requests cannot retry it or hide it. For a watched caller only those structured
   fields decide: the older text pattern (``_LIMIT``) is never applied to what it raises, stderr included.
-* **What a host request is.** A refused request is known by one identity, ``request_identity``: the digest of the exact
-  arguments and input the program is started with, taken at the last step the bound caller gives a subclass before the
+* **What a host request is.** A refused request is known by one identity, ``request_identity``: the digest of the captured
+  arguments and input handed to the launcher, taken at the last step the bound caller gives a subclass before the
   program starts (``_command``, whose output ``host_models._run`` receives unchanged; ``_launch`` for a session of a caller's
   own, as ``ToolSession`` is). The loop checks it there, against what was refused and against an identical request still out,
   under one lock (``telling_stops``' gate), which hands back the send's one record (``Send``), made once it may leave from the
-  bytes as they are then. The record stays with the call's own folder until the reply that reads its outcome, which alone
-  releases it. What is left between that step and the start is the building of the program's environment, with no wait in
-  it; closing it needs a step in the bound file itself, at an issuance window.
+  bytes as they are after the stop reads and waits. That immutable ``Request`` is held on the record; the wrapper hands
+  back its captured arguments and stdin, and restores its captured file bytes before returning to the bound launcher.
+  The record stays with the call's own folder until the reply that reads its outcome, which alone releases it. A writer
+  after the handoff can still change a file before the program opens it: closing that window needs the bound launcher to
+  accept immutable input itself, at an issuance window.
 * Claude Code: its JSON result (``host_models._result``). A refusal is ``stop_reason`` ``refusal``, an ``api_error`` of
   ``_STOPPED_BY`` or a ``permission_denials`` entry; on an error result, a limit is ``api_error_status`` 429 or ``api_error``
   ``usage_limit_reached``, and capacity is ``api_error_status`` 529 (``overloaded_error``). Read from the text of Claude Code
@@ -111,7 +113,7 @@ class Gate(Protocol):
     (``sending``); where what the provider said of a send goes (``told``); and the release of a send by its outcome
     (``done``)."""
 
-    def sending(self, identify: Callable[[], str], sender: Any) -> Send: ...
+    def sending(self, identify: Callable[[], Request], sender: Any) -> Send: ...
 
     def told(self, said: str, record: Send | str) -> None: ...
 
@@ -332,19 +334,77 @@ def request_identity(argv: Sequence[str], stdin: str, root: str | Path | None) -
     of its input, exactly as given. A path in the call's own folder (``root``) stands for the bytes of the file there, which
     G6 wrote for the program to read, or for its place in that folder where there is no file yet, as where the program
     writes; any other argument stands as it is. So the same bytes are one request, whichever call or rendering made them."""
+    captured = argv if isinstance(argv, _HostInput) else _host_input(argv, root)
+    return hashlib.sha256(json.dumps(["host", captured.parts, stdin]).encode("ascii")).hexdigest()
+
+
+@dataclass(frozen=True)
+class _HostInput(Sequence[str]):
+    """The host identity reader accepts a captured input as well as a live command; a captured one opens no file."""
+
+    arguments: tuple[str, ...]
+    parts: tuple[tuple[str, ...], ...]
+    files: tuple[tuple[str, bytes], ...]
+
+    def __getitem__(self, index: Any) -> Any:
+        return self.arguments[index]
+
+    def __len__(self) -> int:
+        return len(self.arguments)
+
+
+@dataclass(frozen=True)
+class Request:
+    """The immutable input admitted for one send. Only the digest is persisted. Host files are captured once with the
+    arguments and stdin, after stop reads and waits; the wrapper returns these arguments and restores these bytes before
+    handing control back to the bound launcher. A writer after that handoff remains outside this seam's custody."""
+
+    identity: str
+    system: str = ""
+    user: str = ""
+    argv: tuple[str, ...] = ()
+    stdin: str = ""
+    files: tuple[tuple[str, bytes], ...] = ()
+
+    @classmethod
+    def text(cls, system: str, user: str) -> Request:
+        return cls(request_digest(system, user), system, user)
+
+    @classmethod
+    def host(cls, argv: Sequence[str], stdin: str, root: str | Path | None) -> Request:
+        arguments = tuple(argv)
+        captured = _host_input(arguments, root)
+        return cls(request_identity(captured, stdin, root), argv=arguments, stdin=stdin, files=captured.files)
+
+    def handoff(self) -> tuple[list[str], str]:
+        """Use the captured input, never a second reading after admission. The bound launcher still opens these paths:
+        closing that last window requires it to accept an immutable input at issuance."""
+        for path, data in self.files:
+            Path(path).write_bytes(data)
+        return list(self.argv), self.stdin
+
+
+def _host_input(argv: Sequence[str], root: str | Path | None) -> _HostInput:
+    """The existing host identity format, and the exact file bytes it names, read together once."""
     base = os.path.normcase(os.path.abspath(root)) if root is not None else None
     parts: list[list[str]] = []
+    files: list[tuple[str, bytes]] = []
     for arg in list(argv)[1:]:
         where = os.path.normcase(os.path.abspath(arg)) if os.path.isabs(arg) else ""
         if base and where and (where == base or where.startswith(base + os.sep)):
             place = os.path.relpath(where, base).replace(os.sep, "/")
+            if Path(arg).is_dir():
+                parts.append(["path", place])
+                continue
             try:
-                parts.append(["file", place, hashlib.sha256(Path(arg).read_bytes()).hexdigest()])
-            except OSError:
+                data = Path(arg).read_bytes()
+                parts.append(["file", place, hashlib.sha256(data).hexdigest()])
+                files.append((arg, data))
+            except (FileNotFoundError, IsADirectoryError):
                 parts.append(["path", place])
         else:
             parts.append(["arg", arg])
-    return hashlib.sha256(json.dumps(["host", parts, stdin]).encode("ascii")).hexdigest()
+    return _HostInput(tuple(argv), tuple(tuple(part) for part in parts), tuple(files))
 
 
 @dataclass(frozen=True, eq=False)
@@ -364,6 +424,7 @@ class Send:
     sender: Any = None
     places: int = 0
     charged: tuple[tuple[Any, int], ...] = ()
+    request: Request | None = None
 
 
 @contextmanager
@@ -394,20 +455,26 @@ class ProviderStop(LLMError):
         return self.record.identity if isinstance(self.record, Send) else self.record
 
 
-def _sending(caller: Any, argv: Sequence[str], stdin: str, files: Any) -> None:
+def _sending(caller: Any, argv: Sequence[str], stdin: str, files: Any) -> tuple[list[str], str]:
     """The last step before a watched caller's program starts: the loop's gate lets it out or keeps it in, and makes the send's
     record from the bytes as they are once it is let out, which stays with this call's own folder until its outcome is read."""
     root = Path(files).parent if files is not None else None
     gate = _TELL.get()
     if gate is None:
-        record = Send(request_identity(argv, stdin, root), True, None, 0, threading.get_ident(), caller)
+        request = Request.host(argv, stdin, root)
+        record = Send(request.identity, True, None, 0, threading.get_ident(), caller, request=request)
     else:
-        record = gate.sending(lambda: request_identity(argv, stdin, root), caller)
+        record = gate.sending(lambda: Request.host(argv, stdin, root), caller)
     with _SENT_LOCK:
         _SENT[str(files)] = (record, gate)
     opened = _OPEN.get()
     if opened is not None:
         opened.append(str(files))
+    try:
+        return record.request.handoff()
+    except BaseException:
+        _released((str(files),))
+        raise
 
 
 def _forget(files: Any) -> tuple[Send | None, Gate | None]:
@@ -465,12 +532,11 @@ class WatchedClaude(_Watched, host_models.ClaudeCodeCaller):
 
     def _command(self, program: str, system: str, user: str, work: Path, files: Path) -> tuple[list[str], str]:
         argv, stdin = super()._command(program, system, user, work, files)
-        _sending(self, argv, stdin, files)
-        return argv, stdin
+        return _sending(self, argv, stdin, files)
 
     def _launch(self, argv: list[str], stdin: str, cwd: Path, files: Path, env: dict[str, str], seconds: float) -> Any:
         """A session of a caller's own that starts its program itself names that step ``_launch`` (``ToolSession``)."""
-        _sending(self, argv, stdin, files)
+        argv, stdin = _sending(self, argv, stdin, files)
         try:
             return super()._launch(argv, stdin, cwd, files, env, seconds)
         except BaseException:
@@ -495,8 +561,7 @@ class WatchedCodex(_Watched, host_models.CodexCaller):
 
     def _command(self, program: str, system: str, user: str, work: Path, files: Path) -> tuple[list[str], str]:
         argv, stdin = super()._command(program, system, user, work, files)
-        _sending(self, argv, stdin, files)
-        return argv, stdin
+        return _sending(self, argv, stdin, files)
 
     def _reply(self, code: int, printed: str, errors: str, files: Any, hide: tuple[str, ...]) -> str:
         said, failed = _codex_turn(printed)
@@ -654,7 +719,7 @@ class AccountReader:
         return self.readings.get(provider)
 
 
-__all__ = ["AT_CAPACITY", "AccountReader", "Gate", "MODEL_REFUSED", "NOT_REPORTED", "ProviderStop", "REFRESH",
+__all__ = ["AT_CAPACITY", "AccountReader", "Gate", "MODEL_REFUSED", "NOT_REPORTED", "ProviderStop", "REFRESH", "Request",
            "UsageUnavailable", "WatchedClaude", "WatchedCodex", "claude_said", "codex_limits", "codex_said", "limit_ends",
            "limits_reading", "read_limits", "read_stops", "refused_by", "request_digest", "request_identity",
            "Send", "telling_stops", "watched"]

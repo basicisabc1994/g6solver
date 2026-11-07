@@ -96,6 +96,7 @@ from g6.self_maintenance.envelope import (
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
 from g6.self_maintenance.usage import (
     ProviderStop,
+    Request,
     Send,
     limit_ends,
     read_stops,
@@ -234,7 +235,7 @@ def _request_digest(system: str, user: str) -> str:
     return request_digest(system, user)
 
 
-def _named(frame: Any) -> str | None:
+def _named(frame: Any) -> Request | str | None:
     """What a frame on the way out of a send names as the request sent: the digest of its ``system`` and ``user`` when it names
     both, as text; ``""``, which no digest is, when it names both and they are not both text, so nothing further out stands in
     for them; and ``None`` when it does not name both, or is one of this module's own frames, which name what a call was asked.
@@ -245,10 +246,10 @@ def _named(frame: Any) -> str | None:
     if "system" not in names or "user" not in names:
         return None
     system, user = names["system"], names["user"]
-    return _request_digest(system, user) if isinstance(system, str) and isinstance(user, str) else ""
+    return Request.text(system, user) if isinstance(system, str) and isinstance(user, str) else ""
 
 
-def _sender(counted: Any) -> tuple[Any, str]:
+def _sender(counted: Any) -> tuple[Any, Request | str]:
     """The caller sending the request being noted and what it sends, from ``counting``'s observer. ``g6.core.model_calls`` says
     only that one is going out, and that file is bound, so both are read from the stack above the note, up to ``counted``'s
     own call, passing over this module's own frames on the way (the observer, the resend gate). The first ``self`` there is the
@@ -477,8 +478,8 @@ class _Requests:
         return False
 
     def admit(self, wait: float = 0.0, *, places: int = 0, generation: int | None = None,
-              live: Callable[[], bool] = lambda: True, identity: str | None = None, owner: object = None,
-              identify: Callable[[], str] | None = None, watched: bool = False, sender: Any = None) -> Send | None:
+              live: Callable[[], bool] = lambda: True, identity: str | Request | None = None, owner: object = None,
+              identify: Callable[[], str | Request] | None = None, watched: bool = False, sender: Any = None) -> Send | None:
         """The one admission of every send in the process, nested or not, on any thread, a resend included, as one step under
         the one lock. The calls around the send are the metered calls open in this context, and one on this meter from
         ``owner``, ``generation`` and ``live`` where none of those is. Everything it decides on is read inside the lock, for
@@ -496,11 +497,10 @@ class _Requests:
                 calls = (*calls, _Call(owner, self, generation, live))
             meters = [meter for meter, _ in _meters(calls)]
             while True:
-                known = identify() if identify is not None else identity
                 barred: set[str] = set()
                 for meter in meters:
                     stopped = meter.halted()
-                    if stopped is None and known is not None:
+                    if stopped is None and (identity is not None or identify is not None):
                         try:
                             barred |= meter.refused | set(meter.on_record())
                         except LedgerError as exc:
@@ -510,6 +510,16 @@ class _Requests:
                         if meter.limit != math.inf:
                             raise stopped
                         raise LLMError(f"{stopped.code}: {stopped.said}")
+                # Snapshot after every stop/store read, including after a wait. No later read names this send.
+                request = identify() if identify is not None else identity
+                known = request.identity if isinstance(request, Request) else request
+                if identify is not None:
+                    for meter in meters:
+                        stopped = meter.halted()
+                        if stopped is not None:
+                            if meter.limit != math.inf:
+                                raise stopped
+                            raise LLMError(f"{stopped.code}: {stopped.said}")
                 for meter in meters:
                     if meter.refusal is not None:
                         raise _Refused(meter.refusal["said"])
@@ -532,7 +542,8 @@ class _Requests:
                 if known is None:
                     return None
                 record = Send(known, watched, owner, self.generation, here, sender, places,
-                              tuple((meter, meter.generation) for meter in meters))
+                              tuple((meter, meter.generation) for meter in meters),
+                              request if isinstance(request, Request) else None)
                 _RECORD.out.setdefault(known, []).append(record)
                 for call in calls:
                     book = _RECORD.books.get(call.owner)
@@ -543,7 +554,7 @@ class _Requests:
         raise LLMError(f"{TICK_BUDGET_SPENT}: {full.stopped}")
 
     def take(self, wait: float = 0.0, *, generation: int | None = None, live: Callable[[], bool] = lambda: True,
-             identity: str | None = None, owner: object = None, identify: Callable[[], str] | None = None,
+             identity: str | Request | None = None, owner: object = None, identify: Callable[[], str | Request] | None = None,
              watched: bool = False, sender: Any = None) -> Send | None:
         """A send about to go out, which takes one place on each meter around it: it keeps them whatever becomes of it, as a
         failed one may have reached the model."""
@@ -740,7 +751,7 @@ class _Gate:
     def __init__(self, requests: _Requests, call: _Call) -> None:
         self.requests, self.call = requests, call
 
-    def sending(self, identify: Callable[[], str], sender: Any) -> Send:
+    def sending(self, identify: Callable[[], Request], sender: Any) -> Send:
         return self.requests.admit(places=1, owner=self.call.owner, identify=identify, watched=True, sender=sender)
 
     def told(self, said: str, record: Send | str) -> None:
@@ -751,7 +762,11 @@ class _Gate:
 
 
 def _raised_by(failed: BaseException, sends: Sequence[Send]) -> Send | None:
-    """The send whose failure ``failed`` is, read from its own frames, innermost first, on its way out or on the way out of
+    """Compatibility fallback for multi-send callers outside G6's wrappers. This cannot bind an error after its sender
+    changes traceback locals. Removing it without losing existing external callers needs the bound note API to carry
+    requests and errors. Owned host errors and single-send metered errors carry their record instead.
+
+    The send whose failure ``failed`` is, read from its own frames, innermost first, on its way out or on the way out of
     what it was raised from: a frame of a watched caller this call let a send out for, or a frame, a function's or a method's,
     that names what an unwatched send let out in this call sent, as ``_sender`` reads it (``_named``). A send that came back
     has no frame there. With none found, it is this call's one send, or not known."""
@@ -767,7 +782,7 @@ def _raised_by(failed: BaseException, sends: Sequence[Send]) -> Send | None:
             caller, named = frame.f_locals.get("self"), _named(frame)
             for record in reversed(sends):
                 if (caller is not None and record.sender is caller) if record.watched else (
-                        bool(named) and named == record.identity):
+                        isinstance(named, Request) and named.identity == record.identity):
                     return record
         error = error.__cause__ or error.__context__
     return sends[0] if len(sends) == 1 else None
@@ -789,10 +804,12 @@ class _Counted:
     passes no boundary, is settled once as the call ends (``_Requests.settle``).
 
     Each send's record (``usage.Send``) is all that is known of it: no flag or variable here holds a send's state. What was
-    refused is known by what was sent: for a host caller, what its program is started with, read where it starts (``_Gate``);
+    refused is known by what was sent: for a host caller, an immutable snapshot handed to its launcher (``_Gate``);
     for any other, the system text and request the innermost frame below its sender, or the sender's own, names, a function's
     or a method's, read as it is noted (``_sender``), and a request no such frame names is not sent. What a call raised is
-    read by the record of the send that raised it, among every send let out inside the call (``_raised_by``): a watched host
+    carried by ``ProviderStop`` with its send's record for owned host errors and single-send metered errors. Only external
+    multi-send errors use the traceback fallback (``_raised_by``), which cannot bind a mutated traceback: the bound note API
+    must hand over the request and error to close that gap. A watched host
     caller's own reading of its structured output is all that decides for it, and the text reader is for any other. Whichever
     way the call comes back, what its tick latched decides last (``recheck``), so a wrapper that catches the limit or the
     refusal cannot turn it into an answer.
@@ -865,7 +882,9 @@ class _Counted:
                         self.requests.provider_said(failed.said, failed.record, call.generation)
                     else:                                 # read as the send that raised it is: text only if not watched
                         sends = self.requests.sends_within(call.owner)
-                        raised = _raised_by(failed, sends)
+                        # A wrapper with one send owns that association; a nested wrapper carries it out explicitly.
+                        # Multi-send callers outside these wrappers still need the bound note API to hand over errors.
+                        raised = sends[0] if len(sends) == 1 else _raised_by(failed, sends)
                         if (raised is None and not any(s.watched for s in sends)) or (raised is not None
                                                                                        and not raised.watched):
                             self.requests.provider_said(failed, raised, call.generation)
@@ -873,6 +892,9 @@ class _Counted:
                     finish(isinstance(reading, Exception | _AtLimit | _Refused | _Halted))
                     raise
                 finish(True)
+                if not isinstance(failed, ProviderStop) and len(sends) == 1 and raised is not None and not raised.watched:
+                    if refused_by(str(failed)) or limit_ends(str(failed), self.requests.now()) is not None:
+                        raise ProviderStop(str(failed), raised) from failed
                 raise
             except (Exception, _AtLimit, _Refused, _Halted):
                 finish(True)

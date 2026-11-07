@@ -1452,12 +1452,14 @@ def test_every_way_a_send_is_known_and_every_sender_the_loop_accepts_names_what_
     from g6.harness.completion_loop import ToolSession
 
     loop_tree, usage_tree = _source_tree(loop_module), _source_tree(usage)
-    assert {where for where, _ in _callers(loop_tree, {"_request_digest"})} == {"_named"}
+    assert {where for where, _ in _callers(loop_tree, {"_request_digest"})} == set()
+    assert {where for where, _ in _callers(loop_tree, {"text"})} == {"_named"}
     assert {where for where, _ in _callers(loop_tree, {"_named"})} == {"_sender", "_raised_by"}
     assert {where for where, node in _nodes(loop_tree) if isinstance(node, ast.Constant) and node.value in ("system", "user")
             } == {"_named"}
-    assert {where for where, _ in _callers(usage_tree, {"request_identity"})} == {"_sending"}
-    assert {where for where, _ in _callers(usage_tree, {"request_digest"})} == {"_received"}
+    assert {where for where, _ in _callers(usage_tree, {"request_identity"})} == {"Request.host"}
+    assert {where for where, _ in _callers(usage_tree, {"request_digest"})} == {"Request.text", "_received"}
+    assert {where for where, _ in _callers(usage_tree, {"host"})} == {"_sending"}
     source, noting = Path(g6.__file__).resolve().parent, set()
     for path in source.rglob("*.py"):
         for where, node in _nodes(ast.parse(path.read_text(encoding="utf-8"))):
