@@ -2,7 +2,7 @@
 
 Status: version 2, approved by the owner on 2026-11-06. Version 1 (178ef54) was challenged by Codex. All 16 of its challenges
 were read against the code, all 16 are adopted, and appendix A lists each. Building follows section 7's order. Section 11 is
-a proposed amendment (2026-11-07) and is not approved.
+a proposed amendment (2026-11-07, version 2 after Codex's challenge in appendix B) and is not approved.
 
 ## 1. Why
 
@@ -398,87 +398,152 @@ Study statistics carry their denominators, their cohorts and how to reproduce th
 
 ## 11. Proposed 2026-11-07, not approved: the rigour architecture as a test of what works in practice
 
-**Status.** Proposed for the owner's approval. Nothing here is built until then, and it changes no step's order in section 7.
+**Status.** Version 2, proposed for the owner's approval. Version 1 (8e72041) was challenged by Codex; all twelve challenges
+were read against the code and adopted, and appendix B lists each. Nothing here is built until the owner approves it, except
+where an item restates what sections 3.1 and 3.2 already require, and it changes no step's order in section 7.
 
 **Source.** The owner's architecture for intellectual rigour and metacognition (six subsystems under one controller), read
 with Dörner, *The logic of failure* (Phil. Trans. R. Soc. B 327, 1990), and Shankar et al., *Who validates the validators?*
 (arXiv 2404.12272, 2024). It is used here as a checklist against this design. Its own citations of other sources are not yet
 checked, and nothing from it is quoted publicly.
 
-### 11.1 Where this design already meets it
+### 11.1 Where this design already meets it, and what that rests on
 
 | The architecture's subsystem | Where this design has it | Gap that matters in practice |
 |---|---|---|
-| Epistemic kernel: typed claims, four states, provenance | 3.1: the issuer keeps support and refutation apart in Belnap's four states, and one refutation makes a conflict; each record states identity, control, independence and scope | nothing measures how far each kind of check can be trusted (11.2, item 1) |
+| Epistemic kernel: typed claims, four states, provenance | 3.1: the issuer keeps support and refutation apart in Belnap's four states; each record states identity, control, independence and scope | custody is checked for support but not for refutation (item 1); no diagnostic of what each check kind detects (item 4) |
 | Necessity under a model versus permission | 3.4: a model result is about the model; merge authorisation is separate from the assessment | none for 0.3 |
-| Seek the evidence that could change the conclusion | 3.3: a disagreement is a lead; negative controls; self-authored checks refused | the confirmed expectation's own check has no stated control (item 2) |
+| Seek the evidence that could change the conclusion | 3.3: a disagreement is a lead; negative controls; self-authored checks refused | the confirmed answer's check needs a witness of the rejected outcome (item 3) |
 | Generative design (C-K theory) | step 6 tests composition against an outside oracle | none built; no failing test shows a need |
-| Choosing the next experiment | 3.5: fixed priorities, `next_experiment` | nothing records what each action expected to learn (item 4) |
-| Action in a dynamic system (Dörner) | section 9: a repair must pass its test and break nothing | nothing reports how many of G6's actions had their effect checked (item 3); reversibility is not a selector input (item 4) |
-| Intent and criteria drift (Shankar) | 3.2: one concrete question, typed form, exact binding, explicit supersession | drift is not measured (item 5) |
+| Choosing the next experiment | 3.5: fixed priorities, `next_experiment` | no record of why a mechanism ran and what it expected to observe (item 6) |
+| Action in a dynamic system (Dörner) | section 9: a repair must pass its test and break nothing | a repair is applied to a working tree that may have changed since it was tested (item 5) |
+| Intent and criteria drift (Shankar) | 3.2: one concrete question, typed form, exact binding, explicit supersession | nothing shows the compiled check observes what the person confirmed (item 2); drift is not measured (item 7) |
 | One controller | 3.5: the selector, which says what ran and why | as above |
 
-The study's own records agree with both papers. The frozen reviewer's balanced accuracy was 53.6% on unseen patches (an
-evaluator nobody had validated), and lines a repair wrote held 43% of the later findings in G6's own review loops (actions
-whose side effects went unchecked).
+**What the study's records motivate, and what they do not show.** The frozen review had 138 false alarms among 279 right
+patches and 61 misses among 141 wrong ones on the named cohort and oracle, a balanced accuracy of 53.6%. Of 153 later findings
+in G6's own review loops whose lines could be located, 66 were on lines a repair wrote. These motivate discriminating
+diagnostics for checkers and stronger checks around repairs. They do not show that those actions were unchecked, which repair
+caused which defect, or that the process proposed here would prevent them.
 
 ### 11.2 Amendments
 
-1. **A report card for every kind of check.** For each mechanism and check kind, two rates with their intervals on the frozen
-   cohort's held-out part: the share of wrong patches it fails, and the share of right patches it fails. They are recomputed
-   whenever the mechanism, its model or the criteria change. The report shows the card beside each finding of that kind, and a
-   kind with no card is labelled unmeasured. The two rates are never merged into one score. **Reuse:** `metaharness/lessons.py`
-   (`calibrate`, `trusted`, `gap`, with the Clopper-Pearson bound in `core/binomial.py`) and `metaharness/coding_replay.py`,
-   both test-only today, graduate to the report. For deterministic checks the cohort's gold, base and empty controls and the
-   study's labelled patches supply both sides, with no model spend. **Where:** step 4. It can start on slice 1's cohort.
-2. **The confirmed expectation must be able to fail.** The `example.v1` check compiled from an answer must fail on a patch, or
-   on the base, that shows the rejected outcome. If there is no such control, or the check passes on it, the expectation is
-   reported as vacuous and supports nothing. This is the issuer's existing negative-control rule, applied to A, and is shown by
-   a contract test. **Where:** slice 3, in its review loop or its follow-up.
-3. **Every action G6 takes has its effect checked, and the share is reported.** This covers each automatic repair (section 9)
-   and each adoption. Afterwards the original reproduction, earlier findings and the affected tests rerun, and the next review
-   covers the lines the repair wrote. The report gives the share of G6's actions whose effect was checked. An action without
-   its executed check is never shown as "Fixed". **Reuse:** `action_logic`'s `VerificationContract` (Dörner's ballistic-action
-   control), unchanged, since a certificate binds it. Its completeness is syntactic, so the executed recheck's receipt is what
-   counts. **Where:** section 9's repair path.
-4. **The selector records its inputs and what it expected.** Two inputs are added:
-   - whether the next action can be undone: work in a scratch copy can, while a merge or anything outside the box cannot;
-   - the consequence of error.
+1. **Custody for both polarities.** A failed run counts as a refutation only when G6 observed its execution and controls, as
+   a pass already must: a failure without resolved execution and control records is an unconfirmed failure, shown as a
+   caveat. The accepted-outcome reference that makes a failing check meaningful also needs observed provenance. Execution
+   custody is kept separate from the independence policy for each polarity, so an author's own genuine reproduction is not
+   discarded. The issuer is bound, so the rule is enforced in the unbound adapter in front of it (`evidence/mapping.py`,
+   `harness/requirement_evidence.py`), and the issuer's failure branch goes on the issuance list. Tests: forged, missing,
+   mismatched and stale negative records, and a conflicting pass and fail. **Why first:** a supplied failure can otherwise veto
+   a requirement G6 never ran (reproduced offline, at the library interface). **Where:** its own change on the evidence line,
+   after slice 2's follow-up, which edits the same files; the 3.1 mapping table carries the distinction.
+2. **The check observes what the person confirmed.** The slice records and tests the correspondence from the confirmed
+   scenario and scope to the executable setup, entry point, observation and assertion. The accepted case and the
+   rejected-outcome witness exercise that same observation. The supported adapters and comparison semantics are stated: this
+   version supports synchronous functions and their return value, error or argument effect, as `example.v1` does. Anything
+   else, such as an HTTP response, database state or async handler, stays confirmed but not enforced, with the missing check
+   shown. Translation failures are counted in A's harm and coverage, apart from a person's mistaken answer. This restates
+   3.2's "bind exactly what was confirmed". **Where:** slice 3, through its review loop.
+3. **A witness of the rejected outcome, and no false "vacuous".** The issuer's negative-control rule stays mandatory. A adds an
+   adapter-level test that the control runs the confirmed setup, shows the named rejected observation, and is rejected by the
+   frozen check for the intended assertion; the accepted-outcome reference runs too. The control comes from the base or a
+   candidate where one shows the rejected outcome, otherwise from a bounded, isolated mutant that implements it. A collection
+   error or unrelated crash never counts. If no witness can be made, the report says "negative control unavailable;
+   enforcement not established", and the answer is kept. **Where:** slice 3.
+4. **Scoped diagnostics for each kind of check, not an accuracy badge.**
+   - First, a control diagnostic labelled as such: gold against the unfixed base, with empty and base counted once.
+   - A repair-discrimination card is published only on independently labelled, runnable candidate patches, with near misses
+     as their own stratum. Labels are relative to the frozen predicate, standard and oracle version, not to complete program
+     correctness.
+   - Each card shows rejected wrong out of eligible wrong, rejected right out of eligible right, independent bugs, distinct
+     patches, control roles, check, criteria and environment versions, and coverage. Inapplicable, unrun, timed-out, errored
+     and unlabelled cases are shown with their own denominators and never counted as detections. Zero observations means
+     unavailable.
+   - The estimand is declared beforehand: one observation per independent bug or stratum with binomial intervals, or a
+     patch-weighted rate with bug-cluster resampling, as 3.6 requires.
+   - It is described as "historical rejection rates on this scope", never as the chance that a given finding is right.
+   - **Cohort discipline:** the card's population, what it may disclose and its refresh policy are fixed before evaluation. A
+     criterion change needs independently versioned labels. Once a card informs tuning or routing, its cohort is retired for
+     confirmatory claims and reuse is labelled retrospective. Held-out per-case diagnostics never go into an agent's repair
+     feedback.
+   - **Reuse:** `core.binomial`'s bounds and a small count-and-render adapter over executed receipts and scoped labels. Not
+     `lessons.calibrate` or `trusted`, which bound majority agreement by bug, a different quantity. `CodingReplay` stays for
+     measuring model verdicts.
+   - **Where:** step 4.
+5. **Repairs applied to the state they were tested on.**
+   - Capture the pre-repair state and the tested result. Apply only if the receiving working tree still matches, and on a
+     conflict preserve the concurrent work. Rerun the required checks on the resulting tree, keep a recoverable diff or
+     snapshot, and record the action's status across an interruption.
+   - Record as separate outcomes whether the original reproduction was restored, the preservation checks passed, which checks
+     are unknown or failed, and whether a review was received. Count distinct applied repair events, including interrupted
+     ones, not MCP retries. An unresolved event is never shown as "Fixed".
+   - For review, promise only that the complete repair diff and its context were supplied, omissions disclosed, and findings
+     reproduced where possible; this is not line coverage.
+   - Adoptions keep their gate and monitor records (`metaharness/monitor.py`).
+   - **Reuse:** `repo_tests.snapshot`, `verification_controller`'s stale-observation rule, and the completion loop's reruns of
+     earlier reproductions. `action_logic`'s textual `VerificationContract` is not required here.
+   - **Where:** section 9's repair path.
+6. **The selector records each decision as an event.** The record holds:
+   - the decision id;
+   - the artefact, standard and environment versions;
+   - the candidate mechanisms and their applicability;
+   - known and unknown features, with their provenance;
+   - the policy version and the reason;
+   - the cost cap;
+   - the hypotheses, with the observable outcome expected under each (qualitative outcomes are allowed);
+   - whether the result discriminated between them;
+   - the actual receipt and how it was read.
 
-   Each choice also records which hypotheses it was meant to tell apart and the outcomes it predicted, and is scored afterwards
-   as a `lessons.Prediction`. A value-of-information rule would later be fitted to these records. Until then no probability is
-   set by hand or by a model. **Reuse:** `harness/verification_controller.next_experiment`, which is wired in but switched off
-   today. **Where:** step 5.
-5. **Criteria drift is measured in A's slice.** Each answer records when it was given: before candidates exist, after
-   candidates exist, or after the final patch. The person may supersede an answer at any time, through
-   `confirmed_expectation`'s existing supersession. Beside unnecessary, missed and harmful questions, the slice counts the
-   answers revised after the person saw results. No new module is needed. The archive's `semantic_drift` tracks term meaning
-   across reasoning steps, a different problem, and is not ported. **Where:** slice 3's measurement.
+   Reversibility comes from host-enforced capabilities and a concrete recovery plan, never from location alone. The
+   consequence of error is the owner's policy or an attributed declaration, and otherwise unknown. Each field is used only if
+   the design states how it changes a fixed priority or admissibility rule. These logs alone cannot train a router: learning
+   still needs independently judged, paired mechanism outcomes, costs and a declared utility (3.5). `lessons.Prediction` is
+   kept for directional numeric hypotheses only. **Where:** step 5.
+7. **Criteria correspondence and drift.**
+   - The store and supersession are slice 2's (`harness/confirmed_expectation.py`), which slice 3 wires in. A supersession
+     preserves the old and new answers, the stage at which each was given, the reason, the scope and the standard and check
+     versions, and reruns the affected evidence.
+   - Within the normal one-question flow, the slice measures correspondence at each step on a fixed scenario set: the options
+     shown, the recorded answer, the compiled observation, the repair's objective and the final report. It records which
+     outcomes each version accepts, and separates a changed specification from a mistranslation.
+   - Human criteria drift is measured only in a separate, predeclared evaluation with paired judgments of the same fixed cases
+     before and after seeing outputs, with the order controlled and reasons recorded. It reports invitations, exposures,
+     pairs, attrition and changes; with too few pairs it says unmeasured.
+   - **Where:** slice 3's measurement, then that evaluation.
 
 ### 11.3 Route or retire: the components this architecture names (section 6's rule)
 
+"Retire" here means from the 0.3 product integration plan. No public library API or shared dependency is removed, and no
+confidence or status mapping changes a requirement's status on its own (3.1).
+
 | Code | Today | Decision proposed |
 |---|---|---|
-| `harness/verification_controller.next_experiment` | wired in, switched off | the selector's scheduler (3.5, item 4) |
-| `cogarch/decision_making/voi.py` (EVPI, information gain) | `g6_invoke` op only; a second selector | stays a library op; not the selector until item 4's records exist |
-| `metaharness/lessons.calibrate`, `metaharness/coding_replay` | test-only | the report card (item 1) |
-| `action_logic` controls | bound; non-coding paths only | the repair path's contract (item 3), unchanged |
-| `core/evidence.EpistemicStatus` | bound; used by `action_gating` | not an authority for requirements; its mapping to the issuer's four states is written down, with no change to the file |
-| `formal/four_valued` alethic and deontic frames | `g6_invoke` op only | stays a library op; the product needs only the two separations it already has |
-| `debate` | no block, no caller | retired for the product: voices from one model family are not independent (section 2's anti-goals) |
-| `reliability_pipeline/metacognition.py` | disclosure only, no caller | retired; `lessons` and `tick_rca` do its job |
-| `workforce/mutation_check` | opt-in (`test_adequacy`) | stays opt-in; its kind gets a card under item 1 |
-| `reasoning/structure_map`, `metaharness/level2.choose` | test-only | parked with step 6 and the unattended loop, which stays off |
+| `harness/verification_controller.next_experiment` | review ordering wired in, off by default; also used by `algorithm_design/autonomous.py` | the low-level scheduler under the selector (item 6), not the selector itself |
+| `cogarch/decision_making/voi.py` | library functions and an invokable next-experiment policy (`policies.py`); no coding integration | stays optional; not the selector until paired outcomes exist |
+| `metaharness/lessons` (`calibrate`, `trusted`, `gap`) | these functions have no production caller; the module is used by `reflex`, `tick_rca` and the loop | not the card's statistics (item 4) |
+| `metaharness/coding_replay` | measures model verdicts against labels; used by the study, no product caller | stays for model verdicts; not deterministic card execution |
+| `action_logic` controls | bound; used by generic material-action gating, not by coding repair | unchanged; not required on the repair path (item 5) |
+| `core/evidence` status vocabulary | bound; the adjudicator emits it, and action gating uses the module's records and grade, conflict and refutation functions | a lossy display correspondence to the issuer's four states is documented; never a promotion adapter |
+| `formal/four_valued` modal frames | library functions and invoke ops; its nonmodal parts are used by `formal/contract.py` | frames stay optional; the shared four-valued implementation stays |
+| `debate` | no block, no production caller; one injected caller | not an evidence path; may generate alternatives, never counted as independent votes |
+| `reliability_pipeline/metacognition.py` | disclosure only, no production caller | not needed by this slice; left as an unintegrated library |
+| `workforce/mutation_check` | opt-in in patch review; also run by `bundles/agent_change.py` | suite-adequacy reporting, kept apart from item 4's patch rejection rates |
+| `reasoning/structure_map`, `metaharness/level2.choose` | no production caller | parked with step 6 and the unattended loop |
+| `metaharness/monitor.py` | post-adoption monitoring | the record of adoption effects (item 5) |
 
 ### 11.4 Not adopted now, with the reason
 
-- **A general modal or deontic logic engine:** the product needs only the two separations it already has.
-- **A C-K design engine:** no failing test shows the need. Step 6 tests the composition model against an outside oracle first.
-- **POMDP or model-predictive control:** 0.3 takes no action outside the box except through a person's merge.
-- **An expected-value-of-sample-information optimiser:** it needs calibrated probabilities G6 does not have, so item 4
-  collects the data first.
-- **Detecting unknown unknowns:** not measurable as a claim. Disagreement and the premortem stay the means, without a claim.
-- **The architecture's state names:** G6 keeps its own three reliability states and its public wording.
+- **A general modal or deontic logic engine, a C-K design engine, POMDP or model-predictive control, an
+  expected-value-of-sample-information optimiser:** none is shown necessary for 0.3, and no failing test shows a need.
+- **What they stand for is kept as concrete obligations:**
+  - permission separate from evidence;
+  - the confirmed criterion's correspondence to its check (item 2);
+  - bounded observe, act and recheck, with stale-state rejection, stopping and recovery, for working-tree writes (item 5);
+  - known unsupported cases listed.
+- **Detecting unknown unknowns** is excluded as a guarantee. Measured coverage of a predeclared scenario set is still needed
+  for the missed-question count.
+- **The architecture's state names:** G6 keeps its internal state names. Public copy says "checked" or "challenged", never
+  "verified" as a claim (owner, 2026-11-05), and each statement carries its artefact, standard, check and scope.
 
 ## Appendix A: Codex's challenge of version 1, and what changed
 
@@ -500,3 +565,25 @@ whose side effects went unchecked).
 | 14 | Wiring every package rebuilds graduated code | 6: a capability table with retirements |
 | 15 | The order postpones the decisive test | 7: cohort, semantics, then the question slice first |
 | 16 | Public copy must separate observations, plans and the product | 10 and 5: wording and published decisions |
+
+## Appendix B: Codex's challenge of section 11 version 1, and what changed
+
+Codex read section 11 at 8e72041 against the code, with one offline probe on synthetic objects. Every challenge was read
+against the code. The issuer probe was rerun on slice 3's tree with the same result. One "not found" is an artefact of the
+checkout: `harness/confirmed_expectation.py` and its supersession exist on `claude/evidence-semantics`, which the integration
+line Codex read does not yet carry. All twelve are adopted.
+
+| # | Challenge | What changed |
+|---|---|---|
+| 1 | The issuer's failure branch turns a supplied failure with no ledger record into a refutation | new item 1: custody for both polarities, at the adapter; the issuer goes on the issuance list |
+| 2 | A card built from gold, base and empty controls looks excellent while missing near misses | item 4: a control diagnostic first; a candidate card only on labelled runnable patches, with near misses apart and full denominators |
+| 3 | The person can confirm the right criterion while G6 compiles the wrong observation | new item 2: correspondence from scenario to setup, entry point, observation and assertion; unsupported cases stay unenforced and shown |
+| 4 | No producer for a control showing the rejected outcome; a missing control is not vacuity | item 3: an adapter-level witness from the base, a candidate or a bounded mutant; "negative control unavailable" otherwise |
+| 5 | `lessons.calibrate` bounds majority agreement by bug, not either rate; `CodingReplay` calls a model | item 4 reuses `core.binomial` and a small adapter; `CodingReplay` stays for model verdicts |
+| 6 | Supersession was claimed as existing on a tree that lacks it; revisions alone cannot measure drift | item 7: the store is slice 2's, wired by slice 3; correspondence measured at each step; human drift only in a paired evaluation |
+| 7 | Recomputing a held-out card spends the cohort | item 4's cohort discipline |
+| 8 | The textual `VerificationContract` adds paperwork; "the next review covers the lines" overpromises | item 5 uses executed checks and promises only that the diff was supplied |
+| 9 | Applying a repair to a working tree that changed since it was tested | item 5: pre-repair capture, apply only on a match, preserve concurrent work, rerun, recover; 11.4's rationale corrected |
+| 10 | `lessons.Prediction` cannot hold an experiment's expected outcomes; chosen-action logs do not train a router | item 6: an event record with qualitative expectations; learning still needs paired outcomes |
+| 11 | Several "Today" cells were wrong or too broad, and two substitutions were not equivalences | 11.3 rewritten row by row; "retire" means from the integration plan, never removing a public API |
+| 12 | The study paragraph overstated what 53.6% and the repair-line count show | 11.1 states the denominators and what they do not show |
