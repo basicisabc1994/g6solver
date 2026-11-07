@@ -2,7 +2,8 @@
 
 Status: version 2, approved by the owner on 2026-11-06. Version 1 (178ef54) was challenged by Codex. All 16 of its challenges
 were read against the code, all 16 are adopted, and appendix A lists each. Building follows section 7's order. Section 11 is
-a proposed amendment (2026-11-07, version 2 after Codex's challenge in appendix B) and is not approved.
+a proposed amendment (2026-11-07, version 2 after Codex's challenge in appendix B) and is not approved. Sections 12 (the
+Context Engine) and 13 (both agents know both allowances) are proposed on 2026-11-08 and are not approved.
 
 ## 1. Why
 
@@ -544,6 +545,334 @@ confidence or status mapping changes a requirement's status on its own (3.1).
   for the missed-question count.
 - **The architecture's state names:** G6 keeps its internal state names. Public copy says "checked" or "challenged", never
   "verified" as a claim (owner, 2026-11-05), and each statement carries its artefact, standard, check and scope.
+
+## 12. Proposed 2026-11-08, not approved: the Context Engine, a person's own knowledge searched three ways
+
+**Status.** Version 1, proposed for the owner's approval. Nothing here is built until the owner approves it and Codex's
+challenge has been read and answered. It changes no step's order in section 7.
+
+**Source.** The owner's direction of 2026-11-08:
+- `ctx.elastic` as a capability for onboarding and specialisation;
+- G6's own skill and MCP tools, not Elastic's Agent Builder or Elastic's MCP server;
+- no built-in hybrid retriever from Elasticsearch;
+- semantic search over large data by `ctx.colbert`;
+- graph search as the third mechanism;
+- an agentic search layer that chooses among the three;
+- G6 indexing its own code.
+
+An outside analysis the owner shared was read as a list of ideas. Its claims about Elastic were checked against Elastic's
+documentation, and two were corrected:
+- Agent Builder needs an Enterprise licence on a self-managed install.
+- The `rrf` retriever is reported to be licence-gated.
+
+The owner authorised porting the earlier private repository's components under G6's licence.
+
+### 12.1 Why it belongs in this design
+
+- **A fourth source.** Section 1's principle is that a checker adds only what it knows that the author does not. A person's
+  own documents are a fourth source of what the agent lacks, beside the person, execution and exact engines: design
+  decisions, conventions, incident reports, and specifications kept outside the repository.
+- **It serves A directly.** 3.2 asks each candidate question to carry "any evidence that the task already settles it". A
+  cited passage that settles the scenario turns a question into a citation, which is the cheapest way to cut unnecessary
+  questions (A's first anti-goal).
+- **A passage never confirms an expectation.** A document is not the person. A proposal backed by a passage stays proposed
+  until the person confirms it, or names that source as normative for the repository.
+- **It is the onboarding step for specialisation.** A person points G6 at their material, which is searchable at once, and
+  G6 can propose a skill that uses it. A proposed skill is a hypothesis until it is measured (12.8).
+- **Independence is stated, not assumed** (section 1). A passage's record says where it came from, which version, and
+  whether the agent could already read it. A file in the repository the agent was given is not new information.
+
+### 12.2 What exists (surveyed 2026-11-08, read from the code)
+
+| Need | Current G6 | Earlier private repository | Decision |
+|---|---|---|---|
+| Passage identity and provenance | `knowledge/_types.py`: `Source`, `Document`, `Passage`. `passage_id` binds the source URI, source hash, document hash and offsets. Trust is computed and always untrusted | — | use as is; every backend indexes G6 passages |
+| One index contract | `knowledge/_index.py`: `Index`, `IndexBackend` (with `writable` and `persistent`) and a backend registry. Backends are combined by rank, never raw score | — | use as is |
+| Convert, chunk, re-check | `knowledge_converter`; `knowledge_chunker`, with checked offsets; `knowledge_manifest.verify_passage`, which answers matches, changed, source unavailable or unverifiable | — | use as is |
+| Local full-text | `knowledge_indexer.SqliteIndex`: SQLite FTS5 BM25, incremental by passage id, with a storage budget and a tamper check | — | the default backend, needing no install |
+| Elasticsearch | `ctx_elastic`: read-only search. Fields are checked against the mapping. It reaches a local cluster over HTTP only, takes its key from the person's key file, and is tested against a fake server | A writer (index, bulk, create, delete, reindex, aliases) and a 25-tool MCP server. It takes keys from environment variables and lets the cluster generate ids, stores no provenance, and runs caller- and model-written query and script JSON unchecked | rewrite the writer inside `ctx_elastic` on `g6.core.outside`, with typed inputs only; do not port the MCP server |
+| Meaning | `ctx_colbert`: ColBERT, then sentence embeddings, then BM25. It loads weights only from the person's cache, holds passages in memory (up to 2,000) and re-encodes them on each call | A RAGatouille wrapper that re-indexes everything on any change; a PLAID index that is disabled on Windows and rebuilt on every ingest | build a persistent index (12.3) |
+| Relationships | `ctx_cognee`: the shortest chain between two labels over a Cognee server's graph, whose edges are model-generated and carry no passage ids. Code graphs in `design_governance` and `complexity.impact_cone` | `knowledge_manifest`'s unused `concept_edges` table (source, target, type, weight, passage id); a raw-Cypher Neo4j adapter; an OWL store with a `run_code` op | port `concept_edges` as the seed; do not port the Cypher or `run_code` ops |
+| Fusion | `g6.context.fuse`: rank fusion in Python over `ContextItem`, with near-duplicate merging guarded on numbers and negation, and a budget | Python RRF in `ctx_rag`; a keyword router that picks one backend | use `fuse`; add a `Hit`-to-`ContextItem` adapter and a fusion over `Searched` results |
+| Untrusted text | computed trust, `grounding.instruction_signals`, the `context` scrubber and `ContextItem`'s rules | — | use as is |
+| Outward acts | `sources/_gate.py`, through `action_gating` | — | gates every write to an outside index |
+| Proposal lifecycle | `ctx_ace.Store` (a proposal until approved); `metaharness/_code_safety.skill_text_problems`; `component_creator`'s SKILL.md render and conformance check | a skill emitter whose evidence is a folder path | reuse, citing passages |
+| Permissions | none beyond sensitive-op allow-lists | an ACL in `context_engine` that failed open (recorded as CTX-009 and not ported) | new (12.6) |
+
+### 12.3 Three ways of searching, one contract
+
+- **Exact terms and structure: `ctx_elastic`, or `SqliteIndex` when no cluster is installed.**
+  - Full-text search with fields checked against the mapping, exact filters, and counts and aggregations, all through typed
+    inputs.
+  - It uses only Elasticsearch features from the free tier: full-text, vector search and structured queries. It does not
+    use the `rrf` retriever, ELSER or `semantic_text`, document-level security, Agent Builder or Elastic's MCP server.
+  - G6 never bundles Elasticsearch. The earlier repository vendored a copy, which stays out. The person installs it, and
+    without it the local index answers.
+- **Meaning: `ctx_colbert`, made persistent.**
+  - Token vectors are kept on disk by passage id, with incremental add and remove, batch encoding and a device setting.
+  - The weights check stays: only a complete safetensors copy already in the person's cache.
+  - A spike chooses the index library before the design names one, comparing PyLate's own indexes with a PLAID build on
+    Windows as well as Linux. The archive's PLAID path was disabled on Windows.
+  - Its scale is stated from measurement, not claimed.
+- **Relationships: a passage-linked graph.**
+  - Nodes are entities and documents. Every edge carries the passage id that states it, from `concept_edges`.
+  - Entities come with exact offsets from `ctx_langextract`. A code repository's own structure comes from
+    `design_governance` and `impact_cone`.
+  - An edge a model proposed is marked as such, and is a lead, not evidence.
+  - A multi-hop query returns the cited passages along its path, never a bare chain.
+  - Cognee stays an optional outside service.
+- **Identity across backends.** Each backend stores the G6 passage id and source, so one passage found two ways is still one
+  passage. The Elasticsearch writer sets `_id` to the passage id, so a repeated upload is idempotent. It also stores the
+  source, hashes and offsets, so a hit cites the original document rather than the cluster's record.
+- **Fusion is G6's.** Results are combined by rank (`g6.context.fuse`), never by raw score, through one adapter from `Hit` to
+  `ContextItem`. Every fused item keeps each backend's rank and reason.
+
+### 12.4 The search planner: choosing among them
+
+- **A staged planner with fixed, stated priorities,** as 3.5 requires of the selector, and with the same event record
+  (11.2 item 6):
+  - exact identifiers, paths, error strings and API names go to exact search first;
+  - conceptual questions go to meaning;
+  - questions about what depends on, decides or contradicts something go to the graph;
+  - results are fused when more than one route applies.
+- **Reading and stopping.** The planner reads each result, and may reformulate or widen the search within a stated budget of
+  searches and tokens. It stops on coverage, on the budget, or when a search finds no new passage.
+- **Only typed queries are admitted.** The model may propose the next search, but the planner takes no query text in a
+  cluster's own syntax and no model-written query JSON, as the earlier repository ran unchecked.
+- **Learned routing comes only after paired outcomes exist** for each mechanism (3.5). The archive's keyword router is a
+  starting rule, not a learned one.
+- **"Extensible" is the claim, with its measured limits:** index size, latency, and recall at each size. Public copy never
+  says "infinite".
+
+### 12.5 Onboarding a person's knowledge, and proposed skills
+
+1. **Add a source:** a folder, a repository, files or a fetched URL.
+   - G6 converts and chunks it, and indexes it into every installed backend with provenance.
+   - It records the source in a manifest with its scope (12.6).
+   - The source is searchable at once, with citations.
+   - Adding is a sensitive operation, confirmed in the client's dialog, with no terminal fallback.
+2. **Refresh.**
+   - A sweep re-reads each source by its git commit, file hash or fetch, and re-checks passages with `verify_passage`.
+   - It deletes a changed or removed source's passages from every backend, and indexes the new ones.
+   - A task's report records a context snapshot: the index generation, and the ids and hashes of the passages used. So what a
+     decision relied on can be reconstructed later. Binding evidence to bytes is already the issuer's rule (3.1).
+3. **Propose a skill.**
+   - From indexed sources, G6 drafts a provisional skill: a SKILL.md naming its sources, its search policy and token budget,
+     the tools it may use and its checks. Every factual line cites a passage.
+   - It is checked by `skill_text_problems` and by `component_creator`'s conformance check.
+   - It stays a proposal until the person approves it in the client's dialog (`ctx_ace`'s lifecycle).
+   - It stays provisional until its 12.8 row has run. Approval installs it; it does not make it expert.
+4. **MCP.** G6's own tools are added, with names fixed from the canonical vocabulary (`00_INDEX.md`):
+   - add a source;
+   - search, fused and cited;
+   - fetch a passage with its provenance;
+   - list sources;
+   - refresh;
+   - assemble a context pack within a token budget;
+   - propose a skill.
+
+   One section of the `using-g6` skill tells the agent when to use them. REST, the CLI and the GUI stay frozen.
+
+### 12.6 Rules that hold on every path
+
+- **Scope before retrieval.**
+  - Each source is registered with a scope: at least the person and the project.
+  - Every backend query is filtered by scope inside its adapter, where a caller cannot widen it.
+  - Results are checked again against the source's scope record before they leave G6. A model never decides access.
+  - A removed or revoked source's passages are deleted from all three backends and from caches.
+  - This is new code, and the leakage test comes first (12.9).
+- **Retrieved text is data.**
+  - Passages keep their computed untrusted trust and pass the tripwire.
+  - They are scrubbed for secrets before they reach a model.
+  - They can never authorise a tool action or change a policy.
+  - A document with a planted instruction is a test fixture on every path.
+- **Writes to an outside index** go through `sources/_gate` and `action_gating`, with the key taken from the key file only.
+  They are local by default, as the reader is.
+- **Freshness.** An item past its stale time is refused (`ContextItem.stale_after`), and a changed source invalidates
+  anything that cited it.
+- **Private material** stays on the person's machine, and tests use synthetic corpora. Nothing indexed reaches a public
+  branch, digest or record.
+
+### 12.7 G6 indexing G6
+
+- **Search and understand.** G6's own repository is the first corpus. It is g6solver, B's worked example (section 8).
+  - The corpus covers code with file and line provenance, the catalogue, the SKILL.md files, the failure map, the
+    specifications and the study's public records.
+  - Code structure comes from the import graph and `impact_cone`; text and meaning come from the other two mechanisms.
+  - It is also where the Context Engine is measured first (12.8), on a corpus whose answers are known.
+- **Fitness for a use case.** Given a person's use case, G6 retrieves the components that claim it, with:
+  - their declared failure modes ("guards" and "introduces");
+  - their limits;
+  - their conformance results and certificates.
+
+  It reports, with citations, what fits, what is unchecked and what is missing. A retrieved description is a claim to check,
+  never evidence that the code does what it says.
+- **Indexing G6's code.** Nothing walks G6's own installation today: `design_governance` and `complexity`'s atlas take file
+  maps by design.
+  - A small walker feeds G6's own files to both, and the results are kept in the local index with file and line, updated by
+    file hash.
+  - Code search becomes one more MCP tool.
+  - The Understand-Anything graph committed under `web/static/graph` is stale and is not used.
+- **Fitness data is thin, and the report says so.** Today about 4 components declare `bad_at`, 2 have parameter contracts and
+  5 hold certificates. So most fitness reports will say "unchecked", and filling in each component's limits is part of this
+  work.
+- **Making code agentic.** One generic higher-order wrapper, ported once from the earlier repository's agentic-runtime pattern,
+  with `solver/agentic_runtime.SolverPlanner` (its one ported instance) as the template. The archive copied that pattern into
+  166 components.
+  - The deterministic function's result is the floor. A model may add to it, never drop from it.
+  - Each addition is checked against a frozen standard through `harness.run`, with at most two repairs. Otherwise the
+    deterministic result stands, marked degraded.
+  - It is off unless the person turns it on for that function.
+  - Wrapping a person's own module goes through `component_creator`: a dry run by default, writing only under configured
+    roots, from source read with `ast` and never imported. Tool schemas come from each block's input `model_json_schema`, not
+    a generic `params`.
+  - Generated code runs only under `core/confine`.
+  - Classes, async functions and variadic functions, which `component_creator` skips today, are a later increment.
+- **When G6 is too restrictive for the use case (owner, 2026-11-08).** G6 never rewrites its own code at run time.
+  - When a fitness report finds that G6's own code is too restrictive for what the person needs, G6 warns, naming the limit
+    and citing where it is.
+  - It then proposes an extension: an additive component registered through the extension framework. It never edits G6's
+    core files.
+  - The extension is built and checked like any change, with tests first and the adaptation gate. It is applied only after
+    the person approves it in the client's dialog, with no terminal fallback and no agent answer.
+  - The gate, the judge, the held-out splits, the envelope, the stop and bound files are never edited by G6 (3.7).
+
+### 12.8 What is measured before each piece is promoted (rows for section 5)
+
+| Piece | What is measured | Bar | Cost |
+|---|---|---|---|
+| Scope | Planted passages in another scope are never returned, on each backend, through fusion and through the graph. A deleted source leaves no passage anywhere | zero, on every path | none |
+| Untrusted text | Planted instructions cause no tool action and no policy change | zero | none |
+| Retrieval | Recall at k, and citation accuracy (each cited span re-checked by `verify_passage`), per mechanism and fused, on a query set about g6solver written before any tuning | set before it runs | none |
+| Freshness | After an edit and a refresh, the old passage is refused; the time from adding a source to it being searchable | set before it runs | none |
+| Scale | Index size, memory and query latency at stated corpus sizes, per backend, on this machine and in CI | reported as measured | none |
+| Planner | Paired outcomes per mechanism, against fixed fusion, before any learning | set before it runs | none |
+| Usefulness for A | On A's frozen cohort, the share of proposed questions that a cited passage settles, judged blind | set before it runs | subscription runs |
+| Proposed skill | Held-out tasks of its class, with and without the skill | set before it runs | subscription runs |
+
+### 12.9 Order
+
+Each step is its own change, test first, with a Codex review loop of at most four reviews and three repairs.
+
+1. **The contract.** Passage identity across backends, the `Hit`-to-`ContextItem` adapter, fusion over `Searched` results,
+   and the scope model with its leakage and deletion tests, on the local index first. This comes first because scope cannot
+   be added later without rereading every path.
+2. **The Elasticsearch writer and the onboarding flow.** Adding a source, searching with citations and fetching a passage,
+   through the MCP tools and the skill, on both the local index and Elasticsearch. Tests use the fake server, plus one job
+   against a live cluster where one is available.
+3. **Persistent ColBERT,** after its spike.
+4. **The passage-linked graph,** and cited multi-hop retrieval.
+5. **Refresh and snapshots.**
+6. **The planner.**
+7. **Proposed skills; G6's self-index, fitness reports and extensions; then the agentic wrapper.**
+
+This runs beside section 7's steps, not ahead of them:
+- Its files are in `knowledge` and `context`, plus new MCP tools, none of which the question slice touches.
+- Its usefulness row for A waits for A's frozen cohort.
+- Builder slots are shared with the trust loops, at most three at once.
+
+### 12.10 Not adopted, with the reason
+
+- **Elastic's Agent Builder and Elastic's MCP server.** G6 owns its tools (owner, 2026-11-08), and Agent Builder also needs
+  an Enterprise licence on a self-managed install.
+- **Elasticsearch's `rrf` retriever, ELSER and `semantic_text`, and document-level security.** G6 fuses results and enforces
+  scope itself, meaning is ColBERT's job, and whether these are in the free tier is not established.
+- **Elastic's content connectors** (Google Drive, SharePoint). They come later, as sources behind the same scope rule.
+  Elastic documents that some of them do not carry the source's permissions by default.
+- **The earlier repository's raw-Cypher Neo4j adapter, the OWL store's `run_code`, and natural-language-to-query JSON.** All
+  three run text G6 has not checked.
+- **A formula as the objective for choosing context.** No measured model of usefulness exists. Context is chosen by rules on
+  rank, coverage and budget, which 12.8 measures.
+- **The earlier repository's vendored code-graph tool.** It is MIT-licensed, but 369 of its files carry a proprietary header
+  stamped over the MIT notice, which would have to be restored before any reuse. It also needs a Memgraph server, and this
+  design's graph already has a seed.
+- **The earlier repository's hot reload, import-hook extension loader, hotfix overlay, patch server and Darwin Gödel Machine
+  loop.** They would bypass the gates described in 3.7.
+- **Run-time rewriting of G6's own running code.** Ruled out by the owner on 2026-11-08. A limit found at run time becomes a
+  warning and an extension the person approves (12.7).
+
+### 12.11 The owner's decisions
+
+1. Approve this section.
+2. Whether step 1 of 12.9 starts now, in a free builder slot beside the trust loops.
+3. A first private corpus for the usefulness rows besides g6solver, if any. It stays on this machine.
+
+## 13. Proposed 2026-11-08, not approved: both agents know both allowances
+
+**Status.** Version 1, proposed for the owner's approval, and built only once the owner approves it.
+
+**Source.** The owner, 2026-11-08: Claude Code and Codex should each know how much of both weekly allowances is left, so the
+agent can scale how many subagents it uses and use the allowance fully without running out early under day-to-day work.
+
+### 13.1 What exists
+
+- **Codex.** `self_maintenance/usage.py` reads Codex's own windows through `codex app-server`'s `account/rateLimits/read`,
+  which starts no thread and calls no model.
+  - On 2026-11-08 it reported one 10,080-minute window, 24% used, with its reset time.
+  - G6 reads no sign-in file.
+- **Pacing.** `self_maintenance/pacing.py` already holds the rule the loop paces by:
+  - a target of d/7 of the allowance by day d;
+  - a ceiling of d/5;
+  - a reserve released in the last 24 hours.
+- **Claude Code.** It has no usage command: `claude --help` was checked on 2.1.319. Its status-line input does carry
+  `rate_limits`, with a five-hour and a seven-day window, each with `used_percentage` and `resets_at`.
+  - That field has been in the input since 2.1.80, according to Claude Code's changelog as quoted in issues on its
+    repository.
+  - Some accounts report it missing.
+  - It can be absent until the first reply of a session.
+  - The person's current status-line command does not read it.
+
+### 13.2 The design
+
+- **Reading Claude.** A G6 status-line command reads Claude Code's status-line input, saves only the `rate_limits` block and
+  the time it was read under G6's home, and passes the same input on to the person's existing status-line command, printing
+  that command's output unchanged.
+  - It adds no model call and stores no account identifier.
+  - Installing it is a one-line change to the person's Claude Code settings, which the person makes. G6 gives the exact line,
+    and never edits the person's settings itself.
+- **Reading Codex** stays `codex_limits()`.
+- **One reading per provider.** Each reading holds:
+  - the used share for each window;
+  - the window's length and reset time;
+  - when it was read, and from where.
+
+  A reading older than a stated age is shown as stale, with its age. A missing reading is unknown, never zero.
+- **Pace.** `pacing.target` and `pacing.ceiling` are applied to the share of each window that has passed, using the
+  provider's own window: weekly for both, and the five-hour window for Claude as well. Each provider is then behind pace, on
+  pace, ahead of pace or unknown.
+- **Advice, by a fixed and stated rule.**
+  - **Behind pace,** so allowance would go unused: more subagents in parallel, up to the cap the person set.
+  - **On pace:** as usual.
+  - **Ahead of pace:** conserve. New subagents go to the other provider if it has room, and fewer run in parallel.
+  - **Near the ceiling, or a short window nearly full:** start no new subagents on that provider.
+
+  The thresholds sit in G6's settings, with their defaults stated. The advice never blocks anything, and the person's own
+  caps stay in force.
+- **Delivery.**
+  - An MCP tool returns both readings and the advice. Its name is fixed from the canonical vocabulary (`00_INDEX.md`).
+  - For Claude Code, the plugin's hook adds a one-line note to the context only when the advice changes, not on every turn.
+  - For Codex, the same tool, with a line in the skill and the `AGENTS.md` guidance to read it before fanning out.
+  - The GUI and the TUI/CLI stay frozen.
+- **Honest limits.**
+  - A Claude reading is only as fresh as the last interactive session's status line. A background session sees the last
+    reading, with its age.
+  - Readings are the providers' own figures. G6 adds no estimate it cannot state.
+
+### 13.3 What is measured
+
+- The rule is tested on recorded readings: each verdict and its advice, at the boundaries of each threshold.
+- Afterwards, each week's use is reported against pace, as observed: whether either allowance ran out early, and how much went
+  unused.
+
+### 13.4 Order and the owner's decisions
+
+It is one small change, test first, with its own Codex review loop. It touches none of the question slice's files, so it can
+go first.
+
+The owner decides:
+1. whether to approve this section;
+2. whether to install the status-line wrapper on this machine, which is one line in the Claude Code settings;
+3. the thresholds, or the stated defaults.
 
 ## Appendix A: Codex's challenge of version 1, and what changed
 
