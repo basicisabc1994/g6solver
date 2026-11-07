@@ -76,7 +76,7 @@ def _bound(fn, name) -> list[ast.AST]:
 
 
 #: Calls that hand on what they are given: a result wrapped for G6's registry.
-WRAPPERS = {"ok", "Success"}
+WRAPPERS = {"ok", "Success", "publish"}
 
 
 def _through(fn, value, names) -> bool:
@@ -151,7 +151,7 @@ EXPECTED_MAKERS = {("block.py", "CognitiveBridgeBlock._refused"), ("block.py", "
                    ("mixed_methods.py", "MixedMethodExecutor._run"),
                    ("orchestration.py", "CognitiveAssuranceOrchestrator.execute")}
 #: The boundary's conversion, by the names a maker may call it by.
-CONVERSION = {"plain", "_plain", "snapshot"}
+CONVERSION = {"plain", "_plain", "snapshot", "publish"}
 
 
 def test_the_makers_are_listed_from_the_code():

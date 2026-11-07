@@ -19,11 +19,10 @@ from __future__ import annotations
 
 import math
 import struct
-from dataclasses import asdict
 from typing import Any, Mapping, Sequence
 
 from .codes import DEPTH, NotPlainData, _read_as, settled, unclaimed
-from .snapshot import _too_deep, canonical_json, fresh, number, plain, record, returned, snapshot, text
+from .snapshot import publish, record_data, _too_deep, canonical_json, fresh, number, plain, record, returned, snapshot, text
 
 
 def _native(value: Any, *, where: str) -> Any:
@@ -109,26 +108,26 @@ class ExplicitTree:
             conditions.append({"feature": self.features[node.feature], "operator": "<=" if less else ">",
                                "threshold": node.threshold, "observed": values[node.feature]})
             node = node.left if less else node.right
-        return unclaimed({"prediction": node.value, "conditions": conditions, "provenance": self.provenance,
-                          "caveat": "explains this explicit model's decision, not causality"}, where="an explanation")
+        return publish(unclaimed({"prediction": node.value, "conditions": conditions, "provenance": self.provenance,
+                          "caveat": "explains this explicit model's decision, not causality"}, where="an explanation"), where="ExplicitTree.explain_one")
 
     def predict(self, samples: Sequence[Mapping[str, Any] | Sequence[Any]]) -> list[Any]:
         samples = snapshot(samples, where="samples")
-        return unclaimed([self.explain_one(sample)["prediction"] for sample in samples], where="the predictions")
+        return publish(unclaimed([self.explain_one(sample)["prediction"] for sample in samples], where="the predictions"), where="ExplicitTree.predict")
 
     def to_dict(self) -> dict:
-        return unclaimed(asdict(self), where="a tree")  # inspectable data, not arbitrary executable code
+        return publish(unclaimed(record_data(self), where="a tree"), where="ExplicitTree.to_dict")  # inspectable data, not arbitrary executable code
 
 
-def _distinct_names(names: Sequence[Any]) -> tuple[str, ...]:
+def _distinct_names(names: Sequence[Any], *, where: str = "feature names") -> tuple[str, ...]:
     """The feature names as the tree uses them: a list of text (``snapshot.text``), never a number or a flag made
     text, so ``1`` and ``True`` are refused, not read as ``"1"`` and ``"True"``; and unique. ``names`` is what the
     boundary already took (the caller's snapshot, or an estimator's array read by :func:`_native`)."""
     if type(names) not in (list, tuple):
-        raise NotPlainData("feature names", f"a {type(names).__name__} is not a list of names")
-    used = tuple(text(name, where=f"feature name {index}") for index, name in enumerate(names))
+        raise NotPlainData(where, f"a {type(names).__name__} is not a list of names")
+    used = tuple(text(name, where=f"{where}: feature name {index}") for index, name in enumerate(names))
     if len(set(used)) != len(used):
-        raise ValueError("feature names must be unique as the strings the tree reads them by")
+        raise NotPlainData(where, "feature names must be unique as the strings the tree reads them by")
     return used
 
 
@@ -137,11 +136,12 @@ def _feature_names(estimator: Any, names: Sequence[str] | None) -> tuple[str, ..
         raise TypeError("estimator must be an already fitted, supported sklearn decision tree")
     features = _estimated(estimator.n_features_in_, where="the estimator's n_features_in_", index=True)
     if names is None:
-        names = _native(getattr(estimator, "feature_names_in_", []), where="the estimator's feature_names_in_") or [
-            f"x{i}" for i in range(features)]
+        names = _native(getattr(estimator, "feature_names_in_", [f"x{i}" for i in range(features)]),
+                        where="the estimator's feature_names_in_")
+        names = _distinct_names(names, where="the estimator's feature_names_in_")
     used = _distinct_names(names)
     if len(used) != features:
-        raise ValueError("feature names must match fitted tree and be unique")
+        raise NotPlainData("the estimator's feature_names_in_", "feature names must match fitted tree and be unique")
     if _estimated(getattr(estimator, "n_outputs_", 1), where="the estimator's n_outputs_", index=True) != 1:
         raise ValueError("multi-output trees not supported in explicit export")
     return used
@@ -215,7 +215,7 @@ def extract_tree(estimator: Any, feature_names: Sequence[str] | None = None,
         return TreeNode(feature=feature, threshold=threshold, left=visit(left, depth + 1), right=visit(right, depth + 1))
 
     # the tree stands at 0, its root node at 1 (its ``root`` field), and the root's own fields at 2
-    return ExplicitTree(names, visit(0, 2), task, provenance)
+    return publish(ExplicitTree(names, visit(0, 2), task, provenance), where="extract_tree")
 
 
 def _predictions(rows: Any, count: int, task: str) -> tuple[Any, ...]:
@@ -297,4 +297,4 @@ def distill_blackbox(blackbox: Any, X_train: Sequence[Sequence[float]],
         report.update({"metric": "rmse", "fidelity": math.sqrt(sum(x*x for x in errors)/len(errors)),
                        "mae": sum(abs(x) for x in errors)/len(errors),
                        "lower_is_better": True})
-    return explicit, settled(None, **report)
+    return publish((explicit, settled(None, **report)), where="distill_blackbox")

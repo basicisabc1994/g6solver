@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import asdict
 from typing import Any, Iterable, Mapping, Sequence
 
 from .adaptation import detect_failure_modes
@@ -42,7 +41,7 @@ from .epistemic import CrossMethodConflictGate, ScopedAssertion, assertions_sha2
 from .metacognition import (MethodVariant, MetacognitiveMethodSelector,
                             ProblemSignature, SelectionDecision, checked_selection)
 from .mixed_methods import (ENGINE_SPECS, ClaimIR, MethodPlan, MethodRouter, MixedMethodExecutor, step_digest)
-from .snapshot import fresh, issue, issued, number, plain, record, returned, snapshot, text
+from .snapshot import publish, record_data, fresh, issue, issued, number, plain, record, returned, snapshot, text
 
 
 def _dossier(dossier: Any, subject: str) -> tuple[CandidateDossier, str]:
@@ -70,7 +69,7 @@ def _reconciled(report: Any, subject: str) -> tuple[Mapping[str, Any], str]:
 
 
 def _plan_digest(plan: MethodPlan) -> str:
-    return sha256(canonical_json([asdict(step) for step in plan.steps]))
+    return sha256(canonical_json([record_data(step) for step in plan.steps]))
 
 
 def compilation_gaps(decision: SelectionDecision, plan: MethodPlan) -> list[str]:
@@ -117,7 +116,7 @@ class CompiledResearch:
     def completion_state(self) -> str:
         """The compilation's state: its selection's verdict and its plan's (:func:`compilation_gaps`), never its own
         ``refused`` field."""
-        return STATES[bool(compilation_gaps(self.decision, self.executable_plan))]
+        return publish(STATES[bool(compilation_gaps(self.decision, self.executable_plan))], where="CompiledResearch.completion_state")
 
     def changed_since_compiled(self, plan: MethodPlan | None = None) -> str:
         """Why ``plan`` (the executable plan, or a frozen copy of it about to run) no longer matches what was compiled
@@ -133,22 +132,22 @@ class CompiledResearch:
             except (KeyError, TypeError, ValueError):
                 digest = ""
             if digest != pin:
-                return f"the compiled {row['method']} model no longer matches the digest pinned at compilation"
+                return publish(f"the compiled {row['method']} model no longer matches the digest pinned at compilation", where="CompiledResearch.changed_since_compiled")
         try:
             steps = _plan_digest(plan)
         except (TypeError, ValueError):
             steps = ""
-        return "" if steps and steps == self.plan_digest else "the compiled steps no longer match their pin"
+        return publish("" if steps and steps == self.plan_digest else "the compiled steps no longer match their pin", where="CompiledResearch.changed_since_compiled")
 
     def to_dict(self) -> dict[str, Any]:
-        return settled(_refusal_for(compilation_gaps(self.decision, self.executable_plan)),
+        return publish(settled(_refusal_for(compilation_gaps(self.decision, self.executable_plan)),
                        claim_id=self.original_claim.id,
                        risk_tier=self.context.risk_tier,
                        standard_digest=self.standard_digest,
                        metacognitive_selection=self.decision.to_dict(),
                        executable_plan=self.executable_plan.to_dict(),
                        selected_model_hashes=dict(self.selected_model_hashes),
-                       activation="none; planned only")
+                       activation="none; planned only"), where="CompiledResearch.to_dict")
 
 
 class CognitiveAssuranceOrchestrator:
@@ -223,8 +222,8 @@ class CognitiveAssuranceOrchestrator:
                             evidence_needs=tuple(claim.evidence_needs), models=models,
                             source_refs=claim.source_refs, origin=claim.origin)
         plan = MethodRouter().plan([new_claim])
-        return issue(self, CompiledResearch(claim, plan, selection, standard.digest, context, model_hashes,
-                                            _refusal_for(compilation_gaps(selection, plan)), _plan_digest(plan)))
+        return publish(issue(self, CompiledResearch(claim, plan, selection, standard.digest, context, model_hashes,
+                                            _refusal_for(compilation_gaps(selection, plan)), _plan_digest(plan))), where="CognitiveAssuranceOrchestrator.compile")
 
     def execute(self, compiled: CompiledResearch, *, approved: bool = False,
                 allow: Iterable[str] = ()) -> dict[str, Any]:
@@ -236,19 +235,19 @@ class CognitiveAssuranceOrchestrator:
             compiled = snapshot(compiled, where="compiled")  # made again: what is checked is what runs
             allow = snapshot(allow, where="allow")
         except ValueError as exc:
-            return refusal(EXECUTION_NOT_APPROVED, f"the compilation cannot be taken: {exc}", steps=[],
-                           method_execution_coverage=0.0)
+            return publish(refusal(EXECUTION_NOT_APPROVED, f"the compilation cannot be taken: {exc}", steps=[],
+                           method_execution_coverage=0.0), where="CognitiveAssuranceOrchestrator.execute")
         if (not affirmed(approved) or self.registry is None or type(compiled) is not CompiledResearch
                 or compiled.completion_state != "qualified-draft"):
-            return refusal(EXECUTION_NOT_APPROVED, "approved, fully specified plan and connected G6 registry required")
+            return publish(refusal(EXECUTION_NOT_APPROVED, "approved, fully specified plan and connected G6 registry required"), where="CognitiveAssuranceOrchestrator.execute")
         plan = compiled.executable_plan
         changed = compiled.changed_since_compiled(plan)
         if changed:
-            return refusal(PLAN_TAMPERED, changed, steps=[], method_execution_coverage=0.0)
+            return publish(refusal(PLAN_TAMPERED, changed, steps=[], method_execution_coverage=0.0), where="CognitiveAssuranceOrchestrator.execute")
         if not issued(self, compiled):
-            return refusal(EXECUTION_NOT_APPROVED, "the compilation is not one this orchestrator compiled: built by "
+            return publish(refusal(EXECUTION_NOT_APPROVED, "the compilation is not one this orchestrator compiled: built by "
                                                    "hand, edited, or made by another instance", steps=[],
-                           method_execution_coverage=0.0)
+                           method_execution_coverage=0.0), where="CognitiveAssuranceOrchestrator.execute")
         out = MixedMethodExecutor(self.registry, allow=allow).execute(plan, approved=True)
         # a result built from the executor's, with the compilation's pins beside it: what the boundary made of it
         result = plain(unclaimed({**out, "selection_policy_digest": compiled.decision.policy_digest,
@@ -256,7 +255,7 @@ class CognitiveAssuranceOrchestrator:
                                   "claim_id": ",".join(c.id for c in plan.claims)}, where="a run"), where="a run")
         if isinstance(result.get("run_id"), str):
             self._runs[result["run_id"]] = (compiled.plan_digest, _claims_digest(plan.claims), canonical_json(result))
-        return result
+        return publish(result, where="CognitiveAssuranceOrchestrator.execute")
 
     def _executed(self, compiled: CompiledResearch, run_result: Mapping[str, Any]) -> dict[str, Any] | None:
         """This orchestrator's own record of the run ``run_result`` names, when it ran this compiled plan for the
@@ -290,9 +289,9 @@ class CognitiveAssuranceOrchestrator:
         if not actor or not claim_id:
             raise ValueError("actor and claim must be supplied")
         payload = canonical_json(run_result)
-        return EvidenceArtifact(id=f"execution:{claim_id}", content=payload, kind="report",
+        return publish(EvidenceArtifact(id=f"execution:{claim_id}", content=payload, kind="report",
                                 claimed_by=actor, source_ref=f"g6:execution:{sha256(payload)}",
-                                claim_id=claim_id)
+                                claim_id=claim_id), where="CognitiveAssuranceOrchestrator.execution_artifact")
 
     def assess(self, compiled: CompiledResearch, *, standard: DomainStandard,
                run_result: Mapping[str, Any], evaluator: InProcessAssuranceEvaluator,
@@ -308,8 +307,8 @@ class CognitiveAssuranceOrchestrator:
         try:
             compiled = snapshot(compiled, where="compiled")
         except ValueError as exc:
-            return refusal(ASSURANCE_BLOCKED, f"the compilation cannot be taken: {exc}", evidence=[],
-                           request_id=uuid.uuid4().hex[:12], run_id="", method_results={})
+            return publish(refusal(ASSURANCE_BLOCKED, f"the compilation cannot be taken: {exc}", evidence=[],
+                           request_id=uuid.uuid4().hex[:12], run_id="", method_results={}), where="CognitiveAssuranceOrchestrator.assess")
         standard = snapshot(standard, where="standard")
         run_result = snapshot(run_result, where="run_result")
         verifiers = snapshot(verifiers, where="verifiers")
@@ -321,9 +320,9 @@ class CognitiveAssuranceOrchestrator:
         if type(compiled) is not CompiledResearch:
             raise ValueError("an assessment is of a CompiledResearch: its state is its selection's verdict")
         if not issued(self, compiled):
-            return refusal(ASSURANCE_BLOCKED, "the compilation is not one this orchestrator compiled: built by hand, "
+            return publish(refusal(ASSURANCE_BLOCKED, "the compilation is not one this orchestrator compiled: built by hand, "
                                               "edited, or made by another instance",
-                           evidence=[], request_id=uuid.uuid4().hex[:12], run_id="", method_results={})
+                           evidence=[], request_id=uuid.uuid4().hex[:12], run_id="", method_results={}), where="CognitiveAssuranceOrchestrator.assess")
         gate = epistemic_gate or CrossMethodConflictGate()
         # The compilation's state, read where it is decided (compilation_gaps), as execute reads it.
         blocked_by = compilation_gaps(compiled.decision, compiled.executable_plan)
@@ -387,15 +386,15 @@ class CognitiveAssuranceOrchestrator:
             "method_results": executed or {},
             "metacognitive_selection": compiled.decision.to_dict(),
             "dossier": dossier.to_dict(),
-            "failure_mode_findings": [asdict(x) for x in faults],
+            "failure_mode_findings": [record_data(x) for x in faults],
             "epistemic_reconciliation": conflict_report,
             "next_action": ("submit frozen artifact/check bundle to independent G6 promotion door"
                             if passed else "address failed method/acceptance checks; do not promote"),
             "warning": warning,
         }
         if not passed:
-            return refusal(ASSURANCE_BLOCKED, "; ".join(why), **fields)
-        return settled(None, draft_card=(NOT_PROMOTED, "the checks this process ran passed. " + warning), **fields)
+            return publish(refusal(ASSURANCE_BLOCKED, "; ".join(why), **fields), where="CognitiveAssuranceOrchestrator.assess")
+        return publish(settled(None, draft_card=(NOT_PROMOTED, "the checks this process ran passed. " + warning), **fields), where="CognitiveAssuranceOrchestrator.assess")
 
 
 __all__ = ["CompiledResearch", "CognitiveAssuranceOrchestrator"]

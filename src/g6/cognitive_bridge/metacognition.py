@@ -12,13 +12,12 @@ NOT a calibrated probability of research success.
 from __future__ import annotations
 
 import math
-from dataclasses import asdict
 from typing import Any, Callable, Mapping, Sequence
 
 from .assurance import canonical_json, is_risk, sha256
 from .codes import MODEL_MISSING, OBLIGATION_NOT_PLANNED, SELECTION_INCOMPLETE, affirmed, only_fields, refusal, settled
 from .mixed_methods import ENGINE_SPECS, ENGINE_OP_VARIANTS, ClaimIR, MethodRouter, MethodPlan
-from .snapshot import fresh, issue, number, record, returned, snapshot
+from .snapshot import publish, record_data, fresh, issue, number, record, returned, snapshot
 
 CAPABILITIES = frozenset(ENGINE_SPECS)
 #: The splits a trial can come from (``EvaluatedTrial.split``); a selector learns from the ones its ``learn_from`` names.
@@ -51,7 +50,7 @@ class ProblemSignature:
     @property
     def risk_tier(self) -> str:
         """G6's ``risk_tier`` for this task: ``R0`` to ``R3``."""
-        return f"R{self.risk}"
+        return publish(f"R{self.risk}", where="ProblemSignature.risk_tier")
 
 
 def _eligible(variant: MethodVariant, context: ProblemSignature) -> bool:
@@ -108,8 +107,8 @@ class MethodVariant:
     def definition_digest(self) -> str:
         """The digest of what this variant is (its kind, method, representation, engine and op), not its name: a
         trial credits a variant only when it names this digest."""
-        return sha256(canonical_json({"kind": self.kind, "method": self.method, "representation": self.representation,
-                                      "engine": self.engine, "op": self.op}))
+        return publish(sha256(canonical_json({"kind": self.kind, "method": self.method, "representation": self.representation,
+                                      "engine": self.engine, "op": self.op})), where="MethodVariant.definition_digest")
 
 
 @record
@@ -190,13 +189,13 @@ class SelectionDecision:
 
     @property
     def completion_state(self) -> str:
-        return settled(self.refused)["completion_state"]
+        return publish(settled(self.refused)["completion_state"], where="SelectionDecision.completion_state")
 
     def to_dict(self) -> dict[str, Any]:
-        return settled(self.refused, ordered_variants=list(self.ordered_variants),
+        return publish(settled(self.refused, ordered_variants=list(self.ordered_variants),
                        requirements=list(self.requirements), missing=list(self.missing),
                        rejected_trials=self.rejected_trials, admitted_trials=self.admitted_trials,
-                       policy_digest=self.policy_digest, limitations=list(self.limitations))
+                       policy_digest=self.policy_digest, limitations=list(self.limitations)), where="SelectionDecision.to_dict")
 
 
 class MetacognitiveMethodSelector:
@@ -366,11 +365,11 @@ class MetacognitiveMethodSelector:
         policy = {"version": "meta-selector/0.2", "seed": self.seed,
                   "exploration_weight": self.exploration_weight, "learn_from": list(self.learn_from),
                   "trials": sorted(t.trial_id for t in self.trials),
-                  "required": list(required), "context": asdict(context),
+                  "required": list(required), "context": record_data(context),
                   "candidate_ids": sorted(v.id for v in variants)}
-        return issue(self, SelectionDecision(tuple(selected), required, tuple(missing),
+        return publish(issue(self, SelectionDecision(tuple(selected), required, tuple(missing),
                                              self.rejected_trials, len(self.trials),
-                                             sha256(canonical_json(policy)), _incomplete(missing)))
+                                             sha256(canonical_json(policy)), _incomplete(missing))), where="MetacognitiveMethodSelector.select")
 
 
 def checked_selection(decision: Any, variants: Sequence[MethodVariant], context: ProblemSignature,
@@ -427,15 +426,15 @@ class MetacognitivePlanner:
         required = set(required_methods)
         requested = {need for claim in claims for need in claim.evidence_needs}
         if not required.issubset(requested):
-            return refusal(OBLIGATION_NOT_PLANNED, "professional requirements not present in canonical claim obligations",
-                           missing=sorted(required - requested), plan=planned.to_dict())
+            return publish(refusal(OBLIGATION_NOT_PLANNED, "professional requirements not present in canonical claim obligations",
+                           missing=sorted(required - requested), plan=planned.to_dict()), where="MetacognitivePlanner.plan")
         decision = returned(self.selector.select(fresh(context), fresh(variants),
                                                  required_methods=fresh(required_methods)), checked_selection, variants,
                             context, required_methods)
         if planned.missing:
-            return refusal(MODEL_MISSING, "typed models missing", selection=decision.to_dict(), plan=planned.to_dict())
-        return settled(decision.refused, selection=decision.to_dict(), plan=planned.to_dict(),
-                       note="selection advises representation/order; the G6 executor still validates all mandatory steps")
+            return publish(refusal(MODEL_MISSING, "typed models missing", selection=decision.to_dict(), plan=planned.to_dict()), where="MetacognitivePlanner.plan")
+        return publish(settled(decision.refused, selection=decision.to_dict(), plan=planned.to_dict(),
+                       note="selection advises representation/order; the G6 executor still validates all mandatory steps"), where="MetacognitivePlanner.plan")
 
 
 __all__ = ["ProblemSignature", "MethodVariant", "EvaluatedTrial", "SelectionDecision",

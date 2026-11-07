@@ -375,7 +375,7 @@ def conversions():
     return found
 
 
-_DUMPS = "json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=True, allow_nan=False)"
+_DUMPS = "json.dumps(projected, sort_keys=True, separators=(',', ':'), ensure_ascii=True, allow_nan=False)"
 #: Every conversion the code holds, compared whole, with how it stands to the boundary: ``boundary`` (the boundary's own
 #: conversion), ``own`` (it reads only a value the bridge made), ``ruled`` (what it converts was read by a rule first:
 #: the number or text rule, or an exact type test) or ``estimator`` (a fitted estimator's array or scalar made Python's
@@ -393,7 +393,7 @@ EXPECTED_CONVERSIONS = {
         ("own", "whether the code pattern matched the text a strictly read card holds"),
     ("engine.py", "_beliefs", "float", "v"):
         ("ruled", "a belief the number rule took (an int or a float): an integer belief, 0 or 1, read as its float"),
-    ("epistemic.py", "assertions_sha256", "decode", "canonical_json(asdict(a))"):
+    ("epistemic.py", "assertions_sha256", "decode", "canonical_json(record_data(a))"):
         ("own", "the ASCII bytes the bridge's own canonical encoder wrote"),
     ("mixed_methods.py", "MixedMethodExecutor._run", "json.loads", "params"):
         ("own", "the canonical bytes the executor made of a checked step's parameters"),
@@ -424,6 +424,26 @@ EXPECTED_CONVERSIONS = {
 }
 #: The rules a ruled conversion's value is read by first (``_numbers`` reads each item of a list by the number rule).
 RULES = {"number", "text", "_estimated", "_numbers", "type", "isinstance"}
+
+
+# Bounded encoder bytes are decoded only after its depth and size checks.
+_ENCODED_BYTES = ("own", "the bounded canonical encoder's own bytes, decoded without changing their data")
+EXPECTED_CONVERSIONS.update({
+    ('critique.py', 'LLMMetacognitiveCritic.propose', 'decode',
+     "canonical_json({'objective': objective, 'model_summary': model_summary, 'evidence_summary': list(evidence_summary)[-8:], 'allowed_methods': sorted(ENGINE_SPECS), 'max_items': self.max_items})"): _ENCODED_BYTES,
+    ('engine.py', 'LLMIdeaGenerator.generate', 'decode',
+     "canonical_json({'objective': objective[:2000], 'observations': list(observations)[-6:], 'max_ideas': self.max_ideas})"): _ENCODED_BYTES,
+    ('engine.py', 'LLMProposer.propose', 'decode',
+     "canonical_json(item['arguments'])"): _ENCODED_BYTES,
+    ('engine.py', 'LLMProposer.propose', 'decode',
+     "canonical_json({'objective': objective[:2500], 'hypotheses': [{'id': h.id, 'statement': h.statement, 'prior': h.prior} for h in hypotheses], 'history': list(history)[-6:], 'allowed_tools': [{'name': t.name, 'cost': t.cost, 'assumed_match_probability': t.assumed_match_probability} for t in self.tools.values()], 'max_probes': self.max_probes})"): _ENCODED_BYTES,
+    ('mixed_methods.py', 'LLMClaimCompiler.draft', 'decode',
+     "canonical_json({'question': question, 'context': list(context)[-6:], 'supported_methods': {k: {'required': list(v['required']), 'allowed': list(v['allowed'])} for k, v in ENGINE_SPECS.items()}, 'max_claims': self.max_claims})"): _ENCODED_BYTES,
+    ('mixed_methods.py', 'MethodRouter.plan', 'decode',
+     'canonical_json(dict(given))'): _ENCODED_BYTES,
+    ('snapshot.py', 'record_data', 'json.loads',
+     'canonical_json(value)'): _ENCODED_BYTES,
+})
 
 
 def test_the_conversions_are_listed_from_the_code():

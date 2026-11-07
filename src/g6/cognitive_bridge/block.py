@@ -28,7 +28,7 @@ from .engine import BayesianUpdater, Hypothesis, InformationGainSelector, Probe,
 from .mixed_methods import ClaimIR, MethodRouter
 from .metacognition import MetacognitiveMethodSelector, ProblemSignature, MethodVariant
 from .assurance import DOCUMENT_FIELDS
-from .snapshot import canonical_json, plain
+from .snapshot import publish, canonical_json, plain
 
 #: Every model here reads a caller's data, after the boundary has read it raw: strict (no field converted from another
 #: kind) and closed (no field it does not declare).
@@ -192,9 +192,9 @@ class CognitiveBridgeBlock(AIBlock[CognitiveInput, dict, dict]):
         try:
             screened = _arguments(raw)
         except NotPlainData as exc:
-            return self._refused(exc)
+            return publish(self._refused(exc), where="CognitiveBridgeBlock.screen_raw")
         self._screened = screened
-        return None
+        return publish(None, where="CognitiveBridgeBlock.screen_raw")
 
     def _held(self) -> Any:
         """What :meth:`screen_raw` read for the call :meth:`infer` now answers, taken once (None when it read
@@ -217,15 +217,15 @@ class CognitiveBridgeBlock(AIBlock[CognitiveInput, dict, dict]):
             if screened is not None:
                 d = _unchanged(d, CognitiveInput.model_validate(screened))
             if d.op == "ops":
-                return _answered({"component": self.name, **settled(
+                return publish(_answered({"component": self.name, **settled(
                     None, ops=list(_OPS),
-                    note="LLM research and in-memory ML adapters are Python-only; no tools are invoked via this surface.")})
+                    note="LLM research and in-memory ML adapters are Python-only; no tools are invoked via this surface.")}), where="CognitiveBridgeBlock.infer")
             if d.op == "help":
-                return _answered({"component": self.name, "op": "help", **settled(None, help=list(_OPS.values()))})
+                return publish(_answered({"component": self.name, "op": "help", **settled(None, help=list(_OPS.values()))}), where="CognitiveBridgeBlock.infer")
             if d.op == "assurance_schema":
-                return _answered({"component": self.name, "op": d.op, **settled(
+                return publish(_answered({"component": self.name, "op": d.op, **settled(
                     None, documentary_fields=list(DOCUMENT_FIELDS), levels=list(STATES),
-                    note="Assurance issuance and historical trial admission require an independently owned Python evaluator; not exposed via MCP.")})
+                    note="Assurance issuance and historical trial admission require an independently owned Python evaluator; not exposed via MCP.")}), where="CognitiveBridgeBlock.infer")
             if d.op == "rank_methods":
                 if d.context is None:
                     raise ValueError("rank_methods requires a typed context")
@@ -233,14 +233,14 @@ class CognitiveBridgeBlock(AIBlock[CognitiveInput, dict, dict]):
                 variants = [MethodVariant(**{**v.model_dump(), "expects": tuple(v.expects)}) for v in d.variants]
                 decision = MetacognitiveMethodSelector().select(context, variants,
                                      required_methods=d.required_methods)
-                return _answered({"component": self.name, "op": d.op, **decision.to_dict(),
-                                  "evidence_note": "no past trial data admitted over stateless MCP; cold-start ranking only"})
+                return publish(_answered({"component": self.name, "op": d.op, **decision.to_dict(),
+                                  "evidence_note": "no past trial data admitted over stateless MCP; cold-start ranking only"}), where="CognitiveBridgeBlock.infer")
             if d.op == "plan_methods":
                 claims = [ClaimIR(id=c.id, statement=c.statement,
                                   evidence_needs=tuple(c.evidence_needs), models=c.models,
                                   source_refs=tuple(c.source_refs), origin=c.origin) for c in d.claims]
-                return _answered({"component": self.name, "op": d.op,
-                                  **MethodRouter().plan(claims).to_dict()})
+                return publish(_answered({"component": self.name, "op": d.op,
+                                  **MethodRouter().plan(claims).to_dict()}), where="CognitiveBridgeBlock.infer")
             hypotheses = [Hypothesis(**h.model_dump()) for h in d.hypotheses]
             beliefs = check_beliefs(hypotheses)
             probes = [Probe(**p.model_dump()) for p in d.probes]
@@ -255,9 +255,9 @@ class CognitiveBridgeBlock(AIBlock[CognitiveInput, dict, dict]):
                 if p is None:
                     raise ValueError("update probe_id not among probes")
                 result = BayesianUpdater().update(beliefs, p, d.observed_positive)
-            return _answered({"component": self.name, "op": d.op, **settled(
+            return publish(_answered({"component": self.name, "op": d.op, **settled(
                 None, result=result, assumptions=["priors are mutually exclusive and exhaustive",
                                                   "likelihoods and predictions are caller-provided assumptions",
-                                                  "does not verify the reality of any observations"])})
+                                                  "does not verify the reality of any observations"])}), where="CognitiveBridgeBlock.infer")
         except (ValidationError, ValueError, TypeError, KeyError, OverflowError) as exc:
-            return self._refused(exc)
+            return publish(self._refused(exc), where="CognitiveBridgeBlock.infer")

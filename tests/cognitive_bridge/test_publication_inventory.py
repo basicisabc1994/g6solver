@@ -151,7 +151,7 @@ def _own_returns(fn):
 #: record issued, and the boundary's conversion (which adds nothing to what it converts).
 WRAPPERS = {"ok": 0, "Success": 0, "issue": 1, "plain": 0, "_plain": 0}
 #: The claim rule, and the makers that apply it.
-RULE = {"unclaimed", "settled", "refusal", "only_fields", "returned"}
+RULE = {"unclaimed", "settled", "refusal", "only_fields", "returned", "publish"}
 
 
 def _callee(call) -> str:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 from .codes import unclaimed
-from .snapshot import number, snapshot, text
+from .snapshot import publish, number, snapshot, text
 
 #: Exactly the features passed to MLAcquisitionSelector.predict(...).
 ACQUISITION_FEATURES = ("expected_information_bits", "cost", "novelty_preference",
@@ -32,7 +32,7 @@ def evaluated_trace_rows(history: Sequence[dict[str, Any]]) -> list[dict[str, fl
             raise ValueError("every exported episode needs externally scored utility and evaluator_ref")
         result.append({name: float(number(row[name], where=f"history[{index}].{name}"))  # a number, as a float
                        for name in (*ACQUISITION_FEATURES, UTILITY_TARGET)})
-    return unclaimed(result, where="the trace rows")
+    return publish(unclaimed(result, where="the trace rows"), where="evaluated_trace_rows")
 
 
 def sklearn_payload(history: Sequence[dict[str, Any]], *, seed: int = 7,
@@ -46,7 +46,7 @@ def sklearn_payload(history: Sequence[dict[str, Any]], *, seed: int = 7,
     history = snapshot(history, where="history")
     seed = snapshot(seed, where="seed")
     estimator = text(estimator, where="estimator")
-    return unclaimed({"op": "fit_eval", "rows": evaluated_trace_rows(history),
+    return publish(unclaimed({"op": "fit_eval", "rows": evaluated_trace_rows(history),
                       "target": UTILITY_TARGET, "features": list(ACQUISITION_FEATURES),
                       "task": "regression", "seed": number(seed, where="seed"), "estimator": estimator},
-                     where="a payload")
+                     where="a payload"), where="sklearn_payload")

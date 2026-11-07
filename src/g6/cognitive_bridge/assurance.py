@@ -14,7 +14,7 @@ from dataclasses import field, fields
 from typing import Any, Mapping, Protocol
 
 from .codes import DOSSIER_BLOCKED, MADE_FIELDS, STATES, affirmed, only_fields, refusal, settled, unclaimed
-from .snapshot import canonical_json, fresh, issue, plain, record, returned, snapshot, text
+from .snapshot import publish, canonical_json, fresh, issue, plain, record, returned, snapshot, text
 
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 FORMAT = "g6.cognitive_assurance.dossier/1"
@@ -89,19 +89,19 @@ class DomainStandard:
     @property
     def risk_tier(self) -> str:
         """G6's ``risk_tier`` for this standard: ``R0`` to ``R3``."""
-        return f"R{self.risk}"
+        return publish(f"R{self.risk}", where="DomainStandard.risk_tier")
 
     def manifest(self) -> dict[str, Any]:
         """A new copy each call, never a view of what the standard holds (each criterion's fields, not its own
         ``__dict__``)."""
-        return unclaimed({"id": self.id, "edition": self.edition, "jurisdiction": self.jurisdiction,
+        return publish(unclaimed({"id": self.id, "edition": self.edition, "jurisdiction": self.jurisdiction,
                           "authority": self.authority, "source_sha256": self.source_sha256,
                           "criteria": [{f.name: getattr(c, f.name) for f in fields(c)} for c in self.criteria],
-                          "risk": self.risk}, where="a standard's manifest")
+                          "risk": self.risk}, where="a standard's manifest"), where="DomainStandard.manifest")
 
     @property
     def digest(self) -> str:
-        return sha256(canonical_json(self.manifest()))
+        return publish(sha256(canonical_json(self.manifest())), where="DomainStandard.digest")
 
 
 @record
@@ -125,12 +125,12 @@ class EvidenceArtifact:
 
     @property
     def digest(self) -> str:
-        return sha256(self.content)
+        return publish(sha256(self.content), where="EvidenceArtifact.digest")
 
     def manifest(self) -> dict[str, Any]:
-        return unclaimed({"id": self.id, "kind": self.kind, "claimed_by": self.claimed_by,
+        return publish(unclaimed({"id": self.id, "kind": self.kind, "claimed_by": self.claimed_by,
                           "source_ref": self.source_ref, "claim_id": self.claim_id,
-                          "sha256": self.digest, "length": len(self.content)}, where="an artifact's manifest")
+                          "sha256": self.digest, "length": len(self.content)}, where="an artifact's manifest"), where="EvidenceArtifact.manifest")
 
 
 class Check(Protocol):
@@ -162,10 +162,10 @@ class FrozenVerifier:
             raise ValueError("controls must be non-empty bytes")
 
     def manifest(self) -> dict[str, Any]:
-        return unclaimed({"id": self.id, "owner": self.owner, "version_sha256": self.version_sha256,
+        return publish(unclaimed({"id": self.id, "owner": self.owner, "version_sha256": self.version_sha256,
                           "positive_control_hashes": [sha256(x) for x in self.positive_controls],
                           "negative_control_hashes": [sha256(x) for x in self.negative_controls]},
-                         where="a checker's manifest")
+                         where="a checker's manifest"), where="FrozenVerifier.manifest")
 
 
 @record
@@ -201,14 +201,14 @@ class CandidateDossier:
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "CandidateDossier":
         payload = plain(payload, where="a dossier's payload")
-        return cls(payload, sha256(canonical_json(payload)))
+        return publish(cls(payload, sha256(canonical_json(payload))), where="CandidateDossier.from_payload")
 
     def intact(self) -> bool:
         """Integrity only; digest can be recomputed by an attacker. Not authenticity."""
-        return sha256(canonical_json(self.payload)) == self.content_sha256
+        return publish(sha256(canonical_json(self.payload)) == self.content_sha256, where="CandidateDossier.intact")
 
     def to_dict(self) -> dict[str, Any]:
-        return unclaimed({**self.payload, "content_sha256": self.content_sha256}, where="a dossier")
+        return publish(unclaimed({**self.payload, "content_sha256": self.content_sha256}, where="a dossier"), where="CandidateDossier.to_dict")
 
 
 def _evidence(*, standard: DomainStandard, artifacts: Mapping[str, EvidenceArtifact],
@@ -268,11 +268,11 @@ class InProcessAssuranceEvaluator:
         verifiers = snapshot(verifiers, where="verifiers")
         documentation = snapshot(documentation, where="documentation")
         candidate_actor = text(candidate_actor, where="candidate_actor, the producer")
-        return sha256(canonical_json({
+        return publish(sha256(canonical_json({
             **_evidence(standard=standard, artifacts=artifacts, verifiers=verifiers, documentation=documentation,
                         candidate_actor=candidate_actor),
             "evaluator_id": self.evaluator_id,
-        }))
+        })), where="InProcessAssuranceEvaluator.review_scope")
 
     def evaluate(self, *, standard: DomainStandard,
                  artifacts: Mapping[str, EvidenceArtifact],
@@ -417,7 +417,7 @@ class InProcessAssuranceEvaluator:
                 "An assurance dossier is not professional accreditation, an audit opinion, or a result G6 promoted.",
             ],
         )
-        return issue(self, CandidateDossier.from_payload(payload))
+        return publish(issue(self, CandidateDossier.from_payload(payload)), where="InProcessAssuranceEvaluator.evaluate")
 
 
 __all__ = ["Criterion", "DomainStandard", "EvidenceArtifact", "FrozenVerifier",

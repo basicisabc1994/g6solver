@@ -429,8 +429,11 @@ def test_every_maker_issues_what_it_returns():
     for cls, name in ((CognitiveAssuranceOrchestrator, "compile"), (MetacognitiveMethodSelector, "select"),
                       (InProcessAssuranceEvaluator, "evaluate"), (CrossMethodConflictGate, "reconcile")):
         returns = _own_returns(_function(cls, name))
-        assert returns and all(isinstance(r.value, ast.Call) and getattr(r.value.func, "id", "") == "issue"
-                               and ast.unparse(r.value.args[0]) == "self" for r in returns), f"{cls.__name__}.{name}"
+        assert returns and all(isinstance(r.value, ast.Call) and getattr(r.value.func, "id", "") == "publish"
+                               and isinstance(r.value.args[0], ast.Call)
+                               and getattr(r.value.args[0].func, "id", "") == "issue"
+                               and ast.unparse(r.value.args[0].args[0]) == "self"
+                               for r in returns), f"{cls.__name__}.{name}"
 
 
 def test_every_record_execute_and_assess_read_is_checked_against_the_issued_set():

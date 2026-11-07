@@ -15,7 +15,6 @@ evidence. No score averaging.
 from __future__ import annotations
 
 import re
-from dataclasses import asdict
 from typing import Any, Callable, Mapping, Sequence
 
 from g6.core.evidence import EvidenceRecord
@@ -25,7 +24,7 @@ from g6.invariants import ERROR_CODE_PATTERN
 from .assurance import canonical_json, sha256
 from .codes import (EVIDENCE_CONTESTED, EVIDENCE_NOT_RECONCILED, EVIDENCE_REFUTED, EVIDENCE_UNDETERMINED, MADE_FIELDS,
                     STATES, affirmed, only_fields, refusal, settled)
-from .snapshot import fresh, issue, record, snapshot
+from .snapshot import publish, record_data, fresh, issue, record, snapshot
 
 HEX64 = re.compile("[0-9a-f]{64}\\Z")
 #: An assertion's stance as an evidence record states it (``g6.core.evidence.EvidenceStance``).
@@ -66,7 +65,7 @@ class ScopedAssertion:
 def assertions_sha256(assertions: Sequence[ScopedAssertion]) -> str:
     """The digest of an assertion set (each assertion's every field, in any order, repeats kept). A report names it as
     its ``subject_sha256``, and an assessment credits a report only for the assertions submitted to that assessment."""
-    return sha256(canonical_json(sorted(canonical_json(asdict(a)).decode() for a in assertions)))
+    return sha256(canonical_json(sorted(canonical_json(record_data(a)).decode() for a in assertions)))
 
 
 def checked_report(report: Any) -> Mapping[str, Any]:
@@ -150,7 +149,7 @@ class CrossMethodConflictGate:
                      if x["completion_state"] != "qualified-draft"]
         why = ([f"{len(refused)} assertion(s) not admitted"] if refused else []) + unsettled + (
             [] if groups else ["no admitted assertion"])
-        return issue(self, settled(refusal(EVIDENCE_NOT_RECONCILED, "; ".join(why)) if why else None,
+        return publish(issue(self, settled(refusal(EVIDENCE_NOT_RECONCILED, "; ".join(why)) if why else None,
                                    subject_sha256=assertions_sha256(assertions),
                                    conflicts=conflicts, unadmitted_evidence_refs=refused,
                                    repeated_source_refs=duplicate_sources,
@@ -159,7 +158,7 @@ class CrossMethodConflictGate:
                                                 "scopes are incomparable.",
                                                 "Agreement is neither independent replication nor evidence of truth.",
                                                 "Admissibility depends on an external trusted evaluator, not a field "
-                                                "or an LLM judgment."]))
+                                                "or an LLM judgment."])), where="CrossMethodConflictGate.reconcile")
 
 
 __all__ = ["REPORT_FIELDS", "ScopedAssertion", "CrossMethodConflictGate", "assertions_sha256", "checked_report",

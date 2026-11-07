@@ -44,15 +44,48 @@ import typing
 import weakref
 from typing import Any, Callable, TypeVar
 
+from returns.result import Failure, Success
+
+from g6.core.result import Result
+
 from .codes import ARRAYS, DEPTH, OBJECTS, FrozenMap, NotPlainData, _read_as, _unread, unclaimed
 
 T = TypeVar("T")
 
+# Limits apply while projecting, before the JSON serializer allocates its output.
+MAX_ITEMS = 100_000
+MAX_SIZE = 4_000_000
+
 
 def canonical_json(value: Any) -> bytes:
-    """Reject NaNs, objects, and noncanonical numerics instead of stringifying them."""
-    return json.dumps(value, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=True, allow_nan=False).encode("utf-8")
+    """The bounded encoder: project records, check depth and size, then serialize."""
+    projected = view(value)
+    found = _not_json(projected, "a value", 0)
+    if found:
+        raise NotPlainData(*found)
+    encoded = json.dumps(projected, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=True, allow_nan=False).encode("utf-8")
+    if len(encoded) > MAX_SIZE:
+        raise NotPlainData("a value", "encoded size exceeds the bridge's limit")
+    return encoded
+
+
+def record_data(value: Any) -> Any:
+    """A record's plain representation, through the bounded canonical encoder."""
+    return json.loads(canonical_json(value))
+
+
+def publish(value: T, *, where: str) -> T:
+    """The sole publication step, including records, leaves and G6 result envelopes.
+
+    The encoder checks the entire answer before the claim rule sees JSON alone.
+    Return the checked object so record identities, tuples and Result semantics stay.
+    """
+    answer = value.unwrap() if type(value) is Success else value.failure() if type(value) is Failure else value
+    if type(value) is Result:
+        answer = value.value if value.is_ok() else value.error
+    unclaimed(record_data(answer), where=where)
+    return value
 
 
 def _named(value: Any) -> str:
@@ -369,22 +402,35 @@ def fresh(value: Any, *, where: str = "a copy") -> Any:
     return value if type(value) is bytes else _taken(value, where, 0)
 
 
-def view(value: Any, *, _depth: int = 0) -> Any:
+def view(value: Any, *, _depth: int = 0, _budget: list[int] | None = None) -> Any:
     """``value`` as JSON, for the claim rule and for a digest: a record as an object of its fields, bytes as their
     digest and length, a list or a mapping item by item; anything else as it is, for the rule to name. ``_depth`` is
     where ``value`` stands; past ``codes.DEPTH`` it is handed back as it is, for the rule (or the boundary, counting
     from the same depth) to refuse as too deep."""
+    if _budget is None:
+        _budget = [0, 0]
+    _budget[0] += 1
+    _budget[1] += len(value) if type(value) is str else 1
+    if _budget[0] > MAX_ITEMS or _budget[1] > MAX_SIZE:
+        raise NotPlainData("a value", "size exceeds the bridge's limit")
     if _depth > DEPTH:
         return value
     if _is_record(value):
-        return {field.name: view(getattr(value, field.name), _depth=_depth + 1) for field in dataclasses.fields(value)}
+        return {field.name: view(getattr(value, field.name), _depth=_depth + 1, _budget=_budget)
+                for field in dataclasses.fields(value)}
     kind = type(value)
     if kind is bytes:
         return {"sha256": hashlib.sha256(value).hexdigest(), "length": len(value)}
     if kind in ARRAYS:
-        return [view(item, _depth=_depth + 1) for item in value]
+        return [view(item, _depth=_depth + 1, _budget=_budget) for item in value]
     if kind in OBJECTS:
-        return {key: view(item, _depth=_depth + 1) for key, item in value.items()}
+        for key in value:
+            if _read_as(key) != "text":
+                raise NotPlainData("a value (a key)", f"a {_named(key)} key is not text")
+            _budget[1] += len(key)
+            if _budget[1] > MAX_SIZE:
+                raise NotPlainData("a value", "size exceeds the bridge's limit")
+        return {key: view(item, _depth=_depth + 1, _budget=_budget) for key, item in value.items()}
     return value
 
 
@@ -427,7 +473,10 @@ def json_reply(reply: Any, cap: int) -> Any:
 def digest(value: Any) -> str:
     """The identity of a record (or of a report): the SHA-256 of every field, as JSON (:func:`view`), with its type."""
     kind = _named(value) if _is_record(value) else ""
-    return hashlib.sha256(canonical_json({"record": kind, "value": plain(view(value), where="a record")})).hexdigest()
+    # The fixed metadata frame adds no caller-data depth. Encode both values before
+    # framing them, keeping the existing digest bytes at the exact depth limit.
+    framed = b'{"record":' + canonical_json(kind) + b',"value":' + canonical_json(value) + b'}'
+    return hashlib.sha256(framed).hexdigest()
 
 
 #: What each maker issued: the maker's id -> (a weak reference to it, the digests of what it issued). Held in memory,

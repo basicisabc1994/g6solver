@@ -18,7 +18,6 @@ import os
 import re
 import stat
 from pathlib import Path, PureWindowsPath
-from dataclasses import asdict
 from typing import Any, Callable, Sequence
 
 from g6.core.adaptation_gate import protected_hits
@@ -26,7 +25,7 @@ from g6.reasoning import sign_test_p
 
 from .assurance import CandidateDossier
 from .codes import ADAPTATION_REFUSED, affirmed, refusal, settled
-from .snapshot import fresh, number, record, snapshot
+from .snapshot import publish, record_data, fresh, number, record, snapshot
 
 HEX = re.compile(r"^[0-9a-f]{64}$")
 
@@ -58,7 +57,7 @@ def detect_failure_modes(dossier: CandidateDossier) -> tuple[FailureModeFinding,
                 evidence_ref=artifact.get("source_ref", ""),
                 failure_detail=entry.get("reason", "not evaluated"),
                 severity=entry["severity"]))
-    return tuple(out)
+    return publish(tuple(out), where="detect_failure_modes")
 
 
 @record
@@ -89,11 +88,11 @@ class CompositionalFailureModel:
             edges.append({"from": proposed.failure_code, "to": proposed.id,
                           "edge": "proposed_mitigation_not_established",
                           "test_to_falsify": proposed.falsifying_case})
-        return settled(None, observed=[asdict(f) for f in findings],
-                       candidate_guards=[asdict(p) for p in proposals],
+        return publish(settled(None, observed=[record_data(f) for f in findings],
+                       candidate_guards=[record_data(p) for p in proposals],
                        edges=edges, unmatched_proposals=unresolved,
                        warning="A failure signature is not a confirmed root cause; an LLM's guard is not an established "
-                               "mitigation.")
+                               "mitigation."), where="CompositionalFailureModel.map")
 
 
 @record
@@ -343,7 +342,7 @@ class AdaptationPromotionGate:
         threshold = self.alpha / self.max_evaluations  # preregistered Bonferroni bound, as EvidencePolicy.threshold
         if p_value > threshold:
             violations.append(f"paired sign test not below preregistered threshold {threshold:.6g}")
-        return settled(refusal(ADAPTATION_REFUSED, "; ".join(violations)) if violations else None,
+        return publish(settled(refusal(ADAPTATION_REFUSED, "; ".join(violations)) if violations else None,
                        recommendation="reject_or_redesign" if violations else "recommend_isolated_shadow_only",
                        candidate=change.id, candidate_digest=change.code_digest,
                        baseline_digest=change.baseline_digest,
@@ -355,7 +354,7 @@ class AdaptationPromotionGate:
                        blocked_reasons=violations,
                        requires_owner_authorisation=True,
                        activation_authority="none; an independent G6 approval and merge remain necessary",
-                       scope="observed held-out cases; no global guarantee of monotonic improvement")
+                       scope="observed held-out cases; no global guarantee of monotonic improvement"), where="AdaptationPromotionGate.assess")
 
 
 __all__ = ["FailureModeFinding", "MitigationHypothesis", "CompositionalFailureModel",

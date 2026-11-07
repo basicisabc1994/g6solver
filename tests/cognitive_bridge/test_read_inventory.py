@@ -367,7 +367,8 @@ EXPECTED_READS = sorted([
     ("xai.py", "_feature_names", "estimator", _HAS),
     ("xai.py", "_feature_names", "estimator", _HAS),
     ("xai.py", "_feature_names", "estimator.n_features_in_", "read by _estimated"),
-    ("xai.py", "_feature_names", "getattr(estimator, 'feature_names_in_', [])", "read by _native"),
+    ("xai.py", "_feature_names", "getattr(estimator, 'feature_names_in_', [f'x{i}' for i in range(features)])",
+     "read by _native"),
     ("xai.py", "_feature_names", "getattr(estimator, 'n_outputs_', 1)", "read by _estimated"),
     ("xai.py", "distill_blackbox", "blackbox.predict(fresh(holdout))", _RETURNED),
     ("xai.py", "distill_blackbox", "blackbox.predict(fresh(train))", _RETURNED),
@@ -713,7 +714,7 @@ PLACES: dict[str, tuple[set[str], Any]] = {
     # a fitted estimator (finding 1)
     "an estimator's n_features_in_": (set(), lambda v, mp: extract_tree(_fitted(n_features_in_=v), ["x"])),
     "an estimator's n_outputs_": (set(), lambda v, mp: extract_tree(_fitted(n_outputs_=v), ["x"])),
-    "an estimator's feature_names_in_": ({"null"},  # null is no names: the defaults, x0, x1, ...
+    "an estimator's feature_names_in_": (set(),  # present metadata must be an array, even when falsy
                                          lambda v, mp: extract_tree(_fitted(feature_names_in_=v))),
     "a name in an estimator's feature_names_in_": ({"numeric-text"},
                                                    lambda v, mp: extract_tree(_fitted(feature_names_in_=[v]))),
