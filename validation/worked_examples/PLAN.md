@@ -3432,3 +3432,23 @@ bugs (uvicorn-3236, uvicorn-3199, openai-python-4166, openai-python-3982) were e
 (084ca72) and every bug ran again, so all kept records come from the same code.
 
 Nothing was scored. No final-cohort bug was read beyond its name and image ids.
+
+## 2026-11-07 (afternoon): slice 1, the frozen replay cohort, ended its review loop at the limit
+
+**What it was.** `claude/replay-cohort`, from 754513c: the box that holds one tree, the kept patch, links carried as git
+carries them, and the four controls that admit a bug to a cohort. Four Codex reviews and three repairs. Findings by round: 11,
+4, 3 and 4, every one reproduced by a test that failed on the reviewed commit; none rejected; never clean. The last repaired
+commit is ec2aae1, and the cohorts are those of this afternoon's section: development 35 of 35, selection 20 of 21, final
+unchanged.
+
+**Open, for their own change** (tests in `review-replay4\tests\_review\`, reproduced on ec2aae1):
+1. the final capture inherits a `core.worktree` the agent can set, so it can read a baseline copy and certify an empty patch;
+2. the capture's separate index inherits sparse-checkout settings, so a tracked file's removal can vanish from the kept patch;
+3. a container file with a second hard-link name outside the exported repository enters the workspace as a plain file;
+4. the manifest maker lets caller-supplied image metadata replace a frozen bug's name, so a name with no controls can be
+   admitted under another bug's controls.
+
+**What it says about the design.** Findings 1 and 2 share a root: the capture runs git under settings that the repository it
+reads can change. The follow-up runs every capture under settings G6 fixes, with no repository or user configuration read,
+rather than closing one setting at a time. Nothing recorded so far is known to be affected; the follow-up checks the kept
+patches for each case before the cohorts are used.
