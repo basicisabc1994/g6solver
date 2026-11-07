@@ -139,6 +139,27 @@ def test_verification_search_s_question_ranking_alone_does_not_fit_and_orders_th
     assert ["D2" in f.to_dict()["evidence"][0] for f in found] == [True, False]
 
 
+def test_g6_premortem_and_the_intent_engine_give_no_concrete_candidate(tmp_path):
+    """Reuse checked first (the brief): with no model, the intent engine's contract for a task is the task itself as
+    its goal, with no success criterion, and g6_premortem's questions are free text with no scenario or outcomes. So
+    neither gives a candidate (a call and two competing outcomes), and as a citation the goal is the whole task, which
+    is what ``differential_candidates`` falls back to when no sentence names the function."""
+    import subprocess
+
+    from g6.intent_engine import IntentElicitor
+    from g6.mcp import mission
+
+    session = IntentElicitor().elicit(TASK)
+    assert session.contract.goal == TASK and session.contract.success_criteria == []
+    for args in (("init", "-q"), ("-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "-q",
+                                  "--allow-empty", "-m", "base")):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+    found = mission.premortem(str(tmp_path), TASK)
+    assert found["standard"] == [] and all(isinstance(q, str) for q in found["questions"])
+    assert not any("A negative price is refused." in q for q in found["questions"])   # nothing it asks cites the task
+    assert bq._citation("Fix it.", "shop.prices.total") == "Fix it."
+
+
 # --- item 2: the form, and the dialog's result -------------------------------------------------------------------------
 
 
