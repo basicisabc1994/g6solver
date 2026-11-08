@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import json
 import os
-import site
 import subprocess
 import sys
 import tempfile
@@ -74,6 +73,7 @@ from g6.self_maintenance.envelope import (
     runner_alive,
     stop_reason,
     stop_standing,
+    stop_entries,
     stop_to_lift,
     stops_asked,
 )
@@ -277,12 +277,8 @@ def asked(folder: str) -> tuple[Path, str, dict[str, Any]] | dict:
 
 
 def _spawn(root: Path, settings: dict[str, Any]) -> Any:
-    """The runner as a process of its own: no console, its own group, its output in its folder. On the Python the settings the
-    person agreed to pin, isolated, since ``-P`` leaves ``PYTHONPATH`` standing and that puts a working tree ahead of any
-    install. With none pinned, on this server's Python, as the server's own environment has it. Either way it reads its
-    cached bytecode from a folder made empty for it, and writes none, so only the source the envelope pins can run: a
-    ``.pyc`` planted under ``__pycache__`` beside a pinned file would run in its place. These are flags, as ``-I`` reads no
-    ``PYTHON*`` setting."""
+    """The runner on the agreed interpreter, isolated, with G6's import roots as arguments and the one checked child
+    environment. The empty bytecode cache and no-write flag keep source edits visible on every start."""
     detached = ({"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
                 else {"start_new_session": True})
     with open(root / RUNNER_LOG, "ab") as log:
@@ -291,33 +287,76 @@ def _spawn(root: Path, settings: dict[str, Any]) -> Any:
                                 env=_environment(), **detached)
 
 
+# The only bootstrap for both launchers. Python has completed isolated startup before it reads these roots. They are
+# a JSON list argument, never a path-list string. Insert them after the standard library and before installed packages;
+# even a server installed in a site folder must not put that folder ahead of the standard library.
+_BOOTSTRAP = (
+    "import sys, json, runpy, site; "
+    "roots = json.loads(sys.argv.pop(1)); "
+    "at = next((i for i, p in enumerate(sys.path) if p in site.getsitepackages()), len(sys.path)); "
+    "sys.path[at:at] = roots; "
+    "mode = sys.argv.pop(1); target = sys.argv.pop(1); sys.argv[0] = target; "
+    "runpy.run_module(target, run_name='__main__', alter_sys=True) if mode == '-m' "
+    "else exec(compile(target, '<g6 child>', 'exec'))"
+)
+
+
 def _interpreter(settings: dict[str, Any]) -> list[str]:
-    """How the runner's Python starts, for the runner and for a person's act alike (``_spawn``). ``-P`` and ``-I`` both
-    keep Python from adding a path of its own: the folder it starts in, which is the loop's, for ``-m`` and ``-c``."""
+    """Both loop children start isolated. A pinned interpreter keeps its own installed G6; otherwise the roots name
+    the G6 this server loaded. Startup settings never come from the parent environment."""
     python = _pinned_python(settings)
     cache = tempfile.mkdtemp(prefix="g6-loop-no-bytecode-")
-    return [python or sys.executable, "-I" if python else "-P", "-B", "-X", f"pycache_prefix={cache}"]
+    roots = [] if python else _import_path()
+    return [python or sys.executable, "-I", "-B", "-X", f"pycache_prefix={cache}",
+            "-c", _BOOTSTRAP, json.dumps(roots)]
+
+
+def _environment_path(value: str, *, must_exist: bool = True) -> str | None:
+    """A local directory named independently of the child's working folder, or nothing. No network lookup, control
+    character or missing directory is admitted. The parent fixes links before the child starts."""
+    if not value or any(ord(char) < 32 for char in value) or not _stands_alone(value):
+        return None
+    if os.name == "nt" and PureWindowsPath(value).drive.startswith("\\\\"):
+        return None
+    try:
+        path = Path(value).resolve()
+        return str(path) if not must_exist or path.is_dir() else None
+    except (OSError, ValueError):
+        return None
 
 
 def _environment() -> dict[str, str]:
-    """The environment a G6 child starts in, for the runner and for a person's act alike: this server's, with its import
-    path fixed here, before the child starts (``_import_path``)."""
-    return {**os.environ, "PYTHONPATH": _import_path()}
+    """Build the whole loop-child environment from an allow-list. Each inherited name is a checked local directory:
+    system folders for Windows startup, home/config folders for host tools, and temporary folders. G6 sets its own
+    absolute state root and search path, with its interpreter directory first. No Python setting or unlisted variable
+    is inherited. Provider secrets and arbitrary host settings must not become startup authority."""
+    env: dict[str, str] = {}
+    for name in ("SYSTEMROOT", "WINDIR", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP"):
+        value = _environment_path(os.environ.get(name, ""))
+        if value is not None:
+            env[name] = value
+    home = _environment_path(str(g6_home().absolute()), must_exist=False)
+    if home is None:
+        raise ValueError("G6_E_LOOP_CHILD_ENV: the state root must be an absolute local path")
+    env["G6_HOME"] = home
+    temp = _environment_path(tempfile.gettempdir())
+    if temp is None:
+        raise ValueError("G6_E_LOOP_CHILD_ENV: no absolute temporary directory")
+    env.setdefault("TEMP", temp)
+    env.setdefault("TMP", temp)
+    paths = [str(Path(sys.executable).parent), *os.environ.get("PATH", os.defpath).split(os.pathsep)]
+    checked = [_environment_path(entry) for entry in paths]
+    env["PATH"] = os.pathsep.join(dict.fromkeys(entry for entry in checked if entry is not None and os.pathsep not in entry))
+    return env
 
 
-def _import_path() -> str:
-    r"""The ``PYTHONPATH`` of a G6 child, so it imports G6 from where this server's ``g6`` was loaded: each entry of the
-    server's own ``PYTHONPATH`` that stands on its own (``_stands_alone``), in its order, behind the folder that holds the
-    server's ``g6`` when neither those entries nor this Python's own site folders hold it already (a working tree, or an
-    editable install). It holds no entry Python would read against where the child stands, which is the loop's folder a
-    caller named, on its drive: an empty or a relative entry, ``\x`` or ``C:x``. A ``g6`` there would run in place of the
-    server's. A site folder is never put first, where it would stand in front of the standard library. A pinned
-    interpreter starts isolated (``-I``), reads none of it, and imports the G6 installed for it."""
-    given = [entry for entry in os.environ.get("PYTHONPATH", "").split(os.pathsep) if _stands_alone(entry)]
-    home = Path(g6.__file__).resolve().parent.parent
-    sites = [*site.getsitepackages(), site.getusersitepackages()]
-    reached = any(os.path.normcase(os.path.realpath(entry)) == os.path.normcase(str(home)) for entry in [*given, *sites])
-    return os.pathsep.join(given if reached else [str(home), *given])
+def _import_path() -> list[str]:
+    """The exact absolute sys.path root of the server's G6, passed as a list argument after isolated startup. Parent import
+    settings supply no extra roots, and a separator in this folder's name stays inside this one entry."""
+    home = str(Path(g6.__file__).resolve().parent.parent)
+    if not _stands_alone(home):
+        raise ValueError("G6_E_LOOP_IMPORT_PATH: the server's G6 root is not absolute")
+    return [home]
 
 
 def _past_opening(root: Path, since: datetime) -> bool:
@@ -717,37 +756,44 @@ def _read_act(code: int | None, out: str, err: str = "", *, act_name: str | None
                     reply_state=reply["completion_state"] if reply is not None else None, **extra)
 
 
-def _stop_file_size(root: Path) -> int | None:
-    """The ``STOP`` file's length, ``-1`` with no file, or ``None`` when it cannot be read."""
+def _stop_entry_on_record(root: Path, name: str, entry: str) -> bool | None:
+    """Read the complete bytes written with this stop's identity. Partial text, an empty file and another stop's bytes
+    are not its entry. An unreadable file is unknown, never a successful write."""
     try:
-        return (root / STOP_FILE).stat().st_size
+        return entry.encode("utf-8") in (root / name).read_bytes()
     except (FileNotFoundError, NotADirectoryError):
-        return -1
+        return False
     except OSError:
         return None
 
 
 def _stop_before(root: Path) -> dict[str, Any]:
-    """What stands before a stop, for its read-back to compare with (``_stop_on_record``): the ``STOP`` file's length, the
-    count of stops, and the start in force, if the records read (``records``)."""
+    """The start a stop is ending, if the records read. File size and the count of historical lines cannot identify
+    this stop's writes: those are read by their complete bytes and written identity. File absence is read separately,
+    so a newly created empty file can stop the folder without borrowing an old unchanged file's effect."""
     try:
         log = _log(root)
         started, records = (log.started() if log is not None and log.start_in_force() else None), True
     except (OSError, LedgerError):
         started, records = None, False
-    return {"size": _stop_file_size(root), "stops": stops_asked(root), "started": started, "records": records}
+    try:
+        (root / STOP_FILE).read_bytes()
+    except (FileNotFoundError, NotADirectoryError):
+        missing = True
+    except OSError:
+        missing = None
+    else:
+        missing = False
+    return {"started": started, "records": records, "missing": missing}
 
 
-def _stop_on_record(root: Path, before: dict[str, Any], ident: str) -> dict[str, bool | None]:
-    """What the folder holds of a stop, read back afresh against what stood ``before`` it (``_stop_before``), each part on
-    its own: its line in the ``STOP`` file (the file grew), its count in ``stops.log`` (the count grew), and its note in
-    the constraint log (the row written with ``ident``). The stop itself stands when its line does, or when
-    the start it found in force no longer stands, by G6's own rule for what stops a start (``stop_standing``), which a
-    runner reads too. A part that cannot be read, now or before, is not known (``None``), never on record or not. It
-    does not raise."""
-    size, stops = _stop_file_size(root), stops_asked(root)
-    line = None if size is None or before["size"] is None else size > before["size"]
-    count = None if stops < 0 or before["stops"] < 0 else stops > before["stops"]
+def _stop_on_record(root: Path, before: dict[str, Any], ident: str, reason: str) -> dict[str, bool | None]:
+    """Read every part from its own bytes or ledger row: the two complete entries written with ``ident``, and the
+    constraint-log row with that id. The stop's effect uses the runner's stop rule too: an empty STOP file may stop a
+    runner even when this stop's line never landed. Unreadable parts are unknown, independently."""
+    stop_entry, count_entry = stop_entries(reason, ident)
+    line = _stop_entry_on_record(root, STOP_FILE, stop_entry)
+    count = _stop_entry_on_record(root, STOPS_FILE, count_entry)
     started = before["started"]
     try:
         log = _log(root)
@@ -757,7 +803,9 @@ def _stop_on_record(root: Path, before: dict[str, Any], ident: str) -> dict[str,
                                    if before["records"] else None)          # its note is written only to end a start
     except (OSError, LedgerError):
         note = ended = None
-    stands = True if line or ended else None if line is None or ended is None else False
+    appeared = (bool(stop_reason(root)) if before["missing"] is True and line is not None else
+                False if before["missing"] is False else None)
+    stands = True if line or ended or appeared else None if line is None or ended is None or appeared is None else False
     return {"the stop": stands, "its line in the STOP file": line, "its count in stops.log": count,
             "its note in the constraint log": note}
 
@@ -773,14 +821,14 @@ def stop(folder: str, reason: str = "") -> dict:
     ident = uuid4().hex                         # the row's identity, separate from its time
     failed, why = None, ""
     try:
-        why = ask_to_stop(root, reason)
+        why = ask_to_stop(root, reason, record_id=ident)
     except OSError as exc:
         failed = exc
     why = why or (stop_standing(root, before["started"]) if before["started"] else "")
     if why:
         record_stop(root, why, at=datetime.now().astimezone().isoformat(), record_id=ident)
     running = runner_alive(root)
-    found = _stop_on_record(root, before, ident)
+    found = _stop_on_record(root, before, ident, reason)
     raised = f"; writing it raised {type(failed).__name__}: {failed}" if failed is not None else ""
     if found["the stop"] is not True:
         return _blocked(STOP_FAILED, f"the stop is not known to stand; {_record_said(found)}{raised}"[:400],

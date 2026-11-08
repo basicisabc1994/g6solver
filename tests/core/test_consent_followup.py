@@ -4,8 +4,7 @@ failing on 66f14b9, and the inventory that removes its class at the root, built 
 
 - untrusted_input_given_authority (finding 1): a G6 child starts in the loop's folder a caller names, so what Python reads
   against that folder decided which ``g6`` ran. Every G6 child now starts on the server's own import path, fixed in the
-  parent with no relative or empty entry (``improve._import_path``), with no path of Python's own (``-P``, or ``-I`` on a
-  pinned interpreter), and a person's act names the G6 it runs, by folder and digest, which the act's process reads again
+  parent as a list argument (``improve._import_path``), with isolated startup (``-I``) on every interpreter, and a person's act names the G6 it runs, by folder and digest, which the act's process reads again
   of the G6 it imported before it runs anything. The inventory lists, from the code, every child the MCP, metaharness and
   self-maintenance code starts, and starts each G6 child for real with a ``g6``, a ``sitecustomize`` and a ``json`` planted
   where the folder, ``.``, an empty entry and a relative entry would reach.
@@ -53,6 +52,11 @@ _spec.loader.exec_module(binding)
 Rig, Server, code, SRC = binding.Rig, binding.Server, binding.code, binding.SRC
 #: The folder holding the ``g6`` this process imported, which a G6 child must import too.
 HOME = Path(g6.__file__).resolve().parent.parent
+
+
+def _child_import_roots(argv):
+    """The roots G6 passed as one JSON-list argument after isolated startup."""
+    return json.loads(argv[argv.index("-c") + 2])
 
 
 @pytest.fixture
@@ -295,12 +299,15 @@ def test_a_g6_childs_import_path_is_absolute_and_fixed_whatever_the_servers_pyth
     improve._spawn(root, settings)
     assert len(seen) == 2
     for argv, kwargs in seen:
-        entries = kwargs["env"]["PYTHONPATH"].split(os.pathsep)
-        assert entries and all(improve._stands_alone(entry) for entry in entries), entries   # review cfu2: one rule
+        entries = _child_import_roots(argv)
+        assert entries == ([] if settings else [str(HOME)]), entries
+        assert all(improve._stands_alone(entry) for entry in entries), entries   # review cfu2: one rule
         assert not any(Path(entry).resolve().is_relative_to(root.resolve()) for entry in entries), entries
-        first = next(Path(entry) for entry in entries if (Path(entry) / "g6" / "__init__.py").is_file())
-        assert first.resolve() == HOME
-        assert argv[1] == ("-I" if settings else "-P") and kwargs["cwd"] == root
+        if entries:
+            first = next(Path(entry) for entry in entries if (Path(entry) / "g6" / "__init__.py").is_file())
+            assert first.resolve() == HOME
+        assert argv[1] == "-I" and kwargs["cwd"] == root
+        assert not any(name.upper().startswith("PYTHON") for name in kwargs["env"])
 
 
 def test_nothing_planted_runs_in_a_real_act_child_and_the_servers_g6_answers(tmp_path, monkeypatch):
@@ -1125,7 +1132,7 @@ AROUND = {
      "except (OSError, LedgerError, WorkspaceRefused, ValueError) around now = _terms(root)"): ("after", "_start_as_recorded"),
     ("mcp/improve.py", "start", "return _start_as_recorded(root, ident, reply) if ident else reply"): ("after", "_start_as_recorded"),
     ("mcp/improve.py", "stop", "return _not_a_loop(root)"): ("before", ""),
-    ("mcp/improve.py", "stop", "except OSError around why = ask_to_stop(root, reason)"): ("after", "_stop_on_record"),
+    ("mcp/improve.py", "stop", "except OSError around why = ask_to_stop(root, reason, record_i"): ("after", "_stop_on_record"),
     ("mcp/improve.py", "stop",
      "return _blocked(STOP_FAILED, f'the stop is not known to stand; {_record_said("): ("after", "_stop_on_record"),
     ("mcp/improve.py", "stop",
@@ -1284,9 +1291,9 @@ PARTS = {
     ("metaharness/runner.py", "on_record", "the demotion"): {"lineage"},
     ("metaharness/runner.py", "on_record", "its note in the constraint log"): {"log._rows"},
     ("mcp/improve.py", "_start_on_record", "the start"): {"log.started", "log.start_in_force", "stop_standing"},
-    ("mcp/improve.py", "_stop_on_record", "the stop"): {"_stop_file_size", "stop_standing", "log.record"},
-    ("mcp/improve.py", "_stop_on_record", "its line in the STOP file"): {"_stop_file_size"},
-    ("mcp/improve.py", "_stop_on_record", "its count in stops.log"): {"stops_asked"},
+    ("mcp/improve.py", "_stop_on_record", "the stop"): {"_stop_entry_on_record", "stop_standing", "log.record"},
+    ("mcp/improve.py", "_stop_on_record", "its line in the STOP file"): {"_stop_entry_on_record"},
+    ("mcp/improve.py", "_stop_on_record", "its count in stops.log"): {"_stop_entry_on_record"},
     ("mcp/improve.py", "_stop_on_record", "its note in the constraint log"): {"log.record"},
 }
 #: What a reply's ``recorded`` may be set from: a read-back's result, or ``None``, which is not known.
@@ -1536,7 +1543,8 @@ def test_a_stop_names_each_part_as_the_reopened_folder_holds_it_and_none_it_cann
             return real_stat(self, *args, **kwargs)
 
         def read_bytes(self):
-            if armed["on"] and unreadable == "its stops.log" and self.name == "stops.log":
+            if armed["on"] and ((unreadable == "its stops.log" and self.name == "stops.log")
+                                or (unreadable == "its STOP file" and self.name == "STOP")):
                 raise PermissionError("stops.log cannot be read")
             return real_read(self)
 
@@ -1632,7 +1640,7 @@ def test_a_rooted_pythonpath_entry_with_no_drive_reaches_neither_child(tmp_path,
     def popen(argv, **kwargs):
         # each launcher's interpreter, flags, folder and environment, with an import-only probe for its entry point: no
         # runner and no act runs
-        seen.append(kwargs["env"]["PYTHONPATH"].split(os.pathsep))
+        seen.append(_child_import_roots(argv))
         entry = argv.index("-c") if "-c" in argv else argv.index("-m")
         child = real_popen([*argv[:entry], "-c", "import g6; print(g6.__file__)"], **kwargs)
         children.append(child)
@@ -1711,9 +1719,9 @@ def _probed(monkeypatch, launcher: str, root: Path, out: Path) -> list[list[str]
     real_popen = improve.subprocess.Popen
 
     def popen(argv, **kwargs):
-        seen.append(kwargs["env"]["PYTHONPATH"].split(os.pathsep))
+        seen.append(_child_import_roots(argv))
         start = argv.index("-c") if "-c" in argv else argv.index("-m")
-        children.append(real_popen([*argv[:start], "-c", PROBE, str(out)], **kwargs))
+        children.append(real_popen([*argv[:start + 3], "-c", PROBE, str(out)], **kwargs))
         return children[-1]
 
     monkeypatch.setattr(improve.subprocess, "Popen", popen)
@@ -1735,29 +1743,23 @@ def _probed(monkeypatch, launcher: str, root: Path, out: Path) -> list[list[str]
 @pytest.mark.parametrize("form", list(CHILD_FORMS))
 def test_each_launchers_real_child_reaches_an_entry_only_when_it_stands_on_its_own(tmp_path, monkeypatch, form,
                                                                                     launcher):
-    """Each form planted ahead of the server's own source in the server's ``PYTHONPATH``, and the launcher's real child
-    started on it. One that does not stand on its own names a folder holding a ``g6``, a ``sitecustomize`` and a
-    ``json``: it is not handed on, and nothing of it runs. One that does is handed on as it is, and the child reaches the
-    folder it names. Either way the child's ``g6`` is the server's."""
+    """Every parent entry is refused, including absolute ones. Each real launcher retains its isolated bootstrap,
+    imports the server's G6, and cannot find a module planted in any parent-supplied entry."""
     root, marker, out = tmp_path / "loop", tmp_path / "planted-ran", tmp_path / "probe.txt"
     root.mkdir()
     entry, folder = _spelled(form, tmp_path, root)
     alone = CHILD_FORMS[form]
-    if not alone:
-        _plant(folder, marker)
+    _plant(folder, marker)
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "g6_cfu2_probe.py").write_text("", encoding="utf-8")
     monkeypatch.setenv("PYTHONPATH", os.pathsep.join([entry, str(HOME)]))
     [given] = _probed(monkeypatch, launcher, root, out)
-    assert given == [*([entry] if alone else []), str(HOME)], f"{entry!r} stands on its own: {alone}; given {given}"
+    assert given == [str(HOME)], f"{entry!r} stands on its own: {alone}; given {given}"
     assert out.is_file(), "the probe did not run"
     imported, found = out.read_text(encoding="utf-8").split("\n")
     assert not marker.exists(), f"the child ran what was planted in {marker.read_text(encoding='utf-8')}"
     assert os.path.samefile(imported, HOME / "g6" / "__init__.py"), imported
-    if alone:
-        assert found and os.path.samefile(found, folder / "g6_cfu2_probe.py"), found
-    else:
-        assert not found, found
+    assert not found, found
 
 
 #: A share no child looks up here.
@@ -1788,13 +1790,13 @@ def test_a_share_stands_on_its_own_and_both_launchers_hand_it_on(tmp_path, monke
             return 1
 
     def popen(argv, **kwargs):
-        seen.append(kwargs["env"]["PYTHONPATH"].split(os.pathsep))
+        seen.append(_child_import_roots(argv))
         return Child()
 
     monkeypatch.setattr(improve.subprocess, "Popen", popen)
     improve._run_act(root, settings, {"act": "enrol"})
     improve._spawn(root, settings)
-    assert seen == [[SHARE, str(HOME)]] * 2
+    assert seen == [[] if settings else [str(HOME)]] * 2
 
 
 @pytest.mark.skipif(os.name != "nt", reason="drives and shares are Windows paths")
@@ -1827,9 +1829,8 @@ THE_RULE, BY_RULE, FROM_RULE, MADE_WHOLE, RUN_FOLDER, BOUND, PRINTED, WORDS, NOT
 #: times it names them, what it is, and why. Any other, or a count that moves, fails the inventory.
 PATH_PLACES = {
     ("mcp/improve.py", "_stands_alone"): (THE_RULE, 2, "names the two predicates it does not use, and why"),
-    ("mcp/improve.py", "_import_path"): (BY_RULE, 3, "a G6 child's PYTHONPATH: an entry is kept only by the rule"),
-    ("mcp/improve.py", "_environment"): (FROM_RULE, 1, "a G6 child's environment: its PYTHONPATH is _import_path's"),
-    ("mcp/improve.py", "_spawn"): (WORDS, 1, "why a pinned runner starts isolated"),
+    ("mcp/improve.py", "_import_path"): (BY_RULE, 1, "the server's one root as an absolute argument"),
+    ("mcp/improve.py", "<module>"): (FROM_RULE, 3, "the bootstrap inserts the exact roots from its list argument"),
     ("metaharness/runner.py", "_g6_terms"): (WORDS, 1, "what a pinned interpreter's act names as its G6"),
     ("cegis/runner.py", "<module>"): (MADE_WHOLE, 2, "the cegis child (-I) appends the folder of the server's g6, "
                                                      "resolved in the parent"),
@@ -1892,7 +1893,8 @@ PATH_PLACES = {
     ("workforce/repo_tests.py", "_file_here"): (NOT_IMPORT, 1, "a file inside the repository"),
 }
 #: Each place that builds a G6 child's import path or names its interpreter, which decides by the rule.
-RULED = (("mcp/improve.py", "_import_path"), ("mcp/improve.py", "_pinned_python"))
+RULED = (("mcp/improve.py", "_import_path"), ("mcp/improve.py", "_pinned_python"),
+         ("mcp/improve.py", "_environment_path"))
 #: How each child's import path built from a folder made whole is made, read from the code: the function, and what in it
 #: makes the folder whole before any child sees it.
 MADE = {
@@ -1948,7 +1950,7 @@ def test_each_place_that_builds_a_g6_childs_import_path_or_names_its_interpreter
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and "_stands_alone" in _calls(node):
                 callers.add((path.relative_to(SRC).as_posix(), node.name))
     assert callers == set(RULED), callers
-    assert "_import_path" in _calls(_functions("mcp/improve.py")["_environment"])
+    assert "_import_path" in _calls(_functions("mcp/improve.py")["_interpreter"])
 
 
 def test_every_place_under_src_that_names_a_paths_standing_is_listed_with_what_it_is():

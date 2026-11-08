@@ -334,7 +334,14 @@ def stops_asked(root: str | Path) -> int:
         return -1
 
 
-def ask_to_stop(root: str | Path, reason: str = "") -> str:
+def stop_entries(reason: str, ident: str) -> tuple[str, str]:
+    """The exact LF-terminated STOP entry and counted line for one written identity. Historical reasons and counts
+    keep their meaning; the counted line additionally names its write so read-back cannot borrow another stop."""
+    said = " ".join(reason.split()) or "stopped through g6_improve_stop"
+    return f"{said}\n{ident}\n", f"{said[:200]} {ident}\n"
+
+
+def ask_to_stop(root: str | Path, reason: str = "", *, record_id: str | None = None) -> str:
     """Add this stop to the ``STOP`` file, making it if need be, so the first reason stands and repeating is safe. It kills
     nothing: the runner reads the file before each model call and ends itself. It returns why the folder is stopped.
 
@@ -346,14 +353,14 @@ def ask_to_stop(root: str | Path, reason: str = "") -> str:
     tick lasts and a stop may never wait. The count serves a restart after a person has removed the file, when no note of
     the stop reached the records, and it is all there is of a stop that dies before its file is written, which a tick and a
     runner read as a stop (``stop_standing``). A count that cannot be written is left, and only that restart loses by it."""
-    said = " ".join(reason.split()) or "stopped through g6_improve_stop"
+    stop_entry, count_entry = stop_entries(reason, record_id or uuid4().hex)
     try:
-        with open(Path(root) / STOPS_FILE, "a", encoding="utf-8") as stops:
-            stops.write(said[:200] + "\n")
+        with open(Path(root) / STOPS_FILE, "a", encoding="utf-8", newline="\n") as stops:
+            stops.write(count_entry)
     except OSError:
         pass
-    with open(Path(root) / STOP_FILE, "a", encoding="utf-8") as stop:
-        stop.write(f"{said}\n{uuid4().hex}\n")
+    with open(Path(root) / STOP_FILE, "a", encoding="utf-8", newline="\n") as stop:
+        stop.write(stop_entry)
     return stop_reason(root)
 
 
@@ -439,5 +446,5 @@ def heartbeat(root: str | Path) -> dict | None:
 __all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "ENROLMENT_CHANGED", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES",
            "NOTHING_TO_TRY", "REFUSED_FILE", "RUNNER_LOCK", "STOPS_FILE", "STOP_FILE", "TICK_BUDGET_SPENT", "ask_to_stop",
            "beat", "enrolment_changed", "enrolment_digest", "enrolment_id", "file_digest", "heartbeat", "note_refusal", "record_stop",
-           "refused_requests", "stop_standing", "runner_alive", "runner_lock", "stop_reason", "stop_to_lift", "stops_asked",
+           "refused_requests", "stop_standing", "runner_alive", "runner_lock", "stop_reason", "stop_to_lift", "stops_asked", "stop_entries",
            "what_stops"]
