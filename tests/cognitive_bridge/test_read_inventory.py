@@ -91,7 +91,7 @@ def _parents(tree):
 
 #: The readers: a value read as one of their first arguments is read by its rule before anything uses it.
 READERS = {"number", "text", "plain", "snapshot", "fresh", "returned", "affirmed", "_native", "_estimated", "_label",
-           "_numbers", "_read_card", "_plain", "_text", "_arguments", "only_fields", "unclaimed"}
+           "_numbers", "_read_card", "_plain", "_text", "_arguments", "only_fields", "unclaimed", "_walk"}
 #: The functions that read a value the bridge did not construct raw, by design: the boundary and the readers it hands a
 #: value to. Their parameters are what reads a value, so they are not listed as values read.
 READER_FUNCTIONS = {
@@ -106,6 +106,7 @@ READER_FUNCTIONS = {
     ("codes.py", "_unread"): "what the leaf test does not read, named in a refusal",
     ("codes.py", "_read_card"): "the one reading of a card: snapshot.plain, then a strict WarningCard",
     ("codes.py", "claims"): "the claim rule: a value walked by the boundary's leaf test, by exact type",
+    ("codes.py", "_bounded_claims"): "the claim rule's entrance: detached by the shared visit-budget walker before claims",
     ("codes.py", "unclaimed"): "the claim rule's verdict",
     ("codes.py", "affirmed"): "the one reading of a yes: True and nothing else",
     ("codes.py", "_plain"): "snapshot.plain, imported where it is used",
@@ -292,6 +293,7 @@ _RETURNED, _AFFIRMED, _NONE, _HAS = "read by returned", "read by affirmed", "a p
     "a presence test (hasattr)"
 #: Every read of a value the bridge did not construct, compared whole: a new one is listed here with what it is.
 EXPECTED_READS = sorted([
+    ("codes.py", "_plain_fields", "value", "read by _plain"),
     ("adaptation.py", "AdaptationPromotionGate.__init__", "admit_control", _KEPT.format("admit_control")),
     ("adaptation.py", "AdaptationPromotionGate.__init__", "admit_pair", _KEPT.format("admit_pair")),
     ("adaptation.py", "AdaptationPromotionGate.assess", "self.admit_control", _NONE),
@@ -457,9 +459,7 @@ EXPECTED_BETWEEN = {
     "CognitiveBridgeBlock.infer": "the caller's arguments (or the registry's typed input), read once by _arguments; "
                                   "and screen_raw's read, by _held",
     "_arguments": "the boundary: snapshot.plain of the arguments as given (_as_given)",
-    "_as_given": "reads an exact CognitiveInput, and each exact model it holds, by its fields for the boundary; "
-                 "anything else is handed on as it is",
-    "_fields": "an exact input model's fields, each read by its name: never serialized",
+    "_as_given": "outer mapping protocol; exact input models and their nested fields go through the shared budget walker",
     "CognitiveBridgeBlock._held": "screen_raw's read, which no one else holds, taken once",
 }
 

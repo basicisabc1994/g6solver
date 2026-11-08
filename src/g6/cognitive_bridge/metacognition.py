@@ -253,9 +253,12 @@ class MetacognitiveMethodSelector:
         #: How many (case, variant) groups were admitted: the evidence count, whatever the repeats or oracle revisions.
         self._groups = len({(t.cohort_id, t.case_id, t.variant_id, t.variant_digest) for t in self.trials})
 
-    def _score(self, variant: MethodVariant, context: ProblemSignature) -> dict[str, Any]:
+    def _score(self, variant: MethodVariant, context: ProblemSignature, *,
+               trials: Sequence[EvaluatedTrial] | None = None) -> dict[str, Any]:
         digest = variant.definition_digest
-        specific = [x for x in self.trials
+        if trials is None:
+            trials = snapshot(self.trials, where="trials")
+        specific = [x for x in trials
                     if x.variant_id == variant.id and x.variant_digest == digest and x.domain == context.domain
                     and x.uncertainty == context.uncertainty and x.claim_kind == context.claim_kind]
         # Do not transfer patterns from unrelated domains by default; such a
@@ -292,6 +295,8 @@ class MetacognitiveMethodSelector:
         variants = snapshot(variants, where="variants")
         required_methods = snapshot(required_methods, where="required_methods")
         max_optional = snapshot(max_optional, where="max_optional")
+        trials = snapshot(self.trials, where="trials")
+        learn_from = snapshot(self.learn_from, where="learn_from")
         if not 0 <= number(max_optional, where="max_optional") <= 10:
             raise ValueError("max optional methods invalid")
         required = tuple(dict.fromkeys(required_methods))
@@ -302,7 +307,7 @@ class MetacognitiveMethodSelector:
         if len({v.id for v in variants}) != len(variants):
             raise ValueError("duplicate candidate method variant ids")
         options = [v for v in variants if _eligible(v, context)]
-        scored = [self._score(v, context) for v in options]
+        scored = [self._score(v, context, trials=trials) for v in options]
         if len(variants) > 100:
             raise ValueError("method selector cap: at most 100 explicit variants")
         selected: list[dict[str, Any]] = []
@@ -364,12 +369,12 @@ class MetacognitiveMethodSelector:
                     selected.append({**s, "obligation": "supplemental"})
                     remaining -= s["expected_cost"]
         policy = {"version": "meta-selector/0.2", "seed": self.seed,
-                  "exploration_weight": self.exploration_weight, "learn_from": list(self.learn_from),
-                  "trials": sorted(t.trial_id for t in self.trials),
+                  "exploration_weight": self.exploration_weight, "learn_from": list(learn_from),
+                  "trials": sorted(t.trial_id for t in trials),
                   "required": list(required), "context": record_data(context),
                   "candidate_ids": sorted(v.id for v in variants)}
         return publish(issue(self, SelectionDecision(tuple(selected), required, tuple(missing),
-                                             self.rejected_trials, len(self.trials),
+                                             self.rejected_trials, len(trials),
                                              sha256(canonical_json(policy)), _incomplete(missing))), where="MetacognitiveMethodSelector.select")
 
 

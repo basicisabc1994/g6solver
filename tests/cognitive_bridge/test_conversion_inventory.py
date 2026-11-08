@@ -436,7 +436,7 @@ EXPECTED_CONVERSIONS.update({
     ('engine.py', 'LLMProposer.propose', 'decode',
      "canonical_json(item['arguments'])"): _ENCODED_BYTES,
     ('engine.py', 'LLMProposer.propose', 'decode',
-     "canonical_json({'objective': objective[:2500], 'hypotheses': [{'id': h.id, 'statement': h.statement, 'prior': h.prior} for h in hypotheses], 'history': list(history)[-6:], 'allowed_tools': [{'name': t.name, 'cost': t.cost, 'assumed_match_probability': t.assumed_match_probability} for t in self.tools.values()], 'max_probes': self.max_probes})"): _ENCODED_BYTES,
+     "canonical_json({'objective': objective[:2500], 'hypotheses': [{'id': h.id, 'statement': h.statement, 'prior': h.prior} for h in hypotheses], 'history': list(history)[-6:], 'allowed_tools': [{'name': t.name, 'cost': t.cost, 'assumed_match_probability': t.assumed_match_probability} for t in tools.values()], 'max_probes': self.max_probes})"): _ENCODED_BYTES,
     ('mixed_methods.py', 'LLMClaimCompiler.draft', 'decode',
      "canonical_json({'question': question, 'context': list(context)[-6:], 'supported_methods': {k: {'required': list(v['required']), 'allowed': list(v['allowed'])} for k, v in ENGINE_SPECS.items()}, 'max_claims': self.max_claims})"): _ENCODED_BYTES,
     ('mixed_methods.py', 'MethodRouter.plan', 'decode',

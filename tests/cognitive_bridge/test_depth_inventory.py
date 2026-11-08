@@ -139,6 +139,7 @@ EXPECTED_WALKS = {
     ("metacognition.py", "MetacognitiveMethodSelector.select.search"),
     ("snapshot.py", "_frozen"), ("snapshot.py", "_has_record"), ("snapshot.py", "_not_json"),
     ("snapshot.py", "_renewed"), ("snapshot.py", "_same"), ("snapshot.py", "_taken"), ("snapshot.py", "view"),
+    ("snapshot.py", "_walk"),
     ("xai.py", "extract_tree.visit"),
 }
 #: A function that calls itself but does not recurse into a value, with why.

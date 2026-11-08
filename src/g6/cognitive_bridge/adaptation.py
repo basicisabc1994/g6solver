@@ -249,6 +249,7 @@ def protected_paths(paths: Sequence[str]) -> list[str]:
     (:data:`ADAPTABLE`, compared by file identity), and every path G6's own policy protects
     (``g6.core.adaptation_gate.protected_hits``). An allow-list, so a judge nobody listed is refused too. Any error
     resolving a path refuses that path; an error in the declaration or in G6's policy refuses every path."""
+    paths = snapshot(paths, where="changed paths")
     try:
         declared = _declared()
         upstream = set(protected_hits(tuple(paths)))

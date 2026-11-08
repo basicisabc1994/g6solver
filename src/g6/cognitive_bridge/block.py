@@ -4,8 +4,8 @@
 No arbitrary model or tool code crosses this door. Agentic calls and in-memory
 ML predictor adapters are deliberately Python-only dependency injection.
 
-The block's outer argument mapping is copied with Python's mapping unpacking on every entry path, matching the bound
-registry. Nested values keep their original kinds. The boundary reads that copy once (:func:`_arguments`:
+The block's outer argument mapping follows the registry's mapping protocol, enumerated inside the bounded walker.
+Nested values keep their original kinds. The boundary reads that copy once (:func:`_arguments`:
 ``snapshot.plain``, an exact :class:`CognitiveInput` by its fields as the caller set them and never serialized first),
 and everything after reads only that read: at G6's door,
 :meth:`CognitiveBridgeBlock.screen_raw` takes the read and :meth:`CognitiveBridgeBlock.infer` answers from it, refusing
@@ -24,13 +24,12 @@ from g6.core.ai_block import AIBlock
 from g6.core.contract_decorator import block_contract
 from g6.core.maturity import component_maturity
 from g6.core.result import Result
-from .codes import _is_type
 from .codes import INPUT, STATES, NotPlainData, refusal, settled, unclaimed
 from .engine import BayesianUpdater, Hypothesis, InformationGainSelector, Probe, check_beliefs
 from .mixed_methods import ClaimIR, MethodRouter
 from .metacognition import MetacognitiveMethodSelector, ProblemSignature, MethodVariant
 from .assurance import DOCUMENT_FIELDS
-from .snapshot import publish, canonical_json, plain
+from .snapshot import publish, canonical_json, plain, _walk
 
 #: Every model here reads a caller's data, after the boundary has read it raw: strict (no field converted from another
 #: kind) and closed (no field it does not declare).
@@ -125,42 +124,19 @@ _NESTED: tuple[type[BaseModel], ...] = (HypothesisInput, ProbeInput, ClaimInput,
                                         MethodVariantInput)
 
 
-def _fields(model: BaseModel) -> dict[str, Any]:
-    """An input model's fields as the caller set them, each read by its name: never serialized, so nothing in them is
-    made another kind before the boundary reads it. A field the model no longer holds is refused."""
-    try:
-        return {name: getattr(model, name) for name in type(model).model_fields}
-    except AttributeError as exc:
-        raise ValueError(f"an input model does not hold its fields: {exc}") from None
-
-
 def _as_given(given: Any) -> Any:
     """What the block was handed, as the boundary reads it: an exact :class:`CognitiveInput` as its fields, each exact
     nested model (:data:`_NESTED`, alone or an item of an exact list) as its fields. An outer mapping is copied by the
-    same unpacking as the bound registry; only its entries are input data, not its class or extra attributes. Nested
+    mapping protocol as the bound registry, within the visit budget; only its entries are input data, not its class or extra attributes. Nested
     values are never converted here. Nothing is serialized: ``model_dump`` erased nested mapping subclasses before
     the boundary saw them (review 3 of PR #8's second follow-up, finding 2)."""
+    if type(given) is dict:
+        return _walk(given, "the block's arguments")
     if type(given) is not CognitiveInput:
         # Apply the agreed outer mapping protocol directly, as the registry does.
         # A class or instance attribute must not decide whether copying is allowed.
-        try:
-            if given:
-                return {**given}
-            # The registry treats falsy params as absent, then adds its separate routing op.
-            # A direct request carries that routing op inside its mapping instead.
-            try:
-                return {"op": given["op"]}
-            except KeyError:
-                return {}
-        except Exception as exc:
-            raise NotPlainData("the block's arguments", f"cannot copy the outer mapping: {exc}") from None
-    out = {}
-    for name, item in _fields(given).items():
-        if type(item) is list:
-            out[name] = [_fields(x) if _is_type(type(x), _NESTED) else x for x in item]
-        else:
-            out[name] = _fields(item) if _is_type(type(item), _NESTED) else item
-    return out
+        return _walk(given, "the block's arguments", outer=True)
+    return _walk(given, "the block's arguments", models=(CognitiveInput, *_NESTED))
 
 
 def _arguments(given: Any) -> Any:

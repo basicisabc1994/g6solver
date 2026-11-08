@@ -23,6 +23,7 @@ fields (``snapshot.plain``), sharing nothing with them. :func:`only_fields` adds
 """
 from __future__ import annotations
 
+import contextvars
 import math
 import sys
 from collections.abc import Mapping
@@ -130,7 +131,8 @@ class FrozenMap(dict):
     __setitem__ = __delitem__ = __ior__ = clear = pop = popitem = setdefault = update = _refuse
 
     def __hash__(self) -> int:  # type: ignore[override]
-        return hash(frozenset(self.items()))
+        checked = _plain(self, where="a snapshot hash", frozen=True)
+        return hash(frozenset(checked.items()))
 
     def __copy__(self) -> FrozenMap:
         return self
@@ -139,10 +141,12 @@ class FrozenMap(dict):
         return self
 
     def __reduce__(self) -> tuple:
-        return FrozenMap, (dict(self),)
+        checked = _plain(self, where="a snapshot copy", frozen=True)
+        return FrozenMap, (dict(checked),)
 
     def __repr__(self) -> str:
-        return f"FrozenMap({dict.__repr__(self)})"
+        checked = _plain(self, where="a snapshot rendering", frozen=True)
+        return f"FrozenMap({dict.__repr__(checked)})"
 
 
 #: How deep :func:`claims` reads a value, and how deep the boundary takes one, counted from where the value enters the
@@ -278,6 +282,10 @@ def result_faults(result: Mapping[str, Any]) -> list[str]:
     type (:data:`OBJECTS`): a mapping subclass, whose own methods would answer the reads, is not a result."""
     if not _is_type(type(result), OBJECTS):
         return [f"a {_named(result)} is not a result: a JSON object"]
+    try:
+        result = _plain(result, where="a result's fields")
+    except NotPlainData as exc:
+        return [str(exc)]
     state, card = result.get("completion_state"), result.get("warning_card")
     if state not in STATES:
         return [f"completion_state {state!r} is not one of the bridge's states"]
@@ -289,6 +297,26 @@ def result_faults(result: Mapping[str, Any]) -> list[str]:
             faults.append(f"it has no warning card for its code {code!r} that claims nothing")
         return faults
     return [] if card is None or _claims_nothing(card) else ["its warning card claims more than a qualified draft"]
+
+
+_CLAIMS_BOUND = contextvars.ContextVar("g6_bridge_claims_bounded", default=False)
+
+
+def _bounded_claims(value: Any, card: bool, at: str, depth: int, odd: list[str] | None) -> list[str]:
+    from .snapshot import _walk
+
+    try:
+        taken = _walk(value, at or "the value", depth, truncate=True)
+    except NotPlainData as exc:
+        if odd is not None:
+            odd.append(exc.path)
+        path = exc.path.removeprefix("the value.") if not at else exc.path
+        return [f"{path} ({exc})"]
+    token = _CLAIMS_BOUND.set(True)
+    try:
+        return claims(taken, _card=card, _at=at, _depth=depth, _not_data=odd)
+    finally:
+        _CLAIMS_BOUND.reset(token)
 
 
 def claims(value: Any, *, _card: bool = False, _at: str = "", _depth: int = 0,
@@ -303,6 +331,8 @@ def claims(value: Any, *, _card: bool = False, _at: str = "", _depth: int = 0,
     format (:func:`result_faults`). A value nested deeper than :data:`DEPTH`, counted from the depth its caller gives
     (``_depth``), is not read, and is named as a claim. Each place that is not JSON data is also added to
     ``_not_data`` when one is given."""
+    if not _CLAIMS_BOUND.get():
+        return _bounded_claims(value, _card, _at, _depth, _not_data)
     where = _at or "the value"
     odd = _not_data if _not_data is not None else []
     if _depth > DEPTH:
@@ -396,6 +426,14 @@ def _no_reserved(values: Mapping[str, Any], where: str) -> None:
         raise ValueError(f"{where} may not set {', '.join(taken)}: only codes.refusal and codes.settled write them")
 
 
+def _plain_fields(value: Any, where: str) -> Any:
+    """Bound maker input before key operations, retaining the claim refusal's diagnostic."""
+    try:
+        return _plain(value, where=where)
+    except NotPlainData as exc:
+        raise NotPlainData(exc.path, f"claims a state the bridge did not decide, or holds what is not JSON data: {exc}") from None
+
+
 def _card(code: Any, reason: Any, card: Mapping[str, Any] | None) -> dict[str, Any]:
     """The warning card a result carries, read the one way the bridge reads a card (:func:`_read_card`: the boundary
     first, then a strict ``WarningCard``): a supplied card; or a new one for ``code`` and ``reason``, which G6's own
@@ -428,6 +466,7 @@ def refusal(code: str, reason: str, *, card: Mapping[str, Any] | None = None, **
     ``WarningCard`` (:func:`_read_card`), and must be a card for that code (:func:`result_faults`). ``extra`` may not
     set any of :data:`RESERVED`, and this function's own fields are written last. What it returns claims no state
     anywhere (:func:`unclaimed`) and is what the boundary made of it (``snapshot.plain``)."""
+    extra = _plain_fields(extra, "a refusal's extra fields")
     _no_reserved(extra, "a refusal's extra fields")
     code = _text(code, where="a refusal's code")
     reason = _text(reason, where="a refusal's reason")[:400]
@@ -445,6 +484,7 @@ def settled(refused: Mapping[str, Any] | None, *, draft_card: tuple[str, str] | 
     ``draft_card`` are each read once, by the boundary, before anything reads them (``snapshot.plain``). ``fields`` may
     not set any of :data:`RESERVED`. What it returns claims no state anywhere (:func:`unclaimed`) and is what the
     boundary made of it (``snapshot.plain``)."""
+    fields = _plain_fields(fields, "a result's fields")
     _no_reserved(fields, "a result's fields")
     if refused is None:
         out = {**fields, "completion_state": "qualified-draft"}

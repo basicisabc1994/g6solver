@@ -58,6 +58,105 @@ MAX_ITEMS = 100_000
 MAX_SIZE = 4_000_000
 
 
+def _walk(value: Any, where: str, depth: int = 0, *, budget: list[int] | None = None,
+          schema: type | None = None, capability: bool = False,
+          models: tuple[type, ...] = (), truncate: bool = False, outer: bool = False) -> Any:
+    """Detach input before any other traversal, counting every reach before reading it.
+
+    Repeated references spend the budget again. Unknown kinds are opaque here:
+    the existing kind readers refuse them, without invoking their protocols.
+    Record callbacks are references; only their declared data fields are walked.
+    All subsequent validation/projection/copy walks receive this detached tree.
+    """
+    if budget is None:
+        budget = [0, 0]
+    if budget[0] >= MAX_ITEMS:
+        raise NotPlainData(where, "size exceeds the bridge's limit")
+    budget[0] += 1
+    if depth > DEPTH:
+        if truncate:
+            return value  # the reader names this depth before touching the value
+        raise _too_deep(where)
+    kind = type(value)
+    budget[1] += len(value) if kind is str else 1
+    if budget[1] > MAX_SIZE:
+        raise NotPlainData(where, "size exceeds the bridge's limit")
+    if capability:
+        return value
+    if outer:
+        # Only the block's outer mapping uses the registry's mapping protocol.
+        # Enumerate it here so neither unpacking nor a second raw walk precedes
+        # the visit budget. Protocol implementations themselves are caller code.
+        try:
+            if not value:
+                try:
+                    value = {"op": value["op"]}
+                except KeyError:
+                    value = {}
+                return _walk(value, where, depth, budget=budget)
+            bases = _type_mro(kind)
+            iteration = next((member for base in bases
+                              for name, member in type.__dict__["__dict__"].__get__(base).items()
+                              if type(name) is str and name == "__iter__"), None)
+            # Native unpacking uses dict storage for a dict subtype whose
+            # iterator is unchanged; it deliberately bypasses mapping hooks.
+            native = any(base is dict for base in bases) and iteration is dict.__iter__
+            keys = dict.keys(value) if native else value.keys()
+            items = {}
+            for key in keys:
+                key = _walk(key, f"{where} (a key)", depth + 1, budget=budget)
+                if type(key) is not str:
+                    raise NotPlainData(where, f"a {_named(key)} key is not text")
+                if budget[0] >= MAX_ITEMS:
+                    raise NotPlainData(where, "size exceeds the bridge's limit")
+                item = dict.__getitem__(value, key) if native else value[key]
+                items[key] = _walk(item, f"{where}.{key}", depth + 1, budget=budget)
+            return items
+        except NotPlainData:
+            raise
+        except Exception as exc:
+            raise NotPlainData(where, f"cannot copy the outer mapping: {exc}") from None
+    if _is_type(kind, models):
+        fields = {}
+        for name in kind.model_fields:
+            try:
+                item = getattr(value, name)
+            except AttributeError:
+                raise NotPlainData(where, f"missing input field {name}") from None
+            fields[name] = _walk(item, f"{where}.{name}", depth + 1,
+                                 budget=budget, models=models, truncate=truncate)
+        return fields
+    if schema is not None or _is_record(value):
+        cls = schema if schema is not None else kind
+        made = object.__new__(cls)
+        kinds = _kinds(cls)
+        for field in dataclasses.fields(cls):
+            try:
+                item = getattr(value, field.name)
+            except AttributeError:
+                if field.init:
+                    raise NotPlainData(where, f"missing record field {field.name}") from None
+                continue  # computed by the record's own checks
+            item = _walk(
+                item, f"{where}.{field.name}", depth + 1, budget=budget,
+                capability=kinds[field.name][0] == "code", models=models, truncate=truncate)
+            object.__setattr__(made, field.name, item)
+        return made
+    if _is_type(kind, ARRAYS):
+        items = [_walk(item, f"{where}[{index}]", depth + 1, budget=budget, models=models, truncate=truncate)
+                 for index, item in enumerate(value)]
+        return tuple(items) if kind is tuple else items
+    if _is_type(kind, OBJECTS):
+        items = {}
+        for key, item in value.items():
+            key = _walk(key, f"{where} (a key)", depth + 1, budget=budget)
+            if type(key) is not str:
+                raise NotPlainData(where, f"a {_named(key)} key is not text (the key, which is not text)")
+            items[key] = _walk(item, f"{where}.{key}", depth + 1, budget=budget, models=models, truncate=truncate)
+        return FrozenMap(items) if kind is FrozenMap else items
+    return value
+
+
 def canonical_json(value: Any) -> bytes:
     """The bounded encoder: project records, check depth and size, then serialize."""
     projected = view(value)
@@ -147,6 +246,7 @@ def plain(value: Any, *, where: str, _depth: int = 0) -> Any:
     :func:`canonical_json`, refused (:class:`NotPlainData`, naming ``where`` and the path) unless ``value`` survives it
     unchanged. A new value, which shares nothing with ``value``. ``_depth`` is where ``value`` stands in what it entered
     with, when a walk hands it a subtree; the bound counts from there."""
+    value = _walk(value, where, _depth)
     found = _not_json(value, where, _depth)
     if found:
         raise NotPlainData(*found)
@@ -333,9 +433,13 @@ def record(cls: type[T]) -> type[T]:
             # The schema belongs to the decorated class, never to a caller's
             # subclass or metaclass. Construction does not register a subclass:
             # every boundary still admits records by their exact registered type.
+            # Composing records need not publish their whole graph. Stop at the
+            # depth frontier; field readers still reject deep raw data, and a
+            # consumer must bound the composed record before traversing it.
+            bounded = _walk(self, cls.__name__, at, schema=cls, truncate=True)
             kinds = _kinds(cls)
             for field in dataclasses.fields(cls):
-                object.__setattr__(self, field.name, _field(kinds[field.name], getattr(self, field.name),
+                object.__setattr__(self, field.name, _field(kinds[field.name], getattr(bounded, field.name),
                                                             f"{cls.__name__}.{field.name}", at + 1))
             if own is not None:
                 own(self)
@@ -407,13 +511,25 @@ def snapshot(value: Any, *, where: str = "a value") -> Any:
     """A caller's value as the bridge takes it, where it enters (``where`` names it in a refusal): plain JSON data,
     read-only, and bridge records (in lists and mappings too), each made again so it shares nothing with the caller's.
     Anything else is refused (:class:`NotPlainData`)."""
-    return _taken(value, where, 0)
+    return _taken(_walk(value, where), where, 0)
 
 
 def fresh(value: Any, *, where: str = "a copy") -> Any:
     """What a collaborator is handed: a :func:`snapshot` that shares nothing with ``value``. A bytes value on its own
     (the content of a field a record declares as bytes, handed to a checker) is handed on whole."""
-    return value if type(value) is bytes else _taken(value, where, 0)
+    return value if type(value) is bytes else _taken(_walk(value, where), where, 0)
+
+
+_VIEW_BOUND = contextvars.ContextVar("g6_bridge_view_bounded", default=False)
+
+
+def _bounded_view(value: Any, depth: int) -> Any:
+    taken = _walk(value, "a value", depth, truncate=True)
+    token = _VIEW_BOUND.set(True)
+    try:
+        return view(taken, _depth=depth)
+    finally:
+        _VIEW_BOUND.reset(token)
 
 
 def view(value: Any, *, _depth: int = 0, _budget: list[int] | None = None) -> Any:
@@ -421,6 +537,8 @@ def view(value: Any, *, _depth: int = 0, _budget: list[int] | None = None) -> An
     digest and length, a list or a mapping item by item; anything else as it is, for the rule to name. ``_depth`` is
     where ``value`` stands; past ``codes.DEPTH`` it is handed back as it is, for the rule (or the boundary, counting
     from the same depth) to refuse as too deep."""
+    if not _VIEW_BOUND.get():
+        return _bounded_view(value, _depth)
     if _budget is None:
         _budget = [0, 0]
     _budget[0] += 1
@@ -473,6 +591,7 @@ def json_reply(reply: Any, cap: int) -> Any:
     too deep."""
     if type(reply) is not str:
         raise ValueError(f"a model's reply is text, not a {type(reply).__name__}")
+    reply = text(reply, where="a model's reply")
     if len(reply) > cap:
         raise ValueError(f"a model's reply is longer than its {cap}-character cap")
     try:

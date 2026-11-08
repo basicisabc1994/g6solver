@@ -225,7 +225,8 @@ class LLMProposer:
         objective = text(objective, where="objective")
         hypotheses = snapshot(hypotheses, where="hypotheses")
         history = snapshot(history, where="history")
-        if not self.tools:
+        tools = snapshot(self.tools, where="tools")
+        if not tools:
             raise ValueError("LLM proposer needs at least one explicitly permitted tool")
         system = (
             "Design falsifiable, discriminating research experiments. Return ONLY a JSON object "
@@ -239,7 +240,7 @@ class LLMProposer:
             {"id": h.id, "statement": h.statement, "prior": h.prior} for h in hypotheses],
             "history": list(history)[-6:],
             "allowed_tools": [{"name": t.name, "cost": t.cost,
-                               "assumed_match_probability": t.assumed_match_probability} for t in self.tools.values()],
+                               "assumed_match_probability": t.assumed_match_probability} for t in tools.values()],
             "max_probes": self.max_probes}).decode("utf-8")
         data = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=1500), json_reply, 12000)
         if not _is_type(type(data), (dict, FrozenMap,)) or not _is_type(type(data.get("probes")), (list,)):
@@ -251,7 +252,7 @@ class LLMProposer:
         for item in data["probes"]:
             if not _is_type(type(item), (dict, FrozenMap,)) or set(item) != {"id", "question", "tool", "arguments", "positive_if", "novelty"}:
                 raise ValueError("model probe has missing or unexpected fields")
-            tool = self.tools.get(item["tool"])
+            tool = tools.get(item["tool"])
             if tool is None:
                 raise ValueError(f"model requested non-allowlisted tool {item['tool']!r}")
             if not _is_type(type(item["arguments"]), (dict, FrozenMap,)) or len(canonical_json(item["arguments"]).decode("utf-8")) > 2000:
@@ -419,7 +420,7 @@ class CognitiveAgent:
         and why it is not used (``""`` when it is)."""
         reply = door.invoke_checked(
             f"tool:{tool.name}", "observe", {"question": probe.question, "arguments": dict(probe.arguments)},
-            allow=door.allowed_sensitive() | frozenset(self.allow), registry=_ToolDoor(tool),
+            allow=door.allowed_sensitive() | frozenset(snapshot(self.allow, where="allow")), registry=_ToolDoor(tool),
             how_to_allow=f"Allow it in your own code with CognitiveAgent(..., allow=('tool:{tool.name}',)).")
         if not affirmed(reply.get("ok")):
             error = reply.get("error")  # the door's own text; anything else is not read as a reason
@@ -442,6 +443,7 @@ class CognitiveAgent:
         hypotheses = snapshot(hypotheses, where="hypotheses")
         budget = snapshot(budget, where="budget")
         max_steps = snapshot(max_steps, where="max_steps")
+        tools = snapshot(self.tools, where="tools")
         if not 1 <= number(max_steps, where="max_steps") <= 20 or number(budget, where="budget") < 0:
             raise ValueError("invalid step or budget limit")
         # What the agent checked is held here only, with the digest taken when it was checked; a collaborator is handed
@@ -458,7 +460,7 @@ class CognitiveAgent:
             shown = _prior(beliefs, checked)
             current = tuple(replace(h, prior=shown[h.id]) for h in hypotheses)
             proposals = returned(self.proposer.propose(fresh(objective), fresh(current), fresh(history)), _proposed)
-            candidates = tuple(p for p in proposals if p.id not in seen and p.tool in self.tools)
+            candidates = tuple(p for p in proposals if p.id not in seen and p.tool in tools)
             for p in candidates:
                 _validate_probe(p, beliefs)
             selection = returned(self.selector.rank(fresh(_prior(beliefs, checked)), fresh(candidates),
@@ -466,7 +468,7 @@ class CognitiveAgent:
             if selection is None:
                 break
             row, chosen = selection
-            tool = self.tools[chosen.tool]
+            tool = tools[chosen.tool]
             # Tool metadata is always owned by the caller, regardless of proposer.
             if chosen.cost != tool.cost or chosen.assumed_match_probability != tool.assumed_match_probability:
                 raise ValueError("probe cost/likelihood must match the caller-owned tool registry")

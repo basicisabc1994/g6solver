@@ -26,7 +26,7 @@ from .codes import FrozenMap
 from .codes import _is_type
 from .codes import (EVIDENCE_CONTESTED, EVIDENCE_NOT_RECONCILED, EVIDENCE_REFUTED, EVIDENCE_UNDETERMINED, MADE_FIELDS,
                     STATES, affirmed, only_fields, refusal, settled)
-from .snapshot import publish, record_data, fresh, issue, record, snapshot
+from .snapshot import publish, record_data, fresh, issue, plain, record, snapshot
 
 HEX64 = re.compile("[0-9a-f]{64}\\Z")
 #: An assertion's stance as an evidence record states it (``g6.core.evidence.EvidenceStance``).
@@ -67,6 +67,7 @@ class ScopedAssertion:
 def assertions_sha256(assertions: Sequence[ScopedAssertion]) -> str:
     """The digest of an assertion set (each assertion's every field, in any order, repeats kept). A report names it as
     its ``subject_sha256``, and an assessment credits a report only for the assertions submitted to that assessment."""
+    assertions = snapshot(assertions, where="assertions")
     return sha256(canonical_json(sorted(canonical_json(record_data(a)).decode() for a in assertions)))
 
 
@@ -83,6 +84,7 @@ def findings_state(report: Mapping[str, Any]) -> str:
     assertion was not admitted (its ``unadmitted_evidence_refs`` an array that is not empty, or not an array at all: a
     flag, text or null there is not read as "none"), there is no finding, or a finding is not ``qualified-draft``; else
     ``qualified-draft``."""
+    report = plain(report, where="a reconciliation report")
     findings = report.get("scoped_findings", ())
     unadmitted = report.get("unadmitted_evidence_refs", ())
     unsettled = (not _is_type(type(findings), (list, tuple,)) or not findings

@@ -100,17 +100,18 @@ class ExplicitTree:
         return [_float32(x) for x in values]
 
     def explain_one(self, sample: Mapping[str, Any] | Sequence[Any]) -> dict[str, Any]:
+        tree = snapshot(self, where="the explicit tree")
         sample = snapshot(sample, where="sample")
-        values = self._row(sample)
-        node = self.root
+        values = tree._row(sample)
+        node = tree.root
         conditions = []
         while node.feature is not None:
             assert node.threshold is not None and node.left is not None and node.right is not None
             less = values[node.feature] <= node.threshold
-            conditions.append({"feature": self.features[node.feature], "operator": "<=" if less else ">",
+            conditions.append({"feature": tree.features[node.feature], "operator": "<=" if less else ">",
                                "threshold": node.threshold, "observed": values[node.feature]})
             node = node.left if less else node.right
-        return publish(unclaimed({"prediction": node.value, "conditions": conditions, "provenance": self.provenance,
+        return publish(unclaimed({"prediction": node.value, "conditions": conditions, "provenance": tree.provenance,
                           "caveat": "explains this explicit model's decision, not causality"}, where="an explanation"), where="ExplicitTree.explain_one")
 
     def predict(self, samples: Sequence[Mapping[str, Any] | Sequence[Any]]) -> list[Any]:

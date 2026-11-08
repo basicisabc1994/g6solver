@@ -290,6 +290,8 @@ RECORD_CONVERSIONS = {
     ('orchestration.py', '_plan_digest', 'canonical_json'): 1,
     ('orchestration.py', '_plan_digest', 'record_data'): 1,
     ('snapshot.py', '_field', 'view'): 1,
+    ('snapshot.py', '_walk', 'fields'): 1,
+    ('snapshot.py', '_bounded_view', 'view'): 1,
     ('snapshot.py', '_kinds', 'fields'): 1,
     ('snapshot.py', '_renewed', 'fields'): 1,
     ('snapshot.py', 'canonical_json', 'view'): 1,
