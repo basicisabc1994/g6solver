@@ -250,14 +250,19 @@ def reviewed(review: Any, repo: str, task: str, **kwargs: Any) -> Any:
 
     try:
         confirmed = enforced(repo, task)
-        if confirmed is None:
-            return bound(review(repo, task=task, **kwargs), identity_of(repo, task))
+        from g6.harness.confirmed_expectation import ExpectationStandard
+
         identity = identity_of(repo, task)
-        store = qs.TaskQuestions(identity)
-        with standard_publication.observing(store.counting):
-            reply = review(repo, task=task, confirmed=confirmed, **kwargs)
-        # Also refuse a standard changed after issuance but before the review returns its evidence.
-        with store.counting(confirmed):
+        # Even an unconfirmed or absent store has an admitted empty standard. Re-read it under the same guard
+        # used for confirmed publication; damage or an intervening answer refuses every successful branch.
+        store = qs.TaskQuestions(identity) if identity is not None else None
+        admitted = confirmed if confirmed is not None else ExpectationStandard()
+        from contextlib import nullcontext
+
+        guard = store.counting if store is not None else lambda _standard: nullcontext()
+        with standard_publication.observing(guard):
+            reply = review(repo, task=task, **({"confirmed": confirmed} if confirmed is not None else {}), **kwargs)
+        with guard(admitted):
             return bound(reply, identity)
     except qs.StoreUnreadable as exc:
         return blocked_reply(str(exc))

@@ -427,6 +427,9 @@ def _confirmed(assessment: dict) -> list[list[str]]:
     items = []
     for one in held.get("expectations", []):
         question, answer, check = one.get("question") or {}, one.get("answer") or {}, one.get("check") or {}
+        scope = str(question.get("scope", ""))
+        # Longer than the whole scope: no text it holds can close the literal block.
+        fence = "`" * (len(scope) + 3)
         option = answer.get("option", "")
         statement = statements.get(one.get("expectation_id")) or {}
         issuer = ("checked" if statement.get("checked") else "refuted" if statement.get("refute") else
@@ -434,10 +437,11 @@ def _confirmed(assessment: dict) -> list[list[str]]:
         outcomes = question.get("outcomes") if isinstance(question.get("outcomes"), dict) else {}
         items.append([f"- {code(bq.shown_call(question), 200)}: the person chose {code(option, 20)}, "
                       f"{code(bq.shown_outcome(outcomes.get(option)), 120)} (question SHA-256 "
-                      f"{code(_question_sha256(question), 70)}), scope {code(question.get('scope', ''), 80)}, answered "
+                      f"{code(_question_sha256(question), 70)}), scope shown in full below, answered "
                       f"by {code(answer.get('answered_by', ''), 60)} (recorded as given, not authenticated); "
                       f"{CONFIRMED_RESULT.get(check.get('result'), 'its check gave no result')}; "
-                      f"the evidence issuer: {code(issuer, 120)}"])
+                      f"the evidence issuer: {code(issuer, 120)}\n\nScope (exact text):\n"
+                      f"{fence}text\n{scope}\n{fence}"])
     return items
 
 

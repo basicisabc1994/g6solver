@@ -70,6 +70,11 @@ def patch_result(readings: Sequence[object]) -> tuple[str, str]:
     return (PASSED, str(readings[0].get("detail", ""))) if readings else (NOT_RUN, "no run on the patch")
 
 
+def normal_reading(found: dict) -> dict:
+    """One reading decides enforcement and every issuer summary, including unavailability."""
+    return found if vs._to_a_result(found) else {**found, "result": "error"}
+
+
 def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *, deadline: float, artifact: str,
         roots: Sequence[str] = (), skip: str = "", before: dict[str, str] | None = None) -> list[dict]:
     """One result per expectation of ``standard``, in its order (the module's docstring). ``skip``: why none runs (an
@@ -108,7 +113,7 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
                                 timeout_s=vs._bound(deadline - vs._clock()), **rooted, **({} if at_base else binding))
             if ran.get(vs.NOT_THE_ARTEFACT_KEY):   # the executor refused a copy that is not the tree under review
                 result["tree_changed"] = ran.get("said", vs.NOT_THE_ARTEFACT)
-            return vs._guarded(change, ran, vs.reading(ran, node))
+            return normal_reading(vs._guarded(change, ran, vs.reading(ran, node)))
 
         try:
             if deadline - vs._clock() < vs.MIN_RUN_S:

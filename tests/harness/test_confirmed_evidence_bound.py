@@ -370,8 +370,9 @@ def _example_check(tmp_path: Path, function: str, text: str, module_file: str) -
     tree = vt.Tree(tmp_path, SimpleNamespace(base_commit="fixture"), frozenset({module_file}), frozenset(),
                    _texts={(module_file, vt.PATCH): text})
     instance = TemplateInstance(id="E1", template="example.v1", requirement_id="R1", intent="change",
-                                bindings={"function": function, "cases": [{"args": [{}], "returns": "{}"}]})
-    definition = vt.TEMPLATES["example.v1"]
+                                bindings={"function": function, "cases": [{"args": [{}], "returns": "{}"}]},
+                                provenance="person_confirmed")
+    definition = vt.instance_definition(instance)
     applied = definition.applies(tree, definition.bindings.model_validate(instance.bindings), vt.PATCH)
     found: dict = {}
     exec(compile(vt.compile_text(definition, applied.data), "<G6 fixed template>", "exec"), found)  # noqa: S102

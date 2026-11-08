@@ -333,7 +333,8 @@ def confirmed_evidence(standard: Any, results: Sequence[Mapping[str, Any]], *, a
         for name, seq in (("patch", RECEIPT), ("again", CONFIRMED_AGAIN)):
             if name in runs:
                 # An earlier pass never supplies support when the full result is partial or unavailable.
-                if runs[name].get("result") == "passed" and found.get("result") != "passed":
+                if runs[name].get("result") in ("passed", "failed") and (
+                        runs[name].get("result") != found.get("result")):
                     continue
                 records.append(SourceRecord(record_id=id_of("confirmed", name, ident), seq=seq,
                                             result=_RESULT.get(str(runs[name].get("result")), "unknown"), **common))

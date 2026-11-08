@@ -502,7 +502,7 @@ def form(question: Question, candidate: Candidate, rule: Question | None = None)
              f"Setup: {SETUP}",
              f"Outcome A: {_line(_said(shown['outcomes']['A']))}",
              f"Outcome B: {_line(_said(shown['outcomes']['B']))}",
-             f"Scope: {_line(shown['scope'])}",
+             f"Scope: {shown['scope']}",
              f"Cited from the task: {_line(shown['cited'])}",
              f"Requirement: {_line(shown['requirement_id'])}; asked about the artefact with SHA-256 "
              f"{shown['baseline_sha256']}",
@@ -512,7 +512,7 @@ def form(question: Question, candidate: Candidate, rule: Question | None = None)
         lines.append("Evidence that the task may already settle it: " + "; ".join(
             f"{one['outcome']}: {_line(one['by'])}" for one in settled))
     if rule is not None:
-        lines.append(f"Rule offered, in full: {_line(candidate.rule)}")
+        lines.append(f"Rule offered, in full: {candidate.rule}")
         lines.append("Choose binds=rule to confirm that rule; binds=case (the default) confirms this one case only. "
                      "Either way G6 enforces this one case; a rule is recorded as you confirmed it.")
     lines.append("Choose A or B; or neither, premise_wrong (the premise is wrong), task_already_says (the task "
