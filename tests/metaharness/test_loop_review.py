@@ -1878,10 +1878,14 @@ def test_a_refusal_read_by_a_session_that_hands_over_a_prompt_alone_still_ends_t
     """As ``ToolSession`` does: there is no system text to bind, and a stop may never fall over for want of one."""
     refused = json.dumps({"type": "result", "is_error": True, "stop_reason": "refusal", "result": "Request denied"})
 
-    class Session(host_models.ClaudeCodeCaller):
+    class Session:
+        # The completion method is final on a host. A domain wrapper can still supply a prompt-only reply fake.
+        def __init__(self):
+            self._inner = WatchedClaude()
+
         def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
             llm._start_model_call()
-            return self._reply(1, refused, "", None, ("a prompt",))
+            return self._inner._reply(1, refused, "", None, ("a prompt",))
 
     requests, _ = _notes_who_sends()
     with pytest.raises(_Refused):

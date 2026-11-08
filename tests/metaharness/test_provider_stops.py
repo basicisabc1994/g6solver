@@ -971,10 +971,9 @@ def test_ref1_every_way_a_request_can_leave_passes_the_one_check():
     assert callers(loop_module, {"admit", "take", "sending"}) == {
         ("_Requests.take", "admit"), ("_Gate.sending", "admit"), ("_Requests.begin", "admit"),
         ("_Counted.complete.resend", "take"), ("_Counted.complete.next_request", "take"), ("_Resends.append", "take")}
-    assert callers(loop_module, {"begin"}) == {("_Counted.complete", "begin")}
+    assert callers(loop_module, {"begin"}) == {("_call_scope", "begin")}
     assert callers(usage, {"sending", "_sending"}) == {
-        ("_sending", "sending"), ("WatchedClaude._command", "_sending"), ("WatchedClaude._launch", "_sending"),
-        ("WatchedCodex._command", "_sending")}
+        ("_sending", "sending"), ("_complete_host", "_sending"), ("WatchedClaude._launch", "_sending")}
     # every place a send leaves carries what it sends; only a call's beginning, where nothing is sent, carries nothing
     sites = {}
 
@@ -1407,7 +1406,7 @@ def test_ref2_the_request_path_keeps_no_per_send_state_but_each_sends_record():
     assert set(calls) == set()                                               # what it let out is the record's
     record = {"_RECORD.out[]", "_RECORD.taken[]", "_RECORD.books[]", "notes", "settled"}     # the record's own containers
     requests = loop_module._Requests
-    for method in (requests.admit, requests.release, requests.at_a_refusal, requests.met_a_limit, requests.provider_said,
+    for method in (requests.admit, requests.release, requests._release_locked, requests.at_a_refusal, requests.met_a_limit, requests.provider_said,
                    requests.take, requests.begin, requests.noted, requests.settle, requests.close, requests._reset,
                    requests._full):
         _, attributes, calls, rebinding = writes(source(method))

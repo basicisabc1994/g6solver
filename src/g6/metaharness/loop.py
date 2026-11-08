@@ -545,13 +545,21 @@ class _Requests:
                 record = Send(known, watched, owner, self.generation, here, sender, places,
                               tuple((meter, meter.generation) for meter in meters),
                               request if isinstance(request, Request) else None)
-                _RECORD.out.setdefault(known, []).append(record)
-                for call in calls:
-                    book = _RECORD.books.get(call.owner)
-                    if book is not None:
-                        book.sends.append(record)
-                _AROUND.set((*_AROUND.get(), record))
-                return record
+                try:
+                    _RECORD.out.setdefault(known, []).append(record)
+                    for call in calls:
+                        book = _RECORD.books.get(call.owner)
+                        if book is not None:
+                            book.sends.append(record)
+                    _AROUND.set((*_AROUND.get(), record))
+                    return record
+                except BaseException:
+                    try:
+                        if record.request is not None:
+                            record.request.close()
+                    finally:
+                        self._release_locked(record)
+                    raise
         raise LLMError(f"{TICK_BUDGET_SPENT}: {full.stopped}")
 
     def take(self, wait: float = 0.0, *, generation: int | None = None, live: Callable[[], bool] = lambda: True,
@@ -604,13 +612,19 @@ class _Requests:
         """A send's outcome is in (its record), or a call is over (its owner): what it had out is out no longer, and an
         identical send held for it may go on. Only that send's own entry goes."""
         with self._lock:
-            for identity, held in list(_RECORD.out.items()):
-                kept = [record for record in held if record is not done and record.owner is not done]
-                if kept:
-                    _RECORD.out[identity] = kept
-                else:
-                    del _RECORD.out[identity]
-            self._settled.notify_all()
+            self._release_locked(done)
+
+    def _release_locked(self, done: Send | object) -> None:
+        """Release with the admission lock already held, including an interrupted record registration."""
+        if not isinstance(done, Send):
+            _RECORD.books.pop(done, None)
+        for identity, held in list(_RECORD.out.items()):
+            kept = [record for record in held if record is not done and record.owner is not done]
+            if kept:
+                _RECORD.out[identity] = kept
+            else:
+                del _RECORD.out[identity]
+        self._settled.notify_all()
 
     def recheck(self, generation: int) -> None:
         """What the tick latched decides, not what a request raised or a wrapper caught: a call of a tick that met a refusal
@@ -789,6 +803,26 @@ def _raised_by(failed: BaseException, sends: Sequence[Send]) -> Send | None:
     return sends[0] if len(sends) == 1 else None
 
 
+@contextmanager
+def _call_scope(call: _Call, ended: threading.Event) -> Iterator[tuple[_Call, ...]]:
+    """Own a call's book, contexts and sends even if setup, settlement or a context exit is interrupted."""
+    try:
+        call.meter.begin(call)
+        around = (*_ACTIVE.get(), call)
+        active = _ACTIVE.set(around)
+        try:
+            lineage = _AROUND.set(_AROUND.get())
+            try:
+                yield around
+            finally:
+                _AROUND.reset(lineage)
+        finally:
+            _ACTIVE.reset(active)
+    finally:
+        ended.set()
+        call.meter.release(call.owner)
+
+
 class _Counted:
     """A model caller the host meters. Every call of a tick passes through one, and what it counts is what reached a
     backend, not how often it was called: ``g6.core.model_calls`` notes each request as it goes out, so a retry inside a
@@ -830,9 +864,6 @@ class _Counted:
         system, user = plain_text(system), plain_text(user)
         ended = threading.Event()
         call = _Call(object(), self.requests, self.requests.generation, lambda: not ended.is_set())
-        self.requests.begin(call)                 # the call begins: no send of its own here
-        around = (*_ACTIVE.get(), call)
-
         def innermost() -> tuple[_Call, ...] | None:
             """The metered calls open here, when this one is the innermost of them, which lets each send in for them all."""
             calls = _ACTIVE.get()
@@ -865,16 +896,16 @@ class _Counted:
                                           "HTTP 429: the provider's limit was met")
 
         def finish(latched: bool) -> None:
-            ended.set()
-            _ACTIVE.reset(active)
-            _AROUND.reset(lineage)
-            self.requests.settle(around, noted)   # what its children imported, once, into the record
-            self.requests.release(call.owner)
+            try:
+                ended.set()
+                self.requests.settle(around, noted)   # what its children imported, once, into the record
+            finally:
+                self.requests.release(call.owner)
             if latched:                           # what the tick latched decides, unless the process is going down
                 self.requests.recheck(call.generation)
 
-        active, lineage = _ACTIVE.set(around), _AROUND.set(_AROUND.get())
-        with (counting(before_call=next_request) as noted, _gating_resends(resend, limited),
+        with (_call_scope(call, ended) as around, counting(before_call=next_request) as noted,
+              _gating_resends(resend, limited),
               telling_stops(_Gate(self.requests, call))):
             try:
                 text = self.inner.complete(system, user, max_tokens=max_tokens)

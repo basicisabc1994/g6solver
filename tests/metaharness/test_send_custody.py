@@ -164,30 +164,13 @@ def test_linked_inputs_are_captured_once_and_handed_off_as_private_copies(tmp_pa
     first.write_bytes(b"one snapshot")
     os.link(first, second)
     reads = []
-    real_read, real_open = Path.read_bytes, Path.open
+    real_read, read_handle = Path.read_bytes, usage._InputHandle.read
 
-    class Reading:
-        def __init__(self, stream, path):
-            self.stream, self.path = stream, path
+    def read(stream):
+        reads.append(stream.fileno())
+        return read_handle(stream)
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            self.stream.close()
-
-        def fileno(self):
-            return self.stream.fileno()
-
-        def read(self):
-            reads.append(self.path)
-            return self.stream.read()
-
-    def open_file(path, mode="r", *args, **kwargs):
-        stream = real_open(path, mode, *args, **kwargs)
-        return Reading(stream, path) if mode == "rb" else stream
-
-    monkeypatch.setattr(Path, "open", open_file)
+    monkeypatch.setattr(usage._InputHandle, "read", read)
     request = usage.Request.host(["fake", str(first), str(second)], "user", tmp_path)
     assert len(reads) == 1
     argv, _ = request.handoff()
@@ -196,6 +179,7 @@ def test_linked_inputs_are_captured_once_and_handed_off_as_private_copies(tmp_pa
     assert Path(argv[1]) not in (first, second)
     assert real_read(Path(argv[1])) == b"one snapshot"
     assert first.read_bytes() == second.read_bytes() == b"one snapshot"
+    request.close()
 
 
 def test_every_class_or_send_replacement_is_at_construction_and_every_capture_uses_file_identity():
@@ -237,7 +221,10 @@ def test_every_class_or_send_replacement_is_at_construction_and_every_capture_us
     assert replacements == set(), replacements
     assert constructors == {("self_maintenance/usage.py", "", "host_models._HostCaller.__new__")}, constructors
     assert data_fields == {("sources/australian_legal_corpus/store.py", "Index.build", "complete")}
-    assert captures == {("self_maintenance/usage.py", "_host_input")}, captures
+    assert captures == {("self_maintenance/usage.py", "_host_input"),
+                        ("self_maintenance/usage.py", "_InputHandle.read"),
+                        ("self_maintenance/usage.py", "_create_copy"),
+                        ("self_maintenance/usage.py", "_open_input")}, captures
     source = (root / "self_maintenance/usage.py").read_text(encoding="utf-8")
     capture = ast.unparse(next(node for node in ast.parse(source).body
                               if isinstance(node, ast.FunctionDef) and node.name == "_host_input"))
@@ -387,26 +374,14 @@ def test_an_interruption_between_record_writes_releases_the_record(tmp_path, mon
 def test_a_file_changed_while_its_handle_is_read_is_refused(tmp_path, monkeypatch):
     path = tmp_path / "input"
     path.write_bytes(b"before")
-    real_open = Path.open
+    read_handle = usage._InputHandle.read
 
-    class Reading:
-        def __enter__(self):
-            self.stream = real_open(path, "rb")
-            return self
+    def read(stream):
+        data = read_handle(stream)
+        path.write_bytes(b"changed during read")
+        return data
 
-        def __exit__(self, *args):
-            self.stream.close()
-
-        def fileno(self):
-            return self.stream.fileno()
-
-        def read(self):
-            data = self.stream.read()
-            path.write_bytes(b"changed during read")
-            return data
-
-    monkeypatch.setattr(Path, "open", lambda where, mode="r", *args, **kwargs:
-                        Reading() if where == path and mode == "rb" else real_open(where, mode, *args, **kwargs))
+    monkeypatch.setattr(usage._InputHandle, "read", read)
     with pytest.raises(LLMError, match="G6_E_LOOP_INPUT_CHANGED"):
         usage.Request.host(["fake", str(path)], "user", tmp_path)
 

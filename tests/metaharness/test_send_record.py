@@ -456,7 +456,8 @@ def test_every_place_a_request_can_leave_reaches_the_one_admission():
                     starts.add((where, node.name))
                 if text.endswith("found.append") and "_WAITS" in ast.unparse(node):
                     resends.add((where, node.name))
-    assert starts == {("core/host_models.py", "complete"), ("harness/completion_loop.py", "_launch")}
+    assert starts == {("core/host_models.py", "complete"), ("harness/completion_loop.py", "_launch"),
+                      ("self_maintenance/usage.py", "_complete_host"), ("self_maintenance/usage.py", "_launch")}
     assert resends == {("core/llm.py", "_post_json")}
     host = _source_tree(host_models)
     complete = _function(host, "_HostCaller.complete")
@@ -521,7 +522,7 @@ def test_every_meter_reads_what_it_has_taken_from_the_one_record():
     changed = {where for where, node in _nodes(tree) if (isinstance(node, ast.Call) and ast.unparse(node.func) in changes)
                or (isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store | ast.Del)
                    and ast.unparse(node.value) == "_RECORD.out")}
-    assert changed == {"_Requests.admit", "_Requests.release"}
+    assert changed == {"_Requests.admit", "_Requests._release_locked"}
     one, two = _Requests(), _Requests()
     one.open(5)
     two.open(5)
@@ -1426,6 +1427,7 @@ NOTES = {
     ("core/llm.py", "OpenAICompatibleCaller._chat"): "frame",
     ("core/llm.py", "AnthropicCaller._create"): "refused",
     ("core/host_models.py", "_HostCaller.complete"): "program",
+    ("self_maintenance/usage.py", "_complete_host"): "program",
     ("harness/completion_loop.py", "ToolSession.run"): "program",
     ("grounding/judges/nli.py", "LocalNLICaller.complete"): "refused",
     ("agents/agent_claude/adapter.py", "ClaudeCodeRuntime.run"): "refused",
@@ -1478,6 +1480,7 @@ def test_every_way_a_send_is_known_and_every_sender_the_loop_accepts_names_what_
              "OpenAICompatibleCaller._chat": [llm.OpenAICompatibleCaller("m", base_url="http://model.invalid", api_key=None)],
              "AnthropicCaller._create": [llm.AnthropicCaller(client=object())],
              "_HostCaller.complete": [ClaudeCodeCaller(), CodexCaller(), usage.WatchedClaude(), usage.WatchedCodex()],
+             "_complete_host": [ClaudeCodeCaller(), CodexCaller(), usage.WatchedClaude(), usage.WatchedCodex()],
              "ToolSession.run": [ToolSession()], "LocalNLICaller.complete": [LocalNLICaller("weights")],
              "ClaudeCodeRuntime.run": [ClaudeCodeRuntime()], "CodexRuntime.run": [CodexRuntime()]}
     assert set(kinds) == {qualified for (_, qualified), how in NOTES.items() if how is not None}

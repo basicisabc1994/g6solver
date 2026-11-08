@@ -276,19 +276,17 @@ def test_a_host_handoff_uses_the_snapshot_without_opening_the_input_again(tmp_pa
 
 
 def test_an_unreadable_host_input_is_not_identified_as_an_absent_output(tmp_path, monkeypatch):
-    from pathlib import Path
-
     path = tmp_path / "system_prompt.md"
     path.write_bytes(b"system")
-    real_open = Path.open
+    real_open = usage._open_input
 
     def read(where, *args, **kwargs):
         if where == path:
             raise PermissionError("input cannot be read")
         return real_open(where, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "open", read)
-    with pytest.raises(PermissionError, match="input cannot be read"):
+    monkeypatch.setattr(usage, "_open_input", read)
+    with pytest.raises(LLMError, match="G6_E_LOOP_INPUT_CHANGED"):
         usage.Request.host(["fake", str(path)], "user", tmp_path)
 
 
@@ -328,6 +326,7 @@ def test_every_send_identity_producer_and_reader_is_classified_from_the_code():
         ("metaharness/loop.py", "_named", "Request.text"): "external sender's admission snapshot",
         ("metaharness/loop.py", "_sender", "_named"): "bound note API fallback at admission",
         ("metaharness/loop.py", "_Requests.admit", ".identity"): "admission reads the snapshot",
+        ("metaharness/loop.py", "_Requests.admit", ".request"): "interrupted admission closes its snapshot",
         ("metaharness/loop.py", "_Requests.admit", "Send"): "one admitted record",
         ("metaharness/loop.py", "_Requests.at_a_refusal", ".identity"): "refusal reads its record",
         ("metaharness/loop.py", "_raised_by", "_named"): "external multi-send traceback gap: issuance required",

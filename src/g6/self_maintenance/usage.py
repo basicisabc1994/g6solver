@@ -37,9 +37,9 @@ the start of what the request raised: ``MODEL_REFUSED`` (``refused_by``), ``G6_E
   sees it, so a wrapper that catches failed requests cannot retry it or hide it. For a watched caller only those structured
   fields decide: the older text pattern (``_LIMIT``) is never applied to what it raises, stderr included.
 * **What a host request is.** A refused request is known by one identity, ``request_identity``: the digest of the captured
-  arguments and input handed to the launcher, taken at the last step the bound caller gives a subclass before the
-  program starts (``_command``, whose output ``host_models._run`` receives unchanged; ``_launch`` for a session of a caller's
-  own, as ``ToolSession`` is). The loop checks it there, against what was refused and against an identical request still out,
+  arguments and input handed to the launcher, taken by the owned completion path after command hooks return, or by the
+  final ``_launch`` for a session such as ``ToolSession``. The loop checks it there, against what was refused and against an
+  identical request still out,
   under one lock (``telling_stops``' gate), which hands back the send's one record (``Send``), made once it may leave from the
   bytes as they are after the stop reads and waits. That immutable ``Request`` is held on the record; the wrapper hands
   back built-in text and arguments naming G6's private copies. File identity, rather than pathname, keys capture, so aliases
@@ -77,10 +77,11 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -88,7 +89,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from g6.core import component_process, host_models
-from g6.core.llm import RATE_LIMITED, LLMError
+from g6.core.llm import RATE_LIMITED, AnthropicCaller, LLMError, OpenAICompatibleCaller
 from g6.core.outside import clean_environment, find_program
 from g6.core.process_tree import ProcessTreeError
 from g6.self_maintenance.pacing import AccountReading, ProviderWindow
@@ -367,6 +368,9 @@ class _HostInput(Sequence[str]):
     files: tuple[tuple[str, bytes], ...]
     aliases: tuple[tuple[str, str], ...]
     encoded: bytes
+    root: str
+    locations: tuple[tuple[str, str], ...]
+    root_file: tuple[int, int] | None
 
     def __getitem__(self, index: Any) -> Any:
         return self.arguments[index]
@@ -380,6 +384,27 @@ class _Delivery:
     folders: list[Path] = field(default_factory=list)
     argv: tuple[str, ...] | None = None
     lock: Any = field(default_factory=threading.Lock)
+    anchors: ExitStack = field(default_factory=ExitStack)
+    directories: dict[str, _InputHandle] = field(default_factory=dict)
+
+    def directory(self, root: Path, relative: Path) -> _InputHandle:
+        """Create each copy parent under an opened parent, and pin it before any child is created."""
+        parent = self.directories[""]
+        path = root
+        for part in relative.parts:
+            path = path / part
+            key = str(path)
+            if key not in self.directories:
+                if os.name == "nt":
+                    path.mkdir()
+                else:
+                    os.mkdir(part, dir_fd=parent.fileno())
+                opened = self.anchors.enter_context(_open_input(path, pin=True, parent=parent))
+                if _final_path(opened) != os.path.normcase(str(path)):
+                    raise LLMError("G6_E_LOOP_INPUT_CHANGED: private copy parent changed")
+                self.directories[key] = opened
+            parent = self.directories[key]
+        return parent
 
 
 @dataclass(frozen=True)
@@ -398,6 +423,9 @@ class Request:
     files: tuple[tuple[str, bytes], ...] = ()
     aliases: tuple[tuple[str, str], ...] = ()
     encoded: bytes = b""
+    root: str = ""
+    locations: tuple[tuple[str, str], ...] = ()
+    root_file: tuple[int, int] | None = None
     _delivery: _Delivery = field(default_factory=_Delivery, compare=False, repr=False)
 
     @classmethod
@@ -411,7 +439,8 @@ class Request:
         arguments, stdin = tuple(plain_text(arg) for arg in argv), plain_text(stdin)
         captured = _host_input(arguments, root, stdin)
         return cls(request_identity(captured, stdin, root), argv=arguments, stdin=stdin, files=captured.files,
-                   aliases=captured.aliases, encoded=captured.encoded)
+                   aliases=captured.aliases, encoded=captured.encoded, root=captured.root, locations=captured.locations,
+                   root_file=captured.root_file)
 
     def handoff(self) -> tuple[list[str], str]:
         """Hand off private copies without writing into any shared input or its aliases.
@@ -421,76 +450,269 @@ class Request:
         with self._delivery.lock:
             if self._delivery.argv is None:
                 copies = {}
-                for path, data in self.files:
-                    original = Path(path)
-                    folder = original.parent / (".g6-input-" + uuid4().hex)
-                    folder.mkdir()
+                locations = dict(self.locations)
+                folder = None
+                if self.files:
+                    anchor = self._delivery.anchors.enter_context(_open_input(Path(self.root), pin=True))
+                    info = os.fstat(anchor.fileno())
+                    if (_final_path(anchor) != self.root or (info.st_dev, info.st_ino) != self.root_file):
+                        raise LLMError("G6_E_LOOP_INPUT_CHANGED: admitted folder changed before delivery")
+                    # The destination is G6's own new folder, never an input's possibly replaced parent.
+                    folder = Path(self.root) / (".g6-input-" + uuid4().hex)
+                    if os.name == "nt":
+                        folder.mkdir()
+                    else:
+                        os.mkdir(folder.name, dir_fd=anchor.fileno())
                     self._delivery.folders.append(folder)
-                    target = folder / original.name
-                    with target.open("xb") as stream:
+                    opened = self._delivery.anchors.enter_context(_open_input(folder, pin=True, parent=anchor))
+                    if not _inside(_final_path(opened), self.root):
+                        raise LLMError("G6_E_LOOP_INPUT_CHANGED: delivery folder left its admitted folder")
+                    self._delivery.directories[""] = opened
+                for path, data in self.files:
+                    target = folder / locations[path]
+                    parent = self._delivery.directory(folder, Path(locations[path]).parent)
+                    with _create_copy(target, parent) as stream:
+                        if not _inside(_final_path(stream), self.root):
+                            raise LLMError("G6_E_LOOP_INPUT_CHANGED: private copy left its admitted folder")
                         stream.write(data)
+                        if os.name == "nt":
+                            self._delivery.anchors.enter_context(_open_input(target, pin=True))
                     copies[path] = str(target)
                 for alias, primary in self.aliases:
                     if alias not in copies:
-                        original = Path(alias)
-                        folder = original.parent / (".g6-input-" + uuid4().hex)
-                        folder.mkdir()
-                        self._delivery.folders.append(folder)
-                        target = folder / original.name
+                        target = folder / locations[alias]
+                        parent = self._delivery.directory(folder, Path(locations[alias]).parent)
                         # Preserve each argument's logical name, with just one private file per captured identity.
-                        os.link(copies[primary], target)
+                        if os.name == "nt":
+                            os.link(copies[primary], target)
+                        else:
+                            source_parent = self._delivery.directory(folder, Path(locations[primary]).parent)
+                            os.link(Path(copies[primary]).name, target.name, src_dir_fd=source_parent.fileno(),
+                                    dst_dir_fd=parent.fileno(), follow_symlinks=False)
                         copies[alias] = str(target)
                 self._delivery.argv = tuple(copies.get(arg, arg) for arg in self.argv)
             return list(self._delivery.argv), self.stdin
 
     def close(self) -> None:
         with self._delivery.lock:
-            for folder in self._delivery.folders:
-                shutil.rmtree(folder, ignore_errors=True)
+            try:
+                self._delivery.anchors.close()
+            finally:
+                for folder in self._delivery.folders:
+                    shutil.rmtree(folder, ignore_errors=True)
 
 
 # Input roles emitted by the two host command producers: ClaudeCodeCaller and ToolSession.
 _INPUT_FLAGS = frozenset({"--system-prompt-file", "--mcp-config", "--settings"})
 
 
+@dataclass(frozen=True)
+class _InputHandle:
+    fd: int
+
+    def fileno(self) -> int:
+        return self.fd
+
+    def read(self) -> bytes:
+        chunks = []
+        while data := os.read(self.fd, 1024 * 1024):
+            chunks.append(data)
+        return b"".join(chunks)
+
+
+def _windows_files() -> Any:
+    import ctypes
+    from ctypes import wintypes
+
+    api = ctypes.WinDLL("kernel32", use_last_error=True)
+    api.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                               wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+    api.CreateFileW.restype = wintypes.HANDLE
+    api.GetFinalPathNameByHandleW.argtypes = (wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD)
+    api.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+    api.GetFileInformationByHandleEx.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
+    api.GetFileInformationByHandleEx.restype = wintypes.BOOL
+    api.CloseHandle.argtypes = (wintypes.HANDLE,)
+    api.CloseHandle.restype = wintypes.BOOL
+    return api
+
+
+@contextmanager
+def _open_input(path: Path, *, pin: bool = False, parent: _InputHandle | None = None) -> Iterator[_InputHandle]:
+    """Open once without following the final link; ancestors are judged by the resulting handle's final path."""
+    if os.name == "nt":
+        import ctypes
+        import msvcrt
+
+        api = _windows_files()
+        handle = api.CreateFileW(str(path), 0x80000000, 3 if pin else 7, None, 3, 0x02200000, None)
+        if handle == ctypes.c_void_p(-1).value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            # FileAttributeTagInfo: reject all reparse tags, including tags we do not understand.
+            info = (ctypes.c_ulong * 2)()
+            if not api.GetFileInformationByHandleEx(handle, 9, ctypes.byref(info), ctypes.sizeof(info)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            if info[0] & 0x400:
+                raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input is an unresolved reparse point")
+            fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+        except BaseException:
+            api.CloseHandle(handle)
+            raise
+    else:
+        if not hasattr(os, "O_NOFOLLOW"):
+            raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input cannot be opened without following links")
+        fd = os.open(path.name if parent is not None else path, os.O_RDONLY | os.O_NOFOLLOW,
+                     dir_fd=parent.fileno() if parent is not None else None)
+    try:
+        yield _InputHandle(fd)
+    finally:
+        os.close(fd)
+
+
+@contextmanager
+def _create_copy(path: Path, parent: _InputHandle) -> Iterator[Any]:
+    if os.name == "nt":
+        with path.open("xb") as stream:
+            yield stream
+    else:
+        fd = os.open(path.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
+                     dir_fd=parent.fileno())
+        with os.fdopen(fd, "wb") as stream:
+            yield stream
+
+
+def _final_path(stream: _InputHandle) -> str:
+    """The opened object's OS name, never a second resolution of the input's spelling."""
+    if os.name == "nt":
+        import ctypes
+        import msvcrt
+
+        buffer = ctypes.create_unicode_buffer(32768)
+        size = _windows_files().GetFinalPathNameByHandleW(msvcrt.get_osfhandle(stream.fileno()), buffer, len(buffer), 0)
+        if not size or size >= len(buffer):
+            raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input's final path cannot be resolved")
+        name = buffer.value
+        if name.startswith("\\\\?\\UNC\\"):
+            name = "\\\\" + name[8:]
+        elif name.startswith("\\\\?\\"):
+            name = name[4:]
+    else:
+        try:
+            name = os.readlink(f"/proc/self/fd/{stream.fileno()}")
+        except OSError:
+            raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input's final path cannot be resolved") from None
+        if name.endswith(" (deleted)"):
+            raise LLMError("G6_E_LOOP_INPUT_CHANGED: opened host input was removed")
+    return os.path.normcase(os.path.normpath(name))
+
+
+def _inside(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath((path, root)) == root
+    except ValueError:
+        return False
+
+
+def _output_place(path: Path, root: str) -> str:
+    """A not-yet-created output belongs where its nearest existing opened parent actually lives."""
+    missing = []
+    while True:
+        try:
+            with _open_input(path) as stream:
+                resolved = _final_path(stream)
+                if not stat.S_ISDIR(os.fstat(stream.fileno()).st_mode):
+                    raise LLMError("G6_E_LOOP_INPUT_CHANGED: host output parent is not a directory")
+                break
+        except FileNotFoundError:
+            missing.append(path.name)
+            parent = path.parent
+            if parent == path:
+                raise LLMError("G6_E_LOOP_INPUT_CHANGED: host output has no resolvable parent") from None
+            path = parent
+    resolved = os.path.normpath(os.path.join(resolved, *reversed(missing)))
+    if not _inside(resolved, root):
+        raise LLMError("G6_E_LOOP_INPUT_CHANGED: host output is outside its admitted folder")
+    return resolved
+
+
 def _host_input(argv: Sequence[str], root: str | Path | None, stdin: str = "") -> _HostInput:
     """The existing host identity format, and the exact file bytes it names, read together once."""
-    base = os.path.normcase(os.path.abspath(root)) if root is not None else None
+    base = None
+    root_file = None
+    if root is not None:
+        with _open_input(Path(root)) as folder:
+            base = _final_path(folder)
+            info = os.fstat(folder.fileno())
+            root_file = (info.st_dev, info.st_ino)
+            if not stat.S_ISDIR(info.st_mode) or not info.st_ino:
+                raise LLMError("G6_E_LOOP_INPUT_CHANGED: admitted folder is not a directory")
     parts: list[list[str]] = []
     files: list[tuple[str, bytes]] = []
     aliases: list[tuple[str, str]] = []
+    locations: list[tuple[str, str]] = []
     by_file: dict[tuple[int, int], tuple[str, bytes, tuple[int, int, int]]] = {}
+    by_path: dict[str, list[str]] = {}
     arguments = tuple(plain_text(arg) for arg in argv)
+    # G6's producers emit separate flag/path arguments. Reject alternate file-option syntax rather than passing an
+    # unclassified path through as ordinary text (the host program would still open it).
+    if any(arg.startswith(flag + "=") for arg in arguments for flag in _INPUT_FLAGS | {"--output-last-message"}):
+        raise LLMError("G6_E_LOOP_INPUT_CHANGED: host file option has an unsupported path form")
     required = set()
+    outputs = set()
     for index, arg in enumerate(arguments):
-        if arg in _INPUT_FLAGS:
+        if arg in _INPUT_FLAGS or arg == "--output-last-message":
             if index + 1 == len(arguments) or arguments[index + 1].startswith("--"):
                 raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input flag has no path")
-            required.add(arguments[index + 1])
+            (required if arg in _INPUT_FLAGS else outputs).add(arguments[index + 1])
+    if required & outputs:
+        raise LLMError("G6_E_LOOP_INPUT_CHANGED: a host path has conflicting input and output roles")
     for arg in arguments[1:]:
+        if arg in by_path:
+            parts.append(by_path[arg])
+            continue
         where = os.path.normcase(os.path.abspath(arg)) if os.path.isabs(arg) else ""
-        owned = base and where and (where == base or where.startswith(base + os.sep))
-        if arg in required and not owned:
-            raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input is outside its admitted folder")
-        if owned:
-            place = os.path.relpath(where, base).replace(os.sep, "/")
-            place = "/".join(part for part in place.split("/") if not part.startswith(".g6-input-"))
+        candidate = base and where
+        if candidate:
             try:
-                path = Path(arg)
-                # Windows cannot open directories with Path.open; they are output/work locations, not captured inputs.
-                if path.is_dir():
+                opened = _open_input(Path(arg))
+                stream = opened.__enter__()
+            except FileNotFoundError:
+                if arg in required:
+                    raise LLMError("G6_E_LOOP_INPUT_CHANGED: required host input is missing") from None
+                if not _inside(where, base):
+                    if arg in outputs:
+                        raise LLMError("G6_E_LOOP_INPUT_CHANGED: host output is outside its admitted folder")
+                    parts.append(["arg", arg])
+                    continue
+                resolved = _output_place(Path(arg), base)
+                place = os.path.relpath(where if _inside(where, base) else resolved, base).replace(os.sep, "/")
+                parts.append(["path", place])
+                continue
+            except OSError:
+                raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input could not be opened safely") from None
+            try:
+                final = _final_path(stream)
+                if not _inside(final, base):
+                    if arg in required or arg in outputs or _inside(where, base):
+                        raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input is outside its admitted folder")
+                    parts.append(["arg", arg])
+                    continue
+                # Containment is the opened object's fact. Retain an admitted argument's logical name afterwards so an
+                # existing refusal keeps its digest; new spellings (short/extended names) use the handle's canonical name.
+                place = os.path.relpath(where if _inside(where, base) else final, base).replace(os.sep, "/")
+                place = "/".join(part for part in place.split("/") if not part.startswith(".g6-input-"))
+                before = os.fstat(stream.fileno())
+                if arg in outputs:
+                    if not stat.S_ISREG(before.st_mode):
+                        raise LLMError("G6_E_LOOP_INPUT_CHANGED: host output is not a regular file")
+                    parts.append(["path", place])
+                    continue
+                if stat.S_ISDIR(before.st_mode):
                     if arg in required:
                         raise LLMError("G6_E_LOOP_INPUT_CHANGED: required host input is a directory")
                     parts.append(["path", place])
                     continue
-                stream = path.open("rb")
-            except FileNotFoundError:
-                if arg in required:
-                    raise LLMError("G6_E_LOOP_INPUT_CHANGED: required host input is missing") from None
-                parts.append(["path", place])
-                continue
-            with stream:
-                before = os.fstat(stream.fileno())
                 if not stat.S_ISREG(before.st_mode) or not before.st_ino:
                     raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input has no regular file identity")
                 key = (before.st_dev, before.st_ino)
@@ -506,11 +728,18 @@ def _host_input(argv: Sequence[str], root: str | Path | None, stdin: str = "") -
                 if stamp != captured_stamp:
                     raise LLMError("G6_E_LOOP_INPUT_CHANGED: aliased host input changed during capture")
                 parts.append(["file", place, _digest(data)])
+                by_path[arg] = parts[-1]
                 aliases.append((arg, primary))
+                locations.append((arg, place))
+            finally:
+                opened.__exit__(None, None, None)
         else:
+            if arg in required or arg in outputs:
+                raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input has no absolute path")
             parts.append(["arg", arg])
     encoded = json.dumps(["host", parts, plain_text(stdin)]).encode("ascii")
-    return _HostInput(arguments, tuple(tuple(part) for part in parts), tuple(files), tuple(aliases), encoded)
+    return _HostInput(arguments, tuple(tuple(part) for part in parts), tuple(files), tuple(aliases), encoded,
+                      base or "", tuple(locations), root_file)
 
 
 @dataclass(frozen=True, eq=False)
@@ -579,8 +808,10 @@ def _sending(caller: Any, argv: Sequence[str], stdin: str, files: Any) -> tuple[
             opened.append(str(files))
         return record.request.handoff()
     except BaseException:
-        _forget(files)
-        _finish_record(record, gate)
+        try:
+            _forget(files)
+        finally:
+            _finish_record(record, gate)
         raise
 
 
@@ -634,10 +865,24 @@ def _released(files_keys: Sequence[str]) -> None:
         raise failed
 
 
+_FINAL_HOST_METHODS = frozenset({"complete", "run", "_invocation", "_launch", "_reply", "__getattribute__",
+                                 "__getattr__", "__setattr__", "_observe_stops", "__class__", "__init_subclass__"})
+
+
 class _Watched:
     """What both watched callers do around the bound call: a send whose program never answers is released as the call ends."""
 
     _observe_stops = True
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in _FINAL_HOST_METHODS:
+            raise LLMError("G6_E_LOOP_UNWATCHED_HOST: host instance replaces a final send method")
+        object.__setattr__(self, name, value)
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        if cls.__module__ != __name__:
+            _check_seam(cls)
 
     @contextmanager
     def _invocation(self) -> Iterator[None]:
@@ -651,12 +896,33 @@ class _Watched:
                 _OPEN.reset(token)
 
     def complete(self, system: str, user: str, **kwargs: Any) -> str:
-        with self._invocation():
-            return super().complete(plain_text(system), plain_text(user), **kwargs)
+        _check_seam(type(self))
+        with _Watched._invocation(self):
+            return _complete_host(self, plain_text(system), plain_text(user), **kwargs)
 
     def run(self, *args: Any, **kwargs: Any) -> str:
-        with self._invocation():
+        _check_seam(type(self))
+        with _Watched._invocation(self):
             return super().run(*args, **kwargs)
+
+
+def _complete_host(caller: Any, system: str, user: str, *, max_tokens: int = host_models.DEFAULT_MAX_TOKENS) -> str:
+    """The owned completion path. Every caller hook runs before admission; only module functions run after it."""
+    host_models._start_model_call()
+    observe = watched(caller)
+    program = caller.locate()
+    with host_models._folders() as (work, files):
+        argv, stdin = caller._command(program, system, user, work, files)
+        env = host_models._environment(caller.keep_env, files / "tmp")
+        seconds, name = caller.timeout, plain_text(caller.program.name)
+        reply = WatchedClaude._reply if isinstance(caller, WatchedClaude) else WatchedCodex._reply
+        if observe:
+            argv, stdin = _sending(caller, argv, stdin, files)
+        try:
+            code, printed, errors = host_models._run(argv, stdin, work, files, env, seconds, name)
+            return reply(caller, code, printed, errors, files, (system, user, stdin))
+        finally:
+            _released((str(files),))
 
 
 class WatchedClaude(_Watched, host_models.ClaudeCodeCaller):
@@ -664,16 +930,15 @@ class WatchedClaude(_Watched, host_models.ClaudeCodeCaller):
     code."""
 
     def _command(self, program: str, system: str, user: str, work: Path, files: Path) -> tuple[list[str], str]:
-        argv, stdin = super()._command(program, system, user, work, files)
-        return _sending(self, argv, stdin, files) if watched(self) else (argv, stdin)
+        return super()._command(program, system, user, work, files)
 
     def _launch(self, argv: list[str], stdin: str, cwd: Path, files: Path, env: dict[str, str], seconds: float) -> Any:
         """A session of a caller's own that starts its program itself names that step ``_launch`` (``ToolSession``)."""
-        if not watched(self):
-            return super()._launch(argv, stdin, cwd, files, env, seconds)
-        argv, stdin = _sending(self, argv, stdin, files)
+        name = plain_text(self.program.name)
+        if watched(self):
+            argv, stdin = _sending(self, argv, stdin, files)
         try:
-            return super()._launch(argv, stdin, cwd, files, env, seconds)
+            return host_models._run(argv, stdin, cwd, files, env, seconds, name)
         except BaseException:
             _released((str(files),))
             raise
@@ -696,8 +961,7 @@ class WatchedCodex(_Watched, host_models.CodexCaller):
         return [*args[:at], "--json", *args[at:]]
 
     def _command(self, program: str, system: str, user: str, work: Path, files: Path) -> tuple[list[str], str]:
-        argv, stdin = super()._command(program, system, user, work, files)
-        return _sending(self, argv, stdin, files) if watched(self) else (argv, stdin)
+        return super()._command(program, system, user, work, files)
 
     def _reply(self, code: int, printed: str, errors: str, files: Any, hide: tuple[str, ...]) -> str:
         if not watched(self):
@@ -714,15 +978,38 @@ class WatchedCodex(_Watched, host_models.CodexCaller):
 _WATCHED = ((host_models.ClaudeCodeCaller, WatchedClaude), (host_models.CodexCaller, WatchedCodex))
 
 
+def _check_seam(kind: type) -> None:
+    """Command/argv/locate hooks run before admission. Completion, observation and session launch are final.
+
+    ToolSession's existing run and launch are admitted explicitly: its launch is replaced at construction by our final
+    module-owned launch, which starts the program directly. A further subclass may customize only pre-admission hooks.
+    """
+    owned = {_Watched, WatchedClaude, WatchedCodex, host_models._HostCaller,
+             host_models.ClaudeCodeCaller, host_models.CodexCaller, OpenAICompatibleCaller, AnthropicCaller, object}
+    for base in kind.__mro__:
+        if base in owned:
+            continue
+        methods = _FINAL_HOST_METHODS.intersection(base.__dict__)
+        session_module = sys.modules.get("g6.harness.completion_loop")
+        if session_module is not None and base is vars(session_module).get("ToolSession"):
+            methods -= {"run", "_launch"}
+        if methods:
+            raise LLMError("G6_E_LOOP_UNWATCHED_HOST: host subclass overrides a final send method")
+
+
 def _new_host(kind: type, *args: Any, **kwargs: Any) -> Any:
     """Choose the cleanup wrapper at construction, before any bound complete can enter.
 
     Plain callers stay dormant until read_stops enables observation. The bound constructor needs a native hook at issuance.
     """
-    if not issubclass(kind, _Watched):
+    _check_seam(kind)
+    dormant = not issubclass(kind, _Watched)
+    if dormant:
         observer = next(wrapper for host, wrapper in _WATCHED if issubclass(kind, host))
-        kind = type(kind.__name__, (observer, kind), {"_observe_stops": False})
-    return object.__new__(kind)
+        kind = type(kind.__name__, (observer, kind), {})
+    caller = object.__new__(kind)
+    object.__setattr__(caller, "_observe_stops", not dormant)
+    return caller
 
 
 host_models._HostCaller.__new__ = staticmethod(_new_host)
@@ -733,7 +1020,8 @@ def read_stops(sender: Any) -> None:
     if isinstance(sender, tuple(host for host, _ in _WATCHED)):
         if not isinstance(sender, _Watched):
             raise LLMError("G6_E_LOOP_UNWATCHED_HOST: host caller predates the construction wrapper")
-        sender._observe_stops = True
+        _check_seam(type(sender))
+        object.__setattr__(sender, "_observe_stops", True)
 
 
 def watched(sender: Any) -> bool:
