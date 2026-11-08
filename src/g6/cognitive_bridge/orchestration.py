@@ -35,6 +35,8 @@ from .adaptation import detect_failure_modes
 from .assurance import (CandidateDossier, DomainStandard, EvidenceArtifact,
                         FrozenVerifier, InProcessAssuranceEvaluator,
                         ProfessionalAttestation, canonical_json, evidence_sha256, sha256)
+from .codes import FrozenMap
+from .codes import _is_type
 from .codes import (ASSURANCE_BLOCKED, COMPILE_BLOCKED, EXECUTION_NOT_APPROVED, NOT_PROMOTED, PLAN_TAMPERED, STATES,
                     affirmed, refusal, settled, unclaimed)
 from .epistemic import CrossMethodConflictGate, ScopedAssertion, assertions_sha256, checked_report, findings_state
@@ -196,7 +198,7 @@ class CognitiveAssuranceOrchestrator:
             method = row["method"]
             vid = row["variant_id"]
             source = variant_models.get(vid)
-            if not isinstance(source, dict):
+            if not _is_type(type(source), (dict, FrozenMap,)):
                 continue
             # A method's chosen representation becomes declarative, reviewed
             # input to the canonical router; no arbitrary generated code. It is
@@ -253,14 +255,14 @@ class CognitiveAssuranceOrchestrator:
         result = plain(unclaimed({**out, "selection_policy_digest": compiled.decision.policy_digest,
                                   "standard_digest": compiled.standard_digest,
                                   "claim_id": ",".join(c.id for c in plan.claims)}, where="a run"), where="a run")
-        if isinstance(result.get("run_id"), str):
+        if _is_type(type(result.get("run_id")), (str,)):
             self._runs[result["run_id"]] = (compiled.plan_digest, _claims_digest(plan.claims), canonical_json(result))
         return publish(result, where="CognitiveAssuranceOrchestrator.execute")
 
     def _executed(self, compiled: CompiledResearch, run_result: Mapping[str, Any]) -> dict[str, Any] | None:
         """This orchestrator's own record of the run ``run_result`` names, when it ran this compiled plan for the
         claim the compiled research names, and the caller's copy is that record unchanged; else None."""
-        run_id = run_result.get("run_id") if isinstance(run_result, dict) else None
+        run_id = run_result.get("run_id") if _is_type(type(run_result), (dict, FrozenMap,)) else None
         record = self._runs.get(run_id) if type(run_id) is str else None  # a run's id is text; nothing is made text
         if record is None or record[0] != compiled.plan_digest or compiled.changed_since_compiled():
             return None
@@ -274,7 +276,7 @@ class CognitiveAssuranceOrchestrator:
     @staticmethod
     def _every_step_ran(compiled: CompiledResearch, executed: Mapping[str, Any]) -> bool:
         """Each compiled step ran through G6's door as compiled (the same step digest) and came back qualified."""
-        ran = {step.get("id"): step for step in executed.get("steps", []) if isinstance(step, dict)}
+        ran = {step.get("id"): step for step in executed.get("steps", []) if _is_type(type(step), (dict, FrozenMap,))}
         return (executed.get("completion_state") == "qualified-draft" and bool(compiled.executable_plan.steps)
                 and all(ran.get(step.id, {}).get("completion_state") == "qualified-draft"
                         and ran[step.id].get("step_digest") == step_digest(step)

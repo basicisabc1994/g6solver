@@ -13,6 +13,7 @@ import re
 from dataclasses import field, fields
 from typing import Any, Mapping, Protocol
 
+from .codes import _code, _is_type
 from .codes import DOSSIER_BLOCKED, MADE_FIELDS, STATES, affirmed, only_fields, refusal, settled, unclaimed
 from .snapshot import publish, canonical_json, fresh, issue, plain, record, returned, snapshot, text
 
@@ -116,7 +117,7 @@ class EvidenceArtifact:
     def __post_init__(self) -> None:
         # The content is immutable bytes from the moment the artifact is made (the record's snapshot copied a bytes-like
         # buffer), so a later change to the caller's buffer cannot change what is checked after its manifest.
-        if not isinstance(self.content, bytes):
+        if not _is_type(type(self.content), (bytes,)):
             raise TypeError("evidence content must be bytes")
         if not all((self.id, self.content, self.kind, self.claimed_by, self.source_ref, self.claim_id)):
             raise ValueError("evidence needs bytes, claim, origin, kind and source reference")
@@ -156,9 +157,9 @@ class FrozenVerifier:
             raise ValueError("checker needs owner, ID and pinned revision")
         if not self.positive_controls or not self.negative_controls:
             raise ValueError("independent checks need both positive and negative controls")
-        if not callable(self.check):
+        if not _code(self.check):
             raise ValueError("checker must be executable")
-        if any(not isinstance(x, bytes) or not x for x in (*self.positive_controls, *self.negative_controls)):
+        if any(not _is_type(type(x), (bytes,)) or not x for x in (*self.positive_controls, *self.negative_controls)):
             raise ValueError("controls must be non-empty bytes")
 
     def manifest(self) -> dict[str, Any]:
@@ -195,7 +196,7 @@ class CandidateDossier:
                               required=PAYLOAD_FIELDS + ("completion_state",), where="a dossier")
         blockers = payload["blockers"]
         # STATES is (qualified-draft, blocked-escalated): the second when there is any blocker
-        if not isinstance(blockers, tuple) or payload["completion_state"] != STATES[bool(blockers)]:
+        if not _is_type(type(blockers), (tuple,)) or payload["completion_state"] != STATES[bool(blockers)]:
             raise ValueError("a dossier's state is the one its blockers give: blocked when it has any")
 
     @classmethod
@@ -302,7 +303,7 @@ class InProcessAssuranceEvaluator:
         if set(documentation) - set(DOCUMENT_FIELDS):
             raise ValueError("unknown documentary field")
         documentary_gaps = [f for f in DOCUMENT_FIELDS
-                            if not isinstance(documentation.get(f), str) or not documentation[f].strip()]
+                            if not _is_type(type(documentation.get(f)), (str,)) or not documentation[f].strip()]
         checks: list[dict[str, Any]] = []
         blockers: list[str] = []
         for criterion in standard.criteria:

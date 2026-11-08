@@ -27,6 +27,7 @@ from returns.result import Failure, Success
 from g6.core import door
 
 from .assurance import canonical_json, sha256
+from .codes import _is_type
 from .codes import NO_PROBE, OBJECTS, STEP_FAILED, affirmed, claims, refusal, settled, unclaimed
 from .snapshot import publish, record_data, FrozenMap, fresh, json_reply, number, plain, record, returned, snapshot, text
 
@@ -85,7 +86,7 @@ def _beliefs(beliefs: Mapping[str, float]) -> dict[str, float]:
     belief a number (``snapshot.number``: never a flag, text or null, never converted) finite in [0, 1], and their sum
     one, with no implicit normalisation. The beliefs as floats, or ``ValueError``.
     ``tests/cognitive_bridge/test_belief_inventory.py`` lists every place beliefs enter."""
-    if type(beliefs) not in OBJECTS:
+    if not _is_type(type(beliefs), OBJECTS):
         raise ValueError("beliefs are a mapping of hypothesis IDs to probabilities")
     if not 2 <= len(beliefs) <= 32:
         raise ValueError("supply 2–32 competing hypotheses")
@@ -241,21 +242,21 @@ class LLMProposer:
                                "assumed_match_probability": t.assumed_match_probability} for t in self.tools.values()],
             "max_probes": self.max_probes}).decode("utf-8")
         data = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=1500), json_reply, 12000)
-        if not isinstance(data, dict) or not isinstance(data.get("probes"), list):
+        if not _is_type(type(data), (dict, FrozenMap,)) or not _is_type(type(data.get("probes")), (list,)):
             raise ValueError("model did not return the required probes array")
         if len(data["probes"]) > self.max_probes:
             raise ValueError("model proposed too many probes")
         hypotheses_ids = {h.id for h in hypotheses}
         probes = []
         for item in data["probes"]:
-            if not isinstance(item, dict) or set(item) != {"id", "question", "tool", "arguments", "positive_if", "novelty"}:
+            if not _is_type(type(item), (dict, FrozenMap,)) or set(item) != {"id", "question", "tool", "arguments", "positive_if", "novelty"}:
                 raise ValueError("model probe has missing or unexpected fields")
             tool = self.tools.get(item["tool"])
             if tool is None:
                 raise ValueError(f"model requested non-allowlisted tool {item['tool']!r}")
-            if not isinstance(item["arguments"], dict) or len(canonical_json(item["arguments"]).decode("utf-8")) > 2000:
+            if not _is_type(type(item["arguments"]), (dict, FrozenMap,)) or len(canonical_json(item["arguments"]).decode("utf-8")) > 2000:
                 raise ValueError("model tool arguments invalid or too large")
-            if not isinstance(item["positive_if"], dict) or set(item["positive_if"]) != hypotheses_ids:
+            if not _is_type(type(item["positive_if"]), (dict, FrozenMap,)) or set(item["positive_if"]) != hypotheses_ids:
                 raise ValueError("model must predict all hypotheses")
             # the model's id and question are text and its novelty a number, as it wrote them: the record and the
             # probe check refuse any other kind, and nothing here converts one
@@ -274,7 +275,7 @@ class LLMProposer:
 
 def _scores(predictions: Any, count: int) -> tuple[float, ...]:
     """A predictor's answer as the selector uses it: one finite number for each of the ``count`` feature rows."""
-    if not isinstance(predictions, tuple) or len(predictions) != count:
+    if not _is_type(type(predictions), (tuple,)) or len(predictions) != count:
         raise ValueError("model returned incorrect number of experiment scores")
     try:  # each score a number as the predictor wrote it (snapshot.number): a flag or text is refused, not converted
         return tuple(number(score, where=f"score {index}") for index, score in enumerate(predictions))
@@ -342,7 +343,7 @@ def _observed(observation: Any) -> Observation:
 
 def _proposed(proposals: Any) -> tuple[Probe, ...]:
     """A proposer's answer as the agent uses it: Probe records (that type, not a subclass) with distinct ids."""
-    if not isinstance(proposals, tuple) or any(type(p) is not Probe for p in proposals):
+    if not _is_type(type(proposals), (tuple,)) or any(type(p) is not Probe for p in proposals):
         raise ValueError("a proposer proposes Probe records")
     if len({p.id for p in proposals}) != len(proposals):
         # the ranking names a probe by its id: two probes under one id could rank one and run the other
@@ -354,7 +355,7 @@ def _selection(ranking: Any, candidates: tuple[Probe, ...]) -> tuple[Mapping[str
     """A selector's answer, checked against the validated candidates: None when it ranks nothing, else its first row
     and the validated candidate that row names (that very record, by identity: never a probe the selector made, and
     never one the selector was handed, which is a copy)."""
-    if not isinstance(ranking, tuple) or any(not isinstance(row, dict) for row in ranking):
+    if not _is_type(type(ranking), (tuple,)) or any(not _is_type(type(row), (dict, FrozenMap,)) for row in ranking):
         raise ValueError("a selector ranks probes as a list of rows")
     if not ranking:
         return None
@@ -363,7 +364,7 @@ def _selection(ranking: Any, candidates: tuple[Probe, ...]) -> tuple[Mapping[str
     if len(named) != 1:
         raise ValueError("the selector chose a probe that is not one of the validated candidates")
     bits = row.get("expected_information_bits")
-    if type(bits) not in (int, float) or not math.isfinite(bits) or bits < 0:
+    if not _is_type(type(bits), (int, float)) or not math.isfinite(bits) or bits < 0:
         raise ValueError("the selector's chosen row needs a finite, nonnegative expected_information_bits")
     return row, named[0]
 
@@ -371,7 +372,7 @@ def _selection(ranking: Any, candidates: tuple[Probe, ...]) -> tuple[Mapping[str
 def _posterior(posterior: Any, prior: Mapping[str, float]) -> FrozenMap:
     """An updater's answer, checked as the prior was: a belief for every hypothesis and no other, by the one rule for
     beliefs (:func:`_beliefs`)."""
-    if not isinstance(posterior, dict) or set(posterior) != set(prior):
+    if not _is_type(type(posterior), (dict, FrozenMap,)) or set(posterior) != set(prior):
         raise ValueError("an updater returns a belief for every hypothesis and no other")
     return snapshot(_beliefs({h: posterior[h] for h in prior}))
 
@@ -428,11 +429,11 @@ class CognitiveAgent:
             result = plain(reply.get("result"), where=f"{tool.name}'s answer")
         except ValueError as exc:
             return None, reply, f"{tool.name}'s answer is not kept: {exc}"
-        claimed = claims(result) if isinstance(result, dict) else ["the door's copy is not a mapping"]
+        claimed = claims(result) if _is_type(type(result), (dict, FrozenMap,)) else ["the door's copy is not a mapping"]
         if claimed:
             return None, reply, f"{tool.name}'s answer claims a state the bridge did not decide: {'; '.join(claimed)}"
         answer = result.get("observation")
-        if not isinstance(answer, dict):
+        if not _is_type(type(answer), (dict, FrozenMap,)):
             return None, reply, f"{tool.name}: G6's door handed on no observation"
         return Observation(**answer), reply, ""
 
@@ -545,14 +546,14 @@ class LLMIdeaGenerator:
         user = canonical_json({"objective": objective[:2000], "observations": list(observations)[-6:],
                            "max_ideas": self.max_ideas}).decode("utf-8")
         doc = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=1200), json_reply, 12000)
-        if not isinstance(doc, dict) or not isinstance(doc.get("ideas"), list) or len(doc["ideas"]) > self.max_ideas:
+        if not _is_type(type(doc), (dict, FrozenMap,)) or not _is_type(type(doc.get("ideas")), (list,)) or len(doc["ideas"]) > self.max_ideas:
             raise ValueError("invalid idea schema or count")
         result = []
         for item in doc["ideas"]:
             fields = {"id", "statement", "cross_domain_analogy", "falsifying_question"}
-            if not isinstance(item, dict) or set(item) != fields:
+            if not _is_type(type(item), (dict, FrozenMap,)) or set(item) != fields:
                 raise ValueError("idea schema mismatch")
-            if any(not isinstance(item[k], str) or not 1 <= len(item[k]) <= 1000 for k in fields):
+            if any(not _is_type(type(item[k]), (str,)) or not 1 <= len(item[k]) <= 1000 for k in fields):
                 raise ValueError("idea fields must be bounded nonempty strings")
             result.append(IdeaHypothesis(**item))
         if len({x.id for x in result}) != len(result):

@@ -15,6 +15,7 @@ import math
 from typing import Any, Callable, Mapping, Sequence
 
 from .assurance import canonical_json, is_risk, sha256
+from .codes import _is_type
 from .codes import MODEL_MISSING, OBLIGATION_NOT_PLANNED, SELECTION_INCOMPLETE, affirmed, only_fields, refusal, settled
 from .mixed_methods import ENGINE_SPECS, ENGINE_OP_VARIANTS, ClaimIR, MethodRouter, MethodPlan
 from .snapshot import publish, record_data, fresh, issue, number, record, returned, snapshot
@@ -86,7 +87,7 @@ class MethodVariant:
     kind: str = "engine"
 
     def __post_init__(self) -> None:
-        if not isinstance(self.kind, str) or not self.kind.strip():
+        if not _is_type(type(self.kind), (str,)) or not self.kind.strip():
             raise ValueError("a variant's kind names what it is: engine, reviewer, arm, ...")
         if self.kind == "engine":
             if self.method not in ENGINE_SPECS:

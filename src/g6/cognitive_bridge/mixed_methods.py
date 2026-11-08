@@ -15,6 +15,8 @@ from typing import Any, Iterable, Mapping, Protocol, Sequence
 from g6.core.door import SENSITIVE_ENV, allowed_sensitive, invoke_checked
 
 from .assurance import canonical_json, sha256
+from .codes import FrozenMap
+from .codes import _is_type
 from .codes import (APPROVAL_REQUIRED, EXECUTION_INCOMPLETE, MODEL_MISSING, PLAN_TAMPERED, PREREQUISITE_UNMET,
                     STEP_FAILED, affirmed, claims, refusal, settled, unclaimed)
 from .snapshot import publish, record_data, fresh, json_reply, number, plain, record, returned, snapshot, text
@@ -158,7 +160,7 @@ class MethodRouter:
                     raise ValueError(f"unsupported evidence method {need!r}")
                 entry = ENGINE_SPECS[need]
                 given = claim.models.get(need)
-                if not isinstance(given, dict):
+                if not _is_type(type(given), (dict, FrozenMap,)):
                     missing.append({"claim": claim.id, "method": need, "reason": "no typed model supplied"})
                     continue
                 if not set(given).issubset(entry["allowed"]):
@@ -247,7 +249,7 @@ class MixedMethodExecutor:
             except ValueError as exc:
                 return refusal(STEP_FAILED, f"{step.component}.{step.op}: its answer is not kept: {exc}", door=door,
                                request_id=request_id, **head)
-            if not isinstance(response, dict):
+            if not _is_type(type(response), (dict, FrozenMap,)):
                 raise ValueError("registry did not return an evidence envelope")
             claimed = claims(response)
             said = (f"; its answer is not kept: it claims a state the bridge did not decide ({'; '.join(claimed)})"
@@ -274,7 +276,7 @@ class MixedMethodExecutor:
             # Snapshot, then check, then run: the plan is a record (immutable all the way down, so nothing here aliases
             # the caller's data), checked against the canonical routing of its own claims; its steps run from bytes.
             plan = snapshot(plan, where="plan")
-            if not isinstance(plan, MethodPlan):
+            if not _is_type(type(plan), (MethodPlan,)):
                 raise TypeError("an executed plan is a MethodPlan record")
             canonical = MethodRouter().plan(plan.claims)
             if canonical.steps != plan.steps or canonical.missing != plan.missing:
@@ -351,15 +353,15 @@ class LLMClaimCompiler:
         if len(user) > 15000:
             raise ValueError("question and context exceed prompt cap")
         doc = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=2200), json_reply, 18000)
-        if not isinstance(doc, dict) or set(doc) != {"claims"} or not isinstance(doc["claims"], list):
+        if not _is_type(type(doc), (dict, FrozenMap,)) or set(doc) != {"claims"} or not _is_type(type(doc["claims"]), (list,)):
             raise ValueError("LLM response did not match the claim schema")
         if not 1 <= len(doc["claims"]) <= self.max_claims:
             raise ValueError("model proposed invalid claim count")
         claims: list[ClaimIR] = []
         for item in doc["claims"]:
-            if not isinstance(item, dict) or set(item) != {"id", "statement", "evidence_needs", "models"}:
+            if not _is_type(type(item), (dict, FrozenMap,)) or set(item) != {"id", "statement", "evidence_needs", "models"}:
                 raise ValueError("LLM claim contains missing or unexpected fields")
-            if not isinstance(item["evidence_needs"], list) or not isinstance(item["models"], dict):
+            if not _is_type(type(item["evidence_needs"]), (list,)) or not _is_type(type(item["models"]), (dict, FrozenMap,)):
                 raise ValueError("LLM claim models and evidence needs must be collections")
             claims.append(ClaimIR(id=item["id"], statement=item["statement"],
                                   evidence_needs=tuple(item["evidence_needs"]),

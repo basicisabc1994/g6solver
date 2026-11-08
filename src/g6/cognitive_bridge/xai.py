@@ -21,6 +21,8 @@ import math
 import struct
 from typing import Any, Mapping, Sequence
 
+from .codes import FrozenMap
+from .codes import _has_member, _is_type
 from .codes import DEPTH, NotPlainData, _read_as, settled, unclaimed
 from .snapshot import publish, record_data, _too_deep, canonical_json, fresh, number, plain, record, returned, snapshot, text
 
@@ -30,7 +32,7 @@ def _native(value: Any, *, where: str) -> Any:
     estimator's values: Python's own values (numpy's ``tolist``, for an array or a numpy scalar), taken by the boundary
     (``snapshot.plain``: a NaN, a set, bytes, a subclass of a JSON type or any other object is refused, never
     converted). Each value is then read by the rule for its kind."""
-    return plain(value.tolist() if hasattr(value, "tolist") else value, where=where)
+    return plain(value.tolist() if _has_member(value, "tolist") else value, where=where)
 
 
 def _estimated(value: Any, *, where: str, index: bool = False) -> int | float:
@@ -89,7 +91,7 @@ class ExplicitTree:
     provenance: str  # tree_transcription | blackbox_surrogate
 
     def _row(self, sample: Mapping[str, Any] | Sequence[Any]) -> list[float]:
-        if isinstance(sample, dict):
+        if _is_type(type(sample), (dict, FrozenMap,)):
             values = [sample[name] for name in self.features]
         else:
             values = list(sample)
@@ -123,7 +125,7 @@ def _distinct_names(names: Sequence[Any], *, where: str = "feature names") -> tu
     """The feature names as the tree uses them: a list of text (``snapshot.text``), never a number or a flag made
     text, so ``1`` and ``True`` are refused, not read as ``"1"`` and ``"True"``; and unique. ``names`` is what the
     boundary already took (the caller's snapshot, or an estimator's array read by :func:`_native`)."""
-    if type(names) not in (list, tuple):
+    if not _is_type(type(names), (list, tuple)):
         raise NotPlainData(where, f"a {type(names).__name__} is not a list of names")
     used = tuple(text(name, where=f"{where}: feature name {index}") for index, name in enumerate(names))
     if len(set(used)) != len(used):

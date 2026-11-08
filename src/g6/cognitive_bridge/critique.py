@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
+from .codes import FrozenMap
+from .codes import _is_type
 from .codes import settled
 from .mixed_methods import ENGINE_SPECS
 from .snapshot import publish, canonical_json, record_data, fresh, json_reply, number, record, returned, snapshot, text
@@ -27,7 +29,7 @@ class CritiqueCandidate:
         if self.suggested_method not in ENGINE_SPECS:
             raise ValueError("critique suggested unsupported method")
         for key, value in record_data(self).items():
-            if not isinstance(value, str) or len(value) > 1200:
+            if not _is_type(type(value), (str,)) or len(value) > 1200:
                 raise ValueError(f"critique field {key} invalid")
         if not all((self.failure_mode, self.assumption_at_risk,
                     self.counterexample_or_refutation, self.evidence_required)):
@@ -85,7 +87,7 @@ class LLMMetacognitiveCritic:
         if len(user) > 25000:
             raise ValueError("critique prompt cap exceeded")
         doc = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=2600), json_reply, 20000)
-        if not isinstance(doc, dict) or set(doc) != {"candidates"} or not isinstance(doc["candidates"], list):
+        if not _is_type(type(doc), (dict, FrozenMap,)) or set(doc) != {"candidates"} or not _is_type(type(doc["candidates"]), (list,)):
             raise ValueError("critique must be a JSON candidate array")
         if len(doc["candidates"]) > self.max_items:
             raise ValueError("too many critique candidates")
@@ -93,7 +95,7 @@ class LLMMetacognitiveCritic:
                   "suggested_method", "evidence_required", "potential_domain_standard_gap"}
         rows: list[CritiqueCandidate] = []
         for item in doc["candidates"]:
-            if not isinstance(item, dict) or set(item) != fields:
+            if not _is_type(type(item), (dict, FrozenMap,)) or set(item) != fields:
                 raise ValueError("critique has missing or unexpected fields")
             rows.append(CritiqueCandidate(**item))
         return publish(CritiqueReport(tuple(rows), objective), where="LLMMetacognitiveCritic.propose")

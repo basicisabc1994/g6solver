@@ -24,6 +24,7 @@ from g6.core.ai_block import AIBlock
 from g6.core.contract_decorator import block_contract
 from g6.core.maturity import component_maturity
 from g6.core.result import Result
+from .codes import _is_type
 from .codes import INPUT, STATES, NotPlainData, refusal, settled, unclaimed
 from .engine import BayesianUpdater, Hypothesis, InformationGainSelector, Probe, check_beliefs
 from .mixed_methods import ClaimIR, MethodRouter
@@ -140,25 +141,25 @@ def _as_given(given: Any) -> Any:
     values are never converted here. Nothing is serialized: ``model_dump`` erased nested mapping subclasses before
     the boundary saw them (review 3 of PR #8's second follow-up, finding 2)."""
     if type(given) is not CognitiveInput:
-        if hasattr(given, "keys"):
+        # Apply the agreed outer mapping protocol directly, as the registry does.
+        # A class or instance attribute must not decide whether copying is allowed.
+        try:
+            if given:
+                return {**given}
+            # The registry treats falsy params as absent, then adds its separate routing op.
+            # A direct request carries that routing op inside its mapping instead.
             try:
-                if given:
-                    return {**given}
-                # The registry treats falsy params as absent, then adds its separate routing op.
-                # A direct request carries that routing op inside its mapping instead.
-                try:
-                    return {"op": given["op"]}
-                except KeyError:
-                    return {}
-            except (TypeError, ValueError, KeyError) as exc:
-                raise NotPlainData("the block's arguments", f"cannot copy the outer mapping: {exc}") from None
-        return given
+                return {"op": given["op"]}
+            except KeyError:
+                return {}
+        except Exception as exc:
+            raise NotPlainData("the block's arguments", f"cannot copy the outer mapping: {exc}") from None
     out = {}
     for name, item in _fields(given).items():
         if type(item) is list:
-            out[name] = [_fields(x) if type(x) in _NESTED else x for x in item]
+            out[name] = [_fields(x) if _is_type(type(x), _NESTED) else x for x in item]
         else:
-            out[name] = _fields(item) if type(item) in _NESTED else item
+            out[name] = _fields(item) if _is_type(type(item), _NESTED) else item
     return out
 
 

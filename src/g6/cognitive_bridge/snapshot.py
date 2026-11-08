@@ -48,6 +48,7 @@ from returns.result import Failure, Success
 
 from g6.core.result import Result
 
+from .codes import _code, _is_type, _type_mro
 from .codes import ARRAYS, DEPTH, OBJECTS, FrozenMap, NotPlainData, _read_as, _unread, unclaimed
 
 T = TypeVar("T")
@@ -132,10 +133,10 @@ def _same(value: Any, out: Any, depth: int) -> bool:
     if depth > DEPTH:
         return False
     kind = type(value)
-    if kind in OBJECTS:
+    if _is_type(kind, OBJECTS):
         return type(out) is dict and out.keys() == value.keys() and all(
             _same(value[k], out[k], depth + 1) for k in value)
-    if kind in ARRAYS:
+    if _is_type(kind, ARRAYS):
         return type(out) is list and len(out) == len(value) and all(
             _same(a, b, depth + 1) for a, b in zip(value, out))
     return type(out) is kind and out == value
@@ -168,7 +169,7 @@ def number(value: Any, *, where: str, _depth: int = 0) -> int | float:
     standing at ``_depth``: within the finite float magnitude, and an integer the encoder writes); anything else (a flag, text, null, a set,
     bytes) is refused, never converted. The one number rule: every place the bridge reads a caller's or a
     collaborator's value as a number reads it through this (``tests/cognitive_bridge/test_conversion_inventory.py``)."""
-    if type(value) not in (int, float):
+    if not _is_type(type(value), (int, float)):
         raise NotPlainData(where, f"a {_named(value)} is not a number: numbers are integers and finite floats, not "
                                   "flags, text or null")
     return plain(value, where=where, _depth=_depth)
@@ -193,7 +194,8 @@ _RECORDS: dict[int, type] = {}
 
 
 def _record_type(kind: Any) -> bool:
-    return _RECORDS.get(id(kind)) is kind
+    found = _RECORDS.get(id(kind))
+    return found is not None and found is kind
 
 
 def _is_record(value: Any) -> bool:
@@ -210,6 +212,15 @@ def _leaf_kind(hint: Any) -> str:
     return next((name for kind, name in _LEAF_KINDS if hint is kind), "")
 
 
+def _protocol_kind(hint: Any) -> bool:
+    """A declared protocol by its actual class MRO, never its supplied marker."""
+    try:
+        bases = _type_mro(hint)
+    except TypeError:
+        return False
+    return any(base is typing.Protocol for base in bases)
+
+
 def _kind(hint: Any) -> tuple[Any, ...]:
     """What a record field annotated ``hint`` holds: text, bytes, a tuple of bytes, a number, an integer or a flag (or
     None, when the annotation allows it), a record of one type (or None), a tuple of records of one type, code, or data
@@ -219,13 +230,13 @@ def _kind(hint: Any) -> tuple[Any, ...]:
         return ("text",)
     if hint is bytes:
         return ("bytes",)
-    if origin is tuple and args == (bytes, Ellipsis):
+    if origin is tuple and (len(args) == 2 and args[0] is bytes and args[1] is Ellipsis):
         return ("bytes*",)
     if _leaf_kind(hint):
         return (_leaf_kind(hint), False)
     if _record_type(hint):
         return ("record", hint, False)
-    if origin in (typing.Union, types.UnionType) and len(args) == 2 and type(None) in args:
+    if _is_type(origin, (typing.Union, types.UnionType)) and len(args) == 2 and any(arg is type(None) for arg in args):
         other = args[0] if args[1] is type(None) else args[1]
         if _leaf_kind(other):
             return (_leaf_kind(other), True)
@@ -233,7 +244,7 @@ def _kind(hint: Any) -> tuple[Any, ...]:
             return ("record", other, True)
     if origin is tuple and len(args) == 2 and args[1] is Ellipsis and _record_type(args[0]):
         return ("records", args[0])
-    if origin is collections.abc.Callable or getattr(hint, "_is_protocol", False):
+    if origin is collections.abc.Callable or _protocol_kind(hint):
         return ("code",)
     return ("data",)
 
@@ -252,7 +263,7 @@ def _kinds(cls: type) -> dict[str, tuple[Any, ...]]:
 
 
 def _bytes(value: Any, where: str) -> bytes:
-    if type(value) not in (bytes, bytearray, memoryview):
+    if not _is_type(type(value), (bytes, bytearray, memoryview)):
         raise NotPlainData(where, f"a {_named(value)} is not bytes")
     return bytes(value)
 
@@ -285,7 +296,7 @@ def _field(kind: tuple[Any, ...], value: Any, where: str, depth: int) -> Any:
     if name in ("bytes", "bytes*"):
         if name == "bytes":
             taken: Any = _bytes(value, where)
-        elif type(value) not in (list, tuple):
+        elif not _is_type(type(value), (list, tuple)):
             raise NotPlainData(where, f"a {_named(value)} is not a list of bytes")
         else:
             taken = tuple(_bytes(item, f"{where}[{index}]") for index, item in enumerate(value))
@@ -296,10 +307,10 @@ def _field(kind: tuple[Any, ...], value: Any, where: str, depth: int) -> Any:
             return value
         raise NotPlainData(where, f"a {_named(value)} is not a {kind[1].__name__}")
     if name == "records":
-        if type(value) not in (list, tuple) or any(type(item) is not kind[1] for item in value):
+        if not _is_type(type(value), (list, tuple)) or any(type(item) is not kind[1] for item in value):
             raise NotPlainData(where, f"a {_named(value)} is not a list of {kind[1].__name__}")
         return tuple(value)
-    if not callable(value):
+    if not _code(value):
         raise NotPlainData(where, f"a {_named(value)} is not code")
     return value
 
@@ -319,10 +330,13 @@ def record(cls: type[T]) -> type[T]:
         at = _AT.get()
         token = _AT.set(0)  # a record this one's own checks make stands on its own
         try:
-            kinds = _kinds(type(self))
-            for field in dataclasses.fields(self):
+            # The schema belongs to the decorated class, never to a caller's
+            # subclass or metaclass. Construction does not register a subclass:
+            # every boundary still admits records by their exact registered type.
+            kinds = _kinds(cls)
+            for field in dataclasses.fields(cls):
                 object.__setattr__(self, field.name, _field(kinds[field.name], getattr(self, field.name),
-                                                            f"{type(self).__name__}.{field.name}", at + 1))
+                                                            f"{cls.__name__}.{field.name}", at + 1))
             if own is not None:
                 own(self)
         finally:
@@ -348,7 +362,7 @@ def _renewed(value: Any, where: str, depth: int) -> Any:
         at = f"{where}.{field.name}"
         if kind == "record" and _is_record(item):
             item = _renewed(item, at, depth + 1)
-        elif kind == "records" and type(item) in (list, tuple):
+        elif kind == "records" and _is_type(type(item), (list, tuple)):
             item = tuple(_renewed(x, f"{at}[{index}]", depth + 2) if _is_record(x) else x
                          for index, x in enumerate(item))
         changes[field.name] = item
@@ -365,9 +379,9 @@ def _has_record(value: Any, depth: int) -> bool:
     if depth > DEPTH:
         return False
     kind = type(value)
-    if kind in ARRAYS:
+    if _is_type(kind, ARRAYS):
         return any(_has_record(item, depth + 1) for item in value)
-    if kind in OBJECTS:
+    if _is_type(kind, OBJECTS):
         return any(_has_record(item, depth + 1) for item in value.values())
     return False
 
@@ -381,9 +395,9 @@ def _taken(value: Any, where: str, depth: int) -> Any:
     if _is_record(value):
         return _renewed(value, where, depth)
     kind = type(value)
-    if kind in ARRAYS and _has_record(value, depth):
+    if _is_type(kind, ARRAYS) and _has_record(value, depth):
         return tuple(_taken(item, f"{where}[{index}]", depth + 1) for index, item in enumerate(value))
-    if kind in OBJECTS and _has_record(value, depth):
+    if _is_type(kind, OBJECTS) and _has_record(value, depth):
         return FrozenMap((text(key, where=f"{where} (a key)", _depth=depth + 1),
                           _taken(item, f"{where}.{key}", depth + 1)) for key, item in value.items())
     return _frozen(plain(value, where=where, _depth=depth), depth)
@@ -421,9 +435,9 @@ def view(value: Any, *, _depth: int = 0, _budget: list[int] | None = None) -> An
     kind = type(value)
     if kind is bytes:
         return {"sha256": hashlib.sha256(value).hexdigest(), "length": len(value)}
-    if kind in ARRAYS:
+    if _is_type(kind, ARRAYS):
         return [view(item, _depth=_depth + 1, _budget=_budget) for item in value]
-    if kind in OBJECTS:
+    if _is_type(kind, OBJECTS):
         for key in value:
             if _read_as(key) != "text":
                 raise NotPlainData("a value (a key)", f"a {_named(key)} key is not text")

@@ -22,6 +22,8 @@ from g6.epistemic_integrity import adjudicator
 from g6.invariants import ERROR_CODE_PATTERN
 
 from .assurance import canonical_json, sha256
+from .codes import FrozenMap
+from .codes import _is_type
 from .codes import (EVIDENCE_CONTESTED, EVIDENCE_NOT_RECONCILED, EVIDENCE_REFUTED, EVIDENCE_UNDETERMINED, MADE_FIELDS,
                     STATES, affirmed, only_fields, refusal, settled)
 from .snapshot import publish, record_data, fresh, issue, record, snapshot
@@ -83,9 +85,9 @@ def findings_state(report: Mapping[str, Any]) -> str:
     ``qualified-draft``."""
     findings = report.get("scoped_findings", ())
     unadmitted = report.get("unadmitted_evidence_refs", ())
-    unsettled = (not isinstance(findings, (list, tuple)) or not findings
-                 or not isinstance(unadmitted, (list, tuple)) or len(unadmitted) > 0
-                 or any(not isinstance(f, dict) or f.get("completion_state") != STATES[0] for f in findings))
+    unsettled = (not _is_type(type(findings), (list, tuple,)) or not findings
+                 or not _is_type(type(unadmitted), (list, tuple,)) or len(unadmitted) > 0
+                 or any(not _is_type(type(f), (dict, FrozenMap,)) or f.get("completion_state") != STATES[0] for f in findings))
     return STATES[unsettled]  # STATES is (qualified-draft, blocked-escalated)
 
 

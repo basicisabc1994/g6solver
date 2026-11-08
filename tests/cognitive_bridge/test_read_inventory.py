@@ -95,6 +95,10 @@ READERS = {"number", "text", "plain", "snapshot", "fresh", "returned", "affirmed
 #: The functions that read a value the bridge did not construct raw, by design: the boundary and the readers it hands a
 #: value to. Their parameters are what reads a value, so they are not listed as values read.
 READER_FUNCTIONS = {
+    ("codes.py", "_is_type"): "exact kind identity only; challenged by the metaclass inventory",
+    ("codes.py", "_type_mro"): "actual class MRO through the built-in descriptor, without metaclass overrides",
+    ("codes.py", "_has_member"): "exact type MRO and namespace through type's built-in descriptors",
+    ("codes.py", "_code"): "the exact type MRO's call member; challenged by the metaclass inventory",
     ("snapshot.py", "*"): "the boundary: each function reads a caller's or a collaborator's value once, to take it as "
                           "plain data, or reads a maker by its identity",
     ("codes.py", "_read_as"): "the boundary's leaf test: a value's exact type",
@@ -424,7 +428,7 @@ def test_the_format_check_reads_its_value_by_exact_type_first():
     fn = next(f for name, f in _functions(ast.parse((PACKAGE / "codes.py").read_text(encoding="utf-8")))
               if name == "result_faults")
     body = [s for s in fn.body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
-    assert isinstance(body[0], ast.If) and ast.unparse(body[0].test) == "type(result) not in OBJECTS"
+    assert isinstance(body[0], ast.If) and ast.unparse(body[0].test) == "not _is_type(type(result), OBJECTS)"
 
     class Forged(dict):
         def get(self, key, default=None):

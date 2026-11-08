@@ -103,7 +103,7 @@ def _state_fields() -> tuple[str, ...]:
             return default
 
     said_state(_Asked())
-    labelled = [name for name, field in ReliabilityEnvelope.model_fields.items() if field.annotation == ReliabilityLabel]
+    labelled = [name for name, field in ReliabilityEnvelope.model_fields.items() if field.annotation is ReliabilityLabel]
     return tuple(dict.fromkeys([*asked, *labelled]))
 
 
@@ -176,6 +176,35 @@ class NotPlainData(TypeError, ValueError):
         return self.args[0]
 
 
+def _is_type(kind: type, kinds: tuple[type, ...]) -> bool:
+    """Admit an exact kind by identity, without hashing or comparing a caller's type."""
+    return any(kind is allowed for allowed in kinds)
+
+
+def _type_mro(kind: Any) -> tuple[type, ...]:
+    """The actual MRO of a class, through the built-in descriptor; never a metaclass override."""
+    return type.__dict__["__mro__"].__get__(kind)
+
+
+def _has_member(value: Any, name: str) -> bool:
+    """Read a capability's exact type MRO without asking its metaclass to resolve it."""
+    missing = object()
+    for base in _type_mro(type(value)):
+        members = type.__dict__["__dict__"].__get__(base)
+        # Only native text keys may participate in the lookup. A foreign key must
+        # not choose a capability through its hash or equality methods either.
+        if any(type(key) is not str for key in members):
+            return False
+        if members.get(name, missing) is not missing:
+            return True
+    return False
+
+
+def _code(value: Any) -> bool:
+    """Executable capability, by the exact type's call slot in its actual MRO."""
+    return _has_member(value, "__call__")
+
+
 def _read_as(value: Any) -> str:
     """How a value is read as JSON data, by its exact type: the one leaf test, which :func:`claims` and the boundary's
     walk (``snapshot.plain``) both ask. ``"text"`` (a leaf, and the only kind an object's key may be), ``"leaf"`` (the
@@ -183,7 +212,7 @@ def _read_as(value: Any) -> str:
     writes out), ``"object"`` (:data:`OBJECTS`), ``"array"`` (:data:`ARRAYS`), or ``""``: anything else,
     which is not JSON data, so it is refused."""
     kind = type(value)
-    if kind in LEAVES:
+    if _is_type(kind, LEAVES):
         if kind is LEAVES[0]:
             return "text"
         if kind is float and not math.isfinite(value):
@@ -198,7 +227,7 @@ def _read_as(value: Any) -> str:
             except ValueError:
                 return ""
         return "leaf"
-    return "object" if kind in OBJECTS else "array" if kind in ARRAYS else ""
+    return "object" if _is_type(kind, OBJECTS) else "array" if _is_type(kind, ARRAYS) else ""
 
 
 def _named(value: Any) -> str:
@@ -231,7 +260,7 @@ def _claims_nothing(card: Mapping[str, Any] | None) -> bool:
     """Whether ``card`` is a G6 warning card that claims nothing of its own: a mapping with no field G6 reads as a
     state and ``verified`` false (INV-ENV-2), that reads as a ``WarningCard`` (:func:`_read_card`) with a stable
     ``G6_E_*`` code."""
-    if type(card) not in OBJECTS or set(card) & set(STATE_FIELDS) or card.get(VERIFIED_FLAG, False) is not False:
+    if not _is_type(type(card), OBJECTS) or set(card) & set(STATE_FIELDS) or card.get(VERIFIED_FLAG, False) is not False:
         return False
     try:
         read = _read_card(card)
@@ -247,7 +276,7 @@ def result_faults(result: Mapping[str, Any]) -> list[str]:
     card for that code that claims nothing; a ``qualified-draft`` one claims nothing more: a card, if it has one,
     claims nothing. Any other ``completion_state`` is not one of the bridge's states. ``result`` is read by its exact
     type (:data:`OBJECTS`): a mapping subclass, whose own methods would answer the reads, is not a result."""
-    if type(result) not in OBJECTS:
+    if not _is_type(type(result), OBJECTS):
         return [f"a {_named(result)} is not a result: a JSON object"]
     state, card = result.get("completion_state"), result.get("warning_card")
     if state not in STATES:
