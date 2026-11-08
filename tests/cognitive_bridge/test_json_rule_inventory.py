@@ -228,6 +228,7 @@ def nested(depth, leaf="leaf"):
 REFUSED = {
     "nan": lambda: math.nan, "inf": lambda: math.inf, "-inf": lambda: -math.inf,
     "integer-longer-than-the-encoder-writes": lambda: 10 ** 5000,
+    "integer-outside-finite-float-range": lambda: 10 ** 400,
     "str-subclass": lambda: _Text("x"), "int-subclass": lambda: _Int(1), "float-subclass": lambda: _Float(1.5),
     "dict-subclass": lambda: _Dict(k="x"), "list-subclass": lambda: _List(["x"]),
     "tuple-subclass": lambda: _Tuple(("x",)), "FrozenMap-subclass": lambda: _Frozen({"k": "x"}),
@@ -243,7 +244,7 @@ REFUSED = {
 TAKEN = {
     "text": lambda: "x", "int": lambda: 3, "float": lambda: 2.5, "negative-zero": lambda: -0.0, "bool": lambda: True,
     "None": lambda: None, "dict": lambda: {"k": "x"}, "list": lambda: ["x", 1], "tuple": lambda: ("x", 1),
-    "FrozenMap": lambda: FrozenMap({"k": ("x",)}), "empty": lambda: {}, "integer-the-encoder-writes": lambda: 10 ** 4000,
+    "FrozenMap": lambda: FrozenMap({"k": ("x",)}), "empty": lambda: {}, "integer-in-finite-float-range": lambda: 10 ** 300,
     "at-the-depth-bound": lambda: nested(DEPTH - 1),
 }
 

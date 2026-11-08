@@ -24,6 +24,7 @@ fields (``snapshot.plain``), sharing nothing with them. :func:`only_fields` adds
 from __future__ import annotations
 
 import math
+import sys
 from collections.abc import Mapping
 from typing import Any
 
@@ -178,8 +179,8 @@ class NotPlainData(TypeError, ValueError):
 def _read_as(value: Any) -> str:
     """How a value is read as JSON data, by its exact type: the one leaf test, which :func:`claims` and the boundary's
     walk (``snapshot.plain``) both ask. ``"text"`` (a leaf, and the only kind an object's key may be), ``"leaf"`` (the
-    rest of :data:`LEAVES`: a number only when the bridge's encoder writes it, so finite, and an integer no longer than
-    the encoder writes out), ``"object"`` (:data:`OBJECTS`), ``"array"`` (:data:`ARRAYS`), or ``""``: anything else,
+    rest of :data:`LEAVES`: a number only within the finite Python float magnitude, and an integer no longer than the encoder
+    writes out), ``"object"`` (:data:`OBJECTS`), ``"array"`` (:data:`ARRAYS`), or ``""``: anything else,
     which is not JSON data, so it is refused."""
     kind = type(value)
     if kind in LEAVES:
@@ -189,6 +190,10 @@ def _read_as(value: Any) -> str:
             return ""
         if kind is int:
             try:
+                # Every numeric consumer can represent this range. Keep the integer itself unchanged;
+                # this is a range check, shared by the encoder and all boundary readers.
+                if not -sys.float_info.max <= value <= sys.float_info.max:
+                    return ""
                 int.__repr__(value)  # what the encoder writes an integer by; past Python's digit limit it raises
             except ValueError:
                 return ""
@@ -207,7 +212,7 @@ def _unread(value: Any) -> str:
     if kind is float:
         return "a number that is not finite"
     if kind is int:
-        return "an integer longer than the bridge's encoder writes"
+        return "an integer outside the finite float range or the bridge's encoder limit"
     return f"a {_named(value)}"
 
 

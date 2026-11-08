@@ -6,7 +6,7 @@ artefact mappings, checker manifests, identities, selections) is converted once,
 into plain JSON data: objects with text keys, arrays, text, finite numbers, booleans and null. The conversion is a
 round trip through the bridge's own canonical encoder (:func:`canonical_json`), and it refuses (:class:`NotPlainData`,
 under ``codes.INPUT``, with the path) anything that does not survive it unchanged: a key that is not text, a subclass of
-any type, a set, any other object, a number that is not finite, an integer longer than the encoder writes. Its walk
+any type, a set, any other object, a number outside the finite float range, an integer longer than the encoder writes. Its walk
 reads each value's kind by the leaf test the claim rule reads by (``codes._read_as``), so the two never disagree on
 what is JSON data. An identity is text (:func:`text`), and a number is an integer or a float (:func:`number`): read
 raw by the boundary first, then by its rule, and never converted from another kind
@@ -165,7 +165,7 @@ def text(value: Any, *, where: str, _depth: int = 0) -> str:
 
 def number(value: Any, *, where: str, _depth: int = 0) -> int | float:
     """A number as the bridge takes it: an integer or a float, by exact type, as the boundary takes it (:func:`plain`,
-    standing at ``_depth``: finite, and an integer the encoder writes); anything else (a flag, text, null, a set,
+    standing at ``_depth``: within the finite float magnitude, and an integer the encoder writes); anything else (a flag, text, null, a set,
     bytes) is refused, never converted. The one number rule: every place the bridge reads a caller's or a
     collaborator's value as a number reads it through this (``tests/cognitive_bridge/test_conversion_inventory.py``)."""
     if type(value) not in (int, float):

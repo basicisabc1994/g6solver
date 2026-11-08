@@ -4,9 +4,10 @@
 No arbitrary model or tool code crosses this door. Agentic calls and in-memory
 ML predictor adapters are deliberately Python-only dependency injection.
 
-The block's arguments are read once, by the bridge's boundary, in their raw form (:func:`_arguments`:
-``snapshot.plain`` of what they are as given, an exact :class:`CognitiveInput` by its fields as the caller set them and
-never serialized first), and everything after reads only that read: at G6's door,
+The block's outer argument mapping is copied with Python's mapping unpacking on every entry path, matching the bound
+registry. Nested values keep their original kinds. The boundary reads that copy once (:func:`_arguments`:
+``snapshot.plain``, an exact :class:`CognitiveInput` by its fields as the caller set them and never serialized first),
+and everything after reads only that read: at G6's door,
 :meth:`CognitiveBridgeBlock.screen_raw` takes the read and :meth:`CognitiveBridgeBlock.infer` answers from it, refusing
 the call when the typed input G6's registry then rebuilt from the caller's objects no longer reads the same; from Python,
 ``infer`` reads what it is handed. The models are strict: no field is converted from another kind (a flag, numeric text
@@ -134,10 +135,23 @@ def _fields(model: BaseModel) -> dict[str, Any]:
 
 def _as_given(given: Any) -> Any:
     """What the block was handed, as the boundary reads it: an exact :class:`CognitiveInput` as its fields, each exact
-    nested model (:data:`_NESTED`, alone or an item of an exact list) as its fields, and anything else as it is, for the
-    boundary to take or refuse. Nothing is serialized: ``model_dump`` turned a dict subclass into a dict before the
-    boundary saw it (review 3 of PR #8's second follow-up, finding 2)."""
+    nested model (:data:`_NESTED`, alone or an item of an exact list) as its fields. An outer mapping is copied by the
+    same unpacking as the bound registry; only its entries are input data, not its class or extra attributes. Nested
+    values are never converted here. Nothing is serialized: ``model_dump`` erased nested mapping subclasses before
+    the boundary saw them (review 3 of PR #8's second follow-up, finding 2)."""
     if type(given) is not CognitiveInput:
+        if hasattr(given, "keys"):
+            try:
+                if given:
+                    return {**given}
+                # The registry treats falsy params as absent, then adds its separate routing op.
+                # A direct request carries that routing op inside its mapping instead.
+                try:
+                    return {"op": given["op"]}
+                except KeyError:
+                    return {}
+            except (TypeError, ValueError, KeyError) as exc:
+                raise NotPlainData("the block's arguments", f"cannot copy the outer mapping: {exc}") from None
         return given
     out = {}
     for name, item in _fields(given).items():
@@ -150,8 +164,8 @@ def _as_given(given: Any) -> Any:
 
 def _arguments(given: Any) -> Any:
     """The block's arguments as the boundary reads them, once, raw, before any model does: ``snapshot.plain`` of what
-    they are as given (:func:`_as_given`), a new value that shares nothing with the caller's, or :class:`NotPlainData`
-    (a NaN, a set, bytes, a subclass, any other object)."""
+    they are as given (:func:`_as_given`), after the common outer mapping copy: a new value that shares nothing with
+    the caller's, or :class:`NotPlainData` (a NaN, a set, bytes, a nested subclass, any other object)."""
     return plain(_as_given(given), where="the block's arguments")
 
 
