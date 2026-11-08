@@ -106,6 +106,24 @@ class CycleLog:
         self._chain.append(kind, str(len(self._rows()) + 1), body)
         return body
 
+    def _write_record(self, kind: str, body: dict, record_id: str | None = None) -> str:
+        """Write the identity with the row, returning it only after the append. A caller may allocate it once before
+        writing, so a lost return after an append can still be read back by that identity. Bodies keep their meaning."""
+        ident = uuid4().hex if record_id is None else record_id
+        self._chain.append(kind, ident, body)
+        return ident
+
+    def latest_id(self, kind: str) -> str:
+        """The latest row's stored identity, including the numeric identities of older logs; no row is empty text."""
+        return next((e["id"] for e in reversed(self._chain.entries()) if e["kind"] == kind), "")
+
+    def record(self, kind: str, ident: str) -> dict | None:
+        """Read precisely the row written with this identity. An absent row is distinct from unreadable records."""
+        try:
+            return self._chain.get(kind, ident)
+        except KeyError:
+            return None
+
     def cycles(self) -> list[dict]:
         return [body for kind, body in self._rows() if kind == "cycle"]
 
@@ -125,8 +143,8 @@ class CycleLog:
         found = [c for c in self.cycles() if any(c.get(name) for name in FINDINGS)]
         return [{"tick": c["tick"], **{name: c[name] for name in FINDINGS}} for c in found[-last:]]
 
-    def enrol(self, by: str, frozen: Mapping[str, str], **fields: Any) -> dict:
-        return self._append("enrolled", {"by": by, "frozen": dict(frozen), **fields})
+    def enrol(self, by: str, frozen: Mapping[str, str], *, record_id: str | None = None, **fields: Any) -> str:
+        return self._write_record("enrolled", {"by": by, "frozen": dict(frozen), **fields}, record_id)
 
     def enrolments(self) -> list[dict]:
         return [body for kind, body in self._rows() if kind == "enrolled"]
@@ -144,15 +162,17 @@ class CycleLog:
     def demote(self, by: str, **fields: Any) -> dict:
         return self._append("demoted", {"by": by, **fields})
 
-    def start(self, by: str, **fields: Any) -> dict:
-        return self._append("started", {"by": by, **fields})
+    def start(self, by: str, *, record_id: str | None = None, **fields: Any) -> str:
+        if "enrolment" in fields and "enrolment_id" not in fields:
+            fields["enrolment_id"] = enrolment_id(self)
+        return self._write_record("started", {"by": by, **fields}, record_id)
 
     def started(self) -> dict | None:
         """The last time a person started the runner."""
         return next((body for kind, body in reversed(self._rows()) if kind == "started"), None)
 
-    def stop(self, reason: str, **fields: Any) -> dict:
-        return self._append("stopped", {"reason": reason, **fields})
+    def stop(self, reason: str, *, record_id: str | None = None, **fields: Any) -> str:
+        return self._write_record("stopped", {"reason": reason, **fields}, record_id)
 
     def limit(self, provider: str, until: str) -> dict:
         return self._append("limited", {"provider": provider, "until": until})
@@ -251,14 +271,19 @@ def what_stops(root: str | Path, start: Mapping[str, Any] | None) -> tuple[str, 
 
 
 def enrolment_digest(log: CycleLog | None) -> str:
-    """The enrolment on record, by digest, or the digest of none: the one rule for which enrolment a start's dialog shows
-    and records (``g6.mcp.improve``), a person's act binds (``g6.metaharness.runner.person_terms``) and a runner holds to."""
+    """The contents of the enrolment on record, or the digest of none. This persisted digest keeps its meaning;
+    ``enrolment_id`` distinguishes separate writes of identical contents."""
     return digest_of((log.enrolled() if log is not None else None) or {})
+
+
+def enrolment_id(log: CycleLog | None) -> str:
+    """The stored identity of the current enrolment. Its body digest remains a digest of its contents alone."""
+    return log.latest_id("enrolled") if log is not None else ""
 
 
 def enrolment_changed(root: str | Path, start: Mapping[str, Any] | None) -> str:
     """Why the enrolment on record is not the one ``start`` agreed to, or ``""``. A start records the enrolment its dialog
-    showed, by digest, and a runner on it runs only that one: a later enrolment, a changed one or none at all ends the
+    showed, by stored identity and body digest, and runs only that one: a later enrolment, a changed one or none ends the
     start as a stop does, until a person starts it again. A start that names none is the runner's gate's to refuse
     (``g6.metaharness.runner``), and records that do not read are their own rule's: no tick runs on them. It writes
     nothing, so the status can show it."""
@@ -266,10 +291,11 @@ def enrolment_changed(root: str | Path, start: Mapping[str, Any] | None) -> str:
     if agreed is None:
         return ""
     try:
-        now = enrolment_digest(CycleLog(path) if path.is_file() else None)
+        log = CycleLog(path) if path.is_file() else None
+        now = enrolment_digest(log)
     except (OSError, LedgerError):
         return ""
-    return "" if now == agreed else NOT_THE_AGREED_ENROLMENT
+    return "" if now == agreed and (start or {}).get("enrolment_id") == enrolment_id(log) else NOT_THE_AGREED_ENROLMENT
 
 
 def _unreadable(exc: Exception) -> str:
@@ -354,7 +380,7 @@ def refused_requests(root: str | Path) -> set[str]:
     return {found for found in (line.split(" ", 1)[0] for line in text.splitlines()) if len(found) == DIGEST_LENGTH}
 
 
-def record_stop(root: str | Path, reason: str, *, at: str) -> None:
+def record_stop(root: str | Path, reason: str, *, at: str, record_id: str | None = None) -> str | None:
     """Note a stop in the records, so a start no longer stands once the ``STOP`` file is gone. The file is what stops the
     loop, so this never gets in its way: records that do not read, or a tick holding them, leave the note for later, and
     a runner notes its own stop as it ends."""
@@ -365,7 +391,7 @@ def record_stop(root: str | Path, reason: str, *, at: str) -> None:
         with Coordination(Path(root) / ".tick").mutex(wait=0):
             log = CycleLog(path)
             if log.start_in_force():
-                log.stop(reason, at=at)
+                return log.stop(reason, at=at, record_id=record_id)
     except (OSError, LedgerError, WorkspaceRefused):
         pass
 
@@ -412,6 +438,6 @@ def heartbeat(root: str | Path) -> dict | None:
 
 __all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "ENROLMENT_CHANGED", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES",
            "NOTHING_TO_TRY", "REFUSED_FILE", "RUNNER_LOCK", "STOPS_FILE", "STOP_FILE", "TICK_BUDGET_SPENT", "ask_to_stop",
-           "beat", "enrolment_changed", "enrolment_digest", "file_digest", "heartbeat", "note_refusal", "record_stop",
+           "beat", "enrolment_changed", "enrolment_digest", "enrolment_id", "file_digest", "heartbeat", "note_refusal", "record_stop",
            "refused_requests", "stop_standing", "runner_alive", "runner_lock", "stop_reason", "stop_to_lift", "stops_asked",
            "what_stops"]

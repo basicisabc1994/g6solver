@@ -471,6 +471,7 @@ CHANGERS = {
     _another_enrolment, "Enrolment on record": _another_enrolment, "Paused because": _another_pause, "Cycles on record":
     _another_cycle, "Its change": _another_demotion, "Measured": _another_demotion,
     **{label: _another_demotion for label in runner.RESTORING.values()}, "Chain of generations": _another_demotion,
+    "Enrolment record id": _another_enrolment,
     "Use": _other_use, improve.STOPS_COUNTED: _another_stop, "Stops the last start counted": _another_start,
     "Stop now in place": _stop_lifted_by_hand, **{label: _another_stop for label in improve.LIFTS.values()},
 }
@@ -504,15 +505,15 @@ def _binding(rig, act: str) -> dict:
 #: Each part each act's binding holds once its folder is ready (``_ready``), but for the ``FIXED`` ones: what the tests
 #: below move. The inventory reads each binding from the code and fails on a part not here.
 HOLDS = {"enrol": ("Python file", "Python file SHA-256", "Runs on", runner.G6_SHA, runner.G6_FOLDER, runner.SETTINGS_DIGEST,
-                   "It replaces the enrolment by", "Enrolment it replaces"),
+                   "It replaces the enrolment by", "Enrolment it replaces", "Enrolment record id"),
          "resume": ("Python file", "Python file SHA-256", "Runs on", runner.G6_SHA, runner.G6_FOLDER, runner.SETTINGS_DIGEST,
-                    "Domain", "Enrolled by", "Enrolment on record", "Paused because", "Cycles on record"),
+                    "Domain", "Enrolled by", "Enrolment on record", "Paused because", "Cycles on record", "Enrolment record id"),
          "demote": ("Python file", "Python file SHA-256", "Runs on", runner.G6_SHA, runner.G6_FOLDER, runner.SETTINGS_DIGEST,
                     "Domain", "Enrolled by", "Enrolment on record", "Its change", "Measured", *runner.RESTORING.values(),
-                    "Chain of generations"),
+                    "Chain of generations", "Enrolment record id"),
          "start": ("Domain", "Python file", "Python file SHA-256", "Enrolled by", improve.ENROLMENT, "Use", "Runs on",
                    improve.SETTINGS_DIGEST, improve.STOPS_COUNTED, "Stops the last start counted", "Stop now in place",
-                   *improve.LIFTS.values(), "Paused because")}
+                   *improve.LIFTS.values(), "Paused because", "Enrolment record id")}
 
 
 def test_every_act_a_person_agrees_to_from_a_binding_is_listed():
@@ -1095,7 +1096,7 @@ AROUND = {
     ("mcp/improve.py", "_spawn",
      "return subprocess.Popen([*_interpreter(settings), '-m', 'g6.metaharness.loop'"): ("after", HANDED),
     ("mcp/improve.py", "_start_as_recorded",
-     "except (OSError, LedgerError) around found = _start_on_record(root, at)"): ("after", ITSELF),
+     "except (OSError, LedgerError) around found = _start_on_record(root, ident)"): ("after", ITSELF),
     ("mcp/improve.py", "_start_as_recorded", "return {**reply, 'recorded': None}"): ("after", ITSELF),
     ("mcp/improve.py", "_start_as_recorded",
      "return _restated(reply, f\"{reply['message']}; the folder's records do not rea"): ("after", ITSELF),
@@ -1122,7 +1123,7 @@ AROUND = {
     ("mcp/improve.py", "start", "return cannot"): ("before", ""),
     ("mcp/improve.py", "start",
      "except (OSError, LedgerError, WorkspaceRefused, ValueError) around now = _terms(root)"): ("after", "_start_as_recorded"),
-    ("mcp/improve.py", "start", "return _start_as_recorded(root, at, reply) if at else reply"): ("after", "_start_as_recorded"),
+    ("mcp/improve.py", "start", "return _start_as_recorded(root, ident, reply) if ident else reply"): ("after", "_start_as_recorded"),
     ("mcp/improve.py", "stop", "return _not_a_loop(root)"): ("before", ""),
     ("mcp/improve.py", "stop", "except OSError around why = ask_to_stop(root, reason)"): ("after", "_stop_on_record"),
     ("mcp/improve.py", "stop",
@@ -1168,7 +1169,7 @@ AROUND = {
     ("metaharness/runner.py", "as_recorded",
      "return _blocked(CANNOT_RECORD, f\"the act could not be recorded ({why}): read "): ("after", ITSELF),
     ("metaharness/runner.py", "on_record",
-     "return {'the enrolment': row.get('by') == who and (row.get('frozen') or {}).g"): ("after", ITSELF),
+     "return {'the enrolment': row is not None}"): ("after", ITSELF),
     ("metaharness/runner.py", "on_record",
      "return {'the lifted pause': log is not None and (not held(log))}"): ("after", ITSELF),
     ("metaharness/runner.py", "on_record",
@@ -1278,15 +1279,15 @@ def test_no_sentence_after_an_acts_process_started_says_what_is_on_record_but_a_
 #: Each part a reply after an act names in ``recorded``, by the function that reads it back, with the reads its value
 #: must come through. One set any other way, from a constant or a rule that does not read that part, fails.
 PARTS = {
-    ("metaharness/runner.py", "on_record", "the enrolment"): {"log.enrolled", "enrolment_digest"},
+    ("metaharness/runner.py", "on_record", "the enrolment"): {"log.record"},
     ("metaharness/runner.py", "on_record", "the lifted pause"): {"held"},
     ("metaharness/runner.py", "on_record", "the demotion"): {"lineage"},
     ("metaharness/runner.py", "on_record", "its note in the constraint log"): {"log._rows"},
     ("mcp/improve.py", "_start_on_record", "the start"): {"log.started", "log.start_in_force", "stop_standing"},
-    ("mcp/improve.py", "_stop_on_record", "the stop"): {"_stop_file_size", "stop_standing", "log._rows"},
+    ("mcp/improve.py", "_stop_on_record", "the stop"): {"_stop_file_size", "stop_standing", "log.record"},
     ("mcp/improve.py", "_stop_on_record", "its line in the STOP file"): {"_stop_file_size"},
     ("mcp/improve.py", "_stop_on_record", "its count in stops.log"): {"stops_asked"},
-    ("mcp/improve.py", "_stop_on_record", "its note in the constraint log"): {"log._rows"},
+    ("mcp/improve.py", "_stop_on_record", "its note in the constraint log"): {"log.record"},
 }
 #: What a reply's ``recorded`` may be set from: a read-back's result, or ``None``, which is not known.
 _SOURCES = {"on_record", "_on_record", "_start_on_record", "_stop_on_record", "_read_back"}

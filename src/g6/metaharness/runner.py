@@ -60,6 +60,7 @@ from dataclasses import asdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import g6
 from g6.core import stop
@@ -93,6 +94,7 @@ from g6.self_maintenance.envelope import (
     CycleLog,
     beat,
     enrolment_digest,
+    enrolment_id,
     file_digest,
     record_stop,
     runner_alive,
@@ -370,7 +372,7 @@ def _admission(root: Path, settings: dict[str, Any]) -> tuple[str, str, str]:
     if start.get("settings") != digest_of(settings):
         return SETTINGS_CHANGED, (f"{SETTINGS_FILE} is not what the person agreed to at the last start, so nothing ran: "
                                   "g6_improve_start shows them what stands now"), ""
-    if start.get("enrolment") != enrolment_digest(log):
+    if start.get("enrolment") != enrolment_digest(log) or start.get("enrolment_id") != enrolment_id(log):
         return ENROLMENT_CHANGED, (NOT_THE_AGREED_ENROLMENT if "enrolment" in start else
                                    "the last start names no enrolment, so it covers none and nothing ran: g6_improve_start "
                                    f"shows the person the enrolment that stands ({ENROLMENT_CHANGED})"), ""
@@ -514,7 +516,7 @@ def person_terms(act_name: str, root: Path, *, generation: int | None = None) ->
     domain_file = settings.get("domain_file")
     bound: dict[str, Any] = {"Folder": str(root), "Python file": str(domain_file), FILE_SHA: file_digest(domain_file),
                              "Runs on": settings.get("python") or "the Python of this server", **_g6_terms(settings),
-                             SETTINGS_DIGEST: digest_of(settings)}
+                             SETTINGS_DIGEST: digest_of(settings), "Enrolment record id": enrolment_id(log)}
     if enrolled is not None and act_name == "enrol":
         bound |= {"It replaces the enrolment by": f"{enrolled['by']} (the name they gave)",
                   "Enrolment it replaces": enrolment_digest(log)}
@@ -563,7 +565,7 @@ ACT_PARTS = {"enrol": ("the enrolment",), "resume": ("the lifted pause",),
 def on_record(request: Mapping[str, Any]) -> dict[str, bool]:
     """Each part of a person's act (``ACT_PARTS``) with whether its folder holds it now, read back from the folder's
     files afresh, as a reopened folder shows it, and never from which of the act's steps raised. The enrolment is a
-    new one by the person, freezing the bytes the binding names; the lifted pause, a folder nothing holds; the demotion,
+    row written with the request's unique id; the lifted pause, a folder nothing holds; the demotion,
     a head one generation on from the one named, the person's rollback; its note, the constraint log's row of that
     demotion, by the person, at that generation. ``OSError``, ``ValueError`` or ``LedgerError`` when the request names no
     act on a folder or the records do not read, and then nothing can say what of the act counts."""
@@ -574,9 +576,8 @@ def on_record(request: Mapping[str, Any]) -> dict[str, bool]:
     path = root / CYCLE_LOG
     log = CycleLog(path) if path.is_file() else None
     if name == "enrol":
-        row = (log.enrolled() if log is not None else None) or {}
-        return {"the enrolment": row.get("by") == who and (row.get("frozen") or {}).get("domain_file") == bound.get(FILE_SHA)
-                and enrolment_digest(log) != bound.get("Enrolment it replaces")}
+        row = log.record("enrolled", str(request.get("record_id", ""))) if log is not None else None
+        return {"the enrolment": row is not None}
     if name == "resume":
         return {"the lifted pause": log is not None and not held(log)}
     after = int(request.get("generation") or 0) + 1
@@ -644,6 +645,8 @@ def act(request: dict[str, Any]) -> dict[str, Any]:
     check and not a boundary: a process with the owner's rights can reach this code, and an editor that takes no lock
     can still write the folder's files between the last read and the write."""
     name, root, who = request["act"], Path(request["folder"]).resolve(), str(request["who"])
+    if name == "enrol":
+        request.setdefault("record_id", uuid4().hex)
     generation, bound = request.get("generation"), request["binding"]
     again = "Call the tool again: the person reads what stands now, in the client's dialog."
 
@@ -679,7 +682,7 @@ def act(request: dict[str, Any]) -> dict[str, Any]:
                                                      f"{exc}"[:500]))
             try:
                 if name == "enrol":
-                    reply = loop.enrol(who, last_check=unchanged)
+                    reply = loop.enrol(who, last_check=unchanged, record_id=request["record_id"])
                 elif name == "resume":
                     reply = loop.resume(who, last_check=unchanged)
                 else:

@@ -520,6 +520,7 @@ START_HOLDS = {
     "Python file SHA-256": "frozen by the enrolment, held by Enrolment on record: the run opens only its bytes",
     "Enrolled by": "part of the enrolment, held by Enrolment on record",
     "Enrolment on record": "recorded as enrolment: runner._admission and stop_standing refuse any other",
+    "Enrolment record id": "recorded as enrolment_id: separate writes of identical contents end earlier starts",
     "Use": "part of the settings, held by Settings digest",
     "Runs on": "part of the settings, held by Settings digest",
     "Settings digest": "recorded as settings: runner._admission refuses any other",
@@ -546,6 +547,7 @@ def test_every_field_a_start_binds_is_held_by_the_runner_it_spawns(rig):
     kept = {k.arg: ast.unparse(k.value) for k in recorded.keywords if k.arg}
     assert kept["enrolment"] == "bound[ENROLMENT]" and kept["settings"] == "bound[SETTINGS_DIGEST]"
     assert kept["stops"] == "bound[STOPS_COUNTED]"
+    assert kept["enrolment_id"] == "bound['Enrolment record id']"
     admission = ast.unparse(binding._functions(SRC / "metaharness" / "runner.py")["_admission"])
-    for name in ("stops", "settings", "enrolment"):
+    for name in ("stops", "settings", "enrolment", "enrolment_id"):
         assert f"start.get({name!r})" in admission, f"the runner does not hold the start to its {name}"

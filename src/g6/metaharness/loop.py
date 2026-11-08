@@ -842,7 +842,8 @@ class ShadowLoop:
         return must_stop(self.log)
 
     @_exclusive
-    def enrol(self, confirmed_by: str, *, last_check: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None
+    def enrol(self, confirmed_by: str, *, last_check: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
+              record_id: str | None = None
               ) -> dict[str, Any]:
         """A person confirms what judges this domain, as it stands now. It is the one step the loop cannot do.
         ``last_check``: given what would be frozen, under the folder's lock and before anything is written, the refusal
@@ -871,7 +872,7 @@ class ShadowLoop:
         if confirmed["completion_state"] == "blocked-escalated":
             return confirmed
         exposed = (*self.cut.tune, *self.cut.selection)
-        self.log.enrol(who, frozen, domain=self.domain.name, at=self._now().isoformat(),
+        self.log.enrol(who, frozen, record_id=record_id, domain=self.domain.name, at=self._now().isoformat(),
                        seen=sorted(c.case_id for c in exposed),
                        seen_inputs=sorted(c.ref()["input_sha256"] for c in exposed),
                        seen_groups=_groups(exposed),

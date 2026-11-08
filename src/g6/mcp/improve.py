@@ -48,6 +48,7 @@ import time
 from datetime import datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
+from uuid import uuid4
 
 import g6
 from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, is_allowed
@@ -66,6 +67,7 @@ from g6.self_maintenance.envelope import (
     CycleLog,
     ask_to_stop,
     enrolment_digest,
+    enrolment_id,
     file_digest,
     heartbeat,
     record_stop,
@@ -232,6 +234,7 @@ def _terms(root: Path) -> dict[str, Any]:
         "Folder": str(root), "Domain": str(enrolled.get("domain", "its domain")),
         "Python file": str(settings.get("domain_file")), "Python file SHA-256": file_digest(settings.get("domain_file")),
         "Enrolled by": f"{enrolled.get('by')} (the name they gave)", ENROLMENT: enrolment_digest(log),
+        "Enrolment record id": enrolment_id(log),
         "Use": "; ".join(f"{w.provider}: {w.allowance:g} a week{' (an estimate)' if w.estimated else ''}, keeping "
                          f"{w.reserve_share:.0%} for you until the week's last day" for w in windows_from(settings)),
         "Runs on": python or ("the Python of this server, so any edit to that install stops its ticks until a person "
@@ -374,7 +377,7 @@ def start(root: Path, who: str, shown: dict[str, Any] | None = None) -> dict:
     cannot = _cannot_start(root)
     if cannot is not None:
         return cannot
-    at = ""
+    ident = ""
     try:
         now = _terms(root)
         if shown is not None and now != shown:
@@ -386,9 +389,11 @@ def start(root: Path, who: str, shown: dict[str, Any] | None = None) -> dict:
             settings = read_settings(root)
             if digest_of(settings) != bound[SETTINGS_DIGEST] or (shown is not None and _terms(root) != bound):
                 return _not_what_was_read(root)
-            at = datetime.now().astimezone().isoformat()   # names this start's record, which is read back by it
-            CycleLog(root / CYCLE_LOG).start(who, at=at, settings=bound[SETTINGS_DIGEST], stops=bound[STOPS_COUNTED],
+            ident = uuid4().hex                         # the row's identity, separate from its time
+            CycleLog(root / CYCLE_LOG).start(who, record_id=ident, at=datetime.now().astimezone().isoformat(),
+                                             settings=bound[SETTINGS_DIGEST], stops=bound[STOPS_COUNTED],
                                              enrolment=bound[ENROLMENT],
+                                             enrolment_id=bound["Enrolment record id"],
                                              **{name: bound[label] for name, label in LIFTS.items() if label in bound})
         why = stop_reason(root)
         if why:
@@ -401,7 +406,7 @@ def start(root: Path, who: str, shown: dict[str, Any] | None = None) -> dict:
     except (OSError, LedgerError, WorkspaceRefused, ValueError) as exc:
         reply = _blocked(START_FAILED, f"the runner could not be started: {type(exc).__name__}: {exc}"[:500],
                          running=False, folder=str(root))
-    return _start_as_recorded(root, at, reply) if at else reply
+    return _start_as_recorded(root, ident, reply) if ident else reply
 
 
 #: The keys every reply's envelope carries, beside what a reply adds of its own.
@@ -415,22 +420,23 @@ def _restated(reply: dict[str, Any], message: str, next_action: str, **more: Any
                      **own, **more)
 
 
-def _start_on_record(root: Path, at: str) -> dict[str, bool]:
-    """Whether the start written ``at`` stands, read back afresh from the folder: the start on record is that one, it is in
+def _start_on_record(root: Path, ident: str) -> dict[str, bool]:
+    """Whether the start written with ``ident`` stands, read back afresh: the start on record is that one, it is in
     force, and nothing stops it by G6's own rule (``stop_standing``). ``OSError`` or ``LedgerError`` when the records do
     not read."""
     log = _log(root)
     started = (log.started() if log is not None else None) or {}
-    ours = log is not None and log.start_in_force() and started.get("at") == at
+    ours = (log is not None and log.start_in_force() and log.record("started", ident) is not None
+            and log.latest_id("started") == ident)
     return {"the start": bool(ours) and not stop_standing(root, started)}
 
 
-def _start_as_recorded(root: Path, at: str, reply: dict[str, Any]) -> dict[str, Any]:
+def _start_as_recorded(root: Path, ident: str, reply: dict[str, Any]) -> dict[str, Any]:
     """The reply to a start that tried to record, as the folder holds it now: ``recorded`` says whether the start written
-    ``at`` stands, read back (``_start_on_record``). One on record whose runner did not start says so, since the next
+    with ``ident`` stands, read back (``_start_on_record``). One on record whose runner did not start says so, since the next
     runner on the folder carries on it until a stop; records that do not read say that, and claim nothing either way."""
     try:
-        found = _start_on_record(root, at)
+        found = _start_on_record(root, ident)
     except (OSError, LedgerError) as exc:
         if reply["warning_card"]["code"] == STARTED:
             return {**reply, "recorded": None}
@@ -561,6 +567,8 @@ def _run_act(root: Path, settings: dict[str, Any], request: dict[str, Any]) -> d
     (``_read_back``). Any failure once it started (the pipe, its output, the wait, a timeout) goes to the one reader
     (``_read_act``), which reads the folder back as it does for a reply it does not recognise."""
     hidden = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+    if request.get("act") == "enrol":
+        request.setdefault("record_id", uuid4().hex)
     command = [*_interpreter(settings), "-c", "import sys; from g6.metaharness.runner import act_main; sys.exit(act_main())"]
     try:
         process = subprocess.Popen(command, cwd=root, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -730,10 +738,10 @@ def _stop_before(root: Path) -> dict[str, Any]:
     return {"size": _stop_file_size(root), "stops": stops_asked(root), "started": started, "records": records}
 
 
-def _stop_on_record(root: Path, before: dict[str, Any], at: str) -> dict[str, bool | None]:
+def _stop_on_record(root: Path, before: dict[str, Any], ident: str) -> dict[str, bool | None]:
     """What the folder holds of a stop, read back afresh against what stood ``before`` it (``_stop_before``), each part on
     its own: its line in the ``STOP`` file (the file grew), its count in ``stops.log`` (the count grew), and its note in
-    the constraint log (the row this stop wrote, which ``at`` names). The stop itself stands when its line does, or when
+    the constraint log (the row written with ``ident``). The stop itself stands when its line does, or when
     the start it found in force no longer stands, by G6's own rule for what stops a start (``stop_standing``), which a
     runner reads too. A part that cannot be read, now or before, is not known (``None``), never on record or not. It
     does not raise."""
@@ -743,7 +751,7 @@ def _stop_on_record(root: Path, before: dict[str, Any], at: str) -> dict[str, bo
     started = before["started"]
     try:
         log = _log(root)
-        note = log is not None and any(kind == "stopped" and body.get("at") == at for kind, body in log._rows())
+        note = log is not None and log.record("stopped", ident) is not None
         in_force = log is not None and log.start_in_force()
         ended = True if note else (started is not None and (not in_force or bool(stop_standing(root, started)))
                                    if before["records"] else None)          # its note is written only to end a start
@@ -762,7 +770,7 @@ def stop(folder: str, reason: str = "") -> dict:
     if not _is_a_loop(root):
         return _not_a_loop(root)
     before = _stop_before(root)
-    at = datetime.now().astimezone().isoformat()   # names this stop's note, which is read back by it
+    ident = uuid4().hex                         # the row's identity, separate from its time
     failed, why = None, ""
     try:
         why = ask_to_stop(root, reason)
@@ -770,9 +778,9 @@ def stop(folder: str, reason: str = "") -> dict:
         failed = exc
     why = why or (stop_standing(root, before["started"]) if before["started"] else "")
     if why:
-        record_stop(root, why, at=at)
+        record_stop(root, why, at=datetime.now().astimezone().isoformat(), record_id=ident)
     running = runner_alive(root)
-    found = _stop_on_record(root, before, at)
+    found = _stop_on_record(root, before, ident)
     raised = f"; writing it raised {type(failed).__name__}: {failed}" if failed is not None else ""
     if found["the stop"] is not True:
         return _blocked(STOP_FAILED, f"the stop is not known to stand; {_record_said(found)}{raised}"[:400],
