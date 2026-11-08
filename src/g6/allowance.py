@@ -155,6 +155,7 @@ def report(*, now: datetime | None = None, refresh: bool = True,
     failure = ""
     settings = Settings()
     try:
+        cache = store.Store(root)  # capture generations before reading any settings
         path = root / "settings.json"
         if path.exists():
             with path.open("rb") as stream:
@@ -178,16 +179,20 @@ def report(*, now: datetime | None = None, refresh: bool = True,
                 raise ValueError("invalid semantics")
             if any(value not in SEMANTICS for value in declarations.values()):
                 raise ValueError("invalid semantics")
-        cache = store.Store(root)
     except Exception:
         failure = "settings or cache unavailable"
         profiles, semantics, cache = {}, {}, None
     readings = {}
+    generations = {}
     for provider in ("codex", "claude"):
         profile = profiles.get(provider, "unbound")
         try:
+            if cache is not None:
+                generation = cache.bind(provider, profiles.get(provider))
+                if generation is None:
+                    raise ValueError("binding changed during settings read")
+                generations[provider] = generation
             if cache is not None and provider in profiles:
-                cache.bind(provider, profile)
                 reading = cache.load(provider, profile, at)
                 reading = replace(reading, windows=tuple(replace(w, semantics=semantics.get(provider, {}).get(
                     w.identity, "unknown")) for w in reading.windows))
@@ -196,10 +201,10 @@ def report(*, now: datetime | None = None, refresh: bool = True,
             readings[provider] = advise(reading, at, settings, useful_parallel_work=useful_parallel_work)
         except Exception:
             readings[provider] = advise(Reading(provider, profile, (), at, failure="cache unavailable"), at, settings)
-    if refresh and cache is not None and "codex" in profiles:
+    if refresh and cache is not None and "codex" in profiles and "codex" in generations:
         try:
             store.start_refresh(cache, profiles["codex"], at, settings.refresh_seconds,
-                                semantics=semantics.get("codex", {}))
+                                semantics=semantics.get("codex", {}), generation=generations["codex"])
         except Exception:
             readings["codex"]["refresh_failure"] = "refresh unavailable"
     return {"schema_version": SCHEMA_VERSION, "providers": readings, "claude_support": CLAUDE_SUPPORT,

@@ -51,7 +51,13 @@ class Store:
             db.execute("CREATE TABLE IF NOT EXISTS refreshes (provider TEXT, profile TEXT, at TEXT NOT NULL, "
                        "PRIMARY KEY(provider, profile))")
             db.execute("CREATE TABLE IF NOT EXISTS notes (name TEXT PRIMARY KEY, digest TEXT NOT NULL)")
-            db.execute("CREATE TABLE IF NOT EXISTS bindings (provider TEXT PRIMARY KEY, profile TEXT NOT NULL)")
+            db.execute("CREATE TABLE IF NOT EXISTS bindings (provider TEXT PRIMARY KEY, profile TEXT NOT NULL, "
+                       "generation INTEGER NOT NULL DEFAULT 1)")
+            if "generation" not in {row[1] for row in db.execute("PRAGMA table_info(bindings)")}:
+                db.execute("ALTER TABLE bindings ADD COLUMN generation INTEGER NOT NULL DEFAULT 1")
+            # A report constructs its Store before reading settings. Its rebind
+            # compares this snapshot, never an epoch obtained after that read.
+            self._bindings = self._snapshot(db)
 
     @contextmanager
     def _db(self):
@@ -66,19 +72,50 @@ class Store:
         finally:
             db.close()
 
-    def bind(self, provider: str, profile: str) -> None:
-        """Owner configuration changed: invalidate old observations, even on switching back."""
+    @staticmethod
+    def _snapshot(db: sqlite3.Connection) -> dict[str, tuple[str, int]]:
+        result = {}
+        for provider, profile, generation in db.execute("SELECT provider,profile,generation FROM bindings"):
+            if profile != "":
+                profile_token(profile)
+            if type(generation) is not int or generation < 1:
+                raise ValueError("invalid binding generation")
+            result[provider] = (profile, generation)
+        return result
+
+    def generation(self, provider: str, profile: str) -> int:
+        """Capture at work start; zero is an as-yet absent binding, -1 a mismatch."""
         profile_token(profile)
         with self._db() as db:
-            old = db.execute("SELECT profile FROM bindings WHERE provider=?", (provider,)).fetchone()
-            if old is not None and old[0] != profile:
+            binding = self._snapshot(db).get(provider)
+            return 0 if binding is None else binding[1] if binding[0] == profile else -1
+
+    def bind(self, provider: str, profile: str | None) -> int | None:
+        """Compare and set the settings snapshot; removal also invalidates work."""
+        token = "" if profile is None else profile_token(profile)
+        expected = self._bindings.get(provider)
+        with self._db() as db:
+            old = self._snapshot(db).get(provider)
+            if old != expected:
+                return None
+            generation = old[1] if old is not None else 0
+            if old is None or old[0] != token:
+                generation += 1
                 db.execute("DELETE FROM readings WHERE provider=?", (provider,))
                 db.execute("DELETE FROM refreshes WHERE provider=?", (provider,))
-            db.execute("INSERT OR REPLACE INTO bindings VALUES (?,?)", (provider, profile))
+                db.execute("INSERT OR REPLACE INTO bindings (provider,profile,generation) VALUES (?,?,?)",
+                           (provider, token, generation))
+        self._bindings[provider] = (token, generation)
+        return generation
 
-    def _save(self, db: sqlite3.Connection, reading: Reading) -> bool:
-        binding = db.execute("SELECT profile FROM bindings WHERE provider=?", (reading.provider,)).fetchone()
-        if binding is not None and binding[0] != reading.profile:
+    def _matches(self, db: sqlite3.Connection, provider: str, profile: str, generation: int) -> bool:
+        if type(generation) is not int or generation < 0:
+            return False
+        binding = self._snapshot(db).get(provider)
+        return generation == 0 if binding is None else binding == (profile, generation)
+
+    def _save(self, db: sqlite3.Connection, reading: Reading, generation: int) -> bool:
+        if not self._matches(db, reading.provider, reading.profile, generation):
             return False
         row = db.execute("SELECT body FROM readings WHERE provider=? AND profile=?",
                          (reading.provider, reading.profile)).fetchone()
@@ -114,9 +151,10 @@ class Store:
         db.execute("INSERT OR REPLACE INTO readings VALUES (?,?,?)", (result.provider, result.profile, _dump(result)))
         return True
 
-    def save(self, reading: Reading) -> None:
+    def save(self, reading: Reading, *, generation: int | None = None) -> None:
+        generation = self.generation(reading.provider, reading.profile) if generation is None else generation
         with self._db() as db:
-            self._save(db, reading)
+            self._save(db, reading, generation)
 
     def load(self, provider: str, profile: str, now: datetime | None = None) -> Reading:
         profile_token(profile)
@@ -138,11 +176,12 @@ class Store:
             return Reading(provider, profile, (), now or utc_now(), failure="cache unavailable")
         return Reading(provider, profile, (), now or utc_now(), failure="no observation")
 
-    def claim_refresh(self, provider: str, profile: str, now: datetime, interval: float) -> bool:
+    def claim_refresh(self, provider: str, profile: str, now: datetime, interval: float, *,
+                      generation: int | None = None) -> bool:
         profile_token(profile)
+        generation = self.generation(provider, profile) if generation is None else generation
         with self._db() as db:
-            binding = db.execute("SELECT profile FROM bindings WHERE provider=?", (provider,)).fetchone()
-            if binding is not None and binding[0] != profile:
+            if not self._matches(db, provider, profile, generation):
                 return False
             row = db.execute("SELECT at FROM refreshes WHERE provider=? AND profile=?", (provider, profile)).fetchone()
             if row is not None and (now - datetime.fromisoformat(row[0])).total_seconds() < interval:
@@ -154,20 +193,21 @@ class Store:
         digest = hashlib.sha256(profile_token(profile).encode()).hexdigest()
         return self.root / "captures" / digest / ("claude-" + CLAUDE_VERSION + ".json")
 
-    def observe_claude(self, payload: Any, profile: str, now: datetime, version: str) -> None:
+    def observe_claude(self, payload: Any, profile: str, now: datetime, version: str, *,
+                       generation: int | None = None) -> None:
+        generation = self.generation("claude", profile) if generation is None else generation
         reading = claude_reading(payload, profile, now, version=version)
         block = capture_block(payload) if version == CLAUDE_VERSION else {}
         with self._db() as db:
-            if not self._save(db, reading) or not block:
+            if not self._save(db, reading, generation) or not block:
                 return
         # Commit the observation before publishing its optional capture. A crash
         # after file replacement must not roll back a reading already captured.
         # Publication has a separate bounded writer transaction, with a binding
         # and ordering recheck, so a late worker cannot publish after a switch.
         with self._db() as db:
-            binding = db.execute("SELECT profile FROM bindings WHERE provider=?", ("claude",)).fetchone()
             row = db.execute("SELECT body FROM readings WHERE provider=? AND profile=?", ("claude", profile)).fetchone()
-            if binding is not None and binding[0] != profile or row is None:
+            if not self._matches(db, "claude", profile, generation) or row is None:
                 return
             if _load(row[0]).attempted_at > now:
                 return
@@ -190,6 +230,8 @@ class Store:
 
     def changed_note(self, name: str, digest: str) -> bool:
         with self._db() as db:
+            if self._snapshot(db) != self._bindings:
+                return False
             row = db.execute("SELECT digest FROM notes WHERE name=?", (name,)).fetchone()
             if row is not None and row[0] == digest:
                 return False
@@ -198,8 +240,9 @@ class Store:
 
 
 def refresh_codex(store: Store, profile: str, *, now: Callable[[], datetime] = utc_now,
-                  semantics: Mapping[str, str] | None = None) -> None:
+                  semantics: Mapping[str, str] | None = None, generation: int | None = None) -> None:
     """Only the existing raw reader; never its weekly meter adapter or ledger."""
+    generation = store.generation("codex", profile) if generation is None else generation
     from g6.self_maintenance.usage import codex_limits
 
     try:
@@ -207,13 +250,15 @@ def refresh_codex(store: Store, profile: str, *, now: Callable[[], datetime] = u
         reading = codex_reading(payload, profile, now(), semantics=semantics)
     except Exception:
         reading = Reading("codex", profile, (), now(), failure="read failed")
-    store.save(reading)
+    store.save(reading, generation=generation)
 
 
 def start_refresh(store: Store, profile: str, now: datetime, interval: float,
-                  semantics: Mapping[str, str] | None = None) -> None:
+                  semantics: Mapping[str, str] | None = None, *, generation: int | None = None) -> None:
     # The transport has a 30s timeout and joins its I/O thread for at most 5s.
     # An expired lease allows recovery without relying on process-local handles.
-    if store.claim_refresh("codex", profile, now, max(35, interval)):
-        threading.Thread(target=refresh_codex, args=(store, profile), kwargs={"semantics": semantics},
+    generation = store.generation("codex", profile) if generation is None else generation
+    if store.claim_refresh("codex", profile, now, max(35, interval), generation=generation):
+        threading.Thread(target=refresh_codex, args=(store, profile),
+                         kwargs={"semantics": semantics, "generation": generation},
                          daemon=True, name="g6-allowance-refresh").start()

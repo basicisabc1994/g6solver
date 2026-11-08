@@ -22,6 +22,7 @@ All fields below are optional. With no profile token a provider is unknown and i
 
 Profile tokens are local random labels, never account or session identifiers. Rotate the token on every sign-in or
 profile change; a different token cannot read the old token's cache. The raw readers do not establish account continuity.
+Tokens accept one through 80 ASCII letters, digits, underscores and hyphens. Other characters are refused.
 Therefore production advice never recommends increased optional spending from an unobserved sign-in binding. The pure
 policy can evaluate an explicitly established binding; the shipped adapters do not claim to establish one.
 
@@ -30,6 +31,9 @@ checked the provider's contract can declare `fixed`, `rolling` or `replenishing`
 `semantics.codex` or `semantics.claude`; only `fixed` weekly windows get a pace. Codex identities include
 `default.primary` and `default.secondary`; extra limit sets get a digest rather than a raw label. Claude identities
 are `five_hour` and `seven_day`. Every reported window stays separate, including malformed windows and extra limit sets.
+Foreign label digests accept escaped surrogates without strict UTF-8 failure. Wrong-typed labels use a separate digest
+domain; any remaining identity ambiguity retains separate failed windows and their known quota constraints. A malformed
+label or metadata field cannot discard a valid sibling window or turn that field's failure into a new good time.
 
 For fixed weekly elapsed fraction f, target is f and ceiling is min(1, 7f/5), capped at 1 minus reserve until f reaches
 6/7. Five-hour windows get no weekly pacing rule. Near-full is inclusive at 95%, tolerance is inclusive at five percentage
@@ -51,6 +55,11 @@ the old good observation time. The cache keeps last-attempt and last-good times 
 under a transaction. Late older writes cannot replace newer observations. Equal-time conflicts retain the stronger
 constraint and become unknown; an equal-time capture never replaces the first capture. Profile changes also fence late
 writers and invalidate old rows, including when switching back. A failed provider or missing window is visible.
+Each binding has a durable, increasing generation. Reports capture binding state before reading settings and compare
+that generation when applying them; an older report cannot restore an obsolete binding. Removing a configured profile
+also retires its generation. Workers capture their generation before input/provider reads and carry it through refresh
+claims, observation writes and capture publication. Every such write checks it under the same SQLite writer transaction.
+The internal database migration retains existing columns and adds the generation; public reading fields stay unchanged.
 The normalised observation commits before the optional capture is published. An interrupted publication can leave an
 older or absent capture; it cannot roll back the committed observation or freshen the old capture's time.
 
@@ -86,9 +95,16 @@ settings mechanism. Rollback restores that property's saved value and preserves 
 prints a complete JSON object so the exact property, padding and quoting can be inspected before applying it.
 No new G6 CLI command is added.
 
-The wrapper forwards the original stdin bytes exactly once to the original command, preserving its stdout, stderr and
-exit code. Its observer is a separate process with a 0.75-second budget; parse/write failure or timeout cannot corrupt
-the renderer. A renderer failure does not suppress a valid observation. A recursion marker prevents nested wrappers.
+Review 1 found three wrapper failures: accepted leading-hyphen tokens can stop renderer startup, a blocked observer
+stdin write can exceed the intended deadline, and PowerShell invocation can change an explicit renderer exit code.
+Repair 1 did not clear the wrapper root's full timing inventory, so that root was reverted as a unit. These three
+failures remain open; the forwarding and timing statements below describe the intended contract, not an established
+guarantee for these cases. The generation and window-isolation repairs remain applied.
+
+The wrapper is intended to forward the original stdin bytes exactly once to the original command, preserving its stdout,
+stderr and exit code, with a separate observer process under a 0.75-second budget. A renderer failure does not suppress a
+valid observation. A recursion marker prevents nested wrappers. Binding-generation lookup is bounded and an unavailable
+binding drops the observation; this does not repair the existing observer IPC deadline.
 The observer has a 1 MiB parsing limit. It persists only allow-listed numbers and checked reset times from `rate_limits`,
 plus the read time in its capture file. It never stores account or session identifiers, repository content or raw input.
 

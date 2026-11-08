@@ -16,6 +16,7 @@ import os
 import shlex
 import subprocess
 import sys
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +27,7 @@ from g6.allowance import CLAUDE_SUPPORT, CLAUDE_VERSION, profile_token, utc_now
 MAX_INPUT = 1024 * 1024
 OBSERVER_SECONDS = .75
 _ACTIVE = "G6_ALLOWANCE_WRAPPER_ACTIVE"
+_GENERATION_SECONDS = OBSERVER_SECONDS
 
 
 def decode_renderer(token: str) -> str:
@@ -88,11 +90,38 @@ def rollback(current_config: Mapping[str, Any], original_config: Mapping[str, An
     return restored
 
 
-def observe_payload(payload: bytes, profile: str, version: str, *, observed_at: datetime | None = None) -> bool:
+def _observation_generation(profile: str, *, timeout: float = _GENERATION_SECONDS) -> int:
+    try:
+        root = Path(os.environ.get("G6_HOME", str(Path.home() / ".g6"))) / "allowances"
+    except Exception:
+        return -1
+    result = [-1]
+    done = threading.Event()
+
+    def read() -> None:
+        try:
+            from g6._allowance.store import Store
+
+            result[0] = Store(root).generation("claude", profile)
+        except Exception:
+            pass
+        finally:
+            done.set()
+
+    try:
+        threading.Thread(target=read, daemon=True, name="g6-allowance-binding").start()
+        return result[0] if done.wait(max(0, timeout)) else -1
+    except Exception:
+        return -1
+
+
+def observe_payload(payload: bytes, profile: str, version: str, *, observed_at: datetime | None = None,
+                    generation: int | None = None) -> bool:
     from g6._allowance.readers import capture_block
     from g6._allowance.store import Store
 
     at = observed_at or utc_now()
+    generation = _observation_generation(profile) if generation is None else generation
     data = None
     try:
         if len(payload) <= MAX_INPUT:
@@ -101,20 +130,22 @@ def observe_payload(payload: bytes, profile: str, version: str, *, observed_at: 
         pass
     try:
         root = Path(os.environ.get("G6_HOME", str(Path.home() / ".g6"))) / "allowances"
-        Store(root).observe_claude(data, profile, at, version)
+        Store(root).observe_claude(data, profile, at, version, generation=generation)
         return bool(capture_block(data)) and version == CLAUDE_VERSION
     except Exception:
         return False
 
 
 def observe_in_worker(payload: bytes, profile: str, version: str, *, timeout: float = OBSERVER_SECONDS,
-                      observed_at: datetime | None = None) -> bool:
+                      observed_at: datetime | None = None, generation: int | None = None) -> bool:
     """Bound parsing, lock waiting and writing together, independently of rendering."""
     process = None
     try:
+        generation = _observation_generation(profile, timeout=min(_GENERATION_SECONDS, max(0, timeout))) \
+            if generation is None else generation
         at = observed_at or utc_now()
         args = [sys.executable, "-P", "-m", "g6._allowance.statusline", "--observe", "--profile", profile,
-                "--version", version, "--observed-at", at.isoformat()]
+                "--version", version, "--observed-at", at.isoformat(), "--generation", str(generation)]
         process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         process.communicate(input=payload, timeout=timeout)
         return process.returncode == 0
@@ -148,18 +179,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--version", default=CLAUDE_VERSION)
     parser.add_argument("--observe", action="store_true")
     parser.add_argument("--observed-at")
+    parser.add_argument("--generation", type=int)
     args = parser.parse_args(argv)
     if not args.observe and os.environ.get(_ACTIVE):
         return 2  # recursive wrappers are unsupported; never launch another copy
+    generation = _observation_generation(args.profile) if args.generation is None else args.generation
     payload = sys.stdin.buffer.read()
     at = datetime.fromisoformat(args.observed_at) if args.observed_at else utc_now()
     if args.observe:
-        return 0 if observe_payload(payload, args.profile, args.version, observed_at=at) else 1
+        return 0 if observe_payload(payload, args.profile, args.version, observed_at=at, generation=generation) else 1
     if not args.renderer:
         return 2
     command = decode_renderer(args.renderer)
     return run_wrapper(payload, shell_argv(args.shell, command),
-                       observer=lambda raw: observe_in_worker(raw, args.profile, args.version, observed_at=at))
+                       observer=lambda raw: observe_in_worker(raw, args.profile, args.version, observed_at=at,
+                                                             generation=generation))
 
 
 if __name__ == "__main__":
