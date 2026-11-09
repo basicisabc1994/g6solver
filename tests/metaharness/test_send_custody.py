@@ -41,10 +41,10 @@ def test_first_host_failure_releases_its_reply_record(monkeypatch, kind):
 
     monkeypatch.setattr(host_models, "_run", failed_run)
     meter = _Requests()
-    for _ in range(3):
+    for index in range(3):
         # A wrapper can construct a fresh supported host caller for each request.
         with pytest.raises(LLMError, match="fake host timed out"):
-            _Counted(kind(), meter).complete("system", "user")
+            _Counted(kind(), meter).complete("system", f"user {index}")
     assert len(launches) == 3
     assert not meter.in_flight
     assert not usage._SENT, "ended first host calls retain their send records and gates"
@@ -228,7 +228,7 @@ def test_every_class_or_send_replacement_is_at_construction_and_every_capture_us
     source = (root / "self_maintenance/usage.py").read_text(encoding="utf-8")
     capture = ast.unparse(next(node for node in ast.parse(source).body
                               if isinstance(node, ast.FunctionDef) and node.name == "_host_input"))
-    assert "st_dev" in capture and "st_ino" in capture
+    assert "_file_identity(stream)" in capture
     assert "by_file" in capture
     assert "os.fstat" in capture and "stream.read()" in capture
     hashes = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)
@@ -260,7 +260,8 @@ def test_each_host_outcome_releases_the_record_and_private_copies(tmp_path, monk
         if outcome is not None:
             raise outcome
         (files / "last_message.txt").write_text("answer", encoding="utf-8")
-        return 0, json.dumps({"type": "result", "result": "answer"}), ""
+        result = {"type": "turn.completed"} if "exec" in argv else {"type": "result", "result": "answer"}
+        return 0, json.dumps(result), ""
 
     monkeypatch.setattr(host_models, "_run", run)
     meter = _Requests()
@@ -283,6 +284,7 @@ def test_a_stop_between_private_copy_writes_releases_every_owned_resource(tmp_pa
     first, second = tmp_path / "first", tmp_path / "second"
     first.write_bytes(b"first")
     second.write_bytes(b"second")
+    (tmp_path / "files").mkdir()
     meter = _Requests()
     call = _Call(object(), meter, meter.generation, lambda: True)
     meter.begin(call)
@@ -317,6 +319,8 @@ def test_cleanup_releases_every_gate_even_when_a_gate_raises(tmp_path):
                 raise BaseException("interrupted cleanup")
 
     before = set(usage._SENT)
+    (tmp_path / "first").mkdir()
+    (tmp_path / "second").mkdir()
     with usage.telling_stops(Gate()), pytest.raises(BaseException, match="interrupted cleanup"):
         with usage.WatchedClaude()._invocation():
             usage._sending(object(), ["fake"], "first", tmp_path / "first")
@@ -357,6 +361,7 @@ def test_an_interruption_between_record_writes_releases_the_record(tmp_path, mon
                 raise failure
 
     monkeypatch.setattr(usage, "_SENT", Records())
+    (tmp_path / "files").mkdir()
     meter = _Requests()
     call = _Call(object(), meter, meter.generation, lambda: True)
     meter.begin(call)

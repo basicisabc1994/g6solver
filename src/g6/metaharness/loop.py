@@ -28,13 +28,14 @@ import importlib.machinery
 import inspect
 import math
 import os
+import stat
 import sys
 import threading
 import time
 import weakref
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from functools import wraps
@@ -95,16 +96,23 @@ from g6.self_maintenance.envelope import (
 )
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
 from g6.self_maintenance.usage import (
+    HOST_UNKNOWN,
     ProviderStop,
     Request,
     Send,
+    _complete_host,
+    _file_identity,
+    _final_path,
+    _host_kind,
+    _native_host_note,
+    _open_input,
+    launch_record,
     limit_ends,
     read_stops,
     plain_text,
     refused_by,
     request_digest,
     telling_stops,
-    watched,
 )
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
@@ -335,16 +343,36 @@ class _Record:
         self.out: dict[str, list[Send]] = {}         # each send let out whose outcome is not yet read, by what it sent
         self.taken: weakref.WeakKeyDictionary[Any, dict[int, int]] = weakref.WeakKeyDictionary()   # meter: tick: places
         self.books: dict[object, _Book] = {}         # each metered call open, by its owner
-        self.folders: dict[str, _Folder] = {}        # what this process alone knows of each loop's folder, by its path
+        self.folders: dict[tuple[int, int], _Folder] = {}  # opened volume/device and file id/inode
+        self.folder_handles = ExitStack()          # retain identities while their latches live, even after unlink
+        self.folder_lock = threading.Lock()
+        weakref.finalize(self, self.folder_handles.close)
 
     def charge(self, meter: Any, generation: int, places: int) -> None:
         held = self.taken.setdefault(meter, {})
         held[generation] = held.get(generation, 0) + places
 
     def folder(self, root: str | Path) -> _Folder:
-        """What this process knows of the loop's folder at ``root``, however its path is spelled: it is known by the path the
-        file system resolves it to, links and short names followed, compared as the platform compares paths."""
-        return self.folders.setdefault(os.path.normcase(os.path.realpath(root)), _Folder())
+        """One latch per opened folder. An unresolved final link is refused; spelling never keys state."""
+        opened = _open_input(Path(root), follow_directory=True)
+        try:
+            handle = opened.__enter__()
+        except OSError:
+            raise LLMError("G6_E_LOOP_INPUT_CHANGED: loop folder cannot be opened safely") from None
+        keep = False
+        try:
+            identity = _file_identity(handle)
+            if not stat.S_ISDIR(os.fstat(handle.fileno()).st_mode):
+                raise LLMError("G6_E_LOOP_INPUT_CHANGED: loop folder is not a directory")
+            with self.folder_lock:
+                if identity not in self.folders:
+                    self.folder_handles.callback(opened.__exit__, None, None, None)
+                    keep = True
+                    self.folders[identity] = _Folder()
+                return self.folders[identity]
+        finally:
+            if not keep:
+                opened.__exit__(None, None, None)
 
 
 _RECORD = _Record()
@@ -390,7 +418,8 @@ class _Requests:
 
     ``halted`` is read first, and read again after any wait, so a stop, or a refusal this process could not keep, refuses
     everything after it. After a refusal nothing more of its tick goes out, and what was refused is never sent again: what
-    ``refused`` holds, every request refused through this meter, and what ``on_record`` reads at every admission, which for a
+    ``refused`` holds, every request refused through this meter, ``unknown`` holds requests whose replies could not be read,
+    and what ``on_record`` reads at every admission, which for a
     loop's meter is the store and what this process holds for the folder (``_Folder``), so another handle of the same loop, in
     this process or another, refuses it too. ``keeping`` is told of each refusal under
     the lock and before any other thread can see it. A send waits while an identical one is out on another thread
@@ -408,6 +437,7 @@ class _Requests:
                  on_record: Callable[[], set[str]] = frozenset) -> None:
         self.now, self.halted, self.barring, self.keeping, self.on_record = now, halted, barring, keeping, on_record
         self.refused: set[str] = set()
+        self.unknown: set[str] = set()
         self._lock, self._settled = _LOCK, _SETTLED
         self.generation = 0
         self._reset(math.inf, None)
@@ -480,7 +510,8 @@ class _Requests:
 
     def admit(self, wait: float = 0.0, *, places: int = 0, generation: int | None = None,
               live: Callable[[], bool] = lambda: True, identity: str | Request | None = None, owner: object = None,
-              identify: Callable[[], str | Request] | None = None, watched: bool = False, sender: Any = None) -> Send | None:
+              identify: Callable[[], str | Request] | None = None, watched: bool = False, sender: Any = None,
+              record: Send | None = None) -> Send | None:
         """The one admission of every send in the process, nested or not, on any thread, a resend included, as one step under
         the one lock. The calls around the send are the metered calls open in this context, and one on this meter from
         ``owner``, ``generation`` and ``live`` where none of those is. Everything it decides on is read inside the lock, for
@@ -503,7 +534,7 @@ class _Requests:
                     stopped = meter.halted()
                     if stopped is None and (identity is not None or identify is not None):
                         try:
-                            barred |= meter.refused | set(meter.on_record())
+                            barred |= meter.refused | meter.unknown | set(meter.on_record())
                         except LedgerError as exc:
                             stopped = _Halted(RECORDS_UNREADABLE, f"what was refused here cannot be read, so nothing could "
                                                                   f"say what must not be sent: {exc}"[:400])
@@ -530,6 +561,15 @@ class _Requests:
                        for call in calls):
                     raise LLMError(f"{TICK_BUDGET_SPENT}: this request came after its call returned, so nothing reserved "
                                    "covers it")
+                if record is not None:
+                    if (request is not record.request or known != record.identity
+                            or not any(held is record for held in _RECORD.out.get(known, ()))
+                            or any(not any(charged is meter and generation == meter.generation
+                                           for charged, generation in record.charged) for meter in meters)):
+                        raise LLMError("G6_E_LOOP_UNNAMED_REQUEST: note does not name its admitted launch")
+                    if known in barred:
+                        raise LLMError(f"{CLASSIFIER_STOP}: this request was refused once, and nothing sends it again")
+                    return record
                 if known is not None and self._out_elsewhere(known, owner, here):
                     self._settled.wait(1.0)               # an identical send is out: what becomes of it decides
                     continue
@@ -699,13 +739,13 @@ class _Requests:
         self.at_a_limit(failed, generation, request)
 
     def at_a_refusal(self, failed: Any, request: Send | str | None, generation: int | None = None) -> None:
-        """Keep what a classifier or a permission refused, whether or not a tick is open, on every meter the send took a place
+        """Keep a provider refusal or an unread-reply hold, whether or not a tick is open, on every meter the send took a place
         on (or around the request, where it has no record), and end each tick it stopped. ``failed``: what the request raised,
         or what a watched caller read before it raised anything. ``request``: the record of the refused send, or its identity,
         never sent again; with neither known, the tick ends and nothing can be barred. ``generation``: the tick the request
         began in; a refusal that comes once that tick has closed ends nothing of the next, though what it refused is still
         never sent again. Under the lock, in order: it is kept (``keeping``), and then, whatever keeping it did, it is in
-        ``refused`` and ends its tick, so no other thread sees it before it is on the disk, and no request goes out between;
+        ``refused`` or ``unknown`` and ends its tick, so no other thread sees it before it is on the disk, and no request goes out between;
         then it leaves for the tick, so nothing is scored and no record of the tick is written before it is kept."""
         said = refused_by(str(failed))
         if not said:
@@ -716,12 +756,15 @@ class _Requests:
             targets = self._targets(request, generation)
             try:
                 for meter, _ in targets:
-                    if identity is not None and identity not in meter.refused:
+                    if identity is not None and identity not in meter.refused | meter.unknown:
                         meter.keeping(identity, said)
             finally:
                 for meter, began in targets:
                     if identity is not None:
-                        meter.refused.add(identity)
+                        if said.startswith(HOST_UNKNOWN + ":"):
+                            meter.unknown.add(identity)
+                        else:
+                            meter.refused.add(identity)
                     if meter.limit != math.inf and (began is None or began == meter.generation):
                         meter.refusal = {"said": _writable(said), "request": identity}
                     ticking = ticking or meter.limit != math.inf
@@ -767,6 +810,7 @@ class _Gate:
         self.requests, self.call = requests, call
 
     def sending(self, identify: Callable[[], Request], sender: Any) -> Send:
+        self.requests.from_sender(sender)          # caller policy runs before the snapshot, never after admission
         return self.requests.admit(places=1, owner=self.call.owner, identify=identify, watched=True, sender=sender)
 
     def told(self, said: str, record: Send | str) -> None:
@@ -873,13 +917,21 @@ class _Counted:
             calls = innermost()
             if calls is None:
                 return                            # a call nested in this one lets this send in, for this meter too
+            record = launch_record()
+            if record is not None:
+                self.requests.admit(identity=record.request, owner=call.owner, places=1, record=record)
+                self.requests.noted(calls)
+                return
+            if _native_host_note(_Counted.complete.__code__):
+                raise LLMError("G6_E_LOOP_UNWATCHED_HOST: native host note has no owned launch record")
             sender, identity = _sender(self)
             self.requests.from_sender(sender)
+            if _host_kind(sender):
+                raise LLMError("G6_E_LOOP_UNWATCHED_HOST: host note has no owned launch record")
             read_stops(sender)
-            if not watched(sender):               # a watched host caller is let in where its program starts
-                if not identity:
-                    self.requests.unnamed()       # nothing names what it sends, so it does not go
-                self.requests.take(identity=identity, owner=call.owner, sender=sender)
+            if not identity:
+                self.requests.unnamed()           # nothing names what it sends, so it does not go
+            self.requests.take(identity=identity, owner=call.owner, sender=sender)
             self.requests.noted(calls)
 
         def resend(wait: float = 0.0) -> None:
@@ -908,7 +960,8 @@ class _Counted:
               _gating_resends(resend, limited),
               telling_stops(_Gate(self.requests, call))):
             try:
-                text = self.inner.complete(system, user, max_tokens=max_tokens)
+                text = (_complete_host(self.inner, system, user, max_tokens=max_tokens) if _host_kind(self.inner)
+                        else self.inner.complete(system, user, max_tokens=max_tokens))
             except LLMError as failed:
                 try:
                     if isinstance(failed, ProviderStop):  # told already, unless the reply was read where the gate is not
@@ -965,8 +1018,47 @@ def _groups(cases: Sequence[SuiteCase]) -> list[str]:
     return sorted({f"group:{c.meta['group']}" for c in cases if c.meta.get("group")})
 
 
+def _folder_place(path: str | Path) -> tuple[tuple[int, int], tuple[str, ...], tuple[tuple[int, int], ...]]:
+    """An opened folder and its opened ancestors, or a future slot beneath that folder.
+
+    Names describe only uncreated entries. Existing folders are compared solely by handle identity, even when their
+    handles expose different drive/share spellings. Parent-name equality terminates a walk; it identifies no object.
+    """
+    where, missing = Path(path), []
+    while True:
+        try:
+            with _open_input(where, follow_directory=True) as stream:
+                identity, final = _file_identity(stream), Path(_final_path(stream))
+                if not stat.S_ISDIR(os.fstat(stream.fileno()).st_mode):
+                    raise LLMError("G6_E_LOOP_INPUT_CHANGED: folder locator names a non-directory")
+            break
+        except FileNotFoundError:
+            missing.append(where.name)
+            parent = where.parent
+            if parent == where:
+                raise LLMError("G6_E_LOOP_INPUT_CHANGED: folder has no opened ancestor") from None
+            where = parent
+        except OSError:
+            raise LLMError("G6_E_LOOP_INPUT_CHANGED: folder ancestry cannot be opened safely") from None
+    ancestors = [identity]
+    while final.parent != final:
+        final = final.parent
+        try:
+            with _open_input(final, follow_directory=True) as stream:
+                ancestors.append(_file_identity(stream))
+        except OSError:
+            raise LLMError("G6_E_LOOP_INPUT_CHANGED: folder ancestry cannot be opened safely") from None
+    # Future slots have no object yet. Preserve the platform's conservative name comparison for those labels only.
+    return identity, tuple(os.path.normcase(part) for part in reversed(missing)), tuple(ancestors)
+
+
 def _overlap(a: str, b: str) -> bool:
-    return a == b or a.startswith(b + os.sep) or b.startswith(a + os.sep)
+    left, left_missing, left_parents = _folder_place(a)
+    right, right_missing, right_parents = _folder_place(b)
+    if left == right:
+        return (left_missing[:len(right_missing)] == right_missing
+                or right_missing[:len(left_missing)] == left_missing)
+    return (not left_missing and left in right_parents) or (not right_missing and right in left_parents)
 
 
 def _in_reach(root: Path, domain: Domain) -> list[str]:
@@ -976,8 +1068,7 @@ def _in_reach(root: Path, domain: Domain) -> list[str]:
     guarded = {"G6's own source": str(_SOURCE),
                **({"the judge's folder": str(source.resolve().parent)} if source is not None else {}),
                **{f"sealed root {i}": r for i, r in enumerate(sealed.vault.roots if sealed is not None else ())}}
-    where = os.path.normcase(str(root))
-    return [name for name, path in guarded.items() if _overlap(where, os.path.normcase(path))]
+    return [name for name, path in guarded.items() if _overlap(str(root), path)]
 
 
 def envelope_sha256() -> str:
@@ -986,8 +1077,10 @@ def envelope_sha256() -> str:
     for a working tree that holds the same bytes today. It is a tripwire, not custody: the code that compares this digest is
     among what it covers, so an edit to that code can skip the comparison. Holding it needs the read-only checkout of design
     6.5."""
+    with _open_input(_SOURCE, follow_directory=True) as stream:
+        install = _file_identity(stream)
     return digest({"code": manifest_sha256({**build_manifest(_SOURCE, patterns=ENVELOPE_PATTERNS), **_importable_caches(_SOURCE)}),
-                   "install": os.path.normcase(str(_SOURCE))})
+                   "install": install})
 
 
 def _importable_caches(root: Path) -> dict[str, str]:

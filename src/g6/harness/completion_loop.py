@@ -365,7 +365,6 @@ class ToolSession(host_models.ClaudeCodeCaller):
     disk. It starts in ``cwd``, may write only there and in ``where``, and runs no hook and no MCP server."""
 
     def run(self, prompt: str, cwd: Path, where: Path, seconds: float) -> str:
-        _start_model_call()
         program = self.locate()
         with host_models._folders() as (_, files):
             (files / "no_mcp_servers.json").write_text(host_models.NO_SERVERS, encoding="utf-8")
@@ -383,6 +382,7 @@ class ToolSession(host_models.ClaudeCodeCaller):
     def _launch(self, argv: list[str], stdin: str, cwd: Path, files: Path, env: dict[str, str],
                 seconds: float) -> tuple[int, str, str]:
         """The one step that starts the program, so a caller that checks what is sent sees it whole, as it leaves."""
+        _start_model_call()
         return host_models._run(argv, stdin, cwd, files, env, seconds, self.program.name)
 
 

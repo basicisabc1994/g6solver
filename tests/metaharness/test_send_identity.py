@@ -336,6 +336,7 @@ def test_every_send_identity_producer_and_reader_is_classified_from_the_code():
         ("metaharness/loop.py", "_Counted.complete", "_raised_by"): "external multi-send errors only",
         ("metaharness/loop.py", "_Counted.complete", "ProviderStop"): "owned single-send error carries its record",
         ("metaharness/loop.py", "_Counted.complete", ".record"): "owned exception's record is read directly",
+        ("metaharness/loop.py", "_Counted.complete.next_request", ".request"): "a note re-admits its exact launch idempotently",
         ("self_maintenance/usage.py", "Request.text", "_text_bytes"): "text encoding made at admission",
         ("self_maintenance/usage.py", "Request.text", "_digest"): "digest of the one text encoding",
         ("self_maintenance/usage.py", "request_digest", "_text_bytes"): "compatibility text encoding",

@@ -970,7 +970,8 @@ def test_ref1_every_way_a_request_can_leave_passes_the_one_check():
 
     assert callers(loop_module, {"admit", "take", "sending"}) == {
         ("_Requests.take", "admit"), ("_Gate.sending", "admit"), ("_Requests.begin", "admit"),
-        ("_Counted.complete.resend", "take"), ("_Counted.complete.next_request", "take"), ("_Resends.append", "take")}
+        ("_Counted.complete.resend", "take"), ("_Counted.complete.next_request", "take"),
+        ("_Counted.complete.next_request", "admit"), ("_Resends.append", "take")}
     assert callers(loop_module, {"begin"}) == {("_call_scope", "begin")}
     assert callers(usage, {"sending", "_sending"}) == {
         ("_sending", "sending"), ("_complete_host", "_sending"), ("WatchedClaude._launch", "_sending")}
@@ -1411,7 +1412,7 @@ def test_ref2_the_request_path_keeps_no_per_send_state_but_each_sends_record():
                    requests._full):
         _, attributes, calls, rebinding = writes(source(method))
         assert rebinding == [] and set(attributes) <= {*requests.TICK_STATE, *record}, (method.__name__, attributes)
-        assert set(calls) <= {"meter.refused.add", "_RECORD.out.setdefault", "_RECORD.out.setdefault(known, []).append",
+        assert set(calls) <= {"meter.refused.add", "meter.unknown.add", "_RECORD.out.setdefault", "_RECORD.out.setdefault(known, []).append",
                               "book.sends.append", "_RECORD.books.pop"}, (method.__name__, calls)
     for method in (loop_module._Gate.sending, loop_module._Gate.told, loop_module._Gate.done):
         _, attributes, calls, _ = writes(source(method))
@@ -1549,10 +1550,10 @@ def test_ref3_2_everything_admission_decides_on_is_read_inside_its_lock():
               and ast.unparse(node.items[0].context_expr) == "self._lock"]
     assert len(locked) == 1
     inside = set(map(id, ast.walk(locked[0])))
-    decides = ("self.halted", "self.refused", "self.refusal", "self.limited", "self.in_flight", "self.sent", "self.limit",
+    decides = ("self.halted", "self.refused", "self.unknown", "self.refusal", "self.limited", "self.in_flight", "self.sent", "self.limit",
                "self.ends", "self.unseen", "self.generation", "identify", "live", "self._out_elsewhere",
                "_ACTIVE", "_RECORD", "_AROUND", "calls", "meters", "meter.halted", "meter.on_record", "meter.refused",
-               "meter.refusal", "meter.limited", "meter.limit", "meter.generation", "meter._full", "call.generation",
+               "meter.unknown", "meter.refusal", "meter.limited", "meter.limit", "meter.generation", "meter._full", "call.generation",
                "call.meter", "call.live")
     outside = [ast.unparse(node) for node in ast.walk(admit) if id(node) not in inside
                and isinstance(node, ast.Attribute | ast.Name) and ast.unparse(node) in decides]

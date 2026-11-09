@@ -170,6 +170,7 @@ def test_send_path_inventory_has_no_unclassified_dispatch_or_acquisition():
         (loop.__name__, "_Resends.append", "take"),
         (loop.__name__, "_call_scope", "begin"),
         (loop.__name__, "_Counted.complete.next_request", "take"),
+        (loop.__name__, "_Counted.complete.next_request", "admit"),
         (loop.__name__, "_Counted.complete.resend", "take"),
     }, acquired
     print("Acquisitions:", sorted(acquired))
@@ -303,15 +304,19 @@ def test_every_path_decision_uses_handle_containment_or_an_owned_destination():
         "Request.handoff": {"Path", "_create_copy", "_final_path", "_inside", "_open_input", "folder.mkdir", "os.link",
                             "os.mkdir", "self._delivery.directory"},
         "Request.host": {"_host_input"}, "request_identity": {"_host_input"},
-        "Request.close": {"shutil.rmtree"},
-        "_Delivery.directory": {"_final_path", "_open_input", "os.mkdir", "path.mkdir"},
+        "Request.close": {"shutil.rmtree", "_open_input"},
+        "_Delivery.directory": {"_final_path", "_open_input", "_inside", "os.mkdir", "path.mkdir"},
         "_create_copy": {"os.open", "path.open"},
         "_host_input": {"Path", "_final_path", "_inside", "_open_input", "_output_place", "os.path.abspath",
                         "os.path.relpath"},
         "_open_input": {"os.open", "api.CreateFileW"},
         "_final_path": {"_windows_files().GetFinalPathNameByHandleW", "os.readlink"},
         "_output_place": {"_final_path", "_inside", "_open_input"},
-        "_sending": {"Path"},
+        "_sending": {"Path", "_open_input"},
+        "_forget": {"Path", "_open_input"},
+        "_note_launch": {"_open_input"},
+        "_output_identity": {"_open_input"},
+        "_check_observation": {"Path"},
     }
     expected = {(scope, call) for scope, calls in classified.items() for call in calls}
     assert sites == expected, f"unclassified: {sites - expected}; missing: {expected - sites}"
@@ -357,7 +362,8 @@ def test_each_customizable_host_hook_finishes_before_admission(tmp_path, monkeyp
     def run(argv, stdin, cwd, files, *args):
         assert admitted and hooks == [method]
         (files / "last_message.txt").write_text("answer", encoding="utf-8")
-        return 0, json.dumps({"type": "result", "result": "answer"}), ""
+        result = {"type": "turn.completed"} if "exec" in argv else {"type": "result", "result": "answer"}
+        return 0, json.dumps(result), ""
 
     monkeypatch.setattr(meter, "admit", admit)
     monkeypatch.setattr(host_models, "_folders", folders)
@@ -390,10 +396,11 @@ def test_native_final_names_normalize_unc_and_extended_forms_without_network(tmp
     assert not usage._inside(name, os.path.normcase("\\\\other\\share\\owned"))
 
 
-def test_repeated_input_arguments_open_once_and_share_one_snapshot(tmp_path, monkeypatch):
+def test_repeated_input_arguments_are_identified_at_each_open_and_share_one_snapshot(tmp_path, monkeypatch):
     path = tmp_path / "input"
     path.write_bytes(b"snapshot")
-    original, opened = usage._open_input, []
+    original, opened, reads = usage._open_input, [], []
+    read_handle = usage._InputHandle.read
 
     def opening(where, **kwargs):
         if where == path:
@@ -401,8 +408,10 @@ def test_repeated_input_arguments_open_once_and_share_one_snapshot(tmp_path, mon
         return original(where, **kwargs)
 
     monkeypatch.setattr(usage, "_open_input", opening)
+    monkeypatch.setattr(usage._InputHandle, "read", lambda stream: (reads.append(stream.fileno()), read_handle(stream))[1])
     request = usage.Request.host(["fake", "--settings", str(path), "--mcp-config", str(path)], "", tmp_path)
-    assert opened == [path]
+    assert opened == [path, path]
+    assert len(reads) == 1
     assert len(request.files) == 1
 
 

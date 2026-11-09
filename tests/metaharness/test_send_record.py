@@ -468,7 +468,8 @@ def test_every_place_a_request_can_leave_reaches_the_one_admission():
     observers = [ast.unparse(keyword.value) for call in _calls_in(loop_tree, "counting") for keyword in call.keywords]
     assert observers == ["next_request"]
     assert {(qualified, name) for qualified, name in _callers(loop_tree, {"admit"})} == {
-        ("_Requests.take", "admit"), ("_Requests.begin", "admit"), ("_Gate.sending", "admit")}
+        ("_Requests.take", "admit"), ("_Requests.begin", "admit"), ("_Gate.sending", "admit"),
+        ("_Counted.complete.next_request", "admit")}
     assert {qualified for qualified, _ in _callers(loop_tree, {"take"})} == {
         "_Counted.complete.next_request", "_Counted.complete.resend", "_Resends.append"}
 
@@ -1427,8 +1428,8 @@ NOTES = {
     ("core/llm.py", "OpenAICompatibleCaller._chat"): "frame",
     ("core/llm.py", "AnthropicCaller._create"): "refused",
     ("core/host_models.py", "_HostCaller.complete"): "program",
-    ("self_maintenance/usage.py", "_complete_host"): "program",
-    ("harness/completion_loop.py", "ToolSession.run"): "program",
+    ("self_maintenance/usage.py", "_note_launch"): "program",
+    ("harness/completion_loop.py", "ToolSession._launch"): "program",
     ("grounding/judges/nli.py", "LocalNLICaller.complete"): "refused",
     ("agents/agent_claude/adapter.py", "ClaudeCodeRuntime.run"): "refused",
     ("agents/agent_codex/adapter.py", "CodexRuntime.run"): "refused",
@@ -1480,8 +1481,8 @@ def test_every_way_a_send_is_known_and_every_sender_the_loop_accepts_names_what_
              "OpenAICompatibleCaller._chat": [llm.OpenAICompatibleCaller("m", base_url="http://model.invalid", api_key=None)],
              "AnthropicCaller._create": [llm.AnthropicCaller(client=object())],
              "_HostCaller.complete": [ClaudeCodeCaller(), CodexCaller(), usage.WatchedClaude(), usage.WatchedCodex()],
-             "_complete_host": [ClaudeCodeCaller(), CodexCaller(), usage.WatchedClaude(), usage.WatchedCodex()],
-             "ToolSession.run": [ToolSession()], "LocalNLICaller.complete": [LocalNLICaller("weights")],
+             "_note_launch": [ClaudeCodeCaller(), CodexCaller(), usage.WatchedClaude(), usage.WatchedCodex()],
+             "ToolSession._launch": [ToolSession()], "LocalNLICaller.complete": [LocalNLICaller("weights")],
              "ClaudeCodeRuntime.run": [ClaudeCodeRuntime()], "CodexRuntime.run": [CodexRuntime()]}
     assert set(kinds) == {qualified for (_, qualified), how in NOTES.items() if how is not None}
     accepted = []
@@ -1517,9 +1518,11 @@ def test_every_way_a_send_is_known_and_every_sender_the_loop_accepts_names_what_
                     return record
 
             started.clear()
-            _Counted(hold(kind), Admits()).complete("system", "asked")
+            meter = Admits()
+            _Counted(hold(kind), meter).complete("system", "asked")
             known = started if isinstance(kind, ClaudeCodeCaller | CodexCaller) else [_request_digest(*given)]
-            assert seen == known and len(known) == 1, (type(kind).__name__, hold)
+            checks = 2 if isinstance(kind, ClaudeCodeCaller | CodexCaller) else 1
+            assert seen == known * checks and len(known) == meter.sent == 1, (type(kind).__name__, hold)
 
 
 class Rewrites(Delegates):

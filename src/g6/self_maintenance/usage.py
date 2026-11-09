@@ -46,7 +46,8 @@ the start of what the request raised: ``MODEL_REFUSED`` (``refused_by``), ``G6_E
   share a snapshot and a private copy. A reply releases its record; the invocation's finally releases unanswered sends.
   The canonical encoded manifest is kept with the request. The bound launcher still encodes OS arguments/stdin and opens
   files itself: exact wire encoding and custody through that open need the bound seam at an issuance window.
-* Claude Code: its JSON result (``host_models._result``). A refusal is ``stop_reason`` ``refusal``, an ``api_error`` of
+* Claude Code: its JSON result (the bound ``host_models._result``); ``_reply_events`` also checks whole-stream readability.
+  A refusal is ``stop_reason`` ``refusal``, an ``api_error`` of
   ``_STOPPED_BY`` or a ``permission_denials`` entry; on an error result, a limit is ``api_error_status`` 429 or ``api_error``
   ``usage_limit_reached``, and capacity is ``api_error_status`` 529 (``overloaded_error``). Read from the text of Claude Code
   2.1.316 and 2.1.318's program, never seen at a real stop. A model's words sit inside the JSON string ``result``, where every
@@ -65,7 +66,12 @@ the start of what the request raised: ``MODEL_REFUSED`` (``refused_by``), ``G6_E
   prints without ``--json``, as the plain caller runs it, is text, and is never read.
 
 A refusal is never sent again, a limit or capacity ends the tick as a wait, and either spends no held-out evaluation and
-scores no case for either arm. What reads as none of these is a failed case, and the tick runs on as it always has.
+scores no case for either arm. A reply that cannot be read whole in the required mode is unknown: its exact request is
+barred before release, using the existing refusal store and failed-write stop. A fully read failed run without a refusal
+remains a failed case, including a nonzero exit without a terminal event.
+The owned launch checks its final observation options, admits its immutable snapshot, and supplies that same record to its
+note for idempotent admission. A host note without that module-owned record authorizes no launch. Instance annotations and
+reply dispatch never decide observation on this path.
 """
 from __future__ import annotations
 
@@ -80,6 +86,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import weakref
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field, replace
@@ -96,6 +103,7 @@ from g6.self_maintenance.pacing import AccountReading, ProviderWindow
 
 REFRESH = timedelta(minutes=15)
 MODEL_REFUSED = "G6_E_MODEL_REFUSED"
+HOST_UNKNOWN = "G6_E_LOOP_HOST_UNKNOWN"
 #: A provider's model at capacity: no answer and no limit of the account, so a wait as a limit with no reset is.
 AT_CAPACITY = "G6_E_MODEL_AT_CAPACITY"
 #: Claude Code's ``api_error`` values that say something other than the model's own reply stopped the turn.
@@ -129,10 +137,16 @@ _TELL: contextvars.ContextVar[Gate | None] = contextvars.ContextVar("g6_loop_sto
 #: Each send's own record and the gate it went through, by the call's own folder, from the step that sends to the reply that
 #: reads its outcome: a call nested inside another, or on another thread, has a folder of its own. Only a send's own outcome
 #: takes its entry out (``_forget``); nothing else evicts one.
-_SENT: dict[str, tuple[Send, Gate | None]] = {}
+_SENT: dict[tuple[int, int], tuple[Send, Gate | None]] = {}
 _SENT_LOCK = threading.Lock()
 #: The folders of the sends a watched call made, so the end of that call releases any whose program never answered.
-_OPEN: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar("g6_open_sends", default=None)
+_OPEN: contextvars.ContextVar[list[tuple[int, int]] | None] = contextvars.ContextVar("g6_open_sends", default=None)
+_LAUNCH_RECORD: contextvars.ContextVar[Send | None] = contextvars.ContextVar("g6_launch_record", default=None)
+# Construction identity survives replacement of an instance dictionary or class. It selects the owned data path,
+# never grants admission. Weak references retain neither a caller nor its dynamically constructed class.
+_HOSTS: dict[int, tuple[weakref.ReferenceType[Any], str]] = {}
+_HOSTS_LOCK = threading.RLock()                  # allocation under this lock can collect a host and re-enter forget
+_NATIVE_HOST_COMPLETE = host_models._HostCaller.complete.__code__
 ASK_TIMEOUT = 30.0
 WEEK_MINUTES = 7 * 24 * 60
 WEEK = timedelta(minutes=WEEK_MINUTES)
@@ -221,9 +235,9 @@ def limit_ends(said: str, now: datetime) -> datetime | None:
 
 
 def refused_by(said: str) -> str:
-    """What stopped a failed request, when a classifier or a permission did, or ``""``. It reads only G6's own code at the
-    start of the text: anything a server or a program said comes after that."""
-    return said[:300] if said.startswith(f"{MODEL_REFUSED}:") else ""
+    """A classifier/permission stop, or the owned launch's unknown-outcome hold, or ``""``. Only G6's own leading codes
+    decide; server text and model-authored content supply no such authority."""
+    return said[:300] if said.startswith((f"{MODEL_REFUSED}:", f"{HOST_UNKNOWN}:")) else ""
 
 
 def _stop_in(result: Mapping[str, Any]) -> str:
@@ -276,25 +290,44 @@ _CODEX_SAID = {"refusal": f"{MODEL_REFUSED}: Codex reported its policy stopped t
                "capacity": f"{AT_CAPACITY}: Codex reported its model at capacity"}
 
 
-def _codex_turn(printed: str) -> tuple[str, bool]:
-    """What Codex's own JSON events (``codex exec --json``) say of the turn: the stop it names, in G6's own words, or ``""``,
-    and whether the turn failed explicitly. The stream is split as Codex writes it, one event to a line ended by ``\\n``: a
-    line separator inside a JSON string is part of that string. Only its own events are read: ``error``, and the ``error`` of
-    ``turn.failed`` (or of a ``turn.completed`` that carries one). A refusal anywhere among them is a refusal, since what was
-    refused is never sent again whatever came after it. Otherwise the last limit or capacity named decides, unless the turn
-    then completed with no error, since then it answered. A ``turn.failed``, or an ``error`` of no kind G6 knows exactly, is a
-    failure whatever follows. A line that is no JSON object, or a field of the wrong kind, says nothing."""
-    refused, said, answered, failed = "", "", False, False
+def _reply_events(printed: str) -> tuple[list[dict[str, Any]], bool]:
+    """Read a whole JSON result or JSONL stream, retaining readable events even when another line is damaged."""
+    text = printed.strip()
+    if not text:
+        return [], True
+    try:
+        whole = json.loads(text)
+    except ValueError:
+        pass
+    else:
+        return ([whole], True) if isinstance(whole, dict) else ([], False)
+    events, readable = [], True
     for line in printed.split("\n"):
-        line = line.strip()
-        if not line.startswith("{"):
+        if not line.strip():
             continue
         try:
             event = json.loads(line)
         except ValueError:
+            readable = False
             continue
-        if not isinstance(event, dict):
-            continue
+        if isinstance(event, dict):
+            events.append(event)
+        else:
+            readable = False
+    return events, readable
+
+
+def _codex_result(events: Sequence[Mapping[str, Any]]) -> tuple[str, bool, bool]:
+    """What Codex's own JSON events (``codex exec --json``) say of the turn: the stop it names, in G6's own words, or ``""``,
+    whether the turn failed explicitly, and whether a completed turn was classified. The stream is split as Codex writes it,
+    one event to a line ended by ``\\n``: a
+    line separator inside a JSON string is part of that string. Only its own events are read: ``error``, and the ``error`` of
+    ``turn.failed`` (or of a ``turn.completed`` that carries one). A refusal anywhere among them is a refusal, since what was
+    refused is never sent again whatever came after it. Otherwise the last limit or capacity named decides, unless the turn
+    then completed with no error, since then it answered. A ``turn.failed``, or an ``error`` of no kind G6 knows exactly, is a
+    failure whatever follows. Parsing and whole-stream readability belong to ``_reply_events``."""
+    refused, said, answered, failed = "", "", False, False
+    for event in events:
         kind = event.get("type")
         error = event if kind == "error" else event.get("error") if kind in ("turn.failed", "turn.completed") else None
         if kind == "turn.completed" and error is None:
@@ -308,7 +341,12 @@ def _codex_turn(printed: str) -> tuple[str, bool]:
             said, answered = _CODEX_SAID[stop], False
         elif kind in ("error", "turn.completed"):
             failed = True
-    return refused or ("" if answered else said), failed
+    return refused or ("" if answered else said), failed, answered and not failed
+
+
+def _codex_turn(printed: str) -> tuple[str, bool]:
+    """Compatibility stop facts from the same parser; only the owned observer decides a reply's class."""
+    return _codex_result(_reply_events(printed)[0])[:2]
 
 
 def codex_said(printed: str) -> str:
@@ -365,11 +403,11 @@ class _HostInput(Sequence[str]):
 
     arguments: tuple[str, ...]
     parts: tuple[tuple[str, ...], ...]
-    files: tuple[tuple[str, bytes], ...]
-    aliases: tuple[tuple[str, str], ...]
+    files: tuple[tuple[tuple[int, int], bytes], ...]
+    aliases: tuple[tuple[int, tuple[int, int]], ...]
     encoded: bytes
     root: str
-    locations: tuple[tuple[str, str], ...]
+    locations: tuple[tuple[int, str], ...]
     root_file: tuple[int, int] | None
 
     def __getitem__(self, index: Any) -> Any:
@@ -381,29 +419,34 @@ class _HostInput(Sequence[str]):
 
 @dataclass
 class _Delivery:
-    folders: list[Path] = field(default_factory=list)
+    folders: list[tuple[Path, tuple[int, int]]] = field(default_factory=list)
     argv: tuple[str, ...] | None = None
     lock: Any = field(default_factory=threading.Lock)
     anchors: ExitStack = field(default_factory=ExitStack)
-    directories: dict[str, _InputHandle] = field(default_factory=dict)
+    directories: set[tuple[int, int]] = field(default_factory=set)
+    base: _InputHandle | None = None
 
     def directory(self, root: Path, relative: Path) -> _InputHandle:
         """Create each copy parent under an opened parent, and pin it before any child is created."""
-        parent = self.directories[""]
+        parent = self.base
         path = root
         for part in relative.parts:
             path = path / part
-            key = str(path)
-            if key not in self.directories:
+            created = False
+            try:
                 if os.name == "nt":
                     path.mkdir()
                 else:
                     os.mkdir(part, dir_fd=parent.fileno())
-                opened = self.anchors.enter_context(_open_input(path, pin=True, parent=parent))
-                if _final_path(opened) != os.path.normcase(str(path)):
-                    raise LLMError("G6_E_LOOP_INPUT_CHANGED: private copy parent changed")
-                self.directories[key] = opened
-            parent = self.directories[key]
+                created = True
+            except FileExistsError:
+                pass
+            opened = self.anchors.enter_context(_open_input(path, pin=True, parent=parent))
+            key = _file_identity(opened)
+            if (not created and key not in self.directories) or not _inside(_final_path(opened), _final_path(self.base)):
+                raise LLMError("G6_E_LOOP_INPUT_CHANGED: private copy parent changed")
+            self.directories.add(key)
+            parent = opened
         return parent
 
 
@@ -420,11 +463,11 @@ class Request:
     user: str = ""
     argv: tuple[str, ...] = ()
     stdin: str = ""
-    files: tuple[tuple[str, bytes], ...] = ()
-    aliases: tuple[tuple[str, str], ...] = ()
+    files: tuple[tuple[tuple[int, int], bytes], ...] = ()
+    aliases: tuple[tuple[int, tuple[int, int]], ...] = ()
     encoded: bytes = b""
     root: str = ""
-    locations: tuple[tuple[str, str], ...] = ()
+    locations: tuple[tuple[int, str], ...] = ()
     root_file: tuple[int, int] | None = None
     _delivery: _Delivery = field(default_factory=_Delivery, compare=False, repr=False)
 
@@ -449,13 +492,14 @@ class Request:
         """
         with self._delivery.lock:
             if self._delivery.argv is None:
-                copies = {}
+                copies: dict[tuple[int, int], tuple[Path, tuple[int, int]]] = {}
                 locations = dict(self.locations)
+                data = dict(self.files)
+                delivered = list(self.argv)
                 folder = None
                 if self.files:
                     anchor = self._delivery.anchors.enter_context(_open_input(Path(self.root), pin=True))
-                    info = os.fstat(anchor.fileno())
-                    if (_final_path(anchor) != self.root or (info.st_dev, info.st_ino) != self.root_file):
+                    if _file_identity(anchor) != self.root_file:
                         raise LLMError("G6_E_LOOP_INPUT_CHANGED: admitted folder changed before delivery")
                     # The destination is G6's own new folder, never an input's possibly replaced parent.
                     folder = Path(self.root) / (".g6-input-" + uuid4().hex)
@@ -463,43 +507,65 @@ class Request:
                         folder.mkdir()
                     else:
                         os.mkdir(folder.name, dir_fd=anchor.fileno())
-                    self._delivery.folders.append(folder)
                     opened = self._delivery.anchors.enter_context(_open_input(folder, pin=True, parent=anchor))
+                    self._delivery.folders.append((folder, _file_identity(opened)))
                     if not _inside(_final_path(opened), self.root):
                         raise LLMError("G6_E_LOOP_INPUT_CHANGED: delivery folder left its admitted folder")
-                    self._delivery.directories[""] = opened
-                for path, data in self.files:
-                    target = folder / locations[path]
-                    parent = self._delivery.directory(folder, Path(locations[path]).parent)
-                    with _create_copy(target, parent) as stream:
-                        if not _inside(_final_path(stream), self.root):
-                            raise LLMError("G6_E_LOOP_INPUT_CHANGED: private copy left its admitted folder")
-                        stream.write(data)
-                        if os.name == "nt":
-                            self._delivery.anchors.enter_context(_open_input(target, pin=True))
-                    copies[path] = str(target)
-                for alias, primary in self.aliases:
-                    if alias not in copies:
-                        target = folder / locations[alias]
-                        parent = self._delivery.directory(folder, Path(locations[alias]).parent)
-                        # Preserve each argument's logical name, with just one private file per captured identity.
-                        if os.name == "nt":
-                            os.link(copies[primary], target)
-                        else:
-                            source_parent = self._delivery.directory(folder, Path(locations[primary]).parent)
-                            os.link(Path(copies[primary]).name, target.name, src_dir_fd=source_parent.fileno(),
-                                    dst_dir_fd=parent.fileno(), follow_symlinks=False)
-                        copies[alias] = str(target)
-                self._delivery.argv = tuple(copies.get(arg, arg) for arg in self.argv)
+                    self._delivery.base = opened
+                    self._delivery.directories.add(_file_identity(opened))
+                for index, identity in self.aliases:
+                    target = folder / locations[index]
+                    parent = self._delivery.directory(folder, Path(locations[index]).parent)
+                    if identity not in copies:
+                        try:
+                            with _create_copy(target, parent) as stream:
+                                if not _inside(_final_path(stream), self.root):
+                                    raise LLMError("G6_E_LOOP_INPUT_CHANGED: private copy left its admitted folder")
+                                stream.write(data[identity])
+                                copied = _file_identity(stream)
+                                if os.name == "nt":
+                                    self._delivery.anchors.enter_context(_open_input(target, pin=True))
+                        except FileExistsError:
+                            raise LLMError("G6_E_LOOP_INPUT_CHANGED: different inputs share a delivery name") from None
+                        copies[identity] = target, copied
+                    else:
+                        source, copied = copies[identity]
+                        # The name is only a requested directory entry. If it exists, its opened identity decides.
+                        try:
+                            if os.name == "nt":
+                                os.link(source, target)
+                            else:
+                                source_parent = self._delivery.directory(folder, source.relative_to(folder).parent)
+                                os.link(source.name, target.name, src_dir_fd=source_parent.fileno(),
+                                        dst_dir_fd=parent.fileno(), follow_symlinks=False)
+                        except FileExistsError:
+                            pass
+                        opened = self._delivery.anchors.enter_context(_open_input(target, pin=True, parent=parent))
+                        if _file_identity(opened) != copied:
+                            raise LLMError("G6_E_LOOP_INPUT_CHANGED: different inputs share a delivery name")
+                    delivered[index] = str(target)
+                self._delivery.argv = tuple(delivered)
             return list(self._delivery.argv), self.stdin
 
     def close(self) -> None:
         with self._delivery.lock:
+            failed = None
             try:
                 self._delivery.anchors.close()
-            finally:
-                for folder in self._delivery.folders:
+            except BaseException as exc:
+                failed = exc
+            for folder, identity in self._delivery.folders:
+                try:
+                    with _open_input(folder) as stream:
+                        if _file_identity(stream) != identity:
+                            raise LLMError("G6_E_LOOP_INPUT_CHANGED: private copy folder changed before cleanup")
                     shutil.rmtree(folder, ignore_errors=True)
+                except FileNotFoundError:
+                    pass
+                except BaseException as exc:
+                    failed = failed or exc
+            if failed is not None:
+                raise failed
 
 
 # Input roles emitted by the two host command producers: ClaudeCodeCaller and ToolSession.
@@ -538,14 +604,16 @@ def _windows_files() -> Any:
 
 
 @contextmanager
-def _open_input(path: Path, *, pin: bool = False, parent: _InputHandle | None = None) -> Iterator[_InputHandle]:
+def _open_input(path: Path, *, pin: bool = False, parent: _InputHandle | None = None,
+                follow_directory: bool = False) -> Iterator[_InputHandle]:
     """Open once without following the final link; ancestors are judged by the resulting handle's final path."""
     if os.name == "nt":
         import ctypes
         import msvcrt
 
         api = _windows_files()
-        handle = api.CreateFileW(str(path), 0x80000000, 3 if pin else 7, None, 3, 0x02200000, None)
+        flags = 0x02000000 if follow_directory else 0x02200000
+        handle = api.CreateFileW(str(path), 0x80000000, 3 if pin else 7, None, 3, flags, None)
         if handle == ctypes.c_void_p(-1).value:
             raise ctypes.WinError(ctypes.get_last_error())
         try:
@@ -562,7 +630,8 @@ def _open_input(path: Path, *, pin: bool = False, parent: _InputHandle | None = 
     else:
         if not hasattr(os, "O_NOFOLLOW"):
             raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input cannot be opened without following links")
-        fd = os.open(path.name if parent is not None else path, os.O_RDONLY | os.O_NOFOLLOW,
+        flags = os.O_RDONLY | (os.O_DIRECTORY if follow_directory else os.O_NOFOLLOW)
+        fd = os.open(path.name if parent is not None else path, flags,
                      dir_fd=parent.fileno() if parent is not None else None)
     try:
         yield _InputHandle(fd)
@@ -614,6 +683,51 @@ def _inside(path: str, root: str) -> bool:
         return False
 
 
+def _file_identity(stream: Any) -> tuple[int, int]:
+    """Identity from the admitted open: Windows volume serial and full file id; device/inode on other platforms."""
+    if os.name == "nt":
+        import ctypes
+        import msvcrt
+
+        class FileIdInfo(ctypes.Structure):
+            _fields_ = [("volume", ctypes.c_ulonglong), ("file", ctypes.c_ubyte * 16)]
+
+        native = FileIdInfo()
+        if not _windows_files().GetFileInformationByHandleEx(msvcrt.get_osfhandle(stream.fileno()), 18,
+                                                            ctypes.byref(native), ctypes.sizeof(native)):
+            raise LLMError("G6_E_LOOP_INPUT_CHANGED: opened object's native file identity cannot be read")
+        identity = int.from_bytes(bytes(native.file), "little")
+        if not identity:
+            raise LLMError("G6_E_LOOP_INPUT_CHANGED: opened object has no file identity")
+        return native.volume, identity
+    info = os.fstat(stream.fileno())
+    if not info.st_ino:
+        raise LLMError("G6_E_LOOP_INPUT_CHANGED: opened object has no file identity")
+    return info.st_dev, info.st_ino
+
+
+def _output_identity(path: Path) -> tuple[Any, ...]:
+    """An existing object, or an uncreated slot under its opened parent. Slot labels never identify an existing file."""
+    missing = []
+    while True:
+        try:
+            with _open_input(path) as stream:
+                identity = _file_identity(stream)
+                if not missing:
+                    return ("object", *identity)
+                if not stat.S_ISDIR(os.fstat(stream.fileno()).st_mode):
+                    raise LLMError("G6_E_LOOP_INPUT_CHANGED: output parent is not a directory")
+                return ("slot", *identity, *reversed(missing))
+        except FileNotFoundError:
+            missing.append(path.name)
+            parent = path.parent
+            if parent == path:
+                raise LLMError("G6_E_LOOP_INPUT_CHANGED: output has no opened parent") from None
+            path = parent
+        except OSError:
+            raise LLMError("G6_E_LOOP_INPUT_CHANGED: output cannot be opened safely") from None
+
+
 def _output_place(path: Path, root: str) -> str:
     """A not-yet-created output belongs where its nearest existing opened parent actually lives."""
     missing = []
@@ -644,33 +758,28 @@ def _host_input(argv: Sequence[str], root: str | Path | None, stdin: str = "") -
         with _open_input(Path(root)) as folder:
             base = _final_path(folder)
             info = os.fstat(folder.fileno())
-            root_file = (info.st_dev, info.st_ino)
+            root_file = _file_identity(folder)
             if not stat.S_ISDIR(info.st_mode) or not info.st_ino:
                 raise LLMError("G6_E_LOOP_INPUT_CHANGED: admitted folder is not a directory")
     parts: list[list[str]] = []
-    files: list[tuple[str, bytes]] = []
-    aliases: list[tuple[str, str]] = []
-    locations: list[tuple[str, str]] = []
-    by_file: dict[tuple[int, int], tuple[str, bytes, tuple[int, int, int]]] = {}
-    by_path: dict[str, list[str]] = {}
+    files: list[tuple[tuple[int, int], bytes]] = []
+    aliases: list[tuple[int, tuple[int, int]]] = []
+    locations: list[tuple[int, str]] = []
+    by_file: dict[tuple[int, int], tuple[bytes, tuple[int, int, int]]] = {}
+    roles: dict[tuple[int, int], bool] = {}
     arguments = tuple(plain_text(arg) for arg in argv)
     # G6's producers emit separate flag/path arguments. Reject alternate file-option syntax rather than passing an
     # unclassified path through as ordinary text (the host program would still open it).
     if any(arg.startswith(flag + "=") for arg in arguments for flag in _INPUT_FLAGS | {"--output-last-message"}):
         raise LLMError("G6_E_LOOP_INPUT_CHANGED: host file option has an unsupported path form")
-    required = set()
-    outputs = set()
+    required: set[int] = set()                    # argument positions are syntax, never filesystem identities
+    outputs: set[int] = set()
     for index, arg in enumerate(arguments):
         if arg in _INPUT_FLAGS or arg == "--output-last-message":
             if index + 1 == len(arguments) or arguments[index + 1].startswith("--"):
                 raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input flag has no path")
-            (required if arg in _INPUT_FLAGS else outputs).add(arguments[index + 1])
-    if required & outputs:
-        raise LLMError("G6_E_LOOP_INPUT_CHANGED: a host path has conflicting input and output roles")
-    for arg in arguments[1:]:
-        if arg in by_path:
-            parts.append(by_path[arg])
-            continue
+            (required if arg in _INPUT_FLAGS else outputs).add(index + 1)
+    for index, arg in enumerate(arguments[1:], 1):
         where = os.path.normcase(os.path.abspath(arg)) if os.path.isabs(arg) else ""
         candidate = base and where
         if candidate:
@@ -678,10 +787,10 @@ def _host_input(argv: Sequence[str], root: str | Path | None, stdin: str = "") -
                 opened = _open_input(Path(arg))
                 stream = opened.__enter__()
             except FileNotFoundError:
-                if arg in required:
+                if index in required:
                     raise LLMError("G6_E_LOOP_INPUT_CHANGED: required host input is missing") from None
                 if not _inside(where, base):
-                    if arg in outputs:
+                    if index in outputs:
                         raise LLMError("G6_E_LOOP_INPUT_CHANGED: host output is outside its admitted folder")
                     parts.append(["arg", arg])
                     continue
@@ -694,7 +803,7 @@ def _host_input(argv: Sequence[str], root: str | Path | None, stdin: str = "") -
             try:
                 final = _final_path(stream)
                 if not _inside(final, base):
-                    if arg in required or arg in outputs or _inside(where, base):
+                    if index in required or index in outputs or _inside(where, base):
                         raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input is outside its admitted folder")
                     parts.append(["arg", arg])
                     continue
@@ -703,38 +812,41 @@ def _host_input(argv: Sequence[str], root: str | Path | None, stdin: str = "") -
                 place = os.path.relpath(where if _inside(where, base) else final, base).replace(os.sep, "/")
                 place = "/".join(part for part in place.split("/") if not part.startswith(".g6-input-"))
                 before = os.fstat(stream.fileno())
-                if arg in outputs:
+                key = _file_identity(stream)
+                output = index in outputs
+                if key in roles and roles[key] != output:
+                    raise LLMError("G6_E_LOOP_INPUT_CHANGED: one opened object has conflicting input and output roles")
+                roles[key] = output
+                if index in outputs:
                     if not stat.S_ISREG(before.st_mode):
                         raise LLMError("G6_E_LOOP_INPUT_CHANGED: host output is not a regular file")
                     parts.append(["path", place])
                     continue
                 if stat.S_ISDIR(before.st_mode):
-                    if arg in required:
+                    if index in required:
                         raise LLMError("G6_E_LOOP_INPUT_CHANGED: required host input is a directory")
                     parts.append(["path", place])
                     continue
                 if not stat.S_ISREG(before.st_mode) or not before.st_ino:
                     raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input has no regular file identity")
-                key = (before.st_dev, before.st_ino)
                 stamp = (before.st_size, before.st_mtime_ns, before.st_ctime_ns)
                 if key not in by_file:
                     data = stream.read()
                     after = os.fstat(stream.fileno())
-                    if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (*key, *stamp):
+                    if (_file_identity(stream), after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (key, *stamp):
                         raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input changed during capture")
-                    by_file[key] = (arg, data, stamp)
-                    files.append((arg, data))
-                primary, data, captured_stamp = by_file[key]
+                    by_file[key] = (data, stamp)
+                    files.append((key, data))
+                data, captured_stamp = by_file[key]
                 if stamp != captured_stamp:
                     raise LLMError("G6_E_LOOP_INPUT_CHANGED: aliased host input changed during capture")
                 parts.append(["file", place, _digest(data)])
-                by_path[arg] = parts[-1]
-                aliases.append((arg, primary))
-                locations.append((arg, place))
+                aliases.append((index, key))
+                locations.append((index, place))
             finally:
                 opened.__exit__(None, None, None)
         else:
-            if arg in required or arg in outputs:
+            if index in required or index in outputs:
                 raise LLMError("G6_E_LOOP_INPUT_CHANGED: host input has no absolute path")
             parts.append(["arg", arg])
     encoded = json.dumps(["host", parts, plain_text(stdin)]).encode("ascii")
@@ -800,25 +912,41 @@ def _sending(caller: Any, argv: Sequence[str], stdin: str, files: Any) -> tuple[
         record = Send(request.identity, True, None, 0, threading.get_ident(), caller, request=request)
     else:
         record = gate.sending(lambda: Request.host(argv, stdin, root), caller)
+    key = None
     try:
+        try:
+            anchor = record.request._delivery.anchors.enter_context(_open_input(Path(files), pin=True))
+        except OSError:
+            raise LLMError("G6_E_LOOP_INPUT_CHANGED: reply folder cannot be opened safely") from None
+        key = _file_identity(anchor)
         with _SENT_LOCK:
-            _SENT[str(files)] = (record, gate)
+            if key in _SENT:
+                raise LLMError("G6_E_LOOP_INPUT_CHANGED: reply folder already has an outstanding launch")
+            _SENT[key] = (record, gate)
         opened = _OPEN.get()
         if opened is not None:
-            opened.append(str(files))
+            opened.append(key)
         return record.request.handoff()
     except BaseException:
         try:
-            _forget(files)
+            if key is not None:
+                _forget(key, record)
         finally:
             _finish_record(record, gate)
         raise
 
 
-def _forget(files: Any) -> tuple[Send | None, Gate | None]:
+def _forget(files: Any, expected: Send | None = None) -> tuple[Send | None, Gate | None]:
     """This send's own record, taken out of where it waited for its outcome, and released by that outcome."""
+    if isinstance(files, tuple):
+        key = files                              # already captured by the same open that registered the send
+    else:
+        with _open_input(Path(files)) as stream:
+            key = _file_identity(stream)
     with _SENT_LOCK:
-        record, gate = _SENT.pop(str(files), (None, None))
+        if expected is not None and _SENT.get(key, (None, None))[0] is not expected:
+            return None, None
+        record, gate = _SENT.pop(key, (None, None))
     return record, gate
 
 
@@ -852,7 +980,7 @@ def _stopped(said: str, files: Any, hide: tuple[str, ...]) -> None:
         _finish_record(record, gate)
 
 
-def _released(files_keys: Sequence[str]) -> None:
+def _released(files_keys: Sequence[str | tuple[int, int]]) -> None:
     """Sends of a call that ended with no reply read: each is released by that outcome, and no other send is."""
     failed = None
     for key in files_keys:
@@ -908,21 +1036,162 @@ class _Watched:
 
 def _complete_host(caller: Any, system: str, user: str, *, max_tokens: int = host_models.DEFAULT_MAX_TOKENS) -> str:
     """The owned completion path. Every caller hook runs before admission; only module functions run after it."""
-    host_models._start_model_call()
-    observe = watched(caller)
+    provider = _host_kind(caller)
+    if not any(base is _Watched for base in type.__getattribute__(type(caller), "__mro__")):
+        raise LLMError("G6_E_LOOP_UNWATCHED_HOST: constructed host no longer has its supported preparation hooks")
+    read_stops(caller)                            # convenience argv hooks emit structured mode; final data decides
     program = caller.locate()
     with host_models._folders() as (work, files):
         argv, stdin = caller._command(program, system, user, work, files)
         env = host_models._environment(caller.keep_env, files / "tmp")
-        seconds, name = caller.timeout, plain_text(caller.program.name)
-        reply = WatchedClaude._reply if isinstance(caller, WatchedClaude) else WatchedCodex._reply
-        if observe:
-            argv, stdin = _sending(caller, argv, stdin, files)
+        seconds, name = float(caller.timeout), provider
+        reply = host_models.ClaudeCodeCaller._reply if provider == "claude" else host_models.CodexCaller._reply
+        argv, stdin = list(map(plain_text, argv)), plain_text(stdin)
+        _check_observation(argv, provider, files)
+        argv, stdin = _sending(caller, argv, stdin, files)
         try:
-            code, printed, errors = host_models._run(argv, stdin, work, files, env, seconds, name)
-            return reply(caller, code, printed, errors, files, (system, user, stdin))
+            _check_observation(argv, provider, files)
+            _note_launch(files)
+            try:
+                code, printed, errors = host_models._run(argv, stdin, work, files, env, seconds, name)
+            except BaseException as failed:
+                try:
+                    _observe_reply(provider, None, "", files, (system, user, stdin))
+                finally:
+                    raise failed
+            _observe_reply(provider, code, printed, files, (system, user, stdin))
+            try:
+                return reply(caller, code, printed, errors, files, (system, user, stdin))
+            except BaseException as failed:
+                try:
+                    _observe_reply(provider, None, "", files, (system, user, stdin))
+                finally:
+                    raise failed
         finally:
             _released((str(files),))
+
+
+def _host_kind(caller: Any) -> str:
+    """Construction identity selects the owned route even after class erasure; ancestry covers older native instances."""
+    with _HOSTS_LOCK:
+        entry = _HOSTS.get(id(caller))
+        if entry is not None and entry[0]() is caller:
+            return entry[1]
+    ancestry = type.__getattribute__(type(caller), "__mro__")
+    return next((provider for (host, _), provider in zip(_WATCHED, ("claude", "codex"))
+                 if any(base is host for base in ancestry)), "")
+
+
+def _remember_host(caller: Any) -> None:
+    key, protocol = id(caller), _host_kind(caller)
+
+    def forget(reference: weakref.ReferenceType[Any]) -> None:
+        with _HOSTS_LOCK:
+            if _HOSTS.get(key, (None, ""))[0] is reference:
+                del _HOSTS[key]
+
+    reference = weakref.ref(caller, forget)
+    with _HOSTS_LOCK:
+        _HOSTS[key] = reference, protocol
+
+
+def _native_host_note(stop: Any) -> bool:
+    """A borrowed native completion still requires owned launch data, whichever object or class invokes it."""
+    frame = sys._getframe(1)
+    try:
+        while frame is not None and frame.f_code is not stop:
+            if frame.f_code is _NATIVE_HOST_COMPLETE:
+                return True
+            frame = frame.f_back
+        return False
+    finally:
+        del frame
+
+
+def launch_record() -> Send | None:
+    """The immutable launch a note is about, supplied only by the owned path."""
+    return _LAUNCH_RECORD.get()
+
+
+def _note_launch(files: Path) -> None:
+    with _open_input(files) as stream:
+        key = _file_identity(stream)
+    with _SENT_LOCK:
+        record, gate = _SENT[key]
+    if gate is None:
+        raise LLMError("G6_E_LOOP_UNWATCHED_HOST: owned host launch has no admission gate")
+    token = _LAUNCH_RECORD.set(record)
+    try:
+        host_models._start_model_call()
+    finally:
+        _LAUNCH_RECORD.reset(token)
+
+
+# Every option used to observe a completion. Joined, repeated and post-delimiter forms are deliberately refused.
+_OBSERVATION_OPTIONS = {"claude": ("-p", "--output-format"),
+                        "codex": ("exec", "--json", "--output-last-message")}
+
+
+def _check_observation(argv: Sequence[str], provider: str, files: Path) -> None:
+    def bad() -> None:
+        raise LLMError("G6_E_LOOP_UNOBSERVABLE_HOST: final command does not retain its observation protocol")
+
+    if provider not in _OBSERVATION_OPTIONS or not argv:
+        bad()
+    end = argv.index("--") if "--" in argv else len(argv)
+    for option in _OBSERVATION_OPTIONS[provider]:
+        if argv.count(option) != 1 or argv.index(option) >= end or any(arg.startswith(option + "=") for arg in argv):
+            bad()
+    if provider == "claude":
+        at = argv.index("--output-format")
+        if at + 1 >= end or tuple(argv[1:4]) != ("-p", "--output-format", "json"):
+            bad()
+    else:
+        at = argv.index("--output-last-message")
+        if argv.index("exec") != 1 or argv.index("--json") != 2 or at + 1 >= end:
+            bad()
+        if _output_identity(Path(argv[at + 1])) != _output_identity(files / "last_message.txt"):
+            bad()
+
+
+def _classify_reply(provider: str, code: int | None, printed: str) -> tuple[str, str]:
+    """The one reply decision: refusal first, then unread/unfinished replies, stops, failures and answers.
+
+    A returned exit status means the launcher read its streams to the end. A nonzero exit needs no terminal event to
+    establish a failed case, but cannot excuse an unparseable stream. ``None`` means launch or reply reading did not finish.
+    A complete JSON result envelope is readable alongside JSONL events; instance reply methods grant no classification.
+    """
+    events, readable = _reply_events(printed)
+    results = [event for event in events if event.get("type") == "result"]
+    result = (host_models._result(printed) or {}) if provider == "claude" else (results[-1] if results else {})
+    result_stop = next((said for event in results if (said := claude_said(event)).startswith(MODEL_REFUSED)), "")
+    said = result_stop or claude_said(result)
+    failed = result.get("is_error") is True
+    known = bool(result) and result.get("is_error", False) is False and isinstance(result.get("result"), str)
+    if provider == "codex":
+        codex_stop, codex_failed, answered = _codex_result(events)
+        said = result_stop or codex_stop or said
+        failed, known = failed or codex_failed, known or answered
+    if said.startswith(MODEL_REFUSED):
+        return "refusal", said
+    if code is None or not readable:
+        return "unknown", f"{HOST_UNKNOWN}: host reply could not be read whole; these inputs stay barred"
+    if said:
+        return "stop", said
+    if code != 0 or failed:
+        return "failed", f"{host_models.HOST_FAILED}: {provider} reported that its turn failed, of no kind G6 reads as a stop"
+    if not known:
+        return "unknown", f"{HOST_UNKNOWN}: host reply ended before its result; these inputs stay barred"
+    return "answer", ""
+
+
+def _observe_reply(provider: str, code: int | None, printed: str, files: Any, hide: tuple[str, ...]) -> None:
+    """Apply the module's decision before returning to any caller-supplied reply dispatch."""
+    kind, said = _classify_reply(provider, code, printed)
+    if kind in {"refusal", "unknown", "stop"}:
+        _stopped(said, files, hide)
+    if kind == "failed":
+        raise LLMError(said)
 
 
 class WatchedClaude(_Watched, host_models.ClaudeCodeCaller):
@@ -934,18 +1203,37 @@ class WatchedClaude(_Watched, host_models.ClaudeCodeCaller):
 
     def _launch(self, argv: list[str], stdin: str, cwd: Path, files: Path, env: dict[str, str], seconds: float) -> Any:
         """A session of a caller's own that starts its program itself names that step ``_launch`` (``ToolSession``)."""
-        name = plain_text(self.program.name)
-        if watched(self):
-            argv, stdin = _sending(self, argv, stdin, files)
+        name = "claude"
+        reply = host_models.ClaudeCodeCaller._reply
+        argv, stdin = list(map(plain_text, argv)), plain_text(stdin)
+        env, seconds = dict(env), float(seconds)
+        _check_observation(argv, name, files)
+        argv, stdin = _sending(self, argv, stdin, files)
         try:
-            return host_models._run(argv, stdin, cwd, files, env, seconds, name)
-        except BaseException:
+            _check_observation(argv, name, files)
+            _note_launch(files)
+            try:
+                result = host_models._run(argv, stdin, cwd, files, env, seconds, name)
+            except BaseException as failed:
+                try:
+                    _observe_reply(name, None, "", files, (stdin,))
+                finally:
+                    raise failed
+            _observe_reply(name, result[0], result[1], files, (stdin,))
+            try:
+                reply(self, *result, files, (stdin,))
+            except BaseException as failed:
+                try:
+                    _observe_reply(name, None, "", files, (stdin,))
+                finally:
+                    raise failed
+            return result
+        finally:
             _released((str(files),))
-            raise
 
     def _reply(self, code: int, printed: str, errors: str, files: Any, hide: tuple[str, ...]) -> str:
         if watched(self):
-            _stopped(claude_said(host_models._result(printed) or {}), files, hide)
+            _observe_reply("claude", code, printed, files, hide)
         return super()._reply(code, printed, errors, files, hide)
 
 
@@ -966,11 +1254,7 @@ class WatchedCodex(_Watched, host_models.CodexCaller):
     def _reply(self, code: int, printed: str, errors: str, files: Any, hide: tuple[str, ...]) -> str:
         if not watched(self):
             return super()._reply(code, printed, errors, files, hide)
-        said, failed = _codex_turn(printed)
-        _stopped(said, files, hide)
-        if failed:
-            raise LLMError(f"{host_models.HOST_FAILED}: codex exited {code} and reported that its turn failed, of no kind "
-                           "G6 reads as a stop")
+        _observe_reply("codex", code, printed, files, hide)
         return super()._reply(code, printed, errors, files, hide)
 
 
@@ -1009,6 +1293,7 @@ def _new_host(kind: type, *args: Any, **kwargs: Any) -> Any:
         kind = type(kind.__name__, (observer, kind), {})
     caller = object.__new__(kind)
     object.__setattr__(caller, "_observe_stops", not dormant)
+    _remember_host(caller)
     return caller
 
 
