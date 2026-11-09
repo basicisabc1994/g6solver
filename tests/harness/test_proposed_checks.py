@@ -319,6 +319,7 @@ def _read(spec, observations=()):
                                            "== -2\n", messages={NODE: "assert 2 == -2\nConnection refused"})
     elif spec in ("not_collected", "not_collected_outside"):   # review E8, E9: the check file itself did not collect
         ran = {"verdict": "failed" if spec == "not_collected" else "collection_error", "said": "", "seconds": 0.1,
+               "rootdir": "", "failed_ids": [], "setup_errors": {}, "collected_ids": [], "omitted_ids": [],
                "test_outcomes": {}, "output": f"ERROR collecting {FILE}\nE   ImportError: cannot import name 'mul'\n",
                "failure_messages": {FILE: "ImportError while importing test module\nE   ImportError: cannot import "
                                           "name 'mul' from 'calc'"}}

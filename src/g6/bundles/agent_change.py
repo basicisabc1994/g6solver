@@ -120,6 +120,9 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
     except rt.RepoRefused as exc:
         return BundleResult("blocked-escalated", str(exc), code=exc.code)
 
+    report = rt.read_report(found)
+    found = {"verdict": report.verdict, "said": report.said, "total": 0, "passed": 0, "failed": 0,
+             "not_passed": 0, "failed_ids": [], "changed": [], **report.wire()}
     rows: list[dict[str, str]] = []
     boundary = (found.get("isolation") or {}).get("backend")
     notes = [(f"G6 ran your repository's tests on this computer inside an operating-system boundary ({boundary})."
@@ -128,8 +131,8 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
              + " Network connections were refused inside the tests.",
              "The best label is qualified-draft: the tests are yours or the agent's, not independent of the change, "
              "and passing tests do not prove the task is done."]
-    verdict, ran = found["verdict"], found["verdict"] in rt.RAN
-    if verdict == rt.PASSED and found["total"]:
+    verdict, ran = found["verdict"], report.valid and found["verdict"] in rt.RAN
+    if report.valid and verdict == rt.PASSED and found["total"]:
         detail = f"{found['passed']} passed" + (f", {found['not_passed']} skipped (a skip is not a pass)"
                                                  if found["not_passed"] else "")
         rows.append(_row("Your tests on the change", "passed", detail, "qualified-draft"))

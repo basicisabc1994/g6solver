@@ -63,8 +63,10 @@ class Scouts:
 def ran(placed: str, cases: dict[str, str], **more) -> dict:
     """A run of the file at ``placed``, as ``repo_tests`` reports it."""
     failing = [name for name, got in cases.items() if got == "failed"]
-    return {"verdict": "failed" if failing else "passed", "said": "", "rootdir": "", "loaded_outside": {},
+    return {"verdict": "failed" if failing else "passed", "said": "", "output": "", "rootdir": "", "loaded_outside": {},
             "loaded_complete": True, "os_errors": [],
+            "collected_ids": sorted(f"{placed}::{name}" for name in cases), "omitted_ids": [],
+            "failed_ids": [f"{placed}::{name}" for name in failing], "setup_errors": {},
             "test_outcomes": {f"{placed}::{name}": {"setup": "passed", "call": got, "teardown": "passed"}
                               for name, got in cases.items()},
             "failure_messages": {f"{placed}::{name}": f"assert {name}" for name in failing}, **more}

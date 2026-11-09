@@ -138,7 +138,7 @@ def checked(monkeypatch, *, at_base: dict, on_patch: dict) -> bool:
 GOOD_BASE, GOOD_PATCH = report({NODE: BODY_FAILED}), report({NODE: PASSED})
 #: A container of another type than each listing's (``review.LISTINGS``), and an id that is not text inside the right
 #: one: read from the reading's own list, so a listing added there is planted too.
-WRONG = {dict: ["text", ["call", "failed"], 1, {1: PASSED}], (list, tuple): [NODE, {NODE: "failed"}, 1, [1]]}
+WRONG = {dict: ["text", ["call", "failed"], 1, {1: PASSED}], list: [NODE, {NODE: "failed"}, 1, [1], (NODE,)]}
 #: Outcomes pytest never gives a phase.
 UNRECOGNISED = ["never-seen", "rerun", "PASSED", "", None, 0, ["passed"]]
 
@@ -386,9 +386,14 @@ def producer_fields() -> set[str]:
         if (isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Subscript)
                 and ast.unparse(node.targets[0].value) == "found" and isinstance(node.targets[0].slice, ast.Constant)):
             found.add(node.targets[0].slice.value)
-    for name in ("run_before", "run_at_base"):
+    for name in ("run_before", "run_at_base", *(name for name in ("_not_run_report",) if name in functions)):
         found |= {key for node in ast.walk(functions[name]) if isinstance(node, ast.Dict) for key in _keys(node)
                   if "verdict" in _keys(node)}
+    # The shared early-exit builder adds the replay comparison diagnostics.
+    if "_not_run_report" in functions:
+        found |= {node.targets[0].slice.value for node in ast.walk(functions["_not_run_report"])
+                  if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Subscript)
+                  and isinstance(node.targets[0].slice, ast.Constant)}
     update = next(n for n in ast.walk(functions["repository_copy"]) if isinstance(n, ast.Call)
                   and ast.unparse(n.func) == "report.update")
     found |= {n.elts[0].value for n in ast.walk(update) if isinstance(n, ast.Tuple) and len(n.elts) == 2
@@ -413,6 +418,10 @@ def read_by_the_reading() -> set[str]:
                     found.add(key.value)
             elif isinstance(node, ast.comprehension) and ast.unparse(node.iter) == "LISTINGS":
                 found |= set(review.LISTINGS)
+            elif isinstance(node, ast.Call) and ast.unparse(node.func) == "repo_tests.read_report":
+                # A read of the validated form reads the producer's required
+                # evidence fields, rather than keeping another raw reader here.
+                found |= {key for key, field in repo_tests.REPORT_FIELDS.items() if field.required}
     return found
 
 

@@ -64,7 +64,7 @@ def result(passed=(), failed=()):
     outcomes = {**{node: {"setup": "passed", "call": "passed", "teardown": "passed"} for node in passed},
                 **{node: {"setup": "passed", "call": "failed", "teardown": "passed"} for node in failed}}
     verdict = "failed" if failed else "passed"
-    return {"verdict": verdict, "said": "", "passed": len(passed), "failed": len(failed), "not_passed": 0,
+    return {"verdict": verdict, "said": "", "rootdir": "", "passed": len(passed), "failed": len(failed), "not_passed": 0,
             "total": len(passed) + len(failed), "deselected": 0, "test_outcomes": outcomes,
             "collected_ids": sorted(outcomes), "omitted_ids": [], "changed": [], "output": "", "seconds": 0.25,
             "python": sys.executable, "interpreter_source": "g6", "command": "pytest",
@@ -79,7 +79,10 @@ def recorded(monkeypatch, in_place, at_base=None, default=None):
         return got
 
     def execute_at_base(change, ids, *, timeout_s, roots=()):
-        return at_base if at_base is not None else {"verdict": "not_run", "said": "no run was recorded"}
+        return at_base if at_base is not None else {"verdict": "not_run", "said": "no run was recorded",
+            'output': '', 'rootdir': '', 'test_outcomes': None,
+            'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+            'omitted_ids': []}
 
     monkeypatch.setattr(patch_review, "_execute", execute)
     monkeypatch.setattr(patch_review, "_execute_at_base", execute_at_base)

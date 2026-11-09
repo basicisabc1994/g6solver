@@ -46,7 +46,7 @@ def _result(failure_phase=None):
         del phases["call"]
     passed, failed = int(failure_phase not in ("setup", "call")), int(bool(failure_phase))
     return {
-        "verdict": "failed" if failure_phase else "passed", "said": "",
+        "verdict": "failed" if failure_phase else "passed", "said": "", "rootdir": "",
         "passed": passed, "failed": failed, "not_passed": 0,
         "total": passed + failed, "deselected": 0, "test_outcomes": {NODE: phases},
         "collected_ids": [NODE], "omitted_ids": [], "changed": [], "output": "",
@@ -104,10 +104,15 @@ def run(phases_by_node: dict, *, verdict: str | None = None, listed=None, rootdi
     """A recorded run with each node's phases; the runner lists every node with a failed phase among its failures."""
     failed = [node for node, phases in phases_by_node.items()
               if isinstance(phases, dict) and "failed" in phases.values()]
+    passed = sum(isinstance(phases, dict) and phases.get("call") == "passed"
+                 and all(state == "passed" for state in phases.values()) for phases in phases_by_node.values())
+    skipped = sum(isinstance(phases, dict) and "skipped" in phases.values() and "failed" not in phases.values()
+                  for phases in phases_by_node.values())
     return {"verdict": verdict or ("failed" if failed else "passed"), "said": "", "output": "",
             "test_outcomes": phases_by_node, "failed_ids": failed if listed is None else listed, "setup_errors": {},
-            "omitted_ids": [], "rootdir": rootdir, "seconds": 0.01, "passed": 0, "failed": len(failed),
-            "not_passed": 0, "isolation": {"backend": "recorded-unit-result", "why": ""}}
+            "omitted_ids": [], "collected_ids": sorted(phases_by_node), "rootdir": rootdir,
+            "seconds": 0.01, "passed": passed, "failed": len(failed),
+            "not_passed": skipped, "isolation": {"backend": "recorded-unit-result", "why": ""}}
 
 
 @pytest.mark.parametrize(("phases", "shown"), [
@@ -207,7 +212,7 @@ def repo(tmp_path, monkeypatch):
 
 def recorded(phases: dict) -> dict:
     found = run({NODE: phases})
-    return {**found, "total": 1, "deselected": 0, "collected_ids": [NODE], "changed": [], "python": sys.executable,
+    return {**found, "total": found["passed"] + found["failed"], "deselected": 0, "collected_ids": [NODE], "changed": [], "python": sys.executable,
             "interpreter_source": "g6", "command": "pytest", "degraded": False, "receipt": ""}
 
 
@@ -313,8 +318,6 @@ CHANNEL = "a channel that holds observations the one rule made (observation): it
 MESSAGE = "the ids of the tests that failed, for a message; it decides nothing"
 #: Every function that reads one of ``KEYS``, with what it is.
 READERS = {
-    ("patch_review.py", "_failed_ids"): ONE_RULE + ": the tests the runner lists as failed",
-    ("patch_review.py", "phases_of"): ONE_RULE + ": each test's phases, from the runner's own report",
     ("patch_review.py", "observation"): ONE_RULE + ": what a check's verdict entry tells the issuer",
     ("patch_review.py", "at_base_observations"): ONE_RULE + ": what the run at the base commit tells the issuer",
     ("patch_review.py", "_verdicts"): ONE_RULE + ": each check's verdict by phase, and its observation",
@@ -355,6 +358,11 @@ def readers() -> dict[tuple[str, str], set[str]]:
                     keys.add(node.slice.value)
                 elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get"
                       and node.args and isinstance(node.args[0], ast.Constant)):
+                    receiver = node.func.value
+                    if (isinstance(receiver, ast.Attribute) and receiver.attr == "data"
+                            and isinstance(receiver.value, ast.Call)
+                            and ast.unparse(receiver.value.func) == "repo_tests.read_report"):
+                        continue  # typed detached fields, never a raw report access
                     keys.add(node.args[0].value)
                 elif (isinstance(node, ast.Call) and ast.unparse(node.func) == "_listing" and len(node.args) > 1
                       and isinstance(node.args[1], ast.Constant)):   # the one reader of a listing (_listing)
@@ -373,11 +381,12 @@ def test_every_reader_of_a_run_s_verdict_is_listed_and_every_listed_one_is_still
 def test_the_runner_s_report_is_read_only_by_the_one_rule():
     found = readers()
     report = {where for where, keys in found.items() if keys & {"test_outcomes", "failed_ids", "setup_errors"}}
-    assert report == {("patch_review.py", "_failed_ids"), ("patch_review.py", "phases_of"),
-                      ("patch_review.py", "_on_base")}   # _on_base: the failed ids, for a message
+    # The producer owns the raw reader; these adapters consume its detached form.
+    assert report == set()
     on_base = ast.unparse(next(f for f in ast.walk(ast.parse((HARNESS / "patch_review.py").read_text(encoding="utf-8")))
                                if isinstance(f, ast.FunctionDef) and f.name == "_on_base"))
-    assert on_base.count("'failed_ids'") == 1 and "', '.join(out.get('failed_ids', [])[:5])" in on_base
+    assert "repo_tests.read_report(out).data.get('failed_ids', ())" in on_base
+    assert "sorted(_failed_ids(out))" not in on_base and "out.get('failed_ids'" not in on_base
 
 
 def test_the_issuer_s_adapter_reads_no_verdict_but_through_the_one_rule():
@@ -396,7 +405,8 @@ def test_every_evidence_reader_in_the_review_reads_through_the_one_rule():
     assert "observation(found)" in functions["_observed"]
     assert "at_base_observations(runs)" in functions["_run_again"] and "observation(found)" in functions["_run_again"]
     assert "at_base_observations(runs)" in functions["_self_checked"]
-    assert "phases_of(ran)" in functions["_verdicts"] and "body_of(phases)" in functions["_verdicts"]
+    assert "repo_tests.read_report(ran)" in functions["_verdicts"]
+    assert "report.phases" in functions["_verdicts"] and "body_of(phases)" in functions["_verdicts"]
     assert "'observation'" in functions["_at_base"]   # the record of the run at the base commit keeps it
     for name in ("_observed", "_run_again"):
         assert "['verdict']" not in functions[name] and ".get('verdict')" not in functions[name].replace(

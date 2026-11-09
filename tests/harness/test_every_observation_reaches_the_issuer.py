@@ -53,8 +53,8 @@ def result(passed=(), failed=(), skipped=()):
     outcomes = {**{node: {"setup": "passed", "call": "passed", "teardown": "passed"} for node in passed},
                 **{node: {"setup": "passed", "call": "failed", "teardown": "passed"} for node in failed},
                 **{node: {"setup": "passed", "call": "skipped", "teardown": "passed"} for node in skipped}}
-    return {"verdict": "failed" if failed else "passed", "said": "", "passed": len(passed), "failed": len(failed),
-            "not_passed": len(skipped), "total": len(outcomes), "deselected": 0, "test_outcomes": outcomes,
+    return {"verdict": "failed" if failed else "passed", "said": "", "rootdir": "", "passed": len(passed), "failed": len(failed),
+            "not_passed": len(skipped), "total": len(passed) + len(failed), "deselected": 0, "test_outcomes": outcomes,
             "collected_ids": sorted(outcomes), "omitted_ids": [], "changed": [], "output": "", "seconds": 0.25,
             "python": sys.executable, "interpreter_source": "g6", "command": "pytest",
             "isolation": {"backend": "synthetic-unit-fixture", "why": ""}, "failed_ids": list(failed),
@@ -80,7 +80,10 @@ class Runs:
 
         def execute_at_base(change, ids, *, timeout_s, roots=()):
             self.calls.append(("base", tuple(ids)))
-            return at_base if at_base is not None else {"verdict": "not_run", "said": "no run was recorded"}
+            return at_base if at_base is not None else {"verdict": "not_run", "said": "no run was recorded",
+                'output': '', 'rootdir': '', 'test_outcomes': None,
+                'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+                'omitted_ids': []}
 
         monkeypatch.setattr(patch_review, "_execute", execute)
         monkeypatch.setattr(patch_review, "_execute_at_base", execute_at_base)
@@ -105,7 +108,10 @@ def receipts(got) -> list[tuple[str, str, int]]:
 
 def test_finding_5_a_failure_of_the_stated_check_in_the_derived_run_is_kept_as_a_caveat(repo, monkeypatch):
     def reviewed(derived_passes: bool):
-        not_replayed = {FILE: {"verdict": "not_run", "baseline": "failed", "patched": "not_run"}}
+        not_replayed = {FILE: {"verdict": "not_run", "baseline": "failed", "patched": "not_run",
+            'said': '', 'output': '', 'rootdir': '',
+            'test_outcomes': None, 'failed_ids': [], 'setup_errors': {},
+            'collected_ids': [], 'omitted_ids': []}}
         runs = Runs(monkeypatch, {(NODE,): [result([NODE]), result([NODE])],
                                   (FILE,): result([NODE]) if derived_passes else result(failed=[NODE])},
                     at_base=result(failed=[NODE]), replay=not_replayed)
@@ -145,7 +151,10 @@ def test_a_replay_that_ran_the_stated_check_on_the_patch_adds_what_it_saw_in_the
 
 def test_a_replay_on_the_patch_that_kept_no_per_test_result_is_an_unknown_never_dropped(repo, monkeypatch):
     # its tests on the patch differ from the base commit's, so the replay kept no per-test result: it ran, and passed
-    unkept = {FILE: {"verdict": "not_run", "said": "the tests differ", "baseline": "passed", "patched": "passed"}}
+    unkept = {FILE: {"verdict": "not_run", "said": "the tests differ", "baseline": "passed", "patched": "passed",
+        'output': '', 'rootdir': '', 'test_outcomes': None,
+        'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+        'omitted_ids': []}}
     Runs(monkeypatch, {(NODE,): result([NODE]), (FILE,): result([NODE], failed=[EXTRA])},
          at_base=result(failed=[NODE]), replay=unkept)
     got = review(repo)
@@ -161,13 +170,8 @@ def test_a_run_that_did_not_collect_the_stated_check_adds_nothing_for_it(repo, m
 
 
 def test_a_derived_run_of_code_from_outside_the_tree_is_an_unknown_for_the_stated_check(repo, monkeypatch):
-    derived = result([NODE])
+    derived = {**result([NODE]), "loaded_outside": {"calc": "elsewhere/calc.py"}, "loaded_complete": True}
     Runs(monkeypatch, {(NODE,): result([NODE]), (FILE,): derived}, at_base=result(failed=[NODE]))
-
-    def shadowed(sources, ran):   # every run loaded the tree's code but the derived one, which ran an installed copy
-        return {"calc.py": {"module": "calc", "file": "elsewhere/calc.py"}} if ran is derived else {}
-
-    monkeypatch.setattr(patch_review.repo_tests, "shadowed", shadowed)
     got = review(repo)
     assert (m.id_of("derived", NODE), "unknown", 3) in receipts(got)
     assert statement(got)["checked"] is False
@@ -176,7 +180,10 @@ def test_a_derived_run_of_code_from_outside_the_tree_is_an_unknown_for_the_state
 def test_forwarding_what_each_run_saw_changes_no_decided_field(repo, monkeypatch):
     def reviewed(forward: bool):
         Runs(monkeypatch, {(NODE,): result([NODE]), (FILE,): result(failed=[NODE])}, at_base=result(failed=[NODE]),
-             replay={FILE: {"verdict": "not_run", "baseline": "failed"}})
+             replay={FILE: {"verdict": "not_run", "baseline": "failed",
+                 'said': '', 'output': '', 'rootdir': '',
+                 'test_outcomes': None, 'failed_ids': [], 'setup_errors': {},
+                 'collected_ids': [], 'omitted_ids': []}})
         if not forward:
             monkeypatch.setattr(patch_review, "_observed", lambda checks, ran: {})
         return review(repo)

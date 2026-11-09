@@ -419,6 +419,7 @@ def _import_roots(root: Path, values) -> tuple[str, ...]:
 
 def _confined(ran: dict) -> dict:
     """``ran``, or a refusal when no operating-system boundary confined it: its results are never assessed."""
+    ran = repo_tests.read_report(ran).wire()
     isolation = ran.get("isolation") or {}
     if "isolation" in ran and not isolation.get("backend"):
         raise _Refused(ISOLATION_UNAVAILABLE, "G6 assesses a patch only from test runs inside an operating-system "
@@ -571,98 +572,41 @@ def _inputs(task, claim, tests, sources, timeout_s, requirements, intent=None, p
 
 
 def _covers(check: str, node: str) -> bool:
-    check = check.rstrip("/")
-    return node == check or node.startswith((check + "::", check + "[", check + "/"))
+    return repo_tests.report_covers(check, node)
 
 
-#: The fields of the runner's report (``repo_tests.run``'s result) that list tests, each by the id pytest gave it, with
-#: the container each is (G6 0.3, review 1 of slice 2's follow-up): the tests of a run are their union, and every one
-#: of them is read (``phases_of``, ``_verdicts``). An inventory test lists every field of the runner's report from the
-#: runner's own code, each read here or named with why it is not.
-LISTINGS = {"test_outcomes": dict, "failed_ids": (list, tuple), "setup_errors": dict, "omitted_ids": (list, tuple),
-            "collected_ids": (list, tuple)}
-#: The listings that name a test as failed: the runner's plugin adds every failed report to one of the two.
+#: Producer-owned report vocabulary, retained for callers of the reading helpers.
+LISTINGS = repo_tests.REPORT_LISTINGS
 FAILURE_LISTINGS = ("failed_ids", "setup_errors")
-#: The phases of one test the runner's plugin reports (pytest's ``report.when``), in pytest's order, and the outcomes
-#: pytest gives a phase (``report.outcome``). A module pytest skipped collecting reports ``collection`` alone.
-PHASES, OUTCOMES = ("setup", "call", "teardown"), frozenset({"passed", "failed", "skipped"})
+PHASES, OUTCOMES = repo_tests.REPORT_PHASES, repo_tests.REPORT_OUTCOMES
 
 
 def _listing(ran: dict, key: str) -> tuple[list[str], bool]:
-    """The ids the listing ``key`` of ``ran`` names (``LISTINGS``), relative to the repository's top, and whether it reads
-    as one. None, and readable, when the report has none (absent, or None as the runner gives one its plugin never
-    wrote); none, and unreadable, when it is another container or names a test by anything but text."""
-    value = ran.get(key)
-    if value is None:
-        return [], True
-    if not isinstance(value, LISTINGS[key]) or not all(isinstance(node, str) for node in value):
+    report = repo_tests.read_report(ran)
+    if type(key) is not str or key not in LISTINGS:
         return [], False
-    full = _in_repository(ran)
-    return [full(node) for node in value], True
+    value = report.wire().get(key)
+    nodes = value if type(value) in (dict, list) else ()
+    return sorted(report.full(node) for node in nodes), report.valid
 
 
 def _failed_ids(ran: dict) -> set[str]:
-    """The tests the runner's own report lists as failed in ``ran`` (``FAILURE_LISTINGS``), by their ids relative to
-    the repository's top; none from a listing that does not read as one."""
-    return {*_listing(ran, "failed_ids")[0], *_listing(ran, "setup_errors")[0]}
+    """Diagnostic failure identities, read through the producer even when unknown."""
+    return set(repo_tests.read_report(ran).failed)
 
 
-def phases_of(ran: dict) -> dict[str, dict[str, str]]:
-    """The one reading of a run's per-test report (G6 0.3, review 4's finding 1): every test the runner's report names
-    as run or failed (``test_outcomes``, ``FAILURE_LISTINGS``), with its outcome per phase as the report gives it
-    (``repo_tests``' plugin), by the test's id relative to the repository's top. A test listed only as failed is there
-    too (review 1 of slice 2's follow-up, finding 2); ``_verdicts`` reads those only collected or left out.
-
-    What the report does not say is marked, never filled in (findings 1 and 5), and ``body_of`` reads every mark as
-    unknown: a test's phases that do not read as a mapping of names to outcomes are none; a test the runner lists as
-    failed whose phases show no failure failed in a phase it did not name (``unnamed``), and one whose phases show a
-    failure no listing of failures names has a failure the runner did not list (``unlisted``); and when a listing, or
-    the report's root folder, does not read as one, every test's ``report`` is ``unreadable``."""
-    outcomes, read = ran.get("test_outcomes"), {key: _listing(ran, key)[1] for key in LISTINGS}
-    failures_read = all(read[key] for key in FAILURE_LISTINGS)
-    whole = all(read.values()) and isinstance(ran.get("rootdir") or "", str)
-    full, listed = _in_repository(ran), _failed_ids(ran)
-    found: dict[str, dict[str, str]] = {}
-    for node, phases in (outcomes.items() if read["test_outcomes"] and outcomes else ()):
-        named = isinstance(phases, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in phases.items())
-        found[full(node)] = dict(phases) if named else {}
-    for node in sorted(listed):
-        found.setdefault(node, {})
-    for node, mine in found.items():
-        shows = "failed" in mine.values()
-        if node in listed and not shows:
-            mine["unnamed"] = "failed"
-        elif shows and node not in listed and failures_read:
-            mine["unlisted"] = "failed"
-        if not whole:
-            mine["report"] = "unreadable"
-    return found
+def phases_of(ran: dict) -> dict[str, repo_tests.PhaseRecord]:
+    """One immutable reading, including unknowns named only in another listing."""
+    return dict(repo_tests.read_report(ran).phases)
 
 
-def _whole(phases: dict[str, str]) -> bool:
-    """Whether ``phases`` hold every phase a test needs, each one pytest names and each with an outcome pytest gives:
-    its set-up and teardown, and its call after a set-up that passed; or a module's skipped collection alone."""
-    if phases == {"collection": "skipped"}:
-        return True
-    return (set(phases) <= set(PHASES) and set(phases.values()) <= OUTCOMES and "setup" in phases
-            and "teardown" in phases and (phases["setup"] != "passed" or "call" in phases))
+def _whole(phases) -> bool:
+    return repo_tests.read_phases(phases).valid
 
 
-def body_of(phases: dict[str, str]) -> str:
-    """What one test's phases (``phases_of``) show of its body: ``failed`` only when every phase it needs is there and
-    one pytest names (``_whole``), its set-up passed and its call failed; ``ERROR`` when anything else failed (a set-up
-    or teardown error, a failure the runner named in no phase): unknown, never a failure of the body and never a pass;
-    ``skipped`` when a phase was skipped (an xfail too: pytest reports its call skipped); ``passed`` only when every
-    phase it needs is there and passed. Anything partial, unrecognised, contradictory or unreadable (review 1 of slice 2's
-    follow-up, findings 1 and 5) is ``ERROR`` where a failure shows and ``not_run`` where none does: unknown either way."""
-    states = set(phases.values())
-    if not _whole(phases):
-        return ERROR if "failed" in states else "not_run"
-    if phases.get("setup") == "passed" and phases.get("call") == "failed":
-        return FAILED
-    if "failed" in states:
-        return ERROR
-    return "skipped" if "skipped" in states else "passed"
+def body_of(phases) -> str:
+    """Only a complete, ordered producer phase pattern yields a body result."""
+    return repo_tests.read_phases(phases).body()
 
 
 def observation(found: dict) -> str:
@@ -697,21 +641,24 @@ def _not_found(check: str, output: str) -> bool:
 
 
 def _in_repository(ran: dict):
-    """A function from a test id or file as pytest named it in ``ran``, relative to its root folder, to the same id
-    relative to the repository's top, as checks name them (review I9: a pytest config below the top moves the root). A
-    root folder that is not text places nothing (``phases_of`` reads every test of such a report as unknown)."""
-    root = ran.get("rootdir") or ""
-    prefix = root.strip("/") if isinstance(root, str) else ""
-    return (lambda node: f"{prefix}/{node}") if prefix else (lambda node: node)
+    """Repository identities from the producer's detached report reading."""
+    return repo_tests.read_report(ran).full
 
 
 def _observed(checks: Sequence[str], ran: dict) -> dict[str, str]:
     """Each of ``checks`` that ``ran`` collected (a test of it is among the run's per-test outcomes, its failures or
     its set-up errors), with its verdict in that run (``_verdicts``). A check the run did not collect has none: the
     run did not observe it. G6 0.3: every run of a stated check on the patch reaches the issuer this way."""
-    nodes = set(phases_of(ran))
-    collected = [check for check in dict.fromkeys(checks) if any(_covers(check, node) for node in nodes)]
-    return {check: observation(found) for check, found in _verdicts(collected, ran).items()}
+    report = repo_tests.read_report(ran)
+    if not report.valid or (not report.has_phase_data and report.verdict != "not_run"):
+        # No invalid listing can establish that a candidate check was absent.
+        # Keep the whole candidate scope unknown, even if all identities broke.
+        return dict.fromkeys(checks, ERROR)
+    nodes = report.nodes
+    collected = [check for check in dict.fromkeys(checks)
+                 if any(_covers(check, node) for node in nodes) or report.collection_errors_for(check)]
+    return {check: ERROR if report.collection_errors_for(check) else observation(found)
+            for check, found in _verdicts(collected, report).items()}
 
 
 def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
@@ -721,11 +668,12 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
     (``observation``: ``ERROR``), and the issuer is told that (``observation``). A test of a check that started which
     pytest collected and neither ran to a reported phase nor left out never finished (review 1 of slice 2's follow-up,
     finding 2): the check did not pass."""
-    run, said, output = ran["verdict"], ran.get("said") or "", ran.get("output") or ""
-    full = _in_repository(ran)
-    tests = phases_of(ran)
-    omitted = set(_listing(ran, "omitted_ids")[0])
-    unfinished = [node for node in _listing(ran, "collected_ids")[0] if node not in tests and node not in omitted]
+    report = repo_tests.read_report(ran)
+    run, said, output = report.verdict, report.said, report.output
+    full = report.full
+    tests = report.phases
+    omitted = report.omitted
+    unfinished = [node for node in report.nodes if node not in tests and node not in omitted]
     missing = {check for check in ids if _not_found(check, output)}
     broken = {full(rel) for rel in _collection_errors(output)}
     found: dict[str, dict] = {}
@@ -748,10 +696,12 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
             verdict, detail = "skipped", f"{sum(s == 'skipped' for s in nodes.values())} of {len(nodes)} skipped"
         elif dropped:
             verdict, detail = "deselected", f"{len(dropped)} test(s) deselected by the repository's configuration"
-        elif states == {"passed"}:
+        elif report.valid and states == {"passed"}:
             verdict, detail = "passed", f"{len(nodes)} test(s) passed"
         elif nodes:
-            verdict, detail = ("timed_out", said) if run == "timed_out" else ("not_run", "started, never finished")
+            started = any(_covers(check, node) for node in report.started)
+            verdict, detail = (("timed_out", said) if run == "timed_out" and started
+                               else ("not_run", "started, never finished" if started else "never started"))
         elif check in missing:
             verdict, detail = "not_collected", "pytest found no test with this id"
         elif missing:
@@ -770,7 +720,9 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
         else:
             verdict, detail = run, said
         found[check] = {"verdict": verdict, "detail": detail}
-        if verdict == FAILED and FAILED not in bodies.values():   # no test's body failed: set-up, teardown, collection
+        if (not report.valid or (verdict == "passed" and run not in repo_tests.RAN)
+                or report.collection_errors_for(check)
+                or (verdict == FAILED and FAILED not in bodies.values())):
             found[check]["observation"] = ERROR
     return found
 
@@ -1541,15 +1493,20 @@ def _on_base(root, change, derived, second, deadline, runs, unknowns, reason, ro
         elsewhere = _loaded_elsewhere(change, out)
         mine = [check for check in stated if _names(check, {rel})]
         unkept = out.get("baseline") == "passed" and out.get("patched", "not_run") != "not_run"   # ran, results not kept
-        seen = _observed(mine, out) if phases_of(out) else dict.fromkeys(mine if unkept else (), NOT_READ)
+        seen = _observed(mine, out)
+        if not seen and unkept:
+            seen = dict.fromkeys(mine, NOT_READ)
         if seen:   # it ran on the patch: each stated check it ran, as it ran there
             observed.append({"run": ["replay", rel], "verdicts": dict.fromkeys(seen, NOT_LOADED) if elsewhere
                              else seen})
         if elsewhere:   # review C1: a replay of code the patch did not change says nothing of the patch
             uncompared(f"{rel} fails on the patch, and its replay in a copy is not read: {elsewhere}")
         elif out.get("verdict") == repo_tests.FAILED:
+            # The released diagnostic lists only failed_ids, in its raw scope
+            # and emission order. Setup/collection hints serve other readers.
+            failed = repo_tests.read_report(out).data.get("failed_ids", ())
             reason("tier_2", "derived_test_regressed", f"{rel} passed at the base commit and fails on the patch: "
-                   + ", ".join(out.get("failed_ids", [])[:5]), node=rel, ran=out)
+                   + ", ".join(failed[:5]), node=rel, ran=out)
         elif out.get("baseline") == "passed" and out.get("patched") in (repo_tests.FAILED, "collection_error"):
             reason("tier_2", "derived_test_regressed", f"{rel} collects and passes at the base commit, and fails to "
                    f"collect or run on the patch ({out.get('said') or out.get('patched')})", node=rel, ran=out)

@@ -543,7 +543,9 @@ def reading(ran: dict, node: str) -> dict:
     operating-system error, a failure that does not say how); with the run's ``verdict``, ``detail``, ``seconds``,
     ``tree_digest`` (its copy as the run began), what it ran with (``RAN_WITH``) and, for a pass, its ``observations``
     (None when it recorded none)."""
-    verdict, output = ran.get("verdict"), ran.get("output") or ""
+    report = repo_tests.read_report(ran)
+    ran = report.wire()
+    verdict, output = report.verdict, report.output
     found = {"verdict": verdict, "seconds": float(ran.get("seconds") or 0.0),
              "tree_digest": ran.get("source_before") or "", **{key: ran[key] for key in RAN_WITH if key in ran}}
 
@@ -559,13 +561,14 @@ def reading(ran: dict, node: str) -> dict:
                          f"outside its copy, the network, a name lookup), or on such a refusal: {how}")
         return {**found, "result": "failed", "detail": how, **extra}
 
+    if not report.valid:
+        return error("the runner report is unknown")
     if verdict == "timed_out":
         return error(f"it did not finish within its time limit ({ran.get('said') or 'timed out'})")
     if verdict == repo_tests.CHANGED:
         return error("it changed files in its copy, so its result is not believed: "
                      + ", ".join((ran.get("changed") or [])[:5]))
-    full = _in_repository(ran)
-    mine = {full(n): phases for n, phases in (ran.get("test_outcomes") or {}).items() if _covers(node, full(n))}
+    mine = {n: phases for n, phases in report.phases.items() if _covers(node, n)}
     if not mine and verdict in (repo_tests.FAILED, "collection_error") and _uncollected(ran, node):
         # review 5, as tier 2 reads a test file: an import the patch broke fails the check where it is collected
         how = _failure(ran, node)
@@ -574,15 +577,17 @@ def reading(ran: dict, node: str) -> dict:
         return error(f"{verdict}: {ran.get('said') or 'no result'}")
     if not mine:
         return error("pytest ran no test of the check: it could not be collected, or names no test")
+    if report.collection_errors_for(node):
+        return error("a collection of the check failed beside its reported test bodies")
     if any(phases.get("setup") != "passed" or phases.get("teardown") == "failed" for phases in mine.values()):
         return error("a test of the check could not be set up, was skipped, or failed after its call")
-    calls = {phases.get("call") for phases in mine.values()}
-    if calls == {"passed"} and verdict == repo_tests.PASSED:
+    bodies = {phases.body() for phases in mine.values()}
+    if bodies == {"passed"} and verdict == repo_tests.PASSED:
         observed = _observations(output)
         if isinstance(observed, str):
             return error(observed)
         return {**found, "result": "passed", "detail": f"{len(mine)} test(s) passed", "observations": observed}
-    if "failed" in calls and verdict == repo_tests.FAILED:
+    if "failed" in bodies and verdict == repo_tests.FAILED:
         return failed(_failure(ran, node))
     return error(f"its tests did not run to a pass or a fail ({verdict})")
 
