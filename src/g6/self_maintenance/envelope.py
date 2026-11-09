@@ -4,7 +4,9 @@
 ``CycleLog`` is the constraint log, a local hash-chained file for now: every cycle that ran, what limited it and what
 came of it, plus each enrolment, pause, resumption, start, generation a person took back and provider's limit. Only a
 person can enrol a domain, resume a paused loop, take a generation back or start the runner, so the loop cannot lift its own
-pause. A ``STOP`` file in the loop's folder halts it at its
+pause. A canonical id/time stop is reserved and read back before any caller text is rendered. Admission reads that
+record independently of the legacy reason, count and ledger note. An incomplete or unreadable reservation refuses every
+start and tick. A ``STOP`` file in the loop's folder also halts it at its
 next model call, and a stop that cannot be read still stops. Nothing but a person removes that file: a start records the file a
 person agreed to lift, and anything else, or any later write, stands, so a stop has no moment in which it can be lost. A
 runner ended by a stop needs a person's start again, even with the file gone: the records say the last start was stopped.
@@ -39,6 +41,11 @@ from g6.workspace._envelope import WorkspaceRefused
 
 STOP_FILE = "STOP"
 STOPS_FILE = "stops.log"
+STOP_RECORDS = "stop_records"
+STOP_DENIED = "stop.denied"
+# A refusal before even the independent directory can be made also holds this process.
+_STOP_UNCERTAIN: set[Path] = set()
+_STOP_UNRESOLVED: set[Path] = set()
 REFUSED_FILE = "refused.log"
 DIGEST_LENGTH = 64                      # of a SHA-256, in hex
 HEARTBEAT_FILE = "heartbeat.json"
@@ -103,14 +110,15 @@ class CycleLog:
         return [(e["kind"], e["body"]) for e in self._chain.entries()]
 
     def _append(self, kind: str, body: dict) -> dict:
+        body = utf8_fields(body)
         self._chain.append(kind, str(len(self._rows()) + 1), body)
         return body
 
     def _write_record(self, kind: str, body: dict, record_id: str | None = None) -> str:
         """Write the identity with the row, returning it only after the append. A caller may allocate it once before
         writing, so a lost return after an append can still be read back by that identity. Bodies keep their meaning."""
-        ident = uuid4().hex if record_id is None else record_id
-        self._chain.append(kind, ident, body)
+        ident = utf8_text(uuid4().hex if record_id is None else record_id)
+        self._chain.append(kind, ident, utf8_fields(body))
         return ident
 
     def latest_id(self, kind: str) -> str:
@@ -120,7 +128,7 @@ class CycleLog:
     def record(self, kind: str, ident: str) -> dict | None:
         """Read precisely the row written with this identity. An absent row is distinct from unreadable records."""
         try:
-            return self._chain.get(kind, ident)
+            return self._chain.get(kind, utf8_text(ident))
         except KeyError:
             return None
 
@@ -223,6 +231,171 @@ class CycleLog:
         return streak
 
 
+def utf8_text(text: str) -> str:
+    """Keep every storable value unchanged; escape only code points strict UTF-8 cannot hold.
+
+    Chunks bound each encoding operation to 4096 code points. There is no truncation: long reasons retain their
+    existing meaning. Lone surrogates read back as literal backslash escapes, as the stop reply states.
+    """
+    text = str.__str__(text)  # use the string's value, without calling Python subclasses' rendering methods
+    return "".join(text[i:i + 4096].encode("utf-8", "backslashreplace").decode("utf-8")
+                   for i in range(0, len(text), 4096))
+
+
+def utf8_fields(value: Any) -> Any:
+    """The same text policy for names, reasons, notes and nested ledger/reply fields."""
+    if isinstance(value, str):
+        return utf8_text(value)
+    if isinstance(value, dict):
+        return {utf8_fields(key): utf8_fields(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [utf8_fields(item) for item in value]
+    return value
+
+
+def _canonical_stops_on_disk(root: str | Path, expected: bytes | None = None) -> str | None:
+    """Read the canonical stops, or refuse uncertainty. Reading never creates a file.
+
+    An exclusive directory reserves a stop before its record is opened. Missing, partial, malformed or unreadable
+    records keep that independent gate shut. Only a complete id/time record may be shown for a new start to lift.
+    """
+    root = Path(root)
+    try:
+        try:
+            (root / STOP_DENIED).stat()
+        except FileNotFoundError:
+            pass
+        else:
+            return None
+        folder = root / STOP_RECORDS
+        try:
+            folder.stat()
+        except FileNotFoundError:
+            return None if expected is not None else ""
+        rows = []
+        for record in sorted(folder.iterdir()):
+            ident = record.name
+            if len(ident) != 32 or any(c not in "0123456789abcdef" for c in ident):
+                return None
+            if sorted(p.name for p in record.iterdir()) != ["stop.json"]:
+                return None
+            held = (record / "stop.json").read_bytes()
+            value = json.loads(held.decode("ascii"))
+            if (not isinstance(value, dict) or set(value) != {"id", "at"} or value["id"] != ident
+                    or not _on_a_clock(value["at"])):
+                return None
+            if datetime.fromisoformat(value["at"]).isoformat() != value["at"]:
+                return None
+            if held != (json.dumps(value, sort_keys=True, ensure_ascii=True) + "\n").encode("ascii"):
+                return None
+            rows.append(held)
+        if expected is not None and expected not in rows:
+            return None
+        return hashlib.sha256(b"".join(rows)).hexdigest() if rows else None
+    except BaseException:
+        return None
+
+
+def canonical_stops(root: str | Path) -> str | None:
+    """Use the same resolved folder identity for every admission and every in-process refusal."""
+    try:
+        resolved = Path(root).resolve()
+        if resolved in _STOP_UNCERTAIN:
+            return None
+        for held in tuple(_STOP_UNRESOLVED):
+            try:
+                if held.resolve() == resolved:
+                    return None
+            except (OSError, ValueError):
+                continue  # an unusable, different locator cannot identify this folder
+        return _canonical_stops_on_disk(resolved)
+    except BaseException:
+        return None
+
+
+def canonical_stop_reason(root: str | Path, start: Mapping[str, Any] | None) -> str:
+    snapshot = canonical_stops(root)
+    if snapshot is None:
+        return "G6_E_LOOP_STOP_STATE_UNREADABLE: stop state is uncertain; admission is denied"
+    if snapshot != (start or {}).get("canonical_stops", ""):
+        return "G6_E_LOOP_STOP_CANONICAL: a stop was recorded after this start, so it has ended; a new person's start is required"
+    return ""
+
+
+def canonical_stop_record(root: str | Path, ident: str | None) -> bool | None:
+    """Read this request's canonical identity, never borrowing a timestamp or another stop's note."""
+    if not ident:
+        return False
+    if canonical_stops(root) is None:
+        return None
+    try:
+        held = (Path(root) / STOP_RECORDS / ident / "stop.json").read_bytes()
+        return json.loads(held.decode("ascii"))["id"] == ident and _canonical_stops_on_disk(root, held) is not None
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _establish_stop(root: Path) -> tuple[list[str], str | None]:
+    """Use only G6's own id/time. The directory is the independent gate if any record byte or flush fails."""
+    root = root.absolute()
+    original = root
+    _STOP_UNCERTAIN.add(root)
+    try:
+        try:
+            root = root.resolve()
+        except BaseException:
+            _STOP_UNRESOLVED.add(original)
+            raise
+        _STOP_UNCERTAIN.discard(original)
+        _STOP_UNCERTAIN.add(root)
+        folder = root / STOP_RECORDS
+        folder.mkdir(exist_ok=True)
+        ident = uuid4().hex
+        record = folder / ident
+        record.mkdir()
+        data = (json.dumps({"id": ident, "at": datetime.now().astimezone().isoformat()},
+                           sort_keys=True, ensure_ascii=True) + "\n").encode("ascii")
+        descriptor = os.open(record / "stop.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+        try:
+            offset = 0
+            while offset < len(data):
+                written = os.write(descriptor, data[offset:])
+                if written <= 0:
+                    raise OSError("canonical stop write made no progress")
+                offset += written
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        if (record / "stop.json").read_bytes() != data or _canonical_stops_on_disk(root, data) is None:
+            raise OSError("the complete canonical stop did not read back by its chosen bytes")
+        _STOP_UNCERTAIN.discard(original)
+        _STOP_UNCERTAIN.discard(root)
+        _STOP_UNRESOLVED.discard(original)
+        return [], ident
+    except BaseException as exc:
+        # The reservation directory remains across restarts. A file marker uses a separate creation primitive
+        # if directory creation failed; failure of both markers keeps the process gate shut.
+        try:
+            denied = os.open(root / STOP_DENIED, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            os.close(denied)
+        except BaseException:
+            # Creating children can fail while an existing count file remains appendable. This independent
+            # gate writes only a G6-chosen line, never the caller's reason. A partial line is uncertain too.
+            try:
+                entry = f"G6_E_LOOP_STOP_CANONICAL_FAILED {uuid4().hex} {datetime.now().astimezone().isoformat()}\n"
+                with open(root / STOPS_FILE, "a", encoding="ascii", newline="\n") as counted:
+                    counted.write(entry)
+                    counted.flush()
+                    os.fsync(counted.fileno())
+                if entry.encode("ascii") not in (root / STOPS_FILE).read_bytes():
+                    raise OSError("the independent count gate did not read back")
+            except BaseException:
+                pass
+        return [f"G6_E_LOOP_STOP_CANONICAL_FAILED: {type(exc).__name__}"], None
+
+
 def stop_reason(root: str | Path) -> str:
     """Why the ``STOP`` file in the loop's folder halts it, or ``""``. It stands unless it is the very file the last start
     lifted: the same digest, length and modification time, since bytes alone cannot say a person wrote again. What was added
@@ -261,9 +434,17 @@ def what_stops(root: str | Path, start: Mapping[str, Any] | None) -> tuple[str, 
     written, which is a stop a person asked for all the same (no code of its own: the reader's stop), or an enrolment on
     record that is not the one the start agreed to (``ENROLMENT_CHANGED``, ``enrolment_changed``). A count that cannot be
     read is no count that start saw, so it stands too. ``("", "")`` when nothing stops it."""
-    why, asked = stop_reason(root), (start or {}).get("stops")
-    if not why and asked is not None and stops_asked(root) != asked:
-        why = f"a stop was asked for and its STOP file was not written: {STOPS_FILE} in the folder says why"
+    canonical = canonical_stop_reason(root, start)  # admission never depends on rendering a reason
+    try:
+        why = stop_reason(root)
+    except BaseException:
+        why = "G6_E_LOOP_STOP_STATE_UNREADABLE: stop state is uncertain; admission is denied"
+    why, asked = why, (start or {}).get("stops")
+    if not why:
+        counted = stops_asked(root)
+        if counted < 0 or asked is not None and counted != asked:
+            why = f"a stop was asked for and its STOP file was not written: {STOPS_FILE} in the folder says why"
+    why = why or canonical
     if why:
         return "", why
     changed = enrolment_changed(root, start)
@@ -305,13 +486,19 @@ def _unreadable(exc: Exception) -> str:
 def stop_to_lift(root: str | Path) -> dict[str, Any]:
     """The ``STOP`` file as it stands, for a start to record what a person agreed to lift, or nothing when there is none
     to read. No start moves or deletes the file: this record is all that lifting is."""
+    snapshot = canonical_stops(root)
+    if snapshot is None:
+        raise ValueError("G6_E_LOOP_STOP_STATE_UNREADABLE: uncertain stop state cannot be lifted")
+    canonical = {"canonical_stops": snapshot} if snapshot else {}
     path = Path(root) / STOP_FILE
     try:
         written = path.stat().st_mtime_ns     # before the read: a write between them leaves an old time, so the stop stands
         held = path.read_bytes()
+    except (FileNotFoundError, NotADirectoryError):
+        return canonical
     except OSError:
-        return {}
-    return {"lifted": hashlib.sha256(held).hexdigest(), "lifted_bytes": len(held), "lifted_mtime_ns": written}
+        return {}  # unreadable legacy stop state gives a new start nothing to lift
+    return {**canonical, "lifted": hashlib.sha256(held).hexdigest(), "lifted_bytes": len(held), "lifted_mtime_ns": written}
 
 
 def file_digest(path: Any) -> str:
@@ -327,7 +514,8 @@ def stops_asked(root: str | Path) -> int:
     restart sees any stop after it, even with the ``STOP`` file gone. One that cannot be read is ``-1``, which is no count a
     start ever recorded."""
     try:
-        return (Path(root) / STOPS_FILE).read_bytes().count(b"\n")
+        held = (Path(root) / STOPS_FILE).read_bytes()
+        return -1 if held and not held.endswith(b"\n") else held.count(b"\n")
     except FileNotFoundError:
         return 0
     except OSError:
@@ -337,31 +525,83 @@ def stops_asked(root: str | Path) -> int:
 def stop_entries(reason: str, ident: str) -> tuple[str, str]:
     """The exact LF-terminated STOP entry and counted line for one written identity. Historical reasons and counts
     keep their meaning; the counted line additionally names its write so read-back cannot borrow another stop."""
-    said = " ".join(reason.split()) or "stopped through g6_improve_stop"
+    said = " ".join(utf8_text(reason).split()) or "stopped through g6_improve_stop"
+    ident = utf8_text(ident)
     return f"{said}\n{ident}\n", f"{said[:200]} {ident}\n"
 
 
+class StopReceipt(str):
+    def __new__(cls, text: str, details: list[str], canonical_id: str | None = None):
+        result = super().__new__(cls, text)
+        result.details = "; " + "; ".join(details) if details else ""
+        result.canonical_id = canonical_id
+        return result
+
+    def __str__(self):
+        return super().__str__() + self.details
+
+
 def ask_to_stop(root: str | Path, reason: str = "", *, record_id: str | None = None) -> str:
+    """The Python stop API preserves cancellation; its canonical gate already stands before legacy writes."""
+    return _ask_to_stop(root, reason, record_id=record_id, managed=False)
+
+
+def ask_to_stop_receipt(root: str | Path, reason: str = "", *, record_id: str | None = None) -> str:
+    """The managed entry returns its own receipt even for cancellation, without retrying or borrowing identity."""
+    return _ask_to_stop(root, reason, record_id=record_id, managed=True)
+
+
+def _ask_to_stop(root: str | Path, reason: str = "", *, record_id: str | None, managed: bool) -> str:
     """Add this stop to the ``STOP`` file, making it if need be, so the first reason stands and repeating is safe. It kills
     nothing: the runner reads the file before each model call and ends itself. It returns why the folder is stopped.
 
     Each stop writes a token of its own there, so no two stops leave the same bytes, and that is what keeps a stop: a start
-    lifts only the file a person agreed to, so it needs no record to know a new stop when it sees one. A stop that cannot
-    change the file raises, because the file it could not change may be lifted.
+    lifts only the file a person agreed to. First, an independent directory reserves the canonical id/time stop. It
+    remains a refusal gate if the canonical record cannot be completed. The caller's optional identity and reason never
+    enter that establishing record. Only a new dialog may lift complete canonical records; uncertain state cannot be
+    lifted. Failures return stable codes on the string receipt and leave the gate shut.
 
-    It is also counted, first and in a file no lock stands in front of, because the records can be held for as long as a
+    It is also counted before writing the legacy STOP file, in a file no lock stands in front of, because the records can be held for as long as a
     tick lasts and a stop may never wait. The count serves a restart after a person has removed the file, when no note of
     the stop reached the records, and it is all there is of a stop that dies before its file is written, which a tick and a
-    runner read as a stop (``stop_standing``). A count that cannot be written is left, and only that restart loses by it."""
-    stop_entry, count_entry = stop_entries(reason, record_id or uuid4().hex)
+    runner read as a stop (``stop_standing``). A failed legacy count does not affect the canonical gate."""
+    root = Path(root)
+    errors, canonical_id = _establish_stop(root)  # no caller text is inspected before this gate and record
+    if errors:
+        return StopReceipt("G6_E_LOOP_STOP_STATE_UNREADABLE: admission is denied", errors)
+    try:
+        ident = utf8_text(record_id) if record_id is not None and str.__len__(record_id) else uuid4().hex
+        plain = str.__str__(reason)
+        stop_entry, count_entry = stop_entries(plain, ident)
+        if utf8_text(plain) != plain:
+            errors.append("G6_E_LOOP_STOP_REASON_ESCAPED: reason stored escaped for strict UTF-8")
+    except BaseException as exc:
+        if not managed and not isinstance(exc, Exception):
+            raise  # raw Python cancellation propagates after the independent stop stands
+        errors.append(f"G6_E_LOOP_STOP_REASON_FAILED: {type(exc).__name__}")
+        stop_entry, count_entry = stop_entries("", uuid4().hex)
     try:
         with open(Path(root) / STOPS_FILE, "a", encoding="utf-8", newline="\n") as stops:
             stops.write(count_entry)
-    except OSError:
-        pass
-    with open(Path(root) / STOP_FILE, "a", encoding="utf-8", newline="\n") as stop:
-        stop.write(stop_entry)
-    return stop_reason(root)
+    except BaseException as exc:
+        if not managed and not isinstance(exc, Exception):
+            raise  # raw Python cancellation propagates after the independent stop stands
+        errors.append(f"G6_E_LOOP_STOP_COUNT_FAILED: {type(exc).__name__}")
+    try:
+        with open(root / STOP_FILE, "a", encoding="utf-8", newline="\n") as stop:
+            stop.write(stop_entry)
+    except BaseException as exc:
+        if not managed and not isinstance(exc, Exception):
+            raise  # raw Python cancellation propagates after the independent stop stands
+        errors.append(f"G6_E_LOOP_STOP_WRITE_FAILED: {type(exc).__name__}")
+    try:
+        why = stop_reason(root) or canonical_stop_reason(root, None)
+    except BaseException as exc:
+        if not managed and not isinstance(exc, Exception):
+            raise  # raw Python cancellation propagates after the independent stop stands
+        why = "G6_E_LOOP_STOP_STATE_UNREADABLE: admission is denied"
+        errors.append(f"G6_E_LOOP_STOP_READ_FAILED: {type(exc).__name__}")
+    return StopReceipt(why, errors, canonical_id)
 
 
 def note_refusal(root: str | Path, request: str, said: str) -> None:
@@ -370,7 +610,7 @@ def note_refusal(root: str | Path, request: str, said: str) -> None:
     cannot be written is left: this process still holds it, and the cycle may yet be written."""
     try:
         with open(Path(root) / REFUSED_FILE, "a", encoding="utf-8") as kept:
-            kept.write(f"{request} {' '.join(said.split())}\n")
+            kept.write(f"{request} {utf8_text(' '.join(said.split()))}\n")
     except OSError:
         pass
 
@@ -398,8 +638,8 @@ def record_stop(root: str | Path, reason: str, *, at: str, record_id: str | None
         with Coordination(Path(root) / ".tick").mutex(wait=0):
             log = CycleLog(path)
             if log.start_in_force():
-                return log.stop(reason, at=at, record_id=record_id)
-    except (OSError, LedgerError, WorkspaceRefused):
+                return log.stop(utf8_text(reason), at=at, record_id=record_id)
+    except BaseException:
         pass
 
 
@@ -425,7 +665,7 @@ def beat(root: str | Path, **fields: Any) -> None:
     path = Path(root) / HEARTBEAT_FILE
     spare = path.with_suffix(".tmp")
     try:
-        spare.write_text(json.dumps(fields, sort_keys=True, ensure_ascii=False), encoding="utf-8")
+        spare.write_text(json.dumps(utf8_fields(fields), sort_keys=True, ensure_ascii=False), encoding="utf-8")
         for _ in range(BEAT_TRIES):
             try:
                 os.replace(spare, path)

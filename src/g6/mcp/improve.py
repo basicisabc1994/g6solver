@@ -25,7 +25,10 @@ It never moves or deletes a ``STOP`` file. It records the
 file the person agreed to lift, by digest, length and modification time, and anything else stands, so a stop it was not shown
 survives it, whatever became of any count or record.
 
-**Stop** always works and asks nobody: it adds to the local ``STOP`` file, which is safe to repeat and works when the runner
+**Stop** asks nobody: it reserves a refusal gate and reads back a G6 id/time record before rendering caller text.
+Admission reads that record independently of the separately stored reason; uncertain state refuses starts and ticks.
+The reply's ``canonical_stop`` reads that gate separately from the legacy ``recorded`` parts. It also adds to the local
+``STOP`` file, which is safe to repeat and works when the runner
 is already dead. It kills nothing and touches no container, so it reports whether the runner has stopped yet. A tick under
 way sees the file at its next model call, so a request already sent comes back first and nothing after it goes out. It also
 ends the person's start, so nothing but a new agreement brings the runner back, not a restart and not the file's removal.
@@ -64,7 +67,10 @@ from g6.self_maintenance.envelope import (
     STOP_FILE,
     STOPS_FILE,
     CycleLog,
-    ask_to_stop,
+    ask_to_stop_receipt as ask_to_stop,
+    canonical_stop_record,
+    canonical_stop_reason,
+    canonical_stops,
     enrolment_digest,
     enrolment_id,
     file_digest,
@@ -76,6 +82,7 @@ from g6.self_maintenance.envelope import (
     stop_entries,
     stop_to_lift,
     stops_asked,
+    utf8_text,
 )
 from g6.self_maintenance.pacing import SETTINGS_FILE, read_settings, windows_from
 from g6.workspace._coordination import Coordination
@@ -140,7 +147,10 @@ def _root(folder: str) -> Path:
     test runs all write there, and nothing but the loop writes here. A loop already in the earlier default stays where it
     is, so that a stop with no folder named still reaches its runner."""
     if folder.strip():
-        return Path(folder).expanduser().resolve()
+        try:
+            return Path(folder).expanduser().resolve()
+        except (OSError, ValueError):
+            return Path(folder)  # malformed locators are refused by _is_a_loop without touching their state
     home = g6_home()
     default, earlier = home.with_name(f"{home.name}-improve"), home / "improve"
     return earlier if _is_a_loop(earlier) and not _is_a_loop(default) else default
@@ -148,10 +158,14 @@ def _root(folder: str) -> Path:
 
 def _is_a_loop(root: Path) -> bool:
     """Its settings, its records or a runner's lock: a runner must stay within reach with the first two gone."""
-    return (root / SETTINGS_FILE).is_file() or (root / CYCLE_LOG).is_file() or (root / RUNNER_LOCK).is_dir()
+    try:
+        return (root / SETTINGS_FILE).is_file() or (root / CYCLE_LOG).is_file() or (root / RUNNER_LOCK).is_dir()
+    except (OSError, ValueError):
+        return False
 
 
 def _not_a_loop(root: Path) -> dict:
+    root = utf8_text(str(root))
     return _blocked(NOT_A_FOLDER, f"{root} is not a loop's folder: it has no {SETTINGS_FILE} and no records, so nothing was "
                     "done", f"Name the folder, or create {SETTINGS_FILE} there: see the design's section 11.")
 
@@ -206,6 +220,9 @@ def _cannot_start(root: Path) -> dict | None:
     if stops_asked(root) < 0:
         return _blocked(RECORDS_UNREADABLE, "the count of stops cannot be read, so a restart would have nothing to stand on "
                         "and nothing was started", f"A person frees {STOPS_FILE} in {root}.")
+    if canonical_stops(root) is None:
+        return _blocked(RECORDS_UNREADABLE, "G6_E_LOOP_STOP_STATE_UNREADABLE: uncertain stop state denies admission",
+                        "A person inspects the stop records; no start may lift uncertain state.")
     if log is None or log.enrolled() is None:
         return _blocked(NOT_ENROLLED, "no person has enrolled a domain in this folder, so nothing was started", ENROL)
     if log.enrolled()["frozen"].get("domain_file") != file_digest(read_settings(root).get("domain_file")):
@@ -219,6 +236,14 @@ SETTINGS_DIGEST = "Settings digest"
 STOPS_COUNTED = "Stops counted"
 ENROLMENT = "Enrolment on record"
 LIFTS = {"lifted": "STOP file SHA-256", "lifted_bytes": "STOP file bytes", "lifted_mtime_ns": "STOP file modified (ns)"}
+
+
+class _StartTerms(dict):
+    """Public terms plus the same read's raw canonical snapshot; the digest is also visible in the terms."""
+    def __init__(self, fields, canonical, active):
+        super().__init__(fields)
+        self.canonical_stops = canonical
+        self.active_stop = active
 
 
 def _terms(root: Path) -> dict[str, Any]:
@@ -242,13 +267,18 @@ def _terms(root: Path) -> dict[str, Any]:
         SETTINGS_DIGEST: digest_of(settings), STOPS_COUNTED: stops,
         "Stops the last start counted": ((log.started() if log is not None else None) or {}).get("stops", 0)}
     why, standing = stop_reason(root), stop_to_lift(root)
-    if why:
+    canonical = standing.pop("canonical_stops", "")
+    active = bool(why or canonical != ((log.started() if log is not None else None) or {}).get("canonical_stops", ""))
+    if canonical:
+        current = why or ("a canonical stop is in place" if active else "no unlifted stop; canonical history is retained")
+        bound["Stop now in place"] = f"{current}; canonical stop records SHA-256: {canonical}"
+    elif why:
         bound["Stop now in place"] = why
     bound |= {LIFTS[name]: value for name, value in standing.items()}
     paused = log.paused() if log is not None else ""
     if paused:
         bound["Paused because"] = paused
-    return bound
+    return _StartTerms(bound, canonical, active)
 
 
 def asked(folder: str) -> tuple[Path, str, dict[str, Any]] | dict:
@@ -265,10 +295,11 @@ def asked(folder: str) -> tuple[Path, str, dict[str, Any]] | dict:
         return _blocked(RECORDS_UNREADABLE, f"the loop's records cannot be trusted: {exc}"[:400],
                         "A person inspects the folder; nothing was started.")
     said = [RUNS]
-    if "Stop now in place" in bound:
+    if getattr(bound, "active_stop", "Stop now in place" in bound):
         said.append("Starting lifts the stop now in place. Its file stays, and any write to it after that stops the loop "
-                    "again.")
-    elif bound[STOPS_COUNTED] > bound["Stops the last start counted"]:
+                    "again." if "STOP file SHA-256" in bound else
+                    "Starting lifts only the canonical stop records shown; any new stop record stops the loop again.")
+    if bound[STOPS_COUNTED] > bound["Stops the last start counted"] and "STOP file SHA-256" not in bound:
         said.append(f"A stop was asked for since the last start and no STOP file stands for it: {STOPS_FILE} in the folder "
                     "says why. Starting goes past it.")
     if "Paused because" in bound:
@@ -411,6 +442,7 @@ def start(root: Path, who: str, shown: dict[str, Any] | None = None) -> dict:
     restart holds to what was agreed and any stop since closes it. It lifts only the ``STOP`` file the binding names, by
     recording it: any other stop stands, and nothing starts. Once it has tried to record, its reply is decided by what
     the folder holds of that start, read back (``_start_as_recorded``), whichever step failed."""
+    who = utf8_text(who)
     if shown is not None and not _still_read(root, shown):
         return _not_what_was_read(root)
     cannot = _cannot_start(root)
@@ -433,8 +465,10 @@ def start(root: Path, who: str, shown: dict[str, Any] | None = None) -> dict:
                                              settings=bound[SETTINGS_DIGEST], stops=bound[STOPS_COUNTED],
                                              enrolment=bound[ENROLMENT],
                                              enrolment_id=bound["Enrolment record id"],
+                                             **({"canonical_stops": now.canonical_stops}
+                                                if getattr(now, "canonical_stops", "") else {}),
                                              **{name: bound[label] for name, label in LIFTS.items() if label in bound})
-        why = stop_reason(root)
+        why = stop_reason(root) or canonical_stop_reason(root, CycleLog(root / CYCLE_LOG).started())
         if why:
             record_stop(root, why, at=datetime.now().astimezone().isoformat())
             reply = _blocked(START_STOPPED, f"a stop arrived while the start was being recorded, so nothing was started: "
@@ -580,6 +614,7 @@ def act(act_name: str, root: Path, who: str, shown: dict[str, Any], generation: 
     checked for what the binding does not cover (``_cannot_act``)."""
     from g6.metaharness.runner import SETTINGS_DIGEST as BOUND_SETTINGS, moved
 
+    who = utf8_text(who)
     changed = moved(act_name, root, shown, generation=generation)
     try:
         settings = read_settings(root)
@@ -787,7 +822,8 @@ def _stop_before(root: Path) -> dict[str, Any]:
     return {"started": started, "records": records, "missing": missing}
 
 
-def _stop_on_record(root: Path, before: dict[str, Any], ident: str, reason: str) -> dict[str, bool | None]:
+def _stop_on_record(root: Path, before: dict[str, Any], ident: str, reason: str,
+                    canonical_id: str | None = "") -> dict[str, bool | None]:
     """Read every part from its own bytes or ledger row: the two complete entries written with ``ident``, and the
     constraint-log row with that id. The stop's effect uses the runner's stop rule too: an empty STOP file may stop a
     runner even when this stop's line never landed. Unreadable parts are unknown, independently."""
@@ -797,15 +833,17 @@ def _stop_on_record(root: Path, before: dict[str, Any], ident: str, reason: str)
     started = before["started"]
     try:
         log = _log(root)
-        note = log is not None and log.record("stopped", ident) is not None
+        note = canonical_id is not None and log is not None and log.record("stopped", ident) is not None
         in_force = log is not None and log.start_in_force()
         ended = True if note else (started is not None and (not in_force or bool(stop_standing(root, started)))
+                                   and (canonical_id == "" or canonical_stop_record(root, canonical_id) is True)
                                    if before["records"] else None)          # its note is written only to end a start
     except (OSError, LedgerError):
         note = ended = None
     appeared = (bool(stop_reason(root)) if before["missing"] is True and line is not None else
                 False if before["missing"] is False else None)
-    stands = True if line or ended or appeared else None if line is None or ended is None or appeared is None else False
+    stands = (False if canonical_id is None else
+              True if line or ended or appeared else None if line is None or ended is None or appeared is None else False)
     return {"the stop": stands, "its line in the STOP file": line, "its count in stops.log": count,
             "its note in the constraint log": note}
 
@@ -825,18 +863,25 @@ def stop(folder: str, reason: str = "") -> dict:
     except OSError as exc:
         failed = exc
     why = why or (stop_standing(root, before["started"]) if before["started"] else "")
-    if why:
+    canonical_id = getattr(why, "canonical_id", "")
+    if why and canonical_id is not None:
         record_stop(root, why, at=datetime.now().astimezone().isoformat(), record_id=ident)
     running = runner_alive(root)
-    found = _stop_on_record(root, before, ident, reason)
+    found = _stop_on_record(root, before, ident, reason, canonical_id)
     raised = f"; writing it raised {type(failed).__name__}: {failed}" if failed is not None else ""
+    raised = utf8_text(raised) + getattr(why, "details", "")
+    if before["started"] and found["its note in the constraint log"] is not True:
+        raised += "; G6_E_LOOP_STOP_NOTE_FAILED: the stop note did not read back"
     if found["the stop"] is not True:
         return _blocked(STOP_FAILED, f"the stop is not known to stand; {_record_said(found)}{raised}"[:400],
-                        running=running, folder=str(root), recorded=found)
+                        running=running, folder=utf8_text(str(root)), recorded=found, canonical_stop=canonical_stops(root),
+                        canonical_stop_id=canonical_id or None)
     said = ("the runner has been asked to stop and is still alive: it ends once it sees the STOP file, at its next model "
             "call, or within a minute while it waits" if running else "no runner is alive")
     return _envelope("qualified-draft", STOP_ASKED, f"{said}; {_record_said(found)}{raised}"[:500], running=running,
-                     stopped=not running, stop=why, folder=str(root), recorded=found,
+                     stopped=not running, stop=why, folder=utf8_text(str(root)), recorded=found,
+                     canonical_stop=canonical_stops(root),
+                     canonical_stop_id=canonical_id or None,
                      next_action="g6_improve_status says when it has gone." if running else
                      "g6_improve_start starts it again, and lifts the stop once the person agrees.")
 

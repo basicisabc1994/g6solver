@@ -101,6 +101,8 @@ from g6.self_maintenance.envelope import (
     runner_lock,
     stop_reason,
     stops_asked,
+    canonical_stop_reason,
+    utf8_text,
 )
 from g6.self_maintenance.pacing import SETTINGS_FILE, read_settings, windows_from
 from g6.self_maintenance.usage import AccountReader
@@ -366,7 +368,11 @@ def _admission(root: Path, settings: dict[str, Any]) -> tuple[str, str, str]:
     if start is None:
         return NOT_STARTED, ("no start stands on this folder, so nothing ran. Only a person starts the loop, in the client's "
                              "dialog, through g6_improve_start; after that a restart carries on until a stop"), ""
-    if start.get("stops") != stops_asked(root):
+    canonical = canonical_stop_reason(root, start)
+    if canonical:
+        return NOT_STARTED, canonical, ""
+    asked = stops_asked(root)
+    if asked < 0 or start.get("stops") != asked:
         return NOT_STARTED, ("a stop has been asked for since the last start, so nothing ran: only a new g6_improve_start "
                              "undoes that"), ""
     if start.get("settings") != digest_of(settings):
@@ -572,7 +578,7 @@ def on_record(request: Mapping[str, Any]) -> dict[str, bool]:
     name, folder, bound = request.get("act"), request.get("folder"), request.get("binding")
     if name not in ACT_PARTS or not folder or not isinstance(bound, Mapping):
         raise ValueError("the request names no person's act on a folder")
-    root, who = Path(str(folder)).resolve(), str(request.get("who", "")).strip()
+    root, who = Path(str(folder)).resolve(), utf8_text(str(request.get("who", ""))).strip()
     path = root / CYCLE_LOG
     log = CycleLog(path) if path.is_file() else None
     if name == "enrol":
@@ -644,7 +650,7 @@ def act(request: dict[str, Any]) -> dict[str, Any]:
     read back (``as_recorded``), so none says what is on record from which step it reached. Like the start, this is a
     check and not a boundary: a process with the owner's rights can reach this code, and an editor that takes no lock
     can still write the folder's files between the last read and the write."""
-    name, root, who = request["act"], Path(request["folder"]).resolve(), str(request["who"])
+    name, root, who = request["act"], Path(request["folder"]).resolve(), utf8_text(str(request["who"]))
     if name == "enrol":
         request.setdefault("record_id", uuid4().hex)
     generation, bound = request.get("generation"), request["binding"]
