@@ -23,7 +23,7 @@ from g6.agents._runtime.model import DOES, NEEDS
 from g6.agents.agent_autogen.adapter import INSTALL, NOT_INSTALLED, AutoGenRuntime, missing
 from g6.agents.agent_autogen.spec import TeamSpec
 from g6.core.ai_block import AIBlock
-from g6.core.llm import provider_from_env
+from g6.core.consent_callers import provider_from_env
 from g6.core.maturity import component_maturity
 from g6.core.reliability_envelope import WarningCard
 from g6.core.result import Result

@@ -19,9 +19,12 @@ from types import SimpleNamespace
 import pytest
 
 from g6.core.llm import FakeLLM, NoModel
+from g6.core.consent_callers import CallerWrapper, SDKClient
 from g6.harness import patch_review, verification_proposer, verification_search
 from g6.harness.patch_review import review_patch
 from g6.invariants import check_envelope
+
+pytestmark = pytest.mark.usefixtures("declared_mcp_grants")
 
 # A library function and its round trip; the patch escapes newlines too and decodes in the wrong order.
 CODEC_BASE = ('def encode(text):\n    return text.replace("%", "%25").replace(",", "%2C")\n\n\n'
@@ -369,12 +372,15 @@ def test_each_call_asks_for_at_most_the_output_limit(tmp_path, monkeypatch, read
     Tiers(monkeypatch)
     asked: list[int] = []
 
-    class Caller:
+    class Caller(CallerWrapper):
         model = "a-fake-model"
+
+        def __init__(self):
+            super().__init__(FakeLLM(json.dumps({"checks": []})))
 
         def complete(self, system, user, *, max_tokens=2048):
             asked.append(max_tokens)
-            return json.dumps({"checks": []})
+            return self.inner.complete(system, user, max_tokens=max_tokens)
 
     review_patch(root, task="t", requirements=RULES, llm=Caller(),
                  search={"propose": True, "proposer": "free_form", "max_output_tokens": 700})
@@ -393,12 +399,19 @@ def test_the_limits_hold_for_every_request_the_provider_receives_behind_g6s_retr
     Tiers(monkeypatch)
     asked: list[int] = []
 
-    class Provider(FakeLLM):   # empty three times (a model that spent its budget thinking), then a reply
+    class Provider(CallerWrapper):   # empty three times (a model that spent its budget thinking), then a reply
         model = "a-fake-model"
+
+        def __init__(self, respond):
+            super().__init__(FakeLLM(respond))
+
+        @property
+        def calls(self):
+            return self.inner.calls
 
         def complete(self, system, user, *, max_tokens=2048):
             asked.append(max_tokens)
-            return super().complete(system, user, max_tokens=max_tokens)
+            return self.inner.complete(system, user, max_tokens=max_tokens)
 
     provider = Provider(lambda system, user: "" if len(asked) % 4 else json.dumps({"checks": []}))
     monkeypatch.setattr(verification_proposer, "default_caller", lambda: EmptyRetry(provider))
@@ -442,8 +455,10 @@ def test_with_no_model_configured_or_no_boundary_no_model_is_called_and_the_stag
 
 # --- what V10 reads from a reply: the calls, their tokens and model, every request and reply, the context ---------------
 
-class FakeClient:
+class FakeClient(SDKClient):
     """An ``anthropic.Anthropic``-shaped client: ``messages.create`` answers with usage, a model and a text block."""
+
+    base_url = 'https://api.anthropic.com'
 
     def __init__(self, text: str):
         self.requests: list[dict] = []
@@ -457,10 +472,14 @@ class FakeClient:
         self.messages = SimpleNamespace(create=create)
 
 
-def test_token_counts_and_the_answering_model_are_recorded_from_the_clients_usage(tmp_path, monkeypatch, ready):
+def test_token_counts_and_the_answering_model_are_recorded_from_the_clients_usage(tmp_path, monkeypatch, ready,
+                                                                                 accepted_cloud_dialog):
+    accepted_cloud_dialog('model_inputs', 'anthropic:api', text='synthetic proposer inputs')
     root = _repo(tmp_path, CODEC, {"textcodec.py": CODEC_PATCH})
     Tiers(monkeypatch)
     client = FakeClient(json.dumps({"checks": []}))
+    for ref in verification_proposer.repository_context(root, requirements=RULES).sources:
+        accepted_cloud_dialog(ref.source_id, 'anthropic:api', text='synthetic repository context')
     caller = verification_proposer.StudyCaller("claude-haiku-4-5", client=client)
     got = review_patch(root, task="t", requirements=RULES, llm=caller,
                        search={"propose": True, "proposer": "free_form", "max_output_tokens": 900})

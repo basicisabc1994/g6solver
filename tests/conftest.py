@@ -8,8 +8,26 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import asyncio
+from contextlib import ExitStack
+from types import SimpleNamespace
 
 import pytest
+
+
+def accepted_cloud_name(message):
+    assert 'cannot be recalled' in message
+    return 'Fixture person'
+
+
+async def accepting_cloud_elicitation(message, response_type, params, context):
+    return response_type(value=accepted_cloud_name(message))
+
+
+@pytest.fixture
+def cloud_smoke_dialog():
+    from pathlib import Path
+    return Path(__file__).parent / 'tools/_consented_smoke.py'
 
 # Set before any g6 module is imported, so module-level defaults resolve inside it.
 os.environ["G6_HOME"] = tempfile.mkdtemp(prefix="g6-test-home-")
@@ -50,6 +68,88 @@ def registry_reset():
     clear()
     yield
     clear()
+
+
+@pytest.fixture
+def accepted_cloud_dialog():
+    """Opt-in grants through the same dialog acceptance path as the MCP client.
+
+    Tests name each complete synthetic source and provider. This fixture changes
+    no production policy, settings, environment flag, or admission function.
+    """
+    from g6.core.cloud_consent import Source, request_sources
+    from g6.mcp.cloud_consent import request_grant
+
+    class Session:
+        async def elicit_form(self, **kwargs):
+            return SimpleNamespace(action='accept', content={'value': accepted_cloud_name(kwargs['message'])})
+
+    with ExitStack() as scopes:
+        def grant(source, provider, *, text):
+            ctx = SimpleNamespace(session=Session(), request_id='fixture-dialog')
+            result = asyncio.run(request_grant(ctx, source, provider))
+            assert result['status'] == 'granted'
+            refs = (Source.text(source, 'fixture-inputs', text),)
+            scopes.enter_context(request_sources(refs))
+            return refs
+        yield grant
+
+
+@pytest.fixture
+def consented_provider_fakes(tmp_path, monkeypatch, accepted_cloud_dialog, request):
+    """Named, synthetic provider inputs for tests of metering and refusal flow.
+
+    Every grant goes through request_grant and its accepting client dialog.
+    Unknown recipients and unrecorded inputs remain ineligible.
+    """
+    from g6.core.cloud_consent import sha256
+
+    monkeypatch.setenv('G6_HOME', str(tmp_path / 'consent-home'))
+    source = request.path.read_text(encoding='utf-8')
+    domain = request.path.parent / '_loop_domains.py'
+    if domain.is_file():
+        source += '\n' + domain.read_text(encoding='utf-8')
+    for provider in ('anthropic:claude_code', 'openai:codex', 'openai:api', 'anthropic:api',
+                     'endpoint:' + sha256('https://unused.invalid'),
+                     'endpoint:' + sha256('https://unused.invalid/v1')):
+        accepted_cloud_dialog('fixture:provider-inputs', provider, text=source)
+
+
+@pytest.fixture
+def declared_mcp_grants(monkeypatch, request):
+    """Explicit opt-in for retained-source tests using an identifiable fake client.
+
+    Grant at client startup, after a test has chosen its isolated G6_HOME. This
+    uses the real accepting dialog path; it changes neither admission nor policy.
+    The tool's own execution/approval dialog remains the test's original handler.
+    """
+    from fastmcp import Client
+    from mcp.types import Implementation
+    from g6.mcp.cloud_consent import request_grant
+
+    class Accepting:
+        async def elicit_form(self, **kwargs):
+            return SimpleNamespace(action='accept', content={'value': accepted_cloud_name(kwargs['message'])})
+
+    initialise, enter = Client.__init__, Client.__aenter__
+
+    def identified(self, *args, **kwargs):
+        kwargs.setdefault('client_info', Implementation(name='codex', version='test'))
+        initialise(self, *args, **kwargs)
+
+    async def granted(self):
+        context = SimpleNamespace(session=Accepting(), request_id='fixture-dialog')
+        parameters = getattr(getattr(request.node, 'callspec', None), 'params', {})
+        scopes = ((parameters['sharing_scope'],) if 'sharing_scope' in parameters else
+            ('jobs', 'missions', 'improvement', 'workflows', 'component_data', 'component_catalogue',
+             'host_configuration', 'completion_history', 'model_inputs', 'consent_metadata'))
+        for source in scopes if parameters.get('scope_granted', True) else ():
+            result = await request_grant(context, source, 'openai:codex')
+            assert result['status'] == 'granted'
+        return await enter(self)
+
+    monkeypatch.setattr(Client, '__init__', identified)
+    monkeypatch.setattr(Client, '__aenter__', granted)
 
 
 #: Set on CI's Linux jobs (tools/ci_bubblewrap.sh): the bwrap tests then fail, never skip, where it cannot confine.

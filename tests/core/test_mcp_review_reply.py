@@ -22,6 +22,7 @@ from g6.invariants import check_envelope
 
 fastmcp = pytest.importorskip("fastmcp")
 from fastmcp import Client  # noqa: E402
+from mcp.types import Implementation  # noqa: E402
 
 from g6.harness import patch_review  # noqa: E402
 from g6.mcp import build_server  # noqa: E402
@@ -44,16 +45,21 @@ def _data(reply) -> dict:
     return reply.data if isinstance(reply.data, dict) else reply.structured_content
 
 
-def _review_over_mcp(monkeypatch, tmp_path, reply: dict, *, detail: str | None = None):
+def _review_over_mcp(monkeypatch, tmp_path, reply: dict, accepted_cloud_dialog, *, detail: str | None = None):
     """Run g6_review_patch over a real MCP client with ``review_patch`` giving ``reply``; the finished job's reply,
     its text as the client receives it, and the full form asked for after it."""
     monkeypatch.setenv("G6_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("G6_MCP_SENSITIVE", "patch_review.review")
-    monkeypatch.setattr(patch_review, "review_patch", lambda *a, **k: copy.deepcopy(reply))
+    from g6.core.cloud_consent import bind_output, repository_source
+    refs = accepted_cloud_dialog('fixture:worked-review', 'openai:codex', text=json.dumps(reply))
+    accepted_cloud_dialog('jobs', 'openai:codex', text='retained synthetic report')
+    accepted_cloud_dialog('host_configuration', 'openai:codex', text='synthetic host diagnostics')
+    accepted_cloud_dialog(repository_source(tmp_path / 'state' / 'reviews'), 'openai:codex', text='review storage')
+    monkeypatch.setattr(patch_review, "review_patch", lambda *a, **k: bind_output(copy.deepcopy(reply), refs))
     server = build_server()
 
     async def flow():
-        async with Client(server) as client:
+        async with Client(server, client_info=Implementation(name='codex', version='test')) as client:
             job = _data(await client.call_tool("g6_review_patch", {"repo": str(tmp_path), "task": "t",
                                                                    "requirements": []}))
             arguments = {"job_id": job["job_id"], **({"detail": detail} if detail else {})}
@@ -68,10 +74,10 @@ def _review_over_mcp(monkeypatch, tmp_path, reply: dict, *, detail: str | None =
     return asyncio.run(flow())
 
 
-def test_the_finished_review_replies_compactly_with_the_report_first(tmp_path, monkeypatch):
+def test_the_finished_review_replies_compactly_with_the_report_first(tmp_path, monkeypatch, accepted_cloud_dialog):
     real = _real()
     assert len(json.dumps(real, separators=(",", ":"))) > 50_000   # the shape the worked examples saw
-    got, text, _ = _review_over_mcp(monkeypatch, tmp_path, real)
+    got, text, _ = _review_over_mcp(monkeypatch, tmp_path, real, accepted_cloud_dialog)
     assert got["status"] == "completed" and len(text) < COMPACT_CHARS, len(text)
     result = got["result"]
     assessment = result["assessment"]
@@ -93,9 +99,9 @@ def test_the_finished_review_replies_compactly_with_the_report_first(tmp_path, m
     assert "gate" not in result and "loaded_outside" not in text
 
 
-def test_the_compact_reply_says_where_the_full_assessment_is_and_both_hold_everything(tmp_path, monkeypatch):
+def test_the_compact_reply_says_where_the_full_assessment_is_and_both_hold_everything(tmp_path, monkeypatch, accepted_cloud_dialog):
     real = _real()
-    got, _, full = _review_over_mcp(monkeypatch, tmp_path, real)
+    got, _, full = _review_over_mcp(monkeypatch, tmp_path, real, accepted_cloud_dialog)
     where = got["result"]["full_assessment"]
     saved = Path(where["file"])
     assert saved.is_file() and saved.parent == (tmp_path / "state" / "reviews").resolve()
@@ -106,13 +112,13 @@ def test_the_compact_reply_says_where_the_full_assessment_is_and_both_hold_every
     assert full["job_id"] == got["job_id"]
 
 
-def test_asking_for_the_full_form_from_the_start_gives_what_the_reply_was_before(tmp_path, monkeypatch):
+def test_asking_for_the_full_form_from_the_start_gives_what_the_reply_was_before(tmp_path, monkeypatch, accepted_cloud_dialog):
     real = _real()
-    got, text, _ = _review_over_mcp(monkeypatch, tmp_path, real, detail="full")
+    got, text, _ = _review_over_mcp(monkeypatch, tmp_path, real, accepted_cloud_dialog, detail="full")
     assert got["result"] == real and len(text) > 50_000
 
 
-def test_a_huge_review_still_fits_and_keeps_its_report_whole(tmp_path, monkeypatch):
+def test_a_huge_review_still_fits_and_keeps_its_report_whole(tmp_path, monkeypatch, accepted_cloud_dialog):
     real = _real()
     huge = copy.deepcopy(real)
     assessment = huge["assessment"]
@@ -123,7 +129,7 @@ def test_a_huge_review_still_fits_and_keeps_its_report_whole(tmp_path, monkeypat
     huge["evidence"] = huge["evidence"] * 100
     huge["warning_card"] = {**huge["warning_card"], "message": "m" * 20_000, "why": "w" * 20_000,
                             "risks": ["r" * 20_000] * 10}
-    got, text, full = _review_over_mcp(monkeypatch, tmp_path, huge)
+    got, text, full = _review_over_mcp(monkeypatch, tmp_path, huge, accepted_cloud_dialog)
     result = got["result"]
     assert len(text) < 25_000, len(text)
     assert result["assessment"]["report"] == real["assessment"]["report"]
@@ -132,11 +138,11 @@ def test_a_huge_review_still_fits_and_keeps_its_report_whole(tmp_path, monkeypat
     assert full["result"] == huge
 
 
-def test_a_refusal_is_returned_as_it_is(tmp_path, monkeypatch):
+def test_a_refusal_is_returned_as_it_is(tmp_path, monkeypatch, accepted_cloud_dialog):
     from g6.core.door import blocked_reply
 
     refused = blocked_reply("[G6_E_INPUT_VALIDATION] template instance ex lacks bindings.relation")
-    got, _, full = _review_over_mcp(monkeypatch, tmp_path, refused)
+    got, _, full = _review_over_mcp(monkeypatch, tmp_path, refused, accepted_cloud_dialog)
     assert got["result"] == refused == full["result"]
     assert not (tmp_path / "state" / "reviews").exists()
 
@@ -159,3 +165,25 @@ def test_the_tool_descriptions_say_the_reply_is_compact_and_how_to_get_the_full_
     job = " ".join(tools["metaharness_job"].description.split())
     assert 'detail="full"' in review and 'detail="full"' in job
     assert "detail" in tools["metaharness_job"].parameters["properties"]
+
+
+@pytest.mark.parametrize('detail', ['compact', 'full'])
+def test_review_reply_without_a_dialog_grant_withholds_the_fixture(tmp_path, monkeypatch, detail):
+    from g6.core.cloud_consent import Source, bind_output
+    monkeypatch.setenv('G6_HOME', str(tmp_path / 'state'))
+    monkeypatch.setenv('G6_MCP_SENSITIVE', 'patch_review.review')
+    refs = (Source.text('fixture:worked-review', 'report', 'PLANTED_REVIEW'),)
+    monkeypatch.setattr(patch_review, 'review_patch',
+                        lambda *a, **k: bind_output({'assessment': {'report': 'PLANTED_REVIEW'}}, refs))
+    async def read():
+        async with Client(build_server(), client_info=Implementation(name='codex', version='test')) as client:
+            job = _data(await client.call_tool('g6_review_patch', {'repo': str(tmp_path), 'task': 't'}))
+            for _ in range(400):
+                got = await client.call_tool('metaharness_job', {'job_id': job['job_id'], 'detail': detail})
+                if _data(got).get('status') in ('completed', 'failed'):
+                    return got
+                await asyncio.sleep(0.02)
+        raise AssertionError('the review job did not finish')
+    got = asyncio.run(read())
+    assert 'G6_E_CLOUD_CONSENT_REQUIRED' in _text(got)
+    assert 'PLANTED_REVIEW' not in _text(got)

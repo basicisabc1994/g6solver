@@ -119,7 +119,8 @@ class G6ChatClient(ChatCompletionClient):
         offered = list(tools) if tool_choice != "none" else []
         system, transcript = render(messages, offered)
         self.calls += 1
-        text = self.llm.complete(system, transcript, max_tokens=self.max_tokens)
+        from g6.core.consent_callers import guard
+        text = guard(self.llm).complete(system, transcript, max_tokens=self.max_tokens)
         calls = tool_calls(text) if offered else None
         if calls:
             return CreateResult(finish_reason="function_calls", content=calls, usage=self._usage, cached=False)

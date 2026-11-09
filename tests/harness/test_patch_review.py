@@ -22,6 +22,8 @@ from g6.harness.patch_review import review_patch
 from g6.workforce import repo_tests
 from g6.invariants import check_envelope
 
+pytestmark = pytest.mark.usefixtures("declared_mcp_grants")
+
 BAD = "def add(a, b):\n    return a - b\n"
 GOOD = "def add(a, b):\n    return a + b\n"
 POSITIVE_ONLY = "def add(a, b):\n    return a + b if a > 0 else a - b\n"

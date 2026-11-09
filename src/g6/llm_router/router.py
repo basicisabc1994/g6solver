@@ -18,7 +18,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 
-from g6.core.llm import FallbackCaller, LLMCaller, LLMError, provider_from_env
+from g6.core.llm import FallbackCaller, LLMCaller, LLMError
+from g6.core.consent_callers import guard, provider_from_env
 from g6.llm_router.advice import KNOWN_PROVIDERS, LOCAL_ONLY, route
 from g6.llm_router.envelope import RouterResult
 from g6.llm_router.outcomes import OutcomeStore
@@ -69,7 +70,7 @@ class TaskRouter:
             raise LLMError(f"{found.code}: {found.reason}")
         chain = [(row["provider"], row["model_id"]) for row in (found.model, *found.fallbacks)]
         callers = [self._build(p, m) if self._build else build_caller(p, m, self._env) for p, m in chain]
-        return FallbackCaller(callers, names=[m for _, m in chain])
+        return guard(FallbackCaller(callers, names=[m for _, m in chain]))
 
 
 __all__ = ["TaskRouter", "build_caller"]

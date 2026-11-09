@@ -1,0 +1,142 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Host-code source contracts for producers that can send to a model.
+
+Contracts describe possible inputs, including retained inputs. They never infer
+permission from a returned value. Source scopes are deliberately conservative:
+for example component_data includes indexes, corpora and arbitrary component IO.
+The inventory challenges additions independently of runtime result rendering.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+import json
+import re
+
+from g6.core import cloud_consent as cloud
+
+
+@dataclass(frozen=True)
+class Declaration:
+    classes: tuple[str, ...]
+
+    def __post_init__(self):
+        if not self.classes or any(c not in ('client_request', 'client_repository', 'g6_operational')
+                and not re.fullmatch(r'source:[A-Za-z0-9_.:-]+', c) for c in self.classes):
+            raise ValueError('unknown producer source class')
+
+    def sources(self, arguments=None, *, payload=''):
+        arguments = arguments or {}
+        capture = cloud.current_capture()
+        refs = []
+        for kind in self.classes:
+            if kind == 'g6_operational':
+                continue
+            if kind == 'client_request':
+                text = json.dumps(arguments, sort_keys=True, default=str)
+                source = cloud.input_source(text)
+                if capture is not None:
+                    capture.supplied.add(source)
+            elif kind == 'client_repository':
+                repo = arguments.get('repo')
+                try:
+                    source = cloud.repository_source(repo) if repo else 'repositories'
+                except (ValueError, OSError):
+                    # Validation belongs to the tool. An invalid client path
+                    # must not replace its earlier refusal with a consent error.
+                    source = cloud.input_source(str(repo))
+                    if capture is not None:
+                        capture.supplied.add(source)
+            else:
+                source = kind.removeprefix('source:')
+            refs.append(cloud.Source.text(source, 'producer-declaration', payload))
+        return tuple(refs)
+
+
+def declares(*classes):
+    declaration = Declaration(tuple(classes))
+    def decorate(fn):
+        fn._g6_declaration = declaration
+        return fn
+    return decorate
+
+
+def contract(*classes):
+    return Declaration(tuple(classes))
+
+
+TOOLS = {
+    **{name: contract('g6_operational') for name in ('g6_help', 'g6_components')},
+    **{name: contract('client_request', 'source:component_catalogue') for name in ('g6_find', 'g6_describe')},
+    **{name: contract('client_request', 'source:component_data') for name in ('g6_invoke', 'g6_compose')},
+    'g6_review_patch': contract('client_request', 'client_repository', 'source:host_configuration'),
+    'g6_review_until_clean': contract('client_request', 'client_repository', 'source:host_configuration',
+                                     'source:completion_history'),
+    'g6_premortem': contract('client_request', 'client_repository'),
+    'g6_mission_create': contract('client_request', 'client_repository', 'source:missions'),
+    'g6_mission_submit': contract('client_request', 'client_repository', 'source:missions', 'source:host_configuration'),
+    **{name: contract('client_request', 'source:missions') for name in (
+        'g6_mission_clarify', 'g6_mission_confirm', 'g6_mission_status', 'g6_mission_certificate')},
+    **{name: contract('client_request', 'source:improvement') for name in (
+        'g6_improve_start', 'g6_improve_stop', 'g6_improve_status')},
+    **{name: contract('client_request', 'source:workflows') for name in (
+        'metaharness_start', 'metaharness_confirm', 'metaharness_propose_code', 'metaharness_evaluate_start',
+        'metaharness_run', 'metaharness_inspect', 'metaharness_propose', 'metaharness_evaluate',
+        'metaharness_decide', 'metaharness_diagnose', 'metaharness_approve', 'metaharness_rollback')},
+    # A retained job can contain any of the asynchronous producers' output.
+    'metaharness_job': contract('client_request', 'source:jobs'),
+    **{name: contract('g6_operational') for name in (
+        'g6_cloud_grant', 'g6_cloud_revoke')},
+    **{name: contract('source:consent_metadata') for name in ('g6_cloud_grants', 'g6_disclosures')},
+}
+
+AGENTS = {
+    'g6.agents.agent_claude.adapter.ClaudeCodeRuntime': contract('client_request', 'client_repository',
+                                                             'source:agent_environment'),
+    'g6.agents.agent_codex.adapter.CodexRuntime': contract('client_request', 'client_repository',
+                                                       'source:agent_environment'),
+    'g6.agents._runtime.cli.CliAgentRunner': contract('client_request', 'client_repository', 'source:agent_environment'),
+    'g6.agents.agent_autogen.adapter.AutoGenRuntime': contract('client_request', 'source:model_inputs'),
+    'g6.agents.agent_smolagents.adapter.SmolagentsRuntime': contract('client_request', 'source:model_inputs'),
+    'g6.agents.agent_langgraph.adapter.LangGraphRuntime': contract('client_request', 'source:model_inputs'),
+}
+
+CLI_COMPONENTS = {'agent_claude', 'agent_codex'}
+
+# Every generic model input may contain earlier model replies or retained data.
+# Specialised callers can narrow this through their own request construction.
+MODEL_INPUTS = contract('source:model_inputs')
+
+SDK_SENDS = {'g6.harness.verification_proposer._RecordedMessages.create': MODEL_INPUTS}
+
+# Identity declarations are separate from recipient classification. Adding a
+# caller to classification alone cannot silently add a source declaration.
+MODELS = {name: MODEL_INPUTS for name in (
+    'g6.core.llm.LLMCaller', 'g6.core.llm.EmptyRetry', 'g6.core.llm.TimingLLMCaller',
+    'g6.core.llm.FallbackCaller', 'g6.core.llm.FakeLLM', 'g6.core.llm.NoModel',
+    'g6.core.llm.UnusableModel', 'g6.core.llm._NoKey', 'g6.core.llm.OllamaCaller',
+    'g6.core.llm.OpenAICompatibleCaller', 'g6.core.llm.AnthropicCaller',
+    'g6.core.host_models._HostCaller', 'g6.core.host_models.ClaudeCodeCaller', 'g6.core.host_models.CodexCaller',
+    'g6.core.consent_callers._Consent', 'g6.core.consent_callers._Unknown',
+    'g6.core.consent_callers.CallerWrapper', 'g6.core.consent_callers.ConsentClaude',
+    'g6.core.consent_callers.ConsentCodex', 'g6.reasoning.budget.MeteredCaller',
+    'g6.metaharness.measurement.TraceCaller', 'g6.metaharness.loop._Counted',
+    'g6.harness.verification_proposer._Limits', 'g6.harness.verification_proposer.StudyCaller',
+    'g6.harness.completion_loop.ToolSession', 'g6.self_maintenance.usage.WatchedClaude',
+    'g6.grounding.judges.nli.LocalNLICaller', 'g6.metaharness.lora.AdapterCaller',
+)}
+
+
+def model_sources():
+    refs = cloud.current_sources()
+    if not refs:
+        return MODEL_INPUTS.sources()
+    return tuple(dict.fromkeys(s if s.recorded else MODEL_INPUTS.sources()[0] for s in refs))
+
+
+def tool_declaration(fn):
+    explicit = getattr(fn, '_g6_declaration', None)
+    if explicit is not None:
+        return explicit
+    if fn.__module__ in ('g6.mcp', 'g6.mcp.cloud_consent'):
+        return TOOLS.get(fn.__name__)
+    return None

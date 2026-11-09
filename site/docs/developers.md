@@ -192,3 +192,61 @@ built on `g6.reasoning`'s sign test, `g6.learning`'s hints, `g6.context`, `g6.se
 hash-chained ledger and vault in `g6.core`. Over MCP: `metaharness_*` tools, where approval always asks the person. See
 [Tune it to your work](metaharness.md). The studies run with it are on the [Research](research.md#the-meta-harness)
 page, as a worked example.
+
+## Cloud sharing consent
+
+The unbound model adapters and MCP session transport use one source/provider check at send time. A repository is a source; task text and other
+caller inputs have separate scopes when their origin is not the repository. A grant is given only in the client's
+dialog, and the dialog explains that sent data cannot be recalled. Unavailable, declined or cancelled dialogs grant
+nothing. A local loopback model needs no cloud grant. Claude Code and Codex sign-ins are cloud providers.
+
+- `g6_cloud_grant(source, provider)` asks in the client dialog; no tool parameter carries the person's answer.
+- `g6_cloud_revoke(source, provider)` stops later sharing without another dialog.
+- `g6_cloud_grants()` lists active grants, their times and attribution hashes.
+- `g6_disclosures()` reads attempted disclosures: source/file/passage ids, hashes, provider and time, never text.
+
+Providers include `anthropic:claude_code`, `openai:codex`, `anthropic:api`, `openai:api`, `openrouter:api`, and an
+`endpoint:<sha256>` identity for a configured custom endpoint. Sources may be canonical repository paths or the opaque
+ids a producer records. Use an absolute path or `./relative/path` for a repository; a plain name is an opaque source id. Grants are in the hash-chained `cloud_consent/events.jsonl` under `G6_HOME`, protected by an OS
+lock and a durable head checkpoint. Revocation waits for an admitted in-flight call to finish; it cannot recall that
+call. Retries made as a new caller invocation are checked again. A checkpoint mismatch denies sharing; do not delete
+or truncate the ledger to recover it, since that could discard a revocation or attempted disclosure.
+
+Producer contracts live in `g6.core.consent_declarations`: every MCP reply, agent adapter and model
+caller declares possible source classes. The closed classes are `client_request`, `client_repository`,
+`g6_operational`, and `source:<scope>`. A declared reply needs no value-level source annotations.
+`g6_operational` covers G6's own ids, codes, counts, states, digests, times and fixed program text;
+it excludes files, outside paths, authored text and retained content.
+
+Retained and implicit sources have named scopes: `missions`, `workflows`, `improvement`, `jobs`,
+`completion_history`, `host_configuration`, `component_catalogue`, `component_data`, `consent_metadata`,
+`agent_environment`, and generic `model_inputs`.
+`component_catalogue` covers package descriptions and skill files, including rankings derived from them.
+`component_data` includes indexes, corpora and component IO outside the client request;
+`jobs` includes retained asynchronous results. Grant and disclosure listings use `consent_metadata`,
+since scope labels can contain text supplied in earlier calls. A provider needs that scope grant to read them. A scope grant covers that scope's possible content,
+and only the named provider. Narrower repository and exact-input grants remain supported.
+
+The inventory tests derive registered tools and caller classes from code and fail on undeclared
+additions. Planted-content tests capture cloud replies and requests with fakes. Declarations are
+trusted host code, checked by tests; neither result fields nor client arguments supply a contract.
+The frozen MCP packet is admitted at transport handoff under the sharing lock.
+
+The repository named in a client request may return to that same identified client's provider
+without a grant; it is logged. CLI coding agents run in that named repository. Another provider
+needs a repository grant. G6's own reviewer and proposer calls always need their source grants.
+CLI permissions can also read outside that workspace or load user configuration. Those reads
+require an `agent_environment` grant to the agent's provider, including for the same client.
+The repository exemption does not cover that scope.
+The K reviewer records a withheld review as its own cause and ends `untested`.
+
+Recipients are classified from caller class identities and configured endpoints, following G6's
+known wrappers. A provider's own SDK client is that provider. Host wrappers that transform
+requests may use `g6.core.consent_callers.CallerWrapper` and delegate through `inner`.
+SDK wrappers use `SDKClientWrapper` to expose their actual SDK client. Synthetic host clients can implement
+the explicit `SDKClient` endpoint contract; an arbitrary object with a `base_url` attribute is not one.
+A foreign opaque wrapper remains `cloud:unknown`; no grant covers it.
+
+Certificate-bound raw provider/library exports still need the transport admission change offered
+for an issuance window. Per-retry SDK hooks and automatic first-use dialog solicitation at raw
+model boundaries remain on that offer. Full coverage of those raw exports is not claimed here.

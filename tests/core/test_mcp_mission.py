@@ -30,6 +30,8 @@ from g6.reliability_pipeline.premortem import PREMORTEM_FAILURE_MODES  # noqa: E
 from g6.workforce import api, bench, coding, objective, scheduler, service, truth  # noqa: E402
 from g6.workforce.runtime import Runtime  # noqa: E402
 
+pytestmark = pytest.mark.usefixtures("declared_mcp_grants")
+
 BUGGY = "def double(x):\n    return x + x + 1\n"
 FIXED = "def double(x):\n    return x + x\n"
 TEST = ("from calc import double\n\n\ndef test_double():\n    assert double(2) == 4\n\n\n"

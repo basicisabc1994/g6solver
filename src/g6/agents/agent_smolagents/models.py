@@ -64,7 +64,8 @@ class G6Model(Model):
             raise LLMError("G6_E_LLM_DISABLED: model calls are disabled by G6_DISABLE_LLM")
         system, transcript = render(messages)
         self.calls += 1
-        text = self.llm.complete(system, transcript, max_tokens=self.max_tokens)
+        from g6.core.consent_callers import guard
+        text = guard(self.llm).complete(system, transcript, max_tokens=self.max_tokens)
         for stop in stop_sequences or ():
             if stop and stop in text:
                 text = text[:text.index(stop)]

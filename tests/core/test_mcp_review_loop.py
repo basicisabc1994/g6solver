@@ -29,6 +29,8 @@ from fastmcp import Client  # noqa: E402
 
 from g6.mcp import build_server, review_loop  # noqa: E402
 
+pytestmark = pytest.mark.usefixtures("declared_mcp_grants")
+
 TASK = "double must return twice its argument"
 ENVELOPE = ("completion_state", "warning_card", "evidence", "request_id", "run_id")
 
