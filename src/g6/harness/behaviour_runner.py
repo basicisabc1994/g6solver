@@ -3,11 +3,14 @@
 
 The result channel excludes repository test configuration. The bootstrap shares its interpreter with the code
 under test: the channel is not an authentication boundary inside Python.
+The observation.v2 frame carries canonical value digests and byte sizes with bounded diagnostic prefixes. Existing
+observation.v1 frames keep their comparison semantics; neither format authenticates its producer inside the child.
 """
 from __future__ import annotations
 
 import ast
 import hashlib
+import inspect
 import json
 import os
 import stat
@@ -20,6 +23,7 @@ from g6.core import component_process, confine
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
 from g6.workforce import repo_tests as rt
+from g6.harness.observation_contract import observable_exception
 
 RUN_TEMPLATES = frozenset({"example.v1", "differential.v1"})
 CONFIRMED = "# G6-CONFIRMED-RUNNER\n"
@@ -27,6 +31,11 @@ LIMIT = ("Code under test runs in the same process as the bootstrap and can shap
          "as with any test run.")
 MAX_FRAME = 1 << 20
 MAGIC = b"G6R1\n"
+
+
+def _fingerprint(text: str) -> dict:
+    raw = text.encode('utf-8')
+    return {'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw), 'prefix': text[:200]}
 
 
 class Activity(dict):
@@ -82,8 +91,8 @@ def probe_sha256() -> str:
     return hashlib.sha256(BOOTSTRAP.encode("utf-8")).hexdigest()
 
 # Loaded before any repository module. There is no site initialisation, PYTHONPATH, pytest, plugin or ini reader.
-BOOTSTRAP = r'''
-import builtins, collections.abc, copy, hashlib, importlib, json, os, re, struct, sys
+BOOTSTRAP = inspect.getsource(observable_exception) + '\n' + inspect.getsource(_fingerprint) + r'''
+import builtins, collections.abc, copy, hashlib, importlib, importlib.machinery, json, os, re, struct, sys
 def _name(kind):
     module = getattr(kind, "__module__", None) or ""
     name = getattr(kind, "__qualname__", None) or getattr(kind, "__name__", None) or "?"
@@ -149,10 +158,15 @@ sink = open(channel, "ab", buffering=0)
 write, dumps, pack = sink.write, json.dumps, struct.pack
 is_instance, identity, kind_of = isinstance, id, type
 sys.dont_write_bytecode = True
+# The channel lives in a fresh G6-owned folder. -B prevents writes; a fresh prefix also prevents cache reads.
+sys.pycache_prefix = os.path.join(os.path.dirname(channel), "pycache")
+def _no_sourceless(self, fullname):
+    raise ImportError("G6_E_OBSERVATION_UNAVAILABLE: sourceless bytecode is outside the execution manifest")
+importlib.machinery.SourcelessFileLoader.get_code = _no_sourceless
 sys.path[:0] = [root, os.path.join(root, "src")]
 def encode(value):
     try:
-        return dumps(value, sort_keys=True, allow_nan=False)
+        return _fingerprint(dumps(value, sort_keys=True, allow_nan=False))
     except (TypeError, ValueError, RecursionError):
         return None
 def load(spec):
@@ -177,7 +191,7 @@ function = load(data["function"])
 errors = {}
 for spec in data["errors"]:
     error = load(spec)
-    if not (is_instance(error, type) and issubclass(error, BaseException)):
+    if not observable_exception(error, resolved=True):
         raise RuntimeError("expected error is not an exception type")
     errors[dumps(spec, sort_keys=True)] = identity(error)
 outcomes = []
@@ -186,12 +200,16 @@ for call in data["calls"]:
     try:
         result = function(*args, **kwargs)
     except BaseException as exc:
-        if is_instance(exc, (KeyboardInterrupt, SystemExit, GeneratorExit, OSError)):
+        if not observable_exception(kind_of(exc), resolved=True):
             raise
-        one = {"raised": [identity(t) for t in kind_of(exc).__mro__],
-               "raised_name": kind_of(exc).__module__ + "." + kind_of(exc).__qualname__}
+        observed_type = kind_of(exc)
+        relevant = set(errors.values())
+        raised = [identity(observed_type), *(identity(t) for t in observed_type.__mro__
+                                            if identity(t) in relevant and t is not observed_type)]
+        name = observed_type.__module__ + "." + observed_type.__qualname__
+        one = {"raised": raised, "raised_name": name if len(name) <= 200 else name[:197] + "..."}
         if data["probe"]:
-            one["probe"] = {"raised": _name(kind_of(exc))}
+            one["probe"] = {"raised": _bounded(_name(observed_type))}
         outcomes.append(one)
     else:
         one = {"returned": encode(result), "arguments": [encode(arg) for arg in args]}
@@ -199,7 +217,7 @@ for call in data["calls"]:
             one["probe"] = ({"raised": None} if data["mode"] == "exceptions" else
                             {"returned": _bounded(_plain(result))})
         outcomes.append(one)
-payload = dumps({"version": "observation.v1", "outcomes": outcomes, "errors": errors},
+payload = dumps({"version": "observation.v2", "outcomes": outcomes, "errors": errors},
                 sort_keys=True, allow_nan=False).encode("utf-8")
 if len(payload) > 1048576:
     raise RuntimeError("observation too large")
@@ -233,7 +251,8 @@ def read_frame(raw: bytes) -> dict | None:
         value = json.loads(raw[len(MAGIC) + 4:], object_pairs_hook=_unique,
                            parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite")))
         if (not isinstance(value, dict) or set(value) != {"version", "outcomes", "errors"}
-                or value["version"] != "observation.v1" or not isinstance(value["outcomes"], list)
+                or value["version"] not in {"observation.v1", "observation.v2"}
+                or not isinstance(value["outcomes"], list)
                 or not isinstance(value["errors"], dict)
                 or any(type(v) is not int for v in value["errors"].values())):
             return None
@@ -242,9 +261,7 @@ def read_frame(raw: bytes) -> dict | None:
                 return None
             fields = set(one) - {"probe"}
             if fields == {"returned", "arguments"}:
-                if (one["returned"] is not None and not isinstance(one["returned"], str)
-                        or not isinstance(one["arguments"], list)
-                        or any(v is not None and not isinstance(v, str) for v in one["arguments"])):
+                if not isinstance(one['arguments'], list):
                     return None
             elif fields == {"raised", "raised_name"}:
                 if (not isinstance(one["raised"], list) or not one["raised"]
@@ -255,7 +272,8 @@ def read_frame(raw: bytes) -> dict | None:
                 return None
         for one in value["outcomes"]:
             for encoded in ([one["returned"], *one["arguments"]] if "returned" in one else []):
-                if encoded is not None and _encoded(json.loads(encoded)) != encoded:
+                if (value['version'] == 'observation.v1' and encoded is not None and not isinstance(encoded, str)
+                        or not _valid_encoding(encoded)):
                     return None
         return value
     except (ValueError, TypeError, RecursionError, OverflowError, struct.error, UnicodeError):
@@ -264,6 +282,27 @@ def read_frame(raw: bytes) -> dict | None:
 
 def _encoded(value):
     return json.dumps(value, sort_keys=True, allow_nan=False)
+
+
+def _valid_encoding(value) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):  # Existing observation.v1 frames retain their meaning, including in-process witnesses.
+        return _encoded(json.loads(value)) == value
+    return (isinstance(value, dict) and set(value) == {'sha256', 'size', 'prefix'}
+            and isinstance(value['sha256'], str) and len(value['sha256']) == 64
+            and all(ch in '0123456789abcdef' for ch in value['sha256'])
+            and type(value['size']) is int and value['size'] >= 0
+            and isinstance(value['prefix'], str) and len(value['prefix']) <= 200
+            and len(value['prefix'].encode('utf-8')) <= value['size'])
+
+
+def _matches_encoding(observed, expected) -> bool:
+    text = _encoded(expected)
+    if isinstance(observed, dict):
+        wanted = _fingerprint(text)
+        return observed['sha256'] == wanted['sha256'] and observed['size'] == wanted['size']
+    return observed == text
 
 
 def finish(code: int | None, raw: bytes, data: dict) -> dict:
@@ -293,12 +332,12 @@ def finish(code: int | None, raw: bytes, data: dict) -> dict:
                 return {"result": "error", "detail": "G6_E_OBSERVATION_UNAVAILABLE: unresolved expected error"}
             matches = token in outcome.get("raised", [])
         elif expected == "returns":
-            matches = "returned" in outcome and outcome["returned"] == _encoded(case["value"])
+            matches = "returned" in outcome and _matches_encoding(outcome["returned"], case["value"])
         elif expected == "effect":
             arguments = outcome.get("arguments", [])
             arg = case["argument"]
             matches = ("returned" in outcome and 0 <= arg < len(arguments)
-                       and arguments[arg] == _encoded(case["value"]))
+                       and _matches_encoding(arguments[arg], case["value"]))
         else:
             return {"result": "error", "detail": "G6_E_OBSERVATION_UNAVAILABLE: unknown comparison"}
         if not matches:
@@ -400,7 +439,11 @@ def run(copy: Path, data: dict, node: str, *, timeout_s: int, deadline: float) -
             if cleanup:
                 isolation["cleanup"] = cleanup
         found = finish(code, raw, data)
-    # Mutations made inside the run are behaviour; binding names the starting copy, never a later live read.
+    after = rt._copy_snapshot(copy, deadline=deadline)
+    moved = rt._moved(before, after)
+    if moved:
+        return {"verdict": rt.CHANGED, "changed": moved, "source_before": digest(before),
+                "isolation": isolation, "said": "the execution copy changed; its observation is not counted"}
     return {"verdict": found["result"] if found["result"] in {"passed", "failed"} else "not_run",
             "g6_observation": found, "source_before": digest(before), "isolation": isolation,
             "execution_limit": LIMIT,

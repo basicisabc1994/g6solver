@@ -95,11 +95,20 @@ def standard(function="calc.add", option="A", *, root=None) -> ExpectationStanda
     shown = Question(requirement_id="R1", function=function, args=[2, 3],
                      outcomes={"A": {"returns": 5}, "B": {"returns": -1}}, scope="this one case: this input, this "
                      "outcome", cited="Repair addition for positive integers.", baseline_sha256="b" * 64)
+    one = confirm(shown, option, answered_by="person:Ada", answered_at="2026-11-09T00:00:00Z")
     if root is not None:
+        from g6.harness import behaviour_question as bq, question_store as qs
         from g6.harness.executable_scenario import Scenario, save
 
-        save(shown, Scenario.resolve(root, shown))
-    return ExpectationStandard().with_expectation(confirm(shown, option, answered_by="person:Ada"))
+        scenario = Scenario.resolve(root, shown)
+        save(shown, scenario)
+        candidate = bq.Candidate.make(source='caller', requirement_id=shown.requirement_id,
+            function=shown.function, args=shown.args, kwargs=shown.kwargs, outcomes=shown.outcomes,
+            scope=shown.scope, cited=shown.cited, evidence=['calc.py: add'])
+        store = qs.TaskQuestions(qs.task_identity(root, TASK))
+        store.ask(shown, None, candidate)
+        store.answer(one.answer, scenario=scenario)
+    return ExpectationStandard().with_expectation(one)
 
 
 def review(repo, **extra):

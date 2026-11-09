@@ -1189,7 +1189,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     if confirmed is not None:
         from g6.harness import confirmed_checks
         enforced = _stage(stopped, "the confirmed expectations", confirmed_checks.run, root, change, confirmed,
-                          deadline=deadline, artifact=artifact, roots=roots, before=before,
+                          deadline=deadline, artifact=artifact, roots=roots, before=before, task=task,
                           skip=INTEGRITY_SKIP if any(r["stage"] == "integrity" for r in reasons) else "")
         enforced = enforced if enforced is not None else [
             {"expectation_id": one.expectation_id, "result": confirmed_checks.NOT_RUN, "runs": {},
@@ -1569,13 +1569,8 @@ def _listed(listed, assumed) -> tuple[list[dict], list[dict]]:
 
 
 def _one_line(text: object) -> str:
-    """Caller text through the shared lossless one-line encoder: a repository name cannot create a new guidance line.
-
-    The review outcome is decided before this presentation.
-    """
-    from g6.harness.behaviour_question import caller_text
-
-    return caller_text(text, literal=False)
+    """Historical guidance rendering; behaviour forms encode their attributed fields separately."""
+    return "".join(" " if ord(ch) < 32 or ord(ch) == 127 else ch for ch in str(text))
 
 
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
@@ -1589,7 +1584,10 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
     (``g6.harness.requirement_evidence``), the issuer's statement for each requirement beside the review's own reading."""
     from g6.harness import verification_search   # the completion report, in every reply
     # a repository's names reach these texts as they are; each is one line (the fresh review of the F1-F8 fix pass)
-    reasons = [{**r, "detail": _one_line(r["detail"])} for r in reasons]
+    from g6.harness.behaviour_question import caller_text
+
+    reasons = [{**r, "detail": caller_text(r['detail'], literal=False)
+                if r['code'] in {CONFIRMED_FAILED, CONFIRMED_NOT_RUN} else _one_line(r["detail"])} for r in reasons]
     unknowns = [_one_line(text) for text in unknowns]
     follow_ups, first_action = [_one_line(text) for text in follow_ups], _one_line(first_action)
     evaluated = [{**req, **{key: _one_line(req[key]) for key in ("reason", "suggested_test")

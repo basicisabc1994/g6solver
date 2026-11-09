@@ -185,12 +185,16 @@ def _at_base(assessment: dict) -> dict[str, str]:
     return dict((found or {}).get("outcomes") or {})
 
 
-def code(value: object, limit: int | None = 140, *, literal: bool = False) -> str:
+def code(value: object, limit: int | None = 140, *, literal: bool = False, confirmed: bool = False) -> str:
     """``value`` as one inert code span: on one line, cut at ``limit`` characters, fenced by more backticks than any
     run inside it (padded where it begins or ends with one), so nothing in it is read as Markdown or HTML."""
     from g6.harness.behaviour_question import caller_text
 
-    text = caller_text(value, literal=literal) or "(empty)"
+    if literal or confirmed:
+        text = caller_text(value, literal=literal) or "(empty)"
+    else:
+        text = " ".join(str(value).split())
+        text = "".join(ch if ch.isprintable() else "?" for ch in text) or "(empty)"
     if limit is not None and len(text) > limit:
         text = text[:limit - 3] + "..."
     fence = "`" * (max((len(run) for run in re.findall(r"`+", text)), default=0) + 1)
@@ -222,17 +226,20 @@ def _headline(assessment: dict) -> str:
 
 
 def _findings(assessment: dict) -> list[list[str]]:
+    from functools import partial
+
     completion = assessment.get("completion") or {}
     defects = completion.get("defects_reproduced") or {}
     items = [[f"- **Test integrity: {INTEGRITY.get(r['code'], 'the tests cannot be trusted')}** ({r['code']}): "
               f"{code(_words(str(r.get('detail', ''))))}", *([IGNORED_TO_DO] if r["code"] in TO_DO else [])]
              for r in assessment.get("reasons", []) if r.get("stage") == "integrity"]
     for found in defects.get("stated_and_repository_checks", []):
-        requirements = ", ".join(code(r) + _issuer(assessment, r, " ({})") for r in found.get("requirements", [])
+        show = partial(code, confirmed=found.get('code') == 'confirmed_expectation_failed')
+        requirements = ", ".join(show(r) + _issuer(assessment, r, " ({})") for r in found.get("requirements", [])
                                  ) or "no stated requirement"
         reproduction = found.get("reproduction") or {}
         head = (f"- **{FAILED.get(found.get('code'), 'A check failed')}** ({found.get('code')}) for {requirements}: "
-                f"{code(found.get('check', ''))}")
+                f"{show(found.get('check', ''))}")
         if reproduction.get("kind") == "static":
             imports = reproduction.get("imports") or [{}]
             first = imports[0]
@@ -241,8 +248,8 @@ def _findings(assessment: dict) -> list[list[str]]:
                    + (f"; the repository's own linter: {code(reproduction['command'])}" if reproduction.get("command")
                       else ""))
         elif found.get("code") == "confirmed_expectation_failed":
-            how = (f"  - Reproduce: write its text (in {code('assessment.completion.defects_reproduced')}) to "
-                   f"{code(reproduction.get('file', ''), 80)}, then {_plain(reproduction.get('node', ''))}. G6 "
+            how = (f"  - Reproduce: write its text (in {show('assessment.completion.defects_reproduced')}) to "
+                   f"{show(reproduction.get('file', ''), 80)}, then {_plain(reproduction.get('node', ''))}. G6 "
                    f"compiled it from example.v1 and the person's answer. {EXACT}. {CAUTION}")
         else:
             base = ("passes at the base commit, fails on the patch" if found.get("code") == "derived_test_regressed"
@@ -422,6 +429,10 @@ def _confirmed(assessment: dict) -> list[list[str]]:
     given, not authenticated), its check's result on the patch and the issuer's statement. No model result is among
     them."""
     from g6.harness import behaviour_question as bq
+    from functools import partial
+
+    # Only confirmed-evidence lines use the form's caller-text encoding.
+    show = partial(code, confirmed=True)
 
     held = assessment.get("confirmed_expectations") or {}
     statements = {s.get("expectation"): s for s in (held.get("evidence") or {}).get("expectations", [])}
@@ -434,13 +445,13 @@ def _confirmed(assessment: dict) -> list[list[str]]:
         issuer = ("checked" if statement.get("checked") else "refuted" if statement.get("refute") else
                   f"not counted yet ({_words(statement.get('not_counted', '') or statement.get('gap', ''))})")
         outcomes = question.get("outcomes") if isinstance(question.get("outcomes"), dict) else {}
-        items.append([f"- {code(bq.shown_call(question), 200)}: the person chose {code(option, 20)}, "
-                      f"{code(bq.shown_outcome(outcomes.get(option)), 120)} (question SHA-256 "
-                      f"{code(_question_sha256(question), 70)}), scope shown in full below, answered "
-                      f"by {code(answer.get('answered_by', ''), 60)} (recorded as given, not authenticated); "
+        items.append([f"- {show(bq.shown_call(question), 200)}: the person chose {show(option, 20)}, "
+                      f"{show(bq.shown_outcome(outcomes.get(option)), 120)} (question SHA-256 "
+                      f"{show(_question_sha256(question), 70)}), scope shown in full below, answered "
+                      f"by {show(answer.get('answered_by', ''), 60)} (recorded as given, not authenticated); "
                       f"{CONFIRMED_RESULT.get(check.get('result'), 'its check gave no result')}; "
-                      f"the evidence issuer: {code(issuer, 120)}; Scope (exact text): "
-                      f"{code(scope, None, literal=True)}. "
+                      f"the evidence issuer: {show(issuer, 120)}; Scope (exact text): "
+                      f"{show(scope, None, literal=True)}. "
                       + _execution_limit()])
     return items
 

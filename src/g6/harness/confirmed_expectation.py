@@ -58,6 +58,7 @@ from g6.core.ledger import canonical, digest
 from g6.evidence.certificate import Check, Control, MissionFacts
 from g6.evidence.mapping import id_of
 from g6.harness.patch_review import NORMATIVE
+from g6.harness.observation_contract import observable_exception
 from g6.harness.verification_templates import (
     Call,
     ExampleBindings,
@@ -235,6 +236,8 @@ def _shown(record: dict, question_sha256: str) -> None:
     for label, outcome in outcomes.items():   # each outcome is an example.v1 case, checked before it is shown
         if type(outcome) is not dict:
             raise ValueError("each outcome states returns, raises or effect")
+        if 'raises' in outcome and not observable_exception(outcome['raises']):
+            raise ValueError('a raised outcome names an observable exception type')
         other = sorted(set(outcome) - OUTCOME_FIELDS)
         if other:   # the scenario is the question's alone: an outcome never restates or replaces it
             raise ValueError(f"outcome {label!r} holds {', '.join(other)}: an outcome states only "

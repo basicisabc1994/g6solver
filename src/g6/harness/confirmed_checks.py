@@ -91,7 +91,7 @@ def record_error(result: dict, step: str, exc: Exception, patch_runs: list[dict]
 
 
 def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *, deadline: float, artifact: str,
-        roots: Sequence[str] = (), skip: str = "", before: dict[str, str] | None = None) -> list[dict]:
+        roots: Sequence[str] = (), skip: str = "", before: dict[str, str] | None = None, task: str = "") -> list[dict]:
     """One result per expectation of ``standard``, in its order (the module's docstring). ``skip``: why none runs (an
     integrity problem, say), each then ``not_run`` with that reason. ``before``: the review's snapshot of the tree,
     whose digest is ``artifact``, to which each run on the patch is bound."""
@@ -99,6 +99,10 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
     binding = {"artefact": before} if before is not None else {}
     found: list[dict] = []
     prepared = None
+    from g6.harness import question_store
+
+    answer_scenarios = (question_store.TaskQuestions(question_store.task_identity(root, task)).state().answer_scenarios
+                        if task else {})
     if not skip:
         prepared = verification_templates.prepare(root, change, [one.instance for one in standard.expectations],
                                                   deadline=deadline)
@@ -121,9 +125,12 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
         from g6.harness import executable_scenario, behaviour_runner
         from g6.core.storage import state_path
 
-        if state_path("scenarios", one.question_sha256 + ".json").exists():
+        held_scenario = answer_scenarios.get(one.answer_sha256, '')
+        if held_scenario and state_path("scenarios", one.question_sha256 + ".json").exists():
             try:
                 scenario = executable_scenario.load(Question.from_record(one._question))
+                if scenario.sha256 != held_scenario:
+                    raise ValueError(executable_scenario.UNAVAILABLE + ': the scenario differs from the answered form')
                 check, placed, _ = verification_templates.compiled_check(root, one.instance,
                     {"scenario": scenario.record.decode("ascii"), "option": one.option}, [])
                 prepared.placed[ident] = placed

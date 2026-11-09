@@ -121,6 +121,7 @@ COMPARISONS = {
     ("_shown", "len(outcomes) < 2"): "count",
     ("_shown", "label in NOT_CONFIRMING"): "label",
     ("_shown", "type(outcome) is not dict"): "type",
+    ("_shown", "'raises' in outcome"): "keys",
     ("_Field.__get__", "obj is None"): "none",
     ("_Record.__eq__", "type(other) is not type(self)"): "type",
     ("_Record.__eq__", "self.record == other.record"): "bytes",

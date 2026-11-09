@@ -13,7 +13,9 @@ lock). Its entries, in the order G6 wrote them:
   opens, under the lock that counts the budget, so two calls never both spend the last question.
 - ``shown``: each time the form was shown, what came back (answered, declined, cancelled, skipped, unavailable,
   invalid) and the dialog's times, for the person's time.
-- ``answer``: what the person chose, as slice 2's record (``Answer``). The ledger's own rule refuses an answer whose
+- ``answer``: what the person chose, as slice 2's record (``Answer``), and the digest of the executable program the
+  dialog showed (empty for answers recorded without that program). Sidecar presence never supplies this digest.
+  The ledger's own rule refuses an answer whose
   question is not an ``asked`` entry before it, and a second answer to one question, on every write and every read:
   the store accepts answers only for questions G6 asked.
 - ``more``: the person let G6 ask one more question on this task, in a form G6 showed them.
@@ -152,6 +154,9 @@ def _kind_rules(kind: str, ident: str, body: dict, seen) -> list[str]:
             return [] if body.get("question_sha256") in asked else ["a showing names a question G6 asked"]
         if kind == ANSWER:
             answer = _answer(body.get("answer"))
+            scenario_sha256 = body.get('scenario_sha256', '')
+            if not isinstance(scenario_sha256, str) or scenario_sha256 and not _HEX64.fullmatch(scenario_sha256):
+                return ["an answer's executable scenario is its shown program's digest, or empty"]
             if answer.sha256 != ident:
                 return ["an answer entry's id is its answer's digest"]
             if answer.question_sha256 not in shas:
@@ -198,6 +203,7 @@ class State:
     default: int = DEFAULT_BUDGET
     budget_note: str = ""
     superseded: tuple[dict, ...] = field(default=())
+    answer_scenarios: dict[str, str] = field(default_factory=dict)
 
     @property
     def allowance(self) -> int:
@@ -338,19 +344,23 @@ class TaskQuestions:
     @staticmethod
     def _read(ledger: ChainLedger, default: int, note: str) -> State:
         asked, answers, shown, more = [], [], [], 0
+        answer_scenarios = {}
         for entry in ledger.entries():
             body = entry["body"]
             if entry["kind"] == ASKED:
                 asked.append(Asked(_question(body["question"]), _question(body["rule"]) if body.get("rule") else None,
                                    Candidate(body["candidate"]), body.get("asked_at", ""), len(asked) + 1))
             elif entry["kind"] == ANSWER:
-                answers.append(_answer(body["answer"]))
+                answer = _answer(body["answer"])
+                answers.append(answer)
+                answer_scenarios[answer.sha256] = body.get('scenario_sha256', '')
             elif entry["kind"] == SHOWN:
                 shown.append(dict(body))
             elif entry["kind"] == MORE:
                 more += 1
-        state = State(tuple(asked), tuple(answers), tuple(shown), more, default, note)
-        return State(state.asked, state.answers, state.shown, more, default, note, _standard(state)[1])
+        state = State(tuple(asked), tuple(answers), tuple(shown), more, default, note,
+                      answer_scenarios=answer_scenarios)
+        return State(state.asked, state.answers, state.shown, more, default, note, _standard(state)[1], answer_scenarios)
 
     def ask(self, question: Question, rule: Question | None, candidate: Candidate, *, at: str | None = None) -> Asked:
         """Record ``question`` as asked, before it is shown, when the budget has room (``BudgetSpent`` when not); a
@@ -383,15 +393,27 @@ class TaskQuestions:
             self._append(ledger, SHOWN, ident, {"question_sha256": asked.question.sha256, "result": result,
                                                 "shown_at": shown_at, "back_at": back_at, "seconds": round(seconds, 3)})
 
-    def answer(self, answer: Answer) -> State:
-        """Record the person's answer; ``AnswerRefused`` when its question is not one G6 asked, or was answered."""
+    def answer(self, answer: Answer, *, scenario=None) -> State:
+        """Record the answer and its shown program in one append; absence never gains custody on a later read.
+
+        ``scenario`` is the program held by the dialog, never inferred from a sidecar. An answer's immutable record
+        keeps its existing bytes and meaning. ``AnswerRefused`` when its question was not asked or was answered.
+        """
         if type(answer) is not Answer:
             raise AnswerRefused("the store takes the record of what the person chose (an Answer)")
         default, note = default_budget()
         with _locked(self.path):
             ledger = self._open()
+            scenario_sha256 = ''
+            if scenario is not None:
+                state = self._read(ledger, default, note)
+                asked = next((one for one in state.asked if answer.question_sha256 in one.shas), None)
+                if asked is None or not scenario.matches(asked.for_answer(answer)):
+                    raise AnswerRefused('the executable scenario was not shown for this answer')
+                scenario_sha256 = scenario.sha256
             try:
-                self._append(ledger, ANSWER, answer.sha256, {"answer": answer.record.decode("ascii")})
+                self._append(ledger, ANSWER, answer.sha256, {"answer": answer.record.decode("ascii"),
+                                                          'scenario_sha256': scenario_sha256})
             except LedgerError as exc:
                 raise AnswerRefused(f"[{REFUSED}] {exc}") from None
             return self._read(ledger, default, note)

@@ -63,7 +63,7 @@ def candidate(**extra) -> dict:
             **extra}
 
 
-def make_repo(parent: Path, test_text: str | None = None) -> Path:
+def make_repo(parent: Path, test_text: str | None = None, *, confirmed_fixture: bool = True) -> Path:
     root = parent / "repo"
     root.mkdir()
     (root / "calc.py").write_text(BAD, encoding="utf-8")
@@ -74,7 +74,8 @@ def make_repo(parent: Path, test_text: str | None = None) -> Path:
                                                 "-c", "commit.gpgsign=false", "commit", "-qm", "base")):
         subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True, timeout=20)
     (root / "calc.py").write_text(GOOD, encoding="utf-8")
-    standard(root=root)
+    if confirmed_fixture:
+        standard(root=root)
     return root
 
 
@@ -97,12 +98,16 @@ def ask(root: Path, *, data=None, dialog=None, task=TASK, **kwargs) -> dict:
 def standard(*, root=None) -> ExpectationStandard:
     [one] = bq.caller_candidates(TASK, [candidate()])
     question = one.question("b" * 64)
+    held = confirm(question, "A", answered_by="person:Ada", answered_at=AT)
     if root is not None:
         from g6.harness.executable_scenario import Scenario, save
 
-        save(question, Scenario.resolve(root, question))
-    return ExpectationStandard().with_expectation(confirm(question, "A", answered_by="person:Ada",
-                                                          answered_at=AT))
+        scenario = Scenario.resolve(root, question)
+        save(question, scenario)
+        store = qs.TaskQuestions(qs.task_identity(root, TASK))
+        store.ask(question, None, one)
+        store.answer(held.answer, scenario=scenario)
+    return ExpectationStandard().with_expectation(held)
 
 
 def run_result(node: str, status: str = "passed") -> dict:
@@ -314,7 +319,7 @@ def test_finding_9_a_queued_review_enforces_the_standard_current_when_it_runs(tm
     from g6.mcp import _metaharness_tools
     from g6.metaharness import jobs
 
-    root = make_repo(tmp_path)
+    root = make_repo(tmp_path, confirmed_fixture=False)
     assert ask(root, dialog=Dialog({"choice": "A", "name": "Ada", "further": "one_more"}))["status"] == "confirmed"
     queued = []
 
@@ -351,7 +356,7 @@ def test_the_issuer_s_statement_names_the_standard_it_used(tmp_path):
 
 
 def test_finding_11_a_standard_library_homonym_is_never_run_as_the_repository_s_entry_point(tmp_path, monkeypatch):
-    root = make_repo(tmp_path)
+    root = make_repo(tmp_path, confirmed_fixture=False)
     source = "def dumps(value):\n    return 'bad'\n"
     (root / "json.py").write_text(source, encoding="utf-8")
     item = candidate(function="json.dumps", args=[{}], outcomes={"A": {"returns": "{}"}, "B": {"returns": "bad"}},

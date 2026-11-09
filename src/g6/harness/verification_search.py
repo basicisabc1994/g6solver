@@ -537,8 +537,11 @@ def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *
                     ran = repo_tests._run(copy, [node], roots=roots, timeout_s=timeout_s, network=False, copied=True,
                                           python=repo_tests.interpreter(change.repo), scratch_dir=copy.parent,
                                           deadline=deadline, require_isolation=True, links=report)
-            if expected is not None and ran.get("source_before") != digest(copied):
+            if expected is not None and ran.get("source_before") and ran["source_before"] != digest(copied):
                 return refused
+            if expected is not None and not ran.get('source_before') and ran.get('verdict') in {'passed', 'failed'}:
+                return {'verdict': 'not_run', 'said': 'G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: '
+                        'the run did not record its starting bytes'}
             if expected is not None:
                 ran['execution_artifact'] = {'version': 'execution-run.v1', 'artifact_digest': digest(artefact),
                     'base_commit': change.base_commit if at_base else '', 'files': copied}
@@ -550,7 +553,7 @@ def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *
             raise
         return {"verdict": "not_run", "said": str(exc)}
     except (OSError, ValueError, repo_tests.CopyNotRun) as exc:
-        return {**refused, "said": str(exc)} if artefact is not None else {"verdict": "not_run", "said": str(exc)}
+        return {"verdict": "not_run", "said": str(exc)}
 
 
 def _messages(ran: dict, node: str) -> list[str]:

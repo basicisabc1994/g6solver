@@ -233,7 +233,7 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
         reading = bq.read(action, content, asked.question, asked.rule, answered_at=back_at)
         if reading.answer is not None:   # the answer first: a stop after it keeps what the person chose
             try:
-                store.answer(reading.answer)
+                store.answer(reading.answer, scenario=scenario)
             except qs.AnswerRefused as exc:
                 return blocked_reply(f"[{qs.REFUSED}] {bq.caller_text(exc, literal=False)}")
         store.show(asked, bq.ANSWERED if reading.answer is not None else reading.why, shown_at=shown_at,

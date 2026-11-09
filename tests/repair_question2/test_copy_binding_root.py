@@ -62,7 +62,11 @@ def test_result_without_the_checked_starting_manifest_is_unavailable(tmp_path, m
         **result("test_g6.py::test_example"), **({"source_before": start} if start else {})})
     got = vs._run_check(repo_tests.change(root), "test_g6.py", "def test_example():\n    pass\n",
                         "test_g6.py::test_example", at_base=False, timeout_s=60, artefact=before)
-    assert got.get(vs.NOT_THE_ARTEFACT_KEY) is True
+    if start is None:
+        assert not got.get(vs.NOT_THE_ARTEFACT_KEY)
+        assert got['verdict'] == 'not_run' and 'G6_E_EXECUTION_ARTIFACT_UNAVAILABLE' in got['said']
+    else:
+        assert got.get(vs.NOT_THE_ARTEFACT_KEY) is True
     assert vs.reading(got, "test_g6.py::test_example")["result"] != "passed"
 
 
@@ -90,4 +94,9 @@ def test_inventory_confirmed_imports_and_each_bound_copy_are_owned_by_g6():
     body = ast.unparse(execute)
     assert body.index("_copy_manifest(") < body.index("repository_copy(")
     assert "_same_copy(" in body and "_copy_snapshot(copy" in body
-    assert "ran.get('source_before') != digest(copied)" in body
+    byte_guard = next(n for n in ast.walk(execute) if isinstance(n, ast.If) and any(
+        isinstance(one, ast.Compare) and ast.unparse(one) == "ran['source_before'] != digest(copied)"
+        for one in ast.walk(n.test)))
+    assert isinstance(byte_guard.test, ast.BoolOp) and isinstance(byte_guard.test.op, ast.And)
+    assert any(ast.unparse(one) == "ran.get('source_before')" for one in byte_guard.test.values)
+    assert 'the run did not record its starting bytes' in body

@@ -201,7 +201,7 @@ def test_confirmed_reproduction_command_also_excludes_repository_pytest_hooks(tm
     monkeypatch.setattr(vs, '_run_check', lambda change, placed, source, node, **kwargs:
                         result(node + '::test_example', 'failed'))
     [reading] = confirmed_checks.run(root, repo_tests.change(root), held,
-                                     deadline=vs._clock() + 60, artifact='b' * 64)
+                                     deadline=vs._clock() + 60, artifact='b' * 64, task=TASK)
     reproduction = reading['reproduction']
     path = root / reproduction['file']
     path.parent.mkdir(parents=True, exist_ok=True)

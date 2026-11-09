@@ -136,6 +136,7 @@ PLACES: dict[tuple[str, str], tuple[str, str]] = {
     ("_issuer", "key in held"): ("membership", "the frozenset of the issuer's codes, one table row's code at a time"),
     ("_words", "text.replace"): ("search", "G6's own wording of a run or a skip, its tier names put plainly"),
     ("code", "re.findall"): ("search", "runs of backticks in the value, to fence it; nothing is read for meaning"),
+    ("code", "str(value).split"): ("search", "whitespace, to put the value on one line; nothing is read for meaning"),
     ("_findings", "str(reproduction.get('at_base', 'not run')).startswith"): (
         "search", "G6's own wording of a proposed check's run at the base commit (verification_search)"),
     ("_decide", "line.startswith"): ("search", f"{OWN}: the 'and N more' line its own cut wrote"),

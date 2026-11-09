@@ -51,6 +51,7 @@ from typing import Any
 
 from g6.harness import verification_search as vs
 from g6.harness.confirmed_expectation import NOT_CONFIRMING, Answer, Question, Unconfirmed
+from g6.harness.observation_contract import observable_exception
 from g6.harness.verification_templates import ExampleCase, TemplateInstance, instance_digest, literal_problem
 
 SOURCES = ("caller", "differential")
@@ -223,6 +224,8 @@ class Candidate:
             raise CandidateRefused("a candidate carries repository evidence: at least one line of text")
         if sorted(record["outcomes"]) != list(LABELS):
             raise CandidateRefused("a candidate states two competing outcomes, A and B")
+        if any('raises' in one and not observable_exception(one['raises']) for one in record['outcomes'].values()):
+            raise CandidateRefused("a raised outcome names an observable exception type")
         problem = literal_problem(record)
         if problem:
             raise CandidateRefused(f"a candidate is JSON data: {problem}")

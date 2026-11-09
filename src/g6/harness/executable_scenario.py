@@ -14,6 +14,7 @@ from pathlib import PurePosixPath
 
 from g6.core import component_process
 from g6.core.ledger import canonical
+from g6.harness.observation_contract import observable_exception
 
 SETUP = ("a fresh import of the function's module in a copy of the tree under review, with no other state set up: "
          "the call is made once, with copies of these arguments")
@@ -31,6 +32,9 @@ class Scenario:
                 or value["version"] != "example-scenario.v1" or value["setup"] != SETUP):
             raise ValueError(f"{UNAVAILABLE}: unsupported executable scenario")
         entry = value["entrypoint"]
+        if any('error' in one and not observable_exception('.'.join(part for part in one['error'][1:3] if part))
+               for one in value['outcomes'].values()):
+            raise ValueError(f"{UNAVAILABLE}: a raised outcome must name an observable exception")
         if (not isinstance(entry, list) or len(entry) != 4 or entry[0] != "module"
                 or PurePosixPath(entry[3]).is_absolute() or ":" in entry[3]
                 or ".." in PurePosixPath(entry[3]).parts):
@@ -102,8 +106,9 @@ class Scenario:
         from g6.harness import behaviour_runner as runner
 
         helpers = "\n\n".join(inspect.getsource(one) for one in (
-            runner._unique, runner._encoded, runner.read_frame, runner.finish, runner.request))
-        return ("import json, struct, subprocess, tempfile, sys, os\n"
+            runner._unique, runner._encoded, runner._fingerprint, runner._valid_encoding,
+            runner._matches_encoding, runner.read_frame, runner.finish, runner.request))
+        return ("import hashlib, json, struct, subprocess, tempfile, sys, os\n"
                 "TEMPLATE = 'example.v1'\nBINDINGS = " + ascii({"scenario": self.record.decode("ascii")})
                 + "\nMAGIC = b'G6R1\\n'\nMAX_FRAME = 1048576\nBOOTSTRAP = " + ascii(self.program)
                 + "\n" + helpers + '''
