@@ -185,12 +185,13 @@ def _at_base(assessment: dict) -> dict[str, str]:
     return dict((found or {}).get("outcomes") or {})
 
 
-def code(value: object, limit: int = 140) -> str:
+def code(value: object, limit: int | None = 140, *, literal: bool = False) -> str:
     """``value`` as one inert code span: on one line, cut at ``limit`` characters, fenced by more backticks than any
     run inside it (padded where it begins or ends with one), so nothing in it is read as Markdown or HTML."""
-    text = " ".join(str(value).split())
-    text = "".join(ch if ch.isprintable() else "?" for ch in text) or "(empty)"
-    if len(text) > limit:
+    from g6.harness.behaviour_question import caller_text
+
+    text = caller_text(value, literal=literal) or "(empty)"
+    if limit is not None and len(text) > limit:
         text = text[:limit - 3] + "..."
     fence = "`" * (max((len(run) for run in re.findall(r"`+", text)), default=0) + 1)
     pad = " " if text[0] == "`" or text[-1] == "`" else ""
@@ -428,8 +429,6 @@ def _confirmed(assessment: dict) -> list[list[str]]:
     for one in held.get("expectations", []):
         question, answer, check = one.get("question") or {}, one.get("answer") or {}, one.get("check") or {}
         scope = str(question.get("scope", ""))
-        # Longer than the whole scope: no text it holds can close the literal block.
-        fence = "`" * (len(scope) + 3)
         option = answer.get("option", "")
         statement = statements.get(one.get("expectation_id")) or {}
         issuer = ("checked" if statement.get("checked") else "refuted" if statement.get("refute") else
@@ -440,9 +439,16 @@ def _confirmed(assessment: dict) -> list[list[str]]:
                       f"{code(_question_sha256(question), 70)}), scope shown in full below, answered "
                       f"by {code(answer.get('answered_by', ''), 60)} (recorded as given, not authenticated); "
                       f"{CONFIRMED_RESULT.get(check.get('result'), 'its check gave no result')}; "
-                      f"the evidence issuer: {code(issuer, 120)}\n\nScope (exact text):\n"
-                      f"{fence}text\n{scope}\n{fence}"])
+                      f"the evidence issuer: {code(issuer, 120)}; Scope (exact text): "
+                      f"{code(scope, None, literal=True)}. "
+                      + _execution_limit()])
     return items
+
+
+def _execution_limit() -> str:
+    from g6.harness.behaviour_runner import LIMIT
+
+    return LIMIT
 
 
 def render(assessment: dict) -> str:

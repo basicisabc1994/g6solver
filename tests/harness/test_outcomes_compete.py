@@ -365,8 +365,9 @@ PLACES: dict[tuple[str, str, str], str] = {
     ("harness/behaviour_question.py", "_value", "encoded(value)"): THROUGH,
     ("harness/behaviour_question.py", "form", "_said(shown['outcomes']['A'])"): THROUGH,
     ("harness/behaviour_question.py", "form", "_said(shown['outcomes']['B'])"): THROUGH,
-    ("harness/behaviour_question.py", "form", "f-string: _line(_said(shown['outcomes']['A']))"): THROUGH,
-    ("harness/behaviour_question.py", "form", "f-string: _line(_said(shown['outcomes']['B']))"): THROUGH,
+    ("harness/behaviour_question.py", "form", "f-string: caller_text(_said(shown['outcomes']['A']), literal=False)"): THROUGH,
+    ("harness/behaviour_question.py", "form", "f-string: caller_text(_said(shown['outcomes']['B']), literal=False)"): THROUGH,
+    ("harness/behaviour_question.py", "form", "shown_call(shown)"): THROUGH,
     ("harness/behaviour_question.py", "form", "_call(question)"): THROUGH,
     ("harness/patch_report.py", "_confirmed", "bq.shown_call(question)"): THROUGH,
     ("harness/patch_report.py", "_confirmed", "bq.shown_outcome(outcomes.get(option))"): THROUGH,
@@ -385,6 +386,11 @@ PLACES: dict[tuple[str, str, str], str] = {
     ("harness/question_store.py", "ask", "one.question.sha256 == question.sha256"): RECORD,
     ("mcp/behaviour.py", "_reply", "one.answer_sha256 == reading.answer.sha256"): RECORD,
     ("mcp/behaviour.py", "confirm", "digest(repo_tests.snapshot(root))"): "the artefact's digest, not an outcome",
+    ("mcp/behaviour.py", "_review_candidates", "digest(a)"): RECORD,
+    ("mcp/behaviour.py", "_review_candidates", "owned.get(a.get('check')) == digest(a)"): RECORD,
+    ("mcp/behaviour.py", "_review_candidates", "json.loads(saved_bytes)"): (
+        "one decode of the exact saved bytes whose task and probe custody are checked"),
+    ("mcp/behaviour.py", "_review_candidates", "saved.get('artifact_digest') != artifact"): RECORD,
     ("harness/behaviour_question.py", "_get", "decoded(self.data)"): THROUGH,
     ("harness/behaviour_question.py", "to_dict", "decoded(self.data)"): THROUGH,
     ("harness/question_store.py", "allow_more", "digest(['more', asked.question.sha256, len(ledger.entries())])"): (

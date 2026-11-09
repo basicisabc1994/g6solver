@@ -106,7 +106,13 @@ def test_inventory_both_dialog_ingresses_require_probe_custody():
     product = ast.parse((root / "mcp/behaviour.py").read_text())
     function = next(n for n in product.body if isinstance(n, ast.FunctionDef) and n.name == "_review_candidates")
     assert "bq.require_probe()" in ast.unparse(function)
-    assert "bq.differential_candidates(" not in ast.unparse(product)
+    calls = [n for n in ast.walk(product) if isinstance(n, ast.Call)
+             and ast.unparse(n.func) == 'bq.differential_candidates']
+    assert len(calls) == 1 and calls[0] in list(ast.walk(function))
+    assert any(k.arg == 'owned_checks' and ast.unparse(k.value) == 'set(owned)' for k in calls[0].keywords)
+    source = ast.unparse(function)
+    assert 'behaviour_runner.read_probes(' in source
+    assert "owned.get(a.get('check')) == digest(a)" in source
     producers = []
     for path in root.rglob('*.py'):
         for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
@@ -114,7 +120,7 @@ def test_inventory_both_dialog_ingresses_require_probe_custody():
                     getattr(node.func, 'attr', '') == 'differential_candidates'
                     or getattr(node.func, 'id', '') == 'differential_candidates'):
                 producers.append(path.relative_to(root).as_posix())
-    assert producers == [], "a new product producer needs protected probe custody before admitting questions"
+    assert producers == ['mcp/behaviour.py'], "every product producer must use the custody gate inventoried above"
 
 
 def test_new_ask_cannot_bypass_current_admission_with_a_different_question(tmp_path):

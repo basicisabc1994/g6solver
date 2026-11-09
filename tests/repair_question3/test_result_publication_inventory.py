@@ -1,5 +1,7 @@
 """Inventory the result, publication, persisted-template and exact-rule boundaries."""
 import ast
+import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -17,9 +19,12 @@ def test_every_rule_rendering_is_exact(rule):
     one = bq.caller_candidates(TASK, [candidate(rule=rule)])[0]
     case, stated = one.questions("b" * 64)
     message = bq.form(case, one, stated)[0]
-    assert "Rule offered, in full: " + rule in message
+    rendered = next(line.removeprefix('Rule offered, in full: ') for line in message.splitlines()
+                    if line.startswith('Rule offered, in full: '))
+    assert (json.loads(rendered) if rendered.startswith('"') else rendered) == rule
     scoped = bq.form(stated, one, stated)[0]
-    assert stated.scope in scoped
+    rendered = next(line.removeprefix('Scope: ') for line in scoped.splitlines() if line.startswith('Scope: '))
+    assert (json.loads(rendered) if rendered.startswith('"') else rendered) == stated.scope
 
 
 def test_report_keeps_the_exact_rule_including_newlines_and_long_literals():
@@ -30,7 +35,9 @@ def test_report_keeps_the_exact_rule_including_newlines_and_long_literals():
     _case, stated = one.questions("b" * 64)
     report = patch_report._confirmed({"confirmed_expectations": {"expectations": [
         {"question": stated.to_dict(), "answer": {"option": "A"}, "check": {}}]}})
-    assert stated.scope in "\n".join(line for item in report for line in item)
+    text = "\n".join(line for item in report for line in item)
+    field = re.search(r'Scope \(exact text\): (`+) ?(.*?) ?\1\.', text)
+    assert field and json.loads(field.group(2)) == stated.scope
 
 
 def test_every_unconfirmed_template_identity_equals_the_base_producer(monkeypatch):

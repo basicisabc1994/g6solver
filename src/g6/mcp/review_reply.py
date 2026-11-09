@@ -66,6 +66,9 @@ def save(reply: dict, job_id: str) -> str | None:
         from g6.mcp import review_binding
 
         review_binding.write(path, reply, data)
+        from g6.harness import behaviour_runner
+
+        behaviour_runner.write_probes(path, reply, data)
     except (OSError, ValueError, TypeError):
         return None
     return str(path)

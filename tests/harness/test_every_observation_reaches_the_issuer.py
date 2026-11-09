@@ -221,6 +221,11 @@ RUN_SITES = {
     ("verification_search.py", "_run_check", "repo_tests.run_at_base(change, [node], roots=roots, "
                                              "timeout_s=timeout_s, overlay=overlay, require_isolation=True)"): (
         "a proposed check at the base commit, not on the patch"),
+    ("verification_search.py", "_run_check", "repo_tests._run(copy, [node], roots=(), timeout_s=timeout_s, "
+                                             "network=False, copied=True, deadline=deadline, require_isolation=True, "
+                                             "observation=generated[1])"): (
+        "an owned confirmed check or behaviour probe: its own scenario, never a stated node; confirmed patch "
+        "observations reach confirmed_evidence and probe observations reach the question's custody record"),
     ("verification_search.py", "_run_check", "repo_tests._run(copy, [node], roots=roots, timeout_s=timeout_s, "
                                              "network=False, copied=True, python=repo_tests.interpreter(change.repo), "
                                              "scratch_dir=copy.parent, deadline=deadline, require_isolation=True, "

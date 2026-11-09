@@ -99,13 +99,16 @@ class CandidateRefused(ValueError):
         self.code = code
 
 
-def require_probe() -> None:
-    """The executor currently exposes repository-owned streams, not a protected G6 observation facility.
+def require_probe(probe_sha256: str = "") -> None:
+    """Admit only a record naming the G6 runner; unowned streams never become a behaviour dialog.
 
-    No new or resumed differential question may label those streams as G6's own observations. Generic review
-    diagnostics retain their existing scope; they cannot cross this boundary into a behaviour dialog.
+    The G6-owned startup and channel exclude repository configuration. The stated in-process limit still applies.
     """
-    raise CandidateRefused("G6 has no protected probe channel for these observations; repository stdout cannot "
+    from g6.harness import behaviour_runner
+
+    if probe_sha256 == behaviour_runner.probe_sha256():
+        return
+    raise CandidateRefused("G6 has no protected probe record matching its isolated runner; repository stdout cannot "
                            "supply G6's own runs for a behaviour question", PROBE_UNAVAILABLE)
 
 
@@ -166,10 +169,10 @@ class Candidate:
     @classmethod
     def make(cls, *, source: str, requirement_id: str, function: str, args: list, kwargs: Mapping[str, Any],
              outcomes: Mapping[str, Mapping[str, Any]], cited: str, evidence: Sequence[str],
-             settled: Sequence[Mapping[str, str]] = (), scope: str = CASE_SCOPE, rule: str = "") -> Candidate:
+             settled: Sequence[Mapping[str, str]] = (), scope: str = CASE_SCOPE, rule: str = "", probe_sha256: str = "") -> Candidate:
         made = cls._structural(source=source, requirement_id=requirement_id, function=function, args=args,
                                kwargs=kwargs, outcomes=outcomes, cited=cited, evidence=evidence, settled=settled,
-                               scope=scope, rule=rule)
+                               scope=scope, rule=rule, probe_sha256=probe_sha256)
         code, why = competition(made.to_dict()["outcomes"])
         if code:
             raise CandidateRefused(f"the two outcomes do not compete: {why}", code)
@@ -200,13 +203,17 @@ class Candidate:
     @classmethod
     def _structural(cls, *, source: str, requirement_id: str, function: str, args: list, kwargs: Mapping[str, Any],
                     outcomes: Mapping[str, Mapping[str, Any]], cited: str, evidence: Sequence[str],
-                    settled: Sequence[Mapping[str, str]] = (), scope: str = CASE_SCOPE, rule: str = "") -> Candidate:
+                    settled: Sequence[Mapping[str, str]] = (), scope: str = CASE_SCOPE, rule: str = "", probe_sha256: str = "") -> Candidate:
         if source not in SOURCES:
             raise CandidateRefused(f"a candidate's source is one of {', '.join(SOURCES)}")
         record = {"source": source, "requirement_id": requirement_id, "function": function, "args": args,
                   "kwargs": dict(kwargs), "outcomes": {k: dict(v) for k, v in outcomes.items()}, "cited": cited,
                   "evidence": list(evidence), "settled": [dict(one) for one in settled], "scope": scope,
                   "rule": rule}
+        if probe_sha256:
+            if source != "differential" or not isinstance(probe_sha256, str) or not _HEX64.fullmatch(probe_sha256):
+                raise CandidateRefused("a probe digest names G6's differential runner")
+            record["probe_sha256"] = probe_sha256
         for name in ("requirement_id", "function", "cited", "scope", "rule"):
             if type(record[name]) is not str:
                 raise CandidateRefused(f"a candidate's {name} is text")
@@ -360,8 +367,14 @@ def _citation(task: str, function: str) -> str:
     return task.strip()[:MAX_CITED]
 
 
+def _probe_digest() -> str:
+    from g6.harness import behaviour_runner
+
+    return behaviour_runner.probe_sha256()
+
+
 def differential_candidates(task: str, instances: Iterable[TemplateInstance], activities: Iterable[Mapping],
-                            ranked: Sequence[str] = ()) -> list[Candidate]:
+                            ranked: Sequence[str] = (), *, owned_checks: set[str] | None = None) -> list[Candidate]:
     """The candidates base-and-patch differences give: each ``behaviour_changed`` activity of a review whose check is
     a ``differential.v1`` instance with intent ``change`` (one whose intent is ``preserve`` reads a difference as a
     counterexample, never a question), held to the instance it names by its digest (``instance_sha256``, which the
@@ -395,6 +408,7 @@ def differential_candidates(task: str, instances: Iterable[TemplateInstance], ac
                     source="differential", requirement_id=one.requirement_id, function=function,
                     args=call.get("args", []), kwargs=call.get("kwargs", {}), outcomes={"A": base, "B": patch},
                     cited=_citation(task, function), evidence=evidence,
+                    probe_sha256=_probe_digest() if owned_checks is not None and one.id in owned_checks else "",
                     settled=settled_by(task, {"A": base, "B": patch})))
             except CandidateRefused:
                 continue
@@ -439,10 +453,20 @@ EVIDENCE_FROM = {"caller": "as the calling agent states it, not checked by G6",
                  "differential": "G6's own runs in a review"}
 
 
-def _line(text: object) -> str:
-    """Text a candidate holds (the calling agent's words, or a value), on one line: a line break in it can never stand
-    as a line of G6's own in the form."""
-    return " ".join(str(text).split())
+def caller_text(value: object, *, literal: bool = True) -> str:
+    """Caller text in one labelled presentation field, losslessly escaped as an ASCII JSON string.
+
+    Plain single-line text may retain its familiar spelling inside an existing labelled field. Control characters,
+    non-ASCII separators, Markdown headings and G6's field labels always force a quoted literal. This function is
+    for presentation only: stored question, answer and candidate records retain their exact bytes.
+    """
+    text = str(value)
+    labels = ("Input:", "Setup:", "Outcome A:", "Outcome B:", "Scope:", "Cited from the task:",
+              "Requirement:", "Evidence (", "Evidence that", "Rule offered, in full:", "Scope (exact text):",
+              "Executable scenario:", "Executable scenario SHA-256:", "#", "G6 asks", "Choose ", "<", ">", "&")
+    if not literal and all(32 <= ord(char) < 127 for char in text) and not any(label in text for label in labels):
+        return text
+    return json.dumps(text, ensure_ascii=True).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
 def _value(value: Any) -> str:
@@ -486,33 +510,48 @@ def _said(outcome: Mapping[str, Any]) -> str:
     return shown_outcome(outcome)
 
 
-def form(question: Question, candidate: Candidate, rule: Question | None = None) -> tuple[str, dict]:
+def form(question: Question, candidate: Candidate, rule: Question | None = None, *, scenario=None) -> tuple[str, dict]:
     """The behaviour form for ``question``: the message the person reads (the exact input and setup, outcome A and
     outcome B, the cited scope, the evidence, the rule in full when one is offered, and how the answer is kept) and
     the form's schema, with standard form-schema fields only."""
     if candidate.source == "differential":
-        require_probe()
+        require_probe(candidate.to_dict().get("probe_sha256", ""))
     code, why = competition(question.outcomes)
     if code:
         raise CandidateRefused(f"the pending outcomes do not compete: {why}", code)
     shown = question.to_dict()
+    setup = SETUP
+    call = _call(question)
+    if scenario is not None:
+        if not scenario.matches(question):
+            raise CandidateRefused("G6_E_SCENARIO_UNAVAILABLE: this is not the question's executable scenario")
+        shown.update(scenario.presentation)
+        setup = shown['setup']
+        call = shown_call(shown)
     whose = EVIDENCE_FROM[candidate.source]
     lines = ["G6 asks one behaviour question about this task. Your answer is enforced exactly as you give it.",
-             f"Input: {_line(_call(question))}",
-             f"Setup: {SETUP}",
-             f"Outcome A: {_line(_said(shown['outcomes']['A']))}",
-             f"Outcome B: {_line(_said(shown['outcomes']['B']))}",
-             f"Scope: {shown['scope']}",
-             f"Cited from the task: {_line(shown['cited'])}",
-             f"Requirement: {_line(shown['requirement_id'])}; asked about the artefact with SHA-256 "
+             f"Input: {caller_text(call, literal=False)}",
+             f"Setup: {setup}",
+             f"Outcome A: {caller_text(_said(shown['outcomes']['A']), literal=False)}",
+             f"Outcome B: {caller_text(_said(shown['outcomes']['B']), literal=False)}",
+             f"Scope: {caller_text(shown['scope'], literal=False)}",
+             f"Cited from the task: {caller_text(shown['cited'], literal=False)}",
+             f"Requirement: {caller_text(shown['requirement_id'], literal=False)}; asked about the artefact with SHA-256 "
              f"{shown['baseline_sha256']}",
-             f"Evidence ({whose}): " + "; ".join(_line(one) for one in candidate.to_dict()["evidence"])]
+             f"Evidence ({whose}): " + "; ".join(caller_text(one, literal=False)
+                                               for one in candidate.to_dict()["evidence"])]
+    if scenario is not None:
+        lines.extend(["Executable scenario: " + caller_text(scenario.record.decode("ascii"), literal=False),
+                      "Executable scenario SHA-256: " + scenario.sha256])
+    from g6.harness.behaviour_runner import LIMIT
+
+    lines.append(LIMIT)
     settled = candidate.settled
     if settled:
         lines.append("Evidence that the task may already settle it: " + "; ".join(
-            f"{one['outcome']}: {_line(one['by'])}" for one in settled))
+            f"{one['outcome']}: {caller_text(one['by'], literal=False)}" for one in settled))
     if rule is not None:
-        lines.append(f"Rule offered, in full: {candidate.rule}")
+        lines.append(f"Rule offered, in full: {caller_text(candidate.rule, literal=False)}")
         lines.append("Choose binds=rule to confirm that rule; binds=case (the default) confirms this one case only. "
                      "Either way G6 enforces this one case; a rule is recorded as you confirmed it.")
     lines.append("Choose A or B; or neither, premise_wrong (the premise is wrong), task_already_says (the task "
@@ -588,6 +627,6 @@ def read(action: str, content: object, question: Question, rule: Question | None
 
 __all__ = ["ANSWERED", "CALLER_FIELDS", "CASE_SCOPE", "CHOICES", "COVERAGE_NOTE", "Candidate", "CandidateRefused",
            "FIELDS", "IDENTICAL", "INDEPENDENT", "INVALID", "LABELS", "OVERLAP", "PENDING", "PRIORITY", "RULE_SCOPE",
-           "Reading", "SETUP", "SOURCES", "UNKNOWN", "caller_candidates", "choose", "competition", "decoded",
+           "Reading", "SETUP", "SOURCES", "UNKNOWN", "caller_candidates", "caller_text", "choose", "competition", "decoded",
            "differential_candidates", "encoded", "form", "observed", "plan", "ranked", "read", "settled_by",
            "shown_call", "shown_outcome"]

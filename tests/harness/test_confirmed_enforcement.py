@@ -39,7 +39,8 @@ def _git(root, *args):
 
 
 @pytest.fixture
-def repo(tmp_path):
+def repo(tmp_path, monkeypatch):
+    monkeypatch.setenv("G6_HOME", str(tmp_path.parent / (tmp_path.name + "_home")))
     (tmp_path / "calc.py").write_text(BAD)
     (tmp_path / "test_calc.py").write_text(TEST)
     _git(tmp_path, "init", "-q")
@@ -47,6 +48,7 @@ def repo(tmp_path):
     _git(tmp_path, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
          "commit", "-qm", "base")
     (tmp_path / "calc.py").write_text(GOOD)
+    standard(root=tmp_path)
     return tmp_path
 
 
@@ -75,7 +77,10 @@ def compiled(monkeypatch, *verdicts):
 
     def run_check(change, placed, source, node, *, at_base, timeout_s, roots=(), artefact=None):
         # artefact: the review's snapshot, which the real executor checks each copy on the patch against
-        given.append({"at_base": at_base, "node": node, "source": source, "bound": artefact is not None})
+        # This historical flag describes a receipt on the patch. The base control now also receives the snapshot
+        # so its projected starting copy can be checked, but is not itself a receipt on the patch's bytes.
+        given.append({"at_base": at_base, "node": node, "source": source,
+                      "bound": artefact is not None and not at_base})
         test = f"{node}::test_example"
         if left.pop(0) == "passed":
             return {**result([test]), "source_before": "d" * 64}
@@ -86,10 +91,14 @@ def compiled(monkeypatch, *verdicts):
     return given
 
 
-def standard(function="calc.add", option="A") -> ExpectationStandard:
+def standard(function="calc.add", option="A", *, root=None) -> ExpectationStandard:
     shown = Question(requirement_id="R1", function=function, args=[2, 3],
                      outcomes={"A": {"returns": 5}, "B": {"returns": -1}}, scope="this one case: this input, this "
                      "outcome", cited="Repair addition for positive integers.", baseline_sha256="b" * 64)
+    if root is not None:
+        from g6.harness.executable_scenario import Scenario, save
+
+        save(shown, Scenario.resolve(root, shown))
     return ExpectationStandard().with_expectation(confirm(shown, option, answered_by="person:Ada"))
 
 

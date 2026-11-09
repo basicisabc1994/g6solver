@@ -1439,6 +1439,11 @@ def compile_text(definition: TemplateDefinition, data: dict) -> str:
         data = {**data, "function": data["function"][:3], "cases": [
             {**case, **({"error": case["error"][:3]} if "error" in case else {})}
             for case in data["cases"]]}
+    if "scenario" in data:
+        from g6.harness.executable_scenario import Scenario
+
+        scenario = Scenario(data["scenario"].encode("ascii"))
+        return scenario.source(data["option"]) if "option" in data else scenario.program
     literal = ascii(data)
     if ast.literal_eval(literal) != data:
         raise ValueError("the bindings do not read back as the same literal")

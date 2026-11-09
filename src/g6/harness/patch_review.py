@@ -844,7 +844,8 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
     refused before anything runs, and one the tree gives nothing to apply to is refused and reported only. Optional
     ``search`` (``{"templates": bool, "test_adequacy": bool}``) runs free-form checks only, or measures test adequacy.
     Optional ``import_roots`` (at most ``MAX_IMPORT_ROOTS`` folders inside the repository, such as ``lib``) go first on
-    the import path of every run of the review, in place and in copies, and are recorded in its scope.
+    the import path of ordinary repository test runs and are recorded in its scope. G6-owned confirmed checks and
+    behaviour probes use the fixed top/src import path instead.
     ``search={"propose": true}`` asks a model for checks (``g6.harness.verification_proposer``): ``llm``, the caller to
     ask (Python only), else the model the person configured for G6; what it proposes stays untrusted.
     Optional ``confirmed`` (Python only; over MCP, G6 reads it from the task's question store): the standard of the
@@ -867,6 +868,11 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
         if expected_artifact_digest and artifact != expected_artifact_digest:
             return blocked_reply("[G6_E_PATCH_STALE] working tree differs from the supplied artifact digest")
         change = repo_tests.change(root, base)
+        if (confirmed is not None and confirmed.expectations) or any(
+                one.template == 'differential.v1' for one in instances):
+            from g6.harness import verification_search
+
+            before = verification_search.bind_execution(change, before, deadline=started + timeout_s)
         placed = {}
         if proposed:
             from g6.harness import verification_search
@@ -893,12 +899,12 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
         if exc.code == ISOLATION_UNAVAILABLE and not isinstance(exc, _Refused):
             # the run's own refusal offers allowing unconfined runs, which a review would refuse anyway
             said = said.removeprefix(f"[{exc.code}] ").split(" To run such code without one")[0] + " " + BOUNDARY_HELP
-        refused = blocked_reply(f"[{exc.code}] {said}")
+        refused = blocked_reply(f"[{exc.code}] {_one_line(said)}")
         if getattr(exc, "help", ""):
             refused["warning_card"].update(suggested_action=exc.help, next_step=exc.help)
         return refused
     except (OSError, ValueError, TypeError) as exc:
-        return blocked_reply(f"[{CODE}] {exc}")
+        return blocked_reply(f"[{CODE}] {_one_line(exc)}")
 
 
 def _left(deadline: float) -> int:
@@ -1147,7 +1153,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             search = verification_search.not_run(checks, where, INTEGRITY_SKIP, origins)
         else:
             search = _stage(stopped, "the proposed and compiled checks", verification_search.search, change, checks,
-                            where, deadline=deadline, artifact=artifact, origins=origins, roots=roots)
+                            where, deadline=deadline, artifact=artifact, origins=origins, roots=roots,
+                            **({'before': before} if isinstance(before, verification_search.ExecutionSnapshot) else {}))
         for code, detail in (search.reasons if search is not None else ()):
             reason("evidence", code, detail)
         follow_ups = [*follow_ups, *(search.next_actions if search is not None else ())]
@@ -1198,8 +1205,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                 reasons.append({"stage": "tier_1", "code": CONFIRMED_FAILED, "detail": detail})
                 defects.append({"code": CONFIRMED_FAILED, "node": found.get("node", ""), "detail": detail,
                                 "provenance": "person_confirmed", "reproduction": found["reproduction"]})
-            elif found["result"] != confirmed_checks.PASSED:
-                reason("evidence", CONFIRMED_NOT_RUN, f"{said} was not enforced: {found.get('detail', '')}")
+            elif found["result"] != confirmed_checks.PASSED or found.get('scenario_unavailable'):
+                reason("evidence", CONFIRMED_NOT_RUN,
+                       f"{said} was not enforced: {found.get('scenario_unavailable') or found.get('detail', '')}")
     # G6 0.3: after the run at the base commit (each check's control), the checks it killed run again on the patch, so
     # the issuer has a receipt its control came before; last, so it takes no time from anything that decides a field
     again = _run_again(root, change, stated, norm, verdicts, runs, deadline, artifact, roots)
@@ -1561,9 +1569,13 @@ def _listed(listed, assumed) -> tuple[list[dict], list[dict]]:
 
 
 def _one_line(text: object) -> str:
-    """``text`` with each control character (a line break among them) shown as a space: a name a repository chose can
-    never start a line of its own in the reply's guidance. It decides nothing."""
-    return "".join(" " if ord(ch) < 32 or ord(ch) == 127 else ch for ch in str(text))
+    """Caller text through the shared lossless one-line encoder: a repository name cannot create a new guidance line.
+
+    The review outcome is decided before this presentation.
+    """
+    from g6.harness.behaviour_question import caller_text
+
+    return caller_text(text, literal=False)
 
 
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
@@ -1637,9 +1649,19 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
     if confirmed is not None:   # G6 0.3, slice 3: what the person confirmed and its check, apart from model results
         from g6.harness import requirement_evidence
         standard, enforced = confirmed
+        from g6.harness.behaviour_runner import LIMIT
+
+        confirmed_environment = {**environment, "execution_limit": LIMIT,
+            "execution_artifacts": [one["execution_artifact"] for one in enforced if "execution_artifact" in one],
+            'execution_runs': [{**run['execution_artifact'], 'bootstrap_sha256': run.get('bootstrap_sha256', '')}
+                               for one in enforced for run in one.get('runs', {}).values()
+                               if run.get('execution_artifact')],
+            "executable_sources": [{key: one.get(key, "") for key in
+                                   ("expectation_id", "source_sha256", "scenario_sha256")} for one in enforced]}
         assessment["confirmed_expectations"] = {
             "standard_sha256": standard.sha256, "revision": standard.revision, "supersedes": standard.supersedes,
-            "note": CONFIRMED_NOTE,
+            "note": CONFIRMED_NOTE + " " + LIMIT,
+            "execution_environment": confirmed_environment,
             "expectations": [{"expectation_id": one.expectation_id, "question": one.question.to_dict(),
                               "question_sha256": one.question_sha256,
                               "answer": {"option": one.option, "text": one.answer.text,
@@ -1647,7 +1669,7 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                                          "identity": "recorded as given, not authenticated"},
                               "check": found} for one, found in zip(standard.expectations, enforced, strict=True)],
             "evidence": requirement_evidence.confirmed_evidence(
-                standard, enforced, artifact=artifact, base_commit=change.base_commit, environment=environment,
+                standard, enforced, artifact=artifact, base_commit=change.base_commit, environment=confirmed_environment,
                 integrity=[r["code"] for r in reasons if r["stage"] == "integrity"])}
     from g6.harness import patch_report   # A1: the readable report, derived from the fields above; it decides nothing
     assessment["report"] = patch_report.safe_render(assessment)

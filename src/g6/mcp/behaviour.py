@@ -46,8 +46,8 @@ IDENTITY = "recorded as given, not authenticated"
 NOT_FOR_YOU = ("Never answer it for the person, and offer no other way to answer: only the person answers, in this "
                "dialog.")
 NEXT = {
-    CONFIRMED: "The person's answer is enforced on each later g6_review_patch of this task, as its one example.v1 check.",
-    NOT_CONFIRMED: "The person's answer confirms no outcome, so nothing is enforced; tell the person what you will do.",
+    CONFIRMED: "The person's answer is recorded. Continue with the task.",
+    NOT_CONFIRMED: "This answer confirms no outcome; tell the person what you will do.",
     PENDING: ("The question stays unconfirmed. Show the person the question in this reply; when they want to answer, "
               "call g6_confirm_behaviour again with the same repo and task and the dialog shows it again. "
               + NOT_FOR_YOU),
@@ -117,8 +117,15 @@ def _review_candidates(task: str, review_job: str, template_instances: Any, *, i
         verification_templates.template_instances(items, named)
     except ValueError as exc:
         raise bq.CandidateRefused(f"template_instances: {exc}") from None
-    bq.require_probe()
-    return []
+    from g6.harness import behaviour_runner
+
+    owned = behaviour_runner.read_probes(state_path("reviews", f"{review_job}.json"), saved_bytes)
+    activities = [a for a in _completion.get("activities", []) if isinstance(a, dict)
+                  and owned.get(a.get("check")) == digest(a)]
+    if not activities:
+        bq.require_probe()
+    validated = verification_templates.template_instances(items, named)
+    return bq.differential_candidates(task, validated, activities, owned_checks=set(owned))
 
 
 def _budget(state: qs.State) -> dict:
@@ -134,9 +141,20 @@ def _standard(state: qs.State) -> dict:
 
 def _reply(status: str, why: str, *, state: qs.State, asked: qs.Asked | None = None, candidate: bq.Candidate | None
            = None, plan: dict | None = None, reading: bq.Reading | None = None, seconds: float | None = None) -> dict:
-    found: dict[str, Any] = {"ok": True, "status": status, "why": why, "coverage": bq.UNKNOWN,
-                             "task_determined": bq.UNKNOWN, "budget": _budget(state), "standard": _standard(state),
-                             "next_action": NEXT[status]}
+    from g6.harness.behaviour_runner import LIMIT
+
+    held = state.standard()
+    count = len(held.expectations)
+    enforcement = (f"{count} confirmed case{'s remain' if count != 1 else ' remains'} enforced on each later "
+                   "g6_review_patch of this task, as example.v1 checks." if count else
+                   "This task has no confirmed cases; nothing is enforced.")
+    standard = {"sha256": held.sha256, "revision": held.revision, "supersedes": held.supersedes,
+                "predicates": list(held.predicates), "superseded": list(state.superseded)}
+    found: dict[str, Any] = {"ok": True, "status": status, "why": bq.caller_text(why, literal=False),
+                             "coverage": bq.UNKNOWN, "task_determined": bq.UNKNOWN, "budget": _budget(state),
+                             "standard": standard, "enforcement": {"count": count,
+                             "predicates": list(held.predicates), "statement": enforcement},
+                             "next_action": enforcement + " " + NEXT[status], "execution_limit": LIMIT}
     if asked is not None:
         found["question"] = asked.question.to_dict()
         found["question_sha256"] = asked.question.sha256
@@ -155,13 +173,12 @@ def _reply(status: str, why: str, *, state: qs.State, asked: qs.Asked | None = N
         if seconds is not None:
             found["person_seconds"] = round(seconds, 3)
     if status == CONFIRMED:
-        held = state.standard()
         mine = next((one for one in held.expectations if one.answer_sha256 == reading.answer.sha256), None)
         if mine is not None:
             found["expectation"] = {"expectation_id": mine.expectation_id, "template": "example.v1",
                                     "provenance": mine.provenance, "check_sha256": mine.check_sha256,
                                     "enforced_on": "this one case, on each later g6_review_patch of this task"}
-    shown = card(None, CODES[status], f"{WHO}: {status}: {why}"[:300])
+    shown = card(None, CODES[status], f"{WHO}: {status}: {bq.caller_text(why, literal=False)}"[:300])
     return {**found, **door_envelope("qualified-draft", who=WHO, warning_card=shown)}
 
 
@@ -169,13 +186,14 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
                   template_instances: Any = None) -> dict:
     """The tool (the module's docstring)."""
     from g6.mcp.consent import elicit
+    from g6.harness import executable_scenario
 
     if not isinstance(task, str) or not task.strip():
         return blocked_reply("[G6_E_INPUT_VALIDATION] task must say what the change is for")
     try:
         root = repo_tests.checked_repo(repo)
     except repo_tests.RepoRefused as exc:
-        return blocked_reply(f"[{exc.code}] {exc}")
+        return blocked_reply(f"[{exc.code}] {bq.caller_text(exc, literal=False)}")
     identity = qs.task_identity(root, task)
     store = qs.TaskQuestions(identity)
     try:
@@ -188,7 +206,7 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
                 made = [*bq.caller_candidates(task, candidates), *_review_candidates(
                     task, review_job, template_instances, identity=identity, artifact=artifact)]
             except bq.CandidateRefused as exc:
-                return blocked_reply(f"[{exc.code}] {exc}")
+                return blocked_reply(f"[{exc.code}] {bq.caller_text(exc, literal=False)}")
             plan = bq.plan(made)
             chosen = bq.choose(made)
             if chosen is None:
@@ -197,11 +215,18 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
                 return _reply(SPENT, state.budget_note or "the task's budget is spent", state=state,
                               candidate=chosen, plan=plan)
             case, rule = chosen.questions(artifact or digest(repo_tests.snapshot(root)))
+            scenario = executable_scenario.Scenario.resolve(root, case)
+            executable_scenario.save(case, scenario)
+            if rule is not None:
+                executable_scenario.save(rule, scenario)
             try:
                 asked = store.ask(case, rule, chosen)
             except qs.BudgetSpent as exc:
                 return _reply(SPENT, str(exc), state=store.state(), candidate=chosen, plan=plan)
-        message, schema = bq.form(asked.question, asked.candidate, asked.rule)
+        if asked.candidate.source == 'differential':
+            bq.require_probe(asked.candidate.to_dict().get('probe_sha256', ''))
+        scenario = executable_scenario.load(asked.question)
+        message, schema = bq.form(asked.question, asked.candidate, asked.rule, scenario=scenario)
         shown_at, started = qs.now(), time.monotonic()
         action, content, _error = await elicit(ctx, message, schema)
         back_at, seconds = qs.now(), time.monotonic() - started
@@ -210,16 +235,19 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
             try:
                 store.answer(reading.answer)
             except qs.AnswerRefused as exc:
-                return blocked_reply(f"[{qs.REFUSED}] {exc}")
+                return blocked_reply(f"[{qs.REFUSED}] {bq.caller_text(exc, literal=False)}")
         store.show(asked, bq.ANSWERED if reading.answer is not None else reading.why, shown_at=shown_at,
                    back_at=back_at, seconds=seconds)
         if reading.further:
             store.allow_more(asked, by=reading.by)
         state = store.state()
     except qs.StoreUnreadable as exc:
-        return blocked_reply(str(exc))
+        return blocked_reply(f"[{qs.UNREADABLE}] " + bq.caller_text(
+            str(exc).removeprefix(f"[{qs.UNREADABLE}] "), literal=False))
     except bq.CandidateRefused as exc:
-        return blocked_reply(f"[{exc.code}] {exc}")
+        return blocked_reply(f"[{exc.code}] {bq.caller_text(exc, literal=False)}")
+    except (OSError, ValueError) as exc:
+        return blocked_reply(f"[{executable_scenario.UNAVAILABLE}] {bq.caller_text(exc, literal=False)}")
     if reading.answer is None:
         return _reply(PENDING, reading.why, state=state, asked=asked, plan=plan, reading=reading)
     status = CONFIRMED if reading.confirms else NOT_CONFIRMED
@@ -265,9 +293,11 @@ def reviewed(review: Any, repo: str, task: str, **kwargs: Any) -> Any:
         with guard(admitted):
             return bound(reply, identity)
     except qs.StoreUnreadable as exc:
-        return blocked_reply(str(exc))
+        return blocked_reply(f"[{qs.UNREADABLE}] " + bq.caller_text(
+            str(exc).removeprefix(f"[{qs.UNREADABLE}] "), literal=False))
     except standard_publication.StandardSuperseded as exc:
-        return blocked_reply(str(exc))
+        return blocked_reply(f"[{standard_publication.CODE}] " + bq.caller_text(
+            str(exc).removeprefix(f"[{standard_publication.CODE}] "), literal=False))
 
 
 __all__ = ["CODES", "CONFIRMED", "HELD", "IDENTITY", "NOT_CONFIRMED", "NOT_THIS_REVIEW", "PENDING", "SPENT", "WHO",

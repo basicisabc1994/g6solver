@@ -14,6 +14,11 @@ the issuer has a pass its control (the run at the base commit) came before (``re
 stated check). A copy's run has no test receipt from the receipt store (only a run in place has one); the issuer's
 receipt binds the review's artefact digest.
 
+New dialogs also hold an executable scenario separately from those historical records. Its exact program supplies
+the isolated child, and G6 compares the framed observation in its own process. Missing scenario records leave legacy
+observations diagnostic: a pass cannot supply support until a new dialog holds the executable scenario. The existing
+``bound`` field still describes only the executable-byte binding, independently of scenario availability.
+
 Its result is the review's like a stated check's, read from every run on the patch: ``failed`` when any of them
 fails there (a defect the review reproduces: what the person confirmed does not hold), the first such run its
 reproduction; ``passed`` when it passes there and no run on the patch failed; and ``not_run`` with why otherwise.
@@ -27,13 +32,14 @@ Without ``before`` nothing here is bound to the artefact (``bound`` false) and t
 from __future__ import annotations
 
 import hashlib
+import shlex
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from g6.core import component_process
 from g6.harness import verification_search as vs
 from g6.harness import verification_templates
-from g6.harness.confirmed_expectation import ExpectationStandard
+from g6.harness.confirmed_expectation import ExpectationStandard, Question
 from g6.workforce import repo_tests
 
 PASSED, FAILED, NOT_RUN = "passed", "failed", "not_run"
@@ -75,79 +81,135 @@ def normal_reading(found: dict) -> dict:
     return found if vs._to_a_result(found) else {**found, "result": "error"}
 
 
+def record_error(result: dict, step: str, exc: Exception, patch_runs: list[dict]) -> None:
+    """Append the failed step's own outcome; an earlier observation is immutable."""
+    error = {"result": "error", "verdict": "not_run", "detail": vs.stopped(exc)}
+    name = step if step not in result["runs"] else step + "_error"
+    result["runs"][name] = error
+    if step in ("patch", "again"):
+        patch_runs.append(error)
+
+
 def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *, deadline: float, artifact: str,
         roots: Sequence[str] = (), skip: str = "", before: dict[str, str] | None = None) -> list[dict]:
     """One result per expectation of ``standard``, in its order (the module's docstring). ``skip``: why none runs (an
     integrity problem, say), each then ``not_run`` with that reason. ``before``: the review's snapshot of the tree,
     whose digest is ``artifact``, to which each run on the patch is bound."""
-    rooted = {"roots": tuple(roots)} if roots else {}
+    rooted = {}
     binding = {"artefact": before} if before is not None else {}
     found: list[dict] = []
     prepared = None
     if not skip:
         prepared = verification_templates.prepare(root, change, [one.instance for one in standard.expectations],
-                                                  deadline=deadline, roots=tuple(roots))
+                                                  deadline=deadline)
     for one in standard.expectations:
         ident = one.expectation_id
+        from g6.harness.behaviour_runner import LIMIT
+
         result = {"expectation_id": ident, "question_sha256": one.question_sha256, "answer_sha256": one.answer_sha256,
                   "option": one.option, "answered_by": one.answered_by, "requirement_id": one.requirement_id,
                   "scope": one.scope, "template": "example.v1", "provenance": one.provenance,
                   "check_sha256": one.check_sha256, "compiled": COMPILED, "runs": {}, "killed": False,
-                  "bound": before is not None}
+                  "bound": before is not None, "execution_limit": LIMIT}
         found.append(result)
+        if isinstance(before, vs.ExecutionSnapshot):
+            result["execution_artifact"] = before.execution
         if skip:
             result.update(result=NOT_RUN, detail=skip)
             continue
         check = next((c for c in prepared.checks if c.id == ident), None)
+        from g6.harness import executable_scenario, behaviour_runner
+        from g6.core.storage import state_path
+
+        if state_path("scenarios", one.question_sha256 + ".json").exists():
+            try:
+                scenario = executable_scenario.load(Question.from_record(one._question))
+                check, placed, _ = verification_templates.compiled_check(root, one.instance,
+                    {"scenario": scenario.record.decode("ascii"), "option": one.option}, [])
+                prepared.placed[ident] = placed
+                result["scenario_sha256"] = scenario.sha256
+            except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+                raise
+            except (OSError, ValueError) as exc:
+                record_error(result, "scenario", exc, [])
+                result["result"], result["detail"] = NOT_RUN, str(exc)
+                continue
+        else:
+            # Legacy records can still supply a diagnostic observation. They cannot
+            # supply support for a canonical executable record that is no longer held.
+            result['scenario_unavailable'] = (executable_scenario.UNAVAILABLE +
+                ': the executable scenario is unavailable; a new dialog is needed for support')
+            result['runs']['scenario'] = {'result': 'error', 'verdict': 'not_run',
+                                          'detail': result['scenario_unavailable']}
         if check is None:
             why = next((a.get("reason", "") for a in prepared.activities if a.get("check") == ident),
                        "G6 could not compile it")
             result.update(result=NOT_RUN, detail=f"it could not be applied to this tree: {why}")
             continue
+        check = check.model_copy(update={"source": behaviour_runner.CONFIRMED + check.source})
         placed = prepared.placed[ident]
         node = placed
         result.update(file=placed, node=node, source_sha256=hashlib.sha256(check.source.encode("utf-8")).hexdigest())
 
         def read(at_base: bool) -> dict:
             ran = vs._run_check(change, placed, check.source, node, at_base=at_base,
-                                timeout_s=vs._bound(deadline - vs._clock()), **rooted, **({} if at_base else binding))
+                                timeout_s=vs._bound(deadline - vs._clock()), **rooted, **binding)
             if ran.get(vs.NOT_THE_ARTEFACT_KEY):   # the executor refused a copy that is not the tree under review
                 result["tree_changed"] = ran.get("said", vs.NOT_THE_ARTEFACT)
             return normal_reading(vs._guarded(change, ran, vs.reading(ran, node)))
 
+        on_the_patch: list[dict] = []
+        step = "patch"
         try:
             if deadline - vs._clock() < vs.MIN_RUN_S:
                 result.update(result=NOT_RUN, detail=vs.OUT_OF_TIME)
                 continue
             on_patch = read(at_base=False)
-            on_the_patch = [on_patch]   # every run on the patch, in the order it ran: each one's result is read
-            result["runs"]["patch"] = vs._summary(on_patch)
+            on_the_patch = [on_patch]
+            result["runs"]["patch"] = on_patch
+            step = "patch_decision"
             result["result"], result["detail"] = _result(on_patch)
+            step = "control_budget"
             if deadline - vs._clock() >= vs.MIN_RUN_S:
+                step = "base"
                 at_base = read(at_base=True)
-                result["runs"]["base"] = vs._summary(at_base)
+                result["runs"]["base"] = at_base
+                step = "control_reading"
                 # the one rule for the control: the check ran to a failure at the base commit (a collection that
                 # failed outside the repository's own code is no failure of it); the issuer's adapter reads this
                 killed = result["killed"] = vs._to_a_result(at_base) and at_base["result"] == "failed"
+                step = "replay_budget"
                 if result["result"] == PASSED and killed and deadline - vs._clock() >= vs.MIN_RUN_S:
+                    step = "again"
                     again = read(at_base=False)
                     on_the_patch.append(again)
-                    result["runs"]["again"] = vs._summary(again)
-            result["result"], result["detail"] = patch_result(on_the_patch)
-            failing = next((found for found in on_the_patch if _failed(found)), None)
-            if failing is not None:   # any run on the patch that observed the case fail: a defect
-                result["result"], result["detail"] = FAILED, failing.get("detail", "")
-                result["reproduction"] = {"check": ident, "file": placed, "text": check.source,
-                                          "sha256": result["source_sha256"], "node": node,
-                                          **vs.reproduce(node, failing), "how": vs.HOW, "caution": CAUTION,
-                                          "patched_tree_digest": failing.get("tree_digest", ""),
-                                          "artifact_digest": artifact, "base_commit": change.base_commit,
-                                          "template": "example.v1", "compiled": COMPILED,
-                                          "on_patch": f"{failing['result']}: {failing.get('detail', '')}"}
+                    result["runs"]["again"] = again
         except (component_process.ExecutionInterrupted, component_process.ContainmentFailure, repo_tests.RepoRefused):
-            raise   # an operator stop, unconfirmed cleanup or a refusal (no boundary) still reaches the door
-        except Exception as exc:   # G6's own work: this expectation is not enforced, and says why
-            result.update(result=NOT_RUN, detail=vs.stopped(exc))
+            raise   # an operator stop, unconfirmed cleanup or a refusal still reaches the door
+        except Exception as exc:
+            record_error(result, step, exc, on_the_patch)
+        result["result"], result["detail"] = patch_result(on_the_patch)
+        failing = next((found for found in on_the_patch if _failed(found)), None)
+        if failing is not None:
+            result["reproduction"] = {"check": ident, "file": placed, "text": check.source,
+                                      "sha256": result["source_sha256"], "node": node,
+                                      "command": "python -I -S -B <G6 bootstrap>",
+                                      "how": "Run the canonical scenario with G6's isolated observation runner.",
+                                      "caution": CAUTION, "execution_limit": LIMIT,
+                                      "patched_tree_digest": failing.get("tree_digest", ""),
+                                      "artifact_digest": artifact, "base_commit": change.base_commit,
+                                      "template": "example.v1", "compiled": COMPILED,
+                                      "on_patch": f"{failing['result']}: {failing.get('detail', '')}"}
+            try:
+                result["reproduction"].update(vs.reproduce(node, failing))
+                if result.get('scenario_sha256'):
+                    command = "import runpy; runpy.run_path(" + repr(placed) + ")['_check_example']()"
+                    result['reproduction'].update(command='python -I -S -B -c ' + shlex.quote(command),
+                                                  environment={}, arguments=[])
+            except (component_process.ExecutionInterrupted, component_process.ContainmentFailure, repo_tests.RepoRefused):
+                raise
+            except Exception as exc:
+                record_error(result, "reproduction", exc, on_the_patch)
     return found
 
 

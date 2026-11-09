@@ -1693,11 +1693,20 @@ def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), time
 def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int, network: bool,
          mutant: tuple[str, str] | None = None, copied: bool = False, python: str = "",
          scratch_dir: Path | None = None, deadline: float | None = None, receipt: bool = False,
-         require_isolation: bool = False, links: dict | None = None) -> dict:
+         require_isolation: bool = False, links: dict | None = None, observation: dict | None = None) -> dict:
     """The shared execution path; only old-test replay uses a copy without git metadata. ``require_isolation``: a run
     no backend confines is refused (``G6_E_ISOLATION_UNAVAILABLE``) before it starts, even where the person allowed
     unconfined runs (verification search's proposed checks). ``links``: what the copy (``repository_copy``'s
-    ``report``) left out or copied in a link's place, added to the result as it is."""
+    ``report``) left out or copied in a link's place, added to the result as it is. ``observation`` selects G6's
+    isolated scenario runner before any pytest configuration or repository interpreter is consulted; recorded
+    executors at this seam therefore control confirmed checks and behaviour probes too."""
+    if observation is not None:
+        from g6.harness import behaviour_runner
+
+        if len(tests) != 1 or not copied or network or not require_isolation:
+            raise RepoRefused("G6_E_INPUT_VALIDATION", "an observation needs one copied, isolated, offline run")
+        return behaviour_runner.run(repo, observation, tests[0], timeout_s=timeout_s,
+                                    deadline=deadline if deadline is not None else time.monotonic() + timeout_s)
     if not tests:
         raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["no_tests"])
     ids = [inside(repo, test, "test") for test in tests]

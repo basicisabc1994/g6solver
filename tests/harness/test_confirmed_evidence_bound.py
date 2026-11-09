@@ -74,6 +74,7 @@ def make_repo(parent: Path, test_text: str | None = None) -> Path:
                                                 "-c", "commit.gpgsign=false", "commit", "-qm", "base")):
         subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True, timeout=20)
     (root / "calc.py").write_text(GOOD, encoding="utf-8")
+    standard(root=root)
     return root
 
 
@@ -93,9 +94,14 @@ def ask(root: Path, *, data=None, dialog=None, task=TASK, **kwargs) -> dict:
                                          candidates=[candidate()] if data is None else data, **kwargs))
 
 
-def standard() -> ExpectationStandard:
+def standard(*, root=None) -> ExpectationStandard:
     [one] = bq.caller_candidates(TASK, [candidate()])
-    return ExpectationStandard().with_expectation(confirm(one.question("b" * 64), "A", answered_by="person:Ada",
+    question = one.question("b" * 64)
+    if root is not None:
+        from g6.harness.executable_scenario import Scenario, save
+
+        save(question, Scenario.resolve(root, question))
+    return ExpectationStandard().with_expectation(confirm(question, "A", answered_by="person:Ada",
                                                           answered_at=AT))
 
 
@@ -191,6 +197,18 @@ def test_finding_8_a_run_on_a_copy_that_is_not_the_artefact_is_refused_and_count
         assert text in (BAD, GOOD)
         module: dict = {}
         exec(compile(text, "<trusted fixture>", "exec"), module)  # noqa: S102 - the fixture's own code
+        if "observation" in kwargs:
+            from g6.harness import behaviour_runner
+
+            data = kwargs["observation"]
+            calls = data["cases"]
+            frame = behaviour_runner.frame({"version": "observation.v1", "errors": {}, "outcomes": [
+                {"returned": bq.encoded(module["add"](*call["args"], **call.get("kwargs", {}))),
+                 "arguments": [bq.encoded(arg) for arg in call["args"]]} for call in calls]})
+            status = behaviour_runner.finish(0, frame, data)["result"]
+            observed.append((text, status))
+            return {**run_result(ids[0] + "::test_example", status),
+                    "source_before": digest(repo_tests._copy_snapshot(copy))}
         check: dict = {}
         exec(compile((copy / ids[0]).read_text(), "<G6 compiled check>", "exec"), check)  # noqa: S102
         load = check["_load"]
@@ -508,8 +526,8 @@ def test_every_place_an_artefact_digest_reaches_the_issuer_comes_from_the_bytes_
     run = next(n for n in ast.walk(ast.parse((ROOT / "src" / "g6" / "harness" / "confirmed_checks.py").read_text(
         encoding="utf-8"))) if isinstance(n, ast.FunctionDef) and n.name == "run")
     [executor] = [n for n in ast.walk(run) if isinstance(n, ast.Call) and ast.unparse(n.func) == "vs._run_check"]
-    [spread] = [k.value for k in executor.keywords if k.arg is None and isinstance(k.value, ast.IfExp)]
-    assert ast.unparse(spread.test) == "at_base" and ast.unparse(spread.orelse) == "binding"   # every run on the patch
+    spreads = [ast.unparse(k.value) for k in executor.keywords if k.arg is None]
+    assert spreads.count('binding') == 1  # patch, base control and replay all check the frozen starting copy
     assert "binding = {'artefact': before} if before is not None else {}" in ast.unparse(run)
     review = (ROOT / "src" / "g6" / "harness" / "patch_review.py").read_text(encoding="utf-8")
     assert "deadline=deadline, artifact=artifact, roots=roots, before=before," in review

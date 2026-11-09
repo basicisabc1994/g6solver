@@ -287,6 +287,8 @@ def _confirmed_not_counted(found: Mapping[str, Any]) -> str:
     if found.get("bound") is not True:
         return ("its runs were not bound to the artefact: G6 ran them without the review's snapshot of the tree, so "
                 "nothing shows they ran on the bytes the artifact digest names")
+    if found.get('scenario_unavailable'):
+        return str(found['scenario_unavailable'])
     if found.get("result") != "passed":
         return f"its check did not pass on the patch ({found.get('result')}: {found.get('detail', '')})"[:300]
     base = (runs.get("base") or {}).get("result")
@@ -332,6 +334,8 @@ def confirmed_evidence(standard: Any, results: Sequence[Mapping[str, Any]], *, a
                       scope=f"the case the person confirmed ({one.scope}), on the working tree under review")
         for name, seq in (("patch", RECEIPT), ("again", CONFIRMED_AGAIN)):
             if name in runs:
+                if found.get('scenario_unavailable') and runs[name].get('result') == 'passed':
+                    continue
                 # An earlier pass never supplies support when the full result is partial or unavailable.
                 if runs[name].get("result") in ("passed", "failed") and (
                         runs[name].get("result") != found.get("result")):
