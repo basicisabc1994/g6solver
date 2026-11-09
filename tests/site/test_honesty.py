@@ -33,6 +33,7 @@ from pathlib import Path
 
 import markdown
 import pytest
+import yaml
 
 from g6.core.skills import front_matter
 from pages import views
@@ -40,8 +41,9 @@ from pages.routes import PAGES
 
 OSS = Path(__file__).resolve().parents[2]
 
-#: The claim forms.
-CLAIM = re.compile(r"\bverif(?:y|ies|ied|ying|ications?)\b", re.IGNORECASE)
+#: The existing verification-family stem, with its prefixes and inflections; only claims() decides a claim.
+#: Keep the old whole-word boundary around identifiers: digits and underscores are not word inflections.
+CLAIM = re.compile(r"\b[^\W\d_]*verif[^\W\d_]*\b", re.IGNORECASE)
 STATE_NAMES = ("verified", "qualified-draft", "blocked-escalated")
 _STATE = r"(?:verified|qualified-draft|blocked-escalated)"
 _SEP = r"(?:\s*[,;/]\s*|\s+)(?:(?:or|and)\s+)?"
@@ -86,9 +88,15 @@ MARKDOWN = sorted({
 #: Every other element (a, span, em, br, tspan) sits inside a line, and a line break is whitespace.
 _BLOCK = frozenset(markdown.util.BLOCK_LEVEL_ELEMENTS)
 _SHOWN = ("title", "alt", "aria-label", "aria-description", "placeholder")
-#: The structured-data fields a search engine shows a reader, read wherever they sit; an address field is not one.
-_READ_FIELDS = ("headline", "description", "name", "alternativeHeadline", "abstract", "text")
-_ADDRESS_FIELDS = ("url", "@id", "image", "sameAs", "logo", "contentUrl", "thumbnailUrl")
+#: Every structured string is copy unless its own key names machine data. Objects beneath a URL-capable
+#: field still have their children read: an image's caption or name is copy, its URL is an address.
+_MACHINE_FIELDS = frozenset({"@context", "@type", "@id", "url", "image", "sameAs", "logo", "contentUrl",
+                             "thumbnailUrl", "license", "datePublished", "dateModified", "dateCreated",
+                             "identifier", "width", "height"})
+#: The inventory is separate from extraction: a new field is read immediately, and needs classification here.
+_COPY_FIELDS = frozenset({"headline", "description", "name", "alternativeHeadline", "abstract", "text",
+                          "articleBody", "keywords", "jobTitle", "programmingLanguage", "caption"})
+_OBJECT_FIELDS = frozenset({"author", "publisher", "mainEntityOfPage", "mainEntity", "acceptedAnswer", "@graph"})
 #: The meta tags a reader or a search engine is shown, by their name or property; an address tag is not one.
 _META_READ = frozenset({"description", "og:title", "og:description", "og:site_name", "og:image:alt", "twitter:title",
                         "twitter:description", "twitter:image:alt"})
@@ -147,15 +155,14 @@ class _Span(str):
 
 
 def _fields(value: object, key: str = ""):
-    """The reader-facing fields of parsed structured data, wherever they sit; an address field is never read."""
+    """All structured strings, except a scalar explicitly named as machine data, at every depth."""
     if isinstance(value, dict):
         for name, item in value.items():
-            if name not in _ADDRESS_FIELDS:
-                yield from _fields(item, name)
+            yield from _fields(item, name)
     elif isinstance(value, list):
         for item in value:
             yield from _fields(item, key)
-    elif isinstance(value, str) and key in _READ_FIELDS:
+    elif isinstance(value, str) and key not in _MACHINE_FIELDS:
         yield value
 
 
@@ -172,6 +179,8 @@ class _Reader(HTMLParser):
         self.pre: list[bool] = []             # the open <pre> blocks: True for a diagram
         self.code: list[str] | None = None    # an inline code span being read
         self.data: list[str] | None = None    # a structured-data script being read
+        self.structured: list[object] = []
+        self.json_errors: list[str] = []
 
     def end_run(self) -> None:
         if "".join(self.run).strip():
@@ -207,8 +216,10 @@ class _Reader(HTMLParser):
         if tag == "script" and self.data is not None:
             try:
                 data = json.loads("".join(self.data))
-            except json.JSONDecodeError:
-                data = None                                          # a search engine cannot read it either
+            except json.JSONDecodeError as error:
+                self.json_errors.append(str(error))
+                data = None                                          # unreadable copy also fails the inventory
+            self.structured.append(data)
             self.units += [[text] for text in _fields(data)]
             self.data = None
         elif tag in ("script", "style"):
@@ -237,12 +248,38 @@ class _Reader(HTMLParser):
             self.run.append(data)
 
 
-def _units(page: str) -> list[list[str]]:
+def _reader(page: str) -> _Reader:
     reader = _Reader()
     reader.feed(page)
     reader.close()
     reader.end_run()
-    return reader.units
+    return reader
+
+
+def _units(page: str) -> list[list[str]]:
+    return _reader(page).units
+
+
+def structured_inventory(page: str) -> set[str]:
+    """Fail on unreadable structured data or a field whose purpose has not been recorded."""
+    reader = _reader(page)
+    assert not reader.json_errors, reader.json_errors
+    fields: set[str] = set()
+
+    def visit(value: object) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                fields.add(key)
+                visit(item)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+
+    for data in reader.structured:
+        visit(data)
+    unknown = fields - _COPY_FIELDS - _MACHINE_FIELDS - _OBJECT_FIELDS
+    assert not unknown, f"Unclassified JSON-LD fields: {sorted(unknown)}"
+    return fields
 
 
 def _resolve(unit: list[str], mark=lambda span: PLACEHOLDER) -> str:
@@ -273,6 +310,25 @@ DOCS_SITE = ("toc", "tables", "fenced_code", "admonition", "attr_list", "md_in_h
 DOCS_SITE_PYMDOWNX = ("pymdownx.superfences", "pymdownx.tabbed", "pymdownx.details")
 
 
+def docs_extensions(path: Path) -> set[str]:
+    """Read the whole YAML list through YAML, including mapping entries and blank lines."""
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(config, dict), "MkDocs configuration must be a mapping"
+    extensions = config.get("markdown_extensions")
+    assert isinstance(extensions, list), "markdown_extensions must be a list"
+    names: set[str] = set()
+    for entry in extensions:
+        if isinstance(entry, dict):
+            assert len(entry) == 1, f"An extension entry needs one name: {entry}"
+            name, options = next(iter(entry.items()))
+            assert options is None or isinstance(options, dict), f"Malformed extension options: {entry}"
+        else:
+            name = entry
+        assert isinstance(name, str) and name, f"Malformed extension name: {name}"
+        names.add(name)
+    return names
+
+
 def _docs_site_html(text: str) -> str:
     text = re.sub(r"^([ \t]*)\?\?\?\+?(?=[ \t]+\S)", r"\1!!!", text, flags=re.MULTILINE)        # a collapsible note
     text = re.sub(r'^([ \t]*)===[+!]*(?=[ \t]+")', r"\1!!! tab", text, flags=re.MULTILINE)     # a tab
@@ -288,15 +344,33 @@ def _markdown_copy(text: str, *, docs_site: bool = False) -> str:
     return "\n\n".join([*front_matter(text).values(), _page_copy(page)])
 
 
+# An abbreviation's periods stay inside the sentence. Initials are capital letters; decimals stay whole too.
+_ABBREVIATION = re.compile(r"\b(?:(?i:e\.g\.|i\.e\.|etc\.|vs\.)|(?:[A-Z]\.)+)(?=\s)|(?<=\d)\.(?=\d)")
+
+
+def sentences(text: str) -> list[str]:
+    """The one sentence reader for ordinary copy and essays, preserving ordinary abbreviations."""
+    text = _normalise(text)
+    # Mask positions rather than characters: any character the copy already contains is preserved.
+    protected = {index for match in _ABBREVIATION.finditer(text)
+                 for index in range(match.start(), match.end()) if text[index] == "."}
+    # A space following a protected period cannot be a boundary. Splitting whitespace at other punctuation
+    # keeps the original text (including quotes and abbreviation spelling) intact.
+    boundaries = [match.start() for match in re.finditer(r"(?<=[.!?])\s+", text)
+                  if match.start() - 1 not in protected]
+    return [text[start:end].strip() for start, end in zip([0, *boundaries], [*boundaries, len(text)])
+            if text[start:end].strip()]
+
+
 def claims(copy: str) -> list[str]:
-    """Each claim form left in ``copy``, read as a reader reads it, once the whole phrases in ``LEFT``, the mentions
-    and the three-state lists are taken out, in its context."""
+    """The single claim decision, after the owner's named mentions and reliability states are resolved."""
     copy = _normalise(copy)
     for name in LEFT:
         copy = re.sub(rf"(?<![\w-]){re.escape(name)}(?![\w-])", " ", copy, flags=re.IGNORECASE)
     copy = MENTION.sub(" ", copy)
     copy = STATE_LIST.sub(lambda m: " " if _all_states(m.group(0)) else m.group(0), copy)
-    return [copy[max(0, m.start() - 60):m.end() + 60] for m in CLAIM.finditer(copy)]
+    return [sentence[max(0, m.start() - 60):m.end() + 60]
+            for sentence in sentences(copy) for m in CLAIM.finditer(sentence)]
 
 
 def g6_claims(page: str) -> list[str]:
@@ -310,7 +384,7 @@ def g6_claims(page: str) -> list[str]:
             spans[key] = str(span)
             return key
 
-        for sentence in re.split(r"(?<=[.!?])\s+", _normalise(_resolve(unit, mark))):
+        for sentence in sentences(_resolve(unit, mark)):
             read = sentence
             for key, value in spans.items():
                 read, sentence = read.replace(key, value), sentence.replace(key, PLACEHOLDER)
@@ -361,7 +435,7 @@ def test_the_check_refuses_the_claim_and_allows_the_state_in_code_format():
     # the site holds back for now
     assert claims(_page_copy('<script type="application/ld+json">{"a": {"description": "G6 verifies it."}}</script>'))
     assert not claims(_page_copy('<script type="application/ld+json">{"a": "G6 "verifies" it"}</script>'))  # unreadable
-    assert not claims(_page_copy('<script type="application/ld+json">{"keywords": "verification"}</script>'))
+    assert claims(_page_copy('<script type="application/ld+json">{"keywords": "verification"}</script>'))
     assert not claims(_page_copy('<meta property="og:url" content="G6 verifies it">'))     # an address tag, by its key
     assert claims(_page_copy('<input type="submit" value="Verify">')) and claims(_page_copy('<input placeholder="Verify">'))
     assert claims(_markdown_copy("Text. <!-- planned -->G6 verifies it.<!-- /planned -->\n"))
@@ -468,7 +542,7 @@ def test_structured_data_is_read_by_field_whatever_its_text_starts_with():
     data = '{"@type": "WebPage", "description": "/ G6 verifies every patch.", "url": "/verified/"}'
     assert claims(_page_copy(f'<script type="application/ld+json">{data}</script>'))
     nested = '{"author": {"name": "G6 verified"}, "image": {"name": "verified.png"}, "sameAs": ["/verify"]}'
-    assert len(claims(_page_copy(f'<script type="application/ld+json">{nested}</script>'))) == 1
+    assert len(claims(_page_copy(f'<script type="application/ld+json">{nested}</script>'))) == 2
 
 
 def test_a_docs_site_tab_is_read_as_prose():
@@ -476,9 +550,7 @@ def test_a_docs_site_tab_is_read_as_prose():
 
 
 def test_the_docs_site_is_read_with_the_extensions_mkdocs_yml_names():
-    config = (OSS / "site" / "mkdocs.yml").read_text(encoding="utf-8")
-    block = config.split("\nmarkdown_extensions:\n", 1)[1].split("\n\n", 1)[0]
-    named = set(re.findall(r"^  - ([\w.]+)", block, re.MULTILINE))
+    named = docs_extensions(OSS / "site" / "mkdocs.yml")
     # every extension the docs site names is either rendered here or read as this test says (DOCS_SITE_PYMDOWNX)
     assert named == (set(DOCS_SITE) - {"tables", "fenced_code"}) | set(DOCS_SITE_PYMDOWNX), named
     # a collapsible note's and a tab's words are read, not taken for an indented code block

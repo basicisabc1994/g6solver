@@ -154,7 +154,7 @@ recovery is not itself evidence that the integrated code passes.
   both registrations retained the exact interpreter and installed the client skill. No user settings changed.
 - Python 3.13.5 installed-wheel smoke passed; 39 selected composition/setup/workflow/MCP tests passed.
 - Codex direct app-server tool calls discover G6 and create workflows but deliver no consent prompt. G6
-  refuses confirmation and supplies the terminal fallback. Interactive human consent remains unverified.
+  refuses confirmation and supplies the terminal fallback. Interactive human consent has not been checked.
 - Frozen six-case patch trial executed under Linux bubblewrap. The selected-test baseline accepts two
   behaviorally wrong patches and one runner-policy violation; G6 blocks all six, including the correct patch.
   Ruling: report these as synthetic engineering observations, not application utility or improved correctness.
