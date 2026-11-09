@@ -1701,7 +1701,8 @@ def test_the_sender_of_a_request_is_read_at_the_request_for_each_kind_of_caller(
     monkeypatch.setattr(host_models.ClaudeCodeCaller, "locate", lambda self: "unused-program")
     monkeypatch.setattr(host_models.CodexCaller, "locate", lambda self: "unused-program")
     answered = json.dumps({"type": "result", "is_error": False, "result": "x"})
-    monkeypatch.setattr(host_models, "_run", lambda argv, stdin, *rest: (0, answered, ""))
+    monkeypatch.setattr(host_models, "_run", lambda argv, stdin, *rest:
+                        (0, json.dumps({"type": "turn.completed"}) if "exec" in argv else answered, ""))
     monkeypatch.setattr(host_models.CodexCaller, "_reply", lambda self, *args: "x")
 
     class Answers:

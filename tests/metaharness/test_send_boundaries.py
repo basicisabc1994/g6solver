@@ -314,7 +314,6 @@ def test_every_path_decision_uses_handle_containment_or_an_owned_destination():
         "_output_place": {"_final_path", "_inside", "_open_input"},
         "_sending": {"Path", "_open_input"},
         "_forget": {"Path", "_open_input"},
-        "_note_launch": {"_open_input"},
         "_output_identity": {"_open_input"},
         "_check_observation": {"Path"},
     }

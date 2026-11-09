@@ -163,7 +163,7 @@ def test_the_code_lists_every_reply_classification_site():
             scope = f"{scope}.{node.name}".lstrip(".")
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             if node.func.id in {"_classify_reply", "_observe_reply", "_codex_result", "claude_said", "_codex_turn",
-                                "_reply_events", "_stopped", "ProviderStop"}:
+                                "_reply_events", "_read_reply", "_reply_outcome", "_event_outcome", "_stopped", "ProviderStop"}:
                 sites.add((scope, node.func.id))
         if isinstance(node, ast.Call) and ast.unparse(node.func) == "host_models._result":
             sites.add((scope, "host_models._result"))
@@ -172,14 +172,16 @@ def test_the_code_lists_every_reply_classification_site():
 
     walk(tree)
     assert sites == {
-        ("_classify_reply", "claude_said"), ("_classify_reply", "_codex_result"),
+        ("_event_outcome", "claude_said"), ("_classify_reply", "_codex_result"),
         ("_observe_reply", "_classify_reply"),
         ("_complete_host", "_observe_reply"), ("WatchedClaude._launch", "_observe_reply"),
         ("WatchedClaude._reply", "_observe_reply"), ("WatchedCodex._reply", "_observe_reply"),
         ("_codex_turn", "_codex_result"), ("codex_said", "_codex_turn"),
-        ("_classify_reply", "_reply_events"), ("_codex_turn", "_reply_events"),
+        ("_read_reply", "_reply_events"), ("_classify_reply", "_read_reply"), ("_codex_turn", "_read_reply"),
+        ("_classify_reply", "_reply_outcome"), ("_codex_result", "_reply_outcome"),
+        ("_reply_outcome", "_event_outcome"),
         ("_observe_reply", "_stopped"), ("_stopped", "ProviderStop"),
-        ("_classify_reply", "host_models._result"),
+        ("_read_reply", "host_models._result"),
     }
     class_returns = set()
     for function in (node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)):

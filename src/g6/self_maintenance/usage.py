@@ -291,62 +291,119 @@ _CODEX_SAID = {"refusal": f"{MODEL_REFUSED}: Codex reported its policy stopped t
 
 
 def _reply_events(printed: str) -> tuple[list[dict[str, Any]], bool]:
-    """Read a whole JSON result or JSONL stream, retaining readable events even when another line is damaged."""
-    text = printed.strip()
-    if not text:
-        return [], True
-    try:
-        whole = json.loads(text)
-    except ValueError:
-        pass
-    else:
-        return ([whole], True) if isinstance(whole, dict) else ([], False)
+    """Total JSON/JSONL read, retaining earlier events when any later read fails."""
     events, readable = [], True
-    for line in printed.split("\n"):
-        if not line.strip():
-            continue
+    try:
+        text = printed.strip()
+        if not text:
+            return [], True
         try:
-            event = json.loads(line)
-        except ValueError:
+            whole = json.loads(text)
+        except json.JSONDecodeError as exc:
+            # Only multiple JSONL values explain this expected whole-value parse failure.
+            if exc.msg != "Extra data" or "\n" not in text:
+                readable = False
+        except BaseException:
             readable = False
-            continue
-        if isinstance(event, dict):
-            events.append(event)
         else:
-            readable = False
+            return ([whole], True) if isinstance(whole, dict) else ([], False)
+        for line in printed.split("\n"):
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except BaseException:
+                readable = False
+                continue
+            if isinstance(event, dict):
+                events.append(event)
+            else:
+                readable = False
+    except BaseException:
+        readable = False
     return events, readable
 
 
-def _codex_result(events: Sequence[Mapping[str, Any]]) -> tuple[str, bool, bool]:
-    """What Codex's own JSON events (``codex exec --json``) say of the turn: the stop it names, in G6's own words, or ``""``,
-    whether the turn failed explicitly, and whether a completed turn was classified. The stream is split as Codex writes it,
-    one event to a line ended by ``\\n``: a
-    line separator inside a JSON string is part of that string. Only its own events are read: ``error``, and the ``error`` of
-    ``turn.failed`` (or of a ``turn.completed`` that carries one). A refusal anywhere among them is a refusal, since what was
-    refused is never sent again whatever came after it. Otherwise the last limit or capacity named decides, unless the turn
-    then completed with no error, since then it answered. A ``turn.failed``, or an ``error`` of no kind G6 knows exactly, is a
-    failure whatever follows. Parsing and whole-stream readability belong to ``_reply_events``."""
+def _read_reply(provider: str, printed: str) -> tuple[list[dict[str, Any]], bool]:
+    """Total native-format read, including the bound Claude reader. Foreign outcomes carry no authority."""
+    events = []
+    try:
+        events, readable = _reply_events(printed)
+        if provider == "claude":
+            # Keep the producer's format reader; event order and whole-stream readability are checked here too.
+            try:
+                final = host_models._result(printed)
+            except BaseException:
+                final, readable = None, False
+            def foreign(event: Mapping[str, Any]) -> bool:
+                kind = event.get("type")
+                return kind in ("turn.completed", "turn.failed", "item.completed", "error")
+        elif provider == "codex":
+            def foreign(event: Mapping[str, Any]) -> bool:
+                return event.get("type") == "result"
+        else:
+            return [], False
+        native = []
+        results = [event for event in events if event.get("type") == "result"] if provider == "claude" else []
+        for event in events:
+            if foreign(event):
+                readable = False
+            elif provider == "claude" and event.get("type") == "result":
+                try:
+                    result = final if event is results[-1] and final is not None else host_models._result(json.dumps(event))
+                    if result is None:
+                        readable = False
+                    else:
+                        native.append(result)
+                except BaseException:
+                    readable = False
+            else:
+                native.append(event)
+        return native, readable
+    except BaseException:
+        return [], False
+
+
+def _event_outcome(provider: str, event: Mapping[str, Any]) -> tuple[str, bool, bool]:
+    """Read one host's own outcome fields; model-authored contents grant no stop authority."""
+    kind = event.get("type")
+    if provider == "claude":
+        if kind != "result":
+            return "", False, False
+        said = claude_said(event)
+        failed = event.get("is_error") is True and not said
+        answered = not said and event.get("is_error", False) is False and isinstance(event.get("result"), str)
+        return said, failed, answered
+    error = event if kind == "error" else event.get("error") if kind in ("turn.failed", "turn.completed") else None
+    stop = _codex_kind(error) if isinstance(error, Mapping) else ""
+    return (_CODEX_SAID.get(stop, ""), kind == "turn.failed" or (not stop and (kind == "error" or error is not None)),
+            kind == "turn.completed" and error is None)
+
+
+def _reply_outcome(provider: str, events: Sequence[Mapping[str, Any]]) -> tuple[str, bool, bool]:
+    """One ordered rule for every native event: refusal persists; only a later completion clears a wait."""
     refused, said, answered, failed = "", "", False, False
     for event in events:
-        kind = event.get("type")
-        error = event if kind == "error" else event.get("error") if kind in ("turn.failed", "turn.completed") else None
-        if kind == "turn.completed" and error is None:
-            answered = True
-            continue
-        failed = failed or kind == "turn.failed"
-        stop = _codex_kind(error) if isinstance(error, Mapping) else ""
-        if stop == "refusal":
-            refused = _CODEX_SAID[stop]
+        stop, error, completed = _event_outcome(provider, event)
+        if stop.startswith(MODEL_REFUSED):
+            refused = stop
         elif stop:
-            said, answered = _CODEX_SAID[stop], False
-        elif kind in ("error", "turn.completed"):
-            failed = True
-    return refused or ("" if answered else said), failed, answered and not failed
+            said, answered = stop, False
+        if completed:
+            said, answered = "", True
+        elif error:
+            failed, answered = True, False
+    return refused or said, failed, answered and not failed
+
+
+def _codex_result(events: Sequence[Mapping[str, Any]]) -> tuple[str, bool, bool]:
+    """Compatibility facts use the same ordered rule as the owned classifier."""
+    return _reply_outcome("codex", events)
 
 
 def _codex_turn(printed: str) -> tuple[str, bool]:
     """Compatibility stop facts from the same parser; only the owned observer decides a reply's class."""
-    return _codex_result(_reply_events(printed)[0])[:2]
+    return _codex_result(_read_reply("codex", printed)[0])[:2]
 
 
 def codex_said(printed: str) -> str:
@@ -902,7 +959,16 @@ class ProviderStop(LLMError):
         return self.record.identity if isinstance(self.record, Send) else self.record
 
 
-def _sending(caller: Any, argv: Sequence[str], stdin: str, files: Any) -> tuple[list[str], str]:
+@dataclass(frozen=True)
+class _OwnedSend:
+    """The reply folder's captured identity, send and gate, held until the launch's finally."""
+
+    key: tuple[int, int]
+    send: Send
+    gate: Gate | None
+
+
+def _sending(caller: Any, argv: Sequence[str], stdin: str, files: Any) -> tuple[list[str], str, _OwnedSend]:
     """The last step before a watched caller's program starts: the loop's gate lets it out or keeps it in, and makes the send's
     record from the bytes as they are once it is let out, which stays with this call's own folder until its outcome is read."""
     root = Path(files).parent if files is not None else None
@@ -926,7 +992,8 @@ def _sending(caller: Any, argv: Sequence[str], stdin: str, files: Any) -> tuple[
         opened = _OPEN.get()
         if opened is not None:
             opened.append(key)
-        return record.request.handoff()
+        argv, stdin = record.request.handoff()
+        return argv, stdin, _OwnedSend(key, record, gate)
     except BaseException:
         try:
             if key is not None:
@@ -968,8 +1035,11 @@ def _received(hide: tuple[str, ...]) -> str:
 def _stopped(said: str, files: Any, hide: tuple[str, ...]) -> None:
     """Tell the loop what the provider said of the send this reply is of, then raise it as the request's failure: before the
     bound caller cuts what the program printed down to its end. The send's record is released only once that is told."""
-    record, gate = _forget(files) if files is not None else (None, None)
+    owned = isinstance(files, _OwnedSend)
+    record, gate = (files.send, files.gate) if owned else (None, None)
     try:
+        if not owned and files is not None:
+            record, gate = _forget(files)
         if said:
             told = gate if gate is not None else _TELL.get()
             what: Send | str = record if record is not None else _received(hide)
@@ -977,16 +1047,23 @@ def _stopped(said: str, files: Any, hide: tuple[str, ...]) -> None:
                 told.told(said, what)
             raise ProviderStop(said, what)
     finally:
-        _finish_record(record, gate)
+        if not owned:
+            _finish_record(record, gate)
 
 
-def _released(files_keys: Sequence[str | tuple[int, int]]) -> None:
+def _released(files_keys: Sequence[str | tuple[int, int] | _OwnedSend]) -> None:
     """Sends of a call that ended with no reply read: each is released by that outcome, and no other send is."""
     failed = None
     for key in files_keys:
-        record, gate = _forget(key)
+        record, gate = (key.send, key.gate) if isinstance(key, _OwnedSend) else (None, None)
         try:
-            _finish_record(record, gate)
+            try:
+                if isinstance(key, _OwnedSend):
+                    _forget(key.key, record)
+                else:
+                    record, gate = _forget(key)
+            finally:
+                _finish_record(record, gate)
         except BaseException as exc:
             failed = failed or exc
     if failed is not None:
@@ -1048,27 +1125,27 @@ def _complete_host(caller: Any, system: str, user: str, *, max_tokens: int = hos
         reply = host_models.ClaudeCodeCaller._reply if provider == "claude" else host_models.CodexCaller._reply
         argv, stdin = list(map(plain_text, argv)), plain_text(stdin)
         _check_observation(argv, provider, files)
-        argv, stdin = _sending(caller, argv, stdin, files)
+        argv, stdin, owned = _sending(caller, argv, stdin, files)
         try:
             _check_observation(argv, provider, files)
-            _note_launch(files)
+            _note_launch(owned)
             try:
                 code, printed, errors = host_models._run(argv, stdin, work, files, env, seconds, name)
             except BaseException as failed:
                 try:
-                    _observe_reply(provider, None, "", files, (system, user, stdin))
+                    _observe_reply(provider, None, "", owned, (system, user, stdin))
                 finally:
                     raise failed
-            _observe_reply(provider, code, printed, files, (system, user, stdin))
+            _observe_reply(provider, code, printed, owned, (system, user, stdin))
             try:
                 return reply(caller, code, printed, errors, files, (system, user, stdin))
             except BaseException as failed:
                 try:
-                    _observe_reply(provider, None, "", files, (system, user, stdin))
+                    _observe_reply(provider, None, "", owned, (system, user, stdin))
                 finally:
                     raise failed
         finally:
-            _released((str(files),))
+            _released((owned,))
 
 
 def _host_kind(caller: Any) -> str:
@@ -1113,11 +1190,8 @@ def launch_record() -> Send | None:
     return _LAUNCH_RECORD.get()
 
 
-def _note_launch(files: Path) -> None:
-    with _open_input(files) as stream:
-        key = _file_identity(stream)
-    with _SENT_LOCK:
-        record, gate = _SENT[key]
+def _note_launch(owned: _OwnedSend) -> None:
+    record, gate = owned.send, owned.gate
     if gate is None:
         raise LLMError("G6_E_LOOP_UNWATCHED_HOST: owned host launch has no admission gate")
     token = _LAUNCH_RECORD.set(record)
@@ -1159,19 +1233,13 @@ def _classify_reply(provider: str, code: int | None, printed: str) -> tuple[str,
 
     A returned exit status means the launcher read its streams to the end. A nonzero exit needs no terminal event to
     establish a failed case, but cannot excuse an unparseable stream. ``None`` means launch or reply reading did not finish.
-    A complete JSON result envelope is readable alongside JSONL events; instance reply methods grant no classification.
+    Only native outcomes carry authority. Any reader failure becomes unknown; no exception grants resend authority.
     """
-    events, readable = _reply_events(printed)
-    results = [event for event in events if event.get("type") == "result"]
-    result = (host_models._result(printed) or {}) if provider == "claude" else (results[-1] if results else {})
-    result_stop = next((said for event in results if (said := claude_said(event)).startswith(MODEL_REFUSED)), "")
-    said = result_stop or claude_said(result)
-    failed = result.get("is_error") is True
-    known = bool(result) and result.get("is_error", False) is False and isinstance(result.get("result"), str)
-    if provider == "codex":
-        codex_stop, codex_failed, answered = _codex_result(events)
-        said = result_stop or codex_stop or said
-        failed, known = failed or codex_failed, known or answered
+    try:
+        events, readable = _read_reply(provider, printed)
+        said, failed, known = (_codex_result(events) if provider == "codex" else _reply_outcome(provider, events))
+    except BaseException:
+        said, failed, known, readable = "", False, False, False
     if said.startswith(MODEL_REFUSED):
         return "refusal", said
     if code is None or not readable:
@@ -1208,28 +1276,28 @@ class WatchedClaude(_Watched, host_models.ClaudeCodeCaller):
         argv, stdin = list(map(plain_text, argv)), plain_text(stdin)
         env, seconds = dict(env), float(seconds)
         _check_observation(argv, name, files)
-        argv, stdin = _sending(self, argv, stdin, files)
+        argv, stdin, owned = _sending(self, argv, stdin, files)
         try:
             _check_observation(argv, name, files)
-            _note_launch(files)
+            _note_launch(owned)
             try:
                 result = host_models._run(argv, stdin, cwd, files, env, seconds, name)
             except BaseException as failed:
                 try:
-                    _observe_reply(name, None, "", files, (stdin,))
+                    _observe_reply(name, None, "", owned, (stdin,))
                 finally:
                     raise failed
-            _observe_reply(name, result[0], result[1], files, (stdin,))
+            _observe_reply(name, result[0], result[1], owned, (stdin,))
             try:
                 reply(self, *result, files, (stdin,))
             except BaseException as failed:
                 try:
-                    _observe_reply(name, None, "", files, (stdin,))
+                    _observe_reply(name, None, "", owned, (stdin,))
                 finally:
                     raise failed
             return result
         finally:
-            _released((str(files),))
+            _released((owned,))
 
     def _reply(self, code: int, printed: str, errors: str, files: Any, hide: tuple[str, ...]) -> str:
         if watched(self):

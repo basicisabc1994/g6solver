@@ -567,7 +567,6 @@ def test_all_path_comparisons_and_state_maps_have_an_identity_or_layout_role(tmp
             "_host_input": {"Path", "_file_identity", "_final_path", "_inside", "_open_input", "os.path.abspath",
                             "os.path.normcase", "os.path.relpath"},
             "_inside": {"os.path.commonpath"},
-            "_note_launch": {"_file_identity", "_open_input"},
             "_output_identity": {"_file_identity", "_open_input"},
             "_output_place": {"_final_path", "_inside", "_open_input"},
             "_sending": {"Path", "_file_identity", "_open_input"},
