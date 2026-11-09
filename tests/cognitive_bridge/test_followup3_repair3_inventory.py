@@ -67,7 +67,6 @@ snapshot.py:plain
 snapshot.py:_field
 snapshot.py:record.__post_init__
 snapshot.py:json_reply
-xai.py:_feature_names
 xai.py:extract_tree
 xai.py:distill_blackbox
 '''.split())
@@ -75,6 +74,8 @@ xai.py:distill_blackbox
 # These routines consume an owned schema, a parser's bounded text, or only a
 # detached result passed by a listed caller. No exemption is inferred by name.
 OWNED = {
+    'snapshot.py:generated': 'count preflight and root visit before tuple consumes the lazy items',
+    'snapshot.py:generated.items': 'shared item/size budget checked before make(index), then the one walker',
     'codes.py:_state_fields': 'G6 door/envelope schema, created in this function',
     'codes.py:_is_type': 'owned tuple of allowed types; comparisons use identity',
     'codes.py:_has_member': 'actual class MRO and namespaces, executable schema',

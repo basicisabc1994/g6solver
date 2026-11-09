@@ -24,7 +24,7 @@ from typing import Any, Mapping, Sequence
 from .codes import FrozenMap
 from .codes import _has_member, _is_type
 from .codes import DEPTH, NotPlainData, _read_as, settled, unclaimed
-from .snapshot import publish, record_data, _too_deep, canonical_json, fresh, number, plain, record, returned, snapshot, text
+from .snapshot import publish, record_data, _too_deep, canonical_json, fresh, generated, number, plain, record, returned, snapshot, text
 
 
 def _native(value: Any, *, where: str) -> Any:
@@ -139,8 +139,12 @@ def _feature_names(estimator: Any, names: Sequence[str] | None) -> tuple[str, ..
         raise TypeError("estimator must be an already fitted, supported sklearn decision tree")
     features = _estimated(estimator.n_features_in_, where="the estimator's n_features_in_", index=True)
     if names is None:
-        names = _native(getattr(estimator, "feature_names_in_", [f"x{i}" for i in range(features)]),
-                        where="the estimator's feature_names_in_")
+        try:
+            supplied = estimator.feature_names_in_
+        except AttributeError:
+            names = generated(features, lambda i: f"x{i}", where="the estimator's feature_names_in_")
+        else:
+            names = _native(supplied, where="the estimator's feature_names_in_")
         names = _distinct_names(names, where="the estimator's feature_names_in_")
     used = _distinct_names(names)
     if len(used) != features:

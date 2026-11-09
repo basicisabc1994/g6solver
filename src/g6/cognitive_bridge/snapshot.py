@@ -58,6 +58,28 @@ MAX_ITEMS = 100_000
 MAX_SIZE = 4_000_000
 
 
+def generated(count: int, make: Callable[[int], Any], *, where: str) -> tuple[Any, ...]:
+    """Generate only an admitted count, charging the walker before the next item.
+
+    The tuple itself spends one visit. Items are made lazily and share the
+    walker's item and size budgets, including any children they contain.
+    """
+    if type(count) is not int or not 0 <= count < MAX_ITEMS:
+        raise NotPlainData(where, "size exceeds the bridge's limit")
+    budget = [0, 0]
+    _walk(None, where, budget=budget)  # the output container
+
+    def items() -> Any:
+        index = 0
+        while index < count:
+            if budget[0] >= MAX_ITEMS or budget[1] >= MAX_SIZE:
+                raise NotPlainData(where, "size exceeds the bridge's limit")
+            yield _walk(make(index), f"{where}[{index}]", 1, budget=budget)
+            index += 1
+
+    return tuple(items())
+
+
 def _walk(value: Any, where: str, depth: int = 0, *, budget: list[int] | None = None,
           schema: type | None = None, capability: bool = False,
           models: tuple[type, ...] = (), truncate: bool = False, outer: bool = False) -> Any:
