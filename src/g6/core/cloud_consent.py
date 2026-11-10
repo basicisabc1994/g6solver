@@ -15,7 +15,7 @@ import threading
 import uuid
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -108,7 +108,16 @@ UNKNOWN = Source('unrecorded', sha256('unrecorded'), sha256('unrecorded'), False
 def withheld_message(provider: str, sources: Sequence[Source] = ()) -> str:
     """Only scope identifiers and recipient identity; never file names or source bytes."""
     recipient = provider if _ID.fullmatch(provider) else 'cloud:unknown'
-    scopes = ', '.join(dict.fromkeys(s.source_id for s in sources)) or 'unrecorded'
+    public = {'unrecorded', 'repositories', 'model_inputs', 'agent_environment', 'jobs', 'workflows',
+              'missions', 'improvement', 'host_configuration', 'completion_history', 'component_catalogue',
+              'component_data', 'consent_metadata', 'host:configuration', 'host:execution-boundary'}
+    capture = _CAPTURE.get()
+    supplied = capture.supplied if capture is not None else ()
+    def label(scope):
+        opaque = any(scope.startswith(prefix) and _HASH.fullmatch(scope[len(prefix):])
+                     for prefix in ('repository:', 'input:'))
+        return scope if scope in public or opaque or input_source(scope) in supplied else 'source:' + sha256(scope)
+    scopes = ', '.join(dict.fromkeys(label(s.source_id) for s in sources)) or 'unrecorded'
     return f'{WITHHELD} Withheld source identifiers: {scopes}. Provider: {recipient}.'
 
 
@@ -117,6 +126,7 @@ class Capture:
     sources: list[Source] = field(default_factory=list)
     client: tuple[str, object] | None = None
     supplied: set[str] = field(default_factory=set)
+    client_arguments: dict | None = None
     outputs: dict[int, tuple[object, str, tuple[Source, ...], dict]] = field(default_factory=dict)
     job: dict[str, str] | None = None
     expected_tool: object | None = None
@@ -141,6 +151,24 @@ def current_capture() -> Capture | None:
     return _CAPTURE.get()
 
 
+def boundary_sources(declared: Sequence[Source] = (), *, carried: Sequence[Source] = (),
+                     directories: Sequence[str | Path] = (), inherit: bool = True) -> tuple[Source, ...]:
+    """Join origins at a boundary; a producer may add scope, never erase origin.
+
+    ``carried`` is the provenance attached at entry (including UNKNOWN). Paths
+    exposed to a process's file tools are data sources even before it reads them.
+    Empty operational controls use ``inherit=False`` at their host factory;
+    content sends always inherit the enclosing request.
+    """
+    refs = (*(_SOURCES.get() if inherit else ()), *carried, *declared,
+            *(Source.text(repository_source(path), 'process-readable-directory', '') for path in directories))
+    return tuple(dict.fromkeys(refs))
+
+
+def _output_digest(value):
+    return digest(asdict(value) if is_dataclass(value) and not isinstance(value, type) else value)
+
+
 def bind_output(value, sources: Sequence[Source], *, metadata: dict | None = None):
     """Bind a reviewed producer's complete source set to this value and its exact JSON bytes.
 
@@ -150,15 +178,15 @@ def bind_output(value, sources: Sequence[Source], *, metadata: dict | None = Non
     """
     capture = _CAPTURE.get()
     if capture is not None:
-        refs = tuple(sources)
+        refs = boundary_sources(sources, inherit=bool(sources))
         old = capture.outputs.get(id(value))
         if old is not None and old[0] is value:
-            refs = tuple(dict.fromkeys((*old[2], *refs)))
-        content_hash = digest(value)
+            refs = boundary_sources(refs, carried=old[2], inherit=False)
+        content_hash = _output_digest(value)
         if metadata is None:
             metadata = old[3] if old is not None and old[0] is value and old[1] == content_hash else {}
         capture.outputs[id(value)] = (value, content_hash, refs, dict(metadata))
-        record_sources(sources)
+        record_sources(refs)
     return value
 
 
@@ -166,9 +194,20 @@ def output_sources(value) -> tuple[Source, ...] | None:
     capture = _CAPTURE.get()
     try:
         stored = capture.outputs.get(id(value)) if capture is not None else None
-        return stored[2] if stored is not None and stored[0] is value and stored[1] == digest(value) else None
-    except ValueError:
-        return None
+        if stored is None or stored[0] is not value:
+            return None
+        if stored[1] == _output_digest(value):
+            return stored[2]
+    except (ValueError, TypeError):
+        if stored is None or stored[0] is not value:
+            return None
+    refs = boundary_sources((UNKNOWN,), carried=stored[2], inherit=False)
+    capture.outputs[id(value)] = (stored[0], stored[1], refs, stored[3])
+    record_sources(refs)
+    # Preserve the public "no binding for these bytes" result. The capture and
+    # any later rebind still retain UNKNOWN, so a declaration cannot bless the
+    # mutation merely because callers observe this compatibility sentinel.
+    return None
 
 
 def output_metadata(value) -> dict:
@@ -176,14 +215,14 @@ def output_metadata(value) -> dict:
     capture = _CAPTURE.get()
     try:
         stored = capture.outputs.get(id(value)) if capture is not None else None
-        return dict(stored[3]) if stored is not None and stored[0] is value and stored[1] == digest(value) else {}
-    except ValueError:
+        return dict(stored[3]) if stored is not None and stored[0] is value and stored[1] == _output_digest(value) else {}
+    except (ValueError, TypeError):
         return {}
 
 
 @contextmanager
 def request_sources(sources: Sequence[Source]) -> Iterator[None]:
-    refs = tuple(dict.fromkeys((*_SOURCES.get(), *sources)))
+    refs = boundary_sources(sources)
     token = _SOURCES.set(refs)
     record_sources(sources)
     try:
@@ -195,14 +234,22 @@ def request_sources(sources: Sequence[Source]) -> Iterator[None]:
 @contextmanager
 def collect_sources() -> Iterator[Capture]:
     parent = _CAPTURE.get()
-    capture = Capture()
+    capture = Capture(outputs=dict(parent.outputs) if parent is not None else {})
     token = _CAPTURE.set(capture)
     try:
         yield capture
     finally:
         _CAPTURE.reset(token)
-        if parent is not None and capture.refused_provider:
-            parent.refused_provider = capture.refused_provider
+        if parent is not None:
+            record_sources(capture.sources)
+            for identity, stored in capture.outputs.items():
+                old = parent.outputs.get(identity)
+                if old is not None and old[0] is stored[0]:
+                    refs = boundary_sources(carried=(*old[2], *stored[2]), inherit=False)
+                    stored = (stored[0], stored[1], refs, stored[3])
+                parent.outputs[identity] = stored
+            if capture.refused_provider:
+                parent.refused_provider = capture.refused_provider
 
 
 def ledger_path() -> Path:
@@ -376,7 +423,7 @@ def admission(provider: str, sources: Sequence[Source], payload_sha256: str, *, 
     Disclosure is an attempt, durably logged first: a crash/transport error cannot say
     whether the recipient received it. Local computation needs no sharing state.
     """
-    refs = tuple(sources) or (UNKNOWN,)
+    refs = boundary_sources(sources) or (UNKNOWN,)
     record_sources(refs)
     if local:
         yield
@@ -386,8 +433,11 @@ def admission(provider: str, sources: Sequence[Source], payload_sha256: str, *, 
         def allowed(source):
             row = decisions.get((source.source_id, provider))
             granted, revision = (row['kind'] == 'grant', row['entry_sha256']) if row is not None else (False, '')
-            # An agent naming a working tree cannot undo the person's revocation.
-            return source.recorded and (granted or source.source_id in supplied and not revision)
+            # Supplied means these exact argument bytes, never content fetched
+            # through a path, repository or retained-record handle.
+            literal = (source.source_id in supplied and source.source_id.startswith('input:')
+                       and source.source_id == 'input:' + source.content_sha256)
+            return source.recorded and (granted or literal and not revision)
         if provider == 'cloud:unknown' or not all(allowed(source) for source in refs):
             capture = _CAPTURE.get()
             if capture is not None:

@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 from urllib.request import getproxies, proxy_bypass
 
 from g6.core import host_models, llm
-from g6.core.cloud_consent import admission, current_sources, sha256
+from g6.core.cloud_consent import REQUIRED, _refusal, admission, current_sources, sha256
 from g6.core.consent_declarations import model_sources
 from g6.core.ledger import digest
 
@@ -128,6 +128,7 @@ class _SDKCall:
     client: object
     provider: str
     thread: int
+    sources: tuple
     active: bool = True
 
 
@@ -139,7 +140,7 @@ def _sdk_call(client, provider):
     if client is None:
         yield
         return
-    call = _SDKCall(client, provider, threading.get_ident())
+    call = _SDKCall(client, provider, threading.get_ident(), model_sources())
     token = _SDK_CALL.set(call)
     try:
         yield
@@ -159,6 +160,8 @@ def sdk_send(client, body):
     call = _SDK_CALL.get()
     counted = call is not None and call.active and call.thread == threading.get_ident()
     if counted and call.client is client and call.provider == to.provider:
+        if not to.local and not set(model_sources()) <= set(call.sources):
+            raise _refusal(llm.LLMError(f'{REQUIRED}: SDK request sources changed after admission; nothing was sent'))
         yield
         return
     try:

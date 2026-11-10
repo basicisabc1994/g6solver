@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 import contextvars
 import re
 import inspect
@@ -56,7 +57,10 @@ def _source_function(fn):
                 except ValueError:
                     content_hash = ''
                 if declaration is not None and refs != ():
-                    refs = declaration.sources(arguments, payload=content_hash)
+                    producer = declaration.sources(arguments, payload=content_hash)
+                    carried = (*(refs if refs is not None else ()), *capture.sources)
+                    refs = policy.boundary_sources(producer, carried=carried,
+                                                   inherit=bool(producer or carried))
                 metadata = policy.output_metadata(value)
                 return_type = hints.get('return')
                 if return_type is list or get_origin(return_type) is list:
@@ -198,6 +202,7 @@ def install(server) -> None:
                 return ToolResult(structured_content=withheld_reply())
             args = context.message.arguments or {}
             with policy.collect_sources() as capture:
+                capture.client_arguments = deepcopy(args)
                 tool = await server.get_tool(context.message.name)
                 # The source wrapper has *args/**kwargs. FastMCP/Pydantic can
                 # discard extra keys on that wrapper before signature.bind sees
@@ -208,11 +213,6 @@ def install(server) -> None:
                     raise ToolError('Undeclared tool argument; use only the declared arguments.')
                 capture.expected_tool = getattr(getattr(tool, 'fn', None), '_g6_tool_identity', None)
                 capture.client = client_provider(ctx), session
-                if isinstance(args.get('repo'), str) and args['repo'].strip():
-                    try:
-                        capture.supplied.add(policy.repository_source(args['repo']))
-                    except ValueError:
-                        pass
                 def inputs(value):
                     if isinstance(value, str):
                         capture.supplied.add(policy.input_source(value))

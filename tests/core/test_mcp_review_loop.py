@@ -81,10 +81,11 @@ class Rig:
                               check=True, capture_output=True, text=True).stdout.strip()
 
     def _run_check(self, change, placed, source, node, *, at_base, timeout_s, roots=()):
+        from tests.conftest import recorded_synthetic_check
         got = "failed" if self.failing else "passed"
-        return {"verdict": got, "said": "", "rootdir": "", "loaded_outside": {}, "loaded_complete": True, "os_errors": [],
+        return recorded_synthetic_check({"verdict": got, "said": "", "rootdir": "", "loaded_outside": {}, "loaded_complete": True, "os_errors": [],
                 "test_outcomes": {f"{placed}::test_critic": {"setup": "passed", "call": got, "teardown": "passed"}},
-                "failure_messages": {f"{placed}::test_critic": "assert False"} if self.failing else {}}
+                "failure_messages": {f"{placed}::test_critic": "assert False"} if self.failing else {}})
 
     def approve(self, critic) -> None:
         self.monkeypatch.setattr(keys, "read", lambda: {loop.CRITIC_LINE: "codex"})
@@ -221,9 +222,11 @@ def test_a_review_that_fails_is_blocked_and_says_so_and_carries_the_report(rig):
 
 
 def test_a_defect_that_could_not_be_reproduced_is_blocked_and_says_so_and_carries_the_report(rig, monkeypatch):
+    from tests.conftest import recorded_synthetic_check
     critic = reviewer("one", "one")
     rig.approve(critic)
-    monkeypatch.setattr(vs, "_run_check", lambda *args, **more: {"verdict": "collection_error", "said": "no such import"})
+    monkeypatch.setattr(vs, "_run_check", lambda *args, **more: recorded_synthetic_check(
+        {"verdict": "collection_error", "said": "no such import"}))
     rig.edit()
     got = rig.step()
     assert len(critic.calls) == 2 and got["ok"] is False and got["action"] == "stop"

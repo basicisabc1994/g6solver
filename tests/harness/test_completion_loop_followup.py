@@ -57,6 +57,7 @@ def rig(tmp_path, monkeypatch, accepted_cloud_dialog):
     from g6.core import cloud_consent as cloud
     accepted_cloud_dialog(cloud.repository_source(repo), 'openai:api', text='synthetic repository')
     accepted_cloud_dialog(cloud.input_source(TASK), 'openai:api', text=TASK)
+    accepted_cloud_dialog('model_inputs', 'openai:api', text=TASK)
     monkeypatch.setattr(keys, "read", lambda: {})
     monkeypatch.setattr(proposer, "boundary", lambda _: "")
     monkeypatch.setattr(loop, "_final_review", lambda *args: "Recorded final assessment.")

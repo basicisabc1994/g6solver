@@ -93,14 +93,6 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
         return blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}", request_id=request_id)
     if not isinstance(params, dict):
         return blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object", request_id=request_id)
-    from g6.core import cloud_consent
-    from g6.core.consent_declarations import CLI_COMPONENTS
-    capture = cloud_consent.current_capture()
-    if capture is not None and component in CLI_COMPONENTS and op == 'run' and isinstance(params.get('workspace'), str):
-        try:
-            capture.supplied.add(cloud_consent.repository_source(params['workspace']))
-        except (OSError, ValueError):
-            pass  # The adapter retains its own earlier workspace validation.
     allow = allowed_sensitive() if allow_sensitive is None else allow_sensitive
     from g6.core.consent_callers import guard
     from g6.core.registry import ComponentRegistry, get_registry

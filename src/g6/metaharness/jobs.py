@@ -51,7 +51,8 @@ class Jobs:
             try:
                 result = operation()
                 known = cloud.output_sources(result)
-                refs = known if known is not None else (cloud.UNKNOWN,)
+                refs = cloud.boundary_sources(carried=(*(known if known is not None else
+                    cloud.current_sources() or (cloud.UNKNOWN,)), *capture.sources))
                 metadata = cloud.output_metadata(result)
                 shown_metadata = metadata
                 shown_refs = refs
@@ -59,7 +60,7 @@ class Jobs:
                     try:
                         shown = compact(result, ident)
                         known = cloud.output_sources(shown)
-                        shown_refs = known if known is not None else (cloud.UNKNOWN,)
+                        shown_refs = cloud.boundary_sources(carried=(*refs, *(known or ()), *capture.sources))
                         shown_metadata = cloud.output_metadata(shown)
                     except Exception:
                         shown = result
@@ -79,16 +80,18 @@ class Jobs:
         with self._lock:
             stored = self._provenance.get(ident, {})
         cloud.record_sources(stored.get("sources", ()))
-        origin = stored.get("origin", (None, ()))
-        if (capture.client is not None and origin[0] is not None
-                and capture.client[0] == origin[0][0] and capture.client[1] is origin[0][1]):
-            capture.supplied.update(origin[1])
         public = result.get("status") in ("pending", "running")
-        refs = () if public else stored.get(detail, (cloud.UNKNOWN,))
+        refs = () if public else cloud.boundary_sources(
+            carried=(*stored.get(detail, (cloud.UNKNOWN,)), *stored.get('sources', ())))
         cloud.bind_output(result, refs)
+        metadata = dict(stored.get('metadata', {}).get(detail, {}))
+        if result['status'] == 'failed':
+            # This code describes the host's failed future, not its opaque
+            # exception text. Withholding that text must retain the stable code.
+            metadata['error_code'] = 'G6_E_JOB_FAILED'
         capture.job = {"job_id": ident, "status": result["status"], "digest": digest(result),
                        "review_unsent": stored.get("review_unsent", False),
-                       "metadata": stored.get('metadata', {}).get(detail, {})}
+                       "metadata": metadata}
         return result
 
     def status(self, ident, detail="compact"):

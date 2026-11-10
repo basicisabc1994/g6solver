@@ -48,6 +48,7 @@ def test_identifiable_rewriting_cloud_wrapper_needs_dialog_grant(
         callers.guard(wrapper).complete('', 'original')
     assert sent == []
     accepted_cloud_dialog('fixture:rewrite', 'openai:api', text='original and fixed request')
+    accepted_cloud_dialog('model_inputs', 'openai:api', text='original and fixed request')
     assert callers.guard(wrapper).complete('', 'original') == 'answer'
     assert sent[0]['messages'][1]['content'] == 'fixed request'
 
@@ -218,12 +219,13 @@ def test_consent_refusal_is_latched_as_a_loop_cause(tmp_path, monkeypatch):
     assert requests.sent == 0
 
 
-def test_mcp_checks_sources_once_at_the_transport_send(tmp_path, monkeypatch):
+def test_mcp_checks_sources_once_at_the_transport_send(tmp_path, monkeypatch, accepted_cloud_dialog):
     from fastmcp import Client
     from mcp.types import Implementation
     from g6.core import cloud_consent as cloud
     from g6.mcp import build_server
     monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
+    accepted_cloud_dialog(cloud.repository_source(tmp_path), 'openai:codex', text='NAMED_REPOSITORY')
     seen = []
     original = cloud.admission
     @contextmanager
@@ -295,8 +297,12 @@ def test_refusal_names_only_source_identifier_and_provider(tmp_path, monkeypatch
     from g6.core import cloud_consent as cloud
     monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
     source = cloud.Source.text('document-a', 'PLANTED_UNSHARED_PATH', 'PLANTED_CONTENT')
-    with pytest.raises(llm.LLMError) as caught:
-        with cloud.admission('openai:codex', (source,), cloud.sha256('PLANTED_CONTENT')):
-            pytest.fail('an ungranted send was admitted')
+    with cloud.collect_sources() as capture:
+        # The identifier was literally supplied in this request; its contents
+        # remain ungranted. An earlier private label is tested separately.
+        capture.supplied.add(cloud.input_source('document-a'))
+        with pytest.raises(llm.LLMError) as caught:
+            with cloud.admission('openai:codex', (source,), cloud.sha256('PLANTED_CONTENT')):
+                pytest.fail('an ungranted send was admitted')
     assert 'document-a' in str(caught.value) and 'openai:codex' in str(caught.value)
     assert 'PLANTED' not in str(caught.value)

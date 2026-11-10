@@ -214,14 +214,15 @@ or truncate the ledger to recover it, since that could discard a revocation or a
 
 Producer contracts live in `g6.core.consent_declarations`: every MCP reply, agent adapter and model
 caller declares possible source classes. The closed classes are `client_request`, `client_repository`,
-`g6_operational`, and `source:<scope>`. A declared reply needs no value-level source annotations.
+`g6_operational`, and `source:<scope>`. A declaration adds to any recorded origins carried by the
+content; it never replaces them. Explicitly unrecorded origins remain withheld.
 `g6_operational` covers G6's own ids, codes, counts, states, digests, times and fixed program text;
 it excludes files, outside paths, authored text and retained content.
 
 Retained and implicit sources have named scopes: `missions`, `workflows`, `improvement`, `jobs`,
 `completion_history`, `host_configuration`, `component_catalogue`, `component_data`, `consent_metadata`,
 `agent_environment`, and generic `model_inputs`.
-`component_catalogue` covers package descriptions and skill files, including rankings derived from them.
+`component_catalogue` covers installed extension names, package descriptions and skill files, including rankings derived from them.
 `component_data` includes indexes, corpora and component IO outside the client request;
 `jobs` includes retained asynchronous results. Grant and disclosure listings use `consent_metadata`,
 since scope labels can contain text supplied in earlier calls. A provider needs that scope grant to read them. A scope grant covers that scope's possible content,
@@ -232,12 +233,13 @@ additions. Planted-content tests capture cloud replies and requests with fakes. 
 trusted host code, checked by tests; neither result fields nor client arguments supply a contract.
 The frozen MCP packet is admitted at transport handoff under the sharing lock.
 
-The repository named in a client request may return to that same identified client's provider
-without a grant; it is logged. CLI coding agents run in that named repository. Another provider
-needs a repository grant. G6's own reviewer and proposer calls always need their source grants.
+Only the exact argument bytes supplied in the current request are client-supplied content.
+A repository, file, directory or retained-record handle grants nothing it points to. Repository
+reads need that repository's grant, including for the same client's provider. CLI agents, scouts,
+reviewers and proposers keep their prompt's sources and need grants for every directory exposed
+to their file tools. Retained job results keep their original sources, including through compaction.
 CLI permissions can also read outside that workspace or load user configuration. Those reads
 require an `agent_environment` grant to the agent's provider, including for the same client.
-The repository exemption does not cover that scope.
 The K reviewer records a withheld review as its own cause and ends `untested`.
 
 Recipients are classified from caller class identities and configured endpoints, following G6's

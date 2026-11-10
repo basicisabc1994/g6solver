@@ -494,6 +494,8 @@ def test_a_scout_session_has_no_shell_no_hooks_no_servers_and_keeps_nothing(monk
     # model_inputs; the client's same-provider repository exemption does not apply.
     from g6.core.cloud_consent import repository_source
     accepted_cloud_dialog(repository_source(tmp_path), 'anthropic:claude_code', text='synthetic scout repository')
+    accepted_cloud_dialog(repository_source(where), 'anthropic:claude_code', text='synthetic scout output directory')
+    accepted_cloud_dialog('agent_environment', 'anthropic:claude_code', text='synthetic scout configuration')
     accepted_cloud_dialog('model_inputs', 'anthropic:claude_code', text='the prompt')
     assert loop.ToolSession("a-model").run("the prompt", tmp_path, where, 30.0) == "finished"
     argv = seen["argv"]

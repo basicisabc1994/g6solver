@@ -50,12 +50,20 @@ def _review_over_mcp(monkeypatch, tmp_path, reply: dict, accepted_cloud_dialog, 
     its text as the client receives it, and the full form asked for after it."""
     monkeypatch.setenv("G6_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("G6_MCP_SENSITIVE", "patch_review.review")
-    from g6.core.cloud_consent import bind_output, repository_source
+    from g6.core.cloud_consent import Source, bind_output, input_source, repository_source
     refs = accepted_cloud_dialog('fixture:worked-review', 'openai:codex', text=json.dumps(reply))
     accepted_cloud_dialog('jobs', 'openai:codex', text='retained synthetic report')
     accepted_cloud_dialog('host_configuration', 'openai:codex', text='synthetic host diagnostics')
     accepted_cloud_dialog(repository_source(tmp_path / 'state' / 'reviews'), 'openai:codex', text='review storage')
-    monkeypatch.setattr(patch_review, "review_patch", lambda *a, **k: bind_output(copy.deepcopy(reply), refs))
+    accepted_cloud_dialog(repository_source(tmp_path), 'openai:codex', text='synthetic review repository')
+    arguments = {'repo': str(tmp_path), 'task': 't', 'requirements': []}
+    accepted_cloud_dialog(input_source(json.dumps(arguments, sort_keys=True)), 'openai:codex', text=json.dumps(arguments))
+    fixture = tmp_path / 'synthetic-review.json'
+    fixture.write_text(json.dumps(reply), encoding='utf-8')
+    def review(*args, **kwargs):
+        text = fixture.read_text(encoding='utf-8')
+        return bind_output(json.loads(text), (*refs, Source.text(repository_source(tmp_path), fixture.name, text)))
+    monkeypatch.setattr(patch_review, "review_patch", review)
     server = build_server()
 
     async def flow():

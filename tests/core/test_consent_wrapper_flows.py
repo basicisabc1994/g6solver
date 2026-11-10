@@ -117,6 +117,7 @@ def test_identified_sdk_captures_grant_and_revocation(tmp_path, monkeypatch, acc
         caller.complete('system', 'PLANTED_SDK_SOURCE')
     assert sent == []
     accepted_cloud_dialog('fixture:sdk', 'anthropic:api', text='PLANTED_SDK_SOURCE')
+    accepted_cloud_dialog('model_inputs', 'anthropic:api', text='PLANTED_SDK_SOURCE')
     caller.complete('system', 'PLANTED_SDK_SOURCE')
     assert 'PLANTED_SDK_SOURCE' in str(sent) and len(sent) == 1
     cloud.revoke('fixture:sdk', 'anthropic:api')
@@ -215,6 +216,7 @@ def test_each_rebuilt_flow_without_a_grant_withholds_before_its_backend(flow, ba
 def test_each_rebuilt_flow_uses_the_real_dialog_grant(flow, backend, accepted_cloud_dialog):
     raw, sent = backend
     accepted_cloud_dialog('fixture:wrapper-flow', 'openai:api', text='synthetic original and rewritten requests')
+    accepted_cloud_dialog('model_inputs', 'openai:api', text='synthetic original and rewritten requests')
     wrapper = wrapped(flow, raw)
     assert callers.guard(wrapper).complete('system', 'request') == 'answer'
     assert len(sent) == 1

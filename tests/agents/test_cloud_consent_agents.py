@@ -65,6 +65,7 @@ def test_cli_external_environment_is_not_the_named_repository(tmp_path, monkeypa
     monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
     repo = tmp_path / 'repo'
     repo.mkdir()
+    accepted_cloud_dialog(cloud.repository_source(repo), provider, text='synthetic workspace')
     external = tmp_path / 'external.txt'
     marker = 'PLANTED_AGENT_EXTERNAL_ENVIRONMENT'
     external.write_text(marker, encoding='utf-8')
@@ -99,4 +100,4 @@ def test_cli_external_environment_is_not_the_named_repository(tmp_path, monkeypa
                 consent_run(runner, ['fake'], provider=provider, prompt='client request', cwd=repo,
                             scratch=tmp_path, seconds=1)
     assert (marker in str(sent)) is granted
-    assert not cloud.is_granted(cloud.repository_source(repo), provider)
+    assert cloud.is_granted(cloud.repository_source(repo), provider)

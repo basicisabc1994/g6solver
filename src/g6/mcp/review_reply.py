@@ -140,7 +140,11 @@ def finish(reply: Any, job_id: str) -> Any:
     from g6.core import cloud_consent as cloud
     from g6.core.storage import g6_home
     refs = cloud.output_sources(reply)
-    refs = refs if refs is not None else (cloud.UNKNOWN,)
+    # A job entered through a declared producer already carries that contract.
+    # Absence of a value receipt is distinct from an explicitly unknown origin;
+    # the latter stays in refs and cannot be replaced by the declaration.
+    refs = cloud.boundary_sources(carried=refs if refs is not None else
+                                   cloud.current_sources() or (cloud.UNKNOWN,))
     saved = save(reply, job_id)
     if saved:
         refs += (cloud.Source.text(cloud.repository_source(g6_home() / 'reviews'), 'assessment-location', saved),)

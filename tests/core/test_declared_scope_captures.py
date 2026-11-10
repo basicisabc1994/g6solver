@@ -15,6 +15,7 @@ from g6.mcp import build_server, improve, mission, review_loop, review_reply
 # An independent scope oracle: positive captures must not grant whatever a
 # potentially wrong declaration happens to request.
 EXPECTED_SCOPES = {
+    'g6_components': ('component_catalogue',),
     **{n: ('component_catalogue',) for n in ('g6_find', 'g6_describe')},
     **{n: ('component_data',) for n in ('g6_invoke', 'g6_compose')},
     'g6_review_patch': ('host_configuration',),
@@ -80,6 +81,10 @@ def test_each_declared_tool_path_captures_retained_content(tmp_path, monkeypatch
     monkeypatch.setattr(g6.mcp, 'describe_reply', result)
     from g6.core import discovery
     monkeypatch.setattr(discovery, 'find', lambda *a: [{'component': stored.read_text(encoding='utf-8')}])
+    if name == 'g6_components':
+        from g6.core import registry
+        monkeypatch.setattr(registry, 'get_registry', lambda: SimpleNamespace(
+            names=lambda: [stored.read_text(encoding='utf-8')]))
     from g6.mcp import composition
     monkeypatch.setattr(composition, 'compose_reply', result)
     server = build_server(Surface())
@@ -92,6 +97,13 @@ def test_each_declared_tool_path_captures_retained_content(tmp_path, monkeypatch
     if granted:
         for scope in set(EXPECTED_SCOPES[name]) | ({'jobs'} if name in ASYNC_TOOLS else set()):
             accepted_cloud_dialog(scope, 'openai:codex', text=planted)
+        if name in ('g6_review_patch', 'g6_review_until_clean', 'g6_mission_create', 'g6_mission_submit'):
+            from g6.core.cloud_consent import repository_source
+            accepted_cloud_dialog(repository_source(tmp_path), 'openai:codex', text='synthetic repository')
+        if name in ('g6_cloud_grants', 'g6_disclosures'):
+            accepted_cloud_dialog(planted, 'openai:codex', text=planted)
+        if name == 'metaharness_job':
+            accepted_cloud_dialog('workflows', 'openai:codex', text=planted)
     arguments = {'repo': str(tmp_path), 'task': 'task', 'session': 'session', 'objective': 'objective',
         'mission_id': 'mission', 'replay_semantics': 'semantics', 'folder': str(tmp_path),
         'workflow': 'workflow', 'workflow_digest': 'digest', 'proposal_digest': 'digest', 'report_digest': 'digest',
@@ -106,6 +118,16 @@ def test_each_declared_tool_path_captures_retained_content(tmp_path, monkeypatch
 
     async def run():
         tools = await server.get_tools()
+        if granted and (name in ASYNC_TOOLS or name == 'metaharness_job'):
+            from g6.core.cloud_consent import input_source
+            from g6.mcp.cloud_consent import request_grant
+            async def dialog(**kwargs):
+                return SimpleNamespace(action='accept', content={'value': 'Fixture person'})
+            context = SimpleNamespace(session=SimpleNamespace(elicit_form=dialog), request_id='grant')
+            selected = ({'workflow': 'workflow', 'task_input': 'task'} if name == 'metaharness_job' else
+                        {key: arguments[key] for key in tools[name].parameters.get('required', [])})
+            assert (await request_grant(context, input_source(json.dumps(selected, sort_keys=True, default=str)),
+                                        'openai:codex'))['status'] == 'granted'
         async with Client(server, client_info=Implementation(name='codex', version='test'),
                           elicitation_handler=accept) as client:
             if name == 'metaharness_job':
@@ -153,6 +175,12 @@ def test_request_and_operational_tools_never_read_other_scopes(tmp_path, monkeyp
     async def accept(message, response_type, params, context):
         return response_type(value='Fixture person')
     async def run():
+        if name == 'g6_components':
+            from g6.mcp.cloud_consent import request_grant
+            async def dialog(**kwargs):
+                return SimpleNamespace(action='accept', content={'value': 'Fixture person'})
+            context = SimpleNamespace(session=SimpleNamespace(elicit_form=dialog), request_id='grant')
+            assert (await request_grant(context, 'component_catalogue', 'openai:codex'))['status'] == 'granted'
         async with Client(build_server(), client_info=Implementation(name='codex', version='test'),
                           elicitation_handler=accept) as client:
             return str(await client.call_tool(name, args))

@@ -22,9 +22,11 @@ def host_controls(value: dict, controls: dict, *, sources: Sequence[cloud.Source
     """Bind explicitly supplied host controls while retaining the content's origins."""
     refs = cloud.output_sources(value)
     if sources is not None:
-        refs = tuple(dict.fromkeys((*(refs or ()), *sources)))
+        refs = cloud.boundary_sources(sources, carried=refs if refs is not None else (), inherit=False)
+    if refs is None:
+        refs = cloud.current_sources() or (cloud.UNKNOWN,)
     metadata = {**cloud.output_metadata(value), **controls}
-    return cloud.bind_output(value, refs if refs is not None else (cloud.UNKNOWN,), metadata=metadata)
+    return cloud.bind_output(value, refs, metadata=metadata)
 
 
 def refused_send(value: dict, *, code: str) -> dict:

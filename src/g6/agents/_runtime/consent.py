@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Consent boundary for cloud coding processes with their own file tools."""
 from g6.agents._runtime.model import AgentRefusal
-from g6.core.cloud_consent import LLMError, Source, admission, current_capture, repository_source, sha256
+from g6.core.cloud_consent import (
+    LLMError, Source, admission, boundary_sources, current_capture, current_sources, input_source, sha256,
+)
 from contextlib import contextmanager
 
 
@@ -30,16 +32,16 @@ def program_provider(program):
 
 
 @contextmanager
-def process_admission(provider, prompt, cwd, *, local=False):
-    # The adapter's workspace is the repository named in this request (ruling 5).
-    repo = repository_source(cwd)
+def process_admission(provider, prompt, cwd, *, local=False, directories=()):
     # CLI permissions do not confine reads to cwd. User configuration, hooks,
     # configured MCP servers and any other outside reads are a separate source.
-    refs = (Source.text(repo, 'coding-agent-request', prompt),
-            Source.text('agent_environment', 'coding-agent-environment', ''))
+    refs = boundary_sources((Source.text('agent_environment', 'coding-agent-environment', ''),),
+                            carried=current_sources() or (
+                                (Source.text(input_source(prompt), 'coding-agent-input', prompt),) if prompt else ()),
+                            directories=(cwd, *directories))
     capture = current_capture()
-    supplied = (repo,) if capture is not None and capture.client is not None and capture.client[0] == provider \
-        and repo in capture.supplied else ()
+    supplied = capture.supplied if capture is not None and capture.client is not None \
+        and capture.client[0] == provider else ()
     try:
         with admission(provider, refs, sha256(prompt), supplied=supplied, local=local):
             yield

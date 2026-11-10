@@ -32,9 +32,10 @@ class Declaration:
             if kind == 'g6_operational':
                 continue
             if kind == 'client_request':
-                text = json.dumps(arguments, sort_keys=True, default=str)
+                actual = capture.client_arguments if capture is not None else None
+                text = json.dumps(actual if actual is not None else arguments, sort_keys=True, default=str)
                 source = cloud.input_source(text)
-                if capture is not None:
+                if actual is not None:
                     capture.supplied.add(source)
             elif kind == 'client_repository':
                 repo = arguments.get('repo')
@@ -44,11 +45,9 @@ class Declaration:
                     # Validation belongs to the tool. An invalid client path
                     # must not replace its earlier refusal with a consent error.
                     source = cloud.input_source(str(repo))
-                    if capture is not None:
-                        capture.supplied.add(source)
             else:
                 source = kind.removeprefix('source:')
-            refs.append(cloud.Source.text(source, 'producer-declaration', payload))
+            refs.append(cloud.Source.text(source, 'producer-declaration', text if kind == 'client_request' else payload))
         return tuple(refs)
 
 
@@ -65,7 +64,8 @@ def contract(*classes):
 
 
 TOOLS = {
-    **{name: contract('g6_operational') for name in ('g6_help', 'g6_components')},
+    'g6_help': contract('g6_operational'),
+    'g6_components': contract('source:component_catalogue'),
     **{name: contract('client_request', 'source:component_catalogue') for name in ('g6_find', 'g6_describe')},
     **{name: contract('client_request', 'source:component_data') for name in ('g6_invoke', 'g6_compose')},
     'g6_review_patch': contract('client_request', 'client_repository', 'source:host_configuration'),
@@ -89,6 +89,50 @@ TOOLS = {
     **{name: contract('source:consent_metadata') for name in ('g6_cloud_grants', 'g6_disclosures')},
 }
 
+def _arguments(content='', pointer=''):
+    return {**dict.fromkeys(content.split(), 'content'), **dict.fromkeys(pointer.split(), 'pointer')}
+
+
+# Resolving a pointer reads a separate declared source. JSON envelopes can
+# contain pointers too; their producers declare component/workflow sources.
+# The inventory checks this closed table against the actual MCP schemas.
+TOOL_ARGUMENTS = {
+    'g6_help': {}, 'g6_components': {}, 'g6_cloud_grants': {}, 'g6_disclosures': {},
+    'g6_cloud_grant': _arguments('provider', 'source'),
+    'g6_cloud_revoke': _arguments('provider', 'source'),
+    'g6_find': _arguments('query limit'),
+    'g6_describe': _arguments(pointer='component'),
+    'g6_invoke': _arguments('op', 'component params_json'),
+    'g6_compose': _arguments(pointer='composition_json'),
+    'g6_review_patch': _arguments('task requirements claim intent timeout_s expected_artifact_digest',
+                                 'repo tests sources base search import_roots proposed_checks template_instances'),
+    'g6_review_until_clean': _arguments('task reason', 'repo session base'),
+    'g6_premortem': _arguments('task intent', 'repo'),
+    'g6_mission_create': _arguments('objective function budget_cents risk', 'repo module helpers'),
+    'g6_mission_clarify': _arguments('replay_semantics', 'mission_id'),
+    'g6_mission_confirm': _arguments(pointer='mission_id'),
+    'g6_mission_submit': _arguments('claim timeout_s', 'mission_id repo'),
+    'g6_mission_status': _arguments('detail', 'mission_id'),
+    'g6_mission_certificate': _arguments(pointer='mission_id'),
+    'g6_improve_start': _arguments(pointer='folder'),
+    'g6_improve_stop': _arguments('reason', 'folder'),
+    'g6_improve_status': _arguments(pointer='folder'),
+    'metaharness_start': _arguments(pointer='specification_json'),
+    'metaharness_confirm': _arguments('workflow_digest', 'workflow'),
+    'metaharness_propose_code': _arguments('hypothesis files_json', 'workflow'),
+    'metaharness_evaluate_start': _arguments('proposal_digest', 'workflow'),
+    'metaharness_job': _arguments('detail', 'job_id'),
+    'metaharness_run': _arguments('task_input', 'workflow'),
+    'metaharness_inspect': _arguments(pointer='workflow'),
+    'metaharness_propose': _arguments('profile_json proposer', 'workflow'),
+    'metaharness_evaluate': _arguments('proposal_digest', 'workflow'),
+    'metaharness_decide': _arguments('report_digest proposal_digest', 'workflow'),
+    'metaharness_diagnose': _arguments(pointer='workflow'),
+    'metaharness_approve': _arguments('decision_digest', 'workflow'),
+    'metaharness_rollback': _arguments('version', 'workflow'),
+}
+
+
 AGENTS = {
     'g6.agents.agent_claude.adapter.ClaudeCodeRuntime': contract('client_request', 'client_repository',
                                                              'source:agent_environment'),
@@ -103,7 +147,7 @@ AGENTS = {
 CLI_COMPONENTS = {'agent_claude', 'agent_codex'}
 
 # Every generic model input may contain earlier model replies or retained data.
-# Specialised callers can narrow this through their own request construction.
+# Specialised callers add their carried origins through request construction.
 MODEL_INPUTS = contract('source:model_inputs')
 
 SDK_SENDS = {'g6.harness.verification_proposer._RecordedMessages.create': MODEL_INPUTS}
@@ -127,10 +171,7 @@ MODELS = {name: MODEL_INPUTS for name in (
 
 
 def model_sources():
-    refs = cloud.current_sources()
-    if not refs:
-        return MODEL_INPUTS.sources()
-    return tuple(dict.fromkeys(s if s.recorded else MODEL_INPUTS.sources()[0] for s in refs))
+    return cloud.boundary_sources(MODEL_INPUTS.sources())
 
 
 def tool_declaration(fn):

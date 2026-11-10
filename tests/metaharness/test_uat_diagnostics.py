@@ -19,7 +19,7 @@ pytestmark = pytest.mark.usefixtures("declared_mcp_grants")
 
 @pytest.mark.parametrize('sharing_scope', ['missions', 'improvement', 'component_data', 'jobs'])
 @pytest.mark.parametrize('scope_granted', [False, True])
-def test_real_retained_scope_capture(tmp_path, monkeypatch, sharing_scope, scope_granted):
+def test_real_retained_scope_capture(tmp_path, monkeypatch, sharing_scope, scope_granted, accepted_cloud_dialog):
     """Seed actual stores, then capture only at the MCP recipient boundary."""
     monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
     marker = 'PLANTED_REAL_RETAINED_' + sharing_scope.upper()
@@ -52,11 +52,17 @@ def test_real_retained_scope_capture(tmp_path, monkeypatch, sharing_scope, scope
         monkeypatch.setattr(module, 'Jobs', lambda: jobs)
         path = tmp_path / 'retained.txt'
         path.write_text(marker, encoding='utf-8')
+        from g6.core import cloud_consent as cloud
+        source = cloud.repository_source(path)
+        accepted_cloud_dialog(source, 'openai:codex', text=marker)
         server = build_server()
         @server.tool()
-        @declares('g6_operational')
+        @declares('source:jobs')
         def retain_for_later() -> dict:
-            return jobs.start(lambda: {'result': path.read_text(encoding='utf-8')})
+            def read_retained():
+                text = path.read_text(encoding='utf-8')
+                return cloud.bind_output({'result': text}, (cloud.Source.text(source, path.name, text),))
+            return jobs.start(read_retained)
         tool, args = 'metaharness_job', {}
     async def read():
         async with Client(server) as client:

@@ -184,6 +184,10 @@ def test_actual_mcp_agent_workspace_is_the_named_repository(tmp_path, monkeypatc
     monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
     monkeypatch.setenv('G6_MCP_SENSITIVE', component)
     accepted_cloud_dialog('agent_environment', provider, text='synthetic CLI environment')
+    if same_client:
+        from g6.core.cloud_consent import repository_source
+        accepted_cloud_dialog(repository_source(tmp_path), provider, text='synthetic workspace')
+        accepted_cloud_dialog('component_data', provider, text='synthetic component request')
     sent = []
     class Registry:
         def invoke(self, *args, **kwargs):
@@ -204,9 +208,10 @@ def test_actual_mcp_agent_workspace_is_the_named_repository(tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize('provider', ['openai:codex', 'anthropic:claude_code'])
-def test_agent_named_workspace_same_provider_needs_no_grant(tmp_path, monkeypatch, accepted_cloud_dialog, provider):
+def test_agent_named_workspace_same_provider_still_needs_a_grant(tmp_path, monkeypatch, accepted_cloud_dialog, provider):
     from types import SimpleNamespace
     from g6.agents._runtime.consent import consent_run
+    from g6.agents._runtime.model import AgentRefusal
     from g6.core import cloud_consent as c
     declarations()
     monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
@@ -215,10 +220,11 @@ def test_agent_named_workspace_same_provider_needs_no_grant(tmp_path, monkeypatc
     with c.collect_sources() as capture:
         capture.client = provider, object()
         capture.supplied.add(c.repository_source(tmp_path))
-        consent_run(SimpleNamespace(run=lambda *a, **kw: sent.append(kw['prompt'])), ['fake'], provider=provider,
-                    prompt='NAMED_REPOSITORY', cwd=tmp_path)
-    assert sent == ['NAMED_REPOSITORY']
-    assert c.disclosures()[-1]['provider'] == provider
+        with pytest.raises(AgentRefusal, match=c.REQUIRED):
+            consent_run(SimpleNamespace(run=lambda *a, **kw: sent.append(kw['prompt'])), ['fake'], provider=provider,
+                        prompt='NAMED_REPOSITORY', cwd=tmp_path)
+    assert sent == []
+    assert c.disclosures() == []
     assert not c.is_granted(c.repository_source(tmp_path), provider)
 
 

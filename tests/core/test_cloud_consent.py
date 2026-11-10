@@ -38,6 +38,10 @@ def grant(c, source, provider):
     result = asyncio.run(request_grant(ctx, source, provider))
     assert result['status'] == 'granted'
     assert 'cannot be recalled' in ctx.session.question
+    # The generic provider also declares model_inputs; a positive source test
+    # grants that separate contract without replacing the carried source.
+    if source != 'model_inputs':
+        assert asyncio.run(request_grant(dialog(), 'model_inputs', provider))['status'] == 'granted'
 
 
 @pytest.mark.parametrize('kind', ['ollama_remote', 'openai', 'anthropic', 'claude_code', 'codex', 'unknown'])

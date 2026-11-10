@@ -42,17 +42,18 @@ def test_unshared_source_reply_contains_only_generic_refusal(tmp_path, monkeypat
     assert 'g6_cloud_grant' in json.dumps(reply)
 
 
-def test_client_named_repository_exception_is_provider_specific_and_logged(tmp_path, monkeypatch):
+def test_client_named_repository_requires_a_dialog_grant_and_is_logged(tmp_path, monkeypatch, accepted_cloud_dialog):
     c, m = modules()
     monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
     repo = c.repository_source(tmp_path)
     source = c.Source.text(repo, 'code.py', 'PLANTED_NAMED_REPO')
     result = {'ok': True, 'result': 'PLANTED_NAMED_REPO'}
-    assert m.protect_reply(ctx('codex'), result, (source,), supplied=(repo,)) == result
-    assert c.disclosures()[-1]['provider'] == 'openai:codex'
-    # The exception applies to egress to the same client, never another model call.
+    assert m.protect_reply(ctx('codex'), result, (source,), supplied=(repo,))['ok'] is False
     assert not c.is_granted(repo, 'openai:codex')
     assert m.protect_reply(ctx('codex'), result, (source,))['ok'] is False
+    accepted_cloud_dialog(repo, 'openai:codex', text='PLANTED_NAMED_REPO')
+    assert m.protect_reply(ctx('codex'), result, (source,), supplied=(repo,)) == result
+    assert c.disclosures()[-1]['provider'] == 'openai:codex'
 
 
 def test_unknown_source_withheld_even_when_repository_was_named(tmp_path, monkeypatch):
@@ -150,7 +151,7 @@ def test_named_working_tree_cannot_override_explicit_revocation(tmp_path, monkey
 
 
 @pytest.mark.parametrize('unshared', [False, True])
-def test_actual_source_bound_reply_only_shares_named_working_tree(tmp_path, monkeypatch, unshared):
+def test_actual_source_bound_reply_only_shares_named_working_tree(tmp_path, monkeypatch, unshared, accepted_cloud_dialog):
     c, m = modules()
     from fastmcp import Client
     from g6.mcp import build_server
@@ -159,6 +160,8 @@ def test_actual_source_bound_reply_only_shares_named_working_tree(tmp_path, monk
     repo.mkdir()
     source = tmp_path / 'document.txt' if unshared else repo / 'code.py'
     source.write_text('PLANTED_BOUND_RESULT', encoding='utf-8')
+    if not unshared:
+        accepted_cloud_dialog(c.repository_source(repo), 'openai:codex', text='PLANTED_BOUND_RESULT')
     server = build_server()
     @server.tool()
     def read_source(repo: str) -> dict:

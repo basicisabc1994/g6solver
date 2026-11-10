@@ -186,7 +186,7 @@ def context(change: repo_tests.Change, requirements, *, max_chars: int) -> Repos
     refs += (cloud.Source.text(source, "patch", body["diff"]),
              cloud.Source.text(cloud.input_source(json.dumps(body["requirements"])),
                                "requirements", json.dumps(body["requirements"])))
-    return RepositoryContext(text, tuple(body["files"]), tuple(left), refs)
+    return RepositoryContext(text, tuple(body["files"]), tuple(left), cloud.boundary_sources(refs))
 
 
 def repository_context(repo: str | Path, *, requirements, base: str = "HEAD",

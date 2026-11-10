@@ -75,6 +75,7 @@ def test_the_default_builder_uses_the_core_callers_with_the_model_name_the_provi
         reg, posts, key_file, accepted_cloud_dialog):
     key_file("OPENROUTER_API_KEY=placeholder-key\n")
     accepted_cloud_dialog('fixture:router-input', 'openrouter:api', text='s\nu')
+    accepted_cloud_dialog('model_inputs', 'openrouter:api', text='s\nu')
     env = {"OLLAMA_BASE_URL": "http://127.0.0.1:9"}
     caller = TaskRouter(["ollama", "openrouter"], registry=reg, env=env).caller_for("summarization")
     assert caller.complete("s", "u") == "from openrouter" and caller.answered == "openrouter/acme/paid"
@@ -108,6 +109,7 @@ def test_the_key_file_is_read_when_the_caller_is_built_and_the_environment_never
     monkeypatch.setenv("OPENROUTER_API_KEY", "placeholder-env")
     key_file("OPENROUTER_API_KEY=placeholder-file\n")
     accepted_cloud_dialog('fixture:router-input', 'openrouter:api', text='s\nu')
+    accepted_cloud_dialog('model_inputs', 'openrouter:api', text='s\nu')
     before = dict(os.environ)
     caller = TaskRouter(["openrouter"], registry=reg).caller_for("summarization")
     assert caller.complete("s", "u") == "from openrouter"

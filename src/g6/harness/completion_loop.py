@@ -230,8 +230,8 @@ def harness(path: Path = HARNESS) -> Harness:
                    data["repair"] + (f"\n\n{literal(repair)}" if repair else ""),
                    data["critic"].replace("</task>", f"4. {critic}\n</task>", 1) if critic else data["critic"],
                    data["critic_note"], data["review_ask"],
-                   (cloud.Source.text(cloud.source_id(str(path)), "trained-harness", json.dumps(added)),)
-                   if added else ())
+                   (cloud.Source.text(cloud.repository_source(path), "harness-file", json.dumps(data)),)
+                   if added or path.resolve() != HARNESS.resolve() else ())
 
 
 @dataclass
@@ -372,8 +372,9 @@ class ToolSession(consent.ConsentClaude):
     disk. It starts in ``cwd``, may write only there and in ``where``, and runs no hook and no MCP server."""
 
     def run(self, prompt: str, cwd: Path, where: Path, seconds: float) -> str:
-        refs = (cloud.Source.text(cloud.repository_source(cwd), "scout-request", prompt),
-                cloud.Source.text('model_inputs', 'scout-request', prompt))
+        refs = cloud.boundary_sources((cloud.Source.text('model_inputs', 'scout-request', prompt),
+                                       cloud.Source.text('agent_environment', 'scout-environment', '')),
+                                      directories=(cwd, where))
         with cloud.admission("anthropic:claude_code", refs, cloud.sha256(prompt)):
             _start_model_call()
             program = self.locate()
@@ -444,8 +445,10 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
     A case that failed on an operating-system error is unknown, as a refused access looks like one. A run that did not
     finish, or tested code from outside its copy, leaves the set unusable."""
     code: int | None = 0
+    origins = []
     results, texts, tail, boundary = {}, {}, [], ""
     for ran in runs:
+        origins.extend(cloud.output_sources(ran) or (cloud.UNKNOWN,))
         boundary = (ran.get("isolation") or {}).get("backend") or boundary
         elsewhere, verdict = _loaded_elsewhere(change, ran), ran.get("verdict")
         if elsewhere or verdict not in repo_tests.RAN:
@@ -458,7 +461,8 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
         for named, phases in (ran.get("test_outcomes") or {}).items():
             results[_PLACE.sub("", full(named))] = "unknown" if named in refused else _outcome(phases)
         texts.update({_PLACE.sub("", full(named)): text for named, text in (ran.get("failure_messages") or {}).items()})
-    return ProbeRun(code, results, texts, "\n".join(tail), boundary)
+    return cloud.bind_output(ProbeRun(code, results, texts, "\n".join(tail), boundary),
+                             cloud.boundary_sources(carried=origins))
 
 
 def run_set(change: repo_tests.Change, probes: Path, *, at_base: bool, deadline: float, only: str = "") -> ProbeRun:
@@ -514,11 +518,12 @@ def _scout(change: repo_tests.Change, task: str, text: str, where: Path, host: H
             break
         try:
             with _base_copy(change, left) as copy:
-                host(asked + again, copy, where, left)
+                with cloud.request_sources((cloud.output_sources(got) or (cloud.UNKNOWN,)) if again else ()):
+                    host(asked + again, copy, where, left)
         except (LLMError, repo_tests.CopyNotRun, OSError) as exc:
             failed = f"{type(exc).__name__}: {exc}"[:400]
         got = run_set(change, where / "probes", at_base=True, deadline=deadline)
-        cloud.record_sources((cloud.UNKNOWN,))
+        cloud.record_sources(cloud.output_sources(got) or (cloud.UNKNOWN,))
         wrong = _gate(where / "tree.json", got)
         if failed or not wrong:
             break
@@ -676,7 +681,8 @@ def critic_file(n: int) -> str:
 
 
 def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: str, where: Path, n: int = 1,
-               told: str = "", *, patch: str, system_sources: tuple[cloud.Source, ...] | None = None) -> dict:
+               told: str = "", *, patch: str, system_sources: tuple[cloud.Source, ...] | None = None,
+               told_sources: tuple[cloud.Source, ...] | None = None) -> dict:
     """L9's critic: another model family reads the finished patch once, and K's, ``n`` the review it is. One that fails is
     recorded and L9 goes on. Its test, if it has one, waits in ``where`` to run with the probes. ``told``: what follows the
     pack, for a reviewer sent back. ``patch``: what it reads, as the caller read it. What it gives names the model called,
@@ -695,7 +701,7 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
         refs += (cloud.Source.text(cloud.input_source(task), "task", task),)
         refs += system_sources if system_sources is not None else (cloud.UNKNOWN,)
         if told:
-            refs += (cloud.UNKNOWN,)  # Opaque child diagnostics may contain host environment/dependency data.
+            refs += told_sources or (cloud.UNKNOWN,)
         with cloud.request_sources(refs):
             found = critic_report(consent.guard(caller).complete(
                 system, sent + (f"\n\n{MASKED_NOTE}" if masked else "") + told), proof=proof)
@@ -740,6 +746,7 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     repair is spent: only where nothing else failed, as otherwise what failed goes back and a fresh review reads the repair.
     A review's ``unrun`` says why its test shows nothing on the latest run, so a later run updates it, or takes it away."""
     n, results, failed, failing, where = len(reviews) + 1, {}, {}, set(), session / "sets" / "critic"
+    diagnostics = {}
     patch, kept, mine = repo_tests.diff_text(change), session / "rounds" / f"round-{n}.patch", critic_file(n)
     kept.parent.mkdir(parents=True, exist_ok=True)
     kept.write_bytes(patch.encode("utf-8"))
@@ -749,7 +756,8 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
 
     def run(name: str) -> None:
         got = run_set(change, where, at_base=False, deadline=deadline, only=name)
-        cloud.record_sources((cloud.UNKNOWN,))
+        diagnostics[name] = cloud.output_sources(got) or (cloud.UNKNOWN,)
+        cloud.record_sources(diagnostics[name])
         found = failures_of([("critic", got, None)])[0] if got.usable else set()    # one that will not run says nothing
         failing.update(found)
         failed[name] = sorted(case.removeprefix("critic:") for case in found)
@@ -771,7 +779,8 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
         (where / mine).unlink(missing_ok=True)
         del results[mine], failed[mine]
         said.update(run_critic(change, task, critic, shipped.critic, where, n, told=WOULD_NOT_RUN.format(error=told),
-                               patch=patch, system_sources=shipped.sources), told=told, claimed=claimed)
+                               patch=patch, system_sources=shipped.sources,
+                               told_sources=diagnostics[mine]), told=told, claimed=claimed)
         if (where / mine).is_file():
             run(mine)
     if any(code in said.get("error", "") for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE)):
@@ -1095,7 +1104,8 @@ def _scouts(change: repo_tests.Change, task: str, session: Path, state: dict, sh
     for label, text in [("scout", shipped.scout), *((f"held{i}", one) for i, one in enumerate(shipped.hidden_scouts))]:
         if label in state["sets"]:
             continue
-        made = _scout(change, task, text, session / "sets" / label, host, deadline)
+        with cloud.request_sources(shipped.sources):
+            made = _scout(change, task, text, session / "sets" / label, host, deadline)
         if when == BEFORE and made["left_out"] == NO_TIME:
             state["late"] = "the time for scouts before the fix ran out"
             break
@@ -1135,16 +1145,24 @@ def prepare(repo: str | Path, task: str, base: str, session: str | Path, *, scou
     if scout is None:
         return ""
     shipped, state = harness(), _load(session)
+    refs = cloud.boundary_sources((cloud.Source.text(cloud.repository_source(root), 'repository', ''),
+                                   cloud.Source.text(cloud.input_source(task), 'task', task)),
+                                  carried=(*source_refs(state), *shipped.sources))
     state.setdefault("sets", {})
-    try:
-        _scouts(repo_tests.change(root, base), task, session, state, shipped, scout, BEFORE)
-    except repo_tests.RepoRefused as exc:
-        if exc.code != ISOLATION_UNAVAILABLE:
-            raise
-        state["late"] = str(exc)[:300]
-    told = _told(state, shipped)
-    _save(session, state)
-    return told
+    with cloud.collect_sources() as capture, cloud.request_sources(refs):
+        token = _SOURCE_STATE.set(capture)
+        try:
+            try:
+                _scouts(repo_tests.change(root, base), task, session, state, shipped, scout, BEFORE)
+            except repo_tests.RepoRefused as exc:
+                if exc.code != ISOLATION_UNAVAILABLE:
+                    raise
+                state["late"] = str(exc)[:300]
+            told = _told(state, shipped)
+            _save(session, state)
+            return told
+        finally:
+            _SOURCE_STATE.reset(token)
 
 
 def _held(session: Path) -> Any:
@@ -1211,7 +1229,8 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
             cloud.record_sources((cloud.Source.text(cloud.input_source(said), 'agent-reason', ' '.join(said.split())),))
         token = _SOURCE_STATE.set(capture)
         try:
-            return _advance_inner(repo, task, base, session, scout, critic, said, answered, agent)
+            with cloud.request_sources(capture.sources):
+                return _advance_inner(repo, task, base, session, scout, critic, said, answered, agent)
         finally:
             _SOURCE_STATE.reset(token)
 
@@ -1279,12 +1298,12 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         for label, one in state["sets"].items():
             if not one["left_out"]:
                 got = run_set(change, Path(one["where"]) / "probes", at_base=False, deadline=ends)
-                cloud.record_sources((cloud.UNKNOWN,))
+                cloud.record_sources(cloud.output_sources(got) or (cloud.UNKNOWN,))
                 state["ran"][label], state["boundary"] = got.ran, got.boundary or state.get("boundary", "")
                 seen.append((label, got, ProbeRun(**one["at_base"])))
         if (state.get("critic") or {}).get("test"):
             got = run_set(change, session / "sets" / "critic", at_base=False, deadline=ends)
-            cloud.record_sources((cloud.UNKNOWN,))
+            cloud.record_sources(cloud.output_sources(got) or (cloud.UNKNOWN,))
             if got.usable:     # a critic's test that will not run says nothing of the patch
                 state["ran"]["critic"] = got.ran
                 seen.append(("critic", got, None))
