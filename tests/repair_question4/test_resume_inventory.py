@@ -102,9 +102,9 @@ def test_every_copy_is_bound_before_base_projection(tmp_path, monkeypatch, at_ba
     root = repo(tmp_path, extra={'helper.py': 'VALUE = 1\n'})
     change = repo_tests.change(root)
     before = vs.bind_execution(change, repo_tests.snapshot(root), deadline=vs._clock() + 60)
-    source = behaviour_runner.CONFIRMED + "TEMPLATE = 'example.v1'\nBINDINGS = " + repr({
-        'function': ['module', 'calc', 'add', 'calc.py'],
-        'cases': [{'args': [2, 3], 'kwargs': {}, 'expect': 'returns', 'value': 5}]})
+    from g6.harness.executable_scenario import Scenario
+    question = bq.caller_candidates(TASK, [candidate()])[0].question('b' * 64)
+    source = behaviour_runner.CONFIRMED + Scenario.resolve(root, question).source('A')
     copy_tree = repo_tests.repository_copy
     executed = []
 
@@ -242,7 +242,7 @@ def test_ordinary_unconfirmed_executor_keeps_its_sparse_snapshot_contract(tmp_pa
     assert 'execution_artifact' not in got  # no full-byte assertion is invented for the ordinary run
 
 
-def test_bad_g6_generated_check_never_falls_back_to_repository_pytest(tmp_path, monkeypatch):
+def test_a_source_marker_cannot_authorize_the_owned_runner(tmp_path, monkeypatch):
     from g6.core.ledger import digest
     from g6.harness import behaviour_runner
     from g6.workforce import repo_tests
@@ -253,6 +253,7 @@ def test_bad_g6_generated_check_never_falls_back_to_repository_pytest(tmp_path, 
     executed = []
 
     def execute(copy, ids, **kwargs):
+        assert 'observation' not in kwargs
         executed.append(True)
         return {**result(ids[0]), 'source_before': digest(repo_tests._copy_snapshot(copy))}
 
@@ -260,7 +261,7 @@ def test_bad_g6_generated_check_never_falls_back_to_repository_pytest(tmp_path, 
     source = behaviour_runner.CONFIRMED + 'def test_x():\n    pass\n'
     got = vs._run_check(change, 'test_bad.py', source, 'test_bad.py::test_x', at_base=False,
                         timeout_s=60, artefact=before)
-    assert got['verdict'] == 'not_run' and executed == []
+    assert got['verdict'] == 'passed' and executed == [True]
 
 
 def test_a_literal_cannot_supply_the_g6_bootstrap():

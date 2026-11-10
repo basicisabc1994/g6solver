@@ -199,6 +199,7 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
     try:
         state = store.state()
         asked, plan = state.pending, None
+        scenario = None
         if asked is None:
             # the tree the question is asked about, which a saved review must have observed
             artifact = digest(repo_tests.snapshot(root)) if review_job else ""
@@ -216,8 +217,10 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
                               candidate=chosen, plan=plan)
             case, rule = chosen.questions(artifact or digest(repo_tests.snapshot(root)))
             scenario = executable_scenario.Scenario.resolve(root, case)
+            scenario.admit(root, case)
             executable_scenario.save(case, scenario)
             if rule is not None:
+                scenario.admit(root, rule)
                 executable_scenario.save(rule, scenario)
             try:
                 asked = store.ask(case, rule, chosen)
@@ -225,7 +228,9 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
                 return _reply(SPENT, str(exc), state=store.state(), candidate=chosen, plan=plan)
         if asked.candidate.source == 'differential':
             bq.require_probe(asked.candidate.to_dict().get('probe_sha256', ''))
-        scenario = executable_scenario.load(asked.question)
+        if scenario is None:
+            scenario = executable_scenario.load(asked.question)
+            scenario.admit(root, asked.question)
         message, schema = bq.form(asked.question, asked.candidate, asked.rule, scenario=scenario)
         shown_at, started = qs.now(), time.monotonic()
         action, content, _error = await elicit(ctx, message, schema)

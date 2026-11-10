@@ -204,7 +204,10 @@ def test_an_agreeing_answer_makes_a_revision_a_contradicting_one_a_superseding_s
     assert revised.predicates == (first.expectation_id, agreeing.expectation_id)
     repeated = confirm(question(cited="the task, paragraph 2"), "A", answered_by="person:reviewer")
     assert repeated.question_sha256 != first.question_sha256   # another question, the same answer
-    assert revised.contradicted_by(repeated) == () and revised.with_expectation(repeated) is revised
+    assert revised.contradicted_by(repeated) == ()
+    latest = revised.with_expectation(repeated)
+    assert latest.expectations == (repeated, agreeing)
+    assert latest.revision == revised.revision + 1 and latest.previous == revised.sha256
     contradicting = by_person(question(cited="the task, paragraph 3"), "B")
     assert revised.contradicted_by(contradicting) == (first.expectation_id,)
     with pytest.raises(ContradictsStandard):

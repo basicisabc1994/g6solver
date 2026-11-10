@@ -223,7 +223,7 @@ RUN_SITES = {
         "a proposed check at the base commit, not on the patch"),
     ("verification_search.py", "_run_check", "repo_tests._run(copy, [node], roots=(), timeout_s=timeout_s, "
                                              "network=False, copied=True, deadline=deadline, require_isolation=True, "
-                                             "observation=generated[1])"): (
+                                             "observation=generated)"): (
         "an owned confirmed check or behaviour probe: its own scenario, never a stated node; confirmed patch "
         "observations reach confirmed_evidence and probe observations reach the question's custody record"),
     ("verification_search.py", "_run_check", "repo_tests._run(copy, [node], roots=roots, timeout_s=timeout_s, "

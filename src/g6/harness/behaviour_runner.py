@@ -31,6 +31,47 @@ LIMIT = ("Code under test runs in the same process as the bootstrap and can shap
          "as with any test run.")
 MAX_FRAME = 1 << 20
 MAGIC = b"G6R1\n"
+COMPACT = '# G6-COMPACT-REPRODUCTION\n'
+
+
+class ExecutableSource(str):
+    """Compiler custody held in the host, outside the Python text and its JSON representation.
+
+    Free-form admission keeps only the string. Adding arbitrary code also produces an ordinary string; only the
+    historical confirmed label can be prepended without losing custody already held by this compiler object.
+    """
+
+    def __new__(cls, source: str, observation: dict):
+        made = super().__new__(cls, source)
+        made._observation = json.dumps(observation, sort_keys=True, ensure_ascii=True, allow_nan=False)
+        return made
+
+    @property
+    def observation(self) -> dict:
+        return json.loads(self._observation)
+
+    def __radd__(self, prefix):
+        text = prefix + str(self)
+        return ExecutableSource(text, self.observation) if prefix == CONFIRMED else text
+
+
+def expanded(source: str) -> str:
+    """Decode a compact portable reproduction for compiler inspection; it supplies no execution authority."""
+    import base64
+    import zlib
+
+    if source.startswith(CONFIRMED):
+        source = source[len(CONFIRMED):]
+    if source.startswith(COMPACT):
+        first = ast.parse(source).body[0]
+        if not (isinstance(first, ast.Assign) and len(first.targets) == 1
+                and isinstance(first.targets[0], ast.Name) and first.targets[0].id == 'CODE_Z85'):
+            raise ValueError('missing compact reproduction')
+        try:
+            source = zlib.decompress(base64.b85decode(ast.literal_eval(first.value))).decode('utf-8')
+        except zlib.error as exc:
+            raise ValueError('malformed compact reproduction') from exc
+    return source
 
 
 def _fingerprint(text: str) -> dict:
@@ -391,7 +432,7 @@ def bindings(source: str) -> tuple[str, dict] | None:
     """Read only G6's own generated Python literal slots; never execute a proposed check to learn its bindings."""
     try:
         fields = {}
-        for one in ast.parse(source).body:
+        for one in ast.parse(expanded(source)).body:
             if isinstance(one, ast.Assign) and len(one.targets) == 1 and isinstance(one.targets[0], ast.Name):
                 if one.targets[0].id in {"TEMPLATE", "BINDINGS"}:
                     if one.targets[0].id in fields:
@@ -465,7 +506,9 @@ def run(copy: Path, data: dict, node: str, *, timeout_s: int, deadline: float) -
             plan.release()
             raise rt.RepoRefused(ISOLATION_UNAVAILABLE, confine.refusal(plan))
         try:
-            command = [python, "-I", "-S", "-B", "-X", "utf8", str(boot), str(copy), str(channel), _encoded(request(data))]
+            # A canonical program already holds its input. Repeating it on argv also hits Windows' command limit.
+            payload = '{}' if '_program' in data else _encoded(request(data))
+            command = [python, "-I", "-S", "-B", "-X", "utf8", str(boot), str(copy), str(channel), payload]
             code = rt._bounded(command, cwd=copy, env=rt.child_env(own, network=False),
                                timeout_s=remaining, log=log, confined=plan)
             with channel.open("rb") as handle:

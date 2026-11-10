@@ -77,6 +77,7 @@ def test_answer_and_scenario_custody_survive_a_stop_before_the_retained_head(tmp
 
 def test_inventory_every_product_answer_writer_and_scenario_reader():
     from g6.harness import confirmed_checks
+    from g6.harness import confirmed_expectation
     from g6.mcp import behaviour
     package = Path(qs.__file__).parents[1]
     writers = []
@@ -90,5 +91,6 @@ def test_inventory_every_product_answer_writer_and_scenario_reader():
     assert writers == ['mcp/behaviour.py']
     assert 'scenario=scenario' in inspect.getsource(behaviour.confirm)
     source = inspect.getsource(confirmed_checks.run)
-    assert 'answer_scenarios.get(one.answer_sha256' in source
+    assert confirmed_checks.latest_confirmed is confirmed_expectation.latest_confirmed
+    assert 'latest_confirmed(standard.expectations, answer_scenarios)' in source
     assert 'scenario.sha256 != held_scenario' in source

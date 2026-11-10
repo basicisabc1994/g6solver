@@ -152,7 +152,10 @@ def test_the_confirmed_case_is_its_one_example_v1_check_run_on_the_patch_and_cou
     assert decided(got) == decided(review(repo))   # a case that holds changes no decided field
     assert [g["at_base"] for g in given[:3]] == [False, True, False]
     assert [g["bound"] for g in given[:3]] == [True, False, True]   # each run on the patch, bound to the artefact
-    assert "'cases': [{'args': [2, 3], 'kwargs': {}, 'expect': 'returns', 'value': 5}]" in given[0]["source"]
+    from g6.harness import behaviour_runner
+    _, comparison = behaviour_runner.bindings(given[0]["source"])
+    assert verification_search._canonical(comparison['cases']) == verification_search._canonical([
+        {'args': [2, 3], 'kwargs': {}, 'expect': 'returns', 'value': 5}])
     assert "TEMPLATE = 'example.v1'" in given[0]["source"]
     held_out = got["assessment"]["confirmed_expectations"]
     [shown] = held_out["expectations"]

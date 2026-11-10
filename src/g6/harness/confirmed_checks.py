@@ -39,7 +39,7 @@ from pathlib import Path
 from g6.core import component_process
 from g6.harness import verification_search as vs
 from g6.harness import verification_templates
-from g6.harness.confirmed_expectation import ExpectationStandard, Question
+from g6.harness.confirmed_expectation import ExpectationStandard, Question, latest_confirmed
 from g6.workforce import repo_tests
 
 PASSED, FAILED, NOT_RUN = "passed", "failed", "not_run"
@@ -106,7 +106,7 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
     if not skip:
         prepared = verification_templates.prepare(root, change, [one.instance for one in standard.expectations],
                                                   deadline=deadline)
-    for one in standard.expectations:
+    for one, held_scenario in latest_confirmed(standard.expectations, answer_scenarios):
         ident = one.expectation_id
         from g6.harness.behaviour_runner import LIMIT
 
@@ -125,7 +125,6 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
         from g6.harness import executable_scenario, behaviour_runner
         from g6.core.storage import state_path
 
-        held_scenario = answer_scenarios.get(one.answer_sha256, '')
         if held_scenario and state_path("scenarios", one.question_sha256 + ".json").exists():
             try:
                 scenario = executable_scenario.load(Question.from_record(one._question))

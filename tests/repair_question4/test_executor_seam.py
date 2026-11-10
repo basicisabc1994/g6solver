@@ -1,9 +1,10 @@
 """Owned checks and probes retain the executor seam used by recorded test runs."""
-import ast
+from types import SimpleNamespace
 
 import pytest
 
 from g6.harness import behaviour_runner, behaviour_question as bq, executable_scenario, verification_search as vs
+from g6.harness import verification_templates as vt
 from g6.workforce import repo_tests
 from tests.repair_question2.helpers import TASK, candidate, repo
 
@@ -16,8 +17,14 @@ def test_recorded_executor_controls_every_owned_run(tmp_path, monkeypatch, at_ba
     question = bq.caller_candidates(TASK, [candidate()])[0].question('b' * 64)
     scenario = executable_scenario.Scenario.resolve(root, question)
     if probe:
-        source = "TEMPLATE = 'differential.v1'\nBINDINGS = " + repr({
-            'function': ['module', 'calc', 'add', 'calc.py'], 'calls': [{'args': [2, 3]}]})
+        instance = vt.TemplateInstance(id='owned', requirement_id='R1', intent='change', template='differential.v1',
+            bindings={'function': 'calc.add', 'mode': 'outputs', 'calls': [{'args': [2, 3]}]})
+        tree = vt.Tree.read(root, change)
+        definition = vt.TEMPLATES[instance.template]
+        applied = definition.applies(tree, definition.bindings.model_validate(instance.bindings), vt.BASE)
+        data = {**applied.data, 'function': vt._located(vt.resolve(tree, 'calc.add', vt.BASE))}
+        compiled, _, _ = vt.compiled_check(root, instance, data, applied.notes)
+        source = compiled.source
     else:
         source = behaviour_runner.CONFIRMED + scenario.source('A')
     before = vs.bind_execution(change, repo_tests.snapshot(root), deadline=vs._clock() + 60)
@@ -72,9 +79,15 @@ def test_reproduction_and_executor_share_the_canonical_host_comparison(tmp_path,
     question = bq.caller_candidates(TASK, [candidate()])[0].question('b' * 64)
     scenario = executable_scenario.Scenario.resolve(root, question)
     source = scenario.source(option)
-    namespace = ast.parse(source)
-    check = next(node for node in namespace.body if isinstance(node, ast.FunctionDef) and node.name == '_check_example')
-    comparison = ast.literal_eval(check.body[0].value)
+    namespace, seen = {}, []
+    exec(compile(source, '<portable canonical comparison>', 'exec'), namespace)
+    namespace['subprocess'] = SimpleNamespace(run=lambda *a, **k: SimpleNamespace(returncode=0))
+    def finish(code, raw, data):
+        seen.append(data)
+        return {'result': 'passed', 'detail': ''}
+    namespace['finish'] = finish
+    namespace['_check_example']()
+    [comparison] = seen
     _, execution = behaviour_runner.bindings(source)
     assert comparison == scenario.comparison(option) == {key: value for key, value in execution.items()
                                                          if key != '_program'}

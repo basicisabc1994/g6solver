@@ -1761,6 +1761,13 @@ def compiled_check(root: Path, one: TemplateInstance, data: dict, notes: list[st
         raise Inapplicable("its compiled check would hold more than 64 kilobytes")
     check = vs.ProposedCheck(id=ident or one.id, requirement_id=one.requirement_id, intent=one.intent,
                              file=f"test_g6_{definition.id.split('.')[0]}.py", source=source)
+    from g6.harness.behaviour_runner import ExecutableSource
+
+    if type(source) is ExecutableSource:
+        check = check.model_copy(update={"source": source})
+    elif (one.template == "differential.v1" or
+          one.template == "example.v1" and one.provenance == "person_confirmed"):
+        check = check.model_copy(update={"source": ExecutableSource(source, data)})
     try:
         placed = vs.placements(root, [check])[check.id]
     except ValueError as exc:

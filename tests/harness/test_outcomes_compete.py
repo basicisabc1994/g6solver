@@ -264,7 +264,7 @@ SLICE = ("harness/behaviour_question.py", "harness/question_store.py", "mcp/beha
 OUTCOME_KEYS = frozenset({"returns", "raises", "effect", "equals", "outcomes", "returned", "raised", "base", "patch"})
 ENCODINGS = frozenset({"dumps", "loads", "canonical", "_canonical", "digest", "repr", "ascii", "encoded", "decoded",
                        "shown_call", "shown_outcome", "_value", "_said", "_call", "competition", "_question_sha256",
-                       "_meaning", "_scenario"})
+                       "_meaning", "_scenario", "latest_confirmed"})
 
 
 def _reads_outcome(node: ast.AST) -> bool:
@@ -420,9 +420,12 @@ PLACES.update({("harness/confirmed_expectation.py", function, expression): SLICE
     ("record", "_canonical({'question': json.loads(self._question), 'answer': json.loads(self._answer)})"),
     ("record", "json.loads(self._answer)"), ("record", "json.loads(self._question)"),
     ("sha256", "digest({'answers': [one.answer_sha256 for one in self.expectations], 'revision': self.revi"),
-    ("with_expectation", "_meaning(new)"), ("with_expectation", "_meaning(one)"),
-    ("with_expectation", "_meaning(one) == meaning"))})
+    ("latest_confirmed", "_scenario(one)"),
+    ("with_expectation", "latest_confirmed((*self.expectations, new))"))})
 PLACES.update({
+    ("harness/confirmed_expectation.py", "with_expectation", "len(held) == len(self.expectations)"): (
+        "counts of held answers, not outcome values"),
+    ("harness/confirmed_expectation.py", "with_expectation", "one.answer_sha256 == old.answer_sha256"): RECORD,
     ("harness/confirmed_expectation.py", "__init__", "kept != answered_at"): "a time, as text: not an outcome",
     ("harness/confirmed_expectation.py", "_parsed", "set(record) != set(fields)"): "field names: not an outcome"})
 

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
@@ -20,6 +19,29 @@ SETUP = ("a fresh import of the function's module in a copy of the tree under re
          "the call is made once, with copies of these arguments")
 FIELDS = frozenset({"version", "setup", "entrypoint", "input", "outcomes"})
 UNAVAILABLE = "G6_E_SCENARIO_UNAVAILABLE"
+
+
+def _comparison(record: str, option: str) -> dict:
+    """The host comparison, derived from the one canonical scenario in a portable check too."""
+    scenario = json.loads(record)
+    if option not in scenario['outcomes']:
+        raise ValueError('G6_E_SCENARIO_UNAVAILABLE: an option not in the scenario')
+    return {'function': scenario['entrypoint'], 'cases': [
+        {**scenario['input'], **scenario['outcomes'][option]}],
+        'errors': [one['error'] for one in scenario['outcomes'].values() if 'error' in one]}
+
+
+def _program_parts() -> tuple[str, str]:
+    from g6.core import confine
+    from g6.harness import behaviour_runner as runner
+
+    # The input belongs to SCENARIO once. Derive the child request at runtime instead of spelling it again.
+    request = """scenario = json.loads(SCENARIO)
+data = {'function': scenario['entrypoint'], 'calls': [scenario['input']],
+        'errors': [one['error'] for one in scenario['outcomes'].values() if 'error' in one],
+        'probe': False, 'mode': 'outputs'}"""
+    return (confine.CHILD_PRELUDE + '\nSCENARIO = ',
+            '\n' + runner.BOOTSTRAP.replace('data = json.loads(raw)', request, 1))
 
 
 @dataclass(frozen=True)
@@ -81,45 +103,39 @@ class Scenario:
         Both offered outcomes belong to the immutable scenario; the selected option never reaches this program.
         The host uses the same record for its comparison after the one observation frame arrives.
         """
-        from g6.core import confine
-        from g6.harness import behaviour_runner as runner
-
-        scenario = json.loads(self.record)
-        data = {"function": scenario["entrypoint"], "calls": [scenario["input"]],
-                "errors": [one["error"] for one in scenario["outcomes"].values() if "error" in one],
-                "probe": False, "mode": "outputs"}
-        return (confine.CHILD_PRELUDE + "\nSCENARIO = " + ascii(self.record.decode("ascii")) + "\n"
-                + runner.BOOTSTRAP.replace('data = json.loads(raw)', 'data = ' + ascii(data), 1))
+        prefix, suffix = _program_parts()
+        return prefix + ascii(self.record.decode('ascii')) + suffix
 
     def comparison(self, option: str) -> dict:
         """The host comparison, compiled once from the canonical record for both execution and reproduction."""
-        scenario = json.loads(self.record)
-        if option not in scenario['outcomes']:
-            raise ValueError(f"{UNAVAILABLE}: an option not in the scenario")
-        return {'function': scenario['entrypoint'], 'cases': [
-            {**scenario['input'], **scenario['outcomes'][option]}],
-            'errors': [one['error'] for one in scenario['outcomes'].values() if 'error' in one]}
+        return _comparison(self.record.decode('ascii'), option)
 
-    def _wrapper(self, comparison: dict) -> str:
+    def _wrapper(self, option: str) -> str:
         """A portable reproduction wrapper; G6 itself executes program, without loading this pytest wrapper."""
         import inspect
         from g6.harness import behaviour_runner as runner
 
         helpers = "\n\n".join(inspect.getsource(one) for one in (
+            _comparison,
             runner._unique, runner._encoded, runner._fingerprint, runner._valid_encoding,
-            runner._matches_encoding, runner.read_frame, runner.finish, runner.request))
+            runner._matches_encoding, runner.read_frame, runner.finish))
+        prefix, suffix = _program_parts()
         return ("import hashlib, json, struct, subprocess, tempfile, sys, os\n"
                 "TEMPLATE = 'example.v1'\nBINDINGS = " + ascii({"scenario": self.record.decode("ascii")})
-                + "\nMAGIC = b'G6R1\\n'\nMAX_FRAME = 1048576\nBOOTSTRAP = " + ascii(self.program)
+                + "\nBINDINGS['option'] = " + ascii(option)
+                + "\nMAGIC = b'G6R1\\n'\nMAX_FRAME = 1048576\nBOOTSTRAP = " + ascii(prefix)
+                + " + ascii(BINDINGS['scenario']) + " + ascii(suffix)
                 + "\n" + helpers + '''
 def _check_example():
-    data = ''' + ascii(comparison) + '''
+    data = _comparison(BINDINGS['scenario'], BINDINGS['option'])
     with tempfile.TemporaryDirectory() as own:
         channel = os.path.join(own, 'result.bin')
+        boot = os.path.join(own, 'bootstrap.py')
+        with open(boot, 'w', encoding='utf-8', newline='\\n') as handle:
+            handle.write(BOOTSTRAP)
         with open(channel, 'xb'):
             pass
-        ran = subprocess.run([sys.executable, '-I', '-S', '-B', '-c', BOOTSTRAP,
-                              os.getcwd(), channel, json.dumps(request(data), sort_keys=True)],
+        ran = subprocess.run([sys.executable, '-I', '-S', '-B', boot, os.getcwd(), channel, '{}'],
                              capture_output=True, timeout=10)
         with open(channel, 'rb') as handle:
             raw = handle.read(MAX_FRAME + len(MAGIC) + 5)
@@ -140,7 +156,33 @@ def test_example():
         return hashlib.sha256(self.program.encode("utf-8")).hexdigest()
 
     def source(self, option: str) -> str:
-        return self._wrapper(self.comparison(option)) + "\nBINDINGS['option'] = " + ascii(option) + "\n"
+        import base64
+        import zlib
+        from g6.harness import behaviour_runner as runner
+
+        data = {**self.comparison(option), '_program': self.program}
+        source = self._wrapper(option)
+        # Keep a portable, self-contained check even for the largest historical bindings. The canonical input is
+        # held once; compression only stores the resulting Python text more compactly, with no new execution path.
+        if len(source.encode('utf-8')) > 48 * 1024:
+            packed = base64.b85encode(zlib.compress(source.encode('utf-8'), 9)).decode('ascii')
+            source = (runner.COMPACT + 'CODE_Z85 = ' + ascii(packed)
+                      + '\nimport base64, zlib\nexec(zlib.decompress(base64.b85decode(CODE_Z85)))\n')
+        return runner.ExecutableSource(source, data)
+
+    def admit(self, root, question) -> None:
+        """Use the enforcing compiler for every offered option, before asking or displaying anything."""
+        from g6.harness import verification_templates as vt
+        from g6.harness.confirmed_expectation import _compiled
+
+        if not self.matches(question):
+            raise ValueError(f'{UNAVAILABLE}: the scenario is not this question')
+        try:
+            for option in question.outcomes:
+                vt.compiled_check(root, _compiled(question.to_dict(), question.sha256, option),
+                                  {'scenario': self.record.decode('ascii'), 'option': option}, [])
+        except vt.Inapplicable as exc:
+            raise ValueError(f'{UNAVAILABLE}: {exc}') from exc
 
     def matches(self, question) -> bool:
         """Correspondence without consulting the live repository or resolving an entry point again."""
@@ -167,6 +209,7 @@ def test_example():
 
 
 def save(question, scenario: Scenario) -> None:
+    from g6.cogarch._store import atomic_write
     from g6.core.storage import state_path
 
     if not scenario.matches(question):
@@ -175,15 +218,15 @@ def save(question, scenario: Scenario) -> None:
     record = {"version": "scenario-binding.v1", "question_sha256": question.sha256,
               "scenario_sha256": scenario.sha256, "scenario": scenario.record.decode("ascii")}
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        if load(question).record != scenario.record:
+    try:
+        held = load(question)
+    except ValueError:
+        held = None   # missing, empty, partial or unparseable custody does not reserve the final name
+    if held is not None:
+        if held.record != scenario.record:
             raise ValueError(f"{UNAVAILABLE}: this question already names another executable scenario")
         return
-    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="ascii",
-                   newline="\n") as handle:
-        handle.write(canonical(record))
-        handle.flush()
-        os.fsync(handle.fileno())
+    atomic_write(path, canonical(record))
 
 
 def load(question) -> Scenario:
@@ -202,5 +245,5 @@ def load(question) -> Scenario:
         return scenario
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
-    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError) as exc:
         raise ValueError(f"{UNAVAILABLE}: the executable scenario is unavailable; ask for confirmation again") from exc

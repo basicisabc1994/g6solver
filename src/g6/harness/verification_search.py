@@ -353,6 +353,8 @@ def proposed_checks(value, requirement_ids) -> list[ProposedCheck]:
         except ValidationError as exc:
             first = exc.errors()[0]
             raise ValueError(f"{where}: {'.'.join(str(p) for p in first['loc']) or 'check'}: {first['msg']}") from exc
+        # A proposal is always its Python text, including when a Python caller supplies a compiler-owned str subclass.
+        one = one.model_copy(update={"source": str.__str__(one.source)})
         problem = _file_problem(one.file) or _source_problem(one.source) or (
             "test must name a test inside the file as pytest does: test_x, TestX::test_x or test_x[case]"
             if one.test and not _NODE.fullmatch(one.test) else "")
@@ -501,11 +503,8 @@ def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *
     from contextlib import nullcontext
     from g6.harness import behaviour_runner
 
-    generated = behaviour_runner.bindings(source)
-    if source.startswith(behaviour_runner.CONFIRMED) and generated is None:
-        return {'verdict': 'not_run', 'said': 'G6_E_OBSERVATION_UNAVAILABLE: missing confirmed executable bindings'}
-    owned = generated is not None and (source.startswith(behaviour_runner.CONFIRMED) or
-                                       generated[0] == "differential.v1" or "_program" in generated[1])
+    generated = source.observation if type(source) is behaviour_runner.ExecutableSource else None
+    owned = generated is not None
     overlay = {} if owned else {placed: source}
     if at_base and not owned:
         return repo_tests.run_at_base(change, [node], roots=roots, timeout_s=timeout_s, overlay=overlay,
@@ -532,7 +531,7 @@ def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *
                     copied = repo_tests._copy_snapshot(copy, deadline=deadline)
                 if owned:
                     ran = repo_tests._run(copy, [node], roots=(), timeout_s=timeout_s, network=False, copied=True,
-                                          deadline=deadline, require_isolation=True, observation=generated[1])
+                                          deadline=deadline, require_isolation=True, observation=generated)
                 else:
                     ran = repo_tests._run(copy, [node], roots=roots, timeout_s=timeout_s, network=False, copied=True,
                                           python=repo_tests.interpreter(change.repo), scratch_dir=copy.parent,
