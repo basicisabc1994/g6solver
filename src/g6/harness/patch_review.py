@@ -899,12 +899,12 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
         if exc.code == ISOLATION_UNAVAILABLE and not isinstance(exc, _Refused):
             # the run's own refusal offers allowing unconfined runs, which a review would refuse anyway
             said = said.removeprefix(f"[{exc.code}] ").split(" To run such code without one")[0] + " " + BOUNDARY_HELP
-        refused = blocked_reply(f"[{exc.code}] {_one_line(said)}")
+        refused = blocked_reply(f"[{exc.code}] {said}")
         if getattr(exc, "help", ""):
             refused["warning_card"].update(suggested_action=exc.help, next_step=exc.help)
         return refused
     except (OSError, ValueError, TypeError) as exc:
-        return blocked_reply(f"[{CODE}] {_one_line(exc)}")
+        return blocked_reply(f"[{CODE}] {exc}")
 
 
 def _left(deadline: float) -> int:

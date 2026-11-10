@@ -293,11 +293,9 @@ def reviewed(review: Any, repo: str, task: str, **kwargs: Any) -> Any:
         with guard(admitted):
             return bound(reply, identity)
     except qs.StoreUnreadable as exc:
-        return blocked_reply(f"[{qs.UNREADABLE}] " + bq.caller_text(
-            str(exc).removeprefix(f"[{qs.UNREADABLE}] "), literal=False))
+        return blocked_reply(str(exc))
     except standard_publication.StandardSuperseded as exc:
-        return blocked_reply(f"[{standard_publication.CODE}] " + bq.caller_text(
-            str(exc).removeprefix(f"[{standard_publication.CODE}] "), literal=False))
+        return blocked_reply(str(exc))
 
 
 __all__ = ["CODES", "CONFIRMED", "HELD", "IDENTITY", "NOT_CONFIRMED", "NOT_THIS_REVIEW", "PENDING", "SPENT", "WHO",

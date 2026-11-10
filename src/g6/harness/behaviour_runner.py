@@ -38,6 +38,47 @@ def _fingerprint(text: str) -> dict:
     return {'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw), 'prefix': text[:200]}
 
 
+def _exception_observation(exc, errors, probe):
+    """Record the caught type first; unavailable diagnostics can never erase that observation.
+
+    Instance display hooks are not needed for type matching and are deliberately not invoked. Names are diagnostic;
+    the actual type's ancestry, read through Python's descriptor, retains the existing subtype comparison.
+    """
+    kind = type(exc)
+    unavailable = '<unavailable>'
+    one = {'raised': [id(kind)], 'raised_name': unavailable + '.' + unavailable,
+           'exception_detail': dict.fromkeys(('str', 'repr', 'arguments', 'metaclass'), unavailable)}
+    if probe:
+        one['probe'] = {'raised': one['raised_name']}
+    try:
+        relevant = set(errors.values())
+        ancestry = type.__dict__['__mro__'].__get__(kind)
+        one['raised'].extend(id(parent) for parent in ancestry if parent is not kind and id(parent) in relevant)
+    except BaseException:
+        pass
+
+    def name(field):
+        try:
+            value = getattr(kind, field)
+            # The base implementation copies a str subclass without calling its display or arithmetic hooks.
+            return str.__str__(value) if isinstance(value, str) else unavailable
+        except BaseException:
+            return unavailable
+
+    try:
+        module, qualified = name('__module__'), name('__qualname__')
+        full = module + '.' + qualified
+        one['raised_name'] = full if len(full) <= 200 else full[:197] + '...'
+        if probe:
+            shown = qualified if module == 'builtins' else full
+            text = json.dumps(shown, sort_keys=True)
+            one['probe'] = {'raised': shown if len(text) <= 500 else {
+                'sha256': hashlib.sha256(text.encode('utf-8')).hexdigest(), 'start': text[:200]}}
+    except BaseException:
+        pass
+    return one
+
+
 class Activity(dict):
     """Process-local probe custody; JSON contains exactly the activity's existing fields."""
 
@@ -91,7 +132,8 @@ def probe_sha256() -> str:
     return hashlib.sha256(BOOTSTRAP.encode("utf-8")).hexdigest()
 
 # Loaded before any repository module. There is no site initialisation, PYTHONPATH, pytest, plugin or ini reader.
-BOOTSTRAP = inspect.getsource(observable_exception) + '\n' + inspect.getsource(_fingerprint) + r'''
+BOOTSTRAP = (inspect.getsource(observable_exception) + '\n' + inspect.getsource(_fingerprint) + '\n'
+             + inspect.getsource(_exception_observation)) + r'''
 import builtins, collections.abc, copy, hashlib, importlib, importlib.machinery, json, os, re, struct, sys
 def _name(kind):
     module = getattr(kind, "__module__", None) or ""
@@ -200,17 +242,7 @@ for call in data["calls"]:
     try:
         result = function(*args, **kwargs)
     except BaseException as exc:
-        if not observable_exception(kind_of(exc), resolved=True):
-            raise
-        observed_type = kind_of(exc)
-        relevant = set(errors.values())
-        raised = [identity(observed_type), *(identity(t) for t in observed_type.__mro__
-                                            if identity(t) in relevant and t is not observed_type)]
-        name = observed_type.__module__ + "." + observed_type.__qualname__
-        one = {"raised": raised, "raised_name": name if len(name) <= 200 else name[:197] + "..."}
-        if data["probe"]:
-            one["probe"] = {"raised": _bounded(_name(observed_type))}
-        outcomes.append(one)
+        outcomes.append(_exception_observation(exc, errors, data['probe']))
     else:
         one = {"returned": encode(result), "arguments": [encode(arg) for arg in args]}
         if data["probe"]:
@@ -260,6 +292,14 @@ def read_frame(raw: bytes) -> dict | None:
             if not isinstance(one, dict):
                 return None
             fields = set(one) - {"probe"}
+            if 'exception_detail' in fields:
+                detail = one['exception_detail']
+                if (value['version'] != 'observation.v2'
+                        or fields != {'raised', 'raised_name', 'exception_detail'}
+                        or not isinstance(detail, dict) or set(detail) != {'str', 'repr', 'arguments', 'metaclass'}
+                        or any(not isinstance(text, str) or len(text) > 200 for text in detail.values())):
+                    return None
+                fields.remove('exception_detail')
             if fields == {"returned", "arguments"}:
                 if not isinstance(one['arguments'], list):
                     return None
