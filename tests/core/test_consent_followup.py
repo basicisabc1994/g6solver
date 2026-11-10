@@ -1012,7 +1012,7 @@ AROUND_MODULES = ("mcp/__init__.py", "mcp/improve.py", "metaharness/runner.py")
 #: reads its folder back after it. Every function that calls one of these is in ``AROUND``, with each of its exits.
 _PATH = {"subprocess.Popen", "process.communicate", "_run_act", "_read_act", "_spawn", "_watch", "improve.act",
          "improve.start", "improve.stop", "act", "as_recorded", "on_record", "_on_record", "_read_back",
-         "_start_on_record", "_start_as_recorded", "_stop_on_record", "ask_to_stop", "loop.enrol", "loop.resume",
+         "_start_on_record", "_start_as_recorded", "_stop_on_record", "_stop_read_back", "ask_to_stop", "loop.enrol", "loop.resume",
          "loop.demote"}
 #: Where, in a function that has one, the act's process starts or the act first writes: an exit before it is ``BEFORE``.
 MARKERS = {("mcp/improve.py", "act"): "_run_act", ("mcp/improve.py", "_run_act"): "process.communicate",
@@ -1060,7 +1060,7 @@ def _on_path() -> dict[tuple[str, str], ast.AST]:
 
 #: The read-backs themselves: each reads the folder after an act, or builds a reply from what was read.
 READBACKS = {"_on_record", "_read_back", "_start_on_record", "_start_as_recorded", "_stop_on_record", "on_record",
-             "as_recorded"}
+             "_stop_read_back", "as_recorded"}
 #: Handed on: a value another exit in this table reads back, by a rule the test below checks from the code.
 HANDED, ITSELF, NOT_KNOWN = "handed", "itself", "not known"
 _TOOLS = "_metaharness_tools"
@@ -1112,9 +1112,19 @@ AROUND = {
     ("mcp/improve.py", "_start_as_recorded", "return {**reply, 'recorded': found}"): ("after", ITSELF),
     ("mcp/improve.py", "_start_on_record",
      "return {'the start': bool(ours) and (not stop_standing(root, started))}"): ("after", ITSELF),
-    ("mcp/improve.py", "_stop_on_record", "except (OSError, LedgerError) around log = _log(root)"): ("after", ITSELF),
+    ("mcp/improve.py", "_stop_on_record", "except BaseException around appeared = bool(stop_reason(root)) if be"): ("after", ITSELF),
+    ("mcp/improve.py", "_stop_on_record", "except BaseException around log = _log(root)"): ("after", ITSELF),
+    ("mcp/improve.py", "_stop_on_record", "except BaseException around own = True if canonical_id == '' else ca"): ("after", ITSELF),
+    ("mcp/improve.py", "_stop_on_record", "except BaseException around count = _stop_entry_on_record(root, STOP"): ("after", ITSELF),
+    ("mcp/improve.py", "_stop_on_record", "except BaseException around line = _stop_entry_on_record(root, STOP_"): ("after", ITSELF),
+    ("mcp/improve.py", "_stop_on_record", "except BaseException around stop_entry, count_entry = entries if ent"): ("after", ITSELF),
     ("mcp/improve.py", "_stop_on_record",
      "return {'the stop': stands, 'its line in the STOP file': line, 'its count in "): ("after", ITSELF),
+    ("mcp/improve.py", "_stop_read_back", "return (found, running, snapshot)"): ("after", ITSELF),
+    ("mcp/improve.py", "_stop_read_back", "except BaseException around snapshot = canonical_stops(root, complet"): ("after", ITSELF),
+    ("mcp/improve.py", "_stop_read_back", "except BaseException around running = runner_alive(root)"): ("after", ITSELF),
+    ("mcp/improve.py", "_stop_read_back", "except BaseException around found = _stop_on_record(root, before, id"): ("after", ITSELF),
+    ("mcp/improve.py", "_stop_read_back", "except BaseException around record_stop(root, why, at=datetime.now()"): ("after", ITSELF),
     ("mcp/improve.py", "_watch",
      "return _blocked(START_FAILED, f'the runner ended as it started, with exit cod"): ("after", HANDED),
     ("mcp/improve.py", "_watch",
@@ -1132,11 +1142,9 @@ AROUND = {
      "except (OSError, LedgerError, WorkspaceRefused, ValueError) around now = _terms(root)"): ("after", "_start_as_recorded"),
     ("mcp/improve.py", "start", "return _start_as_recorded(root, ident, reply) if ident else reply"): ("after", "_start_as_recorded"),
     ("mcp/improve.py", "stop", "return _not_a_loop(root)"): ("before", ""),
-    ("mcp/improve.py", "stop", "except OSError around why = ask_to_stop(root, reason, record_i"): ("after", "_stop_on_record"),
-    ("mcp/improve.py", "stop",
-     "return _blocked(STOP_FAILED, f'the stop is not known to stand; {_record_said("): ("after", "_stop_on_record"),
-    ("mcp/improve.py", "stop",
-     "return _envelope('qualified-draft', STOP_ASKED, f'{said}; {_record_said(found"): ("after", "_stop_on_record"),
+    ("mcp/improve.py", "stop", "except OSError around why = ask_to_stop(root, reason, _identit"): ("after", "_stop_read_back"),
+    ("mcp/improve.py", "stop", "except (OSError, ValueError) around possible_loop = _is_a_loop(root, raise_e"): ("before", ""),
+    ("mcp/improve.py", "stop", "return reply"): ("after", "_stop_read_back"),
     ("metaharness/runner.py", "act", "return as_recorded(request, refused)"): ("after", "as_recorded"),
     ("metaharness/runner.py", "act",
      "return as_recorded(request, _blocked(TERMS_CHANGED, f'{SETTINGS_FILE} changed"): ("after", "as_recorded"),
@@ -1297,7 +1305,7 @@ PARTS = {
     ("mcp/improve.py", "_stop_on_record", "its note in the constraint log"): {"log.record"},
 }
 #: What a reply's ``recorded`` may be set from: a read-back's result, or ``None``, which is not known.
-_SOURCES = {"on_record", "_on_record", "_start_on_record", "_stop_on_record", "_read_back"}
+_SOURCES = {"on_record", "_on_record", "_start_on_record", "_stop_on_record", "_stop_read_back", "_read_back"}
 
 
 def _recorded_sites():
@@ -1831,6 +1839,8 @@ PATH_PLACES = {
     ("mcp/improve.py", "_stands_alone"): (THE_RULE, 2, "names the two predicates it does not use, and why"),
     ("mcp/improve.py", "_import_path"): (BY_RULE, 1, "the server's one root as an absolute argument"),
     ("mcp/improve.py", "<module>"): (FROM_RULE, 3, "the bootstrap inserts the exact roots from its list argument"),
+    ("self_maintenance/envelope.py", "canonical_stops"): (NOT_IMPORT, 1,
+        "a pending stop's locator must have its working-directory scope before process admission can proceed"),
     ("metaharness/runner.py", "_g6_terms"): (WORDS, 1, "what a pinned interpreter's act names as its G6"),
     ("cegis/runner.py", "<module>"): (MADE_WHOLE, 2, "the cegis child (-I) appends the folder of the server's g6, "
                                                      "resolved in the parent"),
@@ -1984,3 +1994,28 @@ def test_a_childs_import_path_that_does_not_decide_by_the_rule_is_in_a_file_a_ce
     for (rel, _), (kind, _, _) in PATH_PLACES.items():
         if kind == BOUND:
             assert any(f'"g6/{rel}"' in text for text in certificates), f"no certificate binds {rel}: apply the rule"
+
+
+def test_stop_receipt_tuple_contains_only_reads_or_explicit_unknowns():
+    function = _defs("mcp/improve.py")["_stop_read_back"]
+    assigned = _assigned(function)
+    returned = [node.value for node in _own(function) if isinstance(node, ast.Return)]
+    assert len(returned) == 1 and isinstance(returned[0], ast.Tuple)
+    assert [ast.unparse(part) for part in returned[0].elts] == ["found", "running", "snapshot"]
+    parts = {part for rel, name, part in PARTS if name == "_stop_on_record"}
+    for name, reader in (("found", "_stop_on_record"), ("running", "runner_alive"), ("snapshot", "canonical_stops")):
+        assert assigned[name]
+        for value in assigned[name]:
+            if isinstance(value, ast.Constant):
+                assert value.value is None and name != "found"
+            elif isinstance(value, ast.Dict):
+                assert name == "found" and {key.value for key in value.keys} == parts
+                assert all(isinstance(item, ast.Constant) and item.value is None for item in value.values)
+            else:
+                assert reader in _reads(value, assigned), name
+        guarded = [node for node in ast.walk(function) if isinstance(node, ast.Try)
+                   and any(isinstance(handler.type, ast.Name) and handler.type.id == "BaseException"
+                           for handler in node.handlers)
+                   and any(isinstance(call, ast.Call) and ast.unparse(call.func) == reader
+                           for statement in node.body for call in ast.walk(statement))]
+        assert guarded, f"{reader} is outside the receipt's exception boundary"

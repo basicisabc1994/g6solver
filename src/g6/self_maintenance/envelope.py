@@ -24,6 +24,7 @@ cut off at its own reservation is blocked and on the record, and in no streak: t
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -44,8 +45,8 @@ STOPS_FILE = "stops.log"
 STOP_RECORDS = "stop_records"
 STOP_DENIED = "stop.denied"
 # A refusal before even the independent directory can be made also holds this process.
-_STOP_UNCERTAIN: set[Path] = set()
-_STOP_UNRESOLVED: set[Path] = set()
+_STOP_PENDING: dict[object, str | Path] = {}
+
 REFUSED_FILE = "refused.log"
 DIGEST_LENGTH = 64                      # of a SHA-256, in hex
 HEARTBEAT_FILE = "heartbeat.json"
@@ -72,6 +73,24 @@ ENROLMENT_CHANGED = "G6_E_LOOP_ENROLMENT_CHANGED"
 NOT_THE_AGREED_ENROLMENT = ("the enrolment on record is not the one the person agreed to at the last start, so nothing "
                             "more runs on that start: g6_improve_start shows them the enrolment that stands "
                             f"({ENROLMENT_CHANGED})")
+
+
+def _begin_stop(root: str | Path) -> object:
+    """Install a process denial before path work, entropy, clocks, rendering or I/O.
+
+    A fresh function object supplies identity without calling a helper or reading
+    a clock or randomness source. It is never executed. Dictionary insertion and removal
+    use that object's identity; equal folder values do not share an entry.
+    """
+    def token():
+        pass
+    _STOP_PENDING[token] = root
+    return token
+
+
+def _finish_stop(token: object) -> None:
+    """Completion releases only this request, never another request's folder."""
+    _STOP_PENDING.pop(token, None)
 
 
 def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dict]) -> list[str]:
@@ -296,18 +315,29 @@ def _canonical_stops_on_disk(root: str | Path, expected: bytes | None = None) ->
         return None
 
 
-def canonical_stops(root: str | Path) -> str | None:
-    """Use the same resolved folder identity for every admission and every in-process refusal."""
+def canonical_stops(root: str | Path, *, completing: object = None) -> str | None:
+    """Every pending or failed request denies its folder, including alternate spellings."""
     try:
         resolved = Path(root).resolve()
-        if resolved in _STOP_UNCERTAIN:
-            return None
-        for held in tuple(_STOP_UNRESOLVED):
+        for token, held in tuple(_STOP_PENDING.items()):
+            if token is completing:
+                continue
+            # An unresolved default locator could name this folder. Until its
+            # selection completes, no admission may assume that it names another.
+            if isinstance(held, str) and not held.strip():
+                return None
+            locator = Path(held)
+            if not locator.is_absolute():
+                return None  # failed before its working-directory scope was captured
             try:
-                if held.resolve() == resolved:
+                if locator.resolve() == resolved:
                     return None
-            except (OSError, ValueError):
-                continue  # an unusable, different locator cannot identify this folder
+            except ValueError:
+                continue  # an intrinsically invalid locator cannot name a folder
+            except OSError as exc:
+                if exc.errno in (errno.EINVAL, errno.ENAMETOOLONG) or getattr(exc, "winerror", None) in (123, 206):
+                    continue  # the operating system cannot represent this locator
+                return None  # an unreadable alias might name this very folder
         return _canonical_stops_on_disk(resolved)
     except BaseException:
         return None
@@ -323,33 +353,33 @@ def canonical_stop_reason(root: str | Path, start: Mapping[str, Any] | None) -> 
 
 
 def canonical_stop_record(root: str | Path, ident: str | None) -> bool | None:
-    """Read this request's canonical identity, never borrowing a timestamp or another stop's note."""
+    """Read this request's disk identity, never borrowing a timestamp or another stop's note.
+
+    This is a receipt observation. Admission additionally checks every pending or
+    failed request through ``canonical_stops``; a receipt cannot clear that gate.
+    """
     if not ident:
         return False
-    if canonical_stops(root) is None:
+    if _canonical_stops_on_disk(root) is None:
         return None
     try:
         held = (Path(root) / STOP_RECORDS / ident / "stop.json").read_bytes()
         return json.loads(held.decode("ascii"))["id"] == ident and _canonical_stops_on_disk(root, held) is not None
     except FileNotFoundError:
         return False
-    except (OSError, ValueError, KeyError, TypeError):
+    except BaseException:
         return None
 
 
-def _establish_stop(root: Path) -> tuple[list[str], str | None]:
+def _establish_stop(root: Path) -> tuple[list[str], str | None, Path]:
     """Use only G6's own id/time. The directory is the independent gate if any record byte or flush fails."""
-    root = root.absolute()
-    original = root
-    _STOP_UNCERTAIN.add(root)
+    denial = _begin_stop(root)
+    durable_id = None
     try:
-        try:
-            root = root.resolve()
-        except BaseException:
-            _STOP_UNRESOLVED.add(original)
-            raise
-        _STOP_UNCERTAIN.discard(original)
-        _STOP_UNCERTAIN.add(root)
+        root = root.absolute()
+        _STOP_PENDING[denial] = root
+        root = root.resolve()
+        _STOP_PENDING[denial] = root
         folder = root / STOP_RECORDS
         folder.mkdir(exist_ok=True)
         ident = uuid4().hex
@@ -366,14 +396,13 @@ def _establish_stop(root: Path) -> tuple[list[str], str | None]:
                     raise OSError("canonical stop write made no progress")
                 offset += written
             os.fsync(descriptor)
+            durable_id = ident
         finally:
             os.close(descriptor)
         if (record / "stop.json").read_bytes() != data or _canonical_stops_on_disk(root, data) is None:
             raise OSError("the complete canonical stop did not read back by its chosen bytes")
-        _STOP_UNCERTAIN.discard(original)
-        _STOP_UNCERTAIN.discard(root)
-        _STOP_UNRESOLVED.discard(original)
-        return [], ident
+        _finish_stop(denial)
+        return [], ident, root
     except BaseException as exc:
         # The reservation directory remains across restarts. A file marker uses a separate creation primitive
         # if directory creation failed; failure of both markers keeps the process gate shut.
@@ -393,7 +422,7 @@ def _establish_stop(root: Path) -> tuple[list[str], str | None]:
                     raise OSError("the independent count gate did not read back")
             except BaseException:
                 pass
-        return [f"G6_E_LOOP_STOP_CANONICAL_FAILED: {type(exc).__name__}"], None
+        return [f"G6_E_LOOP_STOP_CANONICAL_FAILED: {type(exc).__name__}"], durable_id, root
 
 
 def stop_reason(root: str | Path) -> str:
@@ -531,10 +560,15 @@ def stop_entries(reason: str, ident: str) -> tuple[str, str]:
 
 
 class StopReceipt(str):
-    def __new__(cls, text: str, details: list[str], canonical_id: str | None = None):
+    def __new__(cls, text: str, details: list[str], canonical_id: str | None = None,
+                *, record_id: str = "", established: bool = False,
+                entries: tuple[str, str] | None = None):
         result = super().__new__(cls, text)
         result.details = "; " + "; ".join(details) if details else ""
         result.canonical_id = canonical_id
+        result.record_id = record_id
+        result.established = established
+        result.entries = entries
         return result
 
     def __str__(self):
@@ -543,15 +577,27 @@ class StopReceipt(str):
 
 def ask_to_stop(root: str | Path, reason: str = "", *, record_id: str | None = None) -> str:
     """The Python stop API preserves cancellation; its canonical gate already stands before legacy writes."""
-    return _ask_to_stop(root, reason, record_id=record_id, managed=False)
+    denial = _begin_stop(root)
+    try:
+        return _ask_to_stop(root, reason, record_id=record_id, managed=False, _denial=denial)
+    finally:
+        if getattr(denial, "established", False):
+            _finish_stop(denial)
 
 
-def ask_to_stop_receipt(root: str | Path, reason: str = "", *, record_id: str | None = None) -> str:
+def ask_to_stop_receipt(root: str | Path, reason: str = "", *, record_id: str | None = None,
+                        _identity: Any = None) -> str:
     """The managed entry returns its own receipt even for cancellation, without retrying or borrowing identity."""
-    return _ask_to_stop(root, reason, record_id=record_id, managed=True)
+    denial = _begin_stop(root)
+    try:
+        return _ask_to_stop(root, reason, record_id=record_id, managed=True, _denial=denial, _identity=_identity)
+    finally:
+        if getattr(denial, "established", False):
+            _finish_stop(denial)
 
 
-def _ask_to_stop(root: str | Path, reason: str = "", *, record_id: str | None, managed: bool) -> str:
+def _ask_to_stop(root: str | Path, reason: str = "", *, record_id: str | None, managed: bool, _denial: Any,
+                 _identity: Any = None) -> str:
     """Add this stop to the ``STOP`` file, making it if need be, so the first reason stands and repeating is safe. It kills
     nothing: the runner reads the file before each model call and ends itself. It returns why the folder is stopped.
 
@@ -566,11 +612,17 @@ def _ask_to_stop(root: str | Path, reason: str = "", *, record_id: str | None, m
     the stop reached the records, and it is all there is of a stop that dies before its file is written, which a tick and a
     runner read as a stop (``stop_standing``). A failed legacy count does not affect the canonical gate."""
     root = Path(root)
-    errors, canonical_id = _establish_stop(root)  # no caller text is inspected before this gate and record
+    errors, canonical_id, root = _establish_stop(root)
+    _STOP_PENDING[_denial] = root  # keep the scope captured before any later working-directory change
     if errors:
-        return StopReceipt("G6_E_LOOP_STOP_STATE_UNREADABLE: admission is denied", errors)
+        return StopReceipt("G6_E_LOOP_STOP_STATE_UNREADABLE: admission is denied", errors, canonical_id)
+    _denial.established = True  # a cancellation may release this latch, never the durable stop
+    ident = canonical_id
     try:
-        ident = utf8_text(record_id) if record_id is not None and str.__len__(record_id) else uuid4().hex
+        # The managed caller supplies its existing allocator, but no identifier
+        # is drawn until the independent canonical stop has read back.
+        ident = (utf8_text(record_id) if record_id is not None and str.__len__(record_id)
+                 else (_identity if _identity is not None else uuid4)().hex)
         plain = str.__str__(reason)
         stop_entry, count_entry = stop_entries(plain, ident)
         if utf8_text(plain) != plain:
@@ -579,7 +631,9 @@ def _ask_to_stop(root: str | Path, reason: str = "", *, record_id: str | None, m
         if not managed and not isinstance(exc, Exception):
             raise  # raw Python cancellation propagates after the independent stop stands
         errors.append(f"G6_E_LOOP_STOP_REASON_FAILED: {type(exc).__name__}")
-        stop_entry, count_entry = stop_entries("", uuid4().hex)
+        stop_entry = f"stopped through g6_improve_stop\n{canonical_id}\n"
+        count_entry = f"stopped through g6_improve_stop {canonical_id}\n"
+        ident = canonical_id
     try:
         with open(Path(root) / STOPS_FILE, "a", encoding="utf-8", newline="\n") as stops:
             stops.write(count_entry)
@@ -601,7 +655,7 @@ def _ask_to_stop(root: str | Path, reason: str = "", *, record_id: str | None, m
             raise  # raw Python cancellation propagates after the independent stop stands
         why = "G6_E_LOOP_STOP_STATE_UNREADABLE: admission is denied"
         errors.append(f"G6_E_LOOP_STOP_READ_FAILED: {type(exc).__name__}")
-    return StopReceipt(why, errors, canonical_id)
+    return StopReceipt(why, errors, canonical_id, record_id=ident, established=True, entries=(stop_entry, count_entry))
 
 
 def note_refusal(root: str | Path, request: str, said: str) -> None:
@@ -632,9 +686,9 @@ def record_stop(root: str | Path, reason: str, *, at: str, record_id: str | None
     loop, so this never gets in its way: records that do not read, or a tick holding them, leave the note for later, and
     a runner notes its own stop as it ends."""
     path = Path(root) / CYCLE_LOG
-    if not path.is_file():
-        return
     try:
+        if not path.is_file():
+            return
         with Coordination(Path(root) / ".tick").mutex(wait=0):
             log = CycleLog(path)
             if log.start_in_force():

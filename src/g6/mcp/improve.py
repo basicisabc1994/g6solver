@@ -56,6 +56,7 @@ import g6
 from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, is_allowed
 from g6.core.ledger import LedgerError, digest as digest_of
 from g6.core.storage import g6_home
+from g6.core.reliability_envelope import envelope_fields, warning_card
 from g6.invariants import ERROR_CODE_PATTERN
 from g6.mcp.consent import question as _question
 from g6.metaharness.api import _blocked, _envelope
@@ -67,6 +68,9 @@ from g6.self_maintenance.envelope import (
     STOP_FILE,
     STOPS_FILE,
     CycleLog,
+    _begin_stop,
+    _finish_stop,
+    _STOP_PENDING,
     ask_to_stop_receipt as ask_to_stop,
     canonical_stop_record,
     canonical_stop_reason,
@@ -142,10 +146,11 @@ def refused() -> dict | None:
                          f"allow it, by adding {WHO} (or metaharness) to {SENSITIVE_ENV} where the server is registered")
 
 
-def _root(folder: str) -> Path:
+def _root(folder: str, *, stop_request: bool = False) -> Path:
     """The folder named, or the default: beside G6's state folder and not in it, since the server, the completion loop and
     test runs all write there, and nothing but the loop writes here. A loop already in the earlier default stays where it
-    is, so that a stop with no folder named still reaches its runner."""
+    is, so that a stop with no folder named still reaches its runner. A stop leaves an unreadable default selection
+    unresolved and denied, rather than silently choosing a different folder."""
     if folder.strip():
         try:
             return Path(folder).expanduser().resolve()
@@ -153,14 +158,17 @@ def _root(folder: str) -> Path:
             return Path(folder)  # malformed locators are refused by _is_a_loop without touching their state
     home = g6_home()
     default, earlier = home.with_name(f"{home.name}-improve"), home / "improve"
-    return earlier if _is_a_loop(earlier) and not _is_a_loop(default) else default
+    return earlier if _is_a_loop(earlier, raise_errors=stop_request) and not _is_a_loop(
+        default, raise_errors=stop_request) else default
 
 
-def _is_a_loop(root: Path) -> bool:
+def _is_a_loop(root: Path, *, raise_errors: bool = False) -> bool:
     """Its settings, its records or a runner's lock: a runner must stay within reach with the first two gone."""
     try:
         return (root / SETTINGS_FILE).is_file() or (root / CYCLE_LOG).is_file() or (root / RUNNER_LOCK).is_dir()
     except (OSError, ValueError):
+        if raise_errors:
+            raise
         return False
 
 
@@ -791,11 +799,12 @@ def _read_act(code: int | None, out: str, err: str = "", *, act_name: str | None
                     reply_state=reply["completion_state"] if reply is not None else None, **extra)
 
 
-def _stop_entry_on_record(root: Path, name: str, entry: str) -> bool | None:
+def _stop_entry_on_record(root: Path, name: str, entry: str | None) -> bool | None:
     """Read the complete bytes written with this stop's identity. Partial text, an empty file and another stop's bytes
     are not its entry. An unreadable file is unknown, never a successful write."""
     try:
-        return entry.encode("utf-8") in (root / name).read_bytes()
+        held = (root / name).read_bytes()
+        return entry is not None and entry.encode("utf-8") in held
     except (FileNotFoundError, NotADirectoryError):
         return False
     except OSError:
@@ -823,67 +832,142 @@ def _stop_before(root: Path) -> dict[str, Any]:
 
 
 def _stop_on_record(root: Path, before: dict[str, Any], ident: str, reason: str,
-                    canonical_id: str | None = "") -> dict[str, bool | None]:
-    """Read every part from its own bytes or ledger row: the two complete entries written with ``ident``, and the
-    constraint-log row with that id. The stop's effect uses the runner's stop rule too: an empty STOP file may stop a
-    runner even when this stop's line never landed. Unreadable parts are unknown, independently."""
-    stop_entry, count_entry = stop_entries(reason, ident)
-    line = _stop_entry_on_record(root, STOP_FILE, stop_entry)
-    count = _stop_entry_on_record(root, STOPS_FILE, count_entry)
+                    canonical_id: str | None = "", *,
+                    entries: tuple[str, str] | None = None) -> dict[str, bool | None]:
+    """Read each part independently; one unreadable part never erases another receipt."""
+    try:
+        stop_entry, count_entry = entries if entries is not None else (
+            stop_entries(reason, ident) if ident else (None, None))
+    except BaseException:
+        rendered = False
+        stop_entry = count_entry = None
+    else:
+        rendered = True
+    try:
+        line = _stop_entry_on_record(root, STOP_FILE, stop_entry) if rendered else None
+    except BaseException:
+        line = None
+    try:
+        count = _stop_entry_on_record(root, STOPS_FILE, count_entry) if rendered else None
+    except BaseException:
+        count = None
     started = before["started"]
+    try:
+        own = (True if canonical_id == "" else canonical_stop_record(root, canonical_id))
+    except BaseException:
+        own = None
     try:
         log = _log(root)
         note = canonical_id is not None and log is not None and log.record("stopped", ident) is not None
         in_force = log is not None and log.start_in_force()
-        ended = True if note else (started is not None and (not in_force or bool(stop_standing(root, started)))
-                                   and (canonical_id == "" or canonical_stop_record(root, canonical_id) is True)
-                                   if before["records"] else None)          # its note is written only to end a start
-    except (OSError, LedgerError):
+        if note:
+            ended = bool(note)
+        elif not before["records"] or own is None:
+            ended = None
+        else:
+            ended = started is not None and own and (not in_force or bool(stop_standing(root, started)))
+    except BaseException:
         note = ended = None
-    appeared = (bool(stop_reason(root)) if before["missing"] is True and line is not None else
-                False if before["missing"] is False else None)
+    try:
+        appeared = (bool(stop_reason(root)) if before["missing"] is True and line is not None else
+                    False if before["missing"] is False else None)
+    except BaseException:
+        appeared = None
     stands = (False if canonical_id is None else
               True if line or ended or appeared else None if line is None or ended is None or appeared is None else False)
     return {"the stop": stands, "its line in the STOP file": line, "its count in stops.log": count,
             "its note in the constraint log": note}
 
 
+def _stop_reply(state: str, code: str, message: str, *, canonical_id: str | None,
+                next_action: str = "", **extra: Any) -> dict:
+    """Use the library's envelope builders without reading fresh entropy after a stop.
+
+    A known canonical identity also names this operation's envelope. If no identity
+    could be drawn, the library's empty-id defaults say so without inventing one.
+    """
+    card = warning_card(code, message, next_action or None)
+    fields = envelope_fields(reliability_label=state, warning_card=card,
+                             request_id=(canonical_id or "")[:12], run_id=canonical_id or "", evidence=[])
+    if next_action:
+        fields["recommended_next_steps"] = [next_action]
+    return {**fields, "code": code, "message": message, "next_action": next_action, **extra}
+
+
+def _stop_read_back(root: Path, before: dict[str, Any], ident: str, reason: str, why: str,
+                    canonical_id: str | None, denial: object) -> tuple[dict, bool | None, str | None]:
+    """The post-write receipt boundary, including the note's reads and runner metadata.
+
+    Canonical establishment has its own guarded read-back before caller text.
+    Here every observation is independent. An unreadable runner is unknown,
+    never described as absent, and every outcome retains the canonical identity.
+    """
+    if why and canonical_id is not None and ident:
+        try:
+            record_stop(root, why, at=datetime.now().astimezone().isoformat(), record_id=ident)
+        except BaseException:
+            pass  # the note is claimed only by the independent read below
+    try:
+        running = runner_alive(root)
+    except BaseException:
+        running = None
+    try:
+        found = _stop_on_record(root, before, ident, reason, canonical_id,
+                                entries=getattr(why, "entries", None))
+    except BaseException:
+        found = {"the stop": None, "its line in the STOP file": None, "its count in stops.log": None,
+                 "its note in the constraint log": None}
+    try:
+        snapshot = canonical_stops(root, completing=denial)
+    except BaseException:
+        snapshot = None
+    return found, running, snapshot
+
+
 def stop(folder: str, reason: str = "") -> dict:
-    """Write the stop and say whether the runner has gone, as the folder holds the stop once it is written, read back
-    (``_stop_on_record``), whichever of its writes failed: a stop is asked when it is on record, and failed when it is not
-    or cannot be read, since a stop asked again is safe and one taken for standing that does not is not."""
-    root = _root(folder)
-    if not _is_a_loop(root):
+    """Deny first, establish the canonical stop, then report independently read parts."""
+    denial = _begin_stop(folder)
+    root = _root(folder, stop_request=True)
+    _STOP_PENDING[denial] = root
+    try:
+        possible_loop = _is_a_loop(root, raise_errors=True)
+    except (OSError, ValueError):
+        possible_loop = True  # unreadable metadata cannot prevent this folder's durable stop
+    if not possible_loop:
         return _not_a_loop(root)
     before = _stop_before(root)
-    ident = uuid4().hex                         # the row's identity, separate from its time
     failed, why = None, ""
     try:
-        why = ask_to_stop(root, reason, record_id=ident)
+        why = ask_to_stop(root, reason, _identity=uuid4)
     except OSError as exc:
         failed = exc
-    why = why or (stop_standing(root, before["started"]) if before["started"] else "")
-    canonical_id = getattr(why, "canonical_id", "")
-    if why and canonical_id is not None:
-        record_stop(root, why, at=datetime.now().astimezone().isoformat(), record_id=ident)
-    running = runner_alive(root)
-    found = _stop_on_record(root, before, ident, reason, canonical_id)
+    canonical_id = getattr(why, "canonical_id", None)
+    ident = getattr(why, "record_id", "")
+    found, running, snapshot = _stop_read_back(root, before, ident, reason, why, canonical_id, denial)
     raised = f"; writing it raised {type(failed).__name__}: {failed}" if failed is not None else ""
     raised = utf8_text(raised) + getattr(why, "details", "")
     if before["started"] and found["its note in the constraint log"] is not True:
         raised += "; G6_E_LOOP_STOP_NOTE_FAILED: the stop note did not read back"
+    if running is None:
+        raised += "; G6_E_LOOP_STOP_RUNNER_UNREADABLE: runner liveness is unknown"
     if found["the stop"] is not True:
-        return _blocked(STOP_FAILED, f"the stop is not known to stand; {_record_said(found)}{raised}"[:400],
-                        running=running, folder=utf8_text(str(root)), recorded=found, canonical_stop=canonical_stops(root),
-                        canonical_stop_id=canonical_id or None)
-    said = ("the runner has been asked to stop and is still alive: it ends once it sees the STOP file, at its next model "
-            "call, or within a minute while it waits" if running else "no runner is alive")
-    return _envelope("qualified-draft", STOP_ASKED, f"{said}; {_record_said(found)}{raised}"[:500], running=running,
-                     stopped=not running, stop=why, folder=utf8_text(str(root)), recorded=found,
-                     canonical_stop=canonical_stops(root),
-                     canonical_stop_id=canonical_id or None,
-                     next_action="g6_improve_status says when it has gone." if running else
-                     "g6_improve_start starts it again, and lifts the stop once the person agrees.")
+        reply = _stop_reply("blocked-escalated", STOP_FAILED,
+                            f"the stop is not known to stand; {_record_said(found)}{raised}"[:400], canonical_id=canonical_id,
+                            running=running, folder=utf8_text(str(root)), recorded=found, canonical_stop=snapshot,
+                            canonical_stop_id=canonical_id or None)
+    else:
+        said = ("the runner has been asked to stop and is still alive: it ends once it sees the STOP file, at its next model "
+                "call, or within a minute while it waits" if running else
+                "no runner is alive" if running is False else "runner liveness is unknown")
+        reply = _stop_reply("qualified-draft", STOP_ASKED, f"{said}; {_record_said(found)}{raised}"[:500],
+                            canonical_id=canonical_id, running=running,
+                            stopped=None if running is None else not running, stop=why, folder=utf8_text(str(root)),
+                            recorded=found, canonical_stop=snapshot, canonical_stop_id=canonical_id or None,
+                            next_action="g6_improve_status says when it has gone." if running is not False else
+                            "g6_improve_start starts it again, and lifts the stop once the person agrees.")
+    if getattr(why, "established", False):
+        _finish_stop(denial)
+    return reply
 
 
 def _shown(cycle: dict[str, Any]) -> dict[str, Any]:
