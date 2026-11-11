@@ -90,6 +90,8 @@ from g6.self_maintenance.envelope import (
     stop_standing,
 )
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
+from g6.core.consent_callers import guard
+from g6.core.cloud_consent import REQUIRED as CONSENT_REQUIRED, STATE_UNAVAILABLE as CONSENT_STATE, telling_refusals
 from g6.self_maintenance.usage import limit_ends, read_stops, refused_by, telling_stops
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
@@ -345,11 +347,15 @@ class _Requests:
         asked for, and ``sent``: of what went out, where a wrapper made that another request. Neither is sent again.
         ``generation``: the tick the request began in; a refusal that comes once that tick has closed ends nothing of the
         next, though what it refused is still never sent again."""
-        said = refused_by(str(failed))
+        consent_code = next((code for code in (CONSENT_REQUIRED, CONSENT_STATE)
+                             if str(failed).startswith(code + ':')), '')
+        said = consent_code or refused_by(str(failed))
         if said and self.limit != math.inf:
             with self._lock:
                 if generation is None or generation == self.generation:
                     self.refusal = {"said": said, "request": sent or request, "asked": request}
+                    if consent_code:
+                        self.refusal['code'] = consent_code
             for known in {request, sent or request}:
                 self.refused.add(known)
                 self.keeping(known, said)
@@ -435,9 +441,13 @@ class _Counted:
             self.requests.met_a_limit(self.requests.now() + timedelta(seconds=max(hint, 0.0)),
                                       "HTTP 429: the provider's limit was met", generation)
 
-        with counting(before_call=next_request) as noted, _gating_resends(take, limited), telling_stops(told):
+        def withheld(error: LLMError) -> None:
+            self.requests.at_a_refusal(error, asked, sent, generation)
+
+        with (counting(before_call=next_request) as noted, _gating_resends(take, limited), telling_stops(told),
+              telling_refusals(withheld)):
             try:
-                text = self.inner.complete(system, user, max_tokens=max_tokens)
+                text = guard(self.inner).complete(system, user, max_tokens=max_tokens)
             except LLMError as failed:
                 self.requests.at_a_limit(failed, generation)
                 self.requests.at_a_refusal(failed, asked, sent, generation)
@@ -935,7 +945,7 @@ class ShadowLoop:
                     "reason": "a model caller answered with no request noted, so the loop cannot count what it sends: "
                               "nothing is adopted, and a person gives it a caller that notes each request"}
         elif refusal is not None:     # a cycle, so it is on the record, and a pause, so nothing rephrases it on the next tick
-            row |= {"outcome": "blocked", "code": CLASSIFIER_STOP, "classifier_stop": refusal,
+            row |= {"outcome": "blocked", "code": refusal.get('code', CLASSIFIER_STOP), "classifier_stop": refusal,
                     "reason": f"a classifier or a permission stopped a request ({refusal['said']}): nothing is adopted, it is "
                               "not sent again, and a person reads this before the loop goes on"}
         elif limit is not None:       # a wait and no cycle, like any other: what ran is charged, and none of it counts

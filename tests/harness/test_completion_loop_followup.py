@@ -9,7 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from g6.core import keys
+from g6.core import keys, llm
+from g6.core.consent_callers import CallerWrapper
 from g6.harness import completion_loop as loop
 from g6.harness import verification_proposer as proposer
 from g6.harness import verification_search as vs
@@ -20,14 +21,43 @@ FIRST, SECOND = b"# coding: latin-1\nvalue = '\xe9'\n", b"# coding: latin-1\nval
 TASK = "Keep value equal to one"
 
 
+def test_followup_review_without_a_grant_reaches_no_fake(rig):
+    from g6.core import cloud_consent as cloud
+    cloud.revoke(cloud.repository_source(rig.repo), 'openai:api')
+    result = loop.advance(rig.repo, TASK, rig.base, rig.session, critic=rig.critic)
+    assert result.code == cloud.REQUIRED and result.ending == 'untested'
+    assert rig.sent == [] and rig.calls == []
+
+
+def test_followup_review_through_a_foreign_opaque_wrapper_reaches_no_fake(rig):
+    from g6.core import cloud_consent as cloud, consent_callers
+
+    class Foreign:
+        def __init__(self, inner):
+            self.inner = inner
+
+        def complete(self, system, user, **kwargs):
+            return self.inner.complete(system, user, **kwargs)
+
+    critic = Foreign(rig.critic)
+    assert consent_callers.destination(critic).provider == 'cloud:unknown'
+    result = loop.advance(rig.repo, TASK, rig.base, rig.session, critic=critic)
+    assert result.code == cloud.REQUIRED and result.ending == 'untested'
+    assert rig.sent == [] and rig.calls == []
+
+
 @pytest.fixture
-def rig(tmp_path, monkeypatch):
+def rig(tmp_path, monkeypatch, accepted_cloud_dialog):
     """One untracked file under review, a reviewer that answers from a script, and no test of a reviewer's ever run."""
     home, repo = tmp_path / "home", tmp_path / "repo"
     repo.mkdir()
     source = repo / "mod.py"
     source.write_bytes(b"value = 1\n")
     monkeypatch.setenv("G6_HOME", str(home))
+    from g6.core import cloud_consent as cloud
+    accepted_cloud_dialog(cloud.repository_source(repo), 'openai:api', text='synthetic repository')
+    accepted_cloud_dialog(cloud.input_source(TASK), 'openai:api', text=TASK)
+    accepted_cloud_dialog('model_inputs', 'openai:api', text=TASK)
     monkeypatch.setattr(keys, "read", lambda: {})
     monkeypatch.setattr(proposer, "boundary", lambda _: "")
     monkeypatch.setattr(loop, "_final_review", lambda *args: "Recorded final assessment.")
@@ -44,7 +74,17 @@ def rig(tmp_path, monkeypatch):
 
     monkeypatch.setattr(vs, "_run_check", never)
     world = SimpleNamespace(repo=repo, home=home, source=source, change=change, session=home / "completion_loop" / "one",
-                            base="a" * 40, calls=[], on_review=None)
+                            base="a" * 40, calls=[], sent=[], on_review=None)
+
+    def provider(respond):
+        def send(url, body, *args):
+            world.sent.append(body)
+            messages = body['messages']
+            return {'choices': [{'message': {'content': respond(messages[0]['content'], messages[1]['content'])}}]}
+        monkeypatch.setattr(llm, '_post_json', send)
+        return llm.OpenAICompatibleCaller('recorded-reviewer', base_url='https://api.openai.com/v1', api_key=None)
+
+    world.provider = provider
 
     class Clean:
         model = "recorded-reviewer"
@@ -56,7 +96,7 @@ def rig(tmp_path, monkeypatch):
             proof = re.search(r"review [0-9a-f]{32}", user)[0]
             return f"READ: {proof}\nRULE: no defect\nVERDICT: none\nWHY: no failure reproduced\n"
 
-    world.critic = Clean()
+    world.critic = provider(Clean().complete)
     monkeypatch.setattr(loop, "critic_host", lambda: world.critic)
     return world
 
@@ -87,10 +127,13 @@ def test_a_repeat_over_mcp_of_the_same_patch_gives_its_report_again_and_says_not
 
 
 def test_a_run_stopped_by_its_boundary_after_a_finding_keeps_the_finding(rig, monkeypatch):
-    class FindsOne:
+    class FindsOne(CallerWrapper):
         model = "recorded-reviewer"
 
-        def complete(self, system, user):
+        def __init__(self):
+            super().__init__(rig.provider(self.respond))
+
+        def respond(self, system, user):
             proof = re.search(r"review [0-9a-f]{32}", user)[0]
             return (f"READ: {proof}\nRULE: value must be one\nVERDICT: defect\nWHY: the value is wrong\n```python\n"
                     "def test_value():\n    assert False\n```\n")
@@ -151,10 +194,13 @@ def test_a_new_file_shown_whole_gets_no_line_naming_its_bytes(rig):
 
 
 def test_a_repeat_over_mcp_after_a_refusal_with_a_finding_and_an_edit_says_it_tested_nothing(rig, monkeypatch):
-    class FindsOne:
+    class FindsOne(CallerWrapper):
         model = "recorded-reviewer"
 
-        def complete(self, system, user):
+        def __init__(self):
+            super().__init__(rig.provider(self.respond))
+
+        def respond(self, system, user):
             rig.calls.append(user)
             proof = re.search(r"review [0-9a-f]{32}", user)[0]
             return (f"READ: {proof}\nRULE: value must be one\nVERDICT: defect\nWHY: the value is wrong\n```python\n"
@@ -226,10 +272,13 @@ def test_a_repeat_over_mcp_after_a_refusal_before_any_review_and_an_edit_says_it
 
 
 def test_a_repeat_over_mcp_of_the_patch_a_refusal_ended_on_gives_that_ending_again(rig, monkeypatch):
-    class FindsOne:
+    class FindsOne(CallerWrapper):
         model = "recorded-reviewer"
 
-        def complete(self, system, user):
+        def __init__(self):
+            super().__init__(rig.provider(self.respond))
+
+        def respond(self, system, user):
             rig.calls.append(user)
             proof = re.search(r"review [0-9a-f]{32}", user)[0]
             return (f"READ: {proof}\nRULE: value must be one\nVERDICT: defect\nWHY: the value is wrong\n```python\n"
@@ -259,7 +308,8 @@ def test_a_secret_in_a_parent_file_the_pack_cuts_never_reaches_the_reviewer(rig,
     parent = "#" * (room - 1) + "\n" + assignment
     assert secret not in scrub(parent) and secret in scrub(parent[:-2])
     monkeypatch.setattr(repo_tests, "read_at", lambda *args: parent)
-    found = loop.run_critic(rig.change, TASK, rig.critic, loop.harness().critic, rig.session / "sets" / "critic", patch=patch)
+    found = loop.run_critic(rig.change, TASK, rig.critic, loop.harness().critic, rig.session / "sets" / "critic", patch=patch,
+                            system_sources=loop.harness().sources)
     assert len(rig.calls) == 1 and secret not in rig.calls[0] and found["masked"] >= 1
     assert rig.calls[0].startswith("issue.txt:\n") and patch in rig.calls[0]       # the head the review reads stays whole
 
@@ -278,7 +328,8 @@ def test_each_span_the_scrubber_names_is_what_scrub_masks():
 
 
 def _sent(rig, patch: str, task: str = TASK) -> dict:
-    return loop.run_critic(rig.change, task, rig.critic, loop.harness().critic, rig.session / "sets" / "critic", patch=patch)
+    return loop.run_critic(rig.change, task, rig.critic, loop.harness().critic, rig.session / "sets" / "critic", patch=patch,
+                            system_sources=loop.harness().sources)
 
 
 def test_a_secret_the_diffs_line_marks_part_from_its_name_never_reaches_the_reviewer(rig):
@@ -310,7 +361,10 @@ def test_a_value_whose_name_the_hunk_leaves_out_is_found_in_the_parent_file(rig,
     assert secret not in rig.calls[0] and '+    "c": 4,' in rig.calls[0]
 
 
-def test_a_task_that_opens_a_private_key_hides_nothing_of_the_patch(rig):
+def test_a_task_that_opens_a_private_key_hides_nothing_of_the_patch(rig, accepted_cloud_dialog):
+    from g6.core.cloud_consent import input_source
+    task = "Handle invalid -----BEGIN PRIVATE KEY----- inputs"
+    accepted_cloud_dialog(input_source(task), 'openai:api', text=task)
     ended = loop.advance(rig.repo, "Handle invalid -----BEGIN PRIVATE KEY----- inputs", rig.base, rig.session,
                          critic=rig.critic)
     assert "candidate.patch:" in rig.calls[0] and "+value = 1" in rig.calls[0] and "BEGIN PRIVATE" not in rig.calls[0]

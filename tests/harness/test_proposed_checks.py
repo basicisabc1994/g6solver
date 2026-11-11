@@ -26,6 +26,8 @@ from g6.harness.patch_review import review_patch
 from g6.invariants import check_envelope
 from g6.workforce import repo_tests
 
+pytestmark = pytest.mark.usefixtures("declared_mcp_grants")
+
 BASE = "def add(a, b):\n    return a - b\n\n\ndef mul(a, b):\n    return a * b\n"
 FIXED = "def add(a, b):\n    return a + b\n\n\ndef mul(a, b):\n    return a * b\n"
 PLANTED = "def add(a, b):\n    return a + b\n\n\ndef mul(a, b):\n    return a * b + 1\n"

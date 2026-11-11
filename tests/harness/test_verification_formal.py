@@ -33,6 +33,8 @@ from g6.harness.patch_review import review_patch
 from g6.invariants import check_envelope
 from g6.workforce import repo_tests
 
+pytestmark = pytest.mark.usefixtures("declared_mcp_grants")
+
 pytest.importorskip("z3")
 
 # --- a development fixture: a wallet service; the patch drops the guard on withdrawals ----------------------------------

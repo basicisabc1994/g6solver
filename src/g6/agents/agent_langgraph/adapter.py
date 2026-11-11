@@ -141,8 +141,11 @@ def _node(node: GraphNode, llm: LLMCaller | None) -> Callable[[dict[str, Any]], 
             if os.environ.get("G6_DISABLE_LLM"):
                 raise AgentRefusal(LLM_DISABLED, "model calls are disabled by G6_DISABLE_LLM")
             assert llm is not None   # a graph with an llm node never starts without one
-            return {node.key: llm.complete(fill(node.system, state), fill(node.prompt, state),
-                                           max_tokens=DEFAULT_MAX_TOKENS)}
+            from g6.core.consent_callers import guard
+            from g6.core.cloud_consent import prompt_state
+            with prompt_state(state) as (snapshot,):
+                return {node.key: guard(llm).complete(fill(node.system, snapshot), fill(node.prompt, snapshot),
+                                               max_tokens=DEFAULT_MAX_TOKENS)}
         arguments = fill(node.arguments, state)
         return {node.key: _tools().call(node.tool, arguments, [str(p) for p in fill(list(node.paths), state)])}
     run.__name__ = f"g6_{node.op}_{node.name}"
