@@ -52,6 +52,7 @@
     "mcp:g6/g6_knowledge_delete": {"agent_facing": true, "route": "context", "since": "0.3.0"},
     "mcp:g6/g6_knowledge_job": {"agent_facing": true, "route": "context", "since": "0.3.0"},
     "mcp:g6/g6_knowledge_passage": {"agent_facing": true, "route": "context", "since": "0.3.0"},
+    "mcp:g6/g6_knowledge_paths": {"agent_facing": true, "route": "context", "since": "0.3.0"},
     "mcp:g6/g6_knowledge_refresh": {"agent_facing": true, "route": "context", "since": "0.3.0"},
     "mcp:g6/g6_knowledge_revoke": {"agent_facing": true, "route": "context", "since": "0.3.0"},
     "mcp:g6/g6_knowledge_search": {"agent_facing": true, "route": "context", "since": "0.3.0"},

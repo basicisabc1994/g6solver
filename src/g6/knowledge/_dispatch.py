@@ -60,6 +60,10 @@ def routes(store: ProjectStore) -> list[tuple[Route, str]]:
         if generation is None:
             out.append((one, "not_published: nothing is indexed for this project yet"))
             continue
+        if one.backend == "graph":   # derived on this machine from the indexed files: ready once it is built
+            built = store.graph(generation.number)[0] is not None
+            out.append((one, "" if built else f"no graph is built for generation {generation.number}"))
+            continue
         entry = generation.backends.get(one.backend)
         if entry is None:
             out.append((one, f"the {one.backend} backend is not selected for this project"))

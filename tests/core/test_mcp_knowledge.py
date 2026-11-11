@@ -20,7 +20,7 @@ from tests.knowledge.corpus import SUBJECTS
 from tests.knowledge.corpus.rig import make, serve
 
 CLAUDE = "anthropic:claude_code"
-TOOLS_ADDED = ("g6_knowledge_add", "g6_knowledge_context", "g6_knowledge_count", "g6_knowledge_delete", "g6_knowledge_job", "g6_knowledge_passage", "g6_knowledge_refresh",
+TOOLS_ADDED = ("g6_knowledge_add", "g6_knowledge_context", "g6_knowledge_count", "g6_knowledge_delete", "g6_knowledge_job", "g6_knowledge_paths", "g6_knowledge_passage", "g6_knowledge_refresh",
                "g6_knowledge_revoke", "g6_knowledge_search", "g6_knowledge_sources")
 DOCS, NOTES = SUBJECTS[0], SUBJECTS[1]
 
@@ -440,3 +440,26 @@ def test_backends_job_and_count_over_mcp(rig, monkeypatch):
         assert refused["job"]["state"] == "refused"
     finally:
         stop()
+
+
+def test_paths_over_mcp_run_only_through_sources_shared_with_the_client(rig):
+    server = build_server()
+    added, found = calls(server, [("g6_knowledge_add", {"path": str(rig.folder), "share": True}),
+                                  ("g6_knowledge_paths", {"start": "src/ledger.py", "max_hops": 2})], Dialog())
+    source = added["result"]["source"]
+    paths = found["result"]["payload"]["paths"]
+    assert [p["hops"] for p in paths] == [1, 2] and paths[0]["endpoints"] == ["src/ledger.py", "src/parser.py"]
+    edge = paths[0]["edges"][0]
+    assert edge["certainty"] == "possible" and "possible dependency" in edge["means"] and len(edge["passage_id"]) == 64
+    assert edge["source"] == source and found["completion_state"] == "qualified-draft"
+    logged = [s["item_id"] for d in cloud.disclosures() for s in d["sources"]]
+    assert edge["passage_id"] in logged, "a path's witness passage is a disclosure like any other"
+    sections = call(server, "g6_knowledge_paths", {"start": f"docs/{DOCS}.md", "relation": "contains"}).data
+    assert sections["result"]["payload"]["paths"][0]["edges"][0]["relation"] == "contains"
+    revoked, after, bad = calls(server, [
+        ("g6_cloud_revoke", {"source": f"knowledge:{source}", "provider": CLAUDE}),
+        ("g6_knowledge_paths", {"start": "src/ledger.py"}),
+        ("g6_knowledge_paths", {"start": "src/ledger.py", "relation": "calls"})])
+    assert after["result"]["payload"] == {"kind": "path", "paths": [], "start_found": False, "max_hops": 3,
+                                          "more_beyond_max_hops": False}
+    assert "parser" not in json.dumps(after) and bad["ok"] is False and "G6_E_KNOWLEDGE_GRAPH" in bad["error"]

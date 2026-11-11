@@ -147,3 +147,18 @@ def test_hop_and_path_limits_refuse_rather_than_truncate_silently(tmp_path, monk
         paths(rig, start, "depends_on")
     empty = make(tmp_path, monkeypatch, name="empty", build=False)
     assert paths(empty, start)[0].backends[0].reason.startswith("not_published")
+
+
+def test_the_relations_route_is_ready_only_when_a_graph_is_kept_for_the_generation(tmp_path, monkeypatch):
+    from g6.knowledge import _dispatch
+
+    rig = make(tmp_path, monkeypatch)
+    rig.add()
+    store = ProjectStore(rig.binding)
+    assert "no graph is built for generation 1" in {r.name: why for r, why in _dispatch.routes(store)}["relations"]
+    assert paths(rig, f"src/{MODULES[0]}.py")[0].backends[0].state == "unavailable"
+    _graph.ensure(store)
+    assert {r.name: why for r, why in _dispatch.routes(store)}["relations"] == ""
+    kept = store.graph(1)
+    _graph.ensure(store)   # nothing is rebuilt when a graph is kept
+    assert store.graph(1) == kept and paths(rig, f"src/{MODULES[0]}.py")[0].payload["paths"]

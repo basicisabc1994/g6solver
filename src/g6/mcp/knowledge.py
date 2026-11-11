@@ -293,6 +293,27 @@ def register(server: Any, context_type: Any) -> None:
     @server.tool()
     @declares("client_request")
     @_guarded
+    def g6_knowledge_paths(start: str, relation: str = "imports", max_hops: int = 3) -> dict:
+        """Paths through the passage-linked graph of the sources shared with your provider, from start (a file's path
+        inside its source). relation is imports (a Python module names another in an import statement: a possible
+        dependency, never a statement about behaviour) or contains (a file contains a Markdown section). Every edge
+        cites the passage its witness lies in and was re-read in this call; a path through anything you may not use is
+        not returned, and hop and path limits refuse rather than truncate."""
+        try:
+            from g6.knowledge import _graph
+
+            acc = access(host_binding(), "traverse", _destination())
+            _graph.ensure(ProjectStore(acc.binding))
+            response, refs = _graph.traverse(acc, str(start)[:4000], str(relation), max_hops=max_hops)
+        except (ScopeDenied, Refused) as exc:
+            return _refused(exc.code, exc.reason)
+        found = response.model_dump()
+        return _ok(found, refs, [{"kind": "knowledge_paths", "trust": "untrusted", "generation": response.generation,
+                                  "paths": len(found["payload"]["paths"])}])
+
+    @server.tool()
+    @declares("client_request")
+    @_guarded
     def g6_knowledge_refresh(source: str = "") -> dict:
         """Re-read the files the person accepted (of one source, or of every source of this project) and publish what
         changed. A changed or removed file's old passages are denied before anything else happens; new passages get

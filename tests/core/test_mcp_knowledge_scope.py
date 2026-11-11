@@ -26,6 +26,7 @@ ARGUMENTS = {
     "g6_knowledge_delete": {"source": "SOURCE", "complete": True},
     "g6_knowledge_job": {"job_id": "job-0000000000000000"},
     "g6_knowledge_passage": {"passage_id": "PASSAGE", "raw": True},
+    "g6_knowledge_paths": {"start": "src/ledger.py", "relation": "imports", "max_hops": 3},
     "g6_knowledge_refresh": {},
     "g6_knowledge_search": {"query": f"{SUBJECTS[0]} convention service", "top_k": 20},
     "g6_knowledge_sources": {},

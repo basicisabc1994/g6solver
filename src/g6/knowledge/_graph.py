@@ -190,6 +190,14 @@ def build(store: ProjectStore, generation: int) -> dict[str, Any]:
             "files_not_read": unread, "extractor": EXTRACTOR}
 
 
+def ensure(store: ProjectStore) -> None:
+    """Build the graph of the published generation when none is kept for it (after a new generation, or a
+    deletion). The graph is derived data on this machine; what a traversal returns is decided by its own scope."""
+    generation = store.published()
+    if generation is not None and store.graph(generation.number)[0] is None:
+        build(store, generation.number)
+
+
 def _witness_holds(acc: Access, store: ProjectStore, edge: Edge, members: dict[str, Any], registrations: dict,
                    documents: dict) -> bool:
     member = members.get(edge.passage_id)
@@ -297,5 +305,5 @@ def traverse(acc: Access, start: str, relation: str, *, max_hops: int = 3, max_p
             tuple(sources.values()))
 
 
-__all__ = ["EXTRACTOR", "GRAPH", "MAX_HOPS", "MAX_PATHS", "RELATIONS", "Edge", "Node", "Path", "build", "node_id",
+__all__ = ["EXTRACTOR", "GRAPH", "MAX_HOPS", "MAX_PATHS", "RELATIONS", "Edge", "Node", "Path", "build", "ensure", "node_id",
            "traverse"]

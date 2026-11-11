@@ -215,6 +215,8 @@ provider contributes only its id and the provider, under `withheld`. Passages ar
 - `g6_knowledge_passage(passage_id, raw)` returns one passage again by id; `raw` adds its exact text.
 - `g6_knowledge_count(query, sources)` answers how many indexed passages match, as a structured answer; it needs the
   managed Elasticsearch backend and says `unsupported` without it.
+- `g6_knowledge_paths(start, relation, max_hops)` returns paths through the passage-linked graph (static imports and
+  containment), each edge citing the passage of its witness; an import is a possible dependency, not behaviour.
 - `g6_knowledge_refresh(source)` reads the accepted files again and publishes what changed.
 - `g6_knowledge_job(job_id)` reports an indexing job for an optional backend: per-backend readiness and unread files.
 - `g6_knowledge_revoke(source)` denies a source at once, in every G6 process, without a dialog.

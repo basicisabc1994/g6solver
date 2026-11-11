@@ -90,7 +90,7 @@ TOOLS = {
     # The Context Engine binds each reply to the source registrations whose content it carries (knowledge:<id>).
     **{name: contract('client_request') for name in (
         'g6_knowledge_add', 'g6_knowledge_context', 'g6_knowledge_count', 'g6_knowledge_delete', 'g6_knowledge_job',
-        'g6_knowledge_passage', 'g6_knowledge_refresh',
+        'g6_knowledge_passage', 'g6_knowledge_paths', 'g6_knowledge_refresh',
         'g6_knowledge_revoke', 'g6_knowledge_search', 'g6_knowledge_sources')},
 }
 
@@ -141,6 +141,7 @@ TOOL_ARGUMENTS = {
     'g6_knowledge_delete': _arguments('complete', 'source'),
     'g6_knowledge_job': _arguments(pointer='job_id'),
     'g6_knowledge_passage': _arguments('raw', 'passage_id'),
+    'g6_knowledge_paths': _arguments('relation max_hops', 'start'),
     'g6_knowledge_refresh': _arguments(pointer='source'),
     'g6_knowledge_revoke': _arguments(pointer='source'),
     'g6_knowledge_search': _arguments('query top_k routes', 'sources'),
