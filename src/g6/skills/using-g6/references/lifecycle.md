@@ -20,7 +20,8 @@ point, independently of the agent doing it.
 ## A coding mission, over MCP
 
 Use one when what counts as done must be fixed before the work and a person must confirm it. `g6_premortem` proposes the
-standard, the ways the task can fail and at most 3 questions, with no model call and nothing run. `g6_mission_create`
+standard, the ways the task can fail and candidate questions, with no model call and nothing run; put one of them to the
+person, through `g6_confirm_behaviour` (one question per task by default; the person may allow more). `g6_mission_create`
 freezes the standard from the commit a clean repository stands at; an objective about retries or duplicates first
 asks a question, which you answer with `g6_mission_clarify`. `g6_mission_confirm` asks the person in the client's own
 dialog. Only the person can confirm: no argument does, you never answer for them, and there is no terminal fallback.

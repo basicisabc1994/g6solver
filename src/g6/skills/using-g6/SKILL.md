@@ -8,6 +8,26 @@ description: Use when finishing a Python coding task (review the patch with G6 b
 G6 is a library of primitives for AI building AI. Treat improved performance as a hypothesis, never a consequence of
 composition. The evaluator, authorization rules and promotion gate remain outside the candidate's writable scope.
 
+## Routes
+
+Each route is a task and the tools for it. A tool named here that your server does not list is absent: say so, use
+`g6_find`, and do not call it again. The sections below are routes too: Deliver (review), Find (discover), Compose
+and Fit.
+
+- **question.** Where the task may not decide a behaviour, `g6_confirm_behaviour` asks the person in the client's own
+  dialog: one question per task by default, and the person may allow more or set none. Only the person answers; you
+  never answer for them, and nothing else stands in for their answer.
+- **mission.** A standard of done, fixed before the work and confirmed by the person: `g6_premortem`, then the
+  `g6_mission_*` tools (`references/lifecycle.md`).
+- **consent.** Nothing of the person's reaches a cloud provider without their grant. `g6_cloud_grant` asks them in
+  the client's dialog, `g6_cloud_revoke` withdraws a grant, `g6_cloud_grants` lists what stands, `g6_disclosures`
+  reads what was attempted. Never grant for the person; a withheld reply stays withheld.
+- **improve.** G6's self-improvement loop, on a folder a person enrolled: `g6_improve_start` (the person agrees in
+  the dialog), `g6_improve_status`, `g6_improve_stop`.
+- **rules.** What follows from facts and rules: `datalog` (sessions keep facts over a fixed program), `prolog` and
+  `graph_reasoning`, through `g6_invoke` (`references/rules.md`).
+- **abstraction.** Only where the person registered the separate server, `python -P -m g6.abstraction.server`: its
+  tools search a design space for abstractions that hold up (`references/abstraction.md`).
 ## Deliver a coding task with G6
 
 For a Python task, work in this order.
@@ -23,9 +43,12 @@ For a Python task, work in this order.
    with `steps`, grant, share and revoke), `differential.v1` (nothing changes outside the change's scope),
    `forbidden_dependency.v1` (layer rules) or `state_invariant.v1` (critical state). Each template's bindings, with one
    valid instance: `references/templates.md`.
-3. **Hidden constraints.** Ask the person at most 3 questions, each a concrete scenario with the competing outcomes:
-   "for this input the original does A and the change would do B; which do you intend?" Probe the code for the rest.
-   Never assume an answer: an unanswered question stays open in the report.
+3. **Hidden constraints.** One question per task by default, kept across calls. Where the task may not decide a
+   behaviour, call `g6_confirm_behaviour` with the concrete scenario and its competing outcomes: "for this input the
+   original does A and the change would do B". The person answers in the client's own dialog and may allow one more
+   question; their own setting can raise the default or set it to none. Only the person answers: no argument answers
+   and you never answer for them. Probe the code for the rest. Never assume an answer: an unanswered question stays
+   open in the report.
 4. **Acceptance first, then test first.** Write acceptance tests for what the person's own users must be able to do,
    through the product's real interface, and for usability and fitness for purpose
    wherever a test can show it. They become the numbered requirements, each with its stated check. Then unit tests,
@@ -59,6 +82,7 @@ When what counts as done must be fixed before the work, run a mission instead: `
 ## Find
 
 Call `g6_help`, then `g6_find` with the task or failure mode. Read `g6_describe` before choosing fields or an operation.
+`g6_components` lists every installed component.
 Use grounding for source support, coding_agent_gate for declared coding evidence, action_gating before consequential
 actions, and the meta-harness for repeated failures. Python-only components require their library APIs.
 
@@ -85,6 +109,8 @@ Use `metaharness_start` to create a data-only application with a task, labelled 
 Python code. Confirm the workflow digest through `metaharness_confirm`. Then diagnose, propose_code with a hypothesis,
 evaluate_start, poll `metaharness_job`, decide, present the client's approval prompt, and run the approved version.
 This is Propose -> Test -> Gate -> Approve.
+The tools: `metaharness_diagnose`, `metaharness_propose_code`, `metaharness_evaluate_start`, `metaharness_decide`,
+`metaharness_approve`, `metaharness_run`; `metaharness_inspect` reads a workflow (`g6_describe("metaharness")` has the rest).
 
 Below 30 held-out cases is exploration only. A split of answers the proposer already saw is not independent evidence.
 Generated-code activation also requires a host-configured safety/injection evaluator. Never invent its observations.

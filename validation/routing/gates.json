@@ -1,0 +1,17 @@
+{
+  "format": "g6.routing_gates/1",
+  "final_tasks_digest": null,
+  "min_positive_completion": 0.7,
+  "min_positive_lower_bound": 0.5,
+  "max_negative_unnecessary": 0.15,
+  "max_malformed": 0.1,
+  "min_missing_tool_recovery": 0.8,
+  "interval": "wilson95",
+  "release_rule": "at_least_one_client_passes",
+  "final_cohort_shape": {
+    "positive_per_route": 2,
+    "negative_per_route": 2,
+    "missing_tool_per_route": 1
+  },
+  "consistency_repeats": 2
+}
