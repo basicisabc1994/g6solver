@@ -1,0 +1,70 @@
+{
+ "contract": 1,
+ "function": "diagnose",
+ "events": [
+  {
+   "run": "r1",
+   "kind": "run_started",
+   "seconds": 0
+  },
+  {
+   "run": "r1",
+   "kind": "loop_round",
+   "native": "1",
+   "seconds": 10,
+   "data": {
+    "round": 1
+   }
+  },
+  {
+   "run": "r1",
+   "kind": "loop_ended",
+   "native": "end",
+   "seconds": 20,
+   "data": {
+    "ending": "clean",
+    "reviews": 1
+   }
+  },
+  {
+   "run": "r1",
+   "kind": "report_returned",
+   "native": "end",
+   "seconds": 20,
+   "data": {
+    "run_seconds": 20.0
+   }
+  }
+ ],
+ "inputs": {
+  "assessment": {
+   "report": "REPORT",
+   "outcome": "defect_detected",
+   "requirements": [
+    {
+     "id": "R1",
+     "status": "failed",
+     "provenance": "stated",
+     "checks": [
+      {
+       "id": "tests/test_calc.py::test_add",
+       "verdict": "failed",
+       "provenance": "stated"
+      }
+     ]
+    }
+   ],
+   "reasons": []
+  }
+ },
+ "expected": {
+  "status": "unknown_outcome",
+  "rules": [],
+  "obstacles": [
+   "failing_accepted_check"
+  ],
+  "overlapping": false,
+  "capacity_calculated": false,
+  "lines": []
+ }
+}

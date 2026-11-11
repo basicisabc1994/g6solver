@@ -1,0 +1,87 @@
+{
+ "contract": 1,
+ "function": "diagnose",
+ "events": [
+  {
+   "run": "r1",
+   "kind": "run_started",
+   "seconds": 0
+  },
+  {
+   "run": "r2",
+   "kind": "run_started",
+   "seconds": 5
+  },
+  {
+   "run": "r1",
+   "kind": "loop_round",
+   "native": "1",
+   "seconds": 10,
+   "data": {
+    "round": 1
+   }
+  },
+  {
+   "run": "r2",
+   "kind": "loop_round",
+   "native": "1",
+   "seconds": 12,
+   "data": {
+    "round": 1
+   }
+  },
+  {
+   "run": "r2",
+   "kind": "report_returned",
+   "native": "end",
+   "seconds": 30,
+   "data": {
+    "run_seconds": 25.0
+   }
+  },
+  {
+   "run": "r1",
+   "kind": "report_returned",
+   "native": "end",
+   "seconds": 40,
+   "data": {
+    "run_seconds": 40.0
+   }
+  },
+  {
+   "run": "r1",
+   "kind": "stage_measured",
+   "native": "review",
+   "seconds": 1,
+   "data": {
+    "stage": "review",
+    "attempted": 4,
+    "succeeded": 2,
+    "capacity_per_day": 8.0
+   }
+  },
+  {
+   "run": "r1",
+   "kind": "stage_measured",
+   "native": "repair",
+   "seconds": 1,
+   "data": {
+    "stage": "repair",
+    "attempted": 4,
+    "succeeded": 1,
+    "capacity_per_day": 8.0
+   }
+  }
+ ],
+ "inputs": {
+  "goal": "add returns the sum"
+ },
+ "expected": {
+  "status": "insufficient_observation",
+  "rules": [],
+  "obstacles": [],
+  "overlapping": true,
+  "capacity_calculated": false,
+  "lines": []
+ }
+}

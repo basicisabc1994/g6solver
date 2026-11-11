@@ -1,0 +1,70 @@
+{
+ "contract": 1,
+ "function": "diagnose",
+ "events": [
+  {
+   "run": "r1",
+   "kind": "run_started",
+   "seconds": 0
+  },
+  {
+   "run": "r1",
+   "kind": "loop_round",
+   "native": "1",
+   "seconds": 9000,
+   "data": {
+    "round": 1
+   }
+  },
+  {
+   "run": "r1",
+   "kind": "tool_call",
+   "native": "t:1",
+   "seconds": 9001,
+   "data": {
+    "tool": "g6_review_until_clean",
+    "args_sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+    "seconds": 8990.0
+   }
+  },
+  {
+   "run": "r1",
+   "kind": "report_returned",
+   "native": "end",
+   "seconds": 9002,
+   "data": {
+    "run_seconds": 9002.0
+   }
+  }
+ ],
+ "inputs": {
+  "assessment": {
+   "report": "REPORT",
+   "outcome": "defect_detected",
+   "requirements": [
+    {
+     "id": "R1",
+     "status": "passed_on_stated_checks",
+     "provenance": "stated",
+     "checks": [
+      {
+       "id": "tests/test_calc.py::test_add",
+       "verdict": "passed",
+       "provenance": "stated"
+      }
+     ]
+    }
+   ],
+   "reasons": []
+  },
+  "goal": "add returns the sum"
+ },
+ "expected": {
+  "status": "insufficient_observation",
+  "rules": [],
+  "obstacles": [],
+  "overlapping": false,
+  "capacity_calculated": false,
+  "lines": []
+ }
+}
