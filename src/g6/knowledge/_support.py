@@ -166,6 +166,12 @@ def may_suppress(support: Sequence[Support]) -> tuple[bool, str]:
     return True, normative[0].grant_id
 
 
+def settling(support: Sequence[Support]) -> Support | None:
+    """The normative passage that settles the candidate, when :func:`may_suppress` says one does; else ``None``."""
+    allowed, grant = may_suppress(support)
+    return next((s for s in support if s.grant_id == grant), None) if allowed else None
+
+
 def designate(acc: Access, state: Any, answer: Any, *, supersedes: str = "") -> NormativeGrant:
     """Record the normative grant a person's confirmed rule answer gives. ``state`` is the task's question-store
     state and ``answer`` an answer it holds: the grant exists only when that answer confirms the rule question of a
@@ -202,4 +208,4 @@ def designate(acc: Access, state: Any, answer: Any, *, supersedes: str = "") -> 
 
 
 __all__ = ["DESIGNATION", "NOT_DESIGNATED", "NormativeGrant", "Support", "designate", "designation_rule",
-           "may_suppress", "scenario_sha256", "support_for"]
+           "may_suppress", "scenario_sha256", "settling", "support_for"]

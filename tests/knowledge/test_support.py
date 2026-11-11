@@ -75,6 +75,7 @@ def test_passage_without_normative_grant_never_suppresses(tmp_path, monkeypatch)
     assert lines[1] == f"knowledge:{found[0].passage_id} docs/{DOCS}.md"
     assert bq.ranked([after, before])[0] is after, "an unsettled candidate keeps its place: it is still asked"
     assert _support.may_suppress([]) == (False, why)
+    assert _support.settling(found) is None and _support.settling([]) is None
 
 
 def test_grant_for_another_source_version_does_not_suppress(tmp_path, monkeypatch):
@@ -88,6 +89,7 @@ def test_grant_for_another_source_version_does_not_suppress(tmp_path, monkeypatc
     settled = support(rig)
     assert settled[0].authority == "normative" and settled[0].grant_id == grant.id
     assert _support.may_suppress(settled) == (True, grant.id)
+    assert _support.settling(settled) == settled[0], "the passage the grant names, and no other"
     done = bq.with_support(candidate(), [s.model_dump() for s in settled], settles="A", by=f"normative grant {grant.id}")
     assert done.settled == [{"outcome": "A", "by": f"the normative source says so (normative grant {grant.id})"}]
     assert bq.ranked([done, candidate()])[0].settled == [], "a settled candidate is asked after an unsettled one"

@@ -150,11 +150,10 @@ def _with_knowledge(candidates: list[bq.Candidate]) -> list[bq.Candidate]:
             if not found:
                 out.append(one)
                 continue
-            allowed, grant = _support.may_suppress(found)
-            normative = next((s for s in found if s.grant_id == grant), None) if allowed else None
+            normative = _support.settling(found)   # the passage that settles the candidate, when one may
             out.append(bq.with_support(
                 one, [s.model_dump() for s in found], settles=normative.outcome if normative else "",
-                by=f"normative grant {grant}" if normative else "",
+                by=f"normative grant {normative.grant_id}" if normative else "",
                 rule="" if normative else _support.designation_rule(found[0])))
         return out
     except (ScopeDenied, Refused, bq.CandidateRefused, OSError, ValueError):

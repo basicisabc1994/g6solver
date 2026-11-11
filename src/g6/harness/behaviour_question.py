@@ -296,9 +296,8 @@ def with_support(candidate: Candidate, support: Sequence[Mapping[str, Any]], *, 
         if entry not in settled:
             settled.append(entry)
     offered = record["rule"] if record["rule"].strip() or not isinstance(rule, str) else rule
-    if lines == record["evidence"] and settled == record["settled"] and offered == record["rule"]:
-        return candidate
-    return Candidate._structural(**{**record, "evidence": lines, "settled": settled, "rule": offered})
+    made = Candidate._structural(**{**record, "evidence": lines, "settled": settled, "rule": offered})
+    return candidate if made.data == candidate.data else made   # the same record, in the one encoding: unchanged
 
 
 def _words(text: str) -> set[str]:
