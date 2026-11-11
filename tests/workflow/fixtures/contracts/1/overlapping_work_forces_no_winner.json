@@ -1,0 +1,57 @@
+{
+ "contract": 1,
+ "function": "obstacles",
+ "events": [
+  {
+   "run": "r1",
+   "kind": "run_started",
+   "seconds": 0
+  },
+  {
+   "run": "r2",
+   "kind": "run_started",
+   "seconds": 5
+  },
+  {
+   "run": "r1",
+   "kind": "loop_round",
+   "native": "1",
+   "seconds": 10,
+   "data": {
+    "round": 1
+   }
+  },
+  {
+   "run": "r2",
+   "kind": "loop_round",
+   "native": "1",
+   "seconds": 12,
+   "data": {
+    "round": 1
+   }
+  },
+  {
+   "run": "r2",
+   "kind": "report_returned",
+   "native": "end",
+   "seconds": 30,
+   "data": {
+    "run_seconds": 25.0
+   }
+  },
+  {
+   "run": "r1",
+   "kind": "report_returned",
+   "native": "end",
+   "seconds": 40,
+   "data": {
+    "run_seconds": 40.0
+   }
+  }
+ ],
+ "inputs": {},
+ "expected": {
+  "obstacles": [],
+  "next_check": null
+ }
+}

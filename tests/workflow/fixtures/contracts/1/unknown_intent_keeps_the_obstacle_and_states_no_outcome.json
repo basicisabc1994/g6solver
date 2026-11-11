@@ -1,0 +1,73 @@
+{
+ "contract": 1,
+ "function": "view",
+ "events": [
+  {
+   "run": "r1",
+   "kind": "run_started",
+   "seconds": 0
+  },
+  {
+   "run": "r1",
+   "kind": "loop_round",
+   "native": "1",
+   "seconds": 10,
+   "data": {
+    "round": 1
+   }
+  },
+  {
+   "run": "r1",
+   "kind": "loop_ended",
+   "native": "end",
+   "seconds": 20,
+   "data": {
+    "ending": "clean",
+    "reviews": 1
+   }
+  },
+  {
+   "run": "r1",
+   "kind": "report_returned",
+   "native": "end",
+   "seconds": 20,
+   "data": {
+    "run_seconds": 20.0
+   }
+  }
+ ],
+ "inputs": {
+  "assessment": {
+   "report": "REPORT",
+   "outcome": "defect_detected",
+   "requirements": [
+    {
+     "id": "R1",
+     "status": "failed",
+     "provenance": "stated",
+     "checks": [
+      {
+       "id": "tests/test_calc.py::test_add",
+       "verdict": "failed",
+       "provenance": "stated"
+      }
+     ]
+    }
+   ],
+   "reasons": []
+  },
+  "request": "fix this bug"
+ },
+ "expected": {
+  "block": [
+   "## Outcome, obstacle and next step (optional; decides nothing above)",
+   "- **Stated outcome:** not stated. G6 asks nothing more about it here.",
+   "- **Observed, with a receipt:** a check the request stated or you confirmed fails on this patch, reproduced by G6; scope: `requirement R1 on this patch`; receipt `review:job-1`",
+   "- **Not shown by this:** that it is the only obstacle, that delivery improves, or that your wider workflow was observed.",
+   "- **A next check you may run:** `pytest tests/test_calc.py::test_add`",
+   "- **G6's own cost on this task:** 0 question(s), 0 approval(s), 0 tool call(s); not measured: active_g6_seconds. **Value to your work:** not measured."
+  ],
+  "outcome": null,
+  "value_result": "not_measured"
+ }
+}
