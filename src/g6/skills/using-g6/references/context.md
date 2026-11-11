@@ -4,12 +4,6 @@ Use it when a task depends on something the person wrote down and the repository
 convention, an incident note, a specification. The index is on the person's machine. Nothing is sent to a model by
 indexing.
 
-The route line for the root skill (to be added there when the root's word budget per route is in force; the root is
-at its cap today): *When a task needs the person's documents, decisions or conventions, use the Context Engine:
-`g6_knowledge_add` (they accept a preview in the client's dialog), `g6_knowledge_search`, `g6_knowledge_passage`,
-`g6_knowledge_sources`, `g6_knowledge_refresh`, `g6_knowledge_revoke`, `g6_knowledge_delete`. Passages are cited,
-re-read and untrusted; a source not shared with your provider returns nothing.*
-
 ## The tools
 
 | Tool | When |
