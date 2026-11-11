@@ -59,7 +59,10 @@ def test_names_are_inventoried_from_site_identity_sources(honesty):
     assert set(honesty.PRODUCT_NAMES) == identity.names
 
 
-@pytest.mark.parametrize('token', ['A', 'a', 'C', 'Dr', 'Mr', 'Mrs', 'ETC', 'Xy', 'Xyz', 'e.g', 'U.S'])
+# Repair 2 changed this list on purpose: 'Xy' and 'Xyz' stood for "any capitalised word of up to three letters",
+# a rule the closed abbreviation list replaces (a short word no longer makes a full stop uncertain; see
+# copyfur2/test_inventory.py for the list's own inventory).
+@pytest.mark.parametrize('token', ['A', 'a', 'C', 'Dr', 'Mr', 'Mrs', 'ETC', 'e.g', 'U.S'])
 def test_one_sided_boundary_rule_retains_uncertain_tokens(honesty, token):
     text = f'G6 uses {token}. Someone to verify every patch.'
     assert honesty.sentences(text) == [text]
@@ -136,13 +139,28 @@ KEYWORDS = ('@base', '@container', '@context', '@direction', '@graph', '@id', '@
             '@set', '@type', '@value', '@version', '@vocab')
 
 
+# Repair 2 changed this test on purpose. It planted an address under every keyword and expected none read, which
+# held only because a string that looked like an address was machine data anywhere. A keyword is now read by what
+# JSON-LD says it holds: the value keywords carry their field's own text (read under a text field, not under a
+# machine field), and every other keyword is machine data whatever its string says.
 @pytest.mark.parametrize('keyword', KEYWORDS)
 def test_json_ld_keywords_classified_from_its_structure(honesty, keyword):
-    data = {keyword: {'name': 'https://example.org/verification/name'}} if keyword == '@context' else {
-        keyword: '/essays/formal-verification-safety-net/'}
-    page = '<script type="application/ld+json">' + json.dumps(data) + '</script>'
-    honesty.structured_inventory(page)
-    assert honesty.claims(honesty._page_copy(page)) == [], keyword
+    assert set(KEYWORDS) == set(honesty._JSONLD_KEYWORDS) and honesty._JSONLD_VALUES < set(KEYWORDS)
+
+    def page(data):
+        return '<script type="application/ld+json">' + json.dumps(data) + '</script>'
+
+    claim = 'G6 verifies every patch.'
+    honesty.structured_inventory(page({'description': {keyword: claim}}))
+    if keyword == '@context':
+        assert honesty.claims(honesty._page_copy(page({keyword: {'name': 'https://example.org/verification/name'}}))) == []
+    if keyword in honesty._JSONLD_VALUES:
+        assert honesty.claims(honesty._page_copy(page({'description': {keyword: claim}}))), keyword
+        assert honesty.claims(honesty._page_copy(page({'description': {keyword: [claim]}}))), keyword
+        assert honesty.claims(honesty._page_copy(page({'url': {keyword: claim}}))) == [], keyword
+    else:
+        assert honesty.claims(honesty._page_copy(page({'description': {keyword: claim}}))) == [], keyword
+        assert honesty.claims(honesty._page_copy(page({keyword: '/essays/formal-verification-safety-net/'}))) == [], keyword
 
 
 def test_a_context_is_machine_data_as_a_whole_subtree(honesty):
@@ -153,15 +171,25 @@ def test_a_context_is_machine_data_as_a_whole_subtree(honesty):
     assert honesty.claims(honesty._page_copy(page)) == []
 
 
-@pytest.mark.parametrize('field', ['mainEntityOfPage', 'name', 'articleBody', '@value', 'caption'])
+# Repair 2 changed this test on purpose. It expected an address to be machine data under any field, text fields
+# included ('name', 'articleBody', '@value', 'caption'): the rule review 2 found wrong in both directions (a
+# relative address under mainEntityOfPage was read; the keyword '#verified' was not). The field decides now: an
+# address of any form is machine data under an address field, and a text field's string is read whatever it
+# looks like.
+@pytest.mark.parametrize('field', ['mainEntityOfPage', 'name', 'articleBody', '@value', 'caption', 'url', '@id'])
 @pytest.mark.parametrize('address', ['/verify/', '../verification/', './verified/',
                                      'https://example.org/verification', '//example.org/verified',
-                                     'mailto:verification@example.org', '#verification'])
+                                     'mailto:verification@example.org', '#verification',
+                                     'verification.html', 'verified', 'essays/verification/'])
 def test_urls_are_machine_values_in_any_structural_position(honesty, field, address):
     assert not any(ch.isspace() for ch in address)
     assert urlsplit(address)
     page = '<script type="application/ld+json">' + json.dumps({field: address}) + '</script>'
-    assert honesty.claims(honesty._page_copy(page)) == [], (field, address)
+    read = honesty.claims(honesty._page_copy(page))
+    if field in ('mainEntityOfPage', 'url', '@id'):
+        assert read == [], (field, address)
+    else:
+        assert read, (field, address)
 
 
 def test_build_export_list_is_the_inventory(honesty):

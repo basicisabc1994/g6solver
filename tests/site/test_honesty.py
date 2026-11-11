@@ -9,7 +9,9 @@ no reading of the text stops that.
 The copy is read as a reader sees it: Markdown rendered by the site's own renderer (``pages.views.markdown_html``) or,
 for the docs site, with the extensions site/mkdocs.yml names; a skill's front matter as G6 reads it
 (``g6.core.skills.front_matter``); HTML read by an HTML parser, its visible text, the attributes and the structured-data
-fields a reader or a search engine is shown, with only block-level elements ending a run of text. The reliability state
+fields a reader or a search engine is shown, with only block-level elements ending a run of text. Each foreign format
+is read by its own rules: an element HTML reads as text (a text area, the title) is text, a framed document is a
+document, and structured data is read by what each field holds, never by what a string looks like. The reliability state
 keeps its name: a code span is passed over when it holds a state, the three states listed together, a Python identifier
 or dotted name, or code Python parses as code (`verified`, `verify_answer`, `verify(body, artifact)`); a code block is
 code, but a diagram is read. The three states named together as one list pass, and so does the bare word in quotation
@@ -38,6 +40,7 @@ from uuid import uuid4
 import markdown
 import pytest
 import yaml
+from django.conf import settings
 from django.template.loader import render_to_string
 from django.test import RequestFactory
 
@@ -120,19 +123,47 @@ INPUT_VALUE_STATES = {
     'color': False, 'range': False, 'image': False,
 }
 SHOWN_INPUT_TYPES = tuple(kind for kind, shown in INPUT_VALUE_STATES.items() if shown)
-#: Every structured string is copy unless its own key names machine data. Objects beneath a URL-capable
-#: field still have their children read: an image's caption or name is copy, its URL is an address.
+#: The elements whose content HTML reads as text, never as markup (HTML Living Standard, 13.1.2 Elements): the raw
+#: text elements script and style, and the escapable raw text elements textarea and title, in which only character
+#: references are decoded. True where a reader is shown that text: a text area's value, the page's title. A
+#: structured-data script is read through json instead.
+TEXT_ELEMENTS = {'script': False, 'style': False, 'textarea': True, 'title': True}
+#: The attributes whose value is a whole HTML document shown in place (HTML Living Standard: an iframe's srcdoc).
+#: Each is read as a page in its own right: its text, shown attributes, structured data and links.
+EMBEDDED_DOCUMENTS = {'srcdoc': ('iframe',)}
+#: HTML's list containers (HTML Living Standard, 4.4 Grouping content: ol, ul, menu, dl). A block that ends with a
+#: colon is the lead-in of the list after it, and every item of that list, at every depth, is read with it. In a dl
+#: each term (dt) names every description (dd) of its group, so each of those is read with the group's terms too.
+_LISTS = frozenset({'ul', 'ol', 'menu', 'dl'})
+#: Where microdata takes a property's value from an attribute that is neither the element's text nor an address
+#: (HTML Living Standard, 5.2.4 Values: meta's content, data's and meter's value, time's datetime). The value is
+#: read as its field (itemprop) is, by the tables below.
+MICRODATA_VALUES = {'meta': 'content', 'data': 'value', 'meter': 'value', 'time': 'datetime'}
+#: Structured data, in JSON-LD and in microdata, is read by what each field holds, never by what a string looks
+#: like. A string under a field named here is machine data: schema.org expects a URL, a date, a number or an
+#: identifier there (each property's "Values expected", https://schema.org/url and the rest). An object under one
+#: is still read by its own fields: an image's caption or name is copy, its URL is an address.
 _MACHINE_FIELDS = frozenset({"@context", "@type", "@id", "url", "image", "sameAs", "logo", "contentUrl",
                              "thumbnailUrl", "license", "datePublished", "dateModified", "dateCreated",
-                             "identifier", "width", "height"})
-#: The inventory is separate from extraction: a new field is read immediately, and needs classification here.
+                             "identifier", "width", "height", "mainEntityOfPage"})
+#: Reader-facing text, whatever characters it starts with. The inventory is separate from extraction: a new field
+#: is read immediately, and needs classification here.
 _COPY_FIELDS = frozenset({"headline", "description", "name", "alternativeHeadline", "abstract", "text",
                           "articleBody", "keywords", "jobTitle", "programmingLanguage", "caption"})
-_OBJECT_FIELDS = frozenset({"author", "publisher", "mainEntityOfPage", "mainEntity", "acceptedAnswer", "@graph"})
-#: JSON-LD 1.1, section 3's syntax keywords; @context is an opaque machine subtree, at every depth.
+#: Fields that expect a thing (a person, an organisation, an answer). schema.org lets text stand in for a thing,
+#: so a string there is read as its name.
+_OBJECT_FIELDS = frozenset({"author", "publisher", "mainEntity", "acceptedAnswer", "@graph"})
+#: JSON-LD 1.1's keywords (section 1.7, Syntax Tokens and Keywords).
 _JSONLD_KEYWORDS = frozenset({'@base', '@container', '@context', '@direction', '@graph', '@id', '@import',
                             '@included', '@index', '@json', '@language', '@list', '@nest', '@none', '@prefix',
                             '@propagate', '@protected', '@reverse', '@set', '@type', '@value', '@version', '@vocab'})
+#: The keywords that hold values of the field they sit under, or nodes read by their own fields (section 9, JSON-LD
+#: Grammar: value objects, list and set objects, graph and included nodes, nested properties, a map's @none entry).
+#: What such a keyword holds is read as its field is. Every other keyword holds machine data: an IRI (@id, @type,
+#: @base, @vocab, @import), a tag or an index (@language, @direction, @index) or a setting of a context; a
+#: @context is machine data whole, at every depth, and a @reverse map's values are IRIs or nodes.
+_JSONLD_VALUES = frozenset({'@value', '@list', '@set', '@none', '@graph', '@included', '@nest'})
+_MACHINE = _MACHINE_FIELDS | (_JSONLD_KEYWORDS - _JSONLD_VALUES)
 #: The meta tags a reader or a search engine is shown, by their name or property; an address tag is not one.
 #: HTML standard metadata names, Open Graph text properties and Twitter card text fields. Addresses, tokens,
 #: dimensions and presentation hints (theme-color, viewport, robots) are machine data, as before.
@@ -196,29 +227,33 @@ class _Span(str):
     """An inline code span's text, kept apart until the words around it are known."""
 
 
-def _is_address(value: str) -> bool:
-    """JSON-LD string values which are URLs or site paths, through the URL reader, wherever they occur."""
-    if not value or any(ch.isspace() for ch in value):
-        return False
-    try:
-        parts = urlsplit(value)
-    except ValueError:
-        return False
-    return bool(parts.scheme or parts.netloc or value.startswith(('/', './', '../', '#')))
-
-
-def _fields(value: object, key: str = ""):
-    """All structured strings, except a scalar explicitly named as machine data, at every depth."""
-    if key == '@context':
-        return
+def _fields(value: object, under: str = ""):
+    """Each reader-facing string of structured data, at every depth, read by the field it is a value of: copy,
+    unless that field holds machine data (``_MACHINE``). A field nobody has classified is read."""
     if isinstance(value, dict):
         for name, item in value.items():
-            yield from _fields(item, name)
+            if name == '@context':
+                continue
+            if name == '@reverse' and isinstance(item, dict):       # a reverse property holds IRIs or nodes
+                for node in item.values():
+                    yield from _fields(node, '@id')
+            else:
+                yield from _fields(item, under if name in _JSONLD_VALUES else name)
     elif isinstance(value, list):
         for item in value:
-            yield from _fields(item, key)
-    elif isinstance(value, str) and key not in _MACHINE_FIELDS and not _is_address(value):
+            yield from _fields(item, under)
+    elif isinstance(value, str) and under not in _MACHINE:
         yield value
+
+
+class _Items:
+    """An open list container: the lead-in its items are read with and, for a dl, the group being read."""
+
+    def __init__(self, tag: str, lead: list[str]) -> None:
+        self.tag, self.lead = tag, lead
+        self.terms: list[list[str]] = []      # a dl's current group: each term's (dt's) text
+        self.part = ""                        # "dt" or "dd" while a dl's term or description is open
+        self.described = False                # the group has a description: the next term starts a new group
 
 
 class _Reader(HTMLParser):
@@ -226,27 +261,42 @@ class _Reader(HTMLParser):
     field a reader or a search engine is shown, as units of their own. Scripts and styles are not read (structured
     data is, through json), nor code blocks except diagrams."""
 
+    # html.parser's own raw-text mode for every element HTML reads as text; the references in an escapable one are
+    # decoded here, once, whichever version of the parser runs.
+    CDATA_CONTENT_ELEMENTS = tuple(TEXT_ELEMENTS)
+    RCDATA_CONTENT_ELEMENTS = ()
+
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.units: list[list[str]] = []
         self.run: list[str] = []
-        self.hidden = 0                       # inside <script> or <style>
+        self.text: tuple[str, list[str]] | None = None    # an open TEXT_ELEMENTS element and its content so far
+        self.json_ld = False                  # that element is a structured-data script
         self.pre: list[bool] = []             # the open <pre> blocks: True for a diagram
         self.code: list[str] | None = None    # an inline code span being read
-        self.data: list[str] | None = None    # a structured-data script being read
         self.structured: list[object] = []
+        self.properties: set[str] = set()     # the microdata fields whose value an attribute gives
         self.json_errors: list[str] = []
         self.lead: list[str] | None = None
-        self.continuations: list[tuple[str, list[str]]] = []
+        self.lists: list[_Items] = []
         self.links: list[str] = []
         self.site_names: set[str] = set()
 
+    def inherited(self) -> list[str]:
+        """What the text being read is read with: the lead-in of the list it is in and, in a description, its terms."""
+        if not self.lists:
+            return []
+        items = self.lists[-1]
+        pieces = [items.lead, *(items.terms if items.part == 'dd' else [])]
+        return [part for piece in pieces if piece for part in (*piece, ' ')]
+
     def end_run(self) -> None:
         if "".join(self.run).strip():
-            prefix = self.continuations[-1][1] if self.continuations else []
-            unit = [*prefix, ' ', *self.run] if prefix else self.run
+            unit = [*self.inherited(), *self.run]
             self.units.append(unit)
             self.lead = unit if ''.join(self.run).rstrip().endswith(':') else None
+            if self.lists and self.lists[-1].part == 'dt':
+                self.lists[-1].terms.append(self.run)
         self.run = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -257,8 +307,14 @@ class _Reader(HTMLParser):
         shown_value = INPUT_VALUE_STATES.get(values.get('type', 'text').lower(), INPUT_VALUE_STATES['text'])
         if tag == "input" and shown_value and values.get("value"):
             self.units.append([values["value"]])
+        properties = values.get("itemprop", "").split()
+        value = values.get(MICRODATA_VALUES.get(tag, ""), "")
+        if properties and value:
+            self.properties.update(properties)
         if tag == "meta" and values.get("content") and ({name, prop} & SHOWN_META_NAMES):
             self.units.append([values["content"]])                  # read by its key; an address key is not one
+        elif value and any(item not in _MACHINE for item in properties):
+            self.units.append([value])                              # a microdata value, read as its field is
         classes = values.get("class", "").lower().split()
         if tag in ('a', 'area') and values.get('href'):
             self.links.append(values['href'])
@@ -269,10 +325,10 @@ class _Reader(HTMLParser):
             media = Message()
             media['content-type'] = values.get('type', '')
             json_ld = media.get_content_type() == 'application/ld+json'
-        if tag == "script" and json_ld:
-            self.data = []
-        elif tag in ("script", "style"):
-            self.hidden += 1
+        if tag in TEXT_ELEMENTS:
+            if TEXT_ELEMENTS[tag] and tag in _BLOCK:
+                self.end_run()
+            self.text, self.json_ld = (tag, []), json_ld
         elif tag == "pre":
             self.end_run()
             self.pre.append("mermaid" in classes)                   # the website's diagram
@@ -284,23 +340,38 @@ class _Reader(HTMLParser):
             (self.code if self.code is not None else self.run).append("\n")    # a line break is whitespace
         elif tag in _BLOCK:
             self.end_run()
-            if tag in ('ul', 'ol', 'dd'):
-                inherited = self.continuations[-1][1] if self.continuations else []
-                self.continuations.append((tag, self.lead or inherited))
+            if tag in _LISTS:
+                self.lists.append(_Items(tag, self.lead or self.inherited()))
                 self.lead = None
+            elif tag in ('dt', 'dd') and self.lists and self.lists[-1].tag == 'dl':
+                group = self.lists[-1]
+                if tag == 'dt' and group.described:                 # a term after a description starts a new group
+                    group.terms, group.described = [], False
+                group.part, group.described = tag, group.described or tag == 'dd'
+        for attribute, tags in EMBEDDED_DOCUMENTS.items():
+            if tag in tags and values.get(attribute):
+                inner = _reader(values[attribute])
+                self.units += inner.units
+                self.structured += inner.structured
+                self.json_errors += inner.json_errors
+                self.links += inner.links
+                self.properties |= inner.properties
 
     def handle_endtag(self, tag: str) -> None:
-        if tag == "script" and self.data is not None:
-            try:
-                data = json.loads("".join(self.data), parse_constant=_invalid_json_constant)
-            except ValueError as error:
-                self.json_errors.append(str(error))
-                data = None                                          # unreadable copy also fails the inventory
-            self.structured.append(data)
-            self.units += [[text] for text in _fields(data)]
-            self.data = None
-        elif tag in ("script", "style"):
-            self.hidden = max(0, self.hidden - 1)
+        if self.text is not None and tag == self.text[0]:
+            body, self.text = "".join(self.text[1]), None
+            if self.json_ld:
+                try:
+                    data = json.loads(body, parse_constant=_invalid_json_constant)
+                except ValueError as error:
+                    self.json_errors.append(str(error))
+                    data = None                                      # unreadable copy also fails the inventory
+                self.structured.append(data)
+                self.units += [[text] for text in _fields(data)]
+            elif TEXT_ELEMENTS[tag]:
+                self.run.append(html.unescape(body))                 # text as written: a tag in it is not markup
+                if tag in _BLOCK:
+                    self.end_run()
         elif tag == "pre" and self.pre:
             self.pre.pop()
             self.end_run()
@@ -309,23 +380,35 @@ class _Reader(HTMLParser):
             self.code = None
         elif tag in _BLOCK:
             self.end_run()
-            if self.continuations and self.continuations[-1][0] == tag:
-                self.continuations.pop()
+            if tag in _LISTS and any(items.tag == tag for items in self.lists):
+                while self.lists.pop().tag != tag:                   # with any list left open inside it
+                    pass
                 self.lead = None
+            elif tag in ('dt', 'dd') and self.lists and self.lists[-1].tag == 'dl':
+                self.lists[-1].part = ""
 
     def handle_data(self, data: str) -> None:
-        if self.data is not None:
-            self.data.append(data)
-            return
-        if self.hidden:
-            return
-        if self.code is not None:
+        if self.text is not None:
+            self.text[1].append(data)
+        elif self.code is not None:
             self.code.append(data)
         elif self.pre:
             if self.pre[-1]:
                 self.run.append(_diagram(data))
         else:
             self.run.append(data)
+
+    def finish(self) -> None:
+        """The end of the document. HTML closes an element left open there, so its text is still read; structured
+        data left open is recorded as unreadable too, which fails the inventory."""
+        if self.text is not None:
+            if self.json_ld:
+                self.json_errors.append("Structured data is left open at the end of the document")
+            self.feed(f"</{self.text[0]}>")
+        self.close()
+        if self.code is not None:
+            self.handle_endtag("code")
+        self.end_run()
 
 
 def _invalid_json_constant(value: str):
@@ -335,8 +418,7 @@ def _invalid_json_constant(value: str):
 def _reader(page: str) -> _Reader:
     reader = _Reader()
     reader.feed(page)
-    reader.close()
-    reader.end_run()
+    reader.finish()
     return reader
 
 
@@ -362,21 +444,29 @@ def structured_inventory(page: str) -> set[str]:
 
     for data in reader.structured:
         visit(data)
+    fields |= reader.properties
     unknown = fields - _COPY_FIELDS - _MACHINE_FIELDS - _OBJECT_FIELDS - _JSONLD_KEYWORDS
-    assert not unknown, f"Unclassified JSON-LD fields: {sorted(unknown)}"
+    assert not unknown, f"Unclassified structured-data fields: {sorted(unknown)}"
     return fields
 
 
-def _resolve(unit: list[str], mark=lambda span: PLACEHOLDER) -> str:
-    """A unit's text. A code span is exempt (``mark`` stands in for it) when it only names something and stands as a
-    word of its own; inside a word, or as prose, it is read as the words it holds."""
+def _resolve(unit: list[str], exempt: dict[int, str] | None = None) -> str:
+    """A unit's text, the one reading of it for every checker. A code span is exempt (PLACEHOLDER stands in for it)
+    when it only names something and stands as a word of its own; inside a word, or as prose, it is read as the
+    words it holds. ``exempt``, when given, records what each stand-in held, by its place among the text's
+    PLACEHOLDER words."""
     out: list[str] = []
     for index, part in enumerate(unit):
         if isinstance(part, _Span):
             before = _normalise("".join(out) + "|")[-2:-1]          # the visible character either side of it
             after = _normalise("|" + "".join(unit[index + 1:]))[1:2]
             in_word = bool(re.match(r"\w", before) or re.match(r"\w", after))
-            part = mark(part) if _is_name(part) and not in_word else str(part)
+            if _is_name(part) and not in_word:
+                if exempt is not None:
+                    exempt[_normalise("".join(out)).count(PLACEHOLDER)] = str(part)
+                part = PLACEHOLDER
+            else:
+                part = str(part)
         out.append(part)
     return "".join(out)
 
@@ -429,21 +519,54 @@ def _markdown_copy(text: str, *, docs_site: bool = False) -> str:
     return "\n\n".join([*front_matter(text).values(), _page_copy(page)])
 
 
-def sentences(text: str) -> list[str]:
-    """End only at a certain terminal boundary; uncertain abbreviations/initials keep the subject with its claim.
+#: One table of sentence ends, for ordinary copy and essays alike. A sentence ends at an exclamation mark, a question
+#: mark or a full stop, with any closing quotation marks or brackets, before whitespace. A short word, a version
+#: number or a contraction before the mark does not change that, and neither does a next sentence that starts with a
+#: capital, a digit, a bracket, a quotation mark or a name such as eBPF. The mark does not end a sentence in four
+#: cases, each of which keeps a subject with its claim and so can only refuse more:
+#: - the word after it is wholly in lower case: the sentence goes on (an abbreviation outside the list below, a
+#:   quoted question, a name that ends in a mark);
+#: - a full stop after an initial: a single letter, or single letters joined by full stops (J., U.S., e.g., p.m.);
+#: - a full stop after a word of the closed list below, in any case: titles, scholarly Latin, references,
+#:   measures, organisations, places, months and days;
+#: - a run of full stops (an ellipsis).
+#: This intentionally refuses the ambiguous 'G6 checks C. Other tools verify it.' (repair 1's ruling).
+TERMINALS = ".!?"
+CLOSERS = "\"'”’)]}"
+OPENERS = "\"'“‘([{"
+ABBREVIATIONS = frozenset("""
+    mr mrs ms mx dr prof rev revd fr sr jr st hon messrs mmes esq
+    gen col maj capt cmdr lt sgt adm gov sen rep pres supt
+    vs etc cf viz ca al ibid op cit approx est incl excl esp misc
+    no nos vol vols pp fig figs eq eqs sec sect ch chap para ed eds edn ref refs ver
+    min max avg
+    inc ltd co corp bros dept univ assoc
+    mt ave blvd rd
+    jan feb mar apr jun jul aug sep sept oct nov dec mon tue tues wed thu thur thurs fri sat sun
+    ph.d
+""".split())
 
-    Terminal punctuation may have closing quotes/brackets before whitespace, followed by a capital or an opening
-    quote. A single letter, dotted token or capitalised token of up to three letters may be an abbreviation.
-    This intentionally refuses the ambiguous 'G6 checks C. Other tools verify it.' (owner, repair 1).
-    """
+
+def _ends_sentence(token: str, end: str, following: str) -> bool:
+    """Whether the marks ``end``, after the word ``token`` and before the word ``following``, end a sentence, by the
+    table above."""
+    following = following.lstrip(OPENERS)
+    if following[:1].islower() and following == following.lower():
+        return False
+    if "!" in end or "?" in end:
+        return True
+    token = token.lstrip(OPENERS)
+    initials = all(len(part) == 1 and part.isalpha() for part in token.split("."))
+    return len(end) == 1 and not initials and token.casefold() not in ABBREVIATIONS
+
+
+def sentences(text: str) -> list[str]:
+    """A text's sentences, by the one table of sentence ends: the one sentence reader, for every checker."""
     text = _normalise(text)
-    boundaries = []
-    for match in re.finditer(r'''(?P<token>[\w.]+)[.!?]["'”’\)\]\}]*\s+(?=(?P<next>[^\W\d_]|["'“‘]))''', text):
-        token, following = match.group('token', 'next')
-        uncertain = ('.' in token or len(token) == 1
-                     or (token.isalpha() and token[0].isupper() and len(token) <= 3))
-        if not uncertain and (following.isupper() or following in '\"\'“‘'):
-            boundaries.append(match.end())
+    ends = (rf"(?<!\S)(?P<token>\S*?)(?P<end>[{re.escape(TERMINALS)}]+)[{re.escape(CLOSERS)}]*\s+"
+            r"(?=(?P<following>\S*))")
+    boundaries = [match.end() for match in re.finditer(ends, text)
+                  if _ends_sentence(*match.group("token", "end", "following"))]
     return [text[start:end].strip() for start, end in zip([0, *boundaries], [*boundaries, len(text)])
             if text[start:end].strip()]
 
@@ -493,29 +616,43 @@ def _excluded_document(path: Path) -> bool:
             or 'certificate' in path.relative_to(OSS).parts)
 
 
+def _linked_document(link: str, folder: Path | None) -> Path | None:
+    """The public repository document a link shows, if it shows one: an address under the site's own canonical
+    source prefix (no network access) or, from a document in ``folder``, a local path. A page of the site has no
+    folder here: its local links are pages of the site."""
+    address = urlsplit(link)
+    repository = views.evidence.REPO
+    if link.startswith(repository):
+        address, folder = urlsplit('/' + link[len(repository):]), OSS
+    if folder is None or address.scheme or address.netloc or not address.path:
+        return None
+    target = ((OSS if address.path.startswith('/') else folder) / unquote(address.path).lstrip('/')).resolve()
+    if not target.is_relative_to(OSS) or target.suffix.lower() not in {'.md', '.txt'}:
+        return None
+    return None if _excluded_document(target) or not target.is_file() else target
+
+
 def public_documents(seeds) -> list[Path]:
-    """Transitive public-document links, parsed as Markdown/HTML, constrained to the repository and old exclusions."""
-    seen, pending = set(seeds), list(seeds)
-    while pending:
-        path = pending.pop()
-        # Read Markdown links before the site's URL rewrite; the docs renderer uses the same Markdown reader.
-        page = _docs_site_html(views._PLANNED.sub(lambda m: m.group(1), path.read_text(encoding='utf-8')))
+    """Transitive public-document links, parsed as Markdown/HTML, constrained to the repository and old exclusions.
+    A link to the site itself reaches the site as the static builder exports it: every page it writes, the 404 page
+    and each rendered template among them, has its links followed too."""
+    seen, pending, site = set(seeds), list(seeds), urlsplit(settings.SITE_URL).netloc
+    sources: list[tuple[str, Path | None]] = []     # a page read for its links, and the folder its local links are in
+    while pending or sources:
+        if not sources:
+            path = pending.pop()
+            # Read Markdown links before the site's URL rewrite; the docs renderer uses the same Markdown reader.
+            text = views._PLANNED.sub(lambda m: m.group(1), path.read_text(encoding='utf-8'))
+            sources.append((_docs_site_html(text), path.parent))
+        page, folder = sources.pop()
         for link in _reader(page).links:
-            address = urlsplit(link)
-            # Public repository links use the site's own canonical source prefix (no network access).
-            repository = views.evidence.REPO
-            if link.startswith(repository):
-                address = urlsplit('/' + link[len(repository):])
-            if address.scheme or address.netloc or not address.path:
-                continue
-            target = ((OSS if address.path.startswith('/') else path.parent)
-                      / unquote(address.path).lstrip('/')).resolve()
-            if not target.is_relative_to(OSS) or target.suffix.lower() not in {'.md', '.txt'}:
-                continue
-            if target in seen or _excluded_document(target) or not target.is_file():
-                continue
-            seen.add(target)
-            pending.append(target)
+            if site and urlsplit(link).netloc.lower() == site:
+                site = ""                                            # reached: the whole export, read once
+                sources += [(exported, None) for exported in exported_pages().values()]
+            target = _linked_document(link, folder)
+            if target is not None and target not in seen:
+                seen.add(target)
+                pending.append(target)
     return sorted(seen)
 
 
@@ -535,20 +672,17 @@ def claims(copy: str) -> list[str]:
 
 def g6_claims(page: str) -> list[str]:
     """Each sentence of a page that names G6, in any case and in a code span too, and makes a claim form."""
+    names = '|'.join(re.escape(_normalise(name)) for name in PRODUCT_NAMES)
     found = []
     for unit in _units(page):
-        spans: dict[str, str] = {}
-
-        def mark(span: str, spans: dict[str, str] = spans) -> str:
-            key = f"\x00{len(spans)}\x00"
-            spans[key] = str(span)
-            return key
-
-        for sentence in sentences(_resolve(unit, mark)):
-            read = sentence
-            for key, value in spans.items():
-                read, sentence = read.replace(key, value), sentence.replace(key, PLACEHOLDER)
-            names = '|'.join(re.escape(_normalise(name)) for name in PRODUCT_NAMES)
+        exempt: dict[int, str] = {}
+        seen = 0
+        for sentence in sentences(_resolve(unit, exempt)):          # the same text and sentences as ordinary copy
+            pieces = sentence.split(PLACEHOLDER)
+            read = pieces[0]
+            for piece in pieces[1:]:                                # an exempt span's own words can name G6
+                read += exempt.get(seen, PLACEHOLDER) + piece
+                seen += 1
             if re.search(rf"\b(?:{names})\b", _normalise(read), re.IGNORECASE) and claims(sentence):
                 found.append(_normalise(read))
     return found

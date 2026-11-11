@@ -155,18 +155,23 @@ def test_foreign_readers_are_inventoried_from_the_code(honesty):
                 name = ast.unparse(node.func)
                 if name.endswith('.read_text'):
                     reads.append(function.name)
-                if name in {'json.loads', 'yaml.safe_load', 'front_matter', 'reader.feed',
+                if name in {'json.loads', 'yaml.safe_load', 'front_matter', 'reader.feed', 'self.feed',
                             'views.markdown_html', 'markdown.markdown', 'Message', 'media.get_content_type',
-                            'urlsplit', 'render_to_string', 'build'}:
+                            'urlsplit', 'render_to_string', 'build', 'html.unescape', 'exported_pages'}:
                     parsers.append((function.name, name))
     assert sorted(reads) == ['_file_copy', 'docs_extensions', 'exported_pages', 'public_documents'], reads
+    # Repair 2: no reader decides by what a string looks like (the address test is gone); raw-text elements are
+    # decoded by html's own decoder, an open one is closed through the parser, and the link closure reads the
+    # site through the static builder's export.
     assert set(parsers) == {
         ('docs_extensions', 'yaml.safe_load'), ('handle_endtag', 'json.loads'),
-        ('_markdown_copy', 'front_matter'), ('_reader', 'reader.feed'),
+        ('_markdown_copy', 'front_matter'), ('_reader', 'reader.feed'), ('finish', 'self.feed'),
         ('_markdown_copy', 'views.markdown_html'), ('_docs_site_html', 'markdown.markdown'),
         ('handle_starttag', 'Message'), ('handle_starttag', 'media.get_content_type'),
-        ('_is_address', 'urlsplit'), ('public_documents', 'urlsplit'),
+        ('_linked_document', 'urlsplit'), ('public_documents', 'urlsplit'),
         ('product_names', 'render_to_string'), ('exported_pages', 'build'),
+        ('handle_endtag', 'html.unescape'), ('_diagram', 'html.unescape'),
+        ('public_documents', 'exported_pages'),
     }, parsers
 
 
@@ -247,6 +252,7 @@ def test_regex_calls_have_named_roles_from_the_code(honesty):
         ('_all_states', 're.findall'), ('_diagram', 're.sub'), ('_resolve', 're.match'),
         ('_docs_site_html', 're.sub'), ('claims', 're.sub'), ('claims', 're.escape'),
         ('g6_claims', 're.search'), ('g6_claims', 're.escape'), ('sentences', 're.finditer'),
+        ('sentences', 're.escape'),                     # repair 2: the pattern is built from the table of sentence ends
         ('_normalise', 're.sub'),
     }, calls
 
