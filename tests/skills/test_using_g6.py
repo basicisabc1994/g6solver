@@ -16,8 +16,9 @@ GUIDE = skills.guide_dir()
 TEXT = (GUIDE / "SKILL.md").read_text(encoding="utf-8")
 LIFECYCLE = (GUIDE / "references" / "lifecycle.md").read_text(encoding="utf-8")
 BOTH = TEXT + "\n" + LIFECYCLE
-#: The ceiling for SKILL.md's body. The tested version is about 900 words (TESTING.md, "Limits of this test").
-MAX_WORDS = 1000
+#: The ceiling for SKILL.md's body: the cap every skill has (0.3 design, 14.1: the 1,800-word cap holds). The version
+#: tested on agents was about 900 words (TESTING.md, "Limits of this test"); the routing measurement covers the longer one.
+MAX_WORDS = skills.MAX_WORDS
 
 
 def _resolve(dotted: str) -> object:
@@ -89,12 +90,11 @@ def test_every_python_name_it_gives_exists() -> None:
 
 
 def test_every_tool_and_code_it_names_is_real() -> None:
-    import g6.mcp
+    from g6.mcp import registrations
 
-    # the tools live in more than one module of g6.mcp (the Context Engine's are in g6/mcp/knowledge.py)
-    source = "\n".join(p.read_text(encoding="utf-8") for p in sorted(Path(g6.mcp.__file__).parent.glob("*.py")))
-    for tool in set(re.findall(r"`(g6_[a-z_]+|metaharness_[a-z_]+)`", BOTH)):
-        assert f"def {tool}(" in source, tool
+    registered = set(registrations.recorded()["g6"])   # what the server registers, wherever the tool is defined
+    named = set(re.findall(r"`(g6_[a-z_]+|metaharness_[a-z_]+)`", BOTH))
+    assert named and named <= registered, named - registered
     assert "Client-mediated consent may occur in the proposing session" in TEXT
     assert "recorded name is not authenticated" in TEXT
     assert "host-configured safety/injection evaluator" in TEXT
