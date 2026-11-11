@@ -597,9 +597,19 @@ cognitive work, with programming as the first toy model. So P2 was built first a
   won, and whatever else held, a cycle that raised past its own guard included (`fault`, held to the tick's reading, or to
   the enrolment when it read none); a wait or a stop met at a model call writes no cycle, and the next tick's reading
   refuses the change. Every safety stop a cycle met is kept on the tick the moment its work ends, before it settles or
-  does anything else that can fail, and every row the tick writes carries it, the fault's row among them, so a failure at
-  any step after it, then a restart, still pauses; a test built from the code fails each step after the cycle in turn. A
-  safety stop in a cycle the log would not take stops the loop at once, as a `STOP` a restarted handle reads. The judge is pinned by files listed whole, never by following imports: the verdict function selected, by
+  does anything else that can fail, and no tick leaves with it held there alone. A tick has two ways out: it returns,
+  having written the row that carries the stop, or having stopped the folder for a row the log would not take; or it
+  raises, and on its way out writes the pause a restart reads (`_keep`). So a failure at any step after the stop was
+  met, a row or none, then a restart, still pauses: the fault's own reading of the records refusing or raising, the
+  runner's hand-off of a fault that never reached its row, and a tick nobody hands to a fault among them. The fault's
+  row, when one is written, carries the stop too. Tests built from the code fail each call after the cycle, and each
+  call on the fault's ways out, in turn. A pause the log will not take from a tick on its way out stops the folder at
+  once, as a safety stop in a cycle the log would not take does, as a `STOP` a restarted handle reads, and a lost
+  cycle's hand-off reads what the tick met itself, never what its caller passed. A pause that cannot be written after a
+  row that was is left, as before: the row pauses as surely. A generation the cycle's harness made, an adoption or the monitor's
+  rollback, is read from the chain of adoptions for every row the tick writes (`_made`), never from what the tick held
+  when something after it raised, so the row of a cycle that failed after one keeps it, a rollback ranked first as on any
+  row; a failed cycle that had adopted stays coded as failed, with the adoption among its statuses. The judge is pinned by files listed whole, never by following imports: the verdict function selected, by
   its file and qualified name, each check by its file and name, every regular file of any suffix under the roots that
   hold the verdict and the checks (the folders they are in, or the `roots` a domain declares), data files and archives as
   much as source, and every module loaded from anywhere outside those, G6 and the installation, by its bytes. A verdict or
@@ -620,15 +630,22 @@ cognitive work, with programming as the first toy model. So P2 was built first a
   (`g6/core/reading.py`) takes every byte the freeze stands on and lists every folder it stands on, the sealed split's
   (`g6/core/vault.py`), G6's own code and the judging code the harness pins (`g6.integrity.build_manifest`), and the
   roots', and any failure, a locked file, a file another process holds without sharing, a folder that cannot be listed, a
-  file gone mid-listing or an error of any other kind, raises. Each root is listed once: a folder the listing goes into is
-  listed whole or raises, every other entry is decided by a stat that raises, never by a predicate that answers no for an
-  entry it could not ask, and the manifest's patterns choose among the files of that one listing, as `Path.glob` reads them
+  file gone mid-listing or an error of any other kind, raises. Each root is listed once, by the reader's own lister: it
+  takes names from a folder's listing and asks each entry what it is by a stat that raises, never by a predicate that
+  answers no for an entry it could not ask, the listing's own entries' among them (the standard library's walk reads an
+  entry whose kind it cannot ask as no folder, and is nowhere on this path). A folder the listing goes into is listed
+  whole or raises, and is asked again before it is gone into: one changed meanwhile is unreadable. A junction is a folder
+  to that stat, so the sealed split and the manifest list what it holds under its name, as before, and the loop's own
+  listings name it as a link and stay out. The manifest's patterns choose among the files of that one listing, as `Path.glob` reads them
   on Python 3.12, never by listing again; an error of any kind while listing or asking, one that is no `OSError` among
   them, is unreadable. The freeze's reading has one boundary that makes anything
   else that keeps it from being made, a domain's own code raising included, unreadable too, and a test built from the code
   lists every read and listing the freeze reaches and finds none outside the reader, no predicate that answers no, no
   function that lists twice, and no handler that catches less than every error but two that stand for no pinned byte; a
-  second test counts every folder each digest lists and finds none listed twice. G6's own code is listed once for the
+  second test counts every folder each digest lists and finds none listed twice; a third finds every function in that
+  code that lists a folder and crosses each with every kind of entry (a folder that cannot be listed or asked, an entry
+  gone since its folder was listed, a folder changed before it was gone into, a listing whose entries answer nothing but
+  their names). G6's own code is listed once for the
   envelope; the judging code's digest, which the harness reads on its own, lists it once more. An unreadable reading refuses
   enrolment (`G6_E_LOOP_JUDGE_UNPINNED`) and every tick and adoption as a frozen change naming what could not be read,
   while it stands; nothing raises past them, so a cycle's last check keeps every status the cycle held, a safety stop
@@ -1009,7 +1026,9 @@ and only the pause stands between a refusal and that.
 No failure of the records can undo this. A refused request is kept as it happens, by digest, in `refused.log`, a file no lock stands
 in front of, before any record of the tick is written and before the failed request is asked anything else (whether it met a
 limit, which reads the clock), and this process holds it too, for good. So a crash before its cycle is
-written, or a log that will not take that cycle, cannot send it again. A cycle lost that way cannot carry the pause, so it ends the
+written, or a log that will not take that cycle, cannot send it again. A tick that raises after the refusal, before its row,
+writes the pause a person must lift on its way out, so however it fails and whoever handles that, the loop stays paused. A cycle
+the log will not take cannot carry the pause, so it ends the
 run at the first, as three lost cycles do: `STOP` and `stops.log` hold it, the reason says what was refused, and only a person's
 start goes on. If `refused.log`, the log and `STOP` all refuse a write, this process still sends nothing more, and a restart then
 has nothing to go on. A `refused.log` that cannot be read stops the tick with `G6_E_LOOP_RECORDS_UNREADABLE`, before anything is

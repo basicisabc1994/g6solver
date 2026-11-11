@@ -79,7 +79,7 @@ from g6.metaharness.monitor import MIN_PAIRS
 from g6.metaharness.propose import DevRunner, ProposerView
 from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, SuiteCase, Workflow, default_objectives
 from g6.metaharness.select import race_calls
-from g6.metaharness.shadow import FROZEN_CHANGED, ROLLED_BACK, SCOPE, Held, adapt_shadow
+from g6.metaharness.shadow import ADOPTED, ADOPTER, FROZEN_CHANGED, ROLLED_BACK, SCOPE, Held, adapt_shadow
 from g6.operator.store import OperatorStore
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
 from g6.self_maintenance.envelope import (
@@ -982,6 +982,8 @@ class ShadowLoop:
         self.tuned: list[dict[str, Any]] = []     # this tick's tuning cycles as they happen, for a row that a raise cut short
         self._frozen_seen: dict[str, str] | None = None   # the frozen digests this tick read before it developed anything
         self._met: tuple[list[str], dict[str, str] | None, bool, _Halted | None] | None = None   # what its cycle met
+        self._began: int | None = None            # the generations the chain held as this tick's cycle began
+        self._written = False                     # the log holds this tick's row
         self.requests = _Requests(lambda: self._now(), self._halted, self._barred,
                                   lambda request, said: note_refusal(self.root, request, said))
         self._proposer = _Counted(proposer, self.requests)
@@ -1307,8 +1309,13 @@ class ShadowLoop:
         """One cycle. A heartbeat follows every tick, so someone watching can tell a loop that is waiting from one that
         has died."""
         self._frozen_seen = None                  # no tick adopts on a reading an earlier tick made
-        self._met = None                          # nor carries what an earlier tick's cycle met
-        reply = self._refused() or self._run()
+        self._met = None                          # nor carries what an earlier tick's cycle met,
+        self._began, self._written = None, False  # made or wrote
+        try:
+            reply = self._refused() or self._run()
+        except BaseException:
+            self._keep()                          # no tick leaves with what its cycle met held nowhere but here
+            raise
         self._beat(reply["completion_state"], reply["warning_card"]["code"], reason=reply["message"])
         return reply
 
@@ -1318,12 +1325,15 @@ class ShadowLoop:
         the same frozen check and the same rule as every cycle that adopts nothing (``_still_frozen``, ``_coded``), held to
         what the tick read before it developed anything, or to what a person enrolled when it read nothing, so a frozen
         change in a failed cycle is kept and ranked, and it carries every safety status the tick's cycle met before it
-        failed (``_carried``), so a restart pauses on them."""
-        if self.log.paused():
+        failed (``_carried``), so a restart pauses on them, and every generation its harness made (``_made``), first,
+        as it came first, so a rollback ranks as it does on any row. A loop already paused takes no failed cycle, unless
+        the pause is the one this tick wrote on its way out for what its own cycle met (``_keep``) and its row is still
+        owed (``_owed``)."""
+        if self.log.paused() and not self._owed():
             return _blocked(PAUSED, f"the loop is paused: {self.log.paused()}", "A person reads why, then lifts it.")
         row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error", "code": CYCLE_FAILED,
                "reason": f"{type(exc).__name__}: {exc}"[:500]}
-        statuses: list[Mapping[str, Any]] = [row, *self._carried(row)]
+        statuses: list[Mapping[str, Any]] = [*self._made(row), row, *self._carried(row)]
         try:
             held = self._still_frozen() if self._frozen_seen is not None else self._as_enrolled()
         except Exception as second:  # noqa: BLE001 - a failed cycle is recorded whatever else fails
@@ -1381,6 +1391,7 @@ class ShadowLoop:
         self.evaluating = False
         self.tuned = []
         self._rca: TickRecord | str | None = None     # what this tick's analysis reads once it has tuned, or why it could not
+        self._began = len(self.mh.adoption_rows())    # every generation after these is this cycle's (``_made``)
         self.requests.open(spend.amount, spend.ends)
         with sealed_closed(self.domain.sealed().vault) as breaches:
             try:                      # a sealed file already held open: no cycle starts over it
@@ -1397,7 +1408,8 @@ class ShadowLoop:
                 row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
                        "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]}
             finally:
-                # what the cycle met, kept before anything that can fail (``_carried``), and a limit on disk with it
+                # what the cycle met, kept before anything that can fail (``_carried``), and a limit on disk with it;
+                # a tick that leaves by a raise from here on writes what it met on its way out (``tick``, ``_keep``)
                 self._met = (breaches, self.requests.refusal, self.requests.unseen, halted)
                 if limit is not None:
                     self._limited(spend.provider, limit)
@@ -1408,7 +1420,8 @@ class ShadowLoop:
         if self.tuned and "tuning" not in row:     # a tick cut short keeps what it had made
             row["tuning"] = reflex.funnel(self.tuned)
         held = self._carried(row)                 # what held over the cycle: a strategy that swallowed a refusal adopts
-        if not held and limit is not None:        # nothing either
+        made = self._made(row)                    # nothing either; and a generation made that a raise kept off the row
+        if not held and not made and limit is not None:
             # a wait and no cycle, like any other: what ran is charged, none of it counts, nothing is adopted, and a frozen
             # change stays on disk for the next tick's reading to refuse
             self.waited += 1
@@ -1416,11 +1429,11 @@ class ShadowLoop:
                             f"and waits until {limit.until.isoformat()}: {limit.said}",
                             "The loop waits; it runs again when the limit ends.", wait_until=limit.until.isoformat(),
                             charged=charged)
-        if not held and halted is not None:   # also no cycle, and as a limit: what ran is charged, none of it counts
-            return self._cut_off(halted, charged)
+        if not held and not made and halted is not None:   # also no cycle, and as a limit: what ran is charged, none
+            return self._cut_off(halted, charged)          # of it counts; a cycle that made a generation is a row
         if stopped:                   # runs cut off mid-tick compared nothing: no gate result stands on them
             held.append({"outcome": "blocked", "code": TICK_BUDGET_SPENT, "reason": f"{stopped}, so nothing is adopted"})
-        statuses = [row] if "outcome" in row else []   # the cycle's own end is a status like the rest
+        statuses = [*made, *([row] if "outcome" in row else [])]   # the cycle's own end is a status like the rest
         adopted = False
         if recommended and not held:  # the harness's adoption runs its own frozen check last, under the lock it writes with
             statuses.append(self._adopt(recommended[-1]["decision"], row))
@@ -1445,10 +1458,11 @@ class ShadowLoop:
 
     def _carried(self, row: dict[str, Any]) -> list[dict[str, Any]]:
         """The safety statuses this tick's cycle met, as it kept them the moment its work ended and before settlement
-        (``_met``), so every row the tick writes carries them, a fault's row among them, and a restart pauses on them
-        whatever failed after they were met. A classifier's stop puts the request it refused on the row as well, where
-        ``lost_cycle`` and the next tick read it. The sealed split's breaches are read as they stand, since its guard
-        counts a file still held open on its way out too."""
+        (``_met``), so every row the tick writes carries them, a fault's row among them, and a tick that leaves with no
+        row writes them on its way out (``_keep``): a restart pauses on them whatever failed after they were met. A
+        classifier's stop puts the request it refused on the row as well, where ``lost_cycle`` and the next tick read
+        it. The sealed split's breaches are read as they stand, since its guard counts a file still held open on its
+        way out too."""
         if self._met is None:
             return []
         breaches, refusal, unseen, halted = self._met
@@ -1471,6 +1485,58 @@ class ShadowLoop:
             held.append({"outcome": "error", "code": halted.code,
                          "reason": f"{halted.said}: nothing was sent, and nothing is adopted"})
         return held
+
+    def _made(self, row: dict[str, Any]) -> list[dict[str, Any]]:
+        """The generations this tick's cycle made that ``row`` does not say, read from the chain of adoptions, where the
+        harness keeps them, and never from what the tick held when something after them raised: each row the loop itself
+        added since the cycle began (``_began``) that the log has not seen. Each is a status, and gives ``row`` its head,
+        a rollback what it undid as well, so the one rule (``_coded``) ranks a rollback first on a failed cycle's row as
+        on any other, and the log counts its generation. A person's own row there, or another handle's cycle's, is not
+        this cycle's."""
+        if self._began is None:
+            return []
+        seen, made = self.log.generation(), []
+        for kept in self.mh.adoption_rows()[self._began:]:
+            outcome = "rolled_back" if kept["kind"] == "rollback" else "adopted"
+            if kept["by"] != ADOPTER or kept["version"] <= seen or (
+                    row.get("outcome") == outcome and row.get("head_version") == kept["version"]):
+                continue
+            made.append({"outcome": outcome, "code": ROLLED_BACK if outcome == "rolled_back" else ADOPTED,
+                         "reason": f"generation {kept['version']} was made before this cycle ended: {kept['change']}"})
+            row |= {"head_version": kept["version"], **({"undoes": kept["undoes"]} if outcome == "rolled_back" else {})}
+        return made
+
+    def _owed(self, row: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """The safety statuses this tick's cycle met that no row in the log carries yet (``_carried``, into ``row``)."""
+        return [] if self._written else self._carried({} if row is None else row)
+
+    def _keep(self) -> None:
+        """Every safety status this tick's cycle met and no row carries, on disk before the tick leaves by a raise: the
+        pause a restart reads (``CycleLog.paused``), for the reason its row would have given. A tick has two ways out:
+        it returns, having written its row or stopped the folder for the row the log would not take (``_record``,
+        ``lost_cycle``), or it raises, through here. So whatever raised, and whoever answers or raises after it (the
+        fault's own reading of the records, the fault, the runner's hand-off, or nobody at all), the loop stays paused
+        for a person, and the fault's row, when one is written, says why as well. A pause the log will not take, for
+        any reason, stops the folder at once (``_closed``), as a row it will not take does. Nothing the log does to it
+        raises."""
+        held = self._owed()
+        if not held:
+            return
+        why = _safety_in({"statuses": held})
+        try:
+            self.log.pause(why)
+        except Exception as exc:  # noqa: BLE001 - whatever keeps the note from the log, the stop is written in its place
+            self._closed(f"{why[:200]}, and the log would not take its pause ({type(exc).__name__}: {exc})"[:400])
+
+    def _closed(self, why: str) -> None:
+        """This process spends no more, and the folder is stopped: ``STOP`` and ``stops.log`` are other files than the
+        log, so a restart stays closed until a person starts it again, and should those fail too, this process still
+        ends on what it holds here."""
+        self.cannot_record = why
+        try:
+            ask_to_stop(self.root, why)
+        except Exception:  # noqa: BLE001 - the run still ends on what is held here, whatever kept the file
+            pass
 
     def _limited(self, provider: str, limit: _AtLimit) -> None:
         """A provider's limit, kept the moment the cycle met it and before anything that can fail: first in the records a
@@ -1505,6 +1571,7 @@ class ShadowLoop:
             reply = self._reply(self.log.cycle(row))
         except (OSError, LedgerError) as exc:
             return self.lost_cycle(exc, refusal=row.get("classifier_stop"), safety=_safety_in(row))
+        self._written, self._began = True, None   # the row holds all the tick's cycle met and made: no later row says it again
         self.lost_cycles = self.waited = 0
         self._pause_if_failing()
         return reply
@@ -1515,8 +1582,13 @@ class ShadowLoop:
         for good: ``STOP`` and ``stops.log`` are other files, so a restart stays closed until a person starts it again, and
         should those fail too, this process still spends no more. A cycle that is written starts the count again. A cycle
         that holds a safety stop (``safety``, its reason, or a classifier's ``refusal``) stops the loop at the first, since
-        the pause a person must read would have stood on it, so a restarted handle reads it all the same."""
+        the pause a person must read would have stood on it, so a restarted handle reads it all the same. Whoever hands
+        the cycle over, a fault that never reached its row among them (``Runner._fault``), what the tick's cycle met and
+        no row carries yet is read here (``_owed``), never left to the caller to pass."""
         self.lost_cycles += 1
+        if refusal is None and not safety:
+            owed: dict[str, Any] = {}
+            safety, refusal = _safety_in({"statuses": self._owed(owed)}), owed.get("classifier_stop")
         why = (f"{self.lost_cycles} of the {MAX_FAILED_CYCLES} cycles in a row that stop the loop could not be written to "
                f"its log ({type(exc).__name__}: {exc})")[:400]
         if safety:
@@ -1525,11 +1597,7 @@ class ShadowLoop:
             why = (f"a classifier or a permission stopped a request ({refusal['said']}) and the log would not take that cycle "
                    f"({type(exc).__name__}: {exc})")[:400]
         if refusal is not None or safety or self.lost_cycles >= MAX_FAILED_CYCLES:
-            self.cannot_record = why
-            try:
-                ask_to_stop(self.root, why)
-            except Exception:  # noqa: BLE001 - the run still ends on what is held here, whatever kept the file
-                pass
+            self._closed(why)
         return _blocked(CANNOT_RECORD, why, "A person frees the log, then starts the loop again with g6_improve_start.")
 
     def _still_frozen(self) -> Held | dict[str, Any]:

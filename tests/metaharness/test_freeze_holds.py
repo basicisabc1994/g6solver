@@ -817,13 +817,16 @@ def test_any_failure_to_read_under_a_root_makes_the_reading_unreadable_never_a_d
         assert handle != wintypes.HANDLE(-1).value
         closing.append(lambda: kernel.CloseHandle(handle))
     elif failure == "a file gone mid-listing":
-        real = os.walk
+        import contextlib
+        from types import SimpleNamespace
 
-        def walked(top, **kwargs):
-            for here, dirs, files in real(top, **kwargs):
-                yield here, dirs, [*files, "gone.txt"] if Path(here).name == "data" else files
+        real = os.scandir
 
-        monkeypatch.setattr(loop_module.os, "walk", walked)
+        def listed(path):                             # the folder's listing, and one name that is no longer there
+            found = list(real(path))
+            return contextlib.nullcontext([*found, SimpleNamespace(name="gone.txt")] if Path(path).name == "data" else found)
+
+        monkeypatch.setattr(loop_module.os, "scandir", listed)   # the one lister lists by it (follow-up review 3)
     else:
         real_read = Path.read_bytes
         monkeypatch.setattr(Path, "read_bytes", lambda self: (_ for _ in ()).throw(_NeverSeen("never seen"))
@@ -921,11 +924,13 @@ FREEZE_SOURCES = ("metaharness/loop.py", "core/vault.py", "integrity/__init__.py
 #: writes the harness and the records, which have readers of their own.
 FREEZE_ENTRIES = ("_frozen_now", "_frozen", "_unpinned", "_in_reach", "judging_sha256")
 #: The calls that read a file or list a folder.
-READS = {"read_bytes", "read_text", "open", "walk", "rglob", "glob", "iterdir", "scandir", "listdir", "getsource"}
+READS = {"read_bytes", "read_text", "open", "walk", "fwalk", "rglob", "glob", "iterdir", "scandir", "listdir", "getsource"}
 #: Every read or listing the freeze reaches, and why it may stand: only the one reader and lister, and two that say why.
 ALLOWED = {
     ("core/reading.py", "sha256_of", "read_bytes"): "the one reader: any failure is Unreadable",
-    ("core/reading.py", "walk", "walk"): "the one lister: os.walk with a handler that raises, or names what it skipped",
+    ("core/reading.py", "walk", "scandir"): "the one lister: a folder's names, each asked by a stat that raises (the "
+                                            "standard library's walk, which reads an entry it cannot ask as no folder, "
+                                            "is on the path no more: follow-up review 3)",
     ("metaharness/loop.py", "does", "getsource"): "a step's source text for what a profile may express, which inspect "
                                                   "cannot tell from none at all; left open, and a file under a root is "
                                                   "pinned by its bytes",

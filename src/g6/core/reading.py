@@ -5,9 +5,11 @@ raises ``Unreadable`` and nothing ever stands in for what could not be read.
 A digest of a file that could not be read, or a listing that skipped a folder it could not open, would say the bytes are
 what they were when nobody read them. So a read that fails, for whatever reason (a file another process holds without
 sharing, a byte-range lock, a denied folder, a file removed while it was read, an error never seen before), raises, and
-the caller decides what an unreadable reading means. Each root is listed once: a folder the listing goes into is listed
-whole or raises, every other entry is decided by a stat that raises (``asked``), never by a predicate that answers "no"
-for an entry it could not ask, and a selection is made from that listing, never by listing again. The sealed split
+the caller decides what an unreadable reading means. Each root is listed once, by the one lister (``walk``): it takes
+names from a folder's listing and nothing else, and decides what each entry is by a stat of its own that raises
+(``asked``), never by a predicate that answers "no" for an entry it could not ask, the listing's own entries' among
+them, which the standard library's walk reads as "not a folder" when they fail. A folder it goes into is listed whole
+or raises, and a selection is made from that listing, never by listing again. The sealed split
 (``g6.core.vault``), the integrity manifest
 (``g6.integrity.build_manifest``) and the loop's freeze (``g6.metaharness.loop``) all read through here.
 """
@@ -55,35 +57,56 @@ def linked(info: os.stat_result) -> bool:
 
 
 def walk(root: str | os.PathLike[str], *, skipped: list[str] | None = None) -> Iterator[tuple[str, list[str], list[str]]]:
-    """``os.walk`` of ``root``, top down and following no link, each folder listed once. A folder that cannot be listed
-    raises ``Unreadable``, or, with ``skipped``, is named there and the walk goes on, for a caller that must see all else
-    the listing holds. Whatever else ends the listing, an error ``os.walk`` hands no handler (one that is no ``OSError``,
-    never seen before) among them, ends it the same way, the folder named, so nothing past it is taken for listed. A
-    root that does not exist lists nothing, as ``files_under`` holds none for it."""
+    """The one lister: ``root`` and every folder under it, top down, each listed once, as ``(folder, folders, others)``
+    by name. A listing gives names and nothing else: what each entry is, is asked of the entry itself by a stat that
+    raises (``os.lstat``), so no answer is ever "not a folder" because the entry could not be asked. ``folders`` are
+    what that stat finds a folder, a junction among them, as it is one to the file system; a symbolic link is among
+    ``others`` whatever it names, and is never gone into. A caller that takes a name out of ``folders`` keeps the walk
+    out of it, as the loop's listings keep it out of a junction (``_listing``, ``_links_under``). A folder is asked
+    again before the walk goes into it, and one that is a folder no more was changed while it was listed.
+
+    A folder that cannot be listed, an entry that cannot be asked or is gone since its folder was listed, and a folder
+    changed before it was gone into raise ``Unreadable``, whatever the error, one never seen before among them; or, with
+    ``skipped``, each is named there and left out, and the walk goes on, for a caller that must see all else the
+    listing holds. A root that does not exist lists nothing, as ``files_under`` holds none for it."""
     try:
         os.lstat(root)
     except Exception as exc:  # noqa: BLE001 - absence lists nothing; a root that cannot be asked is the walk's to refuse
         if isinstance(exc, FileNotFoundError):
             return
 
-    def refused(error: BaseException) -> None:
-        name = said(getattr(error, "filename", None) or root)
+    def refused(path: str, error: BaseException, what: str) -> None:
         if skipped is None:
-            raise Unreadable(f"{name} cannot be listed ({type(error).__name__})") from error
-        skipped.append(name)
+            raise Unreadable(f"{said(path)} cannot be {what} ({type(error).__name__})") from error
+        skipped.append(said(path))
 
-    listing = os.walk(root, followlinks=False, onerror=refused)
-    while True:
+    def folder(path: str) -> bool | None:
+        """Whether ``path`` is a folder, by its own stat; ``None``, refused, when it cannot be asked."""
         try:
-            found = next(listing, None)
-        except Exception as exc:  # noqa: BLE001 - whatever ends the listing early, it was not listed whole
-            if isinstance(exc, Unreadable):
-                raise
-            refused(exc)
-            return
-        if found is None:
-            return
-        yield found
+            return stat.S_ISDIR(os.lstat(path).st_mode)
+        except Exception as exc:  # noqa: BLE001 - an entry that cannot be asked is unreadable, never "not a folder"
+            refused(path, exc, "read")
+            return None
+
+    pending = [os.fspath(root)]
+    while pending:
+        here = pending.pop()
+        try:
+            with os.scandir(here) as listing:
+                names = [entry.name for entry in listing]
+        except Exception as exc:  # noqa: BLE001 - whatever keeps a folder from being listed whole, it was not listed
+            refused(here, exc, "listed")
+            continue
+        kinds = {name: folder(os.path.join(here, name)) for name in names}
+        folders = [name for name in names if kinds[name]]
+        yield here, folders, [name for name in names if kinds[name] is False]
+        for name in reversed(folders):                # the caller's, by now: what it took out is not gone into
+            path = os.path.join(here, name)
+            still = folder(path)
+            if still:
+                pending.append(path)
+            elif still is False:
+                refused(path, NotADirectoryError(path), "listed, as it was changed while its folder was")
 
 
 def files_under(root: str | os.PathLike[str]) -> list[Path]:
