@@ -1255,7 +1255,12 @@ def test_every_fact_a_handle_holds_is_the_processs_the_folders_files_or_its_own(
     reserve = statements("ShadowLoop._reserve")
     limits = next(i for i, s in enumerate(reserve) if "self.log.limits()" in s)
     assert limits < next(i for i, s in enumerate(reserve) if "self.meter.reserve(" in s)
-    assert statements("ShadowLoop._keep_refusal")[0] == "self._here.refused.add(request)"   # before any file is tried
+    # The folder's record is found before any file is tried, and holds the refusal once the durable write has ended,
+    # whatever became of it: no handle of the folder reads it there before it is on the disk.
+    assert statements("ShadowLoop._keep_refusal")[0] == "here = self._here"
+    writes = [node for node in _function(tree, "ShadowLoop._keep_refusal").body
+              if isinstance(node, ast.Try) and "note_refusal(self.root, request, said)" in ast.unparse(node.body)]
+    assert len(writes) == 1 and [ast.unparse(held) for held in writes[0].finalbody] == ["here.refused.add(request)"]
 
 
 # Finding 2's class (guard_covers_less_than_it_guards): a send is known by what it sent, whoever sends it -------------------

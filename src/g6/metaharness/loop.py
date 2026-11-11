@@ -87,6 +87,7 @@ from g6.self_maintenance.envelope import (
     REFUSED_FILE,
     TICK_BUDGET_SPENT,
     CycleLog,
+    _REFUSAL_WRITE_LOCK as _LOCK,
     ask_to_stop,
     beat,
     file_digest,
@@ -285,8 +286,9 @@ def _sender(counted: Any) -> tuple[Any, Request | str]:
 
 #: The one lock every send in this process is admitted under, whichever meter it is reached through, and what a send held for
 #: an identical one waits on. Each meter holds it as ``_lock``, so there is one lock however many meters are around a send.
-_LOCK = threading.Lock()
 _SETTLED = threading.Condition(_LOCK)
+# Persistence is ordered separately; no stop reader holds this lock.
+_PUBLICATIONS = threading.RLock()
 
 
 @dataclass(frozen=True, eq=False)
@@ -336,13 +338,15 @@ class _Record:
     (``_Requests.sent``, ``_Requests.in_flight``). It is written only under ``_LOCK``: by admission, which takes a place on each
     meter around a send and makes the send's record in one step (``_Requests.admit``), by a send's outcome
     (``_Requests.release``), and by the end of a call, which settles what its children imported (``_Requests.settle``). It also
-    holds what this process alone knows of each loop's folder (``_Folder``), which admission reads, under that lock, through
-    each handle of the folder."""
+    holds what this process alone knows of each loop's folder (``_Folder``), which admission reads through each handle of the
+    folder before it takes that lock, and reads again if a refusal was kept or a folder stopped in between (``moved``)."""
 
     def __init__(self) -> None:
         self.out: dict[str, list[Send]] = {}         # each send let out whose outcome is not yet read, by what it sent
         self.taken: weakref.WeakKeyDictionary[Any, dict[int, int]] = weakref.WeakKeyDictionary()   # meter: tick: places
         self.books: dict[object, _Book] = {}         # each metered call open, by its owner
+        self.writing: set[object] = set()           # refusal writes not yet persisted and latched; excludes every admission
+        self.moved = 0                              # counts, under the lock, each refusal kept and each folder stopped here
         self.folders: dict[tuple[int, int], _Folder] = {}  # opened volume/device and file id/inode
         self.folder_handles = ExitStack()          # retain identities while their latches live, even after unlink
         self.folder_lock = threading.Lock()
@@ -411,7 +415,7 @@ class _Requests:
     watched host caller, and where a watched host caller's program is about to start, for that one; a ``Retry-After`` resend
     passes it too, and the start of a call passes it with no send of its own. It is let in once for every meter around it,
     which are the meters of the metered calls open where it is made, nested or not, on whatever thread: one step under the one
-    lock reads each of their stops and latches and what each holds as refused, takes one place on each, and makes the send's
+    lock checks the stops read outside it, latches and what each holds as refused, takes one place on each, and makes the send's
     record (``usage.Send``), which is all that is known of the send. What a provider said of it goes to each meter that record
     took a place on, and it is released by its own outcome (``release``). A call's children's totals, which pass no boundary,
     are settled once, into the record, as the call ends (``settle``).
@@ -421,8 +425,10 @@ class _Requests:
     ``refused`` holds, every request refused through this meter, ``unknown`` holds requests whose replies could not be read,
     and what ``on_record`` reads at every admission, which for a
     loop's meter is the store and what this process holds for the folder (``_Folder``), so another handle of the same loop, in
-    this process or another, refuses it too. ``keeping`` is told of each refusal under
-    the lock and before any other thread can see it. A send waits while an identical one is out on another thread
+    this process or another, refuses it too. ``keeping`` runs outside the admission lock; its synchronous durable refusal
+    write takes that lock through fsync. Pending writes hold admission and tick finalization until persistence and the
+    protected latch finish. A send waits while an identical one is out
+    on another thread
     (``_out_elsewhere``), so one let in before a refusal of the same bytes was kept cannot leave after it. A tick ends in one
     step under the lock (``close``), which keeps what it latched as ``closed``: a limit or a refusal is in what the tick ends
     on, or was met once it had ended, and is never lost between."""
@@ -458,7 +464,13 @@ class _Requests:
     def open(self, limit: float, ends: datetime | None = None) -> None:
         """A tick's limits, from here on."""
         with self._lock:
+            self._await_writes()
             self._reset(limit, ends)
+
+    def _await_writes(self) -> None:
+        """Wait under the condition, releasing its lock, until all refusal writes have finished, across handles too."""
+        while _RECORD.writing:
+            self._settled.wait()
 
     def _reset(self, limit: float, ends: datetime | None) -> None:
         """A tick's limits, and nothing taken under it yet. ``generation`` moves with each opening and closing, so a request
@@ -473,6 +485,7 @@ class _Requests:
         """End the tick in one step under the lock: what it latched is kept as ``closed``, and nothing is admitted under it
         after. So a limit or a refusal is in what the tick ends on, or was met once it had ended."""
         with self._lock:
+            self._await_writes()
             self.closed = _Ended(self.sent, self.unseen, self.stopped, self.refusal, self.limited, self.met, uuid4().hex)
             self._reset(math.inf, None)
 
@@ -497,13 +510,13 @@ class _Requests:
         return any(held.thread != thread and not any(held is mine for mine in around)
                    and (held.watched or held.owner is not owner) for held in _RECORD.out.get(identity, ()))
 
-    def _full(self, places: int, wait: float) -> bool:
+    def _full(self, places: int, wait: float, moment: datetime | None) -> bool:
         """Whether this tick has no room for ``places`` more, or its week ends before a send that waits ``wait`` seconds could
         leave; ``stopped`` then says which. Called under the lock."""
         if self.unseen or self.sent + places > self.limit or (places == 0 and self.sent >= self.limit):
             self.stopped = f"this tick has sent {self.sent} of the {self.limit:g} it reserved"
             return True
-        if self.ends is not None and self.now() + timedelta(seconds=wait) >= self.ends:
+        if self.ends is not None and moment + timedelta(seconds=wait) >= self.ends:
             self.stopped = f"this tick's week ended at {self.ends.isoformat()} and nothing is reserved in the new one"
             return True
         return False
@@ -512,94 +525,110 @@ class _Requests:
               live: Callable[[], bool] = lambda: True, identity: str | Request | None = None, owner: object = None,
               identify: Callable[[], str | Request] | None = None, watched: bool = False, sender: Any = None,
               record: Send | None = None) -> Send | None:
-        """The one admission of every send in the process, nested or not, on any thread, a resend included, as one step under
-        the one lock. The calls around the send are the metered calls open in this context, and one on this meter from
-        ``owner``, ``generation`` and ``live`` where none of those is. Everything it decides on is read inside the lock, for
-        every meter around the send: the bytes it will carry, each meter's stop, latches and refused requests (its own and its
-        store's), and the tick each call began in and whether it is still running. Then, in that same step, it takes ``places``
-        on each of those meters once and makes the send's record, before the lock is let go: nothing read before it decides
-        anything. ``wait``: the seconds a server asked for before this one goes out. ``identity``, or ``identify`` to read it
-        from the bytes as they are now: what is about to be sent, never sent again once refused, and held while an identical
-        send is out elsewhere; after each wait all of it is read again. With neither, nothing is sent here, and no record is
-        made."""
+        """Read callbacks without the admission lock, then decide and register under it. A refusal published during any
+        reader is checked before charging or sending. Pending persistence excludes admission, and every condition wait
+        restarts all external reads, as does a refusal kept or a folder stopped by this process since they began (``moved``).
+        ``identify`` supplies the immutable snapshot this send carries; no callback can block a refusal from being
+        published while it reads. Tick generations and latches are checked in the protected step."""
         here = threading.get_ident()
         with self._lock:
             calls = _ACTIVE.get()
             if not any(call.meter is self for call in calls):
                 calls = (*calls, _Call(owner, self, generation, live))
             meters = [meter for meter, _ in _meters(calls)]
-            while True:
-                barred: set[str] = set()
-                for meter in meters:
-                    stopped = meter.halted()
-                    if stopped is None and (identity is not None or identify is not None):
-                        try:
-                            barred |= meter.refused | meter.unknown | set(meter.on_record())
-                        except LedgerError as exc:
-                            stopped = _Halted(RECORDS_UNREADABLE, f"what was refused here cannot be read, so nothing could "
-                                                                  f"say what must not be sent: {exc}"[:400])
-                    if stopped is not None:
-                        if meter.limit != math.inf:
-                            raise stopped
-                        raise LLMError(f"{stopped.code}: {stopped.said}")
-                # Snapshot after every stop/store read, including after a wait. No later read names this send.
-                request = identify() if identify is not None else identity
-                known = request.identity if isinstance(request, Request) else request
-                if identify is not None:
-                    for meter in meters:
-                        stopped = meter.halted()
+            books = tuple(_RECORD.books.get(call.owner) for call in calls)
+            seen = _RECORD.moved
+        while True:
+            external: set[str] = set()
+            stops: tuple[tuple[Any, _Halted | None], ...] = ()
+            for meter in meters:
+                stopped = meter.halted()
+                if stopped is None and (identity is not None or identify is not None):
+                    try:
+                        external |= meter.refused | meter.unknown | set(meter.on_record())
+                    except LedgerError as exc:
+                        stopped = _Halted(RECORDS_UNREADABLE, f"what was refused here cannot be read, so nothing could "
+                                                              f"say what must not be sent: {exc}"[:400])
+                stops += ((meter, stopped),)
+            # Snapshot after every stop/store read, including after a wait. No later read names this send.
+            request = identify() if identify is not None and not any(stop for _, stop in stops) else identity
+            known = request.identity if isinstance(request, Request) else request
+            if identify is not None and not any(stop for _, stop in stops):
+                stops += tuple((meter, meter.halted()) for meter in meters)
+            living = all(call.live() for call in calls)
+            moments = [meter.now() if meter.ends is not None else None for meter in meters]
+            registering = None
+            try:
+                with self._lock:
+                    if _RECORD.writing:
+                        self._settled.wait()
+                        seen = _RECORD.moved
+                        continue
+                    if _RECORD.moved != seen:  # a refusal was kept or a folder stopped here since the reads above began
+                        seen = _RECORD.moved
+                        continue
+                    for meter, stopped in stops:
                         if stopped is not None:
                             if meter.limit != math.inf:
                                 raise stopped
                             raise LLMError(f"{stopped.code}: {stopped.said}")
-                for meter in meters:
-                    if meter.refusal is not None:
-                        raise _Refused(meter.refusal["said"])
-                    if meter.limited is not None:
-                        raise _AtLimit(*meter.limited)
-                if any((call.generation is not None and call.generation != call.meter.generation) or not call.live()
-                       for call in calls):
-                    raise LLMError(f"{TICK_BUDGET_SPENT}: this request came after its call returned, so nothing reserved "
-                                   "covers it")
-                if record is not None:
-                    if (request is not record.request or known != record.identity
-                            or not any(held is record for held in _RECORD.out.get(known, ()))
-                            or any(not any(charged is meter and generation == meter.generation
-                                           for charged, generation in record.charged) for meter in meters)):
-                        raise LLMError("G6_E_LOOP_UNNAMED_REQUEST: note does not name its admitted launch")
-                    if known in barred:
+                    for meter in meters:
+                        if meter.refusal is not None:
+                            raise _Refused(meter.refusal["said"])
+                        if meter.limited is not None:
+                            raise _AtLimit(*meter.limited)
+                    if (not living or any(call.generation is not None and call.generation != call.meter.generation
+                                          for call in calls)
+                            or any(book is not None and _RECORD.books.get(call.owner) is not book
+                                   for call, book in zip(calls, books))):
+                        raise LLMError(f"{TICK_BUDGET_SPENT}: this request came after its call returned, so nothing reserved "
+                                       "covers it")
+                    barred = external.copy()
+                    for meter in meters:
+                        barred |= meter.refused | meter.unknown
+                    if record is not None:
+                        if (request is not record.request or known != record.identity
+                                or not any(held is record for held in _RECORD.out.get(known, ()))
+                                or any(not any(charged is meter and generation == meter.generation
+                                               for charged, generation in record.charged) for meter in meters)):
+                            raise LLMError("G6_E_LOOP_UNNAMED_REQUEST: note does not name its admitted launch")
+                        if known in barred:
+                            raise LLMError(f"{CLASSIFIER_STOP}: this request was refused once, and nothing sends it again")
+                        return record
+                    if known is not None and self._out_elsewhere(known, owner, here):
+                        self._settled.wait(1.0)
+                        continue
+                    if any(meter.ends is not None and moment is None for meter, moment in zip(meters, moments)):
+                        continue
+                    full = next((meter for meter, moment in zip(meters, moments)
+                                 if meter._full(places, wait, moment)), None)
+                    if full is not None:
+                        break
+                    for meter in meters:
+                        _RECORD.charge(meter, meter.generation, places)
+                    if known is not None and known in barred:
                         raise LLMError(f"{CLASSIFIER_STOP}: this request was refused once, and nothing sends it again")
-                    return record
-                if known is not None and self._out_elsewhere(known, owner, here):
-                    self._settled.wait(1.0)               # an identical send is out: what becomes of it decides
-                    continue
-                full = next((meter for meter in meters if meter._full(places, wait)), None)
-                if full is not None:
-                    break
-                for meter in meters:                      # a place first, so a wrapper that keeps trying stops at the limit
-                    _RECORD.charge(meter, meter.generation, places)
-                if known is not None and known in barred:
-                    raise LLMError(f"{CLASSIFIER_STOP}: this request was refused once, and nothing sends it again")
-                if known is None:
-                    return None
-                record = Send(known, watched, owner, self.generation, here, sender, places,
-                              tuple((meter, meter.generation) for meter in meters),
-                              request if isinstance(request, Request) else None)
-                try:
-                    _RECORD.out.setdefault(known, []).append(record)
-                    for call in calls:
-                        book = _RECORD.books.get(call.owner)
-                        if book is not None:
-                            book.sends.append(record)
-                    _AROUND.set((*_AROUND.get(), record))
-                    return record
-                except BaseException:
+                    if known is None:
+                        return None
+                    record = Send(known, watched, owner, self.generation, here, sender, places,
+                                  tuple((meter, meter.generation) for meter in meters),
+                                  request if isinstance(request, Request) else None)
+                    registering = record
                     try:
-                        if record.request is not None:
-                            record.request.close()
-                    finally:
+                        _RECORD.out.setdefault(known, []).append(record)
+                        for call in calls:
+                            book = _RECORD.books.get(call.owner)
+                            if book is not None:
+                                book.sends.append(record)
+                        _AROUND.set((*_AROUND.get(), record))
+                        return record
+                    except BaseException:
                         self._release_locked(record)
-                    raise
+                        raise
+            except BaseException:
+                if registering is not None and registering.request is not None:
+                    registering.request.close()
+                raise
         raise LLMError(f"{TICK_BUDGET_SPENT}: {full.stopped}")
 
     def take(self, wait: float = 0.0, *, generation: int | None = None, live: Callable[[], bool] = lambda: True,
@@ -637,9 +666,12 @@ class _Requests:
         inside it and what the calls inside it settled already. It takes its places on each meter around the call once, under
         the tick each call began in, and every call around this one counts it as settled, so none of them charges it again. A
         note refused at its boundary was never counted, so it offsets nothing."""
+        total = counted()
         with self._lock:
+            while _RECORD.writing:
+                self._settled.wait()
             book = _RECORD.books.pop(calls[-1].owner, None)
-            imported = max(counted() - book.notes - book.settled, 0) if book is not None else 0
+            imported = max(total - book.notes - book.settled, 0) if book is not None else 0
             if imported:
                 for meter, began in _meters(calls):
                     _RECORD.charge(meter, meter.generation if began is None else began, imported)
@@ -670,6 +702,7 @@ class _Requests:
         """What the tick latched decides, not what a request raised or a wrapper caught: a call of a tick that met a refusal
         or a limit leaves as that, whichever way the call came back."""
         with self._lock:
+            self._await_writes()
             if self.limit == math.inf or generation != self.generation:
                 return
             refusal, limited = self.refusal, self.limited
@@ -744,31 +777,54 @@ class _Requests:
         or what a watched caller read before it raised anything. ``request``: the record of the refused send, or its identity,
         never sent again; with neither known, the tick ends and nothing can be barred. ``generation``: the tick the request
         began in; a refusal that comes once that tick has closed ends nothing of the next, though what it refused is still
-        never sent again. Under the lock, in order: it is kept (``keeping``), and then, whatever keeping it did, it is in
-        ``refused`` or ``unknown`` and ends its tick, so no other thread sees it before it is on the disk, and no request goes out between;
-        then it leaves for the tick, so nothing is scored and no record of the tick is written before it is kept."""
+        never sent again. A pending write is registered under the admission lock, persistence hooks run outside it, and
+        note_refusal takes it for the durable write before the outcome latches under it in a finally. Admission and tick
+        finalization wait for pending writes. Publications are
+        ordered by their own reentrant lock, which no admission reader holds, so a paused stop reader cannot exclude one."""
         said = refused_by(str(failed))
         if not said:
             return
         identity = request.identity if isinstance(request, Send) else request
-        ticking = False
-        with self._lock:
-            targets = self._targets(request, generation)
-            try:
-                for meter, _ in targets:
-                    if identity is not None and identity not in meter.refused | meter.unknown:
-                        meter.keeping(identity, said)
-            finally:
-                for meter, began in targets:
-                    if identity is not None:
-                        if said.startswith(HOST_UNKNOWN + ":"):
-                            meter.unknown.add(identity)
-                        else:
-                            meter.refused.add(identity)
-                    if meter.limit != math.inf and (began is None or began == meter.generation):
-                        meter.refusal = {"said": _writable(said), "request": identity}
-                    ticking = ticking or meter.limit != math.inf
-                self._settled.notify_all()
+        writable = _writable(said)
+        token = object()
+        targets: tuple[tuple[Any, int | None], ...] = ()
+        unknowns: tuple[set[str], ...] = ()
+
+        def finish() -> bool:
+            with self._lock:
+                try:
+                    if token not in _RECORD.writing:
+                        return False
+                    _RECORD.moved += 1
+                    for (meter, began), unknown in zip(targets, unknowns):
+                        if identity is not None:
+                            if said.startswith(HOST_UNKNOWN + ":"):
+                                unknown.add(identity)
+                            else:
+                                meter.refused.add(identity)
+                        if meter.limit != math.inf and (began is None or began == meter.generation):
+                            meter.refusal = {"said": writable, "request": identity}
+                    return any(meter.limit != math.inf for meter, _ in targets)
+                finally:
+                    _RECORD.writing.discard(token)
+                    self._settled.notify_all()
+
+        try:
+            with self._lock:
+                targets = self._targets(request, generation)
+                unknowns = tuple(meter.unknown for meter, _ in targets)
+                _RECORD.writing.add(token)
+            with _PUBLICATIONS:
+                try:
+                    for meter, _ in targets:
+                        with self._lock:
+                            needed = identity is not None and identity not in meter.refused | meter.unknown
+                        if needed:
+                            meter.keeping(identity, said)
+                finally:
+                    ticking = finish()  # latch before the next publication can start
+        finally:
+            finish()                 # interruption while acquiring the publication lock also releases pending writes
         if ticking:
             raise _Refused(said)
 
@@ -1241,16 +1297,21 @@ class ShadowLoop:
         self.evaluating = True
 
     def _keep_refusal(self, request: str, said: str) -> None:
-        """Keep a refused request's digest before anything else happens, under the admission lock: this process holds it for
-        the folder first, whichever handle met it (``_Folder``), and then the disk (``note_refusal``). One no file would take
-        is held by this process alone, and a restart could send it again: so this process sends nothing more from the folder,
-        on any of its handles, and asks for a stop a person must lift."""
-        self._here.refused.add(request)
+        """Keep a refused request's digest while the pending-write barrier excludes admission: first the disk
+        (``note_refusal``), then, whatever became of that write, this process holds it for the folder, whichever handle met it
+        (``_Folder``), so no handle reads it there before it is durable. The folder's record is found before any file is tried.
+        One no file would take is held by this process alone, and a restart could send it again: so this process sends nothing
+        more from the folder, on any of its handles, and asks for a stop a person must lift."""
+        here = self._here
+        kept = False
         try:
-            if note_refusal(self.root, request, said):
-                return
+            kept = note_refusal(self.root, request, said)
         except Exception:  # noqa: BLE001 - any failure to keep it is a refusal only this process holds
             pass
+        finally:
+            here.refused.add(request)
+        if kept:
+            return
         why = _writable(f"a request was refused ({' '.join(said.split())[:160]}) and {REFUSED_FILE} would not keep it, so a "
                         "restart could send it again")[:400]
         self.cannot_record = why
@@ -1274,7 +1335,10 @@ class ShadowLoop:
     @cannot_record.setter
     def cannot_record(self, why: str) -> None:
         if why:                       # set and never lifted: an empty value changes nothing
-            self._here.cannot_record = why
+            here = self._here
+            with _LOCK:               # an admission that read the folder's stop before this reads it again
+                here.cannot_record = why
+                _RECORD.moved += 1
 
     @property
     def lost_cycles(self) -> int:
@@ -1655,17 +1719,19 @@ class ShadowLoop:
         for good: ``STOP`` and ``stops.log`` are other files, so a restart stays closed until a person starts it again, and
         should those fail too, this process still spends no more. A cycle that is written starts the count again. A cycle
         that holds a ``refusal`` stops the loop at the first, since the pause a person must read would have stood on it."""
-        with _LOCK:                   # the process's count for the folder, whichever of its handles lost the cycle
-            self.lost_cycles += 1
-            lost = self.lost_cycles
+        here = self._here
+        with _LOCK:                   # the process's count for the captured folder, with no custody lookup under admission
+            here.lost_cycles += 1
+            lost = here.lost_cycles
         why = (f"{lost} of the {MAX_FAILED_CYCLES} cycles in a row that stop the loop could not be written to "
                f"its log ({type(exc).__name__}: {exc})")[:400]
         if refusal is not None:
             why = _writable(f"a classifier or a permission stopped a request ({refusal['said']}) and the log would not take "
                             f"that cycle ({type(exc).__name__}: {exc})")[:400]
         if refusal is not None or lost >= MAX_FAILED_CYCLES:
-            with _LOCK:               # what every admission of the folder reads, under the same lock
-                self.cannot_record = why
+            with _LOCK:               # an admission of the folder that read its stop before this reads it again
+                here.cannot_record = why
+                _RECORD.moved += 1
             try:
                 ask_to_stop(self.root, why)
             except OSError:

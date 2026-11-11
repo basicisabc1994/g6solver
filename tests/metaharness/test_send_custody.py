@@ -260,7 +260,7 @@ def test_each_host_outcome_releases_the_record_and_private_copies(tmp_path, monk
         if outcome is not None:
             raise outcome
         (files / "last_message.txt").write_text("answer", encoding="utf-8")
-        result = {"type": "turn.completed"} if "exec" in argv else {"type": "result", "result": "answer"}
+        result = {"type": "turn.completed"} if "exec" in argv else {"type": "result", "is_error": False, "result": "answer"}
         return 0, json.dumps(result), ""
 
     monkeypatch.setattr(host_models, "_run", run)

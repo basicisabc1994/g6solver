@@ -364,36 +364,46 @@ def _read_reply(provider: str, printed: str) -> tuple[list[dict[str, Any]], bool
         return [], False
 
 
-def _event_outcome(provider: str, event: Mapping[str, Any]) -> tuple[str, bool, bool]:
-    """Read one host's own outcome fields; model-authored contents grant no stop authority."""
+def _event_outcome(provider: str, event: Mapping[str, Any]) -> tuple[str, str]:
+    """Every native result supplies a state; an unrecognised status is never an implicit continuation."""
     kind = event.get("type")
     if provider == "claude":
         if kind != "result":
-            return "", False, False
+            return "", "event"
         said = claude_said(event)
-        failed = event.get("is_error") is True and not said
-        answered = not said and event.get("is_error", False) is False and isinstance(event.get("result"), str)
-        return said, failed, answered
+        if said:
+            return said, "stop"
+        if event.get("is_error") is True:
+            return "", "failed"
+        if event.get("is_error") is False and isinstance(event.get("result"), str):
+            return "", "answer"
+        return "", "unknown"
+    if kind not in ("error", "turn.failed", "turn.completed"):
+        return "", "event"
     error = event if kind == "error" else event.get("error") if kind in ("turn.failed", "turn.completed") else None
     stop = _codex_kind(error) if isinstance(error, Mapping) else ""
-    return (_CODEX_SAID.get(stop, ""), kind == "turn.failed" or (not stop and (kind == "error" or error is not None)),
-            kind == "turn.completed" and error is None)
+    if stop:
+        return _CODEX_SAID[stop], "stop"
+    return "", "answer" if kind == "turn.completed" and error is None else "failed"
 
 
 def _reply_outcome(provider: str, events: Sequence[Mapping[str, Any]]) -> tuple[str, bool, bool]:
     """One ordered rule for every native event: refusal persists; only a later completion clears a wait."""
-    refused, said, answered, failed = "", "", False, False
+    refused, said, answered, failed, unknown = "", "", False, False, False
     for event in events:
-        stop, error, completed = _event_outcome(provider, event)
+        stop, state = _event_outcome(provider, event)
         if stop.startswith(MODEL_REFUSED):
             refused = stop
         elif stop:
             said, answered = stop, False
-        if completed:
+        if state == "answer":
             said, answered = "", True
-        elif error:
+        elif state == "failed":
             failed, answered = True, False
-    return refused or said, failed, answered and not failed
+        elif state not in {"event", "stop"}:
+            unknown, answered = True, False
+    unread = f"{HOST_UNKNOWN}: host result has an unrecognised status; these inputs stay barred" if unknown else ""
+    return refused or unread or said, failed, answered and not failed and not unknown
 
 
 def _codex_result(events: Sequence[Mapping[str, Any]]) -> tuple[str, bool, bool]:
@@ -403,7 +413,10 @@ def _codex_result(events: Sequence[Mapping[str, Any]]) -> tuple[str, bool, bool]
 
 def _codex_turn(printed: str) -> tuple[str, bool]:
     """Compatibility stop facts from the same parser; only the owned observer decides a reply's class."""
-    return _codex_result(_read_reply("codex", printed)[0])[:2]
+    said, failed, _ = _codex_result(_read_reply("codex", printed)[0])
+    # This compatibility API projects provider-reported stops, not G6's local unread-result hold. The owned classifier
+    # still reads the whole outcome and bars the admitted inputs for that hold.
+    return ("" if said.startswith(HOST_UNKNOWN + ":") else said), failed
 
 
 def codex_said(printed: str) -> str:
@@ -1244,6 +1257,8 @@ def _classify_reply(provider: str, code: int | None, printed: str) -> tuple[str,
         return "refusal", said
     if code is None or not readable:
         return "unknown", f"{HOST_UNKNOWN}: host reply could not be read whole; these inputs stay barred"
+    if said.startswith(HOST_UNKNOWN + ":"):
+        return "unknown", said
     if said:
         return "stop", said
     if code != 0 or failed:
@@ -1269,7 +1284,7 @@ class WatchedClaude(_Watched, host_models.ClaudeCodeCaller):
     def _command(self, program: str, system: str, user: str, work: Path, files: Path) -> tuple[list[str], str]:
         return super()._command(program, system, user, work, files)
 
-    def _launch(self, argv: list[str], stdin: str, cwd: Path, files: Path, env: dict[str, str], seconds: float) -> Any:
+    def _launch(self, argv: list[str], stdin: str, cwd: Path, files: Path, env: dict[str, str], seconds: float) -> str:
         """A session of a caller's own that starts its program itself names that step ``_launch`` (``ToolSession``)."""
         name = "claude"
         reply = host_models.ClaudeCodeCaller._reply
@@ -1289,13 +1304,12 @@ class WatchedClaude(_Watched, host_models.ClaudeCodeCaller):
                     raise failed
             _observe_reply(name, result[0], result[1], owned, (stdin,))
             try:
-                reply(self, *result, files, (stdin,))
+                return reply(self, *result, files, (stdin,))
             except BaseException as failed:
                 try:
                     _observe_reply(name, None, "", owned, (stdin,))
                 finally:
                     raise failed
-            return result
         finally:
             _released((owned,))
 

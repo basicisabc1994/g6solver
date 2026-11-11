@@ -361,7 +361,7 @@ def test_each_customizable_host_hook_finishes_before_admission(tmp_path, monkeyp
     def run(argv, stdin, cwd, files, *args):
         assert admitted and hooks == [method]
         (files / "last_message.txt").write_text("answer", encoding="utf-8")
-        result = {"type": "turn.completed"} if "exec" in argv else {"type": "result", "result": "answer"}
+        result = {"type": "turn.completed"} if "exec" in argv else {"type": "result", "is_error": False, "result": "answer"}
         return 0, json.dumps(result), ""
 
     monkeypatch.setattr(meter, "admit", admit)

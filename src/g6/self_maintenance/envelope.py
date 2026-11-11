@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import time
 from collections.abc import Mapping
 from datetime import datetime
@@ -58,6 +59,8 @@ NOTHING_TO_TRY = ("idle", "no_winner", "no_constraint")
 #: What a cycle keeps of what a proposer found, a general research record: a regularity found in the failing cases, what
 #: can be exploited, why it does not hold generally, and the earlier cycles it builds on. Empty when it supplied none.
 FINDINGS = ("structure", "resource", "obstruction", "composed_from")
+
+_REFUSAL_WRITE_LOCK = threading.Lock()  # also the loop's admission lock, whichever thread calls this writer
 
 
 def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dict]) -> list[str]:
@@ -303,15 +306,18 @@ def ask_to_stop(root: str | Path, reason: str = "") -> str:
 
 
 def note_refusal(root: str | Path, request: str, said: str) -> bool:
-    """Keep what a classifier or a permission refused, first and in a file no lock stands in front of, because a refused
+    """Keep what a classifier or a permission refused, first and in an append-only file, because a refused
     request is never sent again whether or not its cycle reaches the log, or a tick is open at all. ``request``: a digest, never
     its text. It is on the disk before this returns ``True``. What was said is kept as UTF-8 with any lone surrogate kept as it
     is, so it is written and read back exactly. Each row stands on a line of its own: after a row a crash cut short, the new one
     begins with a line break, in the same write. One that cannot be written raises nothing and returns ``False``: the caller
-    decides what this process does, since only it still holds the refusal."""
+    decides what this process does, since only it still holds the refusal. Every synchronous append and fsync holds the
+    admission lock; path and text conversion, like the hook calling this writer, precede that lock."""
     try:
         row = f"{request} {' '.join(said.split())}\n".encode("utf-8", "surrogatepass")
-        with open(Path(root) / REFUSED_FILE, "a+b") as kept:
+        path = Path(root) / REFUSED_FILE
+        # Admission excludes lock-waiting readers and caller hooks; its own durable write stays locked through fsync.
+        with _REFUSAL_WRITE_LOCK, open(path, "a+b") as kept:
             kept.seek(0, os.SEEK_END)
             if kept.tell():
                 kept.seek(-1, os.SEEK_END)

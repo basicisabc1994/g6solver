@@ -1405,7 +1405,8 @@ def test_ref2_the_request_path_keeps_no_per_send_state_but_each_sends_record():
     _, attributes, calls, _ = writes(tree)
     assert attributes == ["unseen"]                                          # the tick's latch, and nothing else
     assert set(calls) == set()                                               # what it let out is the record's
-    record = {"_RECORD.out[]", "_RECORD.taken[]", "_RECORD.books[]", "notes", "settled"}     # the record's own containers
+    # the record's own containers, and its count of refusals kept and folders stopped, which is of no one send
+    record = {"_RECORD.out[]", "_RECORD.taken[]", "_RECORD.books[]", "notes", "settled", "moved"}
     requests = loop_module._Requests
     for method in (requests.admit, requests.release, requests._release_locked, requests.at_a_refusal, requests.met_a_limit, requests.provider_said,
                    requests.take, requests.begin, requests.noted, requests.settle, requests.close, requests._reset,
@@ -1413,7 +1414,20 @@ def test_ref2_the_request_path_keeps_no_per_send_state_but_each_sends_record():
         _, attributes, calls, rebinding = writes(source(method))
         assert rebinding == [] and set(attributes) <= {*requests.TICK_STATE, *record}, (method.__name__, attributes)
         assert set(calls) <= {"meter.refused.add", "meter.unknown.add", "_RECORD.out.setdefault", "_RECORD.out.setdefault(known, []).append",
-                              "book.sends.append", "_RECORD.books.pop"}, (method.__name__, calls)
+                              "book.sends.append", "_RECORD.books.pop", "_RECORD.writing.add",
+                              "_RECORD.writing.discard", "unknown.add"}, (method.__name__, calls)
+        if "unknown.add" in calls:
+            publication = inspect.getsource(method)
+            assert "unknowns = tuple(meter.unknown for meter, _ in targets)" in publication
+            assert "for (meter, began), unknown in zip(targets, unknowns):" in publication
+        if "_RECORD.writing.add" in calls:
+            publication = source(method)
+            assert any(isinstance(node, ast.Try) and "_RECORD.writing.add(token)" in ast.unparse(node.body)
+                       and "finish()" in ast.unparse(node.finalbody) for node in ast.walk(publication))
+            finish = next(node for node in ast.walk(publication)
+                          if isinstance(node, ast.FunctionDef) and node.name == "finish")
+            assert any(isinstance(node, ast.Try) and "_RECORD.writing.discard(token)" in ast.unparse(node.finalbody)
+                       for node in ast.walk(finish))
     for method in (loop_module._Gate.sending, loop_module._Gate.told, loop_module._Gate.done):
         _, attributes, calls, _ = writes(source(method))
         assert attributes == [] and calls == []
@@ -1535,9 +1549,11 @@ def test_ref3_2_a_file_changed_as_admission_takes_its_lock_is_the_send_it_record
 
 
 def test_ref3_2_everything_admission_decides_on_is_read_inside_its_lock():
-    """Built from the code: in ``_Requests.admit`` nothing that decides is read outside ``with self._lock``. Changed on purpose
-    (the refusals follow-up): admission decides for every meter around the send, so what it reads is each meter's and each
-    call's, and the record's, and the calls around the send are read inside the lock too."""
+    """Callbacks read outside admission; only a protected decision using current facts and the same open call book admits.
+
+    The stop-reader repair replaces the earlier single locked read phase: a callback holding that lock excluded the
+    refusal publisher it awaited. The final decision must retain every local authority check, including call lifetime.
+    """
     import ast
     import inspect
 
@@ -1548,17 +1564,28 @@ def test_ref3_2_everything_admission_decides_on_is_read_inside_its_lock():
     admit = ast.parse("\n".join(line[indent:] for line in text.splitlines())).body[0]
     locked = [node for node in ast.walk(admit) if isinstance(node, ast.With)
               and ast.unparse(node.items[0].context_expr) == "self._lock"]
-    assert len(locked) == 1
-    inside = set(map(id, ast.walk(locked[0])))
-    decides = ("self.halted", "self.refused", "self.unknown", "self.refusal", "self.limited", "self.in_flight", "self.sent", "self.limit",
-               "self.ends", "self.unseen", "self.generation", "identify", "live", "self._out_elsewhere",
-               "_ACTIVE", "_RECORD", "_AROUND", "calls", "meters", "meter.halted", "meter.on_record", "meter.refused",
-               "meter.unknown", "meter.refusal", "meter.limited", "meter.limit", "meter.generation", "meter._full", "call.generation",
-               "call.meter", "call.live")
-    outside = [ast.unparse(node) for node in ast.walk(admit) if id(node) not in inside
-               and isinstance(node, ast.Attribute | ast.Name) and ast.unparse(node) in decides]
-    assert outside == [], outside
-    assert all(id(node) in inside for node in ast.walk(admit) if isinstance(node, ast.Return))
+    assert len(locked) == 2, "capture the call books, then commit after external readers"
+    captured, committed = sorted(locked, key=lambda node: node.lineno)
+    protected = {id(node) for section in locked for node in ast.walk(section)}
+    decision = set(map(id, ast.walk(committed)))
+    callbacks = {"meter.halted", "meter.on_record", "identify", "call.live", "meter.now"}
+    observed = {ast.unparse(node.func) for node in ast.walk(admit)
+                if isinstance(node, ast.Call) and ast.unparse(node.func) in callbacks}
+    assert observed == callbacks
+    assert all(id(node) not in protected for node in ast.walk(admit)
+               if isinstance(node, ast.Call) and ast.unparse(node.func) in callbacks)
+    current = {"meter.refused", "meter.unknown", "meter.refusal", "meter.limited", "meter.generation",
+               "call.generation", "call.meter", "_RECORD.out", "_RECORD.writing", "_RECORD.moved"}
+    assert current <= {ast.unparse(node) for node in ast.walk(committed) if isinstance(node, ast.Attribute)}
+    for name in ("_RECORD.charge", "self._out_elsewhere", "meter._full"):
+        uses = [node for node in ast.walk(admit) if isinstance(node, ast.Call) and ast.unparse(node.func) == name]
+        assert uses and all(id(node) in decision for node in uses)
+    book_capture = ast.parse("books = tuple(_RECORD.books.get(call.owner) for call in calls)").body[0]
+    assert any(ast.dump(node) == ast.dump(book_capture) for node in ast.walk(captured))
+    assert "_RECORD.books.get(call.owner) is not book" in ast.unparse(committed)
+    assert all(id(node) in protected for node in ast.walk(admit)
+               if isinstance(node, ast.Name) and node.id in {"_ACTIVE", "_RECORD", "_AROUND"})
+    assert all(id(node) in decision for node in ast.walk(admit) if isinstance(node, ast.Return))
 
 
 class _BusyOnce:
