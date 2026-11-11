@@ -82,6 +82,9 @@ class AgentTrace:
     cost_usd: float = 0.0
     duration_ms: int = 0
     error: str | None = None
+    #: The SHA-256 of the prompt the backend received, when it reports one; the paired evaluator compares it with what
+    #: it sent.
+    prompt_sha256: str = ""
 
 
 @dataclass(frozen=True)
