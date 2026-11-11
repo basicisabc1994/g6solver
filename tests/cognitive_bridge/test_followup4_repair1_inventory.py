@@ -135,6 +135,11 @@ def runtime_cases():
     for entry, parameter, kind, name in copier._cases():
         cases[f'copier:{entry}:{parameter}:{name}'] = lambda mp, entry=entry, parameter=parameter, kind=kind, name=name: copier.test_one_over_is_refused_before_any_detachment_round_trip_or_encoding(entry, parameter, kind, name, mp)
     cases['text-keys:budget'] = copier.test_the_key_reader_spends_the_visit_budget_before_it_reads_a_key
+    # Repair 3: one tally per detachment, one native scalar per array item.
+    from tests.cognitive_bridge import test_followup4_repair3_inventory as roots
+    cases['tally:detachment'] = lambda mp: [roots.test_one_tally_counts_a_declared_type_across_the_whole_detachment(make) for make in (
+        lambda: {f'h{i}': roots.Hypothesis(f'h{i}', 's', .5) for i in range(33)},)]
+    cases['array:format'] = lambda mp: roots.test_a_buffer_format_that_is_not_one_native_scalar_is_refused('T{<i:x:<d:y:}', mp)
     return cases
 
 

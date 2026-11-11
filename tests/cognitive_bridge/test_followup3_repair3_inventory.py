@@ -81,6 +81,8 @@ OWNED = {
     'mixed_methods.py:_admit_claim': 'one ClaimIR or one parsed reply item: keys by the text-key reader, native lengths, then at most five declared needs; no conversion',
     'mixed_methods.py:_admit_models': 'the mapping the walker is about to copy, after its native count met the visit budget; each model through _admit_json',
     'mixed_methods.py:LLMClaimCompiler._admit_reply': 'native parsed count admitted before each item\'s claim bounds',
+    'snapshot.py:_record_fields': 'the record type\'s own declared fields, looked up in the attribute mapping the one reader read',
+    'snapshot.py:_bytes_view': 'a record\'s declared bytes field, which the record boundary filled (a tuple of bytes)',
     'snapshot.py:_text_keys': 'native key count against the visit budget, then each key by exact type; nothing is looked up',
     'snapshot.py:_admit_held': 'the list or tuple the walker is about to copy, after its native count met the visit budget; exact types only',
     'engine.py:LLMProposer._admit_reply': 'native parsed count admitted before per-item length and encoded-size checks',

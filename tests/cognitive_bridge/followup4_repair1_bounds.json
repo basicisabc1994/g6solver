@@ -5080,6 +5080,17 @@
   {
     "source": [
       "block.py",
+      "_admit_input",
+      "comparison",
+      "cls is ClaimInput"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "block.py",
       "_as_given",
       "comparison",
       "type(given) is dict"
@@ -9825,7 +9836,7 @@
       "mixed_methods.py",
       "_admit_claim",
       "admission",
-      "_admit_length(held('id'), 100, 'claim ID/statement length invalid', minimum=1)"
+      "_admit_length(held.get('id'), 100, 'claim ID/statement length invalid', minimum=1)"
     ],
     "disposition": "resource",
     "reason": "Explicit native-count/length or encoded-size admission call before its operation.; the copier reads the same declared bound before it copies (repair 2)",
@@ -9860,7 +9871,7 @@
       "mixed_methods.py",
       "_admit_claim",
       "admission",
-      "_admit_length(held('statement'), 3000, 'claim ID/statement length invalid', minimum=1)"
+      "_admit_length(held.get('statement'), 3000, 'claim ID/statement length invalid', minimum=1)"
     ],
     "disposition": "resource",
     "reason": "Explicit native-count/length or encoded-size admission call before its operation.; the copier reads the same declared bound before it copies (repair 2)",
@@ -9895,7 +9906,7 @@
       "mixed_methods.py",
       "_admit_claim",
       "admission",
-      "_admit_length(needs, 5, 'claim requires 1\u20135 evidence needs', minimum=1)"
+      "_admit_length(held.get('evidence_needs'), 5, 'claim requires 1\u20135 evidence needs', minimum=1)"
     ],
     "disposition": "resource",
     "reason": "Explicit native-count/length or encoded-size admission call before its operation.; the copier reads the same declared bound before it copies (repair 2)",
@@ -9924,17 +9935,6 @@
       "field:claim.statement",
       "field:claim.evidence_needs"
     ]
-  },
-  {
-    "source": [
-      "mixed_methods.py",
-      "_admit_claim",
-      "comparison",
-      "type(need) is str"
-    ],
-    "disposition": "semantic",
-    "probes": [],
-    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
   },
   {
     "source": [
@@ -11106,6 +11106,19 @@
       "snapshot.py",
       "_admit_array",
       "comparison",
+      "re.fullmatch('[@=<>!|]?(?:[cbB?hHiIlLqQnNefdPO]|\\\\d*[spw])', buffer.format) is None"
+    ],
+    "disposition": "resource",
+    "reason": "The buffer's item format, read before conversion: one native scalar (or one text or bytes item) is one value.",
+    "probes": [
+      "array:format"
+    ]
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_admit_array",
+      "comparison",
       "len(buffer.shape) > DEPTH"
     ],
     "disposition": "resource",
@@ -11213,7 +11226,7 @@
       "snapshot.py",
       "_text_keys",
       "comparison",
-      "2 * len(value) > MAX_ITEMS"
+      "2 * dict.__len__(value) > MAX_ITEMS"
     ],
     "disposition": "resource",
     "reason": "A raw mapping's key count against the visit budget, before a key is read.",
@@ -11224,13 +11237,35 @@
   {
     "source": [
       "snapshot.py",
-      "_admit_fields",
+      "_attributes",
       "comparison",
-      "type(value) is dict"
+      "type(mapping) is not dict"
     ],
     "disposition": "semantic",
-    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
-    "probes": []
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_record_fields",
+      "comparison",
+      "item is _ABSENT"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_admit_fields",
+      "comparison",
+      "type(value) is not dict"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
   },
   {
     "source": [
@@ -11253,17 +11288,6 @@
     "disposition": "semantic",
     "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
     "probes": []
-  },
-  {
-    "source": [
-      "snapshot.py",
-      "_admit_fields",
-      "comparison",
-      "type(value) is dict"
-    ],
-    "disposition": "semantic",
-    "probes": [],
-    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
   },
   {
     "source": [
@@ -11467,15 +11491,16 @@
       "snapshot.py",
       "_admit_held",
       "comparison",
-      "held > entry[1][0]"
+      "tally.get(id(entry[0]), 0) + held > entry[1][0]"
     ],
     "disposition": "resource",
-    "reason": "How many records of one declared type a collection holds, by exact type, before the walker copies any item.",
+    "reason": "How many records of one declared type a collection the walker took holds, with what the detachment already reached, before any item is copied.",
     "probes": [
       "copier:CognitiveAssuranceOrchestrator.compile:variants:one hundred and one",
       "copier:CognitiveAssuranceOrchestrator.execute:compiled:twenty-one",
       "copier:LLMProposer.propose:hypotheses:thirty-three",
-      "copier:MixedMethodExecutor.execute:plan:twenty-one"
+      "copier:MixedMethodExecutor.execute:plan:twenty-one",
+      "tally:detachment"
     ]
   },
   {
@@ -11589,6 +11614,17 @@
       "snapshot.py",
       "_walk",
       "comparison",
+      "len(budget) < 3"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_walk",
+      "comparison",
       "budget[0] >= MAX_ITEMS"
     ],
     "disposition": "resource",
@@ -11648,6 +11684,17 @@
       "snapshot.py",
       "_walk",
       "comparison",
+      "taken is None"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_walk",
+      "comparison",
       "count > MAX_ITEMS - budget[0]"
     ],
     "disposition": "resource",
@@ -11665,6 +11712,28 @@
       "_walk",
       "comparison",
       "bound is not None"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_walk",
+      "comparison",
+      "taken is None"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_walk",
+      "comparison",
+      "taken is not None"
     ],
     "disposition": "semantic",
     "probes": [],
@@ -11762,6 +11831,17 @@
       "snapshot.py",
       "_walk",
       "comparison",
+      "name not in mapping"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_walk",
+      "comparison",
       "schema is not None"
     ],
     "disposition": "semantic",
@@ -11795,6 +11875,47 @@
       "snapshot.py",
       "_walk",
       "comparison",
+      "declared[1] is not None"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_walk",
+      "budget-definition",
+      "budget[2][id(cls)] = budget[2].get(id(cls), 0) + 1"
+    ],
+    "disposition": "resource",
+    "reason": "The detachment's one tally of a declared record type, spent where the walker reaches each record, before it copies it.",
+    "probes": [
+      "tally:detachment",
+      "copier:LLMProposer.propose:hypotheses:thirty-three",
+      "copier:MixedMethodExecutor.execute:plan:twenty-one"
+    ]
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_walk",
+      "comparison",
+      "budget[2][id(cls)] > declared[1][0]"
+    ],
+    "disposition": "resource",
+    "reason": "The detachment's one tally of a declared record type, spent where the walker reaches each record, before it copies it.",
+    "probes": [
+      "tally:detachment",
+      "copier:LLMProposer.propose:hypotheses:thirty-three",
+      "copier:MixedMethodExecutor.execute:plan:twenty-one"
+    ]
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_walk",
+      "comparison",
       "declared[2] is not None"
     ],
     "disposition": "semantic",
@@ -11806,7 +11927,7 @@
       "snapshot.py",
       "_walk",
       "comparison",
-      "kinds[field.name][0] == 'code'"
+      "kinds[name][0] == 'code'"
     ],
     "disposition": "semantic",
     "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
@@ -13060,6 +13181,17 @@
   {
     "source": [
       "snapshot.py",
+      "_bytes_view.one",
+      "comparison",
+      "type(item) is bytes"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
       "view",
       "comparison",
       "_budget is None"
@@ -13153,11 +13285,11 @@
       "snapshot.py",
       "view",
       "comparison",
-      "kind is bytes"
+      "kinds[field.name][0] in ('bytes', 'bytes*')"
     ],
     "disposition": "semantic",
-    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
-    "probes": []
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
   },
   {
     "source": [

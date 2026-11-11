@@ -19,7 +19,7 @@ from .codes import FrozenMap
 from .codes import _is_type
 from .codes import (APPROVAL_REQUIRED, EXECUTION_INCOMPLETE, MODEL_MISSING, PLAN_TAMPERED, PREREQUISITE_UNMET,
                     STEP_FAILED, affirmed, claims, refusal, settled, unclaimed)
-from .snapshot import publish, record_data, _admit_json, _admit_length, _prompt_value, _text_keys, bounded, fresh, json_reply, number, plain, record, returned, snapshot, text
+from .snapshot import publish, record_data, _admit_json, _admit_length, _prompt_value, _record_fields, _text_keys, bounded, fresh, json_reply, number, plain, record, returned, snapshot, text
 
 # Every name resolves to an existing G6 component and a fixed, documented op.
 # Models are declarative data, never arbitrary modules, code or pickle paths.
@@ -146,23 +146,15 @@ def _admit_claim(claim: ClaimIR | dict) -> None:
     is made from. The walker reads them wherever it detaches a ClaimIR (``snapshot.bounded``)."""
     if type(claim) is dict:
         _text_keys(claim, "a claim")
-        held = claim.get
+        held = claim
     elif type(claim) is ClaimIR:
-        def held(name: str) -> Any:
-            return getattr(claim, name)
+        held = _record_fields(claim, ClaimIR, "a claim")  # the one reader: a missing field is refused there
     else:
         return
-    _admit_length(held("id"), 100, "claim ID/statement length invalid", minimum=1)
-    _admit_length(held("statement"), 3000, "claim ID/statement length invalid", minimum=1)
-    needs, models = held("evidence_needs"), held("models")
-    _admit_length(needs, 5, "claim requires 1–5 evidence needs", minimum=1)
-    if _is_type(type(models), (dict, FrozenMap)) and _is_type(type(needs), (list, tuple)):
-        _text_keys(models, "a claim's models")
-        for need in needs:
-            if type(need) is str:
-                given = models.get(need)
-                if _is_type(type(given), (dict, FrozenMap)):
-                    _admit_model(given)
+    _admit_length(held.get("id"), 100, "claim ID/statement length invalid", minimum=1)
+    _admit_length(held.get("statement"), 3000, "claim ID/statement length invalid", minimum=1)
+    _admit_length(held.get("evidence_needs"), 5, "claim requires 1–5 evidence needs", minimum=1)
+    _admit_models(held.get("models"))  # every model it carries, needed or not: one rule, as a compilation's
 
 
 def _admit_model(given: Any) -> None:
@@ -172,7 +164,8 @@ def _admit_model(given: Any) -> None:
 def _admit_models(models: Mapping[str, Mapping[str, Any]]) -> None:
     """Every declarative model a mapping of them holds, under the one model cap, before the mapping is copied."""
     if _is_type(type(models), (dict, FrozenMap)):
-        for given in models.values():
+        _text_keys(models, "models")
+        for given in dict.values(models):
             if _is_type(type(given), (dict, FrozenMap)):
                 _admit_model(given)
 

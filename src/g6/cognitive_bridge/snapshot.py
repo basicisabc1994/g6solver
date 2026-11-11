@@ -39,6 +39,7 @@ import contextvars
 import dataclasses
 import hashlib
 import json
+import re
 import types
 import typing
 import weakref
@@ -49,7 +50,7 @@ from returns.result import Failure, Success
 from g6.core.result import Result
 
 from .codes import _code, _is_type, _type_mro
-from .codes import ARRAYS, DEPTH, OBJECTS, FrozenMap, NotPlainData, _read_as, _unread, unclaimed
+from .codes import ARRAYS, DEPTH, OBJECTS, FrozenMap, NotPlainData, _named, _read_as, _unread, unclaimed
 
 T = TypeVar("T")
 
@@ -91,6 +92,11 @@ def _admit_array(value: Any, *, where: str) -> tuple[memoryview, Callable[[Any],
     except (BufferError, TypeError, ValueError):
         raise NotPlainData(where, "array size cannot be admitted before conversion") from None
     try:
+        # One item is one value only for a single native scalar (or one text/bytes item): a structured item converts
+        # to as many values as it has fields, and a format the native converter does not read fails inside it.
+        if re.fullmatch(r"[@=<>!|]?(?:[cbB?hHiIlLqQnNefdPO]|\d*[spw])", buffer.format) is None:
+            raise NotPlainData(where, "array size cannot be admitted before conversion: its items are not one "
+                                      "native scalar each")
         if len(buffer.shape) > DEPTH:
             raise _too_deep(where)
         visits, prefix = 1, 1
@@ -124,26 +130,55 @@ def _text_key(key: Any, where: str, note: str = "") -> str:
 
 
 def _text_keys(value: Any, where: str) -> None:
-    """Every key of a raw ``dict`` through :func:`_text_key`, within the visit budget, before any lookup in it."""
-    if 2 * len(value) > MAX_ITEMS:
+    """Every key of a raw ``dict`` through :func:`_text_key`, within the visit budget, before any lookup in it. The
+    keys are read from the dict's native storage (``dict.__len__``, ``dict.__iter__``), never by a subclass's own."""
+    if 2 * dict.__len__(value) > MAX_ITEMS:
         raise NotPlainData(where, "size exceeds the bridge's limit")
-    for key in value:
+    for key in dict.__iter__(value):
         _text_key(key, where, " (the key, which is not text)")
 
 
+def _attributes(value: Any, where: str) -> dict[str, Any]:
+    """The one reader of an instance's attribute mapping (a record's, an input model's): an exact ``dict`` whose keys
+    are text, read by native iteration before any ``getattr`` or lookup of a field, so neither a mapping subclass's
+    own methods nor a key's ``__eq__`` runs. Fields are then looked up in what this returns."""
+    mapping = object.__getattribute__(value, "__dict__")
+    if type(mapping) is not dict:
+        raise NotPlainData(where, f"its attribute mapping is a {_named(mapping)}, not a dict")
+    _text_keys(mapping, where)
+    return mapping
+
+
+_ABSENT = object()
+
+
+def _record_fields(value: Any, cls: type, where: str) -> dict[str, Any]:
+    """A record's fields, read once (:func:`_attributes`) for the walker and for every admission of it: a missing
+    field is the boundary's refusal here, so no later reader meets an ``AttributeError``."""
+    mapping = _attributes(value, where)
+    held = {}
+    for field in dataclasses.fields(cls):
+        item = mapping.get(field.name, _ABSENT)
+        if item is _ABSENT:
+            if field.init:
+                raise NotPlainData(where, f"missing record field {field.name}")
+            continue  # computed by the record's own checks
+        held[field.name] = item
+    return held
+
+
 def _admit_fields(value: Any, cls: type) -> None:
-    """Record-local buffer bounds also precede detachment and reconstruction."""
-    if type(value) is dict:
-        _text_keys(value, cls.__name__)
+    """Record-local buffer bounds also precede detachment and reconstruction. ``value`` is a record's fields as the
+    one reader read them (:func:`_record_fields`), or the parsed item a record is made from."""
+    if type(value) is not dict:
+        value = _record_fields(value, cls, cls.__name__)
+    _text_keys(value, cls.__name__)
     for field in dataclasses.fields(cls):
         if 'max_bytes' not in field.metadata and 'max_length' not in field.metadata:
             continue
-        if type(value) is dict:
-            if field.name not in value:
-                continue  # the schema reader supplies defaults/names missing fields
-            item = value[field.name]
-        else:
-            item = getattr(value, field.name)
+        if field.name not in value:
+            continue  # the schema reader supplies defaults/names missing fields
+        item = value[field.name]
         if 'max_bytes' in field.metadata:
             _admit_bytes(item, field.metadata['max_bytes'], field.metadata['size_error'])
         if 'max_length' in field.metadata:
@@ -175,16 +210,38 @@ def _declared(kind: type) -> tuple[type, tuple[int, str] | None, Callable[[Any],
     return entry if entry is not None and entry[0] is kind else None
 
 
-def _admit_held(value: Any, where: str) -> None:
-    """How many records of each declared type a list or tuple holds, by exact type, before any item is copied. Past
-    a cap, the boundary's refusal (:class:`NotPlainData`), saying the rule's own words."""
+def _admit_held(items: Any, where: str, tally: dict[int, int]) -> None:
+    """How many records of each declared type a collection the walker took holds (a list's or a tuple's items, a
+    mapping's values), by exact type, before any item is copied: with what this detachment has already reached
+    (``tally``), past a cap it is the boundary's refusal (:class:`NotPlainData`), saying the rule's own words."""
     counts: dict[int, int] = {}
-    for item in value:
+    for item in items:
         entry = _declared(type(item))
         if entry is not None and entry[1] is not None:
             held = counts[id(entry[0])] = counts.get(id(entry[0]), 0) + 1
-            if held > entry[1][0]:
+            if tally.get(id(entry[0]), 0) + held > entry[1][0]:
                 raise NotPlainData(where, entry[1][1])
+
+
+#: The budget of the walk that is running a declared bound, so what the bound reads spends that one budget
+#: (:func:`_bounded_view`); None outside a walk.
+_COPYING: contextvars.ContextVar[list | None] = contextvars.ContextVar("g6_cognitive_bridge_copier", default=None)
+
+
+def _bounded(check: Callable[[Any], None], value: Any, where: str, budget: list) -> None:
+    """Run a declared bound for the walker, under the walker's one budget; a rule's own refusal of what a record
+    type declares leaves as the boundary's (:class:`NotPlainData`) when ``where`` names the record."""
+    token = _COPYING.set(budget)
+    try:
+        check(value)
+    except NotPlainData:
+        raise
+    except ValueError as exc:
+        if not where:
+            raise
+        raise NotPlainData(where, str(exc)) from None
+    finally:
+        _COPYING.reset(token)
 
 
 def _prompt_value(value: Any, *, where: str) -> Any:
@@ -244,6 +301,8 @@ def _walk(value: Any, where: str, depth: int = 0, *, budget: list[int] | None = 
     """
     if budget is None:
         budget = [0, 0]
+    if len(budget) < 3:
+        budget.append({})  # beside reaches and size: how many records of each declared type this detachment reached
     if budget[0] >= MAX_ITEMS:
         raise NotPlainData(where, "size exceeds the bridge's limit")
     budget[0] += 1
@@ -257,14 +316,22 @@ def _walk(value: Any, where: str, depth: int = 0, *, budget: list[int] | None = 
         raise NotPlainData(where, "size exceeds the bridge's limit")
     if capability:
         return value
-    count = len(value) if _is_type(kind, ARRAYS) else 2 * len(value) if _is_type(kind, OBJECTS) else 0
+    # A collection is taken once: what is counted and admitted below is what is copied, whatever the caller's list
+    # or mapping becomes meanwhile.
+    taken = (tuple(value) if _is_type(kind, ARRAYS) else tuple(dict.items(value)) if _is_type(kind, OBJECTS)
+             else None)
+    count = 0 if taken is None else len(taken) if _is_type(kind, ARRAYS) else 2 * len(taken)
     if count > MAX_ITEMS - budget[0]:
         raise NotPlainData(where, "size exceeds the bridge's limit")
     if not truncate:
         if bound is not None:
-            bound(value)
-        if _is_type(kind, ARRAYS):
-            _admit_held(value, where)
+            if _is_type(kind, OBJECTS):
+                for key, _ in taken:  # read as text before the mapping handed to the bound is built from them
+                    _text_key(key, where, " (the key, which is not text)")
+            _bounded(bound, value if taken is None else taken if _is_type(kind, ARRAYS) else dict(taken), "",
+                     budget)
+        if taken is not None:
+            _admit_held(taken if _is_type(kind, ARRAYS) else (item for _, item in taken), where, budget[2])
     if outer:
         # Only the block's outer mapping uses the registry's mapping protocol.
         # Enumerate it here so neither unpacking nor a second raw walk precedes
@@ -301,49 +368,44 @@ def _walk(value: Any, where: str, depth: int = 0, *, budget: list[int] | None = 
         except Exception as exc:
             raise NotPlainData(where, f"cannot copy the outer mapping: {exc}") from None
     if _is_type(kind, models):
-        # a model's fields are looked up in its own field mapping: its keys are read first, as any raw mapping's
-        _text_keys(object.__getattribute__(value, "__dict__"), where)
+        # a model's fields are looked up in its own field mapping, read by the one reader of one first
+        mapping = _attributes(value, where)
         fields = {}
         for name in kind.model_fields:
-            try:
-                item = getattr(value, name)
-            except AttributeError:
-                raise NotPlainData(where, f"missing input field {name}") from None
-            fields[name] = _walk(item, f"{where}.{name}", depth + 1,
+            if name not in mapping:
+                raise NotPlainData(where, f"missing input field {name}")
+            fields[name] = _walk(mapping[name], f"{where}.{name}", depth + 1,
                                  budget=budget, models=models, truncate=truncate)
         return fields
     if schema is not None or _is_record(value):
         cls = schema if schema is not None else kind
-        _admit_fields(value, cls)
+        # The fields are read once, by the one reader, and every admission is handed what it read: a missing field
+        # is refused here, before any check or copy reads one.
+        held = _record_fields(value, cls, where)
+        _admit_fields(held, cls)
         declared = None if truncate else _declared(cls)
-        if declared is not None and declared[2] is not None:
-            try:
-                declared[2](value)
-            except NotPlainData:
-                raise
-            except ValueError as exc:  # the rule's own words, as the boundary's refusal of what it will not copy
-                raise NotPlainData(where, str(exc)) from None
+        if declared is not None:
+            if declared[1] is not None:  # one tally for the whole detachment, wherever the record stands in it
+                budget[2][id(cls)] = budget[2].get(id(cls), 0) + 1
+                if budget[2][id(cls)] > declared[1][0]:
+                    raise NotPlainData(where, declared[1][1])
+            if declared[2] is not None:
+                _bounded(declared[2], held, where, budget)
         made = object.__new__(cls)
         kinds = _kinds(cls)
-        for field in dataclasses.fields(cls):
-            try:
-                item = getattr(value, field.name)
-            except AttributeError:
-                if field.init:
-                    raise NotPlainData(where, f"missing record field {field.name}") from None
-                continue  # computed by the record's own checks
+        for name, item in held.items():
             item = _walk(
-                item, f"{where}.{field.name}", depth + 1, budget=budget,
-                capability=kinds[field.name][0] == "code", models=models, truncate=truncate)
-            object.__setattr__(made, field.name, item)
+                item, f"{where}.{name}", depth + 1, budget=budget,
+                capability=kinds[name][0] == "code", models=models, truncate=truncate)
+            object.__setattr__(made, name, item)
         return made
     if _is_type(kind, ARRAYS):
         items = [_walk(item, f"{where}[{index}]", depth + 1, budget=budget, models=models, truncate=truncate)
-                 for index, item in enumerate(value)]
+                 for index, item in enumerate(taken)]
         return tuple(items) if kind is tuple else items
     if _is_type(kind, OBJECTS):
         items = {}
-        for key, item in value.items():
+        for key, item in taken:
             key = _text_key(_walk(key, f"{where} (a key)", depth + 1, budget=budget), where,
                             " (the key, which is not text)")
             items[key] = _walk(item, f"{where}.{key}", depth + 1, budget=budget, models=models, truncate=truncate)
@@ -439,10 +501,6 @@ def publish(value: T, *, where: str) -> T:
         answer = value.value if value.is_ok() else value.error
     unclaimed(record_data(answer), where=where)
     return value
-
-
-def _named(value: Any) -> str:
-    return f"{type(value).__module__}.{type(value).__qualname__}"
 
 
 #: Why a value standing deeper than ``codes.DEPTH`` is refused.
@@ -666,7 +724,7 @@ def _field(kind: tuple[Any, ...], value: Any, where: str, depth: int) -> Any:
             raise NotPlainData(where, f"a {_named(value)} is not a list of bytes")
         else:
             taken = tuple(_bytes(item, f"{where}[{index}]") for index, item in enumerate(value))
-        plain(view(taken, _depth=depth), where=where, _depth=depth)  # where it stands, as the claim rule reads it
+        plain(_bytes_view(taken), where=where, _depth=depth)  # where it stands, as the claim rule reads it
         return taken
     if name == "record":
         if type(value) is kind[1] or (value is None and kind[2]):
@@ -791,12 +849,20 @@ _VIEW_BOUND = contextvars.ContextVar("g6_bridge_view_bounded", default=False)
 
 
 def _bounded_view(value: Any, depth: int) -> Any:
-    taken = _walk(value, "a value", depth, truncate=True)
+    taken = _walk(value, "a value", depth, truncate=True, budget=_COPYING.get())
     token = _VIEW_BOUND.set(True)
     try:
         return view(taken, _depth=depth)
     finally:
         _VIEW_BOUND.reset(token)
+
+
+def _bytes_view(value: Any) -> Any:
+    """What a record's bytes field holds (bytes, or a tuple of them), as JSON: each as its digest and length."""
+    def one(item: Any) -> Any:
+        return {"sha256": hashlib.sha256(item).hexdigest(), "length": len(item)} if type(item) is bytes else item
+
+    return [one(item) for item in value] if _is_type(type(value), ARRAYS) else one(value)
 
 
 def view(value: Any, *, _depth: int = 0, _budget: list[int] | None = None) -> Any:
@@ -815,11 +881,13 @@ def view(value: Any, *, _depth: int = 0, _budget: list[int] | None = None) -> An
     if _depth > DEPTH:
         return value
     if _is_record(value):
-        return {field.name: view(getattr(value, field.name), _depth=_depth + 1, _budget=_budget)
+        # Bytes are written as their digest and length only in a field a record declares as bytes: bytes anywhere
+        # else are left for the rule to refuse, unhashed.
+        kinds = _kinds(type(value))
+        return {field.name: (_bytes_view(getattr(value, field.name)) if kinds[field.name][0] in ("bytes", "bytes*")
+                             else view(getattr(value, field.name), _depth=_depth + 1, _budget=_budget))
                 for field in dataclasses.fields(value)}
     kind = type(value)
-    if kind is bytes:
-        return {"sha256": hashlib.sha256(value).hexdigest(), "length": len(value)}
     if _is_type(kind, ARRAYS):
         return [view(item, _depth=_depth + 1, _budget=_budget) for item in value]
     if _is_type(kind, OBJECTS):

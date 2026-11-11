@@ -27,10 +27,10 @@ from g6.core.maturity import component_maturity
 from g6.core.result import Result
 from .codes import INPUT, STATES, NotPlainData, refusal, settled, unclaimed, _is_type, _type_mro
 from .engine import BayesianUpdater, Hypothesis, InformationGainSelector, Probe, check_beliefs
-from .mixed_methods import ClaimIR, MethodRouter
+from .mixed_methods import ClaimIR, MethodRouter, _admit_claim
 from .metacognition import MetacognitiveMethodSelector, ProblemSignature, MethodVariant
 from .assurance import DOCUMENT_FIELDS
-from .snapshot import publish, canonical_json, plain, _text_keys, _walk
+from .snapshot import publish, canonical_json, plain, _attributes, _text_keys, _walk
 
 #: Every model here reads a caller's data, after the boundary has read it raw: strict (no field converted from another
 #: kind) and closed (no field it does not declare).
@@ -168,7 +168,7 @@ def _admit_input(given: Any, *, model: type[BaseModel] = CognitiveInput) -> None
     while pending:
         cls, value, path = pending.pop()
         if _is_type(type(value), (cls,)):
-            values = object.__getattribute__(value, '__dict__')
+            values = _attributes(value, path)  # the one reader of a model's field mapping
         elif type(value) is dict:
             values = value
         else:
@@ -204,6 +204,15 @@ def _admit_input(given: Any, *, model: type[BaseModel] = CognitiveInput) -> None
                     pending.extend((child, entry, f'{where}[{index}]') for index, entry in enumerate(item))
                 else:
                     pending.append((child, item, where))
+        if cls is ClaimInput:
+            # A claim's own bounds (its models' size cap among them) are declared once, beside the router: read here
+            # on the raw arguments, before anything is encoded (review 3 of the fourth follow-up, finding 2).
+            try:
+                _admit_claim(values)
+            except NotPlainData:
+                raise
+            except ValueError as exc:
+                raise NotPlainData(path, str(exc)) from None
 
 
 def _admit_outer_input(key: str, value: Any) -> None:

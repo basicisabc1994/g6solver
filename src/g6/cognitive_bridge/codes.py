@@ -235,8 +235,10 @@ def _read_as(value: Any) -> str:
 
 
 def _named(value: Any) -> str:
-    """The type of ``value``, as a refusal names it."""
-    return f"{type(value).__module__}.{type(value).__qualname__}"
+    """The type of ``value``, as a refusal names it: its module and qualified name read through ``type``'s own
+    descriptors (as :func:`_type_mro` reads the MRO), never by a lookup the value's metaclass can answer."""
+    kind = type(value)
+    return f"{type.__dict__['__module__'].__get__(kind)}.{type.__dict__['__qualname__'].__get__(kind)}"
 
 
 def _unread(value: Any) -> str:

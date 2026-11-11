@@ -639,6 +639,10 @@ OWN_KEYS: dict[tuple[str, str, str], str] = {
     ("engine.py", "LLMProposer._admit_reply", "data"): _PARSED,
     ("engine.py", "LLMProposer._admit_reply", "item"): _PARSED,
     ("mixed_methods.py", "LLMClaimCompiler._admit_reply", "doc"): _PARSED,
+    ("mixed_methods.py", "_admit_claim", "held"): "a claim's fields as the one reader of a record read them "
+                                                  "(snapshot._record_fields), or the parsed item whose keys "
+                                                  "_text_keys read on the line before",
+    ("snapshot.py", "_admit_held", "tally"): "the detachment's own tally, keyed by a type's identity (an integer)",
     ("snapshot.py", "_admit_array", "members"): "a class's own namespace, read by the built-in descriptor; the line "
                                                 "before refuses a key in it that is not text",
     ("snapshot.py", "_admit_array", "type.__dict__"): "the built-in type's own namespace",
@@ -683,7 +687,7 @@ def test_every_keyed_read_in_an_admission_function_follows_the_text_key_reader()
         f"unlisted keyed reads: {sorted(set(unread) - set(OWN_KEYS))}; stale: {sorted(set(OWN_KEYS) - set(unread))}")
     assert all(OWN_KEYS.values())
     assert {(module, name) for module, name, _, read in _keyed_reads() if read} >= {
-        ("block.py", "_admit_input"), ("snapshot.py", "_admit_fields"), ("mixed_methods.py", "_admit_claim")}
+        ("block.py", "_admit_input"), ("snapshot.py", "_admit_fields")}
 
 
 def test_the_walker_reads_every_key_by_the_one_reader():
