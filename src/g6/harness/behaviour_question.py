@@ -269,9 +269,40 @@ class Candidate:
                 self.question(baseline_sha256, scope=RULE_SCOPE.format(rule=rule)) if rule.strip() else None)
 
 
+def with_support(candidate: Candidate, support: Sequence[Mapping[str, Any]], *, settles: str = "", by: str = "",
+                 rule: str = "") -> Candidate:
+    """``candidate`` with one evidence line per cited passage of the person's own indexed files
+    (``knowledge:<passage id> <path>``). A passage is evidence only: the outcomes, the scope and the question stay as
+    they were. ``settles`` (an outcome label, with ``by`` saying which grant) adds a ``settled`` entry, and is given
+    only when a normative source covers this scenario (``g6.knowledge._support.may_suppress``); ``rule`` is offered as
+    the rule line only when the candidate has none. Each support record is one passage id and one path;
+    ``CandidateRefused`` for anything else."""
+    record = candidate.to_dict()
+    lines = list(record["evidence"])
+    for one in support:
+        passage, path = (one.get("passage_id"), one.get("path")) if isinstance(one, Mapping) else (None, None)
+        if not (isinstance(passage, str) and _HEX64.fullmatch(passage) and isinstance(path, str) and path.strip()
+                and len(path) <= 300 and not any(ord(ch) < 32 for ch in path)):
+            raise CandidateRefused("a cited passage is one passage id and one path on one line")
+        line = f"knowledge:{passage} {path}"
+        if line not in lines:
+            lines.append(line)
+    settled = list(record["settled"])
+    if settles:
+        if settles not in LABELS or not support or not isinstance(by, str) or not by.strip():
+            raise CandidateRefused("a normative source settles one of the two outcomes, for a cited passage, and "
+                                   "names its grant")
+        entry = {"outcome": settles, "by": f"the normative source says so ({by.strip()})"}
+        if entry not in settled:
+            settled.append(entry)
+    offered = record["rule"] if record["rule"].strip() or not isinstance(rule, str) else rule
+    if lines == record["evidence"] and settled == record["settled"] and offered == record["rule"]:
+        return candidate
+    return Candidate._structural(**{**record, "evidence": lines, "settled": settled, "rule": offered})
+
+
 def _words(text: str) -> set[str]:
     return set(re.findall(r"[A-Za-z0-9_]+", text))
-
 
 def settled_by(task: str, outcomes: Mapping[str, Mapping[str, Any]]) -> list[dict]:
     """Evidence that the task already settles a choice: each outcome the task names literally (the exception's name,
@@ -632,4 +663,4 @@ __all__ = ["ANSWERED", "CALLER_FIELDS", "CASE_SCOPE", "CHOICES", "COVERAGE_NOTE"
            "FIELDS", "IDENTICAL", "INDEPENDENT", "INVALID", "LABELS", "OVERLAP", "PENDING", "PRIORITY", "RULE_SCOPE",
            "Reading", "SETUP", "SOURCES", "UNKNOWN", "caller_candidates", "caller_text", "choose", "competition", "decoded",
            "differential_candidates", "encoded", "form", "observed", "plan", "ranked", "read", "settled_by",
-           "shown_call", "shown_outcome"]
+           "shown_call", "shown_outcome", "with_support"]

@@ -100,7 +100,7 @@ def test_every_mcp_tool_that_reaches_the_engine_builds_its_access_from_the_host_
 
 #: Tables of the registry that are the index's own membership and bookkeeping, not a stored consumer of passages.
 MEMBERSHIP_TABLES = frozenset({"registrations", "generations", "members", "member_passages", "tombstones", "receipts",
-                               "dependents", "rereads", "retained", "snapshot_sources"})
+                               "dependents", "rereads", "retained", "snapshot_sources", "jobs"})
 
 
 def stored_consumers() -> dict[str, str]:
@@ -134,3 +134,32 @@ def test_every_stored_consumer_registers_a_dependent():
     # and every stored consumer that is read back asks whether it was invalidated first
     snapshots = ast.unparse(_functions(ast.parse((KNOWLEDGE / "_snapshots.py").read_text(encoding="utf-8")))["reconstruct"])
     assert snapshots.index(".invalidated(") < snapshots.index(".retained(")
+
+#: The registry's tables that hold a stored consumer's content, each with the registry method that writes it.
+CONSUMER_TABLES = {"snapshots": "keep_snapshot", "normative_grants": "grant_normative"}
+
+
+def test_every_registry_table_is_membership_or_a_consumer_whose_writer_registers_a_dependent():
+    import re
+
+    registry = (KNOWLEDGE / "_registry.py").read_text(encoding="utf-8")
+    tables = set(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", registry))
+    assert tables == MEMBERSHIP_TABLES | set(CONSUMER_TABLES), "a new table: is it membership, or a stored consumer?"
+    files = [*sorted(KNOWLEDGE.glob("_*.py")), Path(g6.mcp.__file__).parent / "knowledge.py"]
+    for table, writer in CONSUMER_TABLES.items():
+        assert f"INSERT OR IGNORE INTO {table}" in ast.unparse(_functions_of_class(registry)[writer])
+        callers = []
+        for path in files:
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name != writer and any(
+                        isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == writer
+                        for n in ast.walk(node)):
+                    callers.append((f"{path.name}:{node.name}", ast.unparse(node)))
+        assert callers, f"nothing writes {table}"
+        for name, source in callers:
+            assert ".depend(" in source, f"{name} stores a consumer in {table} without registering a dependent"
+
+
+def _functions_of_class(source: str) -> dict[str, ast.FunctionDef]:
+    return {n.name: n for cls in ast.parse(source).body if isinstance(cls, ast.ClassDef) for n in cls.body
+            if isinstance(n, ast.FunctionDef)}

@@ -1,0 +1,377 @@
+{
+ "version": "retrieval.v1",
+ "frozen": "2026-11-11",
+ "labelled_by": "the corpus generator's own ground truth (each subject word is written into exactly one file); not independently written labels",
+ "corpus": "tests/knowledge/corpus (synthetic, generated; fixed seed)",
+ "unit": "file",
+ "queries": [
+  {
+   "id": "subject-quokka",
+   "query": "the quokka convention",
+   "eligible_files": [
+    "docs/quokka.md"
+   ]
+  },
+  {
+   "id": "subject-heron",
+   "query": "the heron convention",
+   "eligible_files": [
+    "notes/heron.txt"
+   ]
+  },
+  {
+   "id": "subject-lichen",
+   "query": "the lichen convention",
+   "eligible_files": [
+    "docs/lichen.md"
+   ]
+  },
+  {
+   "id": "subject-basalt",
+   "query": "the basalt convention",
+   "eligible_files": [
+    "notes/basalt.txt"
+   ]
+  },
+  {
+   "id": "subject-tundra",
+   "query": "the tundra convention",
+   "eligible_files": [
+    "docs/tundra.md"
+   ]
+  },
+  {
+   "id": "subject-saffron",
+   "query": "the saffron convention",
+   "eligible_files": [
+    "notes/saffron.txt"
+   ]
+  },
+  {
+   "id": "subject-marimba",
+   "query": "the marimba convention",
+   "eligible_files": [
+    "docs/marimba.md"
+   ]
+  },
+  {
+   "id": "subject-obsidian",
+   "query": "the obsidian convention",
+   "eligible_files": [
+    "notes/obsidian.txt"
+   ]
+  },
+  {
+   "id": "subject-kestrel",
+   "query": "the kestrel convention",
+   "eligible_files": [
+    "docs/kestrel.md"
+   ]
+  },
+  {
+   "id": "subject-juniper",
+   "query": "the juniper convention",
+   "eligible_files": [
+    "notes/juniper.txt"
+   ]
+  },
+  {
+   "id": "subject-fennel",
+   "query": "the fennel convention",
+   "eligible_files": [
+    "docs/fennel.md"
+   ]
+  },
+  {
+   "id": "subject-pumice",
+   "query": "the pumice convention",
+   "eligible_files": [
+    "notes/pumice.txt"
+   ]
+  },
+  {
+   "id": "subject-osprey",
+   "query": "the osprey convention",
+   "eligible_files": [
+    "docs/osprey.md"
+   ]
+  },
+  {
+   "id": "subject-mangrove",
+   "query": "the mangrove convention",
+   "eligible_files": [
+    "notes/mangrove.txt"
+   ]
+  },
+  {
+   "id": "subject-cobalt",
+   "query": "the cobalt convention",
+   "eligible_files": [
+    "docs/cobalt.md"
+   ]
+  },
+  {
+   "id": "subject-thistle",
+   "query": "the thistle convention",
+   "eligible_files": [
+    "notes/thistle.txt"
+   ]
+  },
+  {
+   "id": "subject-gannet",
+   "query": "the gannet convention",
+   "eligible_files": [
+    "docs/gannet.md"
+   ]
+  },
+  {
+   "id": "subject-larch",
+   "query": "the larch convention",
+   "eligible_files": [
+    "notes/larch.txt"
+   ]
+  },
+  {
+   "id": "subject-quartz",
+   "query": "the quartz convention",
+   "eligible_files": [
+    "docs/quartz.md"
+   ]
+  },
+  {
+   "id": "subject-sorrel",
+   "query": "the sorrel convention",
+   "eligible_files": [
+    "notes/sorrel.txt"
+   ]
+  },
+  {
+   "id": "subject-plover",
+   "query": "the plover convention",
+   "eligible_files": [
+    "docs/plover.md"
+   ]
+  },
+  {
+   "id": "subject-birch",
+   "query": "the birch convention",
+   "eligible_files": [
+    "notes/birch.txt"
+   ]
+  },
+  {
+   "id": "subject-garnet",
+   "query": "the garnet convention",
+   "eligible_files": [
+    "docs/garnet.md"
+   ]
+  },
+  {
+   "id": "subject-nettle",
+   "query": "the nettle convention",
+   "eligible_files": [
+    "notes/nettle.txt"
+   ]
+  },
+  {
+   "id": "subject-curlew",
+   "query": "the curlew convention",
+   "eligible_files": [
+    "docs/curlew.md"
+   ]
+  },
+  {
+   "id": "subject-alder",
+   "query": "the alder convention",
+   "eligible_files": [
+    "notes/alder.txt"
+   ]
+  },
+  {
+   "id": "subject-topaz",
+   "query": "the topaz convention",
+   "eligible_files": [
+    "docs/topaz.md"
+   ]
+  },
+  {
+   "id": "subject-yarrow",
+   "query": "the yarrow convention",
+   "eligible_files": [
+    "notes/yarrow.txt"
+   ]
+  },
+  {
+   "id": "subject-dunlin",
+   "query": "the dunlin convention",
+   "eligible_files": [
+    "docs/dunlin.md"
+   ]
+  },
+  {
+   "id": "subject-hazel",
+   "query": "the hazel convention",
+   "eligible_files": [
+    "notes/hazel.txt"
+   ]
+  },
+  {
+   "id": "subject-zircon",
+   "query": "the zircon convention",
+   "eligible_files": [
+    "docs/zircon.md"
+   ]
+  },
+  {
+   "id": "subject-mallow",
+   "query": "the mallow convention",
+   "eligible_files": [
+    "notes/mallow.txt"
+   ]
+  },
+  {
+   "id": "subject-wigeon",
+   "query": "the wigeon convention",
+   "eligible_files": [
+    "docs/wigeon.md"
+   ]
+  },
+  {
+   "id": "subject-rowan",
+   "query": "the rowan convention",
+   "eligible_files": [
+    "notes/rowan.txt"
+   ]
+  },
+  {
+   "id": "subject-beryl",
+   "query": "the beryl convention",
+   "eligible_files": [
+    "docs/beryl.md"
+   ]
+  },
+  {
+   "id": "subject-tansy",
+   "query": "the tansy convention",
+   "eligible_files": [
+    "notes/tansy.txt"
+   ]
+  },
+  {
+   "id": "subject-avocet",
+   "query": "the avocet convention",
+   "eligible_files": [
+    "docs/avocet.md"
+   ]
+  },
+  {
+   "id": "subject-willow",
+   "query": "the willow convention",
+   "eligible_files": [
+    "notes/willow.txt"
+   ]
+  },
+  {
+   "id": "subject-jasper",
+   "query": "the jasper convention",
+   "eligible_files": [
+    "docs/jasper.md"
+   ]
+  },
+  {
+   "id": "subject-clover",
+   "query": "the clover convention",
+   "eligible_files": [
+    "notes/clover.txt"
+   ]
+  },
+  {
+   "id": "module-ledger",
+   "query": "ledger_step",
+   "eligible_files": [
+    "src/ledger.py"
+   ]
+  },
+  {
+   "id": "module-parser",
+   "query": "parser_step",
+   "eligible_files": [
+    "src/parser.py"
+   ]
+  },
+  {
+   "id": "module-router",
+   "query": "router_step",
+   "eligible_files": [
+    "src/router.py"
+   ]
+  },
+  {
+   "id": "module-cache",
+   "query": "cache_step",
+   "eligible_files": [
+    "src/cache.py"
+   ]
+  },
+  {
+   "id": "module-planner",
+   "query": "planner_step",
+   "eligible_files": [
+    "src/planner.py"
+   ]
+  },
+  {
+   "id": "module-exporter",
+   "query": "exporter_step",
+   "eligible_files": [
+    "src/exporter.py"
+   ]
+  },
+  {
+   "id": "planted-secret-note",
+   "query": "zebrafish deployment upload",
+   "eligible_files": [
+    "ops/deploy-notes.md"
+   ]
+  },
+  {
+   "id": "planted-instruction-note",
+   "query": "wolverine library pinned",
+   "eligible_files": [
+    "ops/vendor-readme.md"
+   ]
+  },
+  {
+   "id": "two-subjects",
+   "query": "quokka heron",
+   "eligible_files": [
+    "docs/quokka.md",
+    "notes/heron.txt"
+   ]
+  },
+  {
+   "id": "three-subjects",
+   "query": "tundra juniper cobalt",
+   "eligible_files": [
+    "docs/tundra.md",
+    "notes/juniper.txt",
+    "docs/cobalt.md"
+   ]
+  },
+  {
+   "id": "absent-1",
+   "query": "kangaroo wombat platypus",
+   "eligible_files": []
+  },
+  {
+   "id": "absent-2",
+   "query": "photosynthesis chlorophyll",
+   "eligible_files": []
+  },
+  {
+   "id": "absent-3",
+   "query": "xylophone zeppelin",
+   "eligible_files": []
+  }
+ ]
+}

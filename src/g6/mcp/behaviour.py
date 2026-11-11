@@ -128,6 +128,52 @@ def _review_candidates(task: str, review_job: str, template_instances: Any, *, i
     return bq.differential_candidates(task, validated, activities, owned_checks=set(owned))
 
 
+def _with_knowledge(candidates: list[bq.Candidate]) -> list[bq.Candidate]:
+    """Each candidate with the cited passages the Context Engine finds for it (``g6.knowledge._support``), under the
+    calling client's access: a source not shared with the client's provider contributes nothing. A passage is
+    evidence beside the candidate. It settles the candidate only under a normative grant for this repository, this
+    source version and this scenario; otherwise the best passage is offered as the form's rule line, so that
+    designating it is the person's own answer to this one question. With nothing indexed for the project, or no
+    host binding, the candidates are returned as they are."""
+    if not candidates:
+        return candidates
+    try:
+        from g6.knowledge import _support
+        from g6.knowledge._registry import Refused
+        from g6.knowledge._scope import ScopeDenied, access, host_binding
+        from g6.mcp.knowledge import _destination
+
+        acc = access(host_binding(), "search", _destination())
+        out = []
+        for one in candidates:
+            found = _support.support_for(acc, one.to_dict())
+            if not found:
+                out.append(one)
+                continue
+            allowed, grant = _support.may_suppress(found)
+            normative = next((s for s in found if s.grant_id == grant), None) if allowed else None
+            out.append(bq.with_support(
+                one, [s.model_dump() for s in found], settles=normative.outcome if normative else "",
+                by=f"normative grant {grant}" if normative else "",
+                rule="" if normative else _support.designation_rule(found[0])))
+        return out
+    except (ScopeDenied, Refused, bq.CandidateRefused, OSError, ValueError):
+        return list(candidates)
+
+
+def _designated(state: qs.State, answer: Any) -> None:
+    """Record the normative grant a confirmed rule answer gives, when the rule designates a passage; anything else
+    records nothing. The grant is kept on this machine; nothing is returned from it."""
+    try:
+        from g6.knowledge import _support
+        from g6.knowledge._registry import Refused
+        from g6.knowledge._scope import ScopeDenied, access, host_binding
+
+        _support.designate(access(host_binding(), "fetch", "local"), state, answer)
+    except (ScopeDenied, Refused, StopIteration, OSError, ValueError):
+        return
+
+
 def _budget(state: qs.State) -> dict:
     return {"allowance": state.allowance, "asked": len(state.asked), "left": state.left, "default": state.default,
             **({"note": state.budget_note} if state.budget_note else {})}
@@ -208,6 +254,7 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
                     task, review_job, template_instances, identity=identity, artifact=artifact)]
             except bq.CandidateRefused as exc:
                 return blocked_reply(f"[{exc.code}] {bq.caller_text(exc, literal=False)}")
+            made = _with_knowledge(made)   # cited passages of the person's own indexed files, beside each candidate
             plan = bq.plan(made)
             chosen = bq.choose(made)
             if chosen is None:
@@ -246,6 +293,8 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
         if reading.further:
             store.allow_more(asked, by=reading.by)
         state = store.state()
+        if reading.answer is not None and reading.confirms:
+            _designated(state, reading.answer)   # a confirmed rule that designates a passage becomes a normative grant
     except qs.StoreUnreadable as exc:
         return blocked_reply(f"[{qs.UNREADABLE}] " + bq.caller_text(
             str(exc).removeprefix(f"[{qs.UNREADABLE}] "), literal=False))

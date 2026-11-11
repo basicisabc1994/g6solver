@@ -71,6 +71,8 @@ _SCHEMA = (
     "PRIMARY KEY (sha256, registration_id))",
     "CREATE TABLE IF NOT EXISTS rereads (n INTEGER PRIMARY KEY AUTOINCREMENT, registration_id TEXT NOT NULL, "
     "generation INTEGER NOT NULL, body TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS normative_grants (id TEXT PRIMARY KEY, registration_id TEXT NOT NULL, body TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, body TEXT NOT NULL)",
 )
 _HEX64 = "0123456789abcdef"
 
@@ -479,6 +481,58 @@ class ProjectStore:
             row = conn.execute("SELECT body FROM snapshots WHERE id = ?", (ident,)).fetchone()
             return row["body"] if row is not None else None
 
+    def put_job(self, ident: str, body: str) -> None:
+        with self._writing() as conn:
+            conn.execute("INSERT OR REPLACE INTO jobs VALUES (?, ?)", (ident, body))
+
+    def job(self, ident: str) -> str | None:
+        with self._reading() as conn:
+            if not self._has(conn, "jobs"):
+                return None
+            row = conn.execute("SELECT body FROM jobs WHERE id = ?", (ident,)).fetchone()
+            return row["body"] if row is not None else None
+
+    def jobs(self) -> list[str]:
+        with self._reading() as conn:
+            if not self._has(conn, "jobs"):
+                return []
+            return [row["body"] for row in conn.execute("SELECT body FROM jobs ORDER BY rowid")]
+
+    def backend_state(self, generation: int, backend: str, state: str, receipt: Mapping[str, Any], *,
+                      registration_id: str) -> None:
+        """Record what an optional backend holds of one registration in a published generation. The backend's own
+        state is ``answered`` when every registration recorded for it is, ``partial`` when some are, and otherwise
+        the state given. A required backend's record is never changed here: only publication writes it."""
+        with self._writing() as conn:
+            row = conn.execute("SELECT backends FROM generations WHERE number = ? AND state = 'published'",
+                               (generation,)).fetchone()
+            if row is None:
+                raise Refused(STATE, "an optional backend is recorded only for a published generation")
+            backends = json.loads(row["backends"])
+            entry = backends.get(backend) or {"required": False, "state": "unavailable", "receipt": {},
+                                              "registrations": {}}
+            if entry.get("required"):
+                raise Refused(STATE, "a required backend's record is written by publication only")
+            held = dict(entry.get("registrations") or {})
+            held[registration_id] = {"state": state, "receipt": dict(receipt)}
+            states = {one["state"] for one in held.values()}
+            entry.update(registrations=held, receipt=dict(receipt),
+                         state="answered" if states == {"answered"} else "partial" if "answered" in states else state)
+            backends[backend] = entry
+            conn.execute("UPDATE generations SET backends = ? WHERE number = ?",
+                         (json.dumps(backends, sort_keys=True), generation))
+
+    def grant_normative(self, ident: str, body: str, registration_id: str = "") -> None:
+        """Keep a normative grant's record (``g6.knowledge._support``): made from a person's confirmed rule answer."""
+        with self._writing() as conn:
+            conn.execute("INSERT OR IGNORE INTO normative_grants VALUES (?, ?, ?)", (ident, registration_id, body))
+
+    def normative_grants(self) -> list[str]:
+        with self._reading() as conn:
+            if not self._has(conn, "normative_grants"):
+                return []
+            return [row["body"] for row in conn.execute("SELECT body FROM normative_grants ORDER BY rowid")]
+
     # -- reverse dependencies -----------------------------------------------------------------------------------------
 
     def depend(self, dependent: Dependent) -> None:
@@ -546,6 +600,7 @@ class ProjectStore:
                 conn.execute("DELETE FROM members WHERE registration_id = ?", (registration_id,))
                 conn.execute("DELETE FROM member_passages WHERE registration_id = ?", (registration_id,))
                 conn.execute("DELETE FROM rereads WHERE registration_id = ?", (registration_id,))
+                conn.execute("DELETE FROM normative_grants WHERE registration_id = ?", (registration_id,))
                 conn.execute("DELETE FROM tombstones WHERE registration_id = ? AND uri != ''", (registration_id,))
                 conn.execute("UPDATE dependents SET passage_ids = '[]', uris = '[]' WHERE registration_id = ?",
                              (registration_id,))
