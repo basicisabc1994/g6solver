@@ -28,6 +28,7 @@ and Fit.
   `graph_reasoning`, through `g6_invoke` (`references/rules.md`).
 - **abstraction.** Only where the person registered the separate server, `python -P -m g6.abstraction.server`: its
   tools search a design space for abstractions that hold up (`references/abstraction.md`).
+
 ## Deliver a coding task with G6
 
 For a Python task, work in this order.
