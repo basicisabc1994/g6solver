@@ -150,7 +150,7 @@ TOOL_ARGUMENTS = {
     'metaharness_diagnose': _arguments(pointer='workflow'),
     'metaharness_approve': _arguments('decision_digest', 'workflow'),
     'metaharness_rollback': _arguments('version', 'workflow'),
-    'g6_feedback': _arguments('task text', 'repo'),
+    'g6_feedback': _arguments('task volunteered', 'repo'),
     'g6_suggestion_decide': _arguments('task intervention_id', 'repo'),
     'g6_workflow_correct': _arguments(pointer='repo'),
     'g6_workflow_delete': _arguments('scope task', 'repo run'),

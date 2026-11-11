@@ -131,6 +131,13 @@ SOURCE_SITES = {
     'g6.core.cloud_consent.withheld_message',
     'g6.mcp.cloud_consent.withheld_reply',
     'g6.mcp.consent_transport.prepare',
+    # design section 17: the workflow tools' one reply maker, the feedback reply maker, and the two places a review
+    # reply gains the workflow field or note (planted cases: tests/core/test_mcp_workflow_consent.py,
+    # test_mcp_workflow_view.py, test_mcp_feedback.py)
+    'g6.mcp.workflow._feedback_reply',
+    'g6.mcp.workflow._noted',
+    'g6.mcp.workflow._reply',
+    'g6.mcp.workflow.attach',
 }
 
 
@@ -594,6 +601,9 @@ OPERATIONAL_FACTORIES = {
     'g6.mcp.review_loop.step',
     'g6.metaharness.jobs.Jobs.start',
     'g6.metaharness.jobs.Jobs.status',
+    # design section 17: a bad argument's fixed refusal, and the fixed refusal while suggestions are not admitted
+    'g6.mcp.workflow._refused',
+    'g6.mcp.workflow.decide',
 }
 
 

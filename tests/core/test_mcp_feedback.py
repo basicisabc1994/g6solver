@@ -45,7 +45,7 @@ def _store(repo):
 def test_tool_has_no_answer_argument():
     registered = asyncio.run(build_server().get_tools())
     schema = registered["g6_feedback"].parameters
-    assert set(schema["properties"]) == {"repo", "task", "text"} == set(declared.TOOL_ARGUMENTS["g6_feedback"])
+    assert set(schema["properties"]) == {"repo", "task", "volunteered"} == set(declared.TOOL_ARGUMENTS["g6_feedback"])
     assert registered["g6_feedback"].fn._g6_declaration == declared.TOOLS["g6_feedback"]
     assert declared.TOOLS["g6_feedback"].classes == ("client_request", "client_workflow_feedback")
     refs = declared.TOOLS["g6_feedback"].sources({"repo": "/somewhere"})
@@ -55,7 +55,7 @@ def test_tool_has_no_answer_argument():
 def test_feedback_text_never_reaches_an_ungranted_reply(repo):
     server = build_server()
     for client in ("codex", "claude-code", "some-other-client"):
-        reply = call(server, "g6_feedback", _args(repo, text=f"the block was too long {MARK}"), client=client)
+        reply = call(server, "g6_feedback", _args(repo, volunteered=f"the block was too long {MARK}"), client=client)
         assert reply["ok"] is False and reply["cloud_consent_code"] == cloud.REQUIRED
         assert "result" not in reply
         echoed = json.dumps({k: v for k, v in reply.items()})
@@ -69,12 +69,12 @@ def test_repository_grant_does_not_cover_feedback(repo, accepted_cloud_dialog):
     accepted_cloud_dialog(cloud.repository_source(repo), "openai:codex", text="the repository")
     accepted_cloud_dialog(rec.workflow_source(project), "openai:codex", text="workflow record")
     server = build_server()
-    assert call(server, "g6_feedback", _args(repo, text="useful"))["ok"] is False
+    assert call(server, "g6_feedback", _args(repo, volunteered="useful"))["ok"] is False
     assert call(server, "g6_workflow_export", {"repo": str(repo)})["ok"] is True          # that grant is its own
     accepted_cloud_dialog(fb.feedback_source(project), "openai:codex", text="feedback")
-    shared = call(server, "g6_feedback", _args(repo, text="useful"))
+    shared = call(server, "g6_feedback", _args(repo, volunteered="useful"))
     assert shared["ok"] is True and shared["result"]["status"] == "kept" and "useful" not in json.dumps(shared["result"])
-    assert call(server, "g6_feedback", _args(repo, text="useful"), client="claude-code")["ok"] is False
+    assert call(server, "g6_feedback", _args(repo, volunteered="useful"), client="claude-code")["ok"] is False
 
 
 def test_opt_in_cannot_be_set_by_a_tool_argument(repo, accepted_cloud_dialog, monkeypatch):

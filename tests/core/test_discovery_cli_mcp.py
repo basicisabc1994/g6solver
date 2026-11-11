@@ -87,6 +87,9 @@ def test_mcp_server_exposes_only_the_discovery_surface() -> None:
                           "g6_mission_submit", "g6_mission_status", "g6_mission_certificate",
                           "g6_improve_start", "g6_improve_stop", "g6_improve_status",
                           "g6_cloud_grant", "g6_cloud_revoke", "g6_cloud_grants", "g6_disclosures",
+                          # the workflow record of G6 0.3's design section 17 (``g6.mcp.workflow``)
+                          "g6_workflow_export", "g6_workflow_correct", "g6_workflow_delete", "g6_suggestion_decide",
+                          "g6_feedback",
                           "metaharness_start", "metaharness_confirm", "metaharness_propose_code",
                           "metaharness_evaluate_start", "metaharness_job", "metaharness_run",
                           "metaharness_inspect", "metaharness_propose", "metaharness_evaluate", "metaharness_decide",

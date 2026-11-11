@@ -428,7 +428,7 @@ async def feedback(repo: str, task: str, ctx: Any, text: str = "") -> dict:
     if not ok:
         return _feedback_reply(project, {"status": "not_asked", "asked": False, "why": why},
                                "G6 did not ask the feedback question.", "Do not ask it yourself, and do not answer for "
-                               "the person. Feedback they volunteer can be passed in text.")
+                               "the person. Feedback they volunteer can be passed in volunteered.")
     adapters.observe_task(repo, task, "feedback_invited", invitation, at=now())
     shown_at, began = now(), time.monotonic()
     with consent_form():        # fixed words only: the dialog shows nothing from the record
@@ -490,14 +490,14 @@ def register(server: Any, context_type: Any) -> None:
         suggestion and cannot be dismissed. repo: the repository's folder, a full path."""
         return await decide(repo, task, intervention_id, ctx)
 
-    async def g6_feedback(repo: str, task: str, ctx: Any, text: str = "") -> dict:
-        """Feedback from the person about G6 on a task. With text: keep what the person volunteered (pass it as they
-        said it); nothing is asked. With no text: G6 may ask them once, in the client's own dialog, "Did this make
+    async def g6_feedback(repo: str, task: str, ctx: Any, volunteered: str = "") -> dict:
+        """Feedback from the person about G6 on a task. With volunteered: keep what the person said unasked (pass it as
+        they said it); nothing is asked. With none: G6 may ask them once, in the client's own dialog, "Did this make
         your work easier?", and only if they opted in, the task has its report, no behaviour question is pending, the
         task's question budget has room and this repository had no such question in seven days; otherwise it asks
         nothing and says why. You never answer it, there is no answer argument, and it is not retried. The answer
         changes nothing in a review. repo: the repository's folder, a full path; task: the task's text."""
-        return await feedback(repo, task, ctx, text=text)
+        return await feedback(repo, task, ctx, text=volunteered)
 
     g6_workflow_delete.__annotations__["ctx"] = g6_suggestion_decide.__annotations__["ctx"] = context_type
     g6_feedback.__annotations__["ctx"] = context_type

@@ -219,12 +219,12 @@ source, `workflow:<the repository's identifier>`, which a grant for the reposito
 - `g6_workflow_correct(repo)` applies the `corrections.json` the person wrote beside it; no argument carries a correction.
 - `g6_workflow_delete(repo, scope, task, run)` deletes a run, a task or the project's record after the person confirms in
   the client's dialog.
-- ``g6_suggestion_decide(repo, task, intervention_id)`` asks the person, in the client's dialog, to adopt, dismiss or reopen
+- `g6_suggestion_decide(repo, task, intervention_id)` asks the person, in the client's dialog, to adopt, dismiss or reopen
   one suggestion G6 showed for a task. No argument carries the decision. It answers only once suggestions are switched
   on, which waits for their measured gate.
-- ``g6_feedback(repo, task, text)`` keeps feedback the person volunteers. With no text, and only if the person opted in
-  (``G6_FEEDBACK_QUESTION=on``), G6 may ask one question in the client's dialog, at most once a week for a repository,
-  inside the task's one-question budget. It has its own source, ``workflow-feedback:<the repository's identifier>``.
+- `g6_feedback(repo, task, volunteered)` keeps feedback the person volunteers. With none, and only if the person opted in
+  (`G6_FEEDBACK_QUESTION=on`), G6 may ask one question in the client's dialog, at most once a week for a repository,
+  inside the task's one-question budget. It has its own source, `workflow-feedback:<the repository's identifier>`.
 
 What is kept, for how long, and what deletion does: `docs/product_global_specs/workflow_storage_policy.md`.
 

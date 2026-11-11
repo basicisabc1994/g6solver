@@ -33,13 +33,13 @@ G6 itself cost on the task.
 
 ## The tools
 
-- ``g6_workflow_export``: call it when the person asks what G6 recorded. It writes ``inspection.json`` and says where.
-- ``g6_workflow_correct``: call it after the person says they wrote ``corrections.json``. It takes no correction from you.
-- ``g6_workflow_delete``: call it when the person asks to delete a run, a task or the project's record. They confirm
+- `g6_workflow_export`: call it when the person asks what G6 recorded. It writes `inspection.json` and says where.
+- `g6_workflow_correct`: call it after the person says they wrote `corrections.json`. It takes no correction from you.
+- `g6_workflow_delete`: call it when the person asks to delete a run, a task or the project's record. They confirm
   in their client's dialog.
-- ``g6_suggestion_decide``: call it when the person wants to adopt, dismiss or reopen a suggestion G6 showed. They
+- `g6_suggestion_decide`: call it when the person wants to adopt, dismiss or reopen a suggestion G6 showed. They
   choose in their client's dialog. It answers only once suggestions are switched on.
-- ``g6_feedback``: pass on, in ``text``, feedback the person volunteers about G6. With no text G6 may ask them one
+- `g6_feedback`: pass on, in `volunteered`, feedback the person volunteers about G6. With none G6 may ask them one
   question in their client's dialog, at most once a week and only if they opted in; you never ask it or answer it.
 
 ## Files the person opens
