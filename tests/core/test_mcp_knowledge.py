@@ -20,22 +20,23 @@ from tests.knowledge.corpus import SUBJECTS
 from tests.knowledge.corpus.rig import make, serve
 
 CLAUDE = "anthropic:claude_code"
-TOOLS_ADDED = ("g6_knowledge_add", "g6_knowledge_passage", "g6_knowledge_revoke", "g6_knowledge_search",
-               "g6_knowledge_sources")
+TOOLS_ADDED = ("g6_knowledge_add", "g6_knowledge_delete", "g6_knowledge_passage", "g6_knowledge_refresh",
+               "g6_knowledge_revoke", "g6_knowledge_search", "g6_knowledge_sources")
 DOCS, NOTES = SUBJECTS[0], SUBJECTS[1]
 
 
 class Dialog:
     """A scripted person: answers each dialog the client shows, and keeps what it was asked."""
 
-    def __init__(self, index="accept", share="accept", before=None):
-        self.index, self.share, self.before, self.questions = index, share, before, []
+    def __init__(self, index="accept", share="accept", before=None, delete="accept"):
+        self.index, self.share, self.before, self.delete, self.questions = index, share, before, delete, []
 
     async def __call__(self, message, response_type, params, context):
         self.questions.append(message)
         if self.before is not None:
             self.before(message)
-        answer = self.index if message.startswith("Index this folder") else self.share
+        answer = (self.index if message.startswith("Index this folder") else
+                  self.delete if message.startswith("Delete source") else self.share)
         if answer == "accept":
             return {"value": "Person"}
         if answer == "nameless":
@@ -73,7 +74,7 @@ def local_items(rig, query, top_k=20):
     return rig.items(query, top_k=top_k)
 
 
-def test_the_five_tools_are_registered_and_declared():
+def test_the_tools_are_registered_and_declared():
     tools = asyncio.run(build_server().get_tools())
     assert set(TOOLS_ADDED) <= set(tools)
     for name in TOOLS_ADDED:
@@ -309,3 +310,73 @@ def test_no_roots_named_means_nothing_can_be_added(tmp_path, monkeypatch):
     dialog = Dialog()
     reply = call(build_server(), "g6_knowledge_add", {"path": str(made.folder)}, dialog).data
     assert reply["ok"] is False and "G6_KNOWLEDGE_ROOTS" in reply["error"] and dialog.questions == []
+
+
+@pytest.mark.parametrize("answer", ["decline", "cancel", "nameless", None])
+def test_delete_needs_its_own_dialog_and_a_cloud_grant_does_not_authorise_it(rig, answer):
+    server = build_server()
+    added, = calls(server, [("g6_knowledge_add", {"path": str(rig.folder), "share": True, "retention": "audit"})], Dialog())
+    source = added["result"]["source"]
+    assert added["result"]["sharing"] == "granted" and cloud.is_granted(f"knowledge:{source}", CLAUDE)
+    for extra in ("answer", "name", "approved", "confirm"):
+        assert call(server, "g6_knowledge_delete", {"source": source, extra: "Person"}, Dialog()).is_error
+    dialog = Dialog(delete=answer) if answer else None
+    refused = call(server, "g6_knowledge_delete", {"source": source, "complete": True}, dialog).data
+    assert refused.get("ok") is not True and refused["completion_state"] == "blocked-escalated"
+    registration, = ProjectStore(rig.binding).registrations()
+    assert registration.state == "active" and local_items(rig, DOCS)
+    assert call(server, "g6_knowledge_search", {"query": DOCS}).data["result"]["payload"]["items"]
+    asked = Dialog()
+    done = call(server, "g6_knowledge_delete", {"source": source}, asked).data
+    assert done["ok"] is True and done["result"]["state"] == "deleted" and done["result"]["audit_copies"] == "kept"
+    question, = asked.questions
+    assert question.startswith(f"Delete source {source}") and "cannot be recalled" in question
+    assert str(rig.folder) in question and "retention: audit" in question
+    assert "cannot be recalled" in done["result"]["note"] and str(rig.folder) not in json.dumps(done)
+    assert not cloud.is_granted(f"knowledge:{source}", CLAUDE) and local_items(rig, DOCS) == []
+    after = call(server, "g6_knowledge_search", {"query": DOCS}).data["result"]
+    assert after["payload"]["items"] == [] and after["withheld"] == []
+    final = call(server, "g6_knowledge_delete", {"source": source, "complete": True}, Dialog()).data
+    assert final["result"]["audit_copies"] == "removed"
+    assert not list((ProjectStore(rig.binding).folder / "retained").glob("*"))
+    unknown = call(server, "g6_knowledge_delete", {"source": "src-0000000000000000"}, Dialog()).data
+    assert unknown["ok"] is False and "G6_E_KNOWLEDGE_SOURCE" in unknown["error"]
+
+
+def test_saved_reply_cannot_bypass_revocation(rig):
+    server = build_server()
+    added, found = calls(server, [("g6_knowledge_add", {"path": str(rig.folder), "share": True}),
+                                  ("g6_knowledge_search", {"query": f"{DOCS} convention", "top_k": 20})], Dialog())
+    saved = [i["passage_id"] for i in found["result"]["payload"]["items"]]
+    assert len(saved) >= 2
+    calls(server, [("g6_knowledge_revoke", {"source": added["result"]["source"]})])
+    replies = calls(server, [("g6_knowledge_passage", {"passage_id": pid, "raw": True}) for pid in saved])
+    assert all(r["result"]["passage"] is None for r in replies)
+    text = json.dumps([r["result"] for r in replies])
+    at = text.find("convention")
+    assert at < 0, text[max(0, at - 300):at + 60]
+    assert all(r["result"]["denied"] == [{"passage_id": pid, "registration_id": "", "why": "unknown"}]
+               for r, pid in zip(replies, saved, strict=True)), "a revoked source is not even named to the client"
+
+
+def test_refresh_over_mcp_reports_what_changed_only_for_shared_sources(rig):
+    server = build_server()
+    shared, private = calls(server, [("g6_knowledge_add", {"path": str(rig.folder / "docs"), "share": True}),
+                                     ("g6_knowledge_add", {"path": str(rig.folder / "notes")})], Dialog())
+    for folder, subject, suffix in (("docs", DOCS, "md"), ("notes", NOTES, "txt")):
+        path = rig.folder / folder / f"{subject}.{suffix}"
+        path.write_text(path.read_text(encoding="utf-8") + "\nThe pangolin clause.\n", encoding="utf-8")
+    (rig.folder / "notes" / "late-arrival.txt").write_text("a new file\n", encoding="utf-8")
+    done = call(server, "g6_knowledge_refresh", {}).data
+    assert done["ok"] is True and done["result"]["state"] == "published" and done["result"]["generation"] == 3
+    rows = {r["source"]: r for r in done["result"]["sources"]}
+    assert rows[shared["result"]["source"]]["changed"] == 1
+    assert rows[private["result"]["source"]] == {"source": private["result"]["source"], "withheld": True}
+    assert "late-arrival" not in json.dumps(done)
+    found = call(server, "g6_knowledge_search", {"query": "pangolin"}).data["result"]
+    assert [i["path"] for i in found["payload"]["items"]] == [f"{DOCS}.md"]
+    assert found["withheld"] == [{"source": private["result"]["source"], "provider": CLAUDE}]
+    again = call(server, "g6_knowledge_refresh", {"source": shared["result"]["source"]}).data
+    assert again["result"]["state"] == "unchanged"
+    bad = call(server, "g6_knowledge_refresh", {"source": "src-0000000000000000"}).data
+    assert bad["ok"] is False and "G6_E_KNOWLEDGE_SOURCE" in bad["error"]

@@ -88,7 +88,7 @@ def test_mcp_server_exposes_only_the_discovery_surface() -> None:
                           "g6_improve_start", "g6_improve_stop", "g6_improve_status",
                           "g6_cloud_grant", "g6_cloud_revoke", "g6_cloud_grants", "g6_disclosures",
                           "g6_knowledge_add", "g6_knowledge_passage", "g6_knowledge_revoke", "g6_knowledge_search",
-                          "g6_knowledge_sources",   # the Context Engine (``g6.mcp.knowledge``)
+                          "g6_knowledge_sources", "g6_knowledge_refresh", "g6_knowledge_delete",   # the Context Engine (``g6.mcp.knowledge``)
                           "metaharness_start", "metaharness_confirm", "metaharness_propose_code",
                           "metaharness_evaluate_start", "metaharness_job", "metaharness_run",
                           "metaharness_inspect", "metaharness_propose", "metaharness_evaluate", "metaharness_decide",

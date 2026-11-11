@@ -92,6 +92,7 @@ class SearchResponse(_Record):
     payload: dict[str, Any] = Field(default_factory=lambda: {"kind": "passages", "items": []})
     withheld: tuple[dict[str, str], ...] = ()
     denied: tuple[Denied, ...] = ()
+    snapshot: str = ""            # the id of the kept snapshot, when a returned source retains audit copies
 
 
 __all__ = ["MAX_TOP_K", "VERSION", "BackendReport", "BackendState", "Checked", "Contribution", "Denied",

@@ -131,6 +131,16 @@ SOURCE_SITES = {
     'g6.core.cloud_consent.withheld_message',
     'g6.mcp.cloud_consent.withheld_reply',
     'g6.mcp.consent_transport.prepare',
+    # The Context Engine (section 12). Planted cases: tests/core/test_mcp_knowledge.py (an ungranted source, an
+    # unknown client, a revoked grant, mixed sources) and tests/knowledge/test_engine_scope.py. _scope.access is here
+    # for its `sources` argument, which narrows source registrations and builds no consent source.
+    'g6.knowledge._engine._source',
+    'g6.knowledge._scope.access',
+    'g6.mcp.knowledge._declined',
+    'g6.mcp.knowledge._ok',
+    'g6.mcp.knowledge._refused',
+    'g6.mcp.knowledge._summary_source',
+    'g6.mcp.knowledge.register.g6_knowledge_search',
 }
 
 
@@ -594,6 +604,10 @@ OPERATIONAL_FACTORIES = {
     'g6.mcp.review_loop.step',
     'g6.metaharness.jobs.Jobs.start',
     'g6.metaharness.jobs.Jobs.status',
+    # The Context Engine's two replies that carry no source content: a refusal with a fixed reason, and a dialog the
+    # person did not accept.
+    'g6.mcp.knowledge._declined',
+    'g6.mcp.knowledge._refused',
 }
 
 

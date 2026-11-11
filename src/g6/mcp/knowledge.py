@@ -22,7 +22,7 @@ from pydantic import ValidationError
 from g6.core import cloud_consent as cloud
 from g6.knowledge import _engine as engine
 from g6.knowledge._envelope import MAX_TOP_K, SearchRequest
-from g6.knowledge._registry import Refused
+from g6.knowledge._registry import ProjectStore, Refused
 from g6.knowledge._scope import ROOTS_ENV, UNKNOWN_DESTINATION, ScopeDenied, access, consent_scope, host_binding
 from g6.knowledge._view import label_view
 
@@ -51,6 +51,11 @@ def _refused(code: str, reason: str) -> dict:
     from g6.core.door import blocked_reply
 
     return cloud.bind_output(blocked_reply(f"[{code}] {reason}"), ())
+
+
+def _declined(reply: dict) -> dict:
+    """A dialog the person did not accept: the fixed refusal text and the consent status, no source content."""
+    return cloud.bind_output(reply, ())
 
 
 def _summary_source(row: dict[str, Any]) -> cloud.Source:
@@ -91,8 +96,8 @@ def register(server: Any, context_type: Any) -> None:
         with consent_form():
             consent = await request_consent(ctx, question)
         if consent.status != "accepted":
-            return cloud.bind_output(refusal(consent, next_action="Nothing was indexed. The person answers in the "
-                                             "client's dialog; no argument can answer for them."), ())
+            return _declined(refusal(consent, next_action="Nothing was indexed. The person answers in the client's "
+                                                          "dialog; no argument can answer for them."))
         try:
             done = await anyio.to_thread.run_sync(engine.commit, binding, shown, consent.answer)
         except (ScopeDenied, Refused) as exc:
@@ -178,6 +183,65 @@ def register(server: Any, context_type: Any) -> None:
             return _ok(engine.revoke(acc, source), ())
         except (ScopeDenied, Refused) as exc:
             return _refused(exc.code, exc.reason)
+
+    @server.tool()
+    @declares("client_request")
+    def g6_knowledge_refresh(source: str = "") -> dict:
+        """Re-read the files the person accepted (of one source, or of every source of this project) and publish what
+        changed. A changed or removed file's old passages are denied before anything else happens; new passages get
+        new ids; a file that is new to the folder is not indexed and needs a new g6_knowledge_add. A refresh that
+        fails says unavailable and serves nothing that changed. Counts and paths are listed only for sources shared
+        with your provider."""
+        try:
+            acc = access(host_binding(), "refresh", _destination())
+            done = engine.refresh(acc, source or None)
+        except (ScopeDenied, Refused) as exc:
+            return _refused(exc.code, exc.reason)
+        rows, refs = [], []
+        for row in done.get("sources", []):
+            if acc.local or engine.shared_with(acc, row["source"]):
+                rows.append(row)
+                refs.append(_summary_source(row))
+            else:
+                rows.append({"source": row["source"], "withheld": True})
+        return _ok({**done, "sources": rows}, tuple(refs))
+
+    @declares("client_request")
+    async def g6_knowledge_delete(source: str, ctx, complete: bool = False) -> dict:
+        """Delete one source by its id, after the person accepts a deletion dialog of its own (a sharing grant or
+        any other consent does not authorise it). The source is removed from search at once. complete=true also
+        removes the audit copies and snapshots G6 kept for it, leaving only the ids that stop it returning. Text
+        already delivered to a client or a model cannot be recalled."""
+        try:
+            binding = host_binding()
+            acc = access(binding, "delete", _destination())
+            registration = ProjectStore(binding).registration(source)
+        except (ScopeDenied, Refused) as exc:
+            return _refused(exc.code, exc.reason)
+        if registration is None:
+            return _refused("G6_E_KNOWLEDGE_SOURCE", "no such source registration in this project")
+        question = (
+            f"Delete source {source} from G6's index for this project? Folder: {registration.root or 'already removed'}. "
+            f"It is removed from search at once, in every G6 process, and every sharing grant for it is revoked. "
+            + ("The audit copies and snapshots G6 kept for it are removed too; only the ids that stop it returning "
+               "are kept. " if complete else
+               f"Audit copies G6 kept for it (retention: {registration.retention}) stay on this machine, not "
+               "searchable; a complete deletion removes them. ")
+            + "Text already delivered to a client or a model cannot be recalled. Accept only if you want this "
+              "deletion; your supplied name is an attribution, not authenticated identity.")
+        with consent_form():
+            consent = await request_consent(ctx, question)
+        if consent.status != "accepted":
+            return _declined(refusal(consent, next_action="Nothing was deleted. The person answers in the client's "
+                                                          "dialog; no argument can answer for them."))
+        try:
+            done = await anyio.to_thread.run_sync(partial(engine.delete, acc, source, complete=bool(complete),
+                                                          attribution=consent.answer))
+        except (ScopeDenied, Refused) as exc:
+            return _refused(exc.code, exc.reason)
+        return _ok(done, ())
+    g6_knowledge_delete.__annotations__["ctx"] = context_type
+    server.tool()(g6_knowledge_delete)
 
 
 __all__ = ["CARD", "register"]

@@ -157,36 +157,66 @@ def _still_changed(store: ProjectStore, generation: int) -> set[tuple[str, str]]
     return {(t.registration_id, t.uri) for t in store.tombstones() if t.reason == "changed" and t.generation >= generation}
 
 
+def _carry(store: ProjectStore, previous: Any, staged: int, index: Any, also_drop: Sequence[str] = ()) -> list[Member]:
+    """Start the staged generation from the previous one: its index file, and its membership for the registrations
+    still active. A file observed changed stays a member (the person accepted it) with no passages and no file
+    hash, so the next refresh reads it again and nothing old comes back before then."""
+    members: list[Member] = []
+    if previous is None:
+        return members
+    before = store.index_path("sqlite", previous.number)
+    if before.exists():
+        shutil.copyfile(before, store.index_path("sqlite", staged))
+    active = {r.id for r in store.registrations() if r.state == "active"}
+    denied = _still_changed(store, previous.number)
+    dropped: list[str] = list(also_drop)
+    for member in store.members(previous.number):
+        if member.registration_id not in active:
+            dropped.extend(member.passage_ids)
+        elif (member.registration_id, member.uri) in denied:
+            dropped.extend(member.passage_ids)
+            members.append(member.model_copy(update={"generation": staged, "passage_ids": (), "spans": (),
+                                                     "file_sha256": ""}))
+        else:
+            members.append(member.model_copy(update={"generation": staged}))
+    if dropped:
+        index.remove(dropped)
+    return members
+
+
+def _publish_staged(store: ProjectStore, staged: int, members: Sequence[Member], index: Any) -> Any:
+    store.record(staged, members)
+    checkpoint("commit:recorded")
+    written = len({pid for m in members for pid in m.passage_ids})
+    held = index.status()["passages"] if store.index_path("sqlite", staged).exists() else 0
+    return store.publish(staged, {"sqlite": {"written": written, "read_back": held}})
+
+
+def _purge(path: Path) -> None:
+    """Rewrite an index file so that no freed page or full-text segment still holds a removed passage's bytes."""
+    import sqlite3
+
+    if not path.exists():
+        return
+    conn = sqlite3.connect(path, isolation_level=None)
+    try:
+        conn.execute("INSERT INTO passages_fts (passages_fts) VALUES ('rebuild')")
+        conn.execute("VACUUM")
+    except sqlite3.Error:
+        raise Refused(INDEX, "the index could not be rewritten after the deletion; run the deletion again") from None
+    finally:
+        conn.close()
+
+
 def _build_generation(store: ProjectStore, registration: Registration, real: Path,
                       files: Sequence[FileEntry]) -> dict[str, Any]:
     """Stage the next generation: the previous one's index and membership for registrations still active, plus the
     new registration's files; publish it only when the index read back every listed passage."""
     previous = store.published()
     staged = store.stage({"sqlite": True})
-    path = store.index_path("sqlite", staged.number)
     index = _lexical(store, staged.number)
-    members: list[Member] = []
     try:
-        if previous is not None:
-            before = store.index_path("sqlite", previous.number)
-            if before.exists():
-                shutil.copyfile(before, path)
-            active = {r.id for r in store.registrations() if r.state == "active"}
-            denied = _still_changed(store, previous.number)
-            dropped: list[str] = []
-            for member in store.members(previous.number):
-                if member.registration_id not in active:
-                    dropped.extend(member.passage_ids)
-                elif (member.registration_id, member.uri) in denied:
-                    # the file was observed changed: it stays a member (the person accepted it) with no passages
-                    # and no file hash, so the next refresh reads it again and nothing old comes back before then
-                    dropped.extend(member.passage_ids)
-                    members.append(member.model_copy(update={"generation": staged.number, "passage_ids": (),
-                                                             "spans": (), "file_sha256": ""}))
-                else:
-                    members.append(member.model_copy(update={"generation": staged.number}))
-            if dropped:
-                index.remove(dropped)
+        members = _carry(store, previous, staged.number, index)
         unread = 0
         for entry in files:
             uri = source_uri(registration.id, entry.relative)
@@ -202,16 +232,14 @@ def _build_generation(store: ProjectStore, registration: Registration, real: Pat
             for start in range(0, len(passages), BATCH):
                 index.add(passages[start:start + BATCH])
             unread += bool(notes or more or not passages)
+            if registration.retention == "audit":
+                store.retain(data, registration.id)   # an audit copy, kept apart from every index
             members.append(Member(
                 registration_id=registration.id, generation=staged.number, uri=uri, relative=entry.relative,
                 file_sha256=entry.sha256, size=entry.size, document_sha256=document.sha256 if document else "",
                 passage_ids=tuple(p.id for p in passages), spans=tuple((p.start, p.end) for p in passages),
                 media_type=entry.media_type, converter=converter, chunker=CHUNKER, unread=(*notes, *more)))
-        store.record(staged.number, members)
-        checkpoint("commit:recorded")
-        written = len({pid for m in members for pid in m.passage_ids})
-        held = index.status()["passages"] if path.exists() else 0
-        published = store.publish(staged.number, {"sqlite": {"written": written, "read_back": held}})
+        published = _publish_staged(store, staged.number, members, index)
     except IndexRefused as exc:
         raise Refused(INDEX, f"the local index refused the write ({exc.code})") from None
     return {"generation": published.number, "passages": sum(len(m.passage_ids) for m in members
@@ -255,6 +283,11 @@ def _granted(acc: Access, registration_id: str) -> bool:
         return cloud_consent.is_granted(consent_scope(registration_id), acc.destination)
     except (ValueError, ScopeDenied):
         return False
+
+
+def shared_with(acc: Access, registration_id: str) -> bool:
+    """Whether the access's destination may be told about this source: it is local, or the source is granted to it."""
+    return _granted(acc, registration_id)
 
 
 def _reread(binding: Binding, registration: Registration, member: Member) -> tuple[Document | None, bytes]:
@@ -359,6 +392,11 @@ def search(acc: Access, request: SearchRequest, *, clock: Clock = _utc) -> tuple
         payload={"kind": "passages", "items": [i.model_dump() for i in items]},
         withheld=tuple(withheld[k] for k in sorted(withheld)),
         denied=tuple(dict.fromkeys(_visible_denied(acc, denied))))
+    from g6.knowledge import _snapshots
+
+    kept_as = _snapshots.write(store, response)   # only for items of a registration that retains audit copies
+    if kept_as:
+        response = response.model_copy(update={"snapshot": kept_as})
     return response, tuple(sources)
 
 
@@ -418,6 +456,57 @@ def revoke(acc: Access, registration_id: str) -> dict[str, Any]:
             "sharing_revoked_for": sorted(revoked)}
 
 
+def refresh(acc: Access, registration_id: str | None = None, *, clock: Clock = _utc) -> dict[str, Any]:
+    """Re-read the accepted files and publish what changed as a new generation (``g6.knowledge._refresh``)."""
+    from g6.knowledge import _refresh
+
+    return _refresh.refresh(acc, registration_id, clock=clock)
+
+
+def delete(acc: Access, registration_id: str, *, complete: bool = False, attribution: str = "") -> dict[str, Any]:
+    """Delete a source after the person accepted the deletion dialog: it is denied at once (a tombstone first), every
+    sharing grant for it is revoked, and the index is rebuilt without it. With ``complete``, the audit copies, the
+    snapshots, the membership records and the preview listing go too, and the index is rewritten so that no freed
+    page still holds its text; only the registration's id and its tombstones stay, so it cannot return."""
+    store = ProjectStore(acc.binding)
+    if not isinstance(attribution, str) or not attribution.strip():
+        raise Refused(INPUT, "a deletion carries the name the deletion dialog returned")
+    before = store.published()
+    # its passages in the current index, read before a complete deletion removes the membership that lists them
+    doomed = [pid for m in store.members(before.number, registration_id) for pid in m.passage_ids] if before else []
+    receipt = store.delete(registration_id, complete=bool(complete))
+    scope = consent_scope(registration_id)
+    try:
+        for row in cloud_consent.grants():
+            if row.get("source") == scope:
+                cloud_consent.revoke(scope, row["provider"])
+    except Exception:  # noqa: BLE001 - unreadable sharing state already denies every disclosure
+        pass
+    previous = store.published()
+    if previous is not None:
+        staged = store.stage({"sqlite": True})
+        index = _lexical(store, staged.number)
+        try:
+            published = _publish_staged(store, staged.number,
+                                        _carry(store, previous, staged.number, index, also_drop=doomed), index)
+        except IndexRefused as exc:
+            raise Refused(INDEX, f"the index could not be rebuilt without the source ({exc.code}); it stays denied. "
+                                 "Run the deletion again.") from None
+        if complete:
+            for generation in store.generations():
+                if generation.number != published.number:
+                    store._drop_index_files(generation.number)
+            _purge(store.index_path("sqlite", published.number))
+    if complete:
+        try:
+            state_path("knowledge", "previews", f"{receipt.pop('preview_sha256')}.md").unlink()
+        except OSError:
+            pass
+    receipt.pop("preview_sha256", None)
+    return {**receipt, "note": "The source is removed from search. Text already delivered to a client or a model "
+                               "cannot be recalled."}
+
+
 def sources(acc: Access) -> list[dict[str, Any]]:
     """Each source registration of the project: its id, state, expiry, generation and backend readiness; and, for the
     local destination or a provider the source is granted to, its label and its file, passage and unread counts."""
@@ -442,5 +531,5 @@ def sources(acc: Access) -> list[dict[str, Any]]:
     return out
 
 
-__all__ = ["CHUNKER", "INDEX", "INPUT", "PREVIEW_CHANGED", "Preview", "checkpoint", "commit", "excluded_counts",
-           "fetch", "preview", "revoke", "search", "sources"]
+__all__ = ["CHUNKER", "INDEX", "INPUT", "PREVIEW_CHANGED", "Preview", "checkpoint", "commit", "delete",
+           "excluded_counts", "fetch", "preview", "refresh", "revoke", "search", "shared_with", "sources"]

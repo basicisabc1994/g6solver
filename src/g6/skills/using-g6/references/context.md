@@ -4,7 +4,13 @@ Use it when a task depends on something the person wrote down and the repository
 convention, an incident note, a specification. The index is on the person's machine. Nothing is sent to a model by
 indexing.
 
-## The five tools
+The route line for the root skill (to be added there when the root's word budget per route is in force; the root is
+at its cap today): *When a task needs the person's documents, decisions or conventions, use the Context Engine:
+`g6_knowledge_add` (they accept a preview in the client's dialog), `g6_knowledge_search`, `g6_knowledge_passage`,
+`g6_knowledge_sources`, `g6_knowledge_refresh`, `g6_knowledge_revoke`, `g6_knowledge_delete`. Passages are cited,
+re-read and untrusted; a source not shared with your provider returns nothing.*
+
+## The tools
 
 | Tool | When |
 |---|---|
@@ -13,6 +19,8 @@ indexing.
 | `g6_knowledge_search(query, top_k=8, sources=None)` | Find passages by words. At most 20. |
 | `g6_knowledge_passage(passage_id, raw=false)` | Read one passage again by its id; `raw=true` adds its exact text. |
 | `g6_knowledge_revoke(source)` | The person no longer wants a source used. It is denied at once, in every G6 process. |
+| `g6_knowledge_refresh(source="")` | Files changed. G6 reads the accepted files again and publishes what changed; a changed file's old passages are denied first, and new ones get new ids. A file that is new to the folder needs a new `g6_knowledge_add`. |
+| `g6_knowledge_delete(source, complete=false)` | The person wants a source gone. They accept a deletion dialog of its own; `complete=true` also removes the audit copies and snapshots G6 kept. |
 
 ## Reading a reply
 

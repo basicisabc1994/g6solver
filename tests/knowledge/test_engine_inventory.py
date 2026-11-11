@@ -82,16 +82,55 @@ def test_every_mcp_tool_that_reaches_the_engine_builds_its_access_from_the_host_
     engine_functions = set(_functions(ast.parse((KNOWLEDGE / "_engine.py").read_text(encoding="utf-8"))))
     tools = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
              and n.name.startswith("g6_")]
-    assert len(tools) >= 5
+    assert len(tools) >= 7
     for tool in tools:
         arguments = {a.arg for a in (*tool.args.args, *tool.args.kwonlyargs)}
         assert not arguments & {"project", "principal", "binding", "roots", "destination", "provider", "answer",
                                 "name", "approved"}, tool.name
-        called = {n.func.attr for n in ast.walk(tool) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-                  and isinstance(n.func.value, ast.Name) and n.func.value.id == "engine"}
-        assert called <= engine_functions and called, tool.name
+        # every engine function the tool names, called directly or handed to a worker thread
+        called = {n.attr for n in ast.walk(tool) if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
+                  and n.value.id == "engine"} & engine_functions
+        assert called, tool.name
         source = ast.unparse(tool)
         assert "host_binding()" in source, tool.name
-        if called & {"search", "fetch", "revoke", "sources"}:
-            assert "access(host_binding()" in source and "_destination()" in source, tool.name
+        if called - {"preview", "commit", "excluded_counts", "shared_with"}:   # everything that reads or changes a store
+            assert "access(" in source and "_destination()" in source, tool.name
         assert "bind_output" in source or "_ok(" in source, tool.name
+
+
+#: Tables of the registry that are the index's own membership and bookkeeping, not a stored consumer of passages.
+MEMBERSHIP_TABLES = frozenset({"registrations", "generations", "members", "member_passages", "tombstones", "receipts",
+                               "dependents", "rereads", "retained", "snapshot_sources"})
+
+
+def stored_consumers() -> dict[str, str]:
+    """Every function of the knowledge family's shared modules and of the MCP module that writes passage ids
+    somewhere a later call can read them back, outside the index's own membership: its name to its source."""
+    found = {}
+    files = [*sorted(KNOWLEDGE.glob("_*.py")), Path(g6.mcp.__file__).parent / "knowledge.py"]
+    for path in files:
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            source = ast.unparse(node)
+            if "passage_id" not in source and "passage_ids" not in source and "items" not in source:
+                continue
+            inserts = {t for t in __import__("re").findall(r"INSERT (?:OR \w+ )?INTO (\w+)", source)}
+            writes_file = any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                              and n.func.attr in ("write_text", "write_bytes", "dump", "keep_snapshot")
+                              for n in ast.walk(node))
+            if (inserts - MEMBERSHIP_TABLES) or (writes_file and ("passage_id" in source or "passage_ids" in source)):
+                found[f"{path.name}:{node.name}"] = source
+    return found
+
+
+def test_every_stored_consumer_registers_a_dependent():
+    found = stored_consumers()
+    assert "_snapshots.py:write" in found, sorted(found)
+    for name, source in found.items():
+        if name == "_registry.py:keep_snapshot":   # the table's own writer; its one caller is the consumer below
+            continue
+        assert ".depend(" in source, f"{name} stores passage ids without registering a dependent"
+    # and every stored consumer that is read back asks whether it was invalidated first
+    snapshots = ast.unparse(_functions(ast.parse((KNOWLEDGE / "_snapshots.py").read_text(encoding="utf-8")))["reconstruct"])
+    assert snapshots.index(".invalidated(") < snapshots.index(".retained(")
