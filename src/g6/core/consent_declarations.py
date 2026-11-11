@@ -171,7 +171,7 @@ MODELS = {name: MODEL_INPUTS for name in (
 
 
 def model_sources():
-    return cloud.boundary_sources(MODEL_INPUTS.sources())
+    return cloud.boundary_sources(MODEL_INPUTS.sources(), carried=cloud.prompt_sources())
 
 
 def tool_declaration(fn):

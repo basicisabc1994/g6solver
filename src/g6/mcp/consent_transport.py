@@ -56,8 +56,17 @@ class Ticket:
     control: dict | None = None
 
 
+def _request_key(request_id):
+    # MCP's request-id schema accepts strings and integers, not bool/float/null.
+    # Invalid/absent ids never create or consume another request's authority.
+    return (type(request_id), request_id) if type(request_id) in (str, int) else None
+
+
 def prepare(session, request_id, result, sources, supplied=(), job=None, *, metadata=None):
-    session._g6_tickets[str(request_id)] = Ticket(tuple(sources), provider(session), frozenset(supplied),
+    key = _request_key(request_id)
+    if key is None:
+        return
+    session._g6_tickets[key] = Ticket(tuple(sources), provider(session), frozenset(supplied),
                                              digest(call_body(result)), job, metadata)
 
 
@@ -133,7 +142,7 @@ class _Stream:
 
 class _Session:
     async def _send_response(self, request_id, response):
-        ticket = self._g6_tickets.pop(str(request_id), None)
+        ticket = self._g6_tickets.pop(_request_key(request_id), None)
         if isinstance(response, types.ErrorData):
             response = types.ErrorData(code=response.code, message=policy.WITHHELD)
             ticket = Ticket((), provider(self), frozenset(), digest(response.model_dump(exclude_none=True)))

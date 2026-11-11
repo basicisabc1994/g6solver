@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ipaddress
-import os
 import sys
 import contextvars
 import threading
@@ -96,9 +95,10 @@ class CallerWrapper:
 class SDKClient:
     """Trusted host contract for an identifiable SDK-shaped provider client.
 
-    An implementation names its actual configured ``base_url`` and sends only
-    there. Tests use this identity for synthetic provider endpoints. A foreign
-    object with a similarly named attribute does not implement this contract.
+    An implementation names its actual configured ``base_url`` and sends directly
+    there, without proxying or request rewriting. Tests use this identity for
+    synthetic provider endpoints. A foreign object with a similarly named
+    attribute does not implement this contract.
     """
 
     base_url: str
@@ -118,9 +118,69 @@ def sdk_endpoint(client, seen=frozenset()):
         return sdk_endpoint(client.sdk_inner, seen | {id(client)})
     module = sys.modules.get('anthropic')
     native = getattr(module, 'Anthropic', None) if module is not None else None
-    if isinstance(client, SDKClient) or isinstance(native, type) and isinstance(client, native):
+    if isinstance(client, SDKClient) or isinstance(native, type) and type(client) is native:
         return getattr(client, 'base_url', None)
     return None
+
+
+def sdk_destination(client, seen=frozenset()):
+    """Ask the SDK's HTTP client to resolve mounts and environment proxies.
+
+    Only the native direct pool establishes locality. Unknown clients, custom
+    routing and custom transports cannot establish a first hop. This deliberately
+    depends on the installed client's routing API, not a second proxy parser.
+    """
+    unknown = Destination('cloud:unknown')
+    if id(client) in seen:
+        return unknown
+    if isinstance(client, SDKClientWrapper):
+        return sdk_destination(client.sdk_inner, seen | {id(client)})
+    url = sdk_endpoint(client)
+    if not url:
+        return unknown
+    url = str(url).rstrip('/')
+    if isinstance(client, SDKClient):
+        # The published host fake contract explicitly sends directly to base_url.
+        return _sdk_direct_destination(url)
+    http = getattr(client, '_client', None)
+    for name, core_name in (('httpx2', 'httpcore2'), ('httpx', 'httpcore')):
+        module, core = sys.modules.get(name), sys.modules.get(core_name)
+        if module is None or core is None or not isinstance(http, module.Client):
+            continue
+        try:
+            sdk_base = sys.modules.get('anthropic._base_client')
+            supported = (module.Client, getattr(sdk_base, 'DefaultHttpxClient', None),
+                         getattr(sdk_base, 'SyncHttpxClientWrapper', None))
+            if type(http) not in supported or http._auth is not None or any(http._event_hooks.values()):
+                return unknown
+            for method in ('_transport_for_url', 'send', 'request', 'build_request', '_send_single_request',
+                           '_send_handling_auth', '_send_handling_redirects'):
+                if method in vars(http) or getattr(type(http), method) is not getattr(module.Client, method):
+                    return unknown
+            transport = http._transport_for_url(module.URL(url))
+            if type(transport) is not module.HTTPTransport:
+                return unknown
+            pool = transport._pool
+            if type(pool) is core.ConnectionPool:
+                if getattr(pool, '_uds', True) is not None:
+                    return unknown
+                return _sdk_direct_destination(url)
+            if type(pool) not in (core.HTTPProxy, core.SOCKSProxy):
+                return unknown
+            proxy = pool._proxy_url
+            hop = str(module.URL(scheme=proxy.scheme.decode('ascii'), host=proxy.host.decode('ascii'),
+                                 port=proxy.port)).rstrip('/')
+            # Even a loopback proxy can forward off-machine. It needs consent.
+            return Destination('endpoint:' + sha256(hop))
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            return unknown
+    return unknown
+
+
+def _sdk_direct_destination(url):
+    if loopback(url):
+        return Destination('local:loopback', True)
+    return Destination('anthropic:api' if url == 'https://api.anthropic.com' else 'endpoint:' + sha256(url))
 
 
 @dataclass
@@ -253,17 +313,13 @@ def destination(caller: object, _seen: frozenset[int] = frozenset()) -> Destinat
         return Destination(own.get(canonical, 'endpoint:' + sha256(canonical)))
     if isinstance(caller, llm.AnthropicCaller):
         client = caller._client
-        url = sdk_endpoint(client) if client is not None else (
-            caller._base_url or os.environ.get('ANTHROPIC_BASE_URL') or 'https://api.anthropic.com')
-        if not url:
-            return Destination('cloud:unknown')
-        url = str(url).rstrip('/')
-        if loopback(url):
-            parsed = urlsplit(url)
-            if parsed.scheme in getproxies() and not proxy_bypass(parsed.hostname or ''):
+        if client is None:
+            # Resolve the real lazily-built SDK before admission. Without an
+            # explicit key, inspection must not trigger an ambient sign-in.
+            if not caller._api_key:
                 return Destination('cloud:unknown')
-            return Destination('local:loopback', True)
-        return Destination('anthropic:api' if url == 'https://api.anthropic.com' else 'endpoint:' + sha256(url))
+            client = caller._get_client()
+        return sdk_destination(client)
     return Destination('cloud:unknown')
 
 

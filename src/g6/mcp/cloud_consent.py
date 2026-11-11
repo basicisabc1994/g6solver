@@ -229,10 +229,10 @@ def install(server) -> None:
                 public = matches and returned[3]
                 refs = (() if public else returned[2]) if matches else None
                 if refs == ():
-                    prepare(session, ctx.request_id, result, ())
+                    prepare(session, ctx.request_context.request_id, result, ())
                     return result
                 sources = refs if refs is not None else (policy.UNKNOWN,)
-                prepare(session, ctx.request_id, result, sources, capture.supplied, capture.job,
+                prepare(session, ctx.request_context.request_id, result, sources, capture.supplied, capture.job,
                         metadata=returned[4] if matches else None)
                 return result
     server.add_middleware(ConsentEgress())

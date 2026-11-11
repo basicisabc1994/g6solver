@@ -9,15 +9,18 @@ from __future__ import annotations
 
 import contextvars
 import hashlib
+import json
 import os
 import re
 import threading
 import uuid
+from copy import deepcopy
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from pydantic_core import to_jsonable_python
 
 from g6.core.ledger import ChainLedger, digest
 from g6.core.llm import LLMError
@@ -35,6 +38,7 @@ _SOURCES: contextvars.ContextVar[tuple[Source, ...]] = contextvars.ContextVar('g
 _CAPTURE: contextvars.ContextVar[Capture | None] = contextvars.ContextVar('g6_source_capture', default=None)
 _POLICY: contextvars.ContextVar[bool] = contextvars.ContextVar('g6_consent_io', default=False)
 _REFUSAL_TELL: contextvars.ContextVar[tuple] = contextvars.ContextVar('g6_consent_refusal_observers', default=())
+_PROMPT_STATE: contextvars.ContextVar[tuple] = contextvars.ContextVar('g6_prompt_state', default=())
 
 
 @contextmanager
@@ -166,7 +170,7 @@ def boundary_sources(declared: Sequence[Source] = (), *, carried: Sequence[Sourc
 
 
 def _output_digest(value):
-    return digest(asdict(value) if is_dataclass(value) and not isinstance(value, type) else value)
+    return digest(to_jsonable_python(value))
 
 
 def bind_output(value, sources: Sequence[Source], *, metadata: dict | None = None):
@@ -218,6 +222,68 @@ def output_metadata(value) -> dict:
         return dict(stored[3]) if stored is not None and stored[0] is value and stored[1] == _output_digest(value) else {}
     except (ValueError, TypeError):
         return {}
+
+
+def freeze_output(value, *, snapshot=...):
+    """Serialise once and match that snapshot to the existing receipt.
+
+    Never re-read a live object to establish the provenance of frozen bytes:
+    it could change between serialisation and the receipt check.
+    """
+    # Keep the producer's field order (compact reviews put the report first).
+    body = json.dumps(to_jsonable_python(value if snapshot is ... else snapshot),
+                      separators=(',', ':'), allow_nan=False)
+    capture = _CAPTURE.get()
+    stored = capture.outputs.get(id(value)) if capture is not None else None
+    if stored is None or stored[0] is not value:
+        return body, None, {}
+    # Receipts use canonical JSON; compare only the already-frozen bytes.
+    if stored[1] != digest(json.loads(body)):
+        refs = boundary_sources(carried=(*stored[2], UNKNOWN), inherit=False)
+        record_sources(refs)
+        return body, refs, {}
+    return body, stored[2], stored[3]
+
+
+def prompt_sources() -> tuple[Source, ...]:
+    """Union raw-state receipts and all reads observed before rendering.
+
+    Frameworks hand over their raw state, never infer its origin from rendered
+    text. A missing/stale receipt or an unreadable value is unknown. Reads remain
+    attached even when a framework copies, formats or serialises a tool result.
+    Reconstructed history without its receipts must be recorded again by its
+    host producer before a non-local send.
+    """
+    capture = _CAPTURE.get()
+    refs = [*(capture.sources if capture is not None else ()), *_PROMPT_STATE.get()]
+    return boundary_sources(carried=refs)
+
+
+@contextmanager
+def prompt_state(*values) -> Iterator[tuple]:
+    """Render only the yielded copies, carrying their complete state receipts.
+
+    Copy before rendering so a concurrent update cannot borrow an earlier
+    state's receipt. Missing receipts and unreadable copies stay unknown.
+    """
+    copies, refs = [], []
+    for value in values:
+        try:
+            copied = deepcopy(value)
+            if copied is None or type(copied) in (dict, list, tuple) and not copied:
+                known = ()
+            else:
+                _, known, _ = freeze_output(value, snapshot=copied)
+        except Exception:
+            copied, known = value, None
+        copies.append(copied)
+        refs.extend(known if known is not None else (UNKNOWN,))
+    token = _PROMPT_STATE.set((*_PROMPT_STATE.get(), *refs))
+    record_sources(refs)
+    try:
+        yield tuple(copies)
+    finally:
+        _PROMPT_STATE.reset(token)
 
 
 @contextmanager
@@ -423,7 +489,7 @@ def admission(provider: str, sources: Sequence[Source], payload_sha256: str, *, 
     Disclosure is an attempt, durably logged first: a crash/transport error cannot say
     whether the recipient received it. Local computation needs no sharing state.
     """
-    refs = boundary_sources(sources) or (UNKNOWN,)
+    refs = boundary_sources(sources, carried=prompt_sources()) or (UNKNOWN,)
     record_sources(refs)
     if local:
         yield
