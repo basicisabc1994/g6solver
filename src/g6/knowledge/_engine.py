@@ -1,23 +1,34 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The Context Engine's first path (design 12.9 step 1): preview a folder, commit it after the person accepted, search
-it, fetch one passage, revoke it, list the sources.
+"""The Context Engine's paths (design 12.9 steps 1 and 2): preview a folder, commit it after the person accepted,
+search it, assemble a budgeted context, fetch one passage, refresh, revoke, delete, list the sources.
 
 ``_``-prefixed, so it never registers as a component. Everything here runs on this machine: the index is a local
-SQLite file per project and generation, and nothing is sent to a model. Whether a result may leave the machine is
-decided per source and per destination: for a destination other than ``"local"``, a source not granted to that
-provider through the client's dialog (``g6.core.cloud_consent``) contributes nothing to the reply but its registration
-id and the provider, in ``withheld``. No result is written to a file for a destination that was refused it.
+SQLite file per project and generation, and nothing is sent to a model.
 
-``search`` runs in a fixed order: (1) the published generation, or ``not_published``; (2) the lexical search on that
-generation's file; (3) :meth:`ProjectStore.use` drops revoked, expired and unknown passages; (4) for a non-local
-destination, sources not granted to that provider are dropped and listed in ``withheld``; (5) each surviving hit's
-file is read again, converted and compared with the hit, and a mismatch writes a ``changed`` tombstone and drops it;
-(6) ``use`` is called again immediately before the return; (7) items carry redacted views only. "Checked" on an item
-means exactly step 5: the passage was re-read and compared in the call that returned it.
+**Scope is decided before retrieval.** For every search the engine first works out, from the registry and the grant
+ledger alone, which source registrations the access may read at this time: usable (not revoked, not deleted, not
+past its expiry by the clock), inside the caller's narrowing, and, for a destination other than ``"local"``, granted
+to that provider through the client's dialog (``g6.core.cloud_consent``). Only those are searched. So nothing a
+destination is told can vary with what a source outside its scope holds: ``withheld`` lists the usable sources not
+shared with it, the same for every query, and no count, state or rank comes from them. No result is written to a
+file for a destination that was refused it.
+
+A search then runs in a fixed order: (1) the published generation, or ``not_published``; (2) the scope; (3) each
+route's search inside the scope, on that generation; (4) :meth:`ProjectStore.use` on every candidate, with the clock;
+(5) each candidate's file is read again, converted and compared with the hit, and a mismatch writes a ``changed``
+tombstone and drops it; (6) ``use`` is called again, and once more immediately before the return; (7) the routes are
+fused by passage id and items carry redacted views only. "Checked" on an item means exactly step 5: the passage was
+re-read and compared in the call that returned it.
+
+Removal is a checked step. Every file that holds a source's bytes or names (an index file, an audit copy, a preview
+listing) is removed through ``ProjectStore.remove_file``, which says whether the file is gone and keeps a durable
+list of the ones that are not, retried by every later deletion, stage and publish. A deletion reports removal only
+when that list is empty.
 """
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import shutil
 from collections.abc import Callable, Sequence
@@ -32,20 +43,27 @@ from g6.core.storage import PathRefused, contained, state_path
 from g6.knowledge._envelope import (MAX_TOP_K, BackendReport, Checked, Contribution, Denied, PassageItem,
                                     SearchRequest, SearchResponse)
 from g6.knowledge._index import IndexRefused
-from g6.knowledge._registry import Dependent, Member, ProjectStore, Refused, Registration, source_uri
+from g6.knowledge._lexical import ScopedLexical
+from g6.knowledge._registry import (Dependent, Member, ProjectStore, Refused, Registration, is_kept, may_use,
+                                    source_uri)
 from g6.knowledge._scope import Access, Binding, ScopeDenied, bound, consent_scope, inside
 from g6.knowledge._types import Document, Passage, now, passage_problems, sha256_hex
 from g6.knowledge._view import label_view, view_of
-from g6.knowledge._walk import MAX_FILE_BYTES, Excluded, FileEntry, Walked, read_file, walk
+from g6.knowledge._walk import (MAX_FILE_BYTES, Excluded, FileEntry, Walked, is_placeholder, read_file, shown_name,
+                                walk)
 
 PREVIEW_CHANGED = "G6_E_KNOWLEDGE_PREVIEW_CHANGED"
 INPUT = "G6_E_KNOWLEDGE_INPUT"
 INDEX = "G6_E_KNOWLEDGE_INDEX"
+PACK_UNKNOWN = "G6_E_KNOWLEDGE_PACK"
+DELETION_PENDING = "G6_E_KNOWLEDGE_DELETION_PENDING"
 CHUNKER = "words:200:20"
 #: Passages added to the index in one write.
 BATCH = 500
-#: The lexical route asks for this many candidates per wanted result, since later steps drop some.
+#: A route is asked for this many candidates per wanted result, since the re-read may drop some.
 OVERSAMPLE = 4
+#: Routes a search uses when the request names none: the ones that are ready, in this order.
+DEFAULT_ROUTES = ("exact", "structure", "meaning")
 Clock = Callable[[], datetime]
 
 
@@ -107,7 +125,8 @@ def excluded_counts(excluded: Sequence[Excluded]) -> dict[str, int]:
 def preview(binding: Binding, path: str, *, expires_days: int = 0, retention: str = "none",
             clock: Clock = _utc) -> Preview:
     """Walk the folder ``path`` names and say exactly what would be indexed. Nothing is registered or indexed; the
-    full list is written to a file under ``$G6_HOME/knowledge/previews/`` for the person to open."""
+    full list is written to a file under ``$G6_HOME/knowledge/previews/`` for the person to open. The listing names
+    its project and folder, so a later complete deletion of that folder removes every listing of it."""
     bound(binding)
     if retention not in ("none", "audit"):
         raise Refused(INPUT, "retention is 'none' or 'audit'")
@@ -118,14 +137,42 @@ def preview(binding: Binding, path: str, *, expires_days: int = 0, retention: st
     made = _preview_of(binding, walked, nonce=secrets.token_hex(16), expires_at=expires_at, retention=retention)
     listing = state_path("knowledge", "previews", f"{made.sha256}.md")
     listing.parent.mkdir(parents=True, exist_ok=True)
-    lines = [f"# Preview {made.sha256}", "", f"Folder: {made.root}", f"Files to index: {len(made.files)} "
-             f"({sum(f.size for f in made.files)} bytes)", f"Not indexed: {len(made.excluded)}",
+    lines = [f"# Preview {made.sha256}", "", f"Project: {made.project}", f"Folder: {shown_name(made.root)}",
+             f"Files to index: {len(made.files)} ({sum(f.size for f in made.files)} bytes)",
+             f"Not indexed: {len(made.excluded)}",
              f"Ignored files decided by: {walked.ignored_by}" + (f" ({walked.note})" if walked.note else ""),
              f"Retention: {made.retention}", f"Expires: {made.expires_at or 'never'}", "", "## Files to index", ""]
     lines += [f"- {f.relative} ({f.size} bytes, sha256 {f.sha256})" for f in made.files]
     lines += ["", "## Not indexed, and why", ""] + [f"- {e.relative}: {e.why}" for e in made.excluded]
     listing.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return made.model_copy(update={"listing_path": str(listing)})
+
+
+def discard_preview(shown: Preview) -> bool:
+    """Remove the listing of a preview whose dialog ended without acceptance or whose commit was refused; whether it
+    is gone."""
+    try:
+        Path(shown.listing_path).unlink()
+    except FileNotFoundError:
+        return True
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _listings_of(project: str, root: str) -> list[Path]:
+    """Every preview listing that names this project and this folder."""
+    folder = state_path("knowledge", "previews")
+    found = []
+    for path in sorted(folder.glob("*.md")) if folder.is_dir() else []:
+        try:
+            head = path.read_text(encoding="utf-8", errors="replace").splitlines()[:6]
+        except OSError:
+            found.append(path)   # a listing that cannot be read cannot be shown to name another folder
+            continue
+        if f"Project: {project}" in head and f"Folder: {shown_name(root)}" in head:
+            found.append(path)
+    return found
 
 
 def _document(data: bytes, member_uri: str, media_type: str) -> tuple[Document | None, str, tuple[str, ...]]:
@@ -147,40 +194,41 @@ def _passages(document: Document) -> tuple[list[Passage], tuple[str, ...]]:
         return [], (exc.code,)
 
 
-def _lexical(store: ProjectStore, generation: int):
-    from g6.knowledge.knowledge_indexer.index import SqliteIndex
-
-    return SqliteIndex("lexical", path=store.index_path("sqlite", generation))
+def _lexical(store: ProjectStore, generation: int) -> ScopedLexical:
+    """A generation's lexical index, unscoped: for writing and for maintenance. A search goes through the
+    dispatcher, which gives it a scope."""
+    return ScopedLexical(store.index_path("sqlite", generation))
 
 
 def _still_changed(store: ProjectStore, generation: int) -> set[tuple[str, str]]:
     return {(t.registration_id, t.uri) for t in store.tombstones() if t.reason == "changed" and t.generation >= generation}
 
 
-def _carry(store: ProjectStore, previous: Any, staged: int, index: Any, also_drop: Sequence[str] = ()) -> list[Member]:
-    """Start the staged generation from the previous one: its index file, and its membership for the registrations
-    still active. A file observed changed stays a member (the person accepted it) with no passages and no file
-    hash, so the next refresh reads it again and nothing old comes back before then."""
+def _carry(store: ProjectStore, previous: Any, staged: int, index: Any) -> list[Member]:
+    """Start the staged generation from the previous one: a copy of its index file and its membership for the
+    registrations that are kept. A file observed changed stays a member (the person accepted it) with no passages
+    and no file hash, so the next refresh reads it again and nothing old comes back before then. Every row of the
+    copy that the carried membership does not list is taken out, whatever an interrupted earlier step left there."""
     members: list[Member] = []
     if previous is None:
         return members
     before = store.index_path("sqlite", previous.number)
     if before.exists():
         shutil.copyfile(before, store.index_path("sqlite", staged))
-    active = {r.id for r in store.registrations() if r.state == "active"}
+    kept = {r.id for r in store.registrations() if is_kept(r)}
     denied = _still_changed(store, previous.number)
-    dropped: list[str] = list(also_drop)
     for member in store.members(previous.number):
-        if member.registration_id not in active:
-            dropped.extend(member.passage_ids)
-        elif (member.registration_id, member.uri) in denied:
-            dropped.extend(member.passage_ids)
+        if member.registration_id not in kept:
+            continue
+        if (member.registration_id, member.uri) in denied:
             members.append(member.model_copy(update={"generation": staged, "passage_ids": (), "spans": (),
                                                      "file_sha256": ""}))
         else:
             members.append(member.model_copy(update={"generation": staged}))
-    if dropped:
-        index.remove(dropped)
+    listed = {pid for m in members for pid in m.passage_ids}
+    extra = sorted(index.held_ids() - listed)
+    if extra:
+        index.remove(extra)
     return members
 
 
@@ -210,8 +258,10 @@ def _purge(path: Path) -> None:
 
 def _build_generation(store: ProjectStore, registration: Registration, real: Path,
                       files: Sequence[FileEntry]) -> dict[str, Any]:
-    """Stage the next generation: the previous one's index and membership for registrations still active, plus the
-    new registration's files; publish it only when the index read back every listed passage."""
+    """Stage the next generation: the previous one's index and membership for the registrations that are kept, plus
+    the new registration's files; publish it only when the index read back every listed passage. When it is not
+    published, the staged generation is abandoned and what it wrote is removed (the index file and, for an audited
+    source, the audit copies), each through the checked removal."""
     previous = store.published()
     staged = store.stage({"sqlite": True})
     index = _lexical(store, staged.number)
@@ -240,8 +290,13 @@ def _build_generation(store: ProjectStore, registration: Registration, real: Pat
                 passage_ids=tuple(p.id for p in passages), spans=tuple((p.start, p.end) for p in passages),
                 media_type=entry.media_type, converter=converter, chunker=CHUNKER, unread=(*notes, *more)))
         published = _publish_staged(store, staged.number, members, index)
-    except IndexRefused as exc:
-        raise Refused(INDEX, f"the local index refused the write ({exc.code})") from None
+    except BaseException as exc:
+        if isinstance(exc, Exception):   # a stop of the process leaves the staging generation for the next stage
+            store.abandon(staged.number)
+            store.forget_retained(registration.id)
+        if isinstance(exc, IndexRefused):
+            raise Refused(INDEX, f"the local index refused the write ({exc.code})") from None
+        raise
     return {"generation": published.number, "passages": sum(len(m.passage_ids) for m in members
                                                            if m.registration_id == registration.id),
             "files": len(files), "unread": unread}
@@ -249,25 +304,33 @@ def _build_generation(store: ProjectStore, registration: Registration, real: Pat
 
 def commit(binding: Binding, accepted: Preview, attribution: str) -> dict[str, Any]:
     """Register and index exactly what ``accepted`` lists, after the person accepted it. The folder is walked again:
-    a file list that differs from the accepted digest is ``G6_E_KNOWLEDGE_PREVIEW_CHANGED`` and changes nothing."""
+    a file list that differs from the accepted digest is ``G6_E_KNOWLEDGE_PREVIEW_CHANGED`` and changes nothing. A
+    commit that is refused, or fails, leaves no registration in use, no staged index, no audit copy and no listing."""
     store = ProjectStore(binding)
     if not isinstance(accepted, Preview) or accepted.project != binding.project or accepted.sha256 != _digest(accepted):
         raise Refused(PREVIEW_CHANGED, "the preview is not one this project produced; nothing was indexed")
     if not isinstance(attribution, str) or not attribution.strip():
         raise Refused(INPUT, "acceptance carries the name the dialog returned")
-    real = inside(binding, accepted.root)
-    walked = walk(binding, real)
-    again = _preview_of(binding, walked, nonce=accepted.nonce, expires_at=accepted.expires_at,
-                        retention=accepted.retention)
-    if again.sha256 != accepted.sha256:
-        raise Refused(PREVIEW_CHANGED, "the folder's files differ from the preview that was accepted; nothing was "
-                                       "indexed. Preview it again.")
-    registration = store.register(accepted, attribution.strip())
+    try:
+        real = inside(binding, accepted.root)
+        walked = walk(binding, real)
+        again = _preview_of(binding, walked, nonce=accepted.nonce, expires_at=accepted.expires_at,
+                            retention=accepted.retention)
+        if again.sha256 != accepted.sha256:
+            raise Refused(PREVIEW_CHANGED, "the folder's files differ from the preview that was accepted; nothing "
+                                           "was indexed. Preview it again.")
+        registration = store.register(accepted, attribution.strip())
+    except (Refused, ScopeDenied):
+        if not any(r.preview_sha256 == accepted.sha256 for r in store.registrations()):
+            discard_preview(accepted)
+        raise
     try:
         built = _build_generation(store, registration, real, accepted.files)
-    except BaseException:
+    except BaseException as exc:
         try:
-            store.revoke(registration.id)   # a registration that was never indexed does not stay active
+            store.revoke(registration.id)   # a registration that was never indexed does not stay in use
+            if isinstance(exc, Exception):
+                discard_preview(accepted)
         except Exception:  # noqa: BLE001 - the first error is the one to report
             pass
         raise
@@ -290,11 +353,33 @@ def shared_with(acc: Access, registration_id: str) -> bool:
     return _granted(acc, registration_id)
 
 
+def scope_of(store: ProjectStore, acc: Access, at: datetime) -> tuple[list[str], list[str], list[Denied]]:
+    """The access's scope at ``at``, from the registry and the grant ledger alone, before anything is retrieved: the
+    registrations it may read; the usable ones withheld from its destination; and, for the registrations inside its
+    narrowing that have expired, a denial the destination may be told (it is local, or the source is shared with
+    it)."""
+    readable, withheld, denied = [], [], []
+    for registration in store.registrations():
+        if acc.sources is not None and registration.id not in acc.sources:
+            continue
+        why = may_use(registration, at)
+        if why == "expired" and _granted(acc, registration.id):
+            denied.append(Denied(passage_id="", registration_id=registration.id, why="expired"))
+        if why:
+            continue
+        (readable if _granted(acc, registration.id) else withheld).append(registration.id)
+    return readable, withheld, denied
+
+
 def _reread(binding: Binding, registration: Registration, member: Member) -> tuple[Document | None, bytes]:
-    """The member's file read and converted again, when its bytes are the bytes that were indexed; else ``None``."""
+    """The member's file read and converted again, when its bytes are the bytes that were indexed; else ``None``. A
+    file that became a cloud placeholder is not opened."""
     try:
         root = inside(binding, registration.root)
-        data = read_file(contained(root, member.relative, refuse_links=True), MAX_FILE_BYTES)
+        path = contained(root, member.relative, refuse_links=True)
+        if is_placeholder(os.lstat(path)):
+            return None, b""
+        data = read_file(path, MAX_FILE_BYTES)
     except (ScopeDenied, PathRefused, OSError):
         return None, b""
     if sha256_hex(data) != member.file_sha256:
@@ -322,22 +407,17 @@ def _visible_denied(acc: Access, denied: Sequence[Denied]) -> list[Denied]:
     return [d for d in denied if acc.local or (d.registration_id and _granted(acc, d.registration_id))]
 
 
-#: Routes a search uses when the request names none: the ones that are ready, in this order.
-DEFAULT_ROUTES = ("exact", "structure", "meaning")
-PACK_UNKNOWN = "G6_E_KNOWLEDGE_PACK"
-
-
-def _route_hits(store: ProjectStore, acc: Access, request: SearchRequest, generation: Any,
-                at: datetime) -> list[tuple[BackendReport, list, int]]:
-    """Each requested route's report and hits on the pinned generation. A route that is not ready is reported
-    ``unavailable`` with why and is not asked; a route name G6 does not know is ``unsupported``."""
+def _route_hits(store: ProjectStore, request: SearchRequest, generation: Any,
+                readable: Sequence[str]) -> list[tuple[BackendReport, list, int]]:
+    """Each requested route's report and hits on the pinned generation, inside ``readable`` only. A route that is
+    not ready is reported ``unavailable`` with why and is not asked; a route name G6 does not know is
+    ``unsupported``."""
     from g6.knowledge import _dispatch
 
     ready = {r.name: (r, why) for r, why in _dispatch.routes(store)}
     wanted = request.routes if request.routes is not None else tuple(
         name for name in DEFAULT_ROUTES if name in ready and not ready[name][1])
     limit = min(request.top_k * OVERSAMPLE, 4 * MAX_TOP_K)
-    usable = _dispatch.usable_registrations(store, acc, at=at)
     out = []
     for name in dict.fromkeys(wanted):
         if name not in ready or "search" not in ready[name][0].operations:
@@ -350,7 +430,7 @@ def _route_hits(store: ProjectStore, acc: Access, request: SearchRequest, genera
                         generation.number))
             continue
         held = _dispatch.answered(generation, route.backend)
-        scoped = None if held == ["*"] else [r for r in usable if r in held]
+        scoped = list(readable) if held == ["*"] else [r for r in readable if r in held]
         found = _dispatch.open_route(store, route, generation.number, registrations=scoped).find(request.query, limit)
         state = {"ok": "answered", "empty": "empty", "unavailable": "unavailable", "failed": "failed"}[found.outcome]
         if found.evidence.get("partial"):
@@ -364,7 +444,7 @@ def _route_hits(store: ProjectStore, acc: Access, request: SearchRequest, genera
 
 def _fused(acc: Access, request: SearchRequest, *, clock: Clock, budget_tokens: int | None = None):
     """The steps every passage search takes (the module docstring), over one or several routes; returns the store,
-    the generation, the fusion and what was denied or withheld."""
+    the narrowed access, the generation, the fusion, each item's consent source and what was denied or withheld."""
     from g6.knowledge._fuse import fuse
 
     store = ProjectStore(acc.binding)
@@ -374,26 +454,21 @@ def _fused(acc: Access, request: SearchRequest, *, clock: Clock, budget_tokens: 
                      sources=narrowed if acc.sources is None else acc.sources & narrowed)
     generation = store.published()
     if generation is None:
-        return store, None, None, [], {}, {}
+        return store, acc, None, None, {}, {}
     at = clock()
-    results = _route_hits(store, acc, request, generation, at)
+    readable, withheld, denied = scope_of(store, acc, at)   # before anything is retrieved
+    results = _route_hits(store, request, generation, readable)
     checkpoint("search:found")
     candidates = {h.passage.id: h for _, hits, _ in results for h in hits}
-    members, denied = store.use(acc, list(candidates), at=at, generation=generation.number)
+    members, refused = store.use(acc, list(candidates), at=at, generation=generation.number)
+    denied.extend(refused)
     by_passage = {pid: m for m in members for pid in m.passage_ids}
     registrations = {r.id: r for r in store.registrations()}
-    withheld: dict[str, dict[str, str]] = {}
-    granted: dict[str, bool] = {}
     documents: dict[str, Document | None] = {}
     usable: dict[str, Member] = {}
     for pid, hit in candidates.items():
         member = by_passage.get(pid)
-        if member is None:
-            continue
-        if member.registration_id not in granted:
-            granted[member.registration_id] = _granted(acc, member.registration_id)
-        if not granted[member.registration_id]:
-            withheld[member.registration_id] = {"source": member.registration_id, "provider": acc.destination}
+        if member is None or member.registration_id not in readable:
             continue
         if member.uri not in documents:
             documents[member.uri], _ = _reread(acc.binding, registrations[member.registration_id], member)
@@ -410,8 +485,8 @@ def _fused(acc: Access, request: SearchRequest, *, clock: Clock, budget_tokens: 
     checkpoint("search:checked")
     _, late = store.use(acc, list(usable), at=clock(), generation=generation.number)
     denied.extend(late)
-    for refused in late:
-        usable.pop(refused.passage_id, None)
+    for gone in late:
+        usable.pop(gone.passage_id, None)
     sources: dict[str, cloud_consent.Source] = {}
 
     def render(hit: Any, rank: int, contributions: tuple[Contribution, ...]) -> PassageItem | None:
@@ -423,77 +498,91 @@ def _fused(acc: Access, request: SearchRequest, *, clock: Clock, budget_tokens: 
 
     fused = fuse(results, top_k=request.top_k, budget_tokens=budget_tokens, render=render, query=request.query)
     shown = {i.source for i in fused.items}
-    meta = {"withheld": tuple(withheld[k] for k in sorted(withheld)),
-            "denied": tuple(dict.fromkeys(_visible_denied(acc, denied))),
-            "revisions": {rid: registrations[rid].authorisation_revision for rid in sorted(shown)}}
-    return store, generation, fused, [sources[i.passage_id] for i in fused.items], meta, usable
+    meta = {"withheld": tuple({"source": rid, "provider": acc.destination} for rid in sorted(withheld)),
+            "denied": list(dict.fromkeys(_visible_denied(acc, denied))),
+            "revisions": {rid: registrations[rid].authorisation_revision for rid in sorted(shown)},
+            "members": usable}
+    return store, acc, generation, fused, sources, meta
+
 
 
 def search(acc: Access, request: SearchRequest, *, clock: Clock = _utc) -> tuple[SearchResponse,
                                                                                 tuple[cloud_consent.Source, ...]]:
-    """Search the project's published generation over the requested routes (by default the ready ones) and fuse the
-    results by passage id; see the module docstring for the order of its steps."""
-    store, generation, fused, sources, meta, _ = _fused(acc, request, clock=clock)
+    """Search the project's published generation over the requested routes (by default the ready ones), inside the
+    access's scope, and fuse the results by passage id; see the module docstring for the order of its steps."""
+    store, acc, generation, fused, sources, meta = _fused(acc, request, clock=clock)
     if generation is None:
         report = BackendReport(backend="sqlite", route="exact", state="unavailable",
                                reason="not_published: nothing is indexed for this project yet")
         return SearchResponse(request=request, generation=None, backends=(report,)), ()
-    payload: dict[str, Any] = {"kind": "passages", "items": [i.model_dump() for i in fused.items]}
+    # the last check, immediately before the reply is built: a revoke or an expiry that arrived meanwhile is honoured
+    _, late = store.use(acc, [i.passage_id for i in fused.items], at=clock(), generation=generation.number)
+    gone = {d.passage_id for d in late}
+    items = [i for i in fused.items if i.passage_id not in gone]
+    shown = {i.passage_id for i in items}
+    payload: dict[str, Any] = {"kind": "passages", "items": [i.model_dump() for i in items]}
     if fused.groups or fused.cautions:
-        payload.update(groups=[list(g) for g in fused.groups if all(p in {i.passage_id for i in fused.items} for p in g)],
-                       cautions=[c for c in fused.cautions
-                                 if all(p in {i.passage_id for i in fused.items} for p in c["passages"])])
+        payload.update(groups=[list(g) for g in fused.groups if all(p in shown for p in g)],
+                       cautions=[c for c in fused.cautions if all(p in shown for p in c["passages"])])
     if fused.refused:
         payload["refused"] = fused.refused
+    denied = tuple(dict.fromkeys([*meta["denied"], *_visible_denied(acc, late)]))
     response = SearchResponse(request=request, generation=generation.number, backends=fused.backends,
-                              authorisation_revisions=meta["revisions"], payload=payload, withheld=meta["withheld"],
-                              denied=meta["denied"])
+                              authorisation_revisions={r: v for r, v in meta["revisions"].items()
+                                                       if r in {i.source for i in items}},
+                              payload=payload, withheld=meta["withheld"], denied=denied)
     from g6.knowledge import _snapshots
 
-    kept_as = _snapshots.write(store, response)   # only for items of a registration that retains audit copies
+    kept_as = _snapshots.write(store, response, meta["members"])   # only for sources that retain audit copies
     if kept_as:
         response = response.model_copy(update={"snapshot": kept_as})
-    return response, tuple(sources)
+    return response, tuple(sources[i.passage_id] for i in items)
 
 
 def context(acc: Access, task: str, *, budget_tokens: int = 4000, routes: Sequence[str] | None = None,
             clock: Clock = _utc) -> tuple[dict[str, Any], tuple[cloud_consent.Source, ...]]:
     """A budgeted context for ``task``: the fused passages that fit ``budget_tokens``, every rendered field,
     provenance and JSON overhead counted. The pack is saved (views only) and registered as a stored consumer, so
-    :func:`pack` denies it once a source in it is revoked, changed or deleted."""
+    :func:`pack` denies it once a source in it may no longer be used."""
     request = SearchRequest(operation="context", query=task, top_k=MAX_TOP_K,
                             routes=tuple(routes) if routes is not None else None)
-    store, generation, fused, sources, meta, usable = _fused(acc, request, clock=clock, budget_tokens=budget_tokens)
+    store, acc, generation, fused, sources, meta = _fused(acc, request, clock=clock, budget_tokens=budget_tokens)
     if generation is None:
         return {"pack": "", "generation": None, "items": [], "tokens": 0, "omitted": 0, "refused": "",
                 "backends": [{"backend": "sqlite", "route": "exact", "state": "unavailable",
                               "reason": "not_published: nothing is indexed for this project yet"}],
                 "withheld": [], "denied": []}, ()
-    shown = {i.passage_id for i in fused.items}
+    _, late = store.use(acc, [i.passage_id for i in fused.items], at=clock(), generation=generation.number)
+    gone = {d.passage_id for d in late}
+    items = [i for i in fused.items if i.passage_id not in gone]
+    shown = {i.passage_id for i in items}
+    from g6.knowledge._fuse import tokens_of
+
     body = {"task_sha256": sha256_hex(task), "generation": generation.number, "budget_tokens": budget_tokens,
-            "items": [i.model_dump(mode="json") for i in fused.items], "tokens": fused.tokens,
-            "omitted": fused.omitted,
-            "refused": fused.refused, "backends": [b.model_dump() for b in fused.backends],
+            "items": [i.model_dump(mode="json") for i in items], "tokens": sum(tokens_of(i) for i in items),
+            "omitted": fused.omitted + len(fused.items) - len(items), "refused": fused.refused,
+            "backends": [b.model_dump() for b in fused.backends],
             "groups": [list(g) for g in fused.groups if all(p in shown for p in g)],
             "cautions": [c for c in fused.cautions if all(p in shown for p in c["passages"])]}
-    ident = "pack-" + sha256_hex(json.dumps(body, sort_keys=True, default=str))[:32] if fused.items else ""
+    ident = "pack-" + sha256_hex(json.dumps(body, sort_keys=True, default=str))[:32] if items else ""
     if ident:
         folder = store.folder / "packs"
         folder.mkdir(parents=True, exist_ok=True)
         (folder / f"{ident}.json").write_text(json.dumps({**body, "destination": acc.destination}, sort_keys=True),
                                               encoding="utf-8")
-        for registration_id in sorted({i.source for i in fused.items}):
+        for registration_id in sorted({i.source for i in items}):
             store.depend(Dependent(kind="pack", ident=ident, registration_id=registration_id,
-                                   passage_ids=tuple(i.passage_id for i in fused.items if i.source == registration_id),
+                                   passage_ids=tuple(i.passage_id for i in items if i.source == registration_id),
                                    generation=generation.number))
-    return {"pack": ident, **body, "withheld": list(meta["withheld"]),
-            "denied": [d.model_dump() for d in meta["denied"]]}, tuple(sources)
+    denied = list(dict.fromkeys([*meta["denied"], *_visible_denied(acc, late)]))
+    return ({"pack": ident, **body, "withheld": list(meta["withheld"]), "denied": [d.model_dump() for d in denied]},
+            tuple(sources[i.passage_id] for i in items))
 
 
 def pack(acc: Access, pack_id: str, *, clock: Clock = _utc) -> tuple[dict[str, Any], tuple[cloud_consent.Source, ...]]:
-    """A saved context, checked again at this use: denied when a source in it was revoked, changed, deleted or has
-    expired since, or is not granted to this destination; a saved pack never bypasses the check. A subagent's
-    context is built from this call, never from the file."""
+    """A saved context, checked again at this use: denied when a source in it may no longer be used at this time
+    (revoked, deleted, expired), was changed, or is not granted to this destination; a saved pack never bypasses the
+    check. A subagent's context is built from this call, never from the file."""
     store = ProjectStore(acc.binding)
     path = store.folder / "packs" / f"{pack_id}.json"
     if not isinstance(pack_id, str) or not pack_id.startswith("pack-") or not pack_id[5:].isalnum() or not path.is_file():
@@ -513,6 +602,7 @@ def pack(acc: Access, pack_id: str, *, clock: Clock = _utc) -> tuple[dict[str, A
                  for i in saved["items"])
     return {"pack": pack_id, "state": "usable", "generation": saved["generation"], "items": saved["items"],
             "tokens": saved["tokens"], "cautions": saved["cautions"], "groups": saved["groups"]}, refs
+
 
 def fetch(acc: Access, passage_id: str, *, raw: bool = False, clock: Clock = _utc) -> tuple[dict[str, Any],
                                                                                           tuple[cloud_consent.Source, ...]]:
@@ -552,11 +642,7 @@ def fetch(acc: Access, passage_id: str, *, raw: bool = False, clock: Clock = _ut
     return {"passage": item, "withheld": [], "denied": []}, (_source(member, passage),)
 
 
-def revoke(acc: Access, registration_id: str) -> dict[str, Any]:
-    """Revoke a source registration: its passages are denied from this moment, in every process, and each sharing
-    grant for it is revoked too. Text already delivered cannot be recalled."""
-    store = ProjectStore(acc.binding)
-    tombstone = store.revoke(registration_id)
+def _revoke_sharing(registration_id: str) -> list[str]:
     scope = consent_scope(registration_id)
     revoked = []
     try:
@@ -566,8 +652,16 @@ def revoke(acc: Access, registration_id: str) -> dict[str, Any]:
                 revoked.append(row["provider"])
     except Exception:  # noqa: BLE001 - unreadable sharing state already denies every disclosure
         pass
+    return sorted(revoked)
+
+
+def revoke(acc: Access, registration_id: str) -> dict[str, Any]:
+    """Revoke a source registration: its passages are denied from this moment, in every process, and each sharing
+    grant for it is revoked too. Text already delivered cannot be recalled."""
+    store = ProjectStore(acc.binding)
+    tombstone = store.revoke(registration_id)
     return {"source": registration_id, "state": "revoked", "deny_epoch": tombstone.epoch,
-            "sharing_revoked_for": sorted(revoked)}
+            "sharing_revoked_for": _revoke_sharing(registration_id)}
 
 
 def refresh(acc: Access, registration_id: str | None = None, *, clock: Clock = _utc) -> dict[str, Any]:
@@ -578,53 +672,60 @@ def refresh(acc: Access, registration_id: str | None = None, *, clock: Clock = _
 
 
 def delete(acc: Access, registration_id: str, *, complete: bool = False, attribution: str = "") -> dict[str, Any]:
-    """Delete a source after the person accepted the deletion dialog: it is denied at once (a tombstone first), every
-    sharing grant for it is revoked, and the index is rebuilt without it. With ``complete``, the audit copies, the
-    snapshots, the membership records and the preview listing go too, and the index is rewritten so that no freed
-    page still holds its text; only the registration's id and its tombstones stay, so it cannot return."""
+    """Delete a source after the person accepted the deletion dialog. It is denied at once (a tombstone first), every
+    sharing grant for it is revoked, and the index is rebuilt without it. With ``complete``, after that publication
+    the audit copies, the snapshots, the membership records and every preview listing of its folder go too, every
+    older index file is removed and the new one is rewritten so that no freed page holds its text; only the
+    registration's id and its tombstones stay, so it cannot return.
+
+    Each step can be run again: a deletion interrupted anywhere is completed by running it again. A file that could
+    not be removed (another program has it open) is kept on a durable list and the deletion is refused with
+    ``G6_E_KNOWLEDGE_DELETION_PENDING`` rather than reported done: the source stays denied, and the next run removes
+    what is left."""
     store = ProjectStore(acc.binding)
     if not isinstance(attribution, str) or not attribution.strip():
         raise Refused(INPUT, "a deletion carries the name the deletion dialog returned")
-    before = store.published()
-    # its passages in the current index, read before a complete deletion removes the membership that lists them
-    doomed = [pid for m in store.members(before.number, registration_id) for pid in m.passage_ids] if before else []
     receipt = store.delete(registration_id, complete=bool(complete))
-    scope = consent_scope(registration_id)
-    try:
-        for row in cloud_consent.grants():
-            if row.get("source") == scope:
-                cloud_consent.revoke(scope, row["provider"])
-    except Exception:  # noqa: BLE001 - unreadable sharing state already denies every disclosure
-        pass
+    _revoke_sharing(registration_id)
+    root, preview_sha256 = receipt.pop("root"), receipt.pop("preview_sha256")
     previous = store.published()
+    published = previous
     if previous is not None:
         staged = store.stage({"sqlite": True})
         index = _lexical(store, staged.number)
         try:
-            published = _publish_staged(store, staged.number,
-                                        _carry(store, previous, staged.number, index, also_drop=doomed), index)
+            published = _publish_staged(store, staged.number, _carry(store, previous, staged.number, index), index)
         except IndexRefused as exc:
+            store.abandon(staged.number)
             raise Refused(INDEX, f"the index could not be rebuilt without the source ({exc.code}); it stays denied. "
                                  "Run the deletion again.") from None
-        if complete:
-            for generation in store.generations():
-                if generation.number != published.number:
-                    store._drop_index_files(generation.number)
-            _purge(store.index_path("sqlite", published.number))
     if complete:
-        try:
-            state_path("knowledge", "previews", f"{receipt.pop('preview_sha256')}.md").unlink()
-        except OSError:
-            pass
-    receipt.pop("preview_sha256", None)
+        listings = [state_path("knowledge", "previews", f"{preview_sha256}.md"), *(_listings_of(acc.binding.project, root) if root else [])]
+        store.pend(listings)
+        store.erase(registration_id)
+        for generation in store.generations():
+            if published is None or generation.number != published.number:
+                store._drop_index_files(generation.number)
+        if published is not None:
+            _purge(store.index_path("sqlite", published.number))
+        for path in listings:
+            store.remove_file(path)
+        pending = store.retry_removals()
+        if pending:
+            raise Refused(DELETION_PENDING, f"the source is denied and out of search, but {len(pending)} file(s) or "
+                                            "step(s) that hold its bytes could not be removed yet (another program "
+                                            "has a file open); run the deletion again")
+        receipt["audit_copies"] = "removed"
     return {**receipt, "note": "The source is removed from search. Text already delivered to a client or a model "
                                "cannot be recalled."}
 
 
-def sources(acc: Access) -> list[dict[str, Any]]:
-    """Each source registration of the project: its id, state, expiry, generation and backend readiness; and, for the
-    local destination or a provider the source is granted to, its label and its file, passage and unread counts."""
+def sources(acc: Access, *, clock: Clock = _utc) -> list[dict[str, Any]]:
+    """Each source registration of the project: its id, state, expiry, whether it may be used at this time,
+    generation and backend readiness; and, for the local destination, or for a provider the source is granted to
+    while it may be used, its label and its file, passage and unread counts."""
     store = ProjectStore(acc.binding)
+    at = clock()
     generation = store.published()
     members = store.members(generation.number) if generation is not None else []
     out = []
@@ -632,12 +733,14 @@ def sources(acc: Access) -> list[dict[str, Any]]:
         if acc.sources is not None and registration.id not in acc.sources:
             continue
         own = [m for m in members if m.registration_id == registration.id]
+        why = may_use(registration, at)
         row: dict[str, Any] = {
             "source": registration.id, "state": registration.state, "expires_at": registration.expires_at,
+            "usable": not why, "why_not": why,
             "retention": registration.retention, "generation": generation.number if generation and own else None,
             "backends": {name: entry["state"] for name, entry in (generation.backends if generation else {}).items()},
             "shared_with_this_client": (not acc.local) and _granted(acc, registration.id)}
-        if acc.local or row["shared_with_this_client"]:
+        if acc.local or (row["shared_with_this_client"] and not why):
             row.update(label=label_view(registration.label), files=len(own),
                        passages=sum(len(m.passage_ids) for m in own),
                        unread=sum(1 for m in own if m.unread or not m.passage_ids))
@@ -645,6 +748,6 @@ def sources(acc: Access) -> list[dict[str, Any]]:
     return out
 
 
-__all__ = ["CHUNKER", "DEFAULT_ROUTES", "INDEX", "INPUT", "PACK_UNKNOWN", "PREVIEW_CHANGED", "Preview", "checkpoint",
-           "commit", "context", "delete", "pack",
-           "excluded_counts", "fetch", "preview", "refresh", "revoke", "search", "shared_with", "sources"]
+__all__ = ["CHUNKER", "DEFAULT_ROUTES", "DELETION_PENDING", "INDEX", "INPUT", "PACK_UNKNOWN", "PREVIEW_CHANGED",
+           "Preview", "checkpoint", "commit", "context", "delete", "discard_preview", "excluded_counts", "fetch",
+           "pack", "preview", "refresh", "revoke", "scope_of", "search", "shared_with", "sources"]

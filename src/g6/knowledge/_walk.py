@@ -75,14 +75,41 @@ class Walked(BaseModel):
 
 
 def is_credential(name: str) -> bool:
-    folded = name.lower()
+    folded = name.casefold()
     return any(fnmatch.fnmatchcase(folded, pattern) for pattern in CREDENTIAL_FILES)
+
+
+def folder_rule(name: str) -> str:
+    """Why nothing is read under a folder of this name (``"credential"`` or ``"ignored"``), or ``""``. The one name
+    rule for folders: case is folded once, here, and the rule holds for every component from the permitted root
+    down, the folder a walk starts in included."""
+    folded = name.casefold()
+    if folded in CREDENTIAL_FOLDERS:
+        return "credential"
+    return "ignored" if folded in BUILTIN_IGNORED else ""
+
+
+def is_placeholder(found: os.stat_result) -> bool:
+    """Whether the status is a cloud placeholder's (offline, or recalled when opened or read): opening one would make
+    the system download it, so no reader of source files opens it."""
+    return bool(getattr(found, "st_file_attributes", 0) & _PLACEHOLDER)
+
+
+def shown_name(name: str) -> str:
+    """``name`` as it can be written down: one that is not valid Unicode is shown with its odd units escaped."""
+    try:
+        name.encode("utf-8")
+        return name
+    except UnicodeEncodeError:
+        return name.encode("utf-8", "backslashreplace").decode("ascii", "replace")
 
 
 def read_file(path: Path, limit: int, expected: os.stat_result | None = None) -> bytes:
     """The bytes of the regular file at ``path``, at most ``limit`` of them; ``OSError`` when it is a link, is not the
     file ``expected`` describes, or is longer than ``limit``. The one place the walker and the engine open a source
     file."""
+    if is_placeholder(os.lstat(path)):
+        raise OSError("the file is a cloud placeholder; it is not opened")
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(path, flags)
     try:
@@ -151,6 +178,11 @@ def walk(binding: Binding, root: Path, *, max_files: int = MAX_FILES,
     real = inside(binding, root)
     if not real.is_dir():
         raise ScopeDenied("the path is not a folder inside a permitted root")
+    above = next(r for r in binding.roots if real == r or r in real.parents)
+    for part in real.relative_to(above).parts:   # the folder itself and every folder between it and the root
+        if folder_rule(part):
+            raise ScopeDenied("the folder is, or lies under, a folder nothing is read under (a credential folder or "
+                              "a generated one)")
     listed, note = tracked(binding, real)
     files: list[FileEntry] = []
     excluded: list[Excluded] = []
@@ -173,6 +205,9 @@ def walk(binding: Binding, root: Path, *, max_files: int = MAX_FILES,
                 break
             path = Path(entry.path)
             relative = path.relative_to(real).as_posix()
+            if shown_name(relative) != relative:   # a name that is not valid Unicode: listed, never read
+                excluded.append(Excluded(relative=shown_name(relative), why="unreadable"))
+                continue
             try:
                 found = os.lstat(path)
             except OSError:
@@ -181,17 +216,15 @@ def walk(binding: Binding, root: Path, *, max_files: int = MAX_FILES,
             if _is_link(found):
                 excluded.append(Excluded(relative=relative, why="link"))
             elif stat.S_ISDIR(found.st_mode):
-                if entry.name.lower() in CREDENTIAL_FOLDERS:
-                    excluded.append(Excluded(relative=relative + "/", why="credential"))
-                elif entry.name in BUILTIN_IGNORED:
-                    excluded.append(Excluded(relative=relative + "/", why="ignored"))
+                if folder_rule(entry.name):
+                    excluded.append(Excluded(relative=relative + "/", why=folder_rule(entry.name)))
                 else:
                     folders.append(path)
             elif is_credential(entry.name):
                 excluded.append(Excluded(relative=relative, why="credential"))
             elif listed is not None and relative not in listed:
                 excluded.append(Excluded(relative=relative, why="ignored"))
-            elif getattr(found, "st_file_attributes", 0) & _PLACEHOLDER:
+            elif is_placeholder(found):
                 excluded.append(Excluded(relative=relative, why="placeholder"))
             elif not stat.S_ISREG(found.st_mode):
                 excluded.append(Excluded(relative=relative, why="unsupported"))
@@ -222,5 +255,5 @@ def walk(binding: Binding, root: Path, *, max_files: int = MAX_FILES,
 
 
 __all__ = ["BUILTIN_IGNORED", "CREDENTIAL_FILES", "CREDENTIAL_FOLDERS", "MAX_ENUMERATED", "MAX_FILES",
-           "MAX_FILE_BYTES", "MEDIA_TYPES", "Excluded", "FileEntry", "Walked", "is_credential", "read_file",
-           "tracked", "walk"]
+           "MAX_FILE_BYTES", "MEDIA_TYPES", "Excluded", "FileEntry", "Walked", "folder_rule", "is_credential",
+           "is_placeholder", "read_file", "shown_name", "tracked", "walk"]

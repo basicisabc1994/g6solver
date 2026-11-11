@@ -26,7 +26,7 @@ import secrets
 import sqlite3
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -73,6 +73,7 @@ _SCHEMA = (
     "generation INTEGER NOT NULL, body TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS normative_grants (id TEXT PRIMARY KEY, registration_id TEXT NOT NULL, body TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, body TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS pending_removals (path TEXT PRIMARY KEY)",
     "CREATE TABLE IF NOT EXISTS nodes (generation INTEGER NOT NULL, body TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS edges (generation INTEGER NOT NULL, id TEXT NOT NULL, subject TEXT NOT NULL, "
     "object TEXT NOT NULL, relation TEXT NOT NULL, body TEXT NOT NULL)",
@@ -158,6 +159,30 @@ class Dependent(_Record):
     registration_id: str
     passage_ids: tuple[str, ...] = ()
     generation: int = 0
+
+
+def may_use(registration: Any, at: datetime) -> str:
+    """The one answer to "may this registration be used at this time": ``""`` when it may, otherwise why not
+    (``unknown``, ``revoked`` for a revoked or deleted one, ``expired``). Every consumer asks this, with the time:
+    no caller reads the state alone. ``registration`` is a :class:`Registration`, a registry row or ``None``."""
+    if registration is None:
+        return "unknown"
+    state = registration["state"] if not isinstance(registration, Registration) else registration.state
+    expires_at = registration["expires_at"] if not isinstance(registration, Registration) else registration.expires_at
+    if state != "active":
+        return "revoked"
+    if expires_at:
+        expires = instant(expires_at)
+        if expires is None or expires <= at:
+            return "expired"
+    return ""
+
+
+def is_kept(registration: Any) -> bool:
+    """Whether a registration's passages stay in the next generation's index: until it is revoked or deleted. This
+    is about what the index holds, never about use: use is :func:`may_use`, with the time."""
+    state = registration["state"] if not isinstance(registration, Registration) else registration.state
+    return state not in ("revoked", "deleted")
 
 
 def new_registration_id() -> str:
@@ -276,7 +301,7 @@ class ProjectStore:
         """Raise the deny epoch and write the tombstone, in one transaction, before anything is deleted."""
         with self._writing() as conn:
             row = conn.execute("SELECT state FROM registrations WHERE id = ?", (registration_id,)).fetchone()
-            if row is not None and row["state"] != "active":
+            if row is not None and not is_kept(row):
                 last = conn.execute("SELECT * FROM tombstones WHERE registration_id = ? AND uri = '' ORDER BY n DESC "
                                     "LIMIT 1", (registration_id,)).fetchone()
                 if last is not None:
@@ -320,7 +345,17 @@ class ProjectStore:
                          (made.number, made.state, json.dumps(made.backends, sort_keys=True), ""))
         for number in stale:
             self._drop_index_files(number)
+        self.retry_removals()
         return made
+
+    def abandon(self, generation: int) -> None:
+        """Give up a staging generation now: its membership and its index file go (the file through the checked
+        removal, so one that cannot be removed yet is retried later)."""
+        with self._writing() as conn:
+            conn.execute("UPDATE generations SET state = 'abandoned' WHERE number = ? AND state = 'staging'", (generation,))
+            conn.execute("DELETE FROM members WHERE generation = ?", (generation,))
+            conn.execute("DELETE FROM member_passages WHERE generation = ?", (generation,))
+        self._drop_index_files(generation)
 
     def record(self, generation: int, members: Sequence[Member]) -> None:
         """The membership of a staging generation."""
@@ -366,14 +401,83 @@ class ProjectStore:
                 conn.execute("DELETE FROM member_passages WHERE generation = ?", (number,))
         for number in old:
             self._drop_index_files(number)
+        self.retry_removals()
         return Generation(number=generation, state="published", backends=backends, published_at=published_at)
 
-    def _drop_index_files(self, generation: int) -> None:
-        for suffix in ("", "-journal", "-wal", "-shm"):
-            try:
-                Path(f"{self.index_path('sqlite', generation)}{suffix}").unlink()
-            except OSError:
-                pass  # a reader still holds it, or it never existed; the registry no longer names it either way
+    def _drop_index_files(self, generation: int) -> bool:
+        """Remove a generation's index file and what SQLite keeps beside it; whether all of it is gone."""
+        return all([self.remove_file(Path(f"{self.index_path('sqlite', generation)}{suffix}"))
+                    for suffix in ("", "-journal", "-wal", "-shm")])
+
+    # -- removal: checked, and retried until it is done ------------------------------------------------------------
+
+    def _pending_key(self, path: Path) -> str:
+        try:
+            return "store:" + path.resolve().relative_to(self.folder.resolve()).as_posix()
+        except ValueError:
+            return "file:" + str(path)
+
+    def _pending_path(self, key: str) -> Path:
+        return self.folder / key[6:] if key.startswith("store:") else Path(key[5:])
+
+    def pend(self, paths: Sequence[Path]) -> None:
+        """Record files that must be removed, durably, before any attempt to remove them."""
+        if paths:
+            with self._writing() as conn:
+                conn.executemany("INSERT OR IGNORE INTO pending_removals VALUES (?)",
+                                 [(self._pending_key(p),) for p in paths])
+
+    def remove_file(self, path: Path) -> bool:
+        """Remove one file that holds a source's bytes or names. True when it is gone (or was never there). A file
+        that cannot be removed now (another program has it open) is recorded in the pending-removals list and every
+        later deletion, stage and publish tries again; nothing reports it removed until it is."""
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            self.pend([path])
+            return False
+        key = self._pending_key(path)
+        with self._reading() as conn:
+            listed = self._has(conn, "pending_removals") and conn.execute(
+                "SELECT 1 FROM pending_removals WHERE path = ?", (key,)).fetchone() is not None
+        if listed:
+            with self._writing() as conn:
+                conn.execute("DELETE FROM pending_removals WHERE path = ?", (key,))
+        return True
+
+    def pending_removals(self) -> list[str]:
+        with self._reading() as conn:
+            if not self._has(conn, "pending_removals"):
+                return []
+            return [row["path"] for row in conn.execute("SELECT path FROM pending_removals ORDER BY path")]
+
+    def retry_removals(self) -> list[str]:
+        """Try every pending removal again; what is still pending afterwards."""
+        for key in self.pending_removals():
+            if key == "vacuum:registry":
+                self._vacuum()
+            else:
+                self.remove_file(self._pending_path(key))
+        return self.pending_removals()
+
+    def _vacuum(self) -> bool:
+        """Rewrite the registry file so that no freed page holds a deleted row's bytes; pending when it fails."""
+        conn = self._connect()
+        try:
+            conn.execute("VACUUM")
+            done = True
+        except sqlite3.Error:
+            done = False
+        finally:
+            conn.close()
+        with self._writing() as conn:
+            if done:
+                conn.execute("DELETE FROM pending_removals WHERE path = 'vacuum:registry'")
+            else:
+                conn.execute("INSERT OR IGNORE INTO pending_removals VALUES ('vacuum:registry')")
+        return done
 
     def published(self) -> Generation | None:
         with self._reading() as conn:
@@ -569,91 +673,100 @@ class ProjectStore:
                           json.dumps(list(dependent.passage_ids)), json.dumps(uris), dependent.generation, watermark))
 
     def invalidated(self, kind: str, ident: str, *, at: datetime | None = None) -> list[Denied]:
-        """Why the stored consumer ``(kind, ident)`` may no longer be used: ``[]`` when it still may. A consumer that
-        was never recorded is ``unknown``; one whose registration is revoked, deleted or expired, or one of whose
-        files was observed changed or removed since it was recorded, is denied for good: a refresh publishes new
-        passages and does not revive a consumer of the old ones."""
+        """Why the stored consumer ``(kind, ident)`` may no longer be used at ``at``: ``[]`` when it still may. The
+        time is always checked: a caller that gives none is answered for this moment, never without the expiry check
+        (G6's own callers all give it; an inventory test holds them to that). A
+        consumer that was never recorded is ``unknown``; one whose registration may not be used at this time
+        (:func:`may_use`: revoked, deleted or expired), or one of whose files was observed changed or removed since
+        it was recorded, is denied: a refresh publishes new passages and does not revive a consumer of the old ones."""
         with self._reading() as conn:
             rows = conn.execute("SELECT * FROM dependents WHERE kind = ? AND ident = ?", (kind, ident)).fetchall() \
                 if self._has(conn, "dependents") else []
             if not rows:
                 return [Denied(passage_id="", registration_id="", why="unknown")]
             found: dict[str, Denied] = {}
+            at = at if at is not None else datetime.now(UTC)
             for row in rows:
                 registration = conn.execute("SELECT * FROM registrations WHERE id = ?", (row["registration_id"],)).fetchone()
                 passages = json.loads(row["passage_ids"])
-                first = passages[0] if passages else ""
-                why = ""
-                if registration is None or registration["state"] != "active":
-                    why = "revoked"
-                elif registration["expires_at"] and at is not None and (
-                        instant(registration["expires_at"]) is None or instant(registration["expires_at"]) <= at):
-                    why = "expired"
-                else:
+                why = may_use(registration, at)
+                why = "revoked" if why == "unknown" else why
+                if not why:
                     uris = set(json.loads(row["uris"]))
                     later = conn.execute("SELECT uri FROM tombstones WHERE registration_id = ? AND n > ?",
                                          (row["registration_id"], row["watermark"])).fetchall()
                     if any(t["uri"] == "" or t["uri"] in uris for t in later):
                         why = "changed"
                 if why:
-                    found.setdefault(why, Denied(passage_id=first, registration_id=row["registration_id"], why=why))
+                    found.setdefault(why, Denied(passage_id=passages[0] if passages else "",
+                                                 registration_id=row["registration_id"], why=why))
             return list(found.values())
+
+    def usable(self, at: datetime, *, sources: Any = None) -> list[Registration]:
+        """The registrations that may be used at ``at`` (:func:`may_use`), inside the caller's narrowing."""
+        return [r for r in self.registrations() if may_use(r, at) == "" and (sources is None or r.id in sources)]
 
     # -- deletion -----------------------------------------------------------------------------------------------------
 
     def delete(self, registration_id: str, *, complete: bool) -> dict[str, Any]:
-        """Mark a registration deleted (a tombstone first, as for a revoke). With ``complete``, every record that
-        holds its content goes too: membership in every generation, receipts, snapshots, audit copies, its changed-file
-        tombstones, its root and its label. Only the registration's id, its state and its deletion tombstones stay,
-        so that it cannot return. The caller rebuilds the index without it."""
-        removed_files: list[Path] = []
+        """Mark a registration deleted: a tombstone first, as for a revoke, so it is denied from this moment. Nothing
+        that lists its passages is erased here: the index is rebuilt without it first, and :meth:`erase` runs after
+        that publication, so a deletion interrupted at any point can be run again and completes."""
         with self._writing() as conn:
             row = conn.execute("SELECT * FROM registrations WHERE id = ?", (registration_id,)).fetchone()
             if row is None:
                 raise Refused(SOURCE_UNKNOWN, "no such source registration in this project")
             tombstone = self._tombstone(conn, registration_id, "deleted", "", "deleted")
-            if complete:
-                ids = [r["passage_id"] for r in conn.execute(
-                    "SELECT DISTINCT passage_id FROM member_passages WHERE registration_id = ?", (registration_id,))]
-                for start in range(0, len(ids), 500):
-                    marks = ",".join("?" * len(ids[start:start + 500]))
-                    conn.execute(f"DELETE FROM receipts WHERE item IN ({marks})", ids[start:start + 500])
-                conn.execute("DELETE FROM members WHERE registration_id = ?", (registration_id,))
-                conn.execute("DELETE FROM member_passages WHERE registration_id = ?", (registration_id,))
-                conn.execute("DELETE FROM rereads WHERE registration_id = ?", (registration_id,))
-                conn.execute("DELETE FROM normative_grants WHERE registration_id = ?", (registration_id,))
-                conn.execute("DELETE FROM nodes")   # the graph is derived: it is rebuilt without the source
-                conn.execute("DELETE FROM edges")
-                conn.execute("DELETE FROM tombstones WHERE registration_id = ? AND uri != ''", (registration_id,))
-                conn.execute("UPDATE dependents SET passage_ids = '[]', uris = '[]' WHERE registration_id = ?",
-                             (registration_id,))
-                gone = [r["id"] for r in conn.execute("SELECT id FROM snapshot_sources WHERE registration_id = ?",
-                                                      (registration_id,))]
-                for ident in gone:
-                    conn.execute("DELETE FROM snapshots WHERE id = ?", (ident,))
-                    conn.execute("DELETE FROM snapshot_sources WHERE id = ?", (ident,))
-                for kept in conn.execute("SELECT sha256 FROM retained WHERE registration_id = ?", (registration_id,)).fetchall():
-                    conn.execute("DELETE FROM retained WHERE sha256 = ? AND registration_id = ?",
-                                 (kept["sha256"], registration_id))
-                    if conn.execute("SELECT 1 FROM retained WHERE sha256 = ?", (kept["sha256"],)).fetchone() is None:
-                        removed_files.append(self.folder / "retained" / kept["sha256"])
-                conn.execute("UPDATE registrations SET root = '', label = '' WHERE id = ?", (registration_id,))
-        for path in removed_files:
-            try:
-                path.unlink()
-            except OSError:
-                pass
-        if complete:
-            conn = self._connect()
-            try:
-                conn.execute("VACUUM")   # freed pages still hold the deleted rows' bytes until the file is rewritten
-            except sqlite3.Error:
-                pass
-            finally:
-                conn.close()
         return {"source": registration_id, "state": "deleted", "deny_epoch": tombstone.epoch,
-                "audit_copies": "removed" if complete else "kept", "preview_sha256": row["preview_sha256"]}
+                "audit_copies": "kept" if not complete else "pending", "preview_sha256": row["preview_sha256"],
+                "root": row["root"]}
 
+    def forget_retained(self, registration_id: str) -> bool:
+        """Drop a registration's audit copies: the rows that name them and, through the checked removal, each file no
+        other registration retains. The files are listed as pending in the transaction that drops the rows."""
+        with self._writing() as conn:
+            files = []
+            for kept in conn.execute("SELECT sha256 FROM retained WHERE registration_id = ?", (registration_id,)).fetchall():
+                conn.execute("DELETE FROM retained WHERE sha256 = ? AND registration_id = ?", (kept["sha256"], registration_id))
+                if conn.execute("SELECT 1 FROM retained WHERE sha256 = ?", (kept["sha256"],)).fetchone() is None:
+                    files.append(self.folder / "retained" / kept["sha256"])
+            conn.executemany("INSERT OR IGNORE INTO pending_removals VALUES (?)", [(self._pending_key(p),) for p in files])
+        return all([self.remove_file(path) for path in files])
+
+    def erase(self, registration_id: str) -> None:
+        """After the index was published without a deleted registration: erase every record that holds its content
+        (membership in every generation, receipts, snapshots, audit copies, grants, its changed-file tombstones, its
+        root and its label) and rewrite the registry file. Only its id, its state and its deletion tombstones stay."""
+        with self._writing() as conn:
+            row = conn.execute("SELECT state FROM registrations WHERE id = ?", (registration_id,)).fetchone()
+            if row is None or row["state"] != "deleted":
+                raise Refused(STATE, "only a deleted registration is erased")
+            ids = [r["passage_id"] for r in conn.execute(
+                "SELECT DISTINCT passage_id FROM member_passages WHERE registration_id = ?", (registration_id,))]
+            for start in range(0, len(ids), 500):
+                marks = ",".join("?" * len(ids[start:start + 500]))
+                conn.execute(f"DELETE FROM receipts WHERE item IN ({marks})", ids[start:start + 500])
+            for table in ("members", "member_passages", "rereads", "normative_grants"):
+                conn.execute(f"DELETE FROM {table} WHERE registration_id = ?", (registration_id,))
+            conn.execute("DELETE FROM nodes")   # the graph is derived: it is rebuilt without the source
+            conn.execute("DELETE FROM edges")
+            conn.execute("DELETE FROM tombstones WHERE registration_id = ? AND uri != ''", (registration_id,))
+            # a saved context holds view text of every source in it: each pack that holds this source goes whole
+            packs = [self.folder / "packs" / f"{r['ident']}.json" for r in conn.execute(
+                "SELECT DISTINCT ident FROM dependents WHERE kind = 'pack' AND registration_id = ?", (registration_id,))]
+            conn.executemany("INSERT OR IGNORE INTO pending_removals VALUES (?)", [(self._pending_key(p),) for p in packs])
+            conn.execute("UPDATE dependents SET passage_ids = '[]', uris = '[]' WHERE registration_id = ?",
+                         (registration_id,))
+            for found in conn.execute("SELECT id FROM snapshot_sources WHERE registration_id = ?",
+                                      (registration_id,)).fetchall():
+                conn.execute("DELETE FROM snapshots WHERE id = ?", (found["id"],))
+                conn.execute("DELETE FROM snapshot_sources WHERE id = ?", (found["id"],))
+            conn.execute("UPDATE registrations SET root = '', label = '' WHERE id = ?", (registration_id,))
+            conn.execute("INSERT OR IGNORE INTO pending_removals VALUES ('vacuum:registry')")
+        for path in packs:
+            self.remove_file(path)
+        self.forget_retained(registration_id)
+        self._vacuum()
     # -- the check at every use ---------------------------------------------------------------------------------------
 
     def use(self, access: Access, passage_ids: Sequence[str], *, at: datetime,
@@ -690,13 +803,8 @@ class ProjectStore:
                 if registration is None or (access.sources is not None and registration["id"] not in access.sources):
                     denied.append(Denied(passage_id=pid, registration_id="", why="unknown"))
                     continue
-                expires = instant(registration["expires_at"]) if registration["expires_at"] else None
-                why = ""
-                if registration["state"] != "active":
-                    why = "revoked"
-                elif registration["expires_at"] and (expires is None or expires <= at):
-                    why = "expired"
-                elif changed.get((registration["id"], row["uri"]), -1) >= current:
+                why = may_use(registration, at)
+                if not why and changed.get((registration["id"], row["uri"]), -1) >= current:
                     why = "changed"
                 if why:
                     denied.append(Denied(passage_id=pid, registration_id=registration["id"], why=why))
@@ -707,5 +815,5 @@ class ProjectStore:
 
 
 __all__ = ["KEPT_GENERATIONS", "NOT_PUBLISHED", "PREVIEW_USED", "SOURCE_UNKNOWN", "STATE", "Denied", "Dependent", "Generation",
-           "Member", "ProjectStore", "Receipt", "Refused", "Registration", "Tombstone", "new_registration_id",
-           "source_uri"]
+           "Member", "ProjectStore", "Receipt", "Refused", "Registration", "Tombstone", "is_kept", "may_use",
+           "new_registration_id", "source_uri"]

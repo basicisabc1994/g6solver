@@ -299,7 +299,10 @@ def test_reply_has_envelope_fields_and_stable_codes(rig, tmp_path):
     assert "[G6_E_KNOWLEDGE_INPUT]" in replies[1]["error"]
     assert len(dialog.questions) == 1, "a refused path or setting opens no dialog"
     assert replies[2]["ok"] and replies[3]["ok"] and replies[4]["ok"]
-    assert replies[5]["result"]["backends"][0]["state"] == "failed"
+    # no source of the project is shared with this client, so nothing is searched and the reply is the same for
+    # every query, a malformed one included
+    assert replies[5]["result"]["backends"] == replies[4]["result"]["backends"]
+    assert replies[5]["result"]["backends"][0]["state"] == "empty" and replies[5]["result"]["backends"][0]["searched"] == 0
     assert replies[6]["result"]["denied"][0]["why"] == "unknown"
     assert "[G6_E_KNOWLEDGE_S" in replies[7]["error"]
 

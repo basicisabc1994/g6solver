@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import secrets
 import threading
+from datetime import UTC, datetime
 from collections.abc import Sequence
 from typing import Any, Literal
 
@@ -21,7 +22,7 @@ from pydantic import BaseModel, ConfigDict
 
 from g6.knowledge import _engine as engine
 from g6.knowledge._index import IndexRefused
-from g6.knowledge._registry import ProjectStore, Refused
+from g6.knowledge._registry import ProjectStore, Refused, may_use
 from g6.knowledge._scope import Binding
 from g6.knowledge._types import now
 from g6.knowledge._walk import Excluded
@@ -103,7 +104,7 @@ def run(binding: Binding, job_id: str, *, gate: Any = None, caller: Any = None) 
     job = status(binding, job_id)
     registration = store.registration(job.registration_id)
     current = store.published()
-    if registration is None or registration.state != "active" or current is None or current.number != job.generation:
+    if may_use(registration, datetime.now(UTC)) or current is None or current.number != job.generation:
         return _save(store, job.model_copy(update={"state": "failed", "finished_at": now(), "backends": {
             name: {"state": "refused", "reason": "the source or the generation is no longer the one the job was for"}
             for name in job.backends}}))
@@ -154,7 +155,7 @@ def start(binding: Binding, registration_id: str, backends: Sequence[str], *, wa
     store = ProjectStore(binding)
     registration = store.registration(registration_id)
     generation = store.published()
-    if registration is None or registration.state != "active" or generation is None:
+    if may_use(registration, datetime.now(UTC)) or generation is None:
         raise Refused(JOB_UNKNOWN, "a job needs an active source in a published generation")
     wanted = list(dict.fromkeys(backends))
     if not wanted or any(name not in BACKENDS for name in wanted):

@@ -15,6 +15,8 @@ consumer: it registers a dependent and honours invalidation before use).
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -47,17 +49,22 @@ def versions(store: ProjectStore, generation: int) -> dict[str, str]:
             "index_schema": INDEX_SCHEMA, "g6": getattr(g6, "__version__", "")}
 
 
-def write(store: ProjectStore, response: SearchResponse) -> str:
-    """Keep a snapshot of ``response``'s items whose registration retains audit copies; ``""`` when none does."""
+def write(store: ProjectStore, response: SearchResponse, members: Mapping[str, Any] | None = None) -> str:
+    """Keep a snapshot of ``response``'s items whose registration retains audit copies; ``""`` when none does. The
+    items are ones the search just returned, so each passed the use check of that call. A snapshot records what its
+    rendering needs (the file's address, its media type and its converter), so that a later reconstruction does not
+    depend on a membership record that publication may have pruned since."""
     if response.generation is None:
         return ""
-    audited = {r.id: r for r in store.registrations() if r.retention == "audit" and r.state == "active"}
+    audited = {r.id: r for r in store.registrations() if r.retention == "audit"}
     kept = []
     for item in response.payload.get("items", []):
         registration = audited.get(item["source"])
-        if registration is None:
+        member = (members or {}).get(item["passage_id"])
+        if registration is None or member is None:
             continue
         kept.append({"passage_id": item["passage_id"], "registration_id": item["source"], "path": item["path"],
+                     "uri": member.uri, "media_type": member.media_type, "converter": member.converter,
                      "start": item["start"], "end": item["end"], "file_sha256": item["checked"]["reread_sha256"],
                      "view_text": item["view"]["text"], "view_sha256": sha256_hex(item["view"]["text"]),
                      "authorisation_revision": registration.authorisation_revision})
@@ -77,9 +84,10 @@ def write(store: ProjectStore, response: SearchResponse) -> str:
     return ident
 
 
-def reconstruct(acc: Access, snapshot_id: str) -> dict[str, Any]:
+def reconstruct(acc: Access, snapshot_id: str, *, clock: Callable[[], datetime] | None = None) -> dict[str, Any]:
     """The snapshot's excerpts rebuilt from the retained bytes and compared with what was recorded, or
-    ``unavailable`` with the reason."""
+    ``unavailable`` with the reason. A snapshot is a use of its source: its registration must be usable at this
+    time (not revoked, deleted or past its expiry)."""
     store = ProjectStore(acc.binding)
 
     def unavailable(reason: str) -> dict[str, Any]:
@@ -90,7 +98,7 @@ def reconstruct(acc: Access, snapshot_id: str) -> dict[str, Any]:
         return unavailable("no snapshot is kept under this id: none was written (retention was 'none'), or it was "
                            "deleted with its source")
     made = Snapshot.model_validate_json(raw)
-    denied = store.invalidated("snapshot", made.id)
+    denied = store.invalidated("snapshot", made.id, at=(clock or (lambda: datetime.now(UTC)))())
     if denied:
         return unavailable("the snapshot's source was revoked, changed or deleted since: "
                            + ", ".join(sorted({d.why for d in denied})))
@@ -104,10 +112,7 @@ def reconstruct(acc: Access, snapshot_id: str) -> dict[str, Any]:
         if data is None:
             return unavailable("the bytes this snapshot was rendered from are not retained (they were never kept, or "
                                "were removed by a complete deletion)")
-        member = next((m for m in store.members(made.generation) if item["passage_id"] in m.passage_ids), None)
-        media = member.media_type if member is not None else "text/plain"
-        uri = member.uri if member is not None else "g6-knowledge://retained/" + item["file_sha256"]
-        document, _, _ = engine._document(data, uri, media)
+        document, _, _ = engine._document(data, item["uri"], item["media_type"])
         text = document.text[item["start"]:item["end"]] if document is not None else ""
         rendered = view_of(text, canonical_start=item["start"]).text
         items.append({"passage_id": item["passage_id"], "path": item["path"], "start": item["start"],

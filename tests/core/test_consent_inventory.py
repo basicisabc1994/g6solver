@@ -354,3 +354,22 @@ def test_new_sdk_resource_fails_inventory(tmp_path):
     path = tmp_path / 'new_sdk.py'
     path.write_text('class NewSDK:\n    def send(self):\n        return self.messages.create()\n', encoding='utf-8')
     assert ('new.NewSDK.send', False, False) in sdk_resources(extra=(path,))
+
+
+def test_every_context_engine_tool_has_its_source_contract_and_argument_kinds():
+    """The Context Engine's tools live in g6.mcp.knowledge: each one the server registers is in the closed tables,
+    with exactly the arguments its schema has, and declares the client's request as a source."""
+    import asyncio
+
+    from g6.core.consent_declarations import TOOL_ARGUMENTS, TOOLS
+    from g6.mcp import build_server
+
+    tools = {name: tool for name, tool in asyncio.run(build_server().get_tools()).items()
+             if name.startswith("g6_knowledge_")}
+    assert len(tools) >= 5
+    for name, tool in tools.items():
+        assert name in TOOLS and TOOLS[name].classes == ('client_request',), name
+        assert set(tool.parameters.get('properties', {})) == set(TOOL_ARGUMENTS[name]), name
+        assert set(TOOL_ARGUMENTS[name].values()) <= {'content', 'pointer'}, name
+    declared = {name for name in TOOLS if name.startswith("g6_knowledge_")}
+    assert declared == set(tools), "a declared Context Engine tool is not registered, or the reverse"

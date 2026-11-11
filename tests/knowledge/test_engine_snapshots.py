@@ -111,23 +111,23 @@ def test_dependents_are_invalidated_by_revoke_change_and_delete(tmp_path, monkey
         store.depend(Dependent(kind="pack", ident=ident, registration_id=source,
                                passage_ids=(passage["passage_id"],), generation=generation))
     snapshot = rig.search(DOCS).snapshot
-    assert snapshot and all(store.invalidated("pack", i) == [] for i in ("pack-a", "pack-b", "pack-c"))
-    assert store.invalidated("snapshot", snapshot) == []
-    assert [d.why for d in store.invalidated("pack", "never-registered")] == ["unknown"]
+    assert snapshot and all(store.invalidated("pack", i, at=NOW) == [] for i in ("pack-a", "pack-b", "pack-c"))
+    assert store.invalidated("snapshot", snapshot, at=NOW) == []
+    assert [d.why for d in store.invalidated("pack", "never-registered", at=NOW)] == ["unknown"]
     # change: only the consumers of the changed file
     path = rig.folder / "docs" / f"{DOCS}.md"
     path.write_text(path.read_text(encoding="utf-8") + "\nedited\n", encoding="utf-8")
     assert rig.items(DOCS) == []
-    assert [d.why for d in store.invalidated("pack", "pack-a")] == ["changed"]
-    assert [d.why for d in store.invalidated("snapshot", snapshot)] == ["changed"]
-    assert store.invalidated("pack", "pack-b") == [] and store.invalidated("pack", "pack-c") == []
+    assert [d.why for d in store.invalidated("pack", "pack-a", at=NOW)] == ["changed"]
+    assert [d.why for d in store.invalidated("snapshot", snapshot, at=NOW)] == ["changed"]
+    assert store.invalidated("pack", "pack-b", at=NOW) == [] and store.invalidated("pack", "pack-c", at=NOW) == []
     assert _snapshots.reconstruct(rig.local("fetch"), snapshot)["state"] == "unavailable"
     engine.refresh(rig.local("refresh"), clock=lambda: NOW)
-    assert [d.why for d in store.invalidated("pack", "pack-a")] == ["changed"], "a refresh publishes new ids; it does not revive a consumer of the old ones"
+    assert [d.why for d in store.invalidated("pack", "pack-a", at=NOW)] == ["changed"], "a refresh publishes new ids; it does not revive a consumer of the old ones"
     # revoke: every consumer of that registration
     engine.revoke(rig.local("revoke"), first)
-    assert [d.why for d in store.invalidated("pack", "pack-b")] == ["revoked"]
-    assert store.invalidated("pack", "pack-c") == []
+    assert [d.why for d in store.invalidated("pack", "pack-b", at=NOW)] == ["revoked"]
+    assert store.invalidated("pack", "pack-c", at=NOW) == []
     # delete
     engine.delete(rig.local("delete"), second, complete=True, attribution="Person")
-    assert [d.why for d in store.invalidated("pack", "pack-c")] == ["revoked"]
+    assert [d.why for d in store.invalidated("pack", "pack-c", at=NOW)] == ["revoked"]

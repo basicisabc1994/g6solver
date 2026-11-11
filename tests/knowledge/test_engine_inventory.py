@@ -15,6 +15,8 @@ KNOWLEDGE = Path(g6.knowledge.__file__).parent
 BUILDERS = frozenset({"PassageItem", "View", "view_of"})
 #: Modules of the engine whose public functions are inventoried.
 ENGINE_MODULES = ("_engine.py",)
+#: Every shared module of the family, read from the folder: the inventories below walk all of them.
+SHARED_MODULES = tuple(sorted(p.name for p in KNOWLEDGE.glob("_*.py") if p.name != "__init__.py"))
 
 
 def _functions(tree: ast.Module) -> dict[str, ast.FunctionDef]:
@@ -102,14 +104,15 @@ def test_every_mcp_tool_that_reaches_the_engine_builds_its_access_from_the_host_
         called |= other & {"_dispatch"}
         source = ast.unparse(tool)
         assert "host_binding()" in source, tool.name
-        if called - {"preview", "commit", "excluded_counts", "shared_with"}:   # everything that reads or changes a store
+        if called - {"preview", "commit", "discard_preview", "excluded_counts", "shared_with"}:   # everything that reads or changes a store
             assert "access(" in source and "_destination()" in source, tool.name
         assert "bind_output" in source or "_ok(" in source, tool.name
 
 
 #: Tables of the registry that are the index's own membership and bookkeeping, not a stored consumer of passages.
 MEMBERSHIP_TABLES = frozenset({"registrations", "generations", "members", "member_passages", "tombstones", "receipts",
-                               "dependents", "rereads", "retained", "snapshot_sources", "jobs", "nodes", "edges"})
+                               "dependents", "rereads", "retained", "snapshot_sources", "jobs", "nodes", "edges",
+                               "pending_removals"})
 
 
 def stored_consumers() -> dict[str, str]:
@@ -181,3 +184,66 @@ def test_a_saved_pack_is_checked_again_at_every_use():
     assert source.index(".invalidated(") < source.index("saved['items']") or source.index(".use(") < source.rindex("saved['items']")
     readers = [name for name, node in functions.items() if "packs" in ast.unparse(node) and ".read_text(" in ast.unparse(node)]
     assert readers == ["pack"], "one function reads a saved pack, and it is the one that checks"
+
+def test_every_function_that_reads_a_store_and_builds_a_view_asks_with_the_time():
+    """Every shared module, derived from the folder: a public function that opens a project store and builds a
+    model-bound view of passage text asks ``use`` or ``invalidated`` itself, and every such call gives the time
+    (``at=``): expiry is checked against a clock at every use, not in one function."""
+    missing, seen = [], []
+    for module in SHARED_MODULES:
+        functions = _functions(ast.parse((KNOWLEDGE / module).read_text(encoding="utf-8")))
+        for name, node in functions.items():
+            reached = _reach(functions, name)
+            if name.startswith("_") or not reached & BUILDERS or "ProjectStore" not in reached:
+                continue
+            seen.append(f"{module}:{name}")
+            checks = [c for c in ast.walk(node) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                      and c.func.attr in ("use", "invalidated")]
+            if not checks or not all(any(k.arg == "at" for k in c.keywords) for c in checks):
+                missing.append(f"{module}:{name}")
+    assert {"_engine.py:search", "_engine.py:fetch", "_engine.py:context", "_snapshots.py:reconstruct",
+            "_support.py:support_for"} <= set(seen), seen
+    assert missing == []
+
+
+def test_no_module_reads_a_registrations_state_alone_or_checks_use_without_the_time():
+    """The one predicate: outside the registry, nothing compares a registration's state itself (``may_use`` and
+    ``is_kept`` do), and every ``use``, ``invalidated`` and ``usable`` call anywhere gives the time."""
+    import re
+
+    modules = [KNOWLEDGE / m for m in SHARED_MODULES if m != "_registry.py"] + [Path(g6.mcp.__file__).parent / "knowledge.py"]
+    for path in modules:
+        text = path.read_text(encoding="utf-8")
+        assert not re.search(r"""\.state\s*[!=]=\s*["'](?:active|revoked|deleted)["']""", text), path.name
+        for call in ast.walk(ast.parse(text)):
+            if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr in (
+                    "invalidated", "usable_registrations") or (
+                    isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "use"
+                    and isinstance(call.func.value, ast.Name) and call.func.value.id == "store"):
+                assert any(k.arg == "at" for k in call.keywords), f"{path.name}:{call.lineno}"
+    registry = _functions_of_class((KNOWLEDGE / "_registry.py").read_text(encoding="utf-8"))
+    body = ast.unparse(registry["invalidated"])
+    assert "datetime.now(UTC)" in body and "may_use(registration, at)" in body, (
+        "a call that gives no time is answered for this moment: the expiry check is never skipped")
+    assert "at: datetime" in ast.unparse(registry["use"].args) and "None" not in ast.unparse(registry["use"].args).split("at:")[1].split(",")[0]
+
+
+def test_every_file_removal_goes_through_the_checked_removal():
+    """Every ``unlink`` in the family's shared modules and the MCP module is the checked removal itself
+    (``ProjectStore.remove_file``, which keeps a durable list of what it could not remove) or the removal of a
+    preview listing before any registry exists (``discard_preview``, which says whether the file is gone)."""
+    found = {}
+    for path in [*(KNOWLEDGE / m for m in SHARED_MODULES), Path(g6.mcp.__file__).parent / "knowledge.py"]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+        for call in ast.walk(tree):
+            if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr in ("unlink", "remove", "rmtree") \
+                    and not (isinstance(call.func.value, ast.Name) and call.func.value.id in ("index", "writer", "wanted")):
+                owner = call
+                while owner in parents and not isinstance(owner, ast.FunctionDef | ast.AsyncFunctionDef):
+                    owner = parents[owner]
+                if call.func.attr != "unlink" and not isinstance(call.func.value, ast.Name):
+                    continue
+                if call.func.attr in ("unlink", "rmtree") or (isinstance(call.func.value, ast.Name) and call.func.value.id in ("os", "shutil")):
+                    found[f"{path.name}:{getattr(owner, 'name', '?')}"] = call.func.attr
+    assert set(found) == {"_registry.py:remove_file", "_engine.py:discard_preview", "_store.py:_write"}, found

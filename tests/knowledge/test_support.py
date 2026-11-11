@@ -209,7 +209,7 @@ def test_support_respects_scope_revocation_and_disclosure(tmp_path, monkeypatch)
     assert _support.may_suppress(support(rig))[0] is True
     engine.revoke(rig.local("revoke"), source)
     assert support(rig) == []
-    assert ProjectStore(rig.binding).invalidated("normative_grant", grant.id)[0].why == "revoked"
+    assert ProjectStore(rig.binding).invalidated("normative_grant", grant.id, at=NOW)[0].why == "revoked"
     again = rig.add()
     fresh = support(rig)
     assert fresh and fresh[0].registration_id == again["source"] and all(s.authority == "none" for s in fresh)

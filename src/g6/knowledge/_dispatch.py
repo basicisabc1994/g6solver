@@ -23,11 +23,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from g6.core import cloud_consent
 from g6.knowledge._index import Index
 from g6.knowledge._registry import ProjectStore, Refused
-from g6.knowledge._scope import Access, Operation, consent_scope
-from g6.knowledge._types import instant
+from g6.knowledge._scope import Access, Operation
 
 UNSUPPORTED = "G6_E_KNOWLEDGE_UNSUPPORTED"
 RouteName = Literal["exact", "structure", "meaning", "relations"]
@@ -82,30 +80,21 @@ def answered(generation: Any, backend: str) -> list[str]:
     return sorted(rid for rid, one in (entry.get("registrations") or {}).items() if one.get("state") == "answered")
 
 
-def usable_registrations(store: ProjectStore, acc: Access, *, at: datetime | None = None) -> list[str]:
-    """The source registrations ``acc`` may read now: active, not expired, inside the caller's narrowing and, for a
-    destination other than local, granted to that provider."""
-    at = at or datetime.now(UTC)
-    out = []
-    for registration in store.registrations():
-        if registration.state != "active" or (acc.sources is not None and registration.id not in acc.sources):
-            continue
-        expires = instant(registration.expires_at) if registration.expires_at else None
-        if registration.expires_at and (expires is None or expires <= at):
-            continue
-        if not acc.local and not cloud_consent.is_granted(consent_scope(registration.id), acc.destination):
-            continue
-        out.append(registration.id)
-    return out
+def usable_registrations(store: ProjectStore, acc: Access, *, at: datetime) -> list[str]:
+    """The source registrations ``acc`` may read at ``at``: the engine's scope (usable by the registry's one
+    predicate, inside the caller's narrowing and, for a destination other than local, granted to that provider)."""
+    from g6.knowledge import _engine as engine
+
+    return engine.scope_of(store, acc, at)[0]
 
 
 def open_route(store: ProjectStore, one: Route, generation: int, *, registrations: list[str] | None = None,
                caller: Any = None) -> Index:
     """The index behind ``one`` for ``generation``. The only place the managed Elasticsearch backend is opened."""
     if one.backend == "sqlite":
-        from g6.knowledge.knowledge_indexer.index import SqliteIndex
+        from g6.knowledge._lexical import ScopedLexical
 
-        return SqliteIndex("lexical", path=store.index_path("sqlite", generation))
+        return ScopedLexical(store.index_path("sqlite", generation), registrations if registrations is not None else [])
     if one.backend == "elastic_managed":
         from g6.knowledge.ctx_elastic.managed import ManagedElasticIndex
 
@@ -145,7 +134,7 @@ def _query(query: str, filters: list[dict]) -> dict[str, Any]:
 
 
 def count(acc: Access, *, query: str = "", filters: Mapping[str, str | int | bool] | None = None,
-          caller: Any = None) -> dict[str, Any]:
+          caller: Any = None, clock: Any = None) -> dict[str, Any]:
     """How many managed passages match, as a structured answer; ``unsupported`` when the project has no managed
     Elasticsearch generation; ``refused`` when some shards did not answer."""
     from g6.knowledge.ctx_elastic import elastic
@@ -158,7 +147,7 @@ def count(acc: Access, *, query: str = "", filters: Mapping[str, str | int | boo
                            note="counts need the managed Elasticsearch backend; the local lexical index answers "
                                 "passage searches only")
     held = answered(generation, "elastic_managed")
-    registrations = [r for r in usable_registrations(store, acc) if r in held]
+    registrations = [r for r in usable_registrations(store, acc, at=(clock or (lambda: datetime.now(UTC)))()) if r in held]
     if not registrations:
         return _structured("answered", answer={"count": 0}, backend="elastic_managed", generation=generation.number,
                            sources_counted=[])
@@ -178,7 +167,7 @@ def count(acc: Access, *, query: str = "", filters: Mapping[str, str | int | boo
 
 def aggregate(acc: Access, field: Literal["registration_id", "document_sha256"],
               kind: Literal["terms", "value_count"], *, query: str = "", size: int = 20,
-              caller: Any = None) -> dict[str, Any]:
+              caller: Any = None, clock: Any = None) -> dict[str, Any]:
     """A typed aggregation over the managed passages, built here from a closed field list: an answer, never
     passages."""
     from g6.knowledge.ctx_elastic import elastic
@@ -191,7 +180,7 @@ def aggregate(acc: Access, field: Literal["registration_id", "document_sha256"],
     if generation is None or why:
         return _structured("unsupported", reason=why or "not_published", backend="elastic_managed")
     held = answered(generation, "elastic_managed")
-    registrations = [r for r in usable_registrations(store, acc) if r in held]
+    registrations = [r for r in usable_registrations(store, acc, at=(clock or (lambda: datetime.now(UTC)))()) if r in held]
     if not registrations:
         return _structured("answered", answer={"buckets": [], "value": 0}, backend="elastic_managed",
                            generation=generation.number, sources_counted=[])

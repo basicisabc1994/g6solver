@@ -25,7 +25,7 @@ from pydantic import BaseModel, ConfigDict
 from g6.core.storage import PathRefused, contained
 from g6.knowledge import _engine as engine
 from g6.knowledge._index import IndexRefused
-from g6.knowledge._registry import Member, ProjectStore, Receipt, Refused, Registration, source_uri
+from g6.knowledge._registry import Member, ProjectStore, Receipt, Refused, Registration, is_kept, source_uri
 from g6.knowledge._scope import Access, ScopeDenied, inside
 from g6.knowledge._types import now, sha256_hex
 from g6.knowledge._view import label_view
@@ -105,12 +105,15 @@ def refresh(acc: Access, registration_id: str | None = None, *, clock: engine.Cl
     store = ProjectStore(acc.binding)
     current = store.published()
     if current is None:
-        return {"state": "not_published", "generation": None, "sources": []}
-    registrations = [r for r in store.registrations() if r.state == "active"
-                     and (registration_id is None or r.id == registration_id)
-                     and (acc.sources is None or r.id in acc.sources)]
+        return {"state": "not_published", "generation": None, "sources": [], "out_of_scope": []}
+    # scope first, from the registry and the grant ledger alone: a source that may not be used at this time (it is
+    # revoked, deleted or past its expiry) or that is not shared with this destination is not opened, and nothing
+    # this reply says is computed from it
+    readable, withheld, _ = engine.scope_of(store, acc, clock())
+    registrations = [r for r in store.registrations() if r.id in readable
+                     and (registration_id is None or r.id == registration_id)]
     if registration_id is not None and not registrations:
-        raise Refused("G6_E_KNOWLEDGE_SOURCE", "no such active source registration in this project")
+        raise Refused("G6_E_KNOWLEDGE_SOURCE", "no such source registration that this client may refresh now")
     members = store.members(current.number)
     found: dict[str, dict[str, Any]] = {}
     receipts: dict[str, Reread] = {}
@@ -132,28 +135,37 @@ def refresh(acc: Access, registration_id: str | None = None, *, clock: engine.Cl
     if not touched and not any((m.registration_id, m.uri) in stale for m in members):
         for receipt in receipts.values():
             store.reread(receipt, current.number)
-        return {"state": "unchanged", "generation": current.number, "sources": summary}
+        return {"state": "unchanged", "generation": current.number, "sources": summary, "out_of_scope": sorted(withheld)}
     try:
         generation = _publish(store, acc, current.number, members, found, registrations)
     except (IndexRefused, Refused, OSError) as exc:
         code = getattr(exc, "code", type(exc).__name__)
-        return {"state": "unavailable", "generation": current.number, "sources": summary,
+        return {"state": "unavailable", "generation": current.number, "sources": summary, "out_of_scope": sorted(withheld),
                 "reason": f"the refresh did not publish ({code}); the changed files' passages stay denied and the "
                           "rest is served from the previous generation. Run the refresh again."}
     for receipt in receipts.values():
         store.reread(receipt, generation)
-    return {"state": "published", "generation": generation, "sources": summary}
+    return {"state": "published", "generation": generation, "sources": summary, "out_of_scope": sorted(withheld)}
 
 
 def _publish(store: ProjectStore, acc: Access, previous: int, members: list[Member],
              found: dict[str, dict[str, Any]], registrations: list[Registration]) -> int:
     staged = store.stage({"sqlite": True})
+    try:
+        return _stage_and_publish(store, staged, previous, members, found, registrations)
+    except Exception:
+        store.abandon(staged.number)   # nothing of a refresh that did not publish stays on disk
+        raise
+
+
+def _stage_and_publish(store: ProjectStore, staged: Any, previous: int, members: list[Member],
+                       found: dict[str, dict[str, Any]], registrations: list[Registration]) -> int:
     path = store.index_path("sqlite", staged.number)
     before = store.index_path("sqlite", previous)
     if before.exists():
         shutil.copyfile(before, path)
     index = engine._lexical(store, staged.number)
-    active = {r.id for r in store.registrations() if r.state == "active"}
+    active = {r.id for r in store.registrations() if is_kept(r)}
     refreshed = {r.id for r in registrations}
     kept: list[Member] = []
     drop: list[str] = []
@@ -210,6 +222,10 @@ def _publish(store: ProjectStore, acc: Access, previous: int, members: list[Memb
     store.receipts_to(staged.number, "acknowledged")
     engine.checkpoint("refresh:acknowledged")
     everything = [*kept, *new_members]
+    listed = {pid for m in everything for pid in m.passage_ids}
+    extra = sorted(index.held_ids() - listed)   # whatever an interrupted earlier step left in the copied index
+    if extra:
+        index.remove(extra)
     store.record(staged.number, everything)
     written = len({pid for m in everything for pid in m.passage_ids})
     held = index.status()["passages"] if path.exists() else 0

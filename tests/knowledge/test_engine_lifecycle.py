@@ -141,7 +141,7 @@ def test_expiry_is_checked_against_the_clock_at_use(tmp_path, monkeypatch):
     assert found["passage"] is None and refs == () and found["denied"][0]["why"] == "expired"
     assert (store.registrations(), store.tombstones(), store.published()) == state
     # an expiry that arrives between the search and the return is honoured by that reply
-    ticks = iter([before, after])
+    ticks = iter([before, after, after])
     crossing = rig.search(DOCS, clock=lambda: next(ticks))
     assert crossing.payload["items"] == [] and {d.why for d in crossing.denied} == {"expired"}
 
@@ -187,12 +187,15 @@ def test_crash_between_stage_and_publish_leaves_previous_generation(tmp_path, mo
     rig = make(tmp_path, monkeypatch)
     rig.add(str(rig.folder / "docs"))
 
+    class Died(BaseException):
+        """The process dying: nothing after this point runs, no clean-up included."""
+
     def crash(name):
         if name == "commit:recorded":
-            raise RuntimeError("the process died here")
+            raise Died()
 
     monkeypatch.setattr(engine, "checkpoint", crash)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(Died):
         rig.add(str(rig.folder / "notes"))
     monkeypatch.setattr(engine, "checkpoint", lambda name: None)
     store = ProjectStore(rig.binding)   # what a new process sees

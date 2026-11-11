@@ -98,14 +98,14 @@ def _query(candidate_record: Mapping[str, Any]) -> str:
     return f"{candidate_record.get('cited', '')} {function}".strip()[:1000]
 
 
-def _live_grants(store: ProjectStore, repository: str) -> list[NormativeGrant]:
+def _live_grants(store: ProjectStore, repository: str, at: Any) -> list[NormativeGrant]:
     superseded = set()
     grants = [NormativeGrant.model_validate_json(body) for body in store.normative_grants()]
     for grant in grants:
         if grant.supersedes:
             superseded.add(grant.supersedes)
     return [g for g in grants if g.repository == repository and g.id not in superseded
-            and store.invalidated("normative_grant", g.id) == []]
+            and store.invalidated("normative_grant", g.id, at=at) == []]
 
 
 def support_for(acc: Access, candidate_record: Mapping[str, Any], *, top_k: int = 3,
@@ -122,8 +122,12 @@ def support_for(acc: Access, candidate_record: Mapping[str, Any], *, top_k: int 
     if not items:
         return []
     store = ProjectStore(acc.binding)
+    at = clock()
+    _, late = store.use(acc, [i["passage_id"] for i in items], at=at)   # a passage beside a candidate is a use of it
+    gone = {d.passage_id for d in late}
+    items = [i for i in items if i["passage_id"] not in gone]
     scenario = scenario_sha256(candidate_record)
-    grants = _live_grants(store, acc.binding.project)
+    grants = _live_grants(store, acc.binding.project, at)
     found = []
     for item in items:
         version = item["checked"]["reread_sha256"]
