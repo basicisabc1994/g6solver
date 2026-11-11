@@ -12,7 +12,7 @@ from typing import Any
 from g6.core import adaptation_gate as _gate
 from g6.core.adaptation_gate import PROTECTED_FRAGMENTS, VERDICTS, LocalValidation, PromotionDecision
 from g6.research.ahi.contracts import AdaptationProposal, Control
-from g6.research.echa.flag import require_research
+from g6.research.ahi.flag import require_research
 
 __all__ = ["PROTECTED_FRAGMENTS", "VERDICTS", "LocalValidation", "PromotionDecision", "decide_promotion",
            "validate_locally"]

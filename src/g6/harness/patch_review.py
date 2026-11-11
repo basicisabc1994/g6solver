@@ -105,6 +105,23 @@ is a ``check_error`` (a mutant: not run), never ``not_refuted`` or a counterexam
 Every reply carries ``assessment.completion``, built from what ran; with no proposed checks, no template instance and
 no search setting, every decided field is as before.
 
+Last, each stated check of a requirement for new behaviour that passed on the patch and failed at the base commit runs
+once more on the patch (``_run_again``), so the evidence issuer has a pass that its control, the run at the base commit,
+came before (``assessment.requirement_evidence``). That run decides no field; it and its test receipt are recorded
+there, never in ``scope.checks_run`` or ``scope.receipts``. Each stated check's identity (its node id and its file's
+bytes) is read before any run, and the final integrity snapshot after the last read the issuer's inputs need, so a
+change between is the review's integrity problem; and a review with an integrity problem gives the issuer nothing to
+count, as the runs it does not believe are no evidence. The run again lets an operator stop and unconfirmed cleanup
+through, as every handler of the review does (``LETS_THROUGH``). Every other run of a stated check on the patch, the
+tests that touch the changed modules and their replays in a copy, adds what it saw of that check, in the order it ran
+(``_observed``), so a failure seen between two passes reaches the issuer too; none of it decides a field. Every run is
+read by phase, from the runner's own report, in one place (``phases_of``, ``body_of``; review 4's finding 1): only a call
+phase that ran and failed is a failure of a test's body. A set-up or teardown error is an error (``ERROR``): the review's
+own verdict counts it as ``failed``, as it always has, and the issuer is told it is unknown, never a control killed and
+never a pass (``observation``, ``at_base_observations``). The reading is total over what the runner reports (review 1 of
+slice 2's follow-up): every test any listing of its report names is read (``LISTINGS``), and a report, or a test's
+phases, that is partial, unrecognised, contradictory or unreadable is unknown, never a pass and never a killed control.
+
 Every in-place run asks for a test receipt (``repo_tests.run(..., receipt=True)``): the scope lists each id, and the
 coding gate, which this review builds bound to its own snapshot digest (never a digest from the request), counts a
 run as G6-observed only when its store holds that receipt for that digest (status ``matched``).
@@ -118,11 +135,12 @@ caller assertions; their lexical support is reported and decides nothing.
 from __future__ import annotations
 
 import configparser
+import hashlib
 import platform
 import re
 import time
 import uuid
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from typing import Literal
@@ -139,6 +157,7 @@ from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
 from g6.core.reliability_envelope import envelope_fields, warning_card
 from g6.core.result import Result
+from g6.evidence.mapping import id_of
 from g6.safety_engine.weakening import _kind as _weakening_kind
 from g6.safety_engine.weakening import _pytest_settings, detect_test_weakening
 from g6.workforce import repo_tests
@@ -147,6 +166,18 @@ SUPPORTED, DEFECT = "supported_within_scope", "defect_detected"
 INTEGRITY, INSUFFICIENT = "test_integrity_compromised", "insufficient_evidence"
 PASSED_ON_CHECKS, FAILED, NOT_ESTABLISHED = "passed_on_stated_checks", "failed", "not_established"
 CODE = "G6_E_PATCH_REVIEW"
+#: A stated check's verdict in a replay of its test file on the patch, in a copy, whose per-test results the replay did
+#: not keep (its tests did not match the base commit's): it ran, and nothing says how; the issuer reads it as unknown.
+NOT_READ = "not_read"
+#: What the issuer is told of a check whose run failed outside every test's body (G6 0.3, review 4's finding 1): a
+#: set-up or teardown error, a failure the runner named in no phase, or a file that failed to collect. The review's own
+#: verdict there is ``failed``, as it always has been (its status and outcome keep their meaning); for the issuer it is
+#: unknown: never a failure of the check's body, a control killed or a pass (``observation``).
+ERROR = "error"
+#: The execution-control signals the review lets through to its door, never caught as an ordinary error: an operator
+#: stop or a spent allowance, and process cleanup that could not be confirmed. Both are ``OSError``s, so every handler
+#: in the review that catches ``OSError`` or ``Exception`` lets this list through first (an inventory test lists them).
+LETS_THROUGH = (component_process.ExecutionInterrupted, component_process.ContainmentFailure)
 #: Files that configure, or could stand in for, the runner: ``repo_tests``'s list, every configuration file pytest
 #: looks for by name among them (``pytest.toml``, ``.pytest.toml``, ``pytest.ini``, ``.pytest.ini`` and the project
 #: files below; review C1).
@@ -176,7 +207,6 @@ RUN_CRASHED_DETAIL = ("{run}: {said}. Nothing is counted on it, for or against t
 DEFECTS = frozenset({repo_tests.FAILED})
 ENVIRONMENT = "could not be collected in this environment"
 #: pytest's own lines naming a file it could not collect: "ERROR collecting x.py" and, in its summary, "ERROR x.py".
-_COLLECTING = re.compile(r"ERROR (?:collecting )?([^\s:]+\.py)(?=\s|$)", re.MULTILINE)
 BOUNDARY_HELP = ("Allowing unconfined runs (g6 setup or G6_ALLOW_UNCONFINED) does not change this: a patch review "
                  "uses only confined runs, the only ones that get test receipts. To get a boundary, install bubblewrap "
                  "on Linux, or on Windows make the one-time access grant g6 doctor prints; macOS has none yet.")
@@ -269,7 +299,6 @@ def _ignored_asks(scan: repo_tests.Ignored) -> list[str]:
 
 
 #: The launch review's I6: a module a run could not import, and the import statements of the lines the patch adds.
-_NO_MODULE = re.compile(r"No module named '([\w.]+)'")
 _ADDED_IMPORT = re.compile(r"^\+[ \t]*(?:from[ \t]+([\w.]+)[ \t]+import\b|import[ \t]+([^\n#;]+))", re.MULTILINE)
 # PENDING copy (the launch review's I6): ask, don't accuse; never "make those tests run here" for this case.
 MISSING_IMPORT_REASON = ("the tests could not import {names}, which the patch imports on a line it adds and which is "
@@ -388,6 +417,7 @@ def _import_roots(root: Path, values) -> tuple[str, ...]:
 
 def _confined(ran: dict) -> dict:
     """``ran``, or a refusal when no operating-system boundary confined it: its results are never assessed."""
+    ran = repo_tests.read_report(ran).wire()
     isolation = ran.get("isolation") or {}
     if "isolation" in ran and not isolation.get("backend"):
         raise _Refused(ISOLATION_UNAVAILABLE, "G6 assesses a patch only from test runs inside an operating-system "
@@ -441,11 +471,11 @@ def _test_data(change: repo_tests.Change) -> list[str]:
 
 
 def _patch_imports_missing(change: repo_tests.Change, runs: list[dict]) -> list[str]:
-    """The modules ``runs`` could not import (``No module named ...``, in their output or their recorded messages) that
+    """The modules ``runs`` could not import (names recorded from exception objects) that
     an import statement on a line the patch adds to a Python file names, itself, a package above it or a module below
     it (the launch review's I6)."""
-    missing = {name for ran in runs for text in [ran.get("output") or "", *(ran.get("failure_messages") or {}).values()]
-               for name in _NO_MODULE.findall(str(text))}
+    missing = {name for ran in runs for report in [repo_tests.read_report(ran)] if report.valid
+               for name in report.data.get("missing_modules", ())}
     if not missing:
         return []
     added = set()
@@ -457,11 +487,6 @@ def _patch_imports_missing(change: repo_tests.Change, runs: list[dict]) -> list[
     return sorted(name for name in missing if any(name == mine or mine.startswith(name + ".")
                                                   or name.startswith(mine + ".") for mine in added
                                                   if not mine.startswith(".")))
-
-
-def _collection_errors(output: str) -> set[str]:
-    """The files pytest said it could not collect (it names them relative to its root folder)."""
-    return set(_COLLECTING.findall(output.replace("\\", "/")))
 
 
 def _names(check: str, files: set[str]) -> bool:
@@ -540,47 +565,117 @@ def _inputs(task, claim, tests, sources, timeout_s, requirements, intent=None, p
 
 
 def _covers(check: str, node: str) -> bool:
-    check = check.rstrip("/")
-    return node == check or node.startswith((check + "::", check + "[", check + "/"))
+    return repo_tests.report_covers(check, node)
 
 
-def _node(phases: dict, failed: bool) -> str:
-    states = set(phases.values())
-    if failed or "failed" in states:
-        return "failed"
-    if "skipped" in states:
-        return "skipped"
-    return "passed" if phases.get("call") == "passed" else "not_run"
+#: Producer-owned report vocabulary, retained for callers of the reading helpers.
+LISTINGS = repo_tests.REPORT_LISTINGS
+FAILURE_LISTINGS = ("failed_ids", "setup_errors")
+PHASES, OUTCOMES = repo_tests.REPORT_PHASES, repo_tests.REPORT_OUTCOMES
 
 
-def _not_found(check: str, output: str) -> bool:
-    """Whether pytest said it found no test named ``check`` (it prints the path it was given, or the full path)."""
-    for line in output.replace("\\", "/").splitlines():
-        _, sep, rest = line.partition("not found: ")
-        if sep and (rest.strip() == check or rest.strip().endswith("/" + check)):
-            return True
-    return False
+def _listing(ran: dict, key: str) -> tuple[list[str], bool]:
+    report = repo_tests.read_report(ran)
+    if type(key) is not str or key not in LISTINGS:
+        return [], False
+    value = report.wire().get(key)
+    nodes = value if type(value) in (dict, list) else ()
+    return sorted(report.full(node) for node in nodes), report.valid
+
+
+def _failed_ids(ran: dict) -> set[str]:
+    """Diagnostic failure identities, read through the producer even when unknown."""
+    return set(repo_tests.read_report(ran).failed)
+
+
+def phases_of(ran: dict) -> dict[str, repo_tests.PhaseRecord]:
+    """One immutable reading, including unknowns named only in another listing."""
+    return dict(repo_tests.read_report(ran).phases)
+
+
+def _whole(phases) -> bool:
+    return repo_tests.read_phases(phases).valid
+
+
+def body_of(phases) -> str:
+    """Only a complete, ordered producer phase pattern yields a body result."""
+    return repo_tests.read_phases(phases).body()
+
+
+def observation(found: dict) -> str:
+    """What one check's verdict entry (``_verdicts``) tells the issuer: its verdict, or ``ERROR`` wherever the entry
+    names an observation. Only ``_verdicts`` names one, ``ERROR``, where the review's verdict is ``failed`` and no
+    test's body failed; whatever value one holds, it can only make the result unknown, never a failure or a pass. Every
+    reader of a run of a stated check for the issuer reads it through here."""
+    return ERROR if found.get("observation") is not None else str(found.get("verdict"))
+
+
+def at_base_observations(runs: Sequence[dict]) -> dict[str, str]:
+    """Each stated check's observation in the run at the base commit (``AT_BASE``): its outcome there, or ``ERROR``
+    where the run's record names an observation for it (``observations``), and for every check when that field is
+    there and does not read as a mapping (the record cannot say which failure was a body's). A control is killed only
+    where this is ``failed``: the check's body failed on the base commit's code."""
+    found = next((run for run in runs if run.get("check") == AT_BASE), {})
+    outcomes = dict(found.get("outcomes") or {})
+    named = found.get("observations")
+    if named is not None and not isinstance(named, dict):
+        named = dict.fromkeys(outcomes, ERROR)
+    return {str(check): observation({"verdict": said, "observation": (named or {}).get(check)})
+            for check, said in outcomes.items()}
 
 
 def _in_repository(ran: dict):
-    """A function from a test id or file as pytest named it in ``ran``, relative to its root folder, to the same id
-    relative to the repository's top, as checks name them (review I9: a pytest config below the top moves the root)."""
-    prefix = (ran.get("rootdir") or "").strip("/")
-    return (lambda node: f"{prefix}/{node}") if prefix else (lambda node: node)
+    """Repository identities from the producer's detached report reading."""
+    return repo_tests.read_report(ran).full
+
+
+def _not_found(check: str, ran) -> bool:
+    """A missing selection recorded by the producer; captured text is not a report."""
+    report = repo_tests.read_report(ran)
+    return check in {report.full(node) for node in report.data.get("not_found_ids", ())}
+
+
+def _collection_errors(ran) -> set[str]:
+    """Fully qualified collection identities from the decided report only."""
+    return set(repo_tests.read_report(ran).collection_errors)
+
+
+def _observed(checks: Sequence[str], ran: dict) -> dict[str, str]:
+    """Each of ``checks`` that ``ran`` collected (a test of it is among the run's per-test outcomes, its failures or
+    its set-up errors), with its verdict in that run (``_verdicts``). A check the run did not collect has none: the
+    run did not observe it. G6 0.3: every run of a stated check on the patch reaches the issuer this way."""
+    report = repo_tests.read_report(ran)
+    if not report.valid or (not report.has_phase_data and report.verdict != "not_run"):
+        # No invalid listing can establish that a candidate check was absent.
+        # Keep the whole candidate scope unknown, even if all identities broke.
+        return dict.fromkeys(checks, ERROR)
+    nodes = report.nodes
+    collected = [check for check in dict.fromkeys(checks)
+                 if any(_covers(check, node) for node in nodes) or report.collection_errors_for(check)]
+    return {check: ERROR if report.collection_errors_for(check) else observation(found)
+            for check, found in _verdicts(collected, report).items()}
 
 
 def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
-    """Each check's own verdict in one run, read from pytest's per-test outcomes."""
-    run, said, output = ran["verdict"], ran.get("said") or "", ran.get("output") or ""
-    full = _in_repository(ran)
-    outcomes = {full(node): phases for node, phases in (ran.get("test_outcomes") or {}).items()}
-    failed = {full(node) for node in [*(ran.get("failed_ids") or []), *(ran.get("setup_errors") or {})]}
-    omitted = {full(node) for node in ran.get("omitted_ids") or []}
-    missing = {check for check in ids if _not_found(check, output)}
-    broken = {full(rel) for rel in _collection_errors(output)}
+    """Each check's own verdict in one run, read from pytest's per-test outcomes by phase (``phases_of``, ``body_of``).
+    The review's verdict counts a test that failed outside its body (``ERROR``) as ``failed``, as it always has, so its
+    status and outcome keep their meaning; where that is all a ``failed`` verdict rests on, the entry says so
+    (``observation``: ``ERROR``), and the issuer is told that (``observation``). A test of a check that started which
+    pytest collected and neither ran to a reported phase nor left out never finished (review 1 of slice 2's follow-up,
+    finding 2): the check did not pass."""
+    report = repo_tests.read_report(ran)
+    run, said = report.verdict, report.said
+    tests = report.phases
+    omitted = report.omitted
+    unfinished = [node for node in report.nodes if node not in tests and node not in omitted]
+    missing = {check for check in ids if _not_found(check, report)}
+    broken = _collection_errors(report)
     found: dict[str, dict] = {}
     for check in ids:
-        nodes = {node: _node(phases, node in failed) for node, phases in outcomes.items() if _covers(check, node)}
+        bodies = {node: body_of(phases) for node, phases in tests.items() if _covers(check, node)}
+        if bodies:   # it started: one of its tests that never reported a phase never finished
+            bodies.update({node: "not_run" for node in unfinished if _covers(check, node)})
+        nodes = {node: FAILED if said_of == ERROR else said_of for node, said_of in bodies.items()}
         dropped = [node for node in omitted if _covers(check, node)]
         states = set(nodes.values())
         if run in UNTRUSTED:
@@ -595,15 +690,18 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
             verdict, detail = "skipped", f"{sum(s == 'skipped' for s in nodes.values())} of {len(nodes)} skipped"
         elif dropped:
             verdict, detail = "deselected", f"{len(dropped)} test(s) deselected by the repository's configuration"
-        elif states == {"passed"}:
+        elif report.valid and states == {"passed"}:
             verdict, detail = "passed", f"{len(nodes)} test(s) passed"
         elif nodes:
-            verdict, detail = ("timed_out", said) if run == "timed_out" else ("not_run", "started, never finished")
+            started = any(_covers(check, node) for node in report.started)
+            verdict, detail = (("timed_out", said) if run == "timed_out" and started
+                               else ("not_run", "started, never finished" if started else "never started"))
         elif check in missing:
             verdict, detail = "not_collected", "pytest found no test with this id"
         elif missing:
             verdict, detail = "not_run", "the run stopped first: another stated check names a test pytest cannot find"
-        elif broken and not _names(check, broken) and run in ("collection_error", repo_tests.FAILED):
+        elif (broken and report.data.get("collection_stopped") is True and not _names(check, broken)
+              and run in ("collection_error", repo_tests.FAILED)):
             verdict, detail = "not_run", "the run stopped first: pytest could not collect " + ", ".join(sorted(broken))
         elif run == repo_tests.FAILED:
             verdict, detail = FAILED, "failed to collect, because of an error in the repository's own code"
@@ -617,6 +715,11 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
         else:
             verdict, detail = run, said
         found[check] = {"verdict": verdict, "detail": detail}
+        if (not report.valid or (bodies and not report.loading_known)
+                or (verdict == "passed" and run not in repo_tests.RAN)
+                or report.collection_errors_for(check)
+                or (verdict == FAILED and FAILED not in bodies.values())):
+            found[check]["observation"] = ERROR
     return found
 
 
@@ -831,7 +934,7 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
                        deadline=started + timeout_s, started=started, listed=listed, assumed=assumed,
                        unmapped=unmapped, proposed=proposed, placed=placed, instances=instances, config=config,
                        roots=roots, llm=llm)
-    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+    except LETS_THROUGH:
         raise   # an operator stop, a spent allowance or unconfirmed process cleanup must reach the enclosing door
     except repo_tests.RepoRefused as exc:
         said = str(exc)
@@ -862,7 +965,7 @@ def _stage(stopped: list[dict], what: str, run, *args, **kwargs):
     unconfirmed process cleanup and a refusal still reach the door."""
     try:
         return run(*args, **kwargs)
-    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure, repo_tests.RepoRefused):
+    except (*LETS_THROUGH, repo_tests.RepoRefused):
         raise
     except Exception as exc:
         from g6.harness import verification_search
@@ -948,6 +1051,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     asks = [*_ignored_asks(scan),
             *(TEST_DATA_ASK.format(base=change.base_commit[:12], path=rel) for rel in data[:10])]
 
+    # G6 0.3: each stated check's identity, the bytes its runs will execute, read before any of them; the final integrity
+    # snapshot comes after the last read of the tree, so a change in between is the review's integrity problem
+    check_sha = _check_shas(Path(root), stated_ids)
     # Tier 1: the stated checks and the extra tests, in one confined run.
     present = [i for i in ids if (root / i.partition("::")[0]).exists()]
     verdicts = {i: {"verdict": "missing", "detail": "no such file on the patched tree"} for i in ids
@@ -1024,6 +1130,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
 
     # Tier 2: the tests that touch the changed modules, only when tier 1 found no integrity problem and no defect.
     second: dict = {}
+    # G6 0.3: each run after the first that collects a stated check on the patch, in the order it ran, with each such
+    # check's verdict there; every one reaches the issuer (assessment.requirement_evidence), a failure included
+    observed: list[dict] = []
     if any(r["stage"] in ("integrity", "tier_1") for r in reasons):
         found = "an integrity problem" if any(r["stage"] == "integrity" for r in reasons) else "a defect"
         skipped.append({"tier": 2, "check": "tests that touch the changed modules", "reason": f"tier 1 found {found}"})
@@ -1041,6 +1150,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         else:
             second = _confined(_execute(root, derived, timeout_s=max(1, _left(deadline)), **_rooted(roots)))
             runs.append(_record(2, "tests that touch the changed modules", derived, second, provenance=DERIVED))
+            seen = {"run": ["derived"], "verdicts": _observed(stated_ids, second)}   # a stated check it collected
+            observed.append(seen)
             if second["verdict"] in UNTRUSTED:
                 reason("integrity", "run_not_trusted", _untrusted(2, second))
             elif second["verdict"] == repo_tests.RUN_INCONSISTENT:
@@ -1049,10 +1160,11 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             elif second["verdict"] == repo_tests.CRASHED:
                 reason("evidence", RUN_CRASHED, RUN_CRASHED_DETAIL.format(
                     run="the run of the tests that touch the changed modules", said=second.get("said") or ""))
-            elif unusable(2, second):
-                pass   # its failures, and its passes, are of code the patch did not change
+            elif unusable(2, second):   # its failures, and its passes, are of code the patch did not change
+                seen["verdicts"] = dict.fromkeys(seen["verdicts"], NOT_LOADED)
             elif second["verdict"] in (repo_tests.FAILED, "collection_error"):
-                _on_base(root, change, derived, second, deadline, runs, unknowns, reason, roots)
+                _on_base(root, change, derived, second, deadline, runs, unknowns, reason, roots, stated=stated_ids,
+                         observed=observed)
             elif second["verdict"] not in repo_tests.RAN:   # the launch review's I4: nothing compared, no support
                 said = (f"the tests that touch the changed modules did not run to a result ({second['verdict']}): "
                         f"{second.get('said', '')}")
@@ -1112,6 +1224,10 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             unknowns.append(f"the proposer's {found['stage']} stage failed, so what it would have proposed is "
                             f"missing: {found['reason']}"[:400])
 
+    # G6 0.3: after the run at the base commit (each check's control), the checks it killed run again on the patch, so
+    # the issuer has a receipt its control came before; last, so it takes no time from anything that decides a field
+    again = _run_again(root, change, stated, norm, verdicts, runs, deadline, artifact, roots)
+    written = {check: _authored(check, change, Path(root)) for check in stated_ids}   # read before the final snapshot
     final = repo_tests.snapshot(root)
     if repo_tests._moved(before, final):   # review I2: a folder G6 did not hash on one side is not a change
         reason("integrity", "repository_changed_during_review", "the working tree changed while G6 reviewed it")
@@ -1181,7 +1297,71 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                   prepared=prepared, adequacy=adequacy, config=config,
                   counts={"template_instances": len(instances), "proposed_checks": len(proposed),
                           "model_calls": proposals.calls if proposals else 0}, roots=roots,
-                  stopped=stopped, proposer=proposals)
+                  stopped=stopped, proposer=proposals,
+                  issuer_inputs={"check_sha": check_sha, "written": lambda check: written.get(check, True),
+                                 "again": again, "observed": observed})
+
+
+def _authored(check: str, change, root: Path) -> bool:
+    """Whether the patch wrote ``check`` (``_written``); authorship G6 cannot read is the patch author's, so no support.
+    An execution-control signal is let through."""
+    try:
+        return _written(check, change, root)
+    except LETS_THROUGH:
+        raise
+    except (repo_tests.RepoRefused, OSError):
+        return True
+
+
+def _run_again(root, change, stated, norm, verdicts, runs, deadline, artifact, roots=()) -> dict:
+    """The stated checks of a requirement for new behaviour that passed on the patch and failed in the run at the base
+    commit, run again on the patch after that run (G6 0.3): the issuer counts a pass only once its control, the run at
+    the base commit, came first, and the stated checks' first run came before it. This run is recorded in
+    ``assessment.requirement_evidence`` only, never in ``scope.checks_run`` or the envelope's evidence, so it changes no
+    decided field; G6's own failure to make it, or a result it cannot read, says why and counts nothing. {} when no
+    check qualifies (the run at the base commit did not happen, or killed no check). Both runs are read by phase
+    (``observation``): only a check whose body failed at the base commit was killed there."""
+    at_base = at_base_observations(runs)
+    ids = [check for check in dict.fromkeys(norm[raw] for req in stated if req.kind != "preserve" for raw in req.checks)
+           if observation(verdicts.get(check, {})) == "passed" and at_base.get(check) == FAILED]
+    if not ids:
+        return {}
+    if _left(deadline) < 1:
+        return {"checks": ids, "why": "the time budget was spent before they could run again"}
+    try:
+        ran = _confined(_execute(root, ids, timeout_s=max(1, _left(deadline)), **_rooted(roots)))
+    except LETS_THROUGH:
+        raise   # the review's own rule: an operator stop or unconfirmed cleanup reaches the door, here as everywhere
+    except Exception as exc:   # G6's own work: this run decides no field, so it never fails the review
+        return {"checks": ids, "why": f"G6 could not run them again ({type(exc).__name__})"}
+    if _loaded_elsewhere(change, ran) or (ran.get("source_before") and ran["source_before"] != artifact):
+        return {"checks": ids, "why": "the run again is not read: it loaded code from outside the tree, or began on "
+                                      "another working tree"}
+    if ran.get("verdict") not in repo_tests.RAN:
+        return {"checks": ids, "why": f"the run again gave no result ({ran.get('verdict')})"}
+    return {"checks": ids, "verdicts": {check: observation(found) for check, found in _verdicts(ids, ran).items()},
+            "receipt": ran.get("receipt", ""), "seconds": ran.get("seconds", 0.0)}
+
+
+def _check_shas(root: Path, checks: Sequence[str]) -> dict[str, str]:
+    """Each stated check's SHA-256, of its node id and its file's bytes' SHA-256 as one structure (``id_of``, never a
+    join), read before any run of the review; none for a check whose file G6 cannot read as a file inside the tree (a
+    folder, a link, a file gone), which the mapping then refuses. A change to a file after this read is a change between
+    the review's integrity snapshots."""
+    found: dict[str, str] = {}
+    top = root.resolve()
+    for check in checks:
+        path = root / check.partition("::")[0]
+        try:
+            if (check in found or path.is_symlink() or not path.is_file()
+                    or not path.resolve().is_relative_to(top)):
+                continue
+            found[check] = id_of(check, hashlib.sha256(path.read_bytes()).hexdigest(), digest=True)
+        except LETS_THROUGH:
+            raise
+        except OSError:
+            continue
+    return found
 
 
 def _structural_check(found: dict) -> dict:
@@ -1212,8 +1392,8 @@ def _not_loaded(found: dict[str, dict], ran: dict) -> list[str]:
     """The test files pytest could not load in ``ran``, the run against the base commit's code (one that imports a
     name the patch adds, say), each holding a check of ``found``: none of those checks ran there, so each becomes
     ``not_run``, never a failure at the base (the owner's pilot, 2026-10-30). Returns those files."""
-    full = _in_repository(ran)
-    broken = sorted({full(rel) for rel in _collection_errors(ran.get("output") or "")})
+    report = repo_tests.read_report(ran)
+    broken = sorted(report.collection_errors) if report.valid else []
     files = []
     for check, verdict in found.items():
         head = check.partition("::")[0].rstrip("/")
@@ -1262,6 +1442,9 @@ def _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, u
                         "load the file against the base commit's code")
     if "isolation" in ran:   # each check's own verdict at the base commit, which the readable report says in words
         runs[-1]["outcomes"] = {check: found["verdict"] for check, found in at_base.items()}
+        errors = {check: found["observation"] for check, found in at_base.items() if "observation" in found}
+        if errors:   # a failure there outside every test's body: no control is killed by it (at_base_observations)
+            runs[-1]["observations"] = errors
     for check, found in at_base.items():
         if found["verdict"] != "passed":
             continue
@@ -1272,19 +1455,23 @@ def _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, u
     return actions
 
 
-def _on_base(root, change, derived, second, deadline, runs, unknowns, reason, roots=()) -> None:
+def _on_base(root, change, derived, second, deadline, runs, unknowns, reason, roots=(), *, stated: Sequence[str],
+             observed: list[dict]) -> None:
     """Replay each failing derived test file, and each one pytest could not collect, at the base commit: a defect only
     when it passed there. Where one fails on the patch and G6 cannot say it passed at the base commit and fails on the
     patch, an evidence reason of its own (``derived_test_not_compared``; the launch review's I4), never support; one
-    that did not pass at the base commit either stays an unknown (the patch did not cause it)."""
+    that did not pass at the base commit either stays an unknown (the patch did not cause it).
+
+    G6 0.3: a replay that ran the file on the patch, in a copy, observed each ``stated`` check in it; each one's verdict
+    there is added to ``observed`` in the order it ran (``_observed``), ``NOT_READ`` when the replay kept no per-test
+    result, and ``NOT_LOADED`` when it ran code from outside the copy."""
     def uncompared(text: str) -> None:
         unknowns.append(text)
         reason("evidence", NOT_COMPARED, text)
 
-    full = _in_repository(second)
-    failing = sorted({full(rel) for rel in {node.partition("::")[0] for node in [*second.get("failed_ids", []),
-                                                                              *second.get("setup_errors", {})]}
-                      | _collection_errors(second.get("output") or "")} & set(derived))
+    report = repo_tests.read_report(second)
+    failing = sorted(({node.partition("::")[0] for node in report.failed}
+                      | report.collection_errors) & set(derived))
     if not failing:
         uncompared(f"the tests that touch the changed modules failed without a test G6 can name: "
                    f"{second.get('said') or 'read their output'}")
@@ -1300,11 +1487,22 @@ def _on_base(root, change, derived, second, deadline, runs, unknowns, reason, ro
                                                                               "and on the patch, in a copy",
                             provenance=DERIVED))
         elsewhere = _loaded_elsewhere(change, out)
+        mine = [check for check in stated if _names(check, {rel})]
+        unkept = out.get("baseline") == "passed" and out.get("patched", "not_run") != "not_run"   # ran, results not kept
+        seen = _observed(mine, out)
+        if not seen and unkept:
+            seen = dict.fromkeys(mine, NOT_READ)
+        if seen:   # it ran on the patch: each stated check it ran, as it ran there
+            observed.append({"run": ["replay", rel], "verdicts": dict.fromkeys(seen, NOT_LOADED) if elsewhere
+                             else seen})
         if elsewhere:   # review C1: a replay of code the patch did not change says nothing of the patch
             uncompared(f"{rel} fails on the patch, and its replay in a copy is not read: {elsewhere}")
         elif out.get("verdict") == repo_tests.FAILED:
+            # The released diagnostic lists only failed_ids, in its raw scope
+            # and emission order. Setup/collection hints serve other readers.
+            failed = repo_tests.read_report(out).data.get("failed_ids", ())
             reason("tier_2", "derived_test_regressed", f"{rel} passed at the base commit and fails on the patch: "
-                   + ", ".join(out.get("failed_ids", [])[:5]), node=rel, ran=out)
+                   + ", ".join(failed[:5]), node=rel, ran=out)
         elif out.get("baseline") == "passed" and out.get("patched") in (repo_tests.FAILED, "collection_error"):
             reason("tier_2", "derived_test_regressed", f"{rel} collects and passes at the base commit, and fails to "
                    f"collect or run on the patch ({out.get('said') or out.get('patched')})", node=rel, ran=out)
@@ -1348,26 +1546,29 @@ SELF_CHECKED_ASK = ("{ids}: this rests on the author's own tests, so tell the pe
                     "not write and that fails at the base commit can change it. Do not rewrite tests to change it.")
 
 
+def _written(check: str, change, root: Path) -> bool:
+    """Whether the patch wrote ``check``: its file (or a test in its folder) is one the patch adds or changes, or it
+    does not exist at the base commit."""
+    head = (root / check.partition("::")[0]).resolve()
+    try:
+        rel = head.relative_to(Path(change.repo).resolve()).as_posix()
+    except ValueError:
+        return False
+    rel = "" if rel == "." else rel
+    inside = [path for path in change.files if not rel or path.startswith(rel + "/")]
+    if rel in change.files or any(repo_tests.is_test_related(path) for path in inside):
+        return True
+    return bool(rel) and not repo_tests._git(change.repo, "ls-tree", "--name-only", change.base_commit, "--", rel)
+
+
 def _self_checked(evaluated: list[dict], change, root: Path, runs: list[dict]) -> list[str]:
     """The requirements with no independent check. A check is independent when it exists at the base commit, its file
     is unchanged, a folder holds no test the patch adds or changes, and, unless the requirement only keeps behaviour,
     it does not pass at the base commit too: an old test that passes there says nothing of the change."""
-    at_base = next((run.get("outcomes") or {} for run in runs if run.get("check") == AT_BASE), {})
-
-    def written(check: str) -> bool:
-        head = (root / check.partition("::")[0]).resolve()
-        try:
-            rel = head.relative_to(Path(change.repo).resolve()).as_posix()
-        except ValueError:
-            return False
-        rel = "" if rel == "." else rel
-        inside = [path for path in change.files if not rel or path.startswith(rel + "/")]
-        if rel in change.files or any(repo_tests.is_test_related(path) for path in inside):
-            return True
-        return bool(rel) and not repo_tests._git(change.repo, "ls-tree", "--name-only", change.base_commit, "--", rel)
+    at_base = at_base_observations(runs)
 
     def independent(req: dict, check: dict) -> bool:
-        return (check["provenance"] == STATED and not written(check["id"])
+        return (check["provenance"] == STATED and not _written(check["id"], change, root)
                 and (req["kind"] == "preserve" or at_base.get(check["id"]) != "passed"))
 
     return [req["id"] for req in evaluated if req["status"] == PASSED_ON_CHECKS
@@ -1398,9 +1599,13 @@ def _one_line(text: object) -> str:
 
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
            sources, started, follow_ups=(), listed=(), assumed=(), search=None, defects=(), prepared=None,
-           adequacy=None, config=None, counts=None, roots=(), stopped=(), proposer=None, first_action="") -> dict:
+           adequacy=None, config=None, counts=None, roots=(), stopped=(), proposer=None, first_action="",
+           issuer_inputs=None) -> dict:
     """The reply. ``first_action``: the next action that stands first for an insufficient-evidence outcome in place of
-    the general one (the launch review's I6: a module the patch imports that is not installed here)."""
+    the general one (the launch review's I6: a module the patch imports that is not installed here).
+    ``issuer_inputs``: each stated check's SHA-256 and whether the patch wrote it, every other run that observed a
+    stated check on the patch and the run again, for ``assessment.requirement_evidence``
+    (``g6.harness.requirement_evidence``), the issuer's statement for each requirement beside the review's own reading."""
     from g6.harness import verification_search   # the completion report, in every reply
     # a repository's names reach these texts as they are; each is one line (the fresh review of the F1-F8 fix pass)
     reasons = [{**r, "detail": _one_line(r["detail"])} for r in reasons]
@@ -1454,6 +1659,12 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                                                      artifact=artifact, base_commit=change.base_commit,
                                                      templates=prepared, adequacy=adequacy, stopped=stopped,
                                                      proposals=proposer)}
+    if issuer_inputs is not None:   # the one authority's statement of each requirement (G6 0.3, slice 2)
+        from g6.harness import requirement_evidence
+        # the review's own integrity rule: a run it does not believe is no evidence for the issuer either
+        assessment["requirement_evidence"] = requirement_evidence.assess(
+            evaluated, runs, artifact=artifact, base_commit=change.base_commit, environment=environment,
+            integrity=[r["code"] for r in reasons if r["stage"] == "integrity"], **issuer_inputs)
     from g6.harness import patch_report   # A1: the readable report, derived from the fields above; it decides nothing
     assessment["report"] = patch_report.safe_render(assessment)
     card = warning_card(CODE, summary, next_actions[0])

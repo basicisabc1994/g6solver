@@ -185,6 +185,12 @@ def _body(*, started_at: str, finished_at: str, before: dict, after: dict, base_
     ``G6_REPO_ENV`` gave the tests, with the SHA-256 of its value, never the value; ``env_set_by_g6``: the variables G6
     set itself (the folder Hypothesis keeps its database in)."""
     from g6 import __version__
+    from g6.workforce.repo_tests import read_report
+
+    report = read_report(found)
+    if not report.valid:
+        raise ValueError("G6_E_TEST_REPORT_UNKNOWN: the runner report is unknown")
+    found = report.wire()
 
     return {"schema": SCHEMA, "execution_id": uuid.uuid4().hex, "started_at": started_at, "finished_at": finished_at,
             "g6_version": __version__, "source_before": digest(before), "source_after": digest(after),

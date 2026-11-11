@@ -289,8 +289,12 @@ class RepoTestsRunner:
         return self._observed(raw, source)
 
     def _observed(self, raw: Mapping[str, Any], source: str) -> TestObservation:
+        from g6.workforce import repo_tests
+
         if self._checker_digest() != self._checker or self._source_digests() != self._sources:
             raise ValueError("protected repository content drifted during execution")
+        report = repo_tests.read_report(raw)
+        raw = report.wire()
         isolation = raw.get("isolation") if isinstance(raw.get("isolation"), Mapping) else {}
         backend = str(isolation.get("backend") or "")
         isolated = bool(backend) and not isolation.get("network")   # any backend confine names, network off
@@ -299,7 +303,10 @@ class RepoTestsRunner:
         return TestObservation(
             # completed as the run record says it: a verdict that ran, every expected test finished (not degraded)
             verdict=str(raw.get("verdict", "unknown")),
-            completed=raw.get("verdict") in ("passed", "failed") and raw.get("degraded") is False,
+            completed=report.valid and report.loading_known and report.verdict in repo_tests.RAN
+            and report.data.get("degraded") is False
+            and all(report.body_result(test) in repo_tests.RAN for test in self.mission.tests)
+            and repo_tests.loaded_from(self.repo, report) == {},
             isolated=isolated, backend=backend, environment_id=environment_id,
             checker_digest=self._checker, candidate_digest=_sha(source),
             failed_tests=tuple(str(x) for x in raw.get("failed_ids", ())[:30]),

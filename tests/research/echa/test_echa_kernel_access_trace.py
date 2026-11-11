@@ -25,7 +25,6 @@ from pathlib import Path
 import pytest
 
 from g6.research.echa import (
-    FLAG,
     AccessDenied,
     ClaimRecord,
     Ledger,
@@ -44,8 +43,7 @@ STD = StandardRef.from_text("std-keep", "A change must not alter a function it w
 
 
 @pytest.fixture
-def led(monkeypatch):
-    monkeypatch.setenv(FLAG, "1")
+def led():
     ledger = Ledger()
     ledger.add_standard(STD)
     return ledger
@@ -241,8 +239,7 @@ def test_the_trace_of_a_claim_reaches_its_standard_its_evidence_and_its_controls
     assert got["limits"]
 
 
-def test_the_trace_of_a_claim_whose_ledger_was_tampered_says_so(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv(FLAG, "1")
+def test_the_trace_of_a_claim_whose_ledger_was_tampered_says_so(tmp_path) -> None:
     path = tmp_path / "ledger.jsonl"
     ledger = Ledger(path)
     claims = kernel_example.build(ledger)
@@ -272,14 +269,9 @@ def test_a_claim_that_is_not_in_the_ledger_has_no_trace(led) -> None:
         trace_claim(led, "nope")
 
 
-def test_the_example_writes_a_ledger_file_only_when_the_flag_is_on(monkeypatch, tmp_path) -> None:
+def test_the_example_writes_its_ledger_file_with_no_flag_set(monkeypatch, tmp_path) -> None:
+    # G6 0.3 removed ECHA's flag: the worked example runs with nothing set
     target = tmp_path / "example.jsonl"
-    monkeypatch.delenv(FLAG, raising=False)
-    from g6.research.echa import ResearchDisabled
-
-    with pytest.raises(ResearchDisabled):
-        kernel_example.main([str(target)])
-    assert not target.exists()
-    monkeypatch.setenv(FLAG, "1")
+    monkeypatch.delenv("G6_ECHA_RESEARCH", raising=False)
     assert kernel_example.main([str(target)]) == 0
     assert Ledger.audit(target) == ()

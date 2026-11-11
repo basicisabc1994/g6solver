@@ -70,7 +70,7 @@ from g6.harness import patch_report
 from g6.harness.completion_hook import CHILD
 from g6.harness import verification_proposer as proposer
 from g6.harness import verification_search as vs
-from g6.harness.patch_review import _in_repository, _loaded_elsewhere, review_patch
+from g6.harness.patch_review import _loaded_elsewhere, review_patch
 from g6.workforce import repo_tests
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
@@ -425,7 +425,9 @@ def _checks(where: Path, root: Path, only: str = "") -> tuple[list[vs.ProposedCh
 
 
 def _outcome(phases: Mapping[str, str]) -> str:
-    return "error" if "failed" in (phases.get("setup"), phases.get("teardown")) else phases.get("call") or "skipped"
+    record = repo_tests.read_phases(phases)
+    # The critic's existing fixture-error policy is stricter than a body fact.
+    return "error" if "failed" in (record.get("setup"), record.get("teardown")) else record.body()
 
 
 def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
@@ -436,17 +438,24 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
     code: int | None = 0
     results, texts, tail, boundary = {}, {}, [], ""
     for ran in runs:
+        report = repo_tests.read_report(ran)
+        ran = report.wire()
         boundary = (ran.get("isolation") or {}).get("backend") or boundary
         elsewhere, verdict = _loaded_elsewhere(change, ran), ran.get("verdict")
-        if elsewhere or verdict not in repo_tests.RAN:
+        if not report.valid or elsewhere or verdict not in repo_tests.RAN:
             code = None
+            if not report.valid:
+                results.update({_PLACE.sub("", node): "unknown" for node in report.nodes})
             tail.append(vs.LOADED_ELSEWHERE.format(elsewhere) if elsewhere else f"{verdict}: {ran.get('said') or ''}")
             texts.update(ran.get("failure_messages") or {})     # pytest's own words: no case has them, so only ``_unrun`` reads them
             continue
         code = None if code is None else max(code, int(verdict == repo_tests.FAILED))
-        full, refused = _in_repository(ran), set(ran.get("os_errors") or ())
-        for named, phases in (ran.get("test_outcomes") or {}).items():
-            results[_PLACE.sub("", full(named))] = "unknown" if named in refused else _outcome(phases)
+        full, refused = report.full, {report.full(n) for n in ran.get("os_errors", ())}
+        for named, phases in report.phases.items():
+            results[_PLACE.sub("", named)] = "unknown" if named in refused else _outcome(phases)
+        if report.collection_errors:
+            code = None
+            results.update({_PLACE.sub("", node): "unknown" for node in report.collection_errors})
         texts.update({_PLACE.sub("", full(named)): text for named, text in (ran.get("failure_messages") or {}).items()})
     return ProbeRun(code, results, texts, "\n".join(tail), boundary)
 
