@@ -60,6 +60,7 @@ from g6.agents._runtime import (
 )
 from g6.core import stop as core_stop
 from g6.core.model_calls import note_model_call
+from g6.agents._runtime.consent import consent_run, register_program
 from g6.core.outside import OutsideProgram
 from g6.core.resources import ResourceUsage
 
@@ -72,6 +73,7 @@ CODEX = OutsideProgram(
     name="Codex", purpose="OpenAI's coding agent; run and available start the codex program you installed, signed in "
                           "with your account",
     install=INSTALL_CODEX, licence="Apache-2.0", command="codex", env=CODEX_ENV, paid=True, online=True)
+register_program(CODEX, 'openai:codex')
 TOOL = "codex_exec"
 #: The code for a run refused because model calls are disabled (the one ``g6.core.llm`` uses).
 LLM_DISABLED = "G6_E_LLM_DISABLED"
@@ -179,7 +181,8 @@ class CodexRuntime:
             try:
                 argv = self.argv(found.where, writes=writes, last_message=self.runner.plain(last))
                 detail["argv"] = argv
-                done = self.runner.run(argv, prompt=prompt, cwd=workspace, scratch=scratch, stop=stop,
+                done = consent_run(self.runner, argv, provider="openai:codex",
+                                   prompt=prompt, cwd=workspace, scratch=scratch, stop=stop,
                                        seconds=gate.limits.wall_clock_s - usage.elapsed_seconds)
             except AgentRefusal as refusal:   # ended early: keep what G6 knew, and say what a write run may have left
                 started = refusal.code != codes.START_FAILED

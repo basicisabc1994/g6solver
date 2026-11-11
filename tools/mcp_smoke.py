@@ -126,7 +126,7 @@ def _default_server() -> list[str]:
     return [found]
 
 
-def run_over_stdio(command: list[str]) -> list[str]:
+def run_over_stdio(command: list[str], *, client_info=None, elicitation_handler=None, sharing_sources=()) -> list[str]:
     """``check`` against a real MCP server started over stdio with ``command``."""
     from fastmcp import Client
     from fastmcp.client.transports import StdioTransport
@@ -134,11 +134,18 @@ def run_over_stdio(command: list[str]) -> list[str]:
     home = tempfile.mkdtemp(prefix="g6-mcp-smoke-")
     env = {k: v for k, v in os.environ.items() if k not in ("G6_MCP_SENSITIVE", "G6_LLM_PROVIDER", "G6_LLM_MODEL")}
     env.update({"G6_DISABLE_LLM": "1", "G6_HOME": home})
-    client = Client(StdioTransport(command=command[0], args=command[1:], env=env, cwd=home))
+    client = Client(StdioTransport(command=command[0], args=command[1:], env=env, cwd=home),
+                    client_info=client_info, elicitation_handler=elicitation_handler)
     loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
         loop.run_until_complete(client.__aenter__())
         try:
+            for source in sharing_sources:
+                granted = _payload(loop.run_until_complete(client.call_tool('g6_cloud_grant',
+                    {'source': source, 'provider': 'openai:codex'})))
+                if not granted.get('ok'):
+                    return ['The client dialog did not grant the smoke test source.']
             def call(component: str, op: str, params: str) -> dict:
                 return _payload(loop.run_until_complete(client.call_tool(
                     "g6_invoke", {"component": component, "op": op, "params_json": params}, raise_on_error=False)))

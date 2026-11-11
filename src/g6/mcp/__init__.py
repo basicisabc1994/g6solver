@@ -12,6 +12,8 @@ thirteen meta-harness tools (``metaharness_start``, ``_confirm``, ``_propose_cod
 ``_inspect``, ``_propose``, ``_evaluate``, ``_decide``, ``_diagnose``, ``_approve``, ``_rollback``) for the workflows
 declared in the file ``G6_METAHARNESS`` names, where confirmation, approval and rollback ask the person through the
 client, including in the proposing session, and a failed attempt carries its recovery (``g6.metaharness.surface``).
+Four sharing tools (``g6_cloud_grant``, ``g6_cloud_revoke``, ``g6_cloud_grants``, ``g6_disclosures``)
+use client-dialog grants and a source/provider disclosure ledger (``g6.mcp.cloud_consent``).
 Install
 with ``pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"`` and register with ``claude mcp add g6 -- g6-mcp`` (or, for Codex,
 ``codex mcp add g6 -- g6-mcp``). There is no account, key or network service.
@@ -92,9 +94,28 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
     if not isinstance(params, dict):
         return blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object", request_id=request_id)
     allow = allowed_sensitive() if allow_sensitive is None else allow_sensitive
-    return invoke_checked(component, op, params, allow=allow, registry=registry, request_id=request_id,
+    from g6.core.consent_callers import guard
+    from g6.core.registry import ComponentRegistry, get_registry
+    target = registry if registry is not None else get_registry()
+    class GuardedRegistry:
+        def __getattr__(self, name):
+            return getattr(target, name)
+        def invoke(self, *args, **kwargs):
+            if kwargs.get("llm") is not None:
+                kwargs["llm"] = guard(kwargs["llm"])
+            return target.invoke(*args, **kwargs)
+    reply = invoke_checked(component, op, params, allow=allow, registry=GuardedRegistry(), request_id=request_id,
                           how_to_allow=f"Only the person who runs this server can allow it, by adding {component}.{op} "
                                        f"(or {component}) to {SENSITIVE_ENV} where the server is registered.")
+    # The host's permission refusal runs no component code. Operations, including
+    # a component's own "ops" implementation, retain the component source scope.
+    if type(target) is ComponentRegistry and component in target.names():
+        module = target.get_module(component)
+        sensitive = getattr(module, '__g6_sensitive_ops__', ())
+        if op in sensitive and not _allowed(component, op, allow):
+            from g6.mcp.consent_controls import public_instructions
+            return public_instructions(reply)
+    return reply
 
 
 #: FastMCP's settings G6 gives its own server unless the person set them in the environment (worked examples, W5).
@@ -129,8 +150,12 @@ def build_server(surface: Any = None) -> Any:
     from g6.core.registry import get_registry
 
     server = FastMCP("g6")
+    from g6.mcp.cloud_consent import install, public_tool, register
+    install(server)
+    register(server, Context)
 
     @server.tool()
+    @public_tool
     def g6_help() -> str:
         """How to use G6 from an agent. Call this first."""
         return discovery.HELP
@@ -177,6 +202,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
     """The meta-harness tools (META_HARNESS_PLAN.md Phase 6): additive, the Python API's envelopes as JSON. Approval
     and rollback ask the person through the client (MCP elicitation); the agent never supplies the approver."""
     from g6.metaharness.surface import Surface
+    from g6.mcp.consent_controls import public_instructions
 
     mh = surface or Surface()
     from g6.metaharness.jobs import Jobs
@@ -261,7 +287,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         G6_MCP_SENSITIVE."""
         from g6.core.door import blocked_reply
         if not _allowed("patch_review", "review", allowed_sensitive()):
-            return blocked_reply(f"{_DENIED} patch_review.review runs repository code; the host must allow it")
+            return public_instructions(blocked_reply(f"{_DENIED} patch_review.review runs repository code; the host must allow it"))
         from g6.mcp.review_reply import finish, review
 
         return jobs.start(lambda: review(repo, task=task, requirements=requirements or [], tests=tests or [],
@@ -289,6 +315,10 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         did nothing: another step of this session is running, so wait for that step's result before you call again, or your
         reason was a question, which rejects nothing, so ask the person, then repair or give your reason.
 
+        Cloud review needs source/provider grants from the client dialog, including the repository and task
+        input. Without them the review is not sent, the run ends untested, and the reply says how to grant them.
+        g6_cloud_revoke stops later sharing. Data already sent cannot be recalled.
+
         Use one session name for one task, and repeat that task as it was on each call: the first call fixes the session's
         repository, task and base commit, and a call for another repository or task is refused. A later call's base is not
         read, so a commit you make does not move it. Needs a boundary (g6 doctor says what this computer needs) and G6_LOOP_CRITIC=codex in the person's key file, which approves their Codex sign-in. The line
@@ -296,8 +326,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         host permission patch_review.review in G6_MCP_SENSITIVE."""
         from g6.core.door import blocked_reply
         if not _allowed("patch_review", "review", allowed_sensitive()):
-            return blocked_reply(f"{_DENIED} g6_review_until_clean runs repository code and tests a model wrote; the host "
-                                 "must allow it, with patch_review.review")
+            return public_instructions(blocked_reply(f"{_DENIED} g6_review_until_clean runs repository code and tests a model wrote; the host "
+                                 "must allow it, with patch_review.review"))
         from g6.mcp.review_loop import step
 
         return jobs.start(lambda: step(repo, task, session, base, reason))
@@ -359,8 +389,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         if _allowed("metaharness", op, allowed_sensitive()):
             return None
         from g6.core.door import blocked_reply
-        return blocked_reply(f"{_DENIED} metaharness.{op} runs the workflow's code; the host must allow it, by adding "
-                             f"metaharness.{op} (or metaharness) to {SENSITIVE_ENV} where the server is registered")
+        return public_instructions(blocked_reply(f"{_DENIED} metaharness.{op} runs the workflow's code; the host must allow it, by adding "
+                             f"metaharness.{op} (or metaharness) to {SENSITIVE_ENV} where the server is registered"))
 
     def metaharness_evaluate_start(workflow: str, proposal_digest: str) -> dict:
         """Start a bounded evaluation job. Poll metaharness_job for its result; no approval is implied. It runs the

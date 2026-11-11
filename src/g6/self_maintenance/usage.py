@@ -76,6 +76,7 @@ from typing import Any
 
 from g6.core import component_process, host_models
 from g6.core.llm import LLMError
+from g6.core.consent_callers import ConsentClaude
 from g6.core.outside import clean_environment, find_program
 from g6.core.process_tree import ProcessTreeError
 from g6.self_maintenance.pacing import AccountReading, ProviderWindow
@@ -202,7 +203,7 @@ def telling_stops(tell: _Tell) -> Iterator[None]:
         _TELL.reset(token)
 
 
-class WatchedClaude(host_models.ClaudeCodeCaller):
+class WatchedClaude(ConsentClaude):
     """Claude Code as the loop calls it: as the bound caller, and a stop in its result raises G6's own code."""
 
     def _reply(self, code: int, printed: str, errors: str, files: Any, hide: tuple[str, ...]) -> str:

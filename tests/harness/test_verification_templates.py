@@ -36,6 +36,8 @@ from g6.harness.patch_review import review_patch
 from g6.invariants import check_envelope
 from g6.workforce import mutation_check, repo_tests
 
+pytestmark = pytest.mark.usefixtures("declared_mcp_grants")
+
 TEMPLATE_IDS = ("example.v1", "relation.v1", "access_rule.v1", "differential.v1", "forbidden_dependency.v1")
 
 # --- development fixtures: five kinds of application, each with a base commit and a patch that plants a defect --------

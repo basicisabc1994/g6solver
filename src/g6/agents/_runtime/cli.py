@@ -25,6 +25,7 @@ from pathlib import Path
 
 from g6.agents._runtime import codes
 from g6.agents._runtime.model import AgentRefusal
+from g6.core import cloud_consent as cloud
 from g6.core import component_process, outside
 from g6.core.process_tree import ProcessTreeError
 
@@ -150,9 +151,15 @@ class CliAgentRunner:
 
             window = None
             try:
-                with component_process.window(seconds, lambda: too_much() or bool(_stopped(stop))) as window:
-                    code = component_process.run_process(list(argv), env=env, cwd=cwd, stdin=incoming, stdout=out,
-                                                         stderr=subprocess.STDOUT)
+                inspection = not prompt and len(argv) == 2 and argv[1] == '--version'
+                from g6.agents._runtime.consent import process_admission, program_provider
+                provider = program_provider(self.program)
+                with process_admission(provider, prompt, cwd, local=inspection):
+                    with component_process.window(seconds, lambda: too_much() or bool(_stopped(stop))) as window:
+                        code = component_process.run_process(list(argv), env=env, cwd=cwd, stdin=incoming, stdout=out,
+                                                             stderr=subprocess.STDOUT)
+            except cloud.LLMError as exc:
+                raise AgentRefusal(str(exc).partition(":")[0], str(exc)) from None
             except component_process.ExecutionInterrupted as exc:
                 if exc.stopped and too_much():
                     raise AgentRefusal(codes.OUTPUT_TOO_LARGE, f"{name}'s output passed {self.max_output_bytes} "

@@ -16,6 +16,7 @@ import pytest
 
 import g6
 from g6.core.ledger import digest
+from g6.core.consent_callers import CallerWrapper
 from g6.core.llm import FakeLLM, LLMError
 from g6.integrity import build_manifest
 from g6.metaharness import JUDGING_PATTERNS, Model, Profile
@@ -40,6 +41,8 @@ MONDAY = datetime(2026, 10, 26, tzinfo=UTC)
 BASE = Profile(routing={"answer": "local"})
 QUIET = BASE.model_copy(update={"prompt": "Note."})
 GOOD = BASE.model_copy(update={"prompt": "Check it."})
+
+pytestmark = pytest.mark.usefixtures('consented_provider_fakes')
 
 
 def test_a_refusal_while_a_stop_is_read_stops_the_request_that_was_reading_it():
@@ -78,19 +81,20 @@ def test_a_context_kept_past_its_call_sends_nothing(tmp_path):
     release = threading.Event()
     failed = []
 
-    class KeepsTheContext:
+    class KeepsTheContext(CallerWrapper):
         def __init__(self, inner):
-            self._inner, self.worker = inner, None
+            super().__init__(inner)
+            self.worker = None
 
         def complete(self, system, user, *, max_tokens=1024):
-            answer = self._inner.complete(system, user, max_tokens=max_tokens)
+            answer = self.inner.complete(system, user, max_tokens=max_tokens)
             if self.worker is None:
                 kept = contextvars.copy_context()
 
                 def later():
                     release.wait(10)
                     try:
-                        kept.run(self._inner.complete, "system", "sent later")
+                        kept.run(self.inner.complete, "system", "sent later")
                     except LLMError as refused:
                         failed.append(refused)
 
@@ -461,13 +465,13 @@ def test_a_request_waiting_on_the_stop_when_its_tick_closes_sends_nothing():
     requests = _Requests(halted=halted)
     requests.open(2)
 
-    class SendsLater:
+    class SendsLater(CallerWrapper):
         def complete(self, system, user, *, max_tokens=1024):
-            answer, kept = backend.complete(system, user, max_tokens=max_tokens), contextvars.copy_context()
+            answer, kept = self.inner.complete(system, user, max_tokens=max_tokens), contextvars.copy_context()
 
             def later():
                 try:
-                    kept.run(backend.complete, "system", "sent later")
+                    kept.run(self.inner.complete, "system", "sent later")
                 except BaseException as exc:
                     failures.append(exc)
 
@@ -476,7 +480,7 @@ def test_a_request_waiting_on_the_stop_when_its_tick_closes_sends_nothing():
             assert reading.wait(5)
             return answer
 
-    caller = SendsLater()
+    caller = SendsLater(backend)
     try:
         assert _Counted(caller, requests).complete("system", "asked") == "answer"
         requests.close()                     # the tick ends while the late request reads the stop
@@ -813,11 +817,11 @@ def _late_refusal(requests: _Requests, release: threading.Event, failures: list)
     """A caller that answers, then has its result read on a thread of its own once ``release`` is set, in the call's context."""
     from g6.self_maintenance.usage import WatchedClaude
 
-    class AnswersFirst:
+    class AnswersFirst(CallerWrapper):
         workers: list = []
 
         def complete(self, system, user, *, max_tokens=1024):
-            answer = FakeLLM(default="answer").complete(system, user)
+            answer = self.inner.complete(system, user)
             context = contextvars.copy_context()
 
             def late():
@@ -832,7 +836,7 @@ def _late_refusal(requests: _Requests, release: threading.Event, failures: list)
             self.workers[-1].start()
             return answer
 
-    return AnswersFirst()
+    return AnswersFirst(FakeLLM(default="answer"))
 
 
 @pytest.mark.parametrize("next_tick", [True, False])
@@ -880,17 +884,17 @@ def test_a_place_a_request_took_is_not_given_back_as_its_call_returns(monkeypatc
     seen = SeenLock()
     monkeypatch.setattr(model_calls, "_lock", seen)
 
-    class ReturnsWhileItsChildIsCounted:
+    class ReturnsWhileItsChildIsCounted(CallerWrapper):
         child = None
 
         def complete(self, system, user, *, max_tokens=1024):
-            answer = backend.complete(system, user)
+            answer = self.inner.complete(system, user)
             context = contextvars.copy_context()
             seen.lock.acquire()
 
             def child():
                 try:
-                    context.run(backend.complete, system, "second")
+                    context.run(self.inner.complete, system, "second")
                 except BaseException as exc:
                     failures.append(exc)
 
@@ -899,7 +903,7 @@ def test_a_place_a_request_took_is_not_given_back_as_its_call_returns(monkeypatc
             assert counting.wait(5)
             return answer
 
-    caller = ReturnsWhileItsChildIsCounted()
+    caller = ReturnsWhileItsChildIsCounted(backend)
     try:
         assert _Counted(caller, requests).complete("system", "first") == "answer"
     finally:

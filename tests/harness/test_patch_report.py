@@ -20,6 +20,8 @@ from g6.harness import patch_report, patch_review
 from g6.harness.patch_review import review_patch
 from g6.invariants import check_envelope
 
+pytestmark = pytest.mark.usefixtures("declared_mcp_grants")
+
 TRIAL = Path(__file__).resolve().parents[2] / "validation" / "patch_review" / "run.py"
 BANNED = ("verified", "proven", "proves", "safe", "guaranteed", "guarantee", "certificate", "confidence")
 BAD = "def add(a, b):\n    return a - b\n"
