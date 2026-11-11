@@ -876,6 +876,9 @@ def _bytes_line(raw: bytes, shown: str, what: str) -> str:
 #: file, by git's own fallback for bytes that are not UTF-8, which G6 does not copy; or nothing is at its name.
 CANNOT_OPEN = "is listed by git under bytes git reads here as another file's name, which G6 cannot open"
 NOT_THERE = "is listed by git as there, and G6 finds no file at that name to read"
+#: Why a patch whose listing holds such a name as there (untracked, added or changed) is not read at all (``diff_read``, by
+#: ``_as_named``): an open of the name reaches another file or a device, and never what is stored under it.
+READ_AS_ANOTHER = "is listed by git under a name Windows reads as another's, which G6 does not open, so the patch is not read"
 
 
 def _link_line(name: str, digest: str) -> str:
@@ -1083,25 +1086,56 @@ def _within(root: Path, where: Path) -> bool:
     return where.parts[:len(root.parts)] == root.parts
 
 
+#: A made-up folder on a drive, below which ``_as_named`` asks Windows how it reads a name: no disk is looked at.
+_BELOW = "C:\\g6\\"
+
+
+def _as_named(name: str) -> bool:
+    """Whether Windows, given ``name`` (a path of a tree as ``_on_disk`` decodes it, its parts joined by ``/``) below a
+    folder, opens what is stored under that name. Win32 rewrites a path before it opens it: it drops the dots and spaces a
+    path ends in and the one dot a folder's name ends in, and reads ``nul`` (older versions: every device's name, with an
+    extension too) as the device. So a file stored as ``x.py.`` or ``nul`` (made by its literal name, or by another
+    system) is listed by git, and a plain open of the listed name reaches ``x.py``, or the device (review-maskfu4, findings
+    1 and 2). The question is put to Windows itself (``GetFullPathNameW``, the rewriting every such open makes; Microsoft's
+    "File path formats on Windows systems", under path normalization), never to a list kept here, as what it rewrites
+    differs between its versions: the name stands below a made-up folder, each part as it is, and is read as itself where
+    the rewriting gives that path back. Where Windows cannot say, it is not. A name Windows cannot store at all (a control
+    character, ``< > " | ? *``) is not rewritten: opening it fails, and the caller's own refusal covers it. Elsewhere a
+    name is its bytes (True). A limit: a short (8.3) name the volume made for another file is not rewritten either, so a
+    listed name that is another file's short name is read as that file."""
+    if os.name != "nt":
+        return True
+    import ctypes
+
+    given = _BELOW + name.replace("/", "\\")
+    buffer = ctypes.create_unicode_buffer(len(given) + 2)      # the rewriting never makes a path longer
+    size = ctypes.windll.kernel32.GetFullPathNameW(given, len(given) + 2, buffer, None)
+    return 0 < size < len(given) + 2 and buffer.value == given
+
+
 def _on_disk(rel: str) -> tuple[str, bool]:
     """The name the system is given for a path git gave (``rel``, git's bytes as ``_listing`` and ``_paths`` read them),
     and whether it names the file git means: git's bytes read back as git encodes a name where it runs (review-maskfu2,
     finding 3). git for Windows writes a file's UTF-16 name as UTF-8 with a lone surrogate kept as its three bytes, so
     those bytes read back that way are the file's name. Bytes that do not read back so name, for git there, another file
     (its own fallback for them, which G6 does not copy): G6 may look at the folders on the way (``exact`` False, ``rel`` as
-    given) but never opens such a file. Elsewhere a name is its bytes, as the system takes them (``os.fsdecode``)."""
+    given) but never opens such a file. Nor one whose name Windows reads as another's (``_as_named``; review-maskfu4):
+    what is stored under it is not what an open of it reaches. Elsewhere a name is its bytes, as the system takes them
+    (``os.fsdecode``)."""
     raw = _raw(rel)
     if os.name != "nt":
         return os.fsdecode(raw), True
     try:
-        return raw.decode("utf-8", "surrogatepass"), True
+        name = raw.decode("utf-8", "surrogatepass")
     except UnicodeDecodeError:
         return str.__str__(rel), False
+    return name, _as_named(name)
 
 
 def _disk(repo: Path, rel: str) -> Path | None:
     """``rel`` in ``repo`` as the system is given it (``_on_disk``), or None where those bytes name, for git there, another
-    file, which G6 never opens: every path G6 opens or reads for a name git gave is made here (repair 3, item 3)."""
+    file, or Windows reads the name as another's, which G6 never opens: every path G6 opens or reads for a name git gave
+    is made here (repair 3, item 3)."""
     on_disk, exact = _on_disk(rel)
     return repo / on_disk if exact else None
 
@@ -1228,7 +1262,9 @@ def diff_read(change: Change) -> DiffRead:
     and has no text in ``files``. Each name G6 writes is put into the text as ``shown_name`` quotes it, so a name is one
     line of the text and two names are two texts (review-maskfu1, finding 4), git's own headers too (``_named_patch``,
     review-maskfu2, finding 1). A file is looked for where git looks (``_on_disk``), and only where git's listing says
-    something is there."""
+    something is there. A listing that holds, as there, a name Windows reads as another's (a trailing dot or space,
+    ``nul``: ``_as_named``) is refused whole (``READ_AS_ANOTHER``): no open there reaches what is stored under it, and what
+    git says of its bytes it read through the same rewriting. One git lists as removed is read as removed, as any is."""
     # a private index built from the base tree (the review of VS-4, finding 1): git's flags, its stat cache and an
     # entry written into the repository's own index hide nothing (review C2 too)
     listed, others = _private(change.repo, change.base_commit, _DIFF, ("ls-files", "--others", "--exclude-standard", "-z"))
@@ -1242,12 +1278,16 @@ def diff_read(change: Change) -> DiffRead:
         """The file at ``rel`` as it stands, its bytes where G6 read them, and whether it is a link, whose bytes are the
         path it names. A file git lists as removed is never opened. One git lists as there that G6 cannot open by the name
         git gives it is named so in what the patch is known by, and a copy made of it refuses (``refusal``): it is never
-        read as removed (review-maskfu2, finding 3)."""
+        read as removed (review-maskfu2, finding 3). One git lists as there under a name Windows reads as another's
+        (``_as_named``) refuses the read itself, before anything is looked at (review-maskfu4, findings 1 and 2)."""
         on_disk, exact = _on_disk(rel)
+        gone = not added and modes[1] == NO_MODE     # git's own word that nothing is there now
+        if not exact and not gone and not _as_named(on_disk):     # there, by git's listing: nothing is looked at
+            raise RepoRefused("G6_E_GIT_COMMAND_FAILED", f"{shown_name(rel)} {READ_AS_ANOTHER}")
         path = change.repo / on_disk     # where a file is comes from this read alone, never an earlier ``Change.outside_links``
         if _leads_out(change.repo, on_disk):
             return FileRead(rel, None, added=added, unread=True, modes=modes), None, False
-        if not added and modes[1] == NO_MODE:     # git's own word that nothing is there now
+        if gone:
             return FileRead(rel, None, added=added, modes=modes), None, False
         if exact and path.is_symlink():     # read as the path it names: the link is never followed
             named = _link_inside(root, path)      # its bytes, shown through the one decoder as a file's are

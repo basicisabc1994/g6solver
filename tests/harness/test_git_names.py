@@ -850,6 +850,9 @@ ALLOWED = {
     "g6.core.git_name: ''.join((_ESCAPED.get(ch) or _octal(ch) for ch in path))": "the rule itself: the text it quotes",
     "g6.workforce.repo_tests: str.__str__(rel)": ("_on_disk: the name given to the system as given, where its bytes name "
                                                    "another file for git there: looked at, never opened; " + _NEVER_SHOWN),
+    "g6.workforce.repo_tests: ctypes.windll.kernel32.GetFullPathNameW(given, len(given) + 2, buffer, None)":
+        ("_as_named: the name, below a made-up folder, given to Windows' own rewriting of a path, which says how an open "
+         "would read it (review-maskfu4): no disk is looked at; " + _NEVER_SHOWN),
     "g6.context.redact: ''.join(parts)": ("the scrubber reading a name as git gave it for a value in it (review-maskfu2, "
                                           "finding 2): what it builds is the spans it found; " + _NEVER_SHOWN),
     "g6.context.redact: ''.join(parts) + shown[at:]": "the same scrubber's masked text, read for its spans; " + _NEVER_SHOWN,
