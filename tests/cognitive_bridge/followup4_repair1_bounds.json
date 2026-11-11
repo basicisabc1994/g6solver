@@ -6181,13 +6181,27 @@
   {
     "source": [
       "engine.py",
+      "",
+      "budget-definition",
+      "HYPOTHESIS_CAP = (32, 'supply 2\u201332 competing hypotheses')"
+    ],
+    "disposition": "semantic",
+    "reason": "Named policy/configuration/schema metadata; associated work caps are separately enumerated at their comparisons or admission calls.",
+    "probes": []
+  },
+  {
+    "source": [
+      "engine.py",
       "_admit_hypotheses",
       "admission",
-      "_admit_length(value, 32, 'supply 2\u201332 competing hypotheses', minimum=2)"
+      "_admit_length(value, *HYPOTHESIS_CAP, minimum=2)"
     ],
     "disposition": "resource",
-    "reason": "Explicit native-count/length or encoded-size admission call before its operation.",
+    "reason": "Explicit native-count/length or encoded-size admission call before its operation.; the copier reads the same declared bound before it copies (repair 2)",
     "probes": [
+      "copier:BayesianUpdater.update:beliefs:thirty-three",
+      "copier:CognitiveAgent.run:hypotheses:thirty-three",
+      "copier:StaticProposer.propose:hypotheses:thirty-three",
       "count:hypotheses"
     ]
   },
@@ -8574,6 +8588,60 @@
   {
     "source": [
       "metacognition.py",
+      "",
+      "budget-definition",
+      "VARIANT_CAP = (100, 'method selector cap: at most 100 explicit variants')"
+    ],
+    "disposition": "semantic",
+    "reason": "Named policy/configuration/schema metadata; associated work caps are separately enumerated at their comparisons or admission calls.",
+    "probes": []
+  },
+  {
+    "source": [
+      "metacognition.py",
+      "",
+      "budget-definition",
+      "OBLIGATION_CAP = (5, 'method selector cap: at most 5 obligations')"
+    ],
+    "disposition": "semantic",
+    "reason": "Named policy/configuration/schema metadata; associated work caps are separately enumerated at their comparisons or admission calls.",
+    "probes": []
+  },
+  {
+    "source": [
+      "metacognition.py",
+      "_admit_variants",
+      "admission",
+      "_admit_length(variants, *VARIANT_CAP)"
+    ],
+    "disposition": "resource",
+    "reason": "Explicit native-count/length or encoded-size admission call before its operation.; the copier reads the same declared bound before it copies (repair 2)",
+    "probes": [
+      "candidates",
+      "copier:CognitiveAssuranceOrchestrator.compile:variants:one hundred and one",
+      "copier:MetacognitivePlanner.plan:variants:one hundred and one",
+      "obligations"
+    ]
+  },
+  {
+    "source": [
+      "metacognition.py",
+      "_admit_obligations",
+      "admission",
+      "_admit_length(required_methods, *OBLIGATION_CAP)"
+    ],
+    "disposition": "resource",
+    "reason": "Explicit native-count/length or encoded-size admission call before its operation.; the copier reads the same declared bound before it copies (repair 2)",
+    "probes": [
+      "candidates",
+      "copier:MetacognitiveMethodSelector.select:required_methods:six",
+      "copier:MetacognitivePlanner.plan:required_methods:six",
+      "obligations"
+    ]
+  },
+  {
+    "source": [
+      "metacognition.py",
       "EvaluatedTrial",
       "record-bound",
       "{'max_length': 64, 'size_error': 'frozen oracle digest required'}"
@@ -9050,12 +9118,14 @@
       "metacognition.py",
       "MetacognitiveMethodSelector.select",
       "admission",
-      "_admit_length(variants, 100, 'method selector cap: at most 100 explicit variants')"
+      "_admit_length(variants, *VARIANT_CAP)"
     ],
     "disposition": "resource",
-    "reason": "Explicit native-count/length or encoded-size admission call before its operation.",
+    "reason": "Explicit native-count/length or encoded-size admission call before its operation.; the copier reads the same declared bound before it copies (repair 2)",
     "probes": [
       "candidates",
+      "copier:CognitiveAssuranceOrchestrator.compile:variants:one hundred and one",
+      "copier:MetacognitivePlanner.plan:variants:one hundred and one",
       "obligations"
     ]
   },
@@ -9064,12 +9134,14 @@
       "metacognition.py",
       "MetacognitiveMethodSelector.select",
       "admission",
-      "_admit_length(required_methods, 5, 'method selector cap: at most 5 obligations')"
+      "_admit_length(required_methods, *OBLIGATION_CAP)"
     ],
     "disposition": "resource",
-    "reason": "Explicit native-count/length or encoded-size admission call before its operation.",
+    "reason": "Explicit native-count/length or encoded-size admission call before its operation.; the copier reads the same declared bound before it copies (repair 2)",
     "probes": [
       "candidates",
+      "copier:MetacognitiveMethodSelector.select:required_methods:six",
+      "copier:MetacognitivePlanner.plan:required_methods:six",
       "obligations"
     ]
   },
@@ -9673,17 +9745,30 @@
   {
     "source": [
       "mixed_methods.py",
+      "",
+      "budget-definition",
+      "CLAIM_CAP = (20, 'supply 1\u201320 typed claims')"
+    ],
+    "disposition": "semantic",
+    "reason": "Named policy/configuration/schema metadata; associated work caps are separately enumerated at their comparisons or admission calls.",
+    "probes": []
+  },
+  {
+    "source": [
+      "mixed_methods.py",
       "_admit_claims",
       "admission",
-      "_admit_length(claims, 20, 'supply 1\u201320 typed claims', minimum=1)"
+      "_admit_length(claims, *CLAIM_CAP, minimum=1)"
     ],
     "disposition": "resource",
-    "reason": "Explicit native-count/length or encoded-size admission call before its operation.",
+    "reason": "Explicit native-count/length or encoded-size admission call before its operation.; the copier reads the same declared bound before it copies (repair 2)",
     "probes": [
+      "copier:MetacognitivePlanner.plan:claims:twenty-one",
+      "copier:MixedMethodExecutor.execute:plan:twenty-one",
       "count:claims",
+      "field:claim.evidence_needs",
       "field:claim.id",
-      "field:claim.statement",
-      "field:claim.evidence_needs"
+      "field:claim.statement"
     ]
   },
   {
@@ -9716,23 +9801,48 @@
   {
     "source": [
       "mixed_methods.py",
-      "_admit_claims",
+      "_admit_claim",
+      "comparison",
+      "type(claim) is dict"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "mixed_methods.py",
+      "_admit_claim",
+      "comparison",
+      "type(claim) is ClaimIR"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "mixed_methods.py",
+      "_admit_claim",
       "admission",
-      "_admit_length(claim.id, 100, 'claim ID/statement length invalid', minimum=1)"
+      "_admit_length(held('id'), 100, 'claim ID/statement length invalid', minimum=1)"
     ],
     "disposition": "resource",
-    "reason": "Explicit native-count/length or encoded-size admission call before its operation.",
+    "reason": "Explicit native-count/length or encoded-size admission call before its operation.; the copier reads the same declared bound before it copies (repair 2)",
     "probes": [
+      "copier:CognitiveAssuranceOrchestrator.compile:claim:id",
+      "copier:MetacognitivePlanner.plan:claims:id",
+      "copier:MixedMethodExecutor.execute:plan:id",
       "count:claims",
+      "field:claim.evidence_needs",
       "field:claim.id",
-      "field:claim.statement",
-      "field:claim.evidence_needs"
+      "field:claim.statement"
     ]
   },
   {
     "source": [
       "mixed_methods.py",
-      "_admit_claims",
+      "_admit_claim",
       "declared-bound",
       "minimum=1"
     ],
@@ -9748,23 +9858,26 @@
   {
     "source": [
       "mixed_methods.py",
-      "_admit_claims",
+      "_admit_claim",
       "admission",
-      "_admit_length(claim.statement, 3000, 'claim ID/statement length invalid', minimum=1)"
+      "_admit_length(held('statement'), 3000, 'claim ID/statement length invalid', minimum=1)"
     ],
     "disposition": "resource",
-    "reason": "Explicit native-count/length or encoded-size admission call before its operation.",
+    "reason": "Explicit native-count/length or encoded-size admission call before its operation.; the copier reads the same declared bound before it copies (repair 2)",
     "probes": [
+      "copier:CognitiveAssuranceOrchestrator.compile:claim:statement",
+      "copier:MetacognitivePlanner.plan:claims:statement",
+      "copier:MixedMethodExecutor.execute:plan:statement",
       "count:claims",
+      "field:claim.evidence_needs",
       "field:claim.id",
-      "field:claim.statement",
-      "field:claim.evidence_needs"
+      "field:claim.statement"
     ]
   },
   {
     "source": [
       "mixed_methods.py",
-      "_admit_claims",
+      "_admit_claim",
       "declared-bound",
       "minimum=1"
     ],
@@ -9780,23 +9893,26 @@
   {
     "source": [
       "mixed_methods.py",
-      "_admit_claims",
+      "_admit_claim",
       "admission",
-      "_admit_length(claim.evidence_needs, 5, 'claim requires 1\u20135 evidence needs', minimum=1)"
+      "_admit_length(needs, 5, 'claim requires 1\u20135 evidence needs', minimum=1)"
     ],
     "disposition": "resource",
-    "reason": "Explicit native-count/length or encoded-size admission call before its operation.",
+    "reason": "Explicit native-count/length or encoded-size admission call before its operation.; the copier reads the same declared bound before it copies (repair 2)",
     "probes": [
+      "copier:CognitiveAssuranceOrchestrator.compile:claim:evidence_needs",
+      "copier:MetacognitivePlanner.plan:claims:evidence_needs",
+      "copier:MixedMethodExecutor.execute:plan:evidence_needs",
       "count:claims",
+      "field:claim.evidence_needs",
       "field:claim.id",
-      "field:claim.statement",
-      "field:claim.evidence_needs"
+      "field:claim.statement"
     ]
   },
   {
     "source": [
       "mixed_methods.py",
-      "_admit_claims",
+      "_admit_claim",
       "declared-bound",
       "minimum=1"
     ],
@@ -9812,13 +9928,13 @@
   {
     "source": [
       "mixed_methods.py",
-      "_admit_claims",
+      "_admit_claim",
       "comparison",
       "type(need) is str"
     ],
     "disposition": "semantic",
-    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
-    "probes": []
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
   },
   {
     "source": [
@@ -10694,6 +10810,32 @@
   {
     "source": [
       "orchestration.py",
+      "CognitiveAssuranceOrchestrator.execution_artifact",
+      "declared-bound",
+      "cap=bound['max_bytes']"
+    ],
+    "disposition": "resource",
+    "reason": "The artifact's declared byte cap is handed to the round trip and to the encoder, which admit the exact encoded size before any output.",
+    "probes": [
+      "copier:CognitiveAssuranceOrchestrator.execution_artifact:run_result:an oversized run"
+    ]
+  },
+  {
+    "source": [
+      "orchestration.py",
+      "CognitiveAssuranceOrchestrator.execution_artifact",
+      "declared-bound",
+      "cap=bound['max_bytes']"
+    ],
+    "disposition": "resource",
+    "reason": "The artifact's declared byte cap is handed to the round trip and to the encoder, which admit the exact encoded size before any output.",
+    "probes": [
+      "copier:CognitiveAssuranceOrchestrator.execution_artifact:run_result:an oversized run"
+    ]
+  },
+  {
+    "source": [
+      "orchestration.py",
       "CognitiveAssuranceOrchestrator.assess",
       "slice",
       ":12"
@@ -10942,6 +11084,28 @@
       "snapshot.py",
       "_admit_array",
       "comparison",
+      "name == 'tolist'"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_admit_array",
+      "comparison",
+      "convert is None"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_admit_array",
+      "comparison",
       "len(buffer.shape) > DEPTH"
     ],
     "disposition": "resource",
@@ -11036,6 +11200,41 @@
   {
     "source": [
       "snapshot.py",
+      "_text_key",
+      "comparison",
+      "type(key) is not str"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_text_keys",
+      "comparison",
+      "2 * len(value) > MAX_ITEMS"
+    ],
+    "disposition": "resource",
+    "reason": "A raw mapping's key count against the visit budget, before a key is read.",
+    "probes": [
+      "text-keys:budget"
+    ]
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_admit_fields",
+      "comparison",
+      "type(value) is dict"
+    ],
+    "disposition": "semantic",
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
+    "probes": []
+  },
+  {
+    "source": [
+      "snapshot.py",
       "_admit_fields",
       "comparison",
       "'max_bytes' not in field.metadata"
@@ -11063,8 +11262,8 @@
       "type(value) is dict"
     ],
     "disposition": "semantic",
-    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
-    "probes": []
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
   },
   {
     "source": [
@@ -11217,6 +11416,66 @@
       "reply-count:critique",
       "candidates",
       "obligations"
+    ]
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_declared",
+      "comparison",
+      "entry is not None"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_declared",
+      "comparison",
+      "entry[0] is kind"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_admit_held",
+      "comparison",
+      "entry is not None"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_admit_held",
+      "comparison",
+      "entry[1] is not None"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_admit_held",
+      "comparison",
+      "held > entry[1][0]"
+    ],
+    "disposition": "resource",
+    "reason": "How many records of one declared type a collection holds, by exact type, before the walker copies any item.",
+    "probes": [
+      "copier:CognitiveAssuranceOrchestrator.compile:variants:one hundred and one",
+      "copier:CognitiveAssuranceOrchestrator.execute:compiled:twenty-one",
+      "copier:LLMProposer.propose:hypotheses:thirty-three",
+      "copier:MixedMethodExecutor.execute:plan:twenty-one"
     ]
   },
   {
@@ -11389,6 +11648,33 @@
       "snapshot.py",
       "_walk",
       "comparison",
+      "count > MAX_ITEMS - budget[0]"
+    ],
+    "disposition": "resource",
+    "reason": "One bounded raw walker before child reads; known container lower bounds use native length first. Depth paths retain the existing depth inventory.",
+    "probes": [
+      "walk:list",
+      "walk:mapping",
+      "walk:text",
+      "walk:depth"
+    ]
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_walk",
+      "comparison",
+      "bound is not None"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_walk",
+      "comparison",
       "type(name) is str"
     ],
     "disposition": "semantic",
@@ -11449,17 +11735,6 @@
       "snapshot.py",
       "_walk",
       "comparison",
-      "type(key) is not str"
-    ],
-    "disposition": "semantic",
-    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
-    "probes": []
-  },
-  {
-    "source": [
-      "snapshot.py",
-      "_walk",
-      "comparison",
       "budget[0] >= MAX_ITEMS"
     ],
     "disposition": "resource",
@@ -11509,6 +11784,28 @@
       "snapshot.py",
       "_walk",
       "comparison",
+      "declared is not None"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_walk",
+      "comparison",
+      "declared[2] is not None"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_walk",
+      "comparison",
       "kinds[field.name][0] == 'code'"
     ],
     "disposition": "semantic",
@@ -11520,50 +11817,7 @@
       "snapshot.py",
       "_walk",
       "comparison",
-      "len(value) > MAX_ITEMS - budget[0]"
-    ],
-    "disposition": "resource",
-    "reason": "One bounded raw walker before child reads; known container lower bounds use native length first. Depth paths retain the existing depth inventory.",
-    "probes": [
-      "walk:list",
-      "walk:mapping",
-      "walk:text",
-      "walk:depth"
-    ]
-  },
-  {
-    "source": [
-      "snapshot.py",
-      "_walk",
-      "comparison",
       "kind is tuple"
-    ],
-    "disposition": "semantic",
-    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
-    "probes": []
-  },
-  {
-    "source": [
-      "snapshot.py",
-      "_walk",
-      "comparison",
-      "2 * len(value) > MAX_ITEMS - budget[0]"
-    ],
-    "disposition": "resource",
-    "reason": "One bounded raw walker before child reads; known container lower bounds use native length first. Depth paths retain the existing depth inventory.",
-    "probes": [
-      "walk:list",
-      "walk:mapping",
-      "walk:text",
-      "walk:depth"
-    ]
-  },
-  {
-    "source": [
-      "snapshot.py",
-      "_walk",
-      "comparison",
-      "type(key) is not str"
     ],
     "disposition": "semantic",
     "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
@@ -12192,6 +12446,43 @@
     "disposition": "semantic",
     "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
     "probes": []
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "plain",
+      "comparison",
+      "cap is not None"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "plain",
+      "admission",
+      "_admit_json(value, cap=cap, error=error)"
+    ],
+    "disposition": "resource",
+    "reason": "The declared encoded-size cap of what the value fills (an artifact) is admitted exactly before the round trip builds any output.",
+    "probes": [
+      "copier:CognitiveAssuranceOrchestrator.execution_artifact:run_result:an oversized run"
+    ]
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "plain",
+      "declared-bound",
+      "cap=cap"
+    ],
+    "disposition": "resource",
+    "reason": "The artifact's declared byte cap is handed to the round trip and to the encoder, which admit the exact encoded size before any output.",
+    "probes": [
+      "copier:CognitiveAssuranceOrchestrator.execution_artifact:run_result:an oversized run"
+    ]
   },
   {
     "source": [

@@ -33,9 +33,11 @@ def _native(value: Any, *, where: str) -> Any:
     (``snapshot.plain``: a NaN, a set, bytes, a subclass of a JSON type or any other object is refused, never
     converted). Each value is then read by the rule for its kind."""
     if _has_member(value, "tolist"):
-        buffer = _admit_array(value, where=where)
+        buffer, tolist = _admit_array(value, where=where)
         try:
-            return plain(value.tolist(), where=where)
+            # the native slot that was measured, called on the value: never ``value.tolist``, which an instance
+            # attribute can shadow (review 2 of PR #8's fourth follow-up, finding 1)
+            return plain(tolist(value), where=where)
         finally:
             buffer.release()
     return plain(value, where=where)

@@ -41,8 +41,9 @@ from .codes import (ASSURANCE_BLOCKED, COMPILE_BLOCKED, EXECUTION_NOT_APPROVED, 
                     affirmed, refusal, settled, unclaimed)
 from .epistemic import CrossMethodConflictGate, ScopedAssertion, assertions_sha256, checked_report, findings_state
 from .metacognition import (MethodVariant, MetacognitiveMethodSelector,
-                            ProblemSignature, SelectionDecision, checked_selection)
-from .mixed_methods import (ENGINE_SPECS, ClaimIR, MethodPlan, MethodRouter, MixedMethodExecutor, step_digest)
+                            ProblemSignature, SelectionDecision, checked_selection, _admit_variants)
+from .mixed_methods import (ENGINE_SPECS, ClaimIR, MethodPlan, MethodRouter, MixedMethodExecutor, step_digest,
+                            _admit_models)
 from .snapshot import publish, record_data, fresh, issue, issued, number, plain, record, returned, snapshot, text
 
 
@@ -167,8 +168,8 @@ class CognitiveAssuranceOrchestrator:
         claim = snapshot(claim, where="claim")
         context = snapshot(context, where="context")
         standard = snapshot(standard, where="standard")
-        variants = snapshot(variants, where="variants")
-        variant_models = snapshot(variant_models, where="variant_models")
+        variants = snapshot(variants, where="variants", bound=_admit_variants)
+        variant_models = snapshot(variant_models, where="variant_models", bound=_admit_models)
         max_supplemental = snapshot(max_supplemental, where="max_supplemental")
         number(max_supplemental, where="max_supplemental")
         if context.risk < standard.risk or context.domain != standard.id:
@@ -285,12 +286,15 @@ class CognitiveAssuranceOrchestrator:
     @staticmethod
     def execution_artifact(run_result: Mapping[str, Any], *, actor: str,
                            claim_id: str) -> EvidenceArtifact:
-        run_result = plain(run_result, where="run_result")
+        # The artifact's declared byte cap bounds the round trip and the encoding that fill it: the encoder admits the
+        # exact size before it builds any output (review 2 of the fourth follow-up, finding 6).
+        bound = EvidenceArtifact.__dataclass_fields__["content"].metadata
+        run_result = plain(run_result, where="run_result", cap=bound["max_bytes"], error=bound["size_error"])
         actor = text(actor, where="actor, the producer")
         claim_id = text(claim_id, where="claim_id")
         if not actor or not claim_id:
             raise ValueError("actor and claim must be supplied")
-        payload = canonical_json(run_result)
+        payload = canonical_json(run_result, cap=bound["max_bytes"], error=bound["size_error"])
         return publish(EvidenceArtifact(id=f"execution:{claim_id}", content=payload, kind="report",
                                 claimed_by=actor, source_ref=f"g6:execution:{sha256(payload)}",
                                 claim_id=claim_id), where="CognitiveAssuranceOrchestrator.execution_artifact")

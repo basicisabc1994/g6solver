@@ -29,7 +29,7 @@ from g6.core import door
 from .assurance import canonical_json, sha256
 from .codes import _is_type
 from .codes import NO_PROBE, OBJECTS, STEP_FAILED, affirmed, claims, refusal, settled, unclaimed
-from .snapshot import publish, record_data, FrozenMap, _admit_json, _admit_length, fresh, json_reply, number, plain, record, returned, snapshot, text
+from .snapshot import publish, record_data, FrozenMap, _admit_json, _admit_length, bounded, fresh, json_reply, number, plain, record, returned, snapshot, text
 
 
 @record
@@ -80,8 +80,16 @@ class Updater(Protocol):
     def update(self, beliefs: Mapping[str, float], probe: Probe, positive: bool) -> dict[str, float]: ...
 
 
+#: The belief rule's bound on competing hypotheses (how many, and the refusal), declared once: the rule's own
+#: admission and every copier of a collection of hypotheses read it.
+HYPOTHESIS_CAP = (32, "supply 2–32 competing hypotheses")
+
+
 def _admit_hypotheses(value: Any) -> None:
-    _admit_length(value, 32, "supply 2–32 competing hypotheses", minimum=2)
+    _admit_length(value, *HYPOTHESIS_CAP, minimum=2)
+
+
+bounded(Hypothesis, most=HYPOTHESIS_CAP)
 
 
 def _beliefs(beliefs: Mapping[str, float]) -> dict[str, float]:
@@ -105,7 +113,7 @@ def _beliefs(beliefs: Mapping[str, float]) -> dict[str, float]:
 
 def check_beliefs(hypotheses: Sequence[Hypothesis]) -> dict[str, float]:
     _admit_hypotheses(hypotheses)
-    hypotheses = snapshot(hypotheses, where="hypotheses")
+    hypotheses = snapshot(hypotheses, where="hypotheses", bound=_admit_hypotheses)
     ids = [h.id for h in hypotheses]
     if any(not h.statement for h in hypotheses) or len(set(ids)) != len(ids):
         raise ValueError("hypothesis IDs must be nonempty and unique; statements nonempty")
@@ -140,7 +148,7 @@ def _likelihood(probe: Probe, hypothesis_id: str, positive: bool) -> float:
 def expected_information_gain(beliefs: Mapping[str, float], probe: Probe) -> float:
     """Mutual information I(H;O) under an explicitly assumed binary likelihood model."""
     _admit_hypotheses(beliefs)
-    beliefs = snapshot(beliefs, where="beliefs")
+    beliefs = snapshot(beliefs, where="beliefs", bound=_admit_hypotheses)
     beliefs = _beliefs(beliefs)  # the rule priors follow, where the beliefs enter
     probe = snapshot(probe, where="probe")
     _validate_probe(probe, beliefs)
@@ -166,7 +174,7 @@ class InformationGainSelector:
 
     def rank(self, beliefs: Mapping[str, float], probes: Sequence[Probe], budget: float) -> list[dict]:
         _admit_hypotheses(beliefs)
-        beliefs = snapshot(beliefs, where="beliefs")
+        beliefs = snapshot(beliefs, where="beliefs", bound=_admit_hypotheses)
         beliefs = _beliefs(beliefs)  # the rule priors follow, where the beliefs enter
         probes = snapshot(probes, where="probes")
         budget = snapshot(budget, where="budget")
@@ -188,7 +196,7 @@ class InformationGainSelector:
 class BayesianUpdater:
     def update(self, beliefs: Mapping[str, float], probe: Probe, positive: bool) -> dict[str, float]:
         _admit_hypotheses(beliefs)
-        beliefs = snapshot(beliefs, where="beliefs")
+        beliefs = snapshot(beliefs, where="beliefs", bound=_admit_hypotheses)
         beliefs = _beliefs(beliefs)  # the rule priors follow, where the beliefs enter
         probe = snapshot(probe, where="probe")
         positive = snapshot(positive, where="positive")
@@ -209,7 +217,7 @@ class StaticProposer:
 
     def propose(self, objective: str, hypotheses: Sequence[Hypothesis], history: Sequence[dict]) -> list[Probe]:
         objective = text(objective, where="objective")
-        hypotheses = snapshot(hypotheses, where="hypotheses")
+        hypotheses = snapshot(hypotheses, where="hypotheses", bound=_admit_hypotheses)
         history = snapshot(history, where="history")
         beliefs = check_beliefs(hypotheses)
         probes = _proposed(snapshot(self.probes, where="probes"))
@@ -318,7 +326,7 @@ class MLAcquisitionSelector:
 
     def rank(self, beliefs: Mapping[str, float], probes: Sequence[Probe], budget: float) -> list[dict]:
         _admit_hypotheses(beliefs)
-        beliefs = snapshot(beliefs, where="beliefs")
+        beliefs = snapshot(beliefs, where="beliefs", bound=_admit_hypotheses)
         beliefs = _beliefs(beliefs)  # the rule priors follow, where the beliefs enter
         probes = snapshot(probes, where="probes")
         budget = snapshot(budget, where="budget")
@@ -460,7 +468,7 @@ class CognitiveAgent:
 
     def run(self, objective: str, hypotheses: Sequence[Hypothesis], *, budget: float, max_steps: int = 3) -> dict:
         objective = text(objective, where="objective")
-        hypotheses = snapshot(hypotheses, where="hypotheses")
+        hypotheses = snapshot(hypotheses, where="hypotheses", bound=_admit_hypotheses)
         budget = snapshot(budget, where="budget")
         max_steps = snapshot(max_steps, where="max_steps")
         tools = snapshot(self.tools, where="tools")

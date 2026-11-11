@@ -30,7 +30,7 @@ from .engine import BayesianUpdater, Hypothesis, InformationGainSelector, Probe,
 from .mixed_methods import ClaimIR, MethodRouter
 from .metacognition import MetacognitiveMethodSelector, ProblemSignature, MethodVariant
 from .assurance import DOCUMENT_FIELDS
-from .snapshot import publish, canonical_json, plain, _walk
+from .snapshot import publish, canonical_json, plain, _text_keys, _walk
 
 #: Every model here reads a caller's data, after the boundary has read it raw: strict (no field converted from another
 #: kind) and closed (no field it does not declare).
@@ -173,6 +173,9 @@ def _admit_input(given: Any, *, model: type[BaseModel] = CognitiveInput) -> None
             values = value
         else:
             continue
+        # Raw keys pass the one text-key reader before the schema's names are looked up among them: a lookup hashes
+        # and compares, and a foreign key's own ``__eq__`` would run (review 2 of the fourth follow-up, finding 2).
+        _text_keys(values, path)
         for name, info in cls.model_fields.items():
             if name not in values:
                 continue

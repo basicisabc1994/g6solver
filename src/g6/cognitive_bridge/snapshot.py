@@ -58,12 +58,18 @@ MAX_ITEMS = 100_000
 MAX_SIZE = 4_000_000
 
 
-def _admit_array(value: Any, *, where: str) -> memoryview:
-    """Admit native conversion from buffer shape and byte count before tolist."""
+def _admit_array(value: Any, *, where: str) -> tuple[memoryview, Callable[[Any], Any]]:
+    """Admit native conversion from buffer shape and byte count before tolist.
+
+    Hands back the pinned buffer and the native ``tolist`` slot it admitted: the
+    caller converts by calling that slot on the value, never by a lookup on the
+    value, which an instance attribute can shadow.
+    """
     # A small native buffer cannot bound a Python override of tolist, attribute
     # access, or buffer export. Resolve slots from the actual MRO without
     # invoking any of them; only native descriptors have this storage contract.
     pending = {'tolist', '__getattribute__', '__buffer__'}
+    convert = None
     for base in _type_mro(type(value)):
         members = type.__dict__['__dict__'].__get__(base)
         if any(type(key) is not str for key in members):
@@ -75,7 +81,11 @@ def _admit_array(value: Any, *, where: str) -> memoryview:
                           (types.MethodDescriptorType, types.WrapperDescriptorType))
                 if not _is_type(type(member), native):
                     raise NotPlainData(where, f"array size cannot be admitted before conversion: non-native {name}")
+                if name == 'tolist':
+                    convert = member
                 pending.remove(name)
+    if convert is None:
+        raise NotPlainData(where, "array size cannot be admitted before conversion: no native tolist")
     try:
         buffer = memoryview(value)
     except (BufferError, TypeError, ValueError):
@@ -94,7 +104,7 @@ def _admit_array(value: Any, *, where: str) -> memoryview:
     except BaseException:
         buffer.release()
         raise
-    return buffer  # keep native storage pinned through conversion
+    return buffer, convert  # keep native storage pinned through conversion, by the slot that was measured
 
 
 def _admit_bytes(value: Any, cap: int, message: str) -> None:
@@ -105,8 +115,26 @@ def _admit_bytes(value: Any, cap: int, message: str) -> None:
             raise ValueError(message)
 
 
+def _text_key(key: Any, where: str, note: str = "") -> str:
+    """The one reader of a mapping's key: text, by exact type. Nothing looks a raw key up, compares it or hashes it
+    before this has read it, so a key's own ``__eq__`` and ``__hash__`` never run for G6."""
+    if type(key) is not str:
+        raise NotPlainData(where, f"a {_named(key)} key is not text{note}")
+    return key
+
+
+def _text_keys(value: Any, where: str) -> None:
+    """Every key of a raw ``dict`` through :func:`_text_key`, within the visit budget, before any lookup in it."""
+    if 2 * len(value) > MAX_ITEMS:
+        raise NotPlainData(where, "size exceeds the bridge's limit")
+    for key in value:
+        _text_key(key, where, " (the key, which is not text)")
+
+
 def _admit_fields(value: Any, cls: type) -> None:
     """Record-local buffer bounds also precede detachment and reconstruction."""
+    if type(value) is dict:
+        _text_keys(value, cls.__name__)
     for field in dataclasses.fields(cls):
         if 'max_bytes' not in field.metadata and 'max_length' not in field.metadata:
             continue
@@ -127,6 +155,36 @@ def _admit_length(value: Any, cap: int | None, error: str, *, minimum: int = 0) 
     if _is_type(type(value), (str, list, tuple, dict, FrozenMap)):
         if len(value) < minimum or (cap is not None and len(value) > cap):
             raise ValueError(error)
+
+
+#: The bounds a record type declares for every copy of it (:func:`bounded`): the type, how many of them one list or
+#: tuple may hold (the cap and its refusal), and its own check of one record. Keyed by the type's identity.
+_BOUNDED: dict[int, tuple[type, tuple[int, str] | None, Callable[[Any], None] | None]] = {}
+
+
+def bounded(cls: type, *, most: tuple[int, str] | None = None, admit: Callable[[Any], None] | None = None) -> None:
+    """Declare, once and beside the rule that owns them, the bounds of the record type ``cls``: ``most``, how many of
+    them one list or tuple may hold (the cap and its refusal), and ``admit``, the check of one record's own fields.
+    The walker reads them wherever it detaches a caller's value (:func:`_walk`), before it copies the collection or
+    the record, so no entry can copy first; a caller's own admission is a second check, never the only one."""
+    _BOUNDED[id(cls)] = (cls, most, admit)
+
+
+def _declared(kind: type) -> tuple[type, tuple[int, str] | None, Callable[[Any], None] | None] | None:
+    entry = _BOUNDED.get(id(kind))
+    return entry if entry is not None and entry[0] is kind else None
+
+
+def _admit_held(value: Any, where: str) -> None:
+    """How many records of each declared type a list or tuple holds, by exact type, before any item is copied. Past
+    a cap, the boundary's refusal (:class:`NotPlainData`), saying the rule's own words."""
+    counts: dict[int, int] = {}
+    for item in value:
+        entry = _declared(type(item))
+        if entry is not None and entry[1] is not None:
+            held = counts[id(entry[0])] = counts.get(id(entry[0]), 0) + 1
+            if held > entry[1][0]:
+                raise NotPlainData(where, entry[1][1])
 
 
 def _prompt_value(value: Any, *, where: str) -> Any:
@@ -166,13 +224,23 @@ def generated(count: int, make: Callable[[int], Any], *, where: str) -> tuple[An
 def _walk(value: Any, where: str, depth: int = 0, *, budget: list[int] | None = None,
           schema: type | None = None, capability: bool = False,
           models: tuple[type, ...] = (), truncate: bool = False, outer: bool = False,
-          preflight: Callable[[str, Any], None] | None = None) -> Any:
+          preflight: Callable[[str, Any], None] | None = None,
+          bound: Callable[[Any], None] | None = None) -> Any:
     """Detach input before any other traversal, counting every reach before reading it.
 
     Repeated references spend the budget again. Unknown kinds are opaque here:
     the existing kind readers refuse them, without invoking their protocols.
     Record callbacks are references; only their declared data fields are walked.
     All subsequent validation/projection/copy walks receive this detached tree.
+
+    The copier is the admitter. Where it detaches a caller's value (every walk
+    but a record's own making and a publication, which pass ``truncate``), it
+    reads the declared bounds of what it is about to copy, before it copies it:
+    ``bound``, the bound the caller declares for this value; how many records
+    of a declared type a list or tuple holds; and a declared record type's own
+    check (:func:`bounded`). A record's field caps are read on every walk.
+    What a record type declares is refused as the boundary refuses anything
+    (:class:`NotPlainData`, with the rule's own words), wherever the walk is.
     """
     if budget is None:
         budget = [0, 0]
@@ -189,6 +257,14 @@ def _walk(value: Any, where: str, depth: int = 0, *, budget: list[int] | None = 
         raise NotPlainData(where, "size exceeds the bridge's limit")
     if capability:
         return value
+    count = len(value) if _is_type(kind, ARRAYS) else 2 * len(value) if _is_type(kind, OBJECTS) else 0
+    if count > MAX_ITEMS - budget[0]:
+        raise NotPlainData(where, "size exceeds the bridge's limit")
+    if not truncate:
+        if bound is not None:
+            bound(value)
+        if _is_type(kind, ARRAYS):
+            _admit_held(value, where)
     if outer:
         # Only the block's outer mapping uses the registry's mapping protocol.
         # Enumerate it here so neither unpacking nor a second raw walk precedes
@@ -212,9 +288,7 @@ def _walk(value: Any, where: str, depth: int = 0, *, budget: list[int] | None = 
             keys = dict.keys(value) if native else value.keys()
             items = {}
             for key in keys:
-                key = _walk(key, f"{where} (a key)", depth + 1, budget=budget)
-                if type(key) is not str:
-                    raise NotPlainData(where, f"a {_named(key)} key is not text")
+                key = _text_key(_walk(key, f"{where} (a key)", depth + 1, budget=budget), where)
                 if budget[0] >= MAX_ITEMS:
                     raise NotPlainData(where, "size exceeds the bridge's limit")
                 item = dict.__getitem__(value, key) if native else value[key]
@@ -227,6 +301,8 @@ def _walk(value: Any, where: str, depth: int = 0, *, budget: list[int] | None = 
         except Exception as exc:
             raise NotPlainData(where, f"cannot copy the outer mapping: {exc}") from None
     if _is_type(kind, models):
+        # a model's fields are looked up in its own field mapping: its keys are read first, as any raw mapping's
+        _text_keys(object.__getattribute__(value, "__dict__"), where)
         fields = {}
         for name in kind.model_fields:
             try:
@@ -239,6 +315,14 @@ def _walk(value: Any, where: str, depth: int = 0, *, budget: list[int] | None = 
     if schema is not None or _is_record(value):
         cls = schema if schema is not None else kind
         _admit_fields(value, cls)
+        declared = None if truncate else _declared(cls)
+        if declared is not None and declared[2] is not None:
+            try:
+                declared[2](value)
+            except NotPlainData:
+                raise
+            except ValueError as exc:  # the rule's own words, as the boundary's refusal of what it will not copy
+                raise NotPlainData(where, str(exc)) from None
         made = object.__new__(cls)
         kinds = _kinds(cls)
         for field in dataclasses.fields(cls):
@@ -254,19 +338,14 @@ def _walk(value: Any, where: str, depth: int = 0, *, budget: list[int] | None = 
             object.__setattr__(made, field.name, item)
         return made
     if _is_type(kind, ARRAYS):
-        if len(value) > MAX_ITEMS - budget[0]:
-            raise NotPlainData(where, "size exceeds the bridge's limit")
         items = [_walk(item, f"{where}[{index}]", depth + 1, budget=budget, models=models, truncate=truncate)
                  for index, item in enumerate(value)]
         return tuple(items) if kind is tuple else items
     if _is_type(kind, OBJECTS):
-        if 2 * len(value) > MAX_ITEMS - budget[0]:
-            raise NotPlainData(where, "size exceeds the bridge's limit")
         items = {}
         for key, item in value.items():
-            key = _walk(key, f"{where} (a key)", depth + 1, budget=budget)
-            if type(key) is not str:
-                raise NotPlainData(where, f"a {_named(key)} key is not text (the key, which is not text)")
+            key = _text_key(_walk(key, f"{where} (a key)", depth + 1, budget=budget), where,
+                            " (the key, which is not text)")
             items[key] = _walk(item, f"{where}.{key}", depth + 1, budget=budget, models=models, truncate=truncate)
         return FrozenMap(items) if kind is FrozenMap else items
     return value
@@ -415,15 +494,19 @@ def _same(value: Any, out: Any, depth: int) -> bool:
     return type(out) is kind and out == value
 
 
-def plain(value: Any, *, where: str, _depth: int = 0) -> Any:
+def plain(value: Any, *, where: str, _depth: int = 0, cap: int | None = None, error: str | None = None) -> Any:
     """``value`` as plain JSON data, the one conversion of what enters the bridge: a round trip through
     :func:`canonical_json`, refused (:class:`NotPlainData`, naming ``where`` and the path) unless ``value`` survives it
     unchanged. A new value, which shares nothing with ``value``. ``_depth`` is where ``value`` stands in what it entered
-    with, when a walk hands it a subtree; the bound counts from there."""
+    with, when a walk hands it a subtree; the bound counts from there. ``cap`` and ``error`` are the declared size of
+    what the value is encoded into (an artifact's byte cap) and its refusal: the exact encoded size is admitted before
+    the round trip builds any output."""
     value = _walk(value, where, _depth)
     found = _not_json(value, where, _depth)
     if found:
         raise NotPlainData(*found)
+    if cap is not None:
+        _admit_json(value, cap=cap, error=error)
     out = json.loads(canonical_json(value))
     if not _same(value, out, _depth):
         raise NotPlainData(where, "it does not survive the bridge's canonical encoder unchanged")
@@ -690,11 +773,12 @@ def _taken(value: Any, where: str, depth: int) -> Any:
     return _frozen(plain(value, where=where, _depth=depth), depth)
 
 
-def snapshot(value: Any, *, where: str = "a value") -> Any:
+def snapshot(value: Any, *, where: str = "a value", bound: Callable[[Any], None] | None = None) -> Any:
     """A caller's value as the bridge takes it, where it enters (``where`` names it in a refusal): plain JSON data,
     read-only, and bridge records (in lists and mappings too), each made again so it shares nothing with the caller's.
-    Anything else is refused (:class:`NotPlainData`)."""
-    return _taken(_walk(value, where), where, 0)
+    Anything else is refused (:class:`NotPlainData`). ``bound`` is the declared bound of what is copied (a collection's
+    count cap, a model's size cap): the walker reads it before it copies the value."""
+    return _taken(_walk(value, where, bound=bound), where, 0)
 
 
 def fresh(value: Any, *, where: str = "a copy") -> Any:

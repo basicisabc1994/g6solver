@@ -18,8 +18,8 @@ from typing import Any, Callable, Mapping, Sequence
 from .assurance import canonical_json, is_risk, sha256
 from .codes import _is_type
 from .codes import MODEL_MISSING, OBLIGATION_NOT_PLANNED, SELECTION_INCOMPLETE, affirmed, only_fields, refusal, settled
-from .mixed_methods import ENGINE_SPECS, ENGINE_OP_VARIANTS, ClaimIR, MethodRouter, MethodPlan
-from .snapshot import publish, record_data, _admit_length, fresh, issue, number, record, returned, snapshot
+from .mixed_methods import ENGINE_SPECS, ENGINE_OP_VARIANTS, ClaimIR, MethodRouter, MethodPlan, _admit_claims
+from .snapshot import publish, record_data, _admit_length, bounded, fresh, issue, number, record, returned, snapshot
 
 CAPABILITIES = frozenset(ENGINE_SPECS)
 #: The splits a trial can come from (``EvaluatedTrial.split``); a selector learns from the ones its ``learn_from`` names.
@@ -111,6 +111,23 @@ class MethodVariant:
         trial credits a variant only when it names this digest."""
         return publish(sha256(canonical_json({"kind": self.kind, "method": self.method, "representation": self.representation,
                                       "engine": self.engine, "op": self.op})), where="MethodVariant.definition_digest")
+
+
+#: The selector's search bounds (how many, and the refusal), declared once: the selector's own admission and every
+#: copier of its candidates or its obligations read them.
+VARIANT_CAP = (100, "method selector cap: at most 100 explicit variants")
+OBLIGATION_CAP = (5, "method selector cap: at most 5 obligations")
+
+
+def _admit_variants(variants: Sequence[MethodVariant]) -> None:
+    _admit_length(variants, *VARIANT_CAP)
+
+
+def _admit_obligations(required_methods: Sequence[str]) -> None:
+    _admit_length(required_methods, *OBLIGATION_CAP)
+
+
+bounded(MethodVariant, most=VARIANT_CAP)
 
 
 @record
@@ -293,11 +310,11 @@ class MetacognitiveMethodSelector:
     def select(self, context: ProblemSignature, variants: Sequence[MethodVariant],
                *, required_methods: Sequence[str],
                max_optional: int = 0) -> SelectionDecision:
-        _admit_length(variants, 100, "method selector cap: at most 100 explicit variants")
-        _admit_length(required_methods, 5, "method selector cap: at most 5 obligations")
+        _admit_length(variants, *VARIANT_CAP)
+        _admit_length(required_methods, *OBLIGATION_CAP)
         context = snapshot(context, where="context")
-        variants = snapshot(variants, where="variants")
-        required_methods = snapshot(required_methods, where="required_methods")
+        variants = snapshot(variants, where="variants", bound=_admit_variants)
+        required_methods = snapshot(required_methods, where="required_methods", bound=_admit_obligations)
         max_optional = snapshot(max_optional, where="max_optional")
         trials = snapshot(self.trials, where="trials")
         learn_from = snapshot(self.learn_from, where="learn_from")
@@ -426,10 +443,10 @@ class MetacognitivePlanner:
     def plan(self, claims: Sequence[ClaimIR], context: ProblemSignature,
              variants: Sequence[MethodVariant], *,
              required_methods: Sequence[str]) -> dict[str, Any]:
-        claims = snapshot(claims, where="claims")
+        claims = snapshot(claims, where="claims", bound=_admit_claims)
         context = snapshot(context, where="context")
-        variants = snapshot(variants, where="variants")
-        required_methods = snapshot(required_methods, where="required_methods")
+        variants = snapshot(variants, where="variants", bound=_admit_variants)
+        required_methods = snapshot(required_methods, where="required_methods", bound=_admit_obligations)
         planned: MethodPlan = MethodRouter().plan(claims)
         required = set(required_methods)
         requested = {need for claim in claims for need in claim.evidence_needs}

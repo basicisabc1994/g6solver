@@ -342,6 +342,10 @@ def _converter(call) -> str:
     func = call.func
     if isinstance(func, ast.Name) and func.id in CONVERTERS:
         return func.id
+    if isinstance(func, ast.Name) and func.id == "tolist":
+        # the admitted native slot, called on the value (``tolist(value)``, review 2 of PR #8's fourth follow-up,
+        # finding 1): the same conversion ``value.tolist()`` was, listed by the same name and argument
+        return func.id
     if isinstance(func, ast.Attribute):
         if isinstance(func.value, ast.Name) and (func.value.id, func.attr) in MODULE_FUNCTIONS:
             return f"{func.value.id}.{func.attr}"
