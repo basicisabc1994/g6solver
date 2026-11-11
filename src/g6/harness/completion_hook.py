@@ -223,6 +223,11 @@ def on_stop(event: dict) -> dict:
     if step.note:      # no loop ran, so nothing but this tells the next prompt that a turn ended
         (run / TURN_ENDED).touch()
     said = step.text or step.note
+    if step.text and workflow_policy.enabled()[0]:    # after the whole report: the optional view of the task
+        from g6.harness.workflow import view
+
+        said = view.appended(asked["repo"], asked["task"], said, provider="anthropic:claude_code", loop={
+            "ending": step.ending, "error": f"[{step.code}]" if step.code else "", "run_id": run.name, "report": step.text})
     return {"systemMessage": said} if said else {}
 
 

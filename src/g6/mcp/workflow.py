@@ -22,7 +22,7 @@ import time
 from typing import Any
 
 from g6.core import cloud_consent as cloud
-from g6.harness.workflow import adapters, lifecycle, policy
+from g6.harness.workflow import adapters, lifecycle, policy, view
 from g6.harness.workflow.record import ProjectRecord, RecordUnreadable, now, project_id, workflow_source
 
 CODE = "G6_E_WORKFLOW_RECORD"
@@ -55,12 +55,55 @@ def _noted(reply: Any, note: str) -> Any:
     if not note or not isinstance(reply, dict):
         return reply
     refs, metadata = cloud.output_sources(reply), cloud.output_metadata(reply)
-    noted = {**reply, "workflow": {"note": note}}
+    noted = {**reply, "workflow": {**(reply.get("workflow") or {}), "note": note}}
     return cloud.bind_output(noted, refs, metadata=metadata) if refs is not None else noted
 
 
-def finishing(finish: Any, repo: str, task: str) -> Any:
-    """The compact step of a review job (``review_reply.finish``), followed by the record of that finished review."""
+def _provider() -> str | None:
+    """The provider of the client this reply is for; None when no client is known (then nothing is shared)."""
+    capture = cloud.current_capture()
+    return capture.client[0] if capture is not None and capture.client is not None else None
+
+
+def attach(reply: Any, built: Any, where: tuple[str, ...], project: str) -> Any:
+    """``reply`` with the view: the block after the report at ``where``, and the ``workflow`` field. The report's own
+    text is untouched and comes first. The reply keeps its sources; when the view holds workflow data, the project's
+    workflow source is added, so a later return to a provider without that grant is withheld."""
+    if not built or not isinstance(reply, dict):
+        return reply
+    refs, metadata = cloud.output_sources(reply), cloud.output_metadata(reply)
+    shown = holder = dict(reply)
+    for key in where[:-1]:
+        if not isinstance(holder.get(key), dict):
+            return reply
+        holder[key] = dict(holder[key])
+        holder = holder[key]
+    if not isinstance(holder.get(where[-1]), str):
+        return reply
+    holder[where[-1]] = view.with_block(holder[where[-1]], built)
+    shown["workflow"] = dict(built)
+    if refs is None:
+        return shown
+    extra = () if built.get("withheld") else (cloud.Source.text(
+        workflow_source(project), "workflow-view", json.dumps(built, sort_keys=True, default=str)),)
+    return cloud.bind_output(shown, (*refs, *extra), metadata=metadata)
+
+
+def _viewed(reply: Any, repo: str, task: str, where: tuple[str, ...], **given: Any) -> Any:
+    """``reply`` with this task's view attached; the reply as it was when the view is off or cannot be built."""
+    try:
+        if view.level() == "off":
+            return reply
+        project, task_id = adapters.identities(repo, task)
+        built = view.build(project, task_id, provider=_provider(), request=task, **given)
+        return attach(reply, built, where, project)
+    except Exception:  # noqa: BLE001 - optional advice never costs the person the mandatory report
+        return reply
+
+
+def finishing(finish: Any, repo: str, task: str, intent: Any = None) -> Any:
+    """The compact step of a review job (``review_reply.finish``), followed by the record of that finished review and,
+    after its whole report, the view of the task."""
     started_at, began = now(), time.monotonic()
 
     def done(reply: Any, job_id: str) -> Any:
@@ -70,6 +113,9 @@ def finishing(finish: Any, repo: str, task: str) -> Any:
         where = (shown.get("full_assessment") or {}).get("file") if isinstance(shown, dict) else None
         note = adapters.observe_review(repo, task, job_id, reply, started_at=started_at, finished_at=now(),
                                        seconds=time.monotonic() - began, saved=where)
+        if isinstance(reply, dict) and isinstance(reply.get("assessment"), dict):
+            shown = _viewed(shown, repo, task, ("assessment", "report"), assessment=reply["assessment"], intent=intent,
+                            job_id=job_id)
         return _noted(shown, note)
     return done
 
@@ -82,6 +128,8 @@ def stepped(step: Any, repo: str, task: str, session: str, base: str = "HEAD", r
     from g6.harness import completion_hook
 
     note = adapters.observe_step(repo, task, completion_hook.folder(f"mcp:{session}"), _Step(result))
+    if result.get("action") == "stop":
+        result = _viewed(result, repo, task, ("report",), loop=result)
     return _noted(result, note)
 
 

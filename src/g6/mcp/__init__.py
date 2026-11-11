@@ -313,7 +313,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             review, repo, task, requirements=requirements or [], tests=tests or [], claim=claim, sources=sources,
             base=base, expected_artifact_digest=expected_artifact_digest, timeout_s=timeout_s, intent=intent,
             proposed_checks=proposed_checks, template_instances=template_instances, search=search,
-            import_roots=import_roots or []), compact=workflow.finishing(finish, repo, task))
+            import_roots=import_roots or []), compact=workflow.finishing(finish, repo, task, intent))
 
     @server.tool()
     def g6_review_until_clean(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
