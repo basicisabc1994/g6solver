@@ -20,7 +20,7 @@ from typing import Any
 
 #: Server id -> ``module:attribute``. The attribute is the server, or a function that builds it.
 SERVERS: dict[str, str] = {"g6": "g6.mcp:build_server", "abstraction": "g6.abstraction.server:mcp"}
-#: The extra each server needs beyond the base install (``pip install 'g6[<extra>]'``).
+#: The extra each server needs beyond the base install.
 EXTRAS: dict[str, str] = {"g6": "mcp", "abstraction": "abstraction,mcp"}
 #: Argument names that would let a tool's caller answer for the person. No registered tool takes one, except those
 #: listed in ``DIALOG_EXEMPT`` with what the argument really is.
@@ -75,7 +75,8 @@ def _all(servers: Mapping[str, str] | None = None) -> dict[str, dict[str, dict[s
             out[server_id] = _tools(_load(target))
         except (Exception, SystemExit) as exc:
             extra = EXTRAS.get(server_id, "")
-            needs = f"; it needs the extra: pip install 'g6[{extra}]'" if extra else ""
+            needs = (f"; it needs the extra: pip install 'g6[{extra}] @ git+https://github.com/basicisabc1994/g6solver'"
+                     if extra else "")
             raise RegistrationError(f"the MCP server {server_id!r} ({target}) could not be recorded{needs}. "
                                     f"{type(exc).__name__}: {exc}") from exc
     return out

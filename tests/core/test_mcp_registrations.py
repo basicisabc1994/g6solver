@@ -87,13 +87,13 @@ def test_a_server_that_cannot_be_imported_fails_loudly(monkeypatch: pytest.Monke
     monkeypatch.setitem(registrations.EXTRAS, "broken", "some-extra")
     with pytest.raises(registrations.RegistrationError) as caught:
         registrations.recorded(servers)
-    assert "'broken'" in str(caught.value) and "g6[some-extra]" in str(caught.value)
+    assert "'broken'" in str(caught.value) and "g6[some-extra] @ git+https://" in str(caught.value)
 
     def gone(target: str) -> object:
         raise SystemExit("g6-mcp needs the MCP extra")
 
     monkeypatch.setattr(registrations, "_load", gone)
-    with pytest.raises(registrations.RegistrationError, match="g6\\[mcp\\]"):
+    with pytest.raises(registrations.RegistrationError, match="g6\\[mcp\\] @ git"):
         registrations.recorded({"g6": registrations.SERVERS["g6"]})
 
 
