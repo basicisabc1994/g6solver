@@ -95,18 +95,30 @@ settings mechanism. Rollback restores that property's saved value and preserves 
 prints a complete JSON object so the exact property, padding and quoting can be inspected before applying it.
 No new G6 CLI command is added.
 
-Review 1 found three wrapper failures: accepted leading-hyphen tokens can stop renderer startup, a blocked observer
-stdin write can exceed the intended deadline, and PowerShell invocation can change an explicit renderer exit code.
-Repair 1 did not clear the wrapper root's full timing inventory, so that root was reverted as a unit. These three
-failures remain open; the forwarding and timing statements below describe the intended contract, not an established
-guarantee for these cases. The generation and window-isolation repairs remain applied.
+The wrapper starts the original command first and hands it the original stdin bytes exactly once. The command keeps
+the caller's own stdout and stderr, so its bytes arrive as it writes them, and its exit code is the wrapper's. Every
+option value in the generated command is attached to its option, so an accepted token such as `--` or `-local` is a
+value on every shell; the PowerShell form passes the exit code on explicitly. A renderer failure does not suppress a
+valid observation. A recursion marker prevents nested wrappers.
 
-The wrapper is intended to forward the original stdin bytes exactly once to the original command, preserving its stdout,
-stderr and exit code, with a separate observer process under a 0.75-second budget. A renderer failure does not suppress a
-valid observation. A recursion marker prevents nested wrappers. Binding-generation lookup is bounded and an unavailable
-binding drops the observation; this does not repair the existing observer IPC deadline.
-The observer has a 1 MiB parsing limit. It persists only allow-listed numbers and checked reset times from `rate_limits`,
-plus the read time in its capture file. It never stores account or session identifiers, repository content or raw input.
+The observer is a detached process of its own, started beside the renderer and never ahead of it. The wrapper's own
+interpreter reads no binding, parses nothing and opens no cache. The observer is told the input's length, reads the
+binding generation before it reads the input, and has 0.75 seconds from its start for the lookup, the input, parsing
+and writing; then it ends itself. The wrapper never stops an observer. After the renderer has ended it stays at most
+0.4 seconds for an observer that has not ended, then leaves it to finish by itself: the wrapper's exit, never the
+renderer's output, can trail the renderer by up to that long. An observation that ends after the wrapper has left
+is in the cache for the next report, carrying the time its input was read; a reading
+past its age limit is shown as stale whenever it was written. If the wrapper ends before a large input was handed over
+whole, the observer records nothing for that refresh, neither a reading nor a failure. An input over 1 MiB is recorded
+as a failure and its bytes are not handed over.
+The observer persists only allow-listed numbers and checked reset times from `rate_limits`, plus the read time in its
+capture file. It never stores account or session identifiers, repository content or raw input.
+
+The contract is that the wrapper's whole time stays within the renderer's own time plus 0.75 seconds. An inventory
+compares the two on native Windows CMD, PowerShell and Git's `sh`, one run against one run. On a machine busy with
+other work that comparison also misses for a command that adds nothing, and it has so far been run only on such a
+machine: there it showed every byte and exit code unchanged, and timing misses at the rate of a command that adds
+nothing. The bound is therefore the stated contract, not yet a measured result.
 
 The observer's saved capture is under `G6_HOME/allowances/captures/<profile-digest>/claude-2.1.319.json` and contains
 only `rate_limits` and `read_at`. It is replaced atomically under the cache's writer transaction, ordered by observation
