@@ -54,18 +54,21 @@ def review(repo, requirements=SUM, **kwargs):
 
 
 def result(passed=(), failed=(), skipped=(), *, verdict=None, backend="synthetic-unit-fixture", said="", output="",
-           receipt=""):
+           receipt="", messages=None, collection_stopped=None):
     """One recorded ``repo_tests.run`` result: these node ids passed, failed or were skipped."""
     outcomes = {**{node: {"setup": "passed", "call": "passed", "teardown": "passed"} for node in passed},
                 **{node: {"setup": "passed", "call": "failed", "teardown": "passed"} for node in failed},
                 **{node: {"setup": "skipped", "teardown": "passed"} for node in skipped}}
     verdict = verdict or ("failed" if failed else "passed")
-    return {"verdict": verdict, "said": said, "rootdir": "", "passed": len(passed), "failed": len(failed),
-            "not_passed": len(skipped), "total": len(passed) + len(failed), "deselected": 0,
+    messages = messages or {}
+    bad = len(failed) + len(set(messages) - set(outcomes))
+    return {"verdict": verdict, "said": said, "rootdir": "", "passed": len(passed), "failed": bad,
+            "not_passed": len(skipped), "total": len(passed) + bad, "deselected": 0,
             "test_outcomes": outcomes, "collected_ids": sorted(outcomes), "omitted_ids": [], "changed": [],
             "output": output, "seconds": 0.25, "python": sys.executable, "interpreter_source": "g6",
             "command": "pytest", "isolation": {"backend": backend, "why": ""}, "failed_ids": list(failed),
-            "setup_errors": {}, "degraded": verdict not in ("passed", "failed"), "receipt": receipt}
+            "setup_errors": {}, "degraded": verdict not in ("passed", "failed"), "receipt": receipt,
+            "failure_messages": messages, "collection_stopped": collection_stopped}
 
 
 class Recorded:
@@ -164,7 +167,9 @@ def test_a_stated_check_whose_test_file_cannot_load_at_the_base_commit_is_not_sa
     commit's code, so none of its checks ran there. That is no failure at the base, and whether they exercise the
     change is an unknown, never claimed."""
     (repo / "calc.py").write_text(GOOD)
-    unloaded = result(verdict="failed", output="ERROR test_calc.py - ImportError: cannot import name 'sub' from 'calc'\n")
+    unloaded = result(verdict="failed", output="ERROR test_calc.py - ImportError: cannot import name 'sub' from 'calc'\n",
+                      messages={"test_calc.py": "ImportError: cannot import name 'sub' from 'calc'"},
+                      collection_stopped=True)
     Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])},
              at_base=unloaded)
     assessment = review(repo)["assessment"]
@@ -657,7 +662,8 @@ def test_a_stated_check_the_environment_cannot_collect_is_not_established(repo, 
         'output': '', 'rootdir': '', 'test_outcomes': None,
         'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
         'omitted_ids': []}
-    Recorded(monkeypatch, default=result(verdict="collection_error", output="ERROR test_calc.py\n"),
+    Recorded(monkeypatch, default=result(verdict="collection_error", output="ERROR test_calc.py\n",
+                                        messages={"test_calc.py": "ImportError"}, collection_stopped=True),
              on_base={"test_calc.py": lacking})   # the environment lacks the dependency at the base commit too
     got = review(repo)
     assert got["assessment"]["outcome"] == "insufficient_evidence"
@@ -670,7 +676,8 @@ def test_only_the_check_whose_file_failed_to_collect_is_named(repo, monkeypatch)
     (repo / "test_more.py").write_text("import calc\n\n\ndef test_more():\n    assert calc.add(0, 0) == 0\n")
     (repo / "calc.py").write_text(GOOD)
     more = [*SUM, {"id": "R3", "text": "add sums zeros", "checks": ["test_more.py::test_more"]}]
-    Recorded(monkeypatch, default=result(verdict="failed", output="ERROR collecting test_more.py\nERROR test_more.py"))
+    Recorded(monkeypatch, default=result(verdict="failed", output="ERROR collecting test_more.py\nERROR test_more.py",
+                                        messages={"test_more.py": "ImportError"}, collection_stopped=True))
     got = review(repo, more)
     assert got["assessment"]["outcome"] == "defect_detected"
     assert _requirement(got, "R3")["checks"][0]["verdict"] == "failed"
@@ -784,7 +791,8 @@ def test_a_derived_file_that_fails_to_collect_on_the_patch_and_passes_at_the_bas
         'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
         'omitted_ids': []}
     runs = Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]),
-                                  ("test_calc.py", "test_legacy.py"): result(verdict=verdict, output=output)},
+                                  ("test_calc.py", "test_legacy.py"): result(verdict=verdict, output=output,
+                                      messages={"test_legacy.py": "ImportError"}, collection_stopped=True)},
                     on_base={"test_legacy.py": collected_at_base})
     got = review(repo)
     assert got["assessment"]["outcome"] == "defect_detected", got["assessment"]
@@ -793,7 +801,8 @@ def test_a_derived_file_that_fails_to_collect_on_the_patch_and_passes_at_the_bas
     assert runs.calls[-1] == ("base", ("test_legacy.py",))
     # survival: when it did not pass at the base commit either, it stays an unknown
     Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]),
-                           ("test_calc.py", "test_legacy.py"): result(verdict=verdict, output=output)},
+                           ("test_calc.py", "test_legacy.py"): result(verdict=verdict, output=output,
+                               messages={"test_legacy.py": "ImportError"}, collection_stopped=True)},
              on_base={"test_legacy.py": {"verdict": "not_run", "said": "no", "baseline": "failed",
                  'output': '', 'rootdir': '', 'test_outcomes': None,
                  'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],

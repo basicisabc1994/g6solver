@@ -259,6 +259,95 @@ def _report_object(pairs):
 
 _ISOLATION = {"backend": (str, type(None)), "why": str, "network": bool, "container": (str, type(None)),
               "profile": (str, type(None)), "warning": str, "allowed_by": str, "cleanup": str}
+
+# G6's probe payload is read once by the producer, before it builds the final
+# report. Consumers never recover payloads or outcomes from captured output.
+MAX_OBSERVATIONS, MAX_OBSERVATION_CHARS, MAX_OBSERVATION_DEPTH = 32, 1000, 16
+OBSERVATION = "G6-OBSERVATION"
+_OBSERVED = re.compile(rf"{OBSERVATION} (.*)$", re.MULTILINE)
+_CUT_OBSERVATIONS = re.compile(r"^\.\.\. \[\d+ bytes of output omitted\] \.\.\.$", re.MULTILINE)
+
+
+def _observation_depth(value) -> int:
+    deepest, pending = 0, [(value, 1)]
+    while pending and deepest <= MAX_OBSERVATION_DEPTH:
+        item, level = pending.pop()
+        deepest = max(deepest, level)
+        children = item.values() if type(item) is dict else item if type(item) is list else ()
+        pending.extend((child, level + 1) for child in children)
+    return deepest
+
+
+def probe_observations(output: str) -> list[dict] | None | str:
+    """Ingest G6's own payload protocol while the producer builds a report."""
+    lines = [match.group(1) for match in _OBSERVED.finditer(output)]
+    if not lines:
+        return None
+    if _CUT_OBSERVATIONS.search(output):
+        return "its output was longer than G6 keeps of a run, so its observations cannot be read in full"
+    if len(lines) > MAX_OBSERVATIONS:
+        return f"it recorded {len(lines)} observations; a probe records at most {MAX_OBSERVATIONS}"
+    found = []
+    for line in lines:
+        if len(line) > MAX_OBSERVATION_CHARS:
+            return f"an observation holds more than {MAX_OBSERVATION_CHARS} characters"
+        try:
+            item = json.loads(line, object_pairs_hook=_report_object)
+        except (ValueError, RecursionError):
+            return f"an observation is not JSON: {line[:80]!r}"
+        if not (type(item) is dict and set(item) == {"input", "output"}):
+            return f"an observation is not {{\"input\": ..., \"output\": ...}}: {line[:80]!r}"
+        if _observation_depth(item) > MAX_OBSERVATION_DEPTH:
+            return f"an observation is nested more than {MAX_OBSERVATION_DEPTH} levels deep"
+        found.append(item)
+    return found if _payload_shape(found) else "an observation is not a bounded JSON value"
+
+
+def _payload_shape(value: object) -> bool:
+    if type(value) in (str, type(None)):
+        return True
+    if type(value) is not list or len(value) > MAX_OBSERVATIONS:
+        return False
+    pending = [(item, 1) for item in value]
+    if any(type(item) is not dict or any(type(key) is not str for key in item)
+           or set(item) != {"input", "output"} for item in value):
+        return False
+    while pending:
+        item, depth = pending.pop()
+        if depth > MAX_OBSERVATION_DEPTH:
+            return False
+        if type(item) is dict:
+            if any(type(key) is not str for key in item):
+                return False
+            pending.extend((child, depth + 1) for child in item.values())
+        elif type(item) is list:
+            pending.extend((child, depth + 1) for child in item)
+        elif type(item) not in (str, int, float, bool, type(None)) or (type(item) is float and not math.isfinite(item)):
+            return False
+    # Decoding changes float spelling and Unicode escaping. Bound the decoded
+    # tree directly; the producer already applied the original line budget.
+    for observation in value:
+        remaining, nodes = MAX_OBSERVATION_CHARS, 0
+        pending_values = [observation]
+        while pending_values:
+            item = pending_values.pop()
+            nodes += 1
+            if nodes > MAX_OBSERVATION_CHARS:
+                return False
+            if type(item) is dict:
+                remaining -= sum(len(key) for key in item)
+                pending_values.extend(item.values())
+            elif type(item) is list:
+                pending_values.extend(item)
+            elif type(item) is str:
+                remaining -= len(item)
+            elif type(item) is int and item.bit_length() > MAX_OBSERVATION_CHARS * 4:
+                return False
+            if remaining < 0:
+                return False
+    return True
+
+
 REPORT_FIELDS = {
     "verdict": ReportField(str, "passed", "runner decision", "known runner verdict", True),
     "said": ReportField(str, "", "runner explanation", "text only", True),
@@ -271,6 +360,19 @@ REPORT_FIELDS = {
     "setup_errors": ReportField({str: str}, {}, "fixture lookup failures", "setup failed, disjoint failures", True),
     "collected_ids": ReportField([str], [], "all collected identities", "equals run plus omitted, unique", True),
     "omitted_ids": ReportField([str], [], "collected but deselected", "disjoint run, unique", True),
+    "not_found_ids": ReportField([str], [], "requested identities pytest did not find", "disjoint collected, unique"),
+    "missing_modules": ReportField([str], [], "names from ModuleNotFoundError objects", "exact text names"),
+    "probe_observations": ReportField((list, str, type(None)), None, "G6 probe payload or its read error",
+                                      "bounded exact JSON input/output pairs, or an error or no payload",
+                                      predicate=_payload_shape),
+    "collection_stopped": ReportField((bool, type(None)), None, "session stopped during collection",
+                                      "true requires a collection failure or missing selection; null when unrecorded"),
+    "python_sources": ReportField(([str], type(None)), None, "Python names in the copy's pre-run snapshot",
+                                  "unique relative Python paths, or null for a Git source listing",
+                                  predicate=lambda names: names is None or len(names) == len(set(names)) and all(
+                                      name.endswith(".py") and "\\" not in name and ":" not in name
+                                      and not PurePosixPath(name).is_absolute() and ".." not in PurePosixPath(name).parts
+                                      for name in names)),
 }
 for _name in ("passed", "failed", "not_passed", "total", "deselected"):
     REPORT_FIELDS[_name] = ReportField(int, int(_name in ("passed", "total")), "runner tally",
@@ -299,7 +401,7 @@ for _name in ("failure_messages", "messages"):
                                       "failed phase, or an uncollected collection failure; never omitted")
 
 REPORT_LISTINGS = {"test_outcomes": dict, "failed_ids": list, "setup_errors": dict,
-                   "omitted_ids": list, "collected_ids": list}
+                   "omitted_ids": list, "collected_ids": list, "not_found_ids": list}
 REPORT_PHASES = ("setup", "call", "teardown")
 REPORT_OUTCOMES = frozenset({"passed", "failed", "skipped"})
 REPORT_VERDICTS = frozenset({*RAN, CHANGED, RUN_INCONSISTENT, CRASHED, "timed_out", "collection_error",
@@ -372,6 +474,8 @@ class RunReport:
     said: str
     output: str
     data: Mapping[str, object]
+    outcome: str
+    loading_known: bool  # diagnostics survive unrelated errors; outcome still needs whole-report validity
 
     @property
     def has_phase_data(self) -> bool:
@@ -385,6 +489,21 @@ class RunReport:
         """A check's own failed collections, including a parent that could not collect it."""
         return frozenset(node for node in self.collection_errors
                          if node == "" or report_covers(check, node) or report_covers(node, check))
+
+    def body_result(self, check: str) -> str:
+        """A positive body match for this requested scope, or unknown."""
+        if type(check) is not str or not self.valid or not self.loading_known or self.verdict not in RAN:
+            return "unknown"
+        records = [record.body() for node, record in self.phases.items() if report_covers(check, node)]
+        if self.collection_errors_for(check) or any(report_covers(check, node) for node in self.omitted):
+            return "unknown"
+        if FAILED in records:
+            return FAILED
+        return PASSED if records and all(value == PASSED for value in records) else "unknown"
+
+    def selected(self, check: str) -> bool:
+        """Whether the producer recorded any identity in this requested scope."""
+        return type(check) is str and any(report_covers(check, node) for node in self.nodes)
 
     def wire(self) -> dict:
         """A fresh wire representation for the producer's result builder."""
@@ -438,6 +557,7 @@ def read_report(raw: object) -> RunReport:
     omitted, collected = set(listings["omitted_ids"]), set(listings["collected_ids"])
     phase_failures = {node for node, record in phases.items() if "failed" in record.values()}
     consistent = (collected == set(phases) | omitted and not (set(phases) & omitted)
+                  and not (set(listings["not_found_ids"]) & collected)
                   and not (failed & setup) and failed | setup == phase_failures
                   and all(phases[node].get("setup") == "failed" for node in setup if node in phases)
                   and setup <= set(phases)
@@ -445,6 +565,8 @@ def read_report(raw: object) -> RunReport:
                   and all(record.valid for record in phases.values()))
     verdict = value.get("verdict") if type(value.get("verdict")) is str else ""
     consistent &= verdict in REPORT_VERDICTS
+    # Loading telemetry is one fact, never two independently optional claims.
+    consistent &= ("loaded_outside" in value) == ("loaded_complete" in value)
     if phases_raw is None:
         # A process that never wrote progress has no phase data. This is an
         # explicit wire shape only for non-ran diagnostics, never a substitute
@@ -478,8 +600,26 @@ def read_report(raw: object) -> RunReport:
     if verdict == PASSED and collection_failures:
         consistent = False
     any_failure = bool(phase_failures or collection_failures)
+    if value.get("collection_stopped") is True:
+        consistent &= bool(collection_failures or listings["not_found_ids"]) and verdict != PASSED
     passes = sum(record.body() == PASSED for record in phases.values())
     skips = sum("skipped" in record.values() for record in phases.values())
+    # Process summaries may withhold a result, but cannot contradict a positive
+    # disposition. Progress uses the explicit non-final diagnostic below.
+    if verdict == FAILED:
+        consistent &= any_failure
+    if verdict == PASSED:
+        consistent &= not any_failure
+    if verdict == "no_tests_collected":
+        consistent &= not any_failure and not any("setup" in record for record in phases.values())
+    if verdict == RUN_INCONSISTENT:
+        consistent &= not any_failure
+    if verdict == "collection_error" and phases_raw is not None:
+        consistent &= not phase_failures and (bool(collection_failures) or not phases)
+    if listings["not_found_ids"]:
+        consistent &= verdict not in {*RAN, "no_tests_collected", RUN_INCONSISTENT}
+    if typed and value.get("missing_modules"):
+        consistent &= any_failure
     # JUnit groups by class/name, not nodeid, and merges multiple failed phases.
     # Bounds retain that released count meaning while rejecting impossible
     # tallies; exact identity counts above come from the producer's own lists.
@@ -519,13 +659,25 @@ def read_report(raw: object) -> RunReport:
         return item
     data = {key: freeze(item) for key, item in value.items()
             if type(key) is str and key in REPORT_FIELDS and REPORT_FIELDS[key].accepts(item)}
+    # Positive body facts are decided here, including execution completeness.
+    # Diagnostics retain their released verdict separately from this evidence.
+    loading_fields = {"loaded_complete", "loaded_outside"} & value.keys()
+    loading_known = not loading_fields or (
+        len(loading_fields) == 2 and value.get("loaded_complete") is True
+        and _report_type(value.get("loaded_outside"), {str: str}))
+    outcome = "unknown"
+    if valid and loading_known:
+        if verdict == PASSED and passes:
+            outcome = PASSED
+        elif verdict == FAILED and any(record.body() == FAILED for record in phases.values()):
+            outcome = FAILED
     return RunReport(valid, MappingProxyType({full(node): record for node, record in phases.items()}),
                      frozenset(full(node) for node in named | collection_failures),
                      frozenset(full(node) for node in listings["test_outcomes"]),
                      frozenset(full(node) for node in failed | setup),
                      frozenset(full(node) for node in omitted), frozenset(full(node) for node in collection_failures),
                      root, text("verdict", "not_run"),
-                     text("said"), text("output"), MappingProxyType(data))
+                     text("said"), text("output"), MappingProxyType(data), outcome, loading_known)
 
 
 class RepoRefused(ValueError):
@@ -1202,10 +1354,17 @@ class _Counted:
         self.rootdir = ""
         self.messages = {}
         self.os_errors = set()
+        self.missing_modules, self.not_found_ids = set(), set()
+        self.session = None
+        self.collection_stopped = None
+    def pytest_sessionstart(self, session):
+        self.session = session
     def pytest_exception_interact(self, node, call, report):
         error, seen = getattr(getattr(call, "excinfo", None), "value", None), set()
         while error is not None and id(error) not in seen:
             seen.add(id(error))
+            if isinstance(error, ModuleNotFoundError) and type(error.name) is str:
+                self.missing_modules.add(error.name)
             if isinstance(error, OSError):
                 self.os_errors.add(report.nodeid)
                 break
@@ -1224,6 +1383,12 @@ class _Counted:
         self.collected = len(session.items) + self.deselected
         self.write()
     def pytest_collectreport(self, report):
+        # pytest still holds its structured missing selections here; it clears
+        # them before collection_finish. Never parse a printed UsageError.
+        for arg, _ in getattr(self.session, "_notfound", ()):
+            path, separator, selected = arg.partition("::")
+            root = str(self.session.config.rootpath)
+            self.not_found_ids.add(os.path.relpath(path, root).replace(os.sep, "/") + separator + selected)
         if report.skipped:
             self.collected_ids.add(report.nodeid)
             self.test_outcomes[report.nodeid] = {"collection": "skipped"}
@@ -1243,6 +1408,9 @@ class _Counted:
                 self.failed.append(report.nodeid)
         self.write()
     def pytest_sessionfinish(self, session):
+        status = getattr(session, "exitstatus", None)
+        self.collection_stopped = (status in (2, 4) and bool(self.not_found_ids or
+            set(self.messages) - set(self.test_outcomes))) if status is not None else None
         self.write()
     def write(self):
         if self.collected is not None:
@@ -1252,7 +1420,9 @@ class _Counted:
                            "setup_errors": self.setup_errors, "test_outcomes": self.test_outcomes,
                            "collected_ids": sorted(self.collected_ids), "omitted_ids": sorted(self.omitted_ids),
                            "rootdir": self.rootdir, "messages": self.messages,
-                           "os_errors": sorted(self.os_errors)}, handle)
+                           "os_errors": sorted(self.os_errors), "missing_modules": sorted(self.missing_modules),
+                           "not_found_ids": sorted(self.not_found_ids),
+                           "collection_stopped": self.collection_stopped}, handle)
 class _Capture:
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_load_initial_conftests(self, early_config):
@@ -1886,9 +2056,9 @@ def _progress(counts: dict[str, int], counted: Path) -> dict:
         raw = json.loads(counted.read_text(encoding="utf-8"), object_pairs_hook=_report_object)
     except (OSError, ValueError, RecursionError):
         raw = None
-    # Progress has no process verdict yet. The non-supporting failed diagnostic
-    # lets the shared schema read its fields; _judge alone decides the verdict.
-    report = read_report({**raw, "verdict": FAILED, "said": "", "output": ""} if type(raw) is dict else raw)
+    # Progress has no process verdict yet. An incomplete diagnostic reads its
+    # dispositions without pretending the process has already failed.
+    report = read_report({**raw, "verdict": "incomplete", "said": "", "output": ""} if type(raw) is dict else raw)
     found = report.wire()
     counters = ("collected", "deselected", "started", "finished")
     complete = report.valid and all(type(found.get(key)) is int for key in counters)
@@ -1902,6 +2072,8 @@ def _progress(counts: dict[str, int], counted: Path) -> dict:
             "failed_ids": found.get("failed_ids", []), "setup_errors": found.get("setup_errors", {}),
             "rootdir": found.get("rootdir", ""), "failure_messages": found.get("messages", {}),
             "os_errors": found.get("os_errors", []),
+            "missing_modules": found.get("missing_modules", []), "not_found_ids": found.get("not_found_ids", []),
+            "collection_stopped": found.get("collection_stopped"),
             "passed": max(0, counts.get("passed", 0) - max(0, started - finished))}
 
 
@@ -1924,9 +2096,8 @@ def shadowed(sources: tuple[str, ...] | list[str], ran: dict) -> dict[str, dict[
     recorded run); None when it cannot say (its list was cut at ``LOADED_LIMIT``, or never written). What a run lists
     is the modules its pytest process had loaded when the session ended: a subprocess's, or a forked child's, are not
     seen. A module that was never loaded, or a standard-library module named like a source file, is not one."""
-    if "loaded_outside" not in ran:
-        return {}
-    if not ran.get("loaded_complete"):
+    report = read_report(ran)
+    if not report.loading_known:
         return None
     ends: dict[str, list[str]] = {}   # each source by every tail of its path, for one look-up per module
     for rel in sources:
@@ -1934,13 +2105,35 @@ def shadowed(sources: tuple[str, ...] | list[str], ran: dict) -> dict[str, dict[
         for start in range(len(parts)):
             ends.setdefault("/".join(parts[start:]), []).append(rel)
     found: dict[str, dict[str, str]] = {}
-    for name, file in sorted((ran.get("loaded_outside") or {}).items()):
+    for name, file in sorted(report.data.get("loaded_outside", {}).items()):
         if name.startswith("__"):
             continue
         tail = name.replace(".", "/") + ("/__init__.py" if os.path.basename(file).startswith("__init__.") else ".py")
         for rel in ends.get(tail, ()):
             found.setdefault(rel, {"module": name, "file": file})
     return dict(sorted(found.items()))
+
+
+def loaded_from(repo: Path | None, ran: dict | RunReport) -> dict[str, dict[str, str]] | None:
+    """Shared ownership: the copy's pre-run listing, otherwise the source folder's own listing."""
+    report = read_report(ran)
+    if not report.valid or not report.loading_known:
+        return None
+    if not report.data.get("loaded_outside"):
+        return {}
+    sources = report.data.get("python_sources")
+    if sources is None:
+        if repo is None:
+            return None
+        try:
+            sources = _paths(_git(repo, "ls-files", "-co", "--exclude-standard", "-z"))
+        except (RepoRefused, OSError):
+            try:
+                sources = _copy_snapshot(repo)
+            except (RepoRefused, OSError, CopyNotRun):
+                return None
+        sources = [name for name in sources if name.endswith(".py")]
+    return shadowed(sources, report)
 
 
 def _root(repo: Path, rootdir: str) -> str:
@@ -2086,6 +2279,11 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 "source_before": ledger.digest(before), "rootdir": _root(repo, tally.get("rootdir") or ""),
                 "failure_messages": tally.get("failure_messages") or {},
                 "os_errors": list(tally.get("os_errors") or []),
+                "missing_modules": list(tally.get("missing_modules") or []),
+                "not_found_ids": list(tally.get("not_found_ids") or []),
+                "probe_observations": probe_observations(output),
+                "collection_stopped": tally.get("collection_stopped"),
+                "python_sources": sorted(name for name in before if name.endswith(".py")) if copied else None,
                 "import_path": [Path(entry).relative_to(repo).as_posix() for entry in entries],
                 "own_config": bool(own_config),
                 "repo_env": _digests(person), "env_set_by_g6": list(set_by_g6),
@@ -2827,8 +3025,11 @@ def repository_copy(repo: Path, *, deadline: float, before: dict[str, str] | Non
 def _copy_snapshot(repo: Path, *, deadline: float | None = None) -> dict[str, str]:
     """A copy's own record of its files, read before and after a run in it: each file's SHA-256, and each link the copy
     holds (``_copy_links``) as its own text, never followed."""
+    def unreadable(error):
+        raise error
+
     found, size = {}, 0
-    for folder, dirs, files in os.walk(repo):
+    for folder, dirs, files in os.walk(repo, onerror=unreadable):
         _copy_caps(len(found), size, deadline)
         ignored = _copy_ignored(folder, dirs + files)
         for name in sorted(ignored):

@@ -129,6 +129,7 @@
         "isolation",
         "output",
         "own_config",
+        "probe_observations",
         "python",
         "said",
         "seconds",
@@ -299,7 +300,7 @@
       "constraint": "text only"
     },
     "output": {
-      "meaning": "pytest's printed lines: a test id it found none of, and a file it could not collect",
+      "meaning": "captured text retained for display; outcomes use decided annotations",
       "consumers": [
         "harness/patch_review.py:_not_loaded",
         "harness/patch_review.py:_on_base",
@@ -743,6 +744,47 @@
       ],
       "type": "{'backend': (<class 'str'>, <class 'NoneType'>), 'why': <class 'str'>, 'network': <class 'bool'>, 'container': (<class 'str'>, <class 'NoneType'>), 'profile': (<class 'str'>, <class 'NoneType'>), 'warning': <class 'str'>, 'allowed_by': <class 'str'>, 'cleanup': <class 'str'>}",
       "constraint": "known typed fields, backend required"
+    },
+    "not_found_ids": {
+      "meaning": "missing selections from pytest collection objects",
+      "consumers": [
+        "harness/patch_review.py:_verdicts"
+      ],
+      "type": "[<class 'str'>]",
+      "constraint": "disjoint collected, unique"
+    },
+    "missing_modules": {
+      "meaning": "module names from exception objects",
+      "consumers": [
+        "harness/patch_review.py:_patch_imports_missing"
+      ],
+      "type": "[<class 'str'>]",
+      "constraint": "exact text names"
+    },
+    "probe_observations": {
+      "meaning": "bounded producer-owned G6 payload; consumers do not parse captured output",
+      "consumers": [
+        "harness/verification_search.py:reading",
+        "harness/verification_search.py:search"
+      ],
+      "type": "(<class 'list'>, <class 'str'>, <class 'NoneType'>)",
+      "constraint": "bounded exact JSON input/output pairs, or an error or no payload"
+    },
+    "python_sources": {
+      "meaning": "Python names in the copy's pre-run snapshot; null uses the source folder's own listing",
+      "consumers": [
+        "workforce/repo_tests.py:loaded_from"
+      ],
+      "type": "([<class 'str'>], <class 'NoneType'>)",
+      "constraint": "unique relative Python paths, or null for a Git source listing"
+    },
+    "collection_stopped": {
+      "meaning": "final collection stage from the producer session; null when unrecorded",
+      "consumers": [
+        "harness/patch_review.py:_verdicts"
+      ],
+      "type": "(<class 'bool'>, <class 'NoneType'>)",
+      "constraint": "true requires a collection failure or missing selection; null when unrecorded"
     }
   },
   "values": {

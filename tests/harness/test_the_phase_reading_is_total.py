@@ -294,7 +294,8 @@ SRC = Path(g6.__file__).resolve().parent
 REPO_TESTS = SRC / "workforce" / "repo_tests.py"
 PATCH_REVIEW = SRC / "harness" / "patch_review.py"
 #: The functions that make up the phase reading.
-READING = ("_listing", "_failed_ids", "phases_of", "_whole", "body_of", "_verdicts", "_observed", "_in_repository")
+READING = ("_listing", "_failed_ids", "phases_of", "_whole", "body_of", "_verdicts", "_observed", "_in_repository",
+           "_not_found", "_collection_errors")
 #: Every field of the runner's report the phase reading reads, with what it takes from it.
 READ = {
     "test_outcomes": "each test's outcome by phase (phases_of)",
@@ -306,7 +307,9 @@ READ = {
     "rootdir": "the folder pytest named every id relative to (_in_repository); one that is not text makes all unknown",
     "verdict": "the run's verdict, which G6 decides outside the run from its exit code and counts (repo_tests._judge)",
     "said": "G6's own words for the run's verdict, in a check's detail",
-    "output": "pytest's printed lines: a test id it found none of, and a file it could not collect",
+    "output": "captured text retained for display; never a source of an outcome",
+    "not_found_ids": "missing selections recorded from pytest's collection objects, never its console text",
+    "collection_stopped": "the producer's final collection-stage flag, for the released diagnostic verdict",
 }
 COUNT = "a count: the run's verdict (repo_tests._judge) reads it; a count names no test"
 ANNOTATION = ("why a failure happened, by the failure's id: a test's is also in failed_ids or setup_errors (the "
@@ -320,6 +323,9 @@ NOT_READ = {
     "passed": COUNT, "failed": COUNT, "not_passed": COUNT, "total": COUNT, "deselected": COUNT,
     "degraded": COUNT + " (a summary of the counts)", "completed": COUNT + " (a summary of the counts)",
     "failure_messages": ANNOTATION, "os_errors": ANNOTATION,
+    "missing_modules": "module names from exception objects, read by dependency guidance",
+    "probe_observations": "the producer's bounded G6 payload, read by verification_search",
+    "python_sources": "Python names from the copy's pre-run snapshot, read by shared loaded_from ownership",
     "changed": "the tracked files the run changed: its verdict says so (changed_tracked_files, never believed)",
     "seconds": HOW, "python": HOW, "interpreter_source": HOW, "command": HOW, "import_path": HOW, "own_config": HOW,
     "repo_env": HOW, "env_set_by_g6": HOW,
@@ -422,6 +428,9 @@ def read_by_the_reading() -> set[str]:
                 # A read of the validated form reads the producer's required
                 # evidence fields, rather than keeping another raw reader here.
                 found |= {key for key, field in repo_tests.REPORT_FIELDS.items() if field.required}
+            elif (isinstance(node, ast.Call) and ast.unparse(node.func) == "report.data.get"
+                  and node.args and isinstance(node.args[0], ast.Constant)):
+                found.add(node.args[0].value)
     return found
 
 
@@ -452,7 +461,8 @@ def test_every_listing_of_tests_the_runner_s_plugin_writes_is_read_as_one_or_an_
         holder = (node.func.value if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) else
                   node.value if isinstance(node, ast.Subscript) else None)
         if (isinstance(holder, ast.Attribute) and ast.unparse(holder.value) == "self"
-                and ".nodeid" in ast.unparse(node)):
+                and (".nodeid" in ast.unparse(node) or holder.attr == "not_found_ids"
+                     and isinstance(node, ast.Call) and node.func.attr == "add")):
             by_ids.add(holder.attr)
     listings = {name for name, value in fields.items()
                 if any(isinstance(n, ast.Attribute) and ast.unparse(n.value) == "self" and n.attr in by_ids

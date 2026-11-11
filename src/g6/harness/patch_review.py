@@ -207,7 +207,6 @@ RUN_CRASHED_DETAIL = ("{run}: {said}. Nothing is counted on it, for or against t
 DEFECTS = frozenset({repo_tests.FAILED})
 ENVIRONMENT = "could not be collected in this environment"
 #: pytest's own lines naming a file it could not collect: "ERROR collecting x.py" and, in its summary, "ERROR x.py".
-_COLLECTING = re.compile(r"ERROR (?:collecting )?([^\s:]+\.py)(?=\s|$)", re.MULTILINE)
 BOUNDARY_HELP = ("Allowing unconfined runs (g6 setup or G6_ALLOW_UNCONFINED) does not change this: a patch review "
                  "uses only confined runs, the only ones that get test receipts. To get a boundary, install bubblewrap "
                  "on Linux, or on Windows make the one-time access grant g6 doctor prints; macOS has none yet.")
@@ -300,7 +299,6 @@ def _ignored_asks(scan: repo_tests.Ignored) -> list[str]:
 
 
 #: The launch review's I6: a module a run could not import, and the import statements of the lines the patch adds.
-_NO_MODULE = re.compile(r"No module named '([\w.]+)'")
 _ADDED_IMPORT = re.compile(r"^\+[ \t]*(?:from[ \t]+([\w.]+)[ \t]+import\b|import[ \t]+([^\n#;]+))", re.MULTILINE)
 # PENDING copy (the launch review's I6): ask, don't accuse; never "make those tests run here" for this case.
 MISSING_IMPORT_REASON = ("the tests could not import {names}, which the patch imports on a line it adds and which is "
@@ -473,11 +471,11 @@ def _test_data(change: repo_tests.Change) -> list[str]:
 
 
 def _patch_imports_missing(change: repo_tests.Change, runs: list[dict]) -> list[str]:
-    """The modules ``runs`` could not import (``No module named ...``, in their output or their recorded messages) that
+    """The modules ``runs`` could not import (names recorded from exception objects) that
     an import statement on a line the patch adds to a Python file names, itself, a package above it or a module below
     it (the launch review's I6)."""
-    missing = {name for ran in runs for text in [ran.get("output") or "", *(ran.get("failure_messages") or {}).values()]
-               for name in _NO_MODULE.findall(str(text))}
+    missing = {name for ran in runs for report in [repo_tests.read_report(ran)] if report.valid
+               for name in report.data.get("missing_modules", ())}
     if not missing:
         return []
     added = set()
@@ -489,11 +487,6 @@ def _patch_imports_missing(change: repo_tests.Change, runs: list[dict]) -> list[
     return sorted(name for name in missing if any(name == mine or mine.startswith(name + ".")
                                                   or name.startswith(mine + ".") for mine in added
                                                   if not mine.startswith(".")))
-
-
-def _collection_errors(output: str) -> set[str]:
-    """The files pytest said it could not collect (it names them relative to its root folder)."""
-    return set(_COLLECTING.findall(output.replace("\\", "/")))
 
 
 def _names(check: str, files: set[str]) -> bool:
@@ -631,18 +624,20 @@ def at_base_observations(runs: Sequence[dict]) -> dict[str, str]:
             for check, said in outcomes.items()}
 
 
-def _not_found(check: str, output: str) -> bool:
-    """Whether pytest said it found no test named ``check`` (it prints the path it was given, or the full path)."""
-    for line in output.replace("\\", "/").splitlines():
-        _, sep, rest = line.partition("not found: ")
-        if sep and (rest.strip() == check or rest.strip().endswith("/" + check)):
-            return True
-    return False
-
-
 def _in_repository(ran: dict):
     """Repository identities from the producer's detached report reading."""
     return repo_tests.read_report(ran).full
+
+
+def _not_found(check: str, ran) -> bool:
+    """A missing selection recorded by the producer; captured text is not a report."""
+    report = repo_tests.read_report(ran)
+    return check in {report.full(node) for node in report.data.get("not_found_ids", ())}
+
+
+def _collection_errors(ran) -> set[str]:
+    """Fully qualified collection identities from the decided report only."""
+    return set(repo_tests.read_report(ran).collection_errors)
 
 
 def _observed(checks: Sequence[str], ran: dict) -> dict[str, str]:
@@ -669,13 +664,12 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
     pytest collected and neither ran to a reported phase nor left out never finished (review 1 of slice 2's follow-up,
     finding 2): the check did not pass."""
     report = repo_tests.read_report(ran)
-    run, said, output = report.verdict, report.said, report.output
-    full = report.full
+    run, said = report.verdict, report.said
     tests = report.phases
     omitted = report.omitted
     unfinished = [node for node in report.nodes if node not in tests and node not in omitted]
-    missing = {check for check in ids if _not_found(check, output)}
-    broken = {full(rel) for rel in _collection_errors(output)}
+    missing = {check for check in ids if _not_found(check, report)}
+    broken = _collection_errors(report)
     found: dict[str, dict] = {}
     for check in ids:
         bodies = {node: body_of(phases) for node, phases in tests.items() if _covers(check, node)}
@@ -706,7 +700,8 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
             verdict, detail = "not_collected", "pytest found no test with this id"
         elif missing:
             verdict, detail = "not_run", "the run stopped first: another stated check names a test pytest cannot find"
-        elif broken and not _names(check, broken) and run in ("collection_error", repo_tests.FAILED):
+        elif (broken and report.data.get("collection_stopped") is True and not _names(check, broken)
+              and run in ("collection_error", repo_tests.FAILED)):
             verdict, detail = "not_run", "the run stopped first: pytest could not collect " + ", ".join(sorted(broken))
         elif run == repo_tests.FAILED:
             verdict, detail = FAILED, "failed to collect, because of an error in the repository's own code"
@@ -720,7 +715,8 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
         else:
             verdict, detail = run, said
         found[check] = {"verdict": verdict, "detail": detail}
-        if (not report.valid or (verdict == "passed" and run not in repo_tests.RAN)
+        if (not report.valid or (bodies and not report.loading_known)
+                or (verdict == "passed" and run not in repo_tests.RAN)
                 or report.collection_errors_for(check)
                 or (verdict == FAILED and FAILED not in bodies.values())):
             found[check]["observation"] = ERROR
@@ -1396,8 +1392,8 @@ def _not_loaded(found: dict[str, dict], ran: dict) -> list[str]:
     """The test files pytest could not load in ``ran``, the run against the base commit's code (one that imports a
     name the patch adds, say), each holding a check of ``found``: none of those checks ran there, so each becomes
     ``not_run``, never a failure at the base (the owner's pilot, 2026-10-30). Returns those files."""
-    full = _in_repository(ran)
-    broken = sorted({full(rel) for rel in _collection_errors(ran.get("output") or "")})
+    report = repo_tests.read_report(ran)
+    broken = sorted(report.collection_errors) if report.valid else []
     files = []
     for check, verdict in found.items():
         head = check.partition("::")[0].rstrip("/")
@@ -1473,9 +1469,9 @@ def _on_base(root, change, derived, second, deadline, runs, unknowns, reason, ro
         unknowns.append(text)
         reason("evidence", NOT_COMPARED, text)
 
-    full = _in_repository(second)
-    failing = sorted(({node.partition("::")[0] for node in _failed_ids(second)}
-                      | {full(rel) for rel in _collection_errors(second.get("output") or "")}) & set(derived))
+    report = repo_tests.read_report(second)
+    failing = sorted(({node.partition("::")[0] for node in report.failed}
+                      | report.collection_errors) & set(derived))
     if not failing:
         uncompared(f"the tests that touch the changed modules failed without a test G6 can name: "
                    f"{second.get('said') or 'read their output'}")

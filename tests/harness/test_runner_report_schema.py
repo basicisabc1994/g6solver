@@ -237,6 +237,10 @@ def test_schema_classifies_every_producer_field_and_exact_nested_type():
         valid = report(PASSED)
         if name not in valid:
             valid[name] = deepcopy(field.example)
+        if name == "loaded_complete":
+            valid["loaded_outside"] = {}
+        if name == "loaded_outside":
+            valid["loaded_complete"] = True
         assert read(valid).valid, name
         for wrong in (False, None, 1, 1.0, "text", [], {}, ()):
             if field.accepts(wrong):
@@ -352,15 +356,18 @@ def test_duplicate_json_keys_and_wrong_plugin_types_cannot_be_sanitized_to_reada
 # Every product function that reads per-test report fields, found by AST. A new
 # consumer fails this inventory until it goes through the producer's reader.
 CONSUMERS = {
-    "harness/patch_review.py": {"_confined", "_listing", "_failed_ids", "phases_of", "_in_repository", "_verdicts", "_observed", "_on_base"},
-    "harness/verification_search.py": {"reading"},
+    "harness/patch_review.py": {"_confined", "_listing", "_failed_ids", "phases_of", "_in_repository", "_verdicts", "_observed", "_on_base", "_not_loaded", "_not_found", "_collection_errors"},
+    "harness/verification_search.py": {"reading", "_messages", "_refused_access", "_uncollected", "search"},
     "harness/completion_loop.py": {"_read"},
-    "workforce/repo_tests.py": {"read_report", "_judge", "_progress", "_run", "run_before"},
+    "workforce/repo_tests.py": {"read_report", "_judge", "_progress", "_run", "run_before", "shadowed", "loaded_from"},
     "workforce/receipt_store.py": {"_body"},
-    "bundles/agent_change.py": {"run"},
+    "bundles/agent_change.py": {"run", "_as_run"},
+    "metaharness/coding.py": {"coding_oracle", "_mutants_killed"},
+    "workforce/bench.py": {"_in_place"},
 }
 PHASE_FIELDS = {"test_outcomes", "failed_ids", "setup_errors", "collected_ids", "omitted_ids", "rootdir"}
-VALIDATED_FIELDS = {"phases", "nodes", "failed", "omitted", "full", "wire", "collection_errors"}
+VALIDATED_FIELDS = {"phases", "nodes", "failed", "omitted", "full", "wire", "collection_errors",
+                    "collection_errors_for", "outcome", "body_result", "loading_known"}
 
 
 def consumers():

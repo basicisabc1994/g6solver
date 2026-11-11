@@ -533,7 +533,9 @@ def _uncollectable(name: str) -> dict:
 
     return {**result(), "verdict": "collection_error", "said": repo_tests.SAID["collection_error"],
             "output": f"ERROR collecting test_calc.py\nE   ModuleNotFoundError: No module named '{name}'\n"
-                      "ERROR test_calc.py\n", "test_outcomes": {}, "collected_ids": []}
+                      "ERROR test_calc.py\n", "test_outcomes": {}, "collected_ids": [],
+            "failure_messages": {"test_calc.py": f"ModuleNotFoundError: {name}"},
+            "missing_modules": [name], "collection_stopped": True, "failed": 1, "total": 1}
 
 
 def _no_run_text(got: dict) -> None:

@@ -91,12 +91,14 @@ def review(repo, requirements=RULE, **kwargs):
 
 
 def result(passed=(), failed=(), *, output="", seconds=0.25, digest=""):
+    from g6.workforce.repo_tests import probe_observations
     outcomes = {**{node: {"setup": "passed", "call": "passed", "teardown": "passed"} for node in passed},
                 **{node: {"setup": "passed", "call": "failed", "teardown": "passed"} for node in failed}}
     verdict = "failed" if failed else "passed"
     return {"verdict": verdict, "said": "", "passed": len(passed), "failed": len(failed), "not_passed": 0,
             "total": len(outcomes), "deselected": 0, "test_outcomes": outcomes, "collected_ids": sorted(outcomes),
             "omitted_ids": [], "changed": [], "output": output, "seconds": seconds, "python": sys.executable,
+            "probe_observations": probe_observations(output),
             "interpreter_source": "g6", "command": "pytest", "isolation": {"backend": "synthetic-unit-fixture"},
             "failed_ids": list(failed), "setup_errors": {}, "degraded": False, "receipt": "", "rootdir": "",
             **({"source_before": digest} if digest else {}),

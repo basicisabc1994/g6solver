@@ -87,6 +87,7 @@ from g6.evidence.certificate import (
     record,
 )
 from g6.evidence.certificate import _check_of as _issuers_check   # the issuer's own reading of a check it wrote
+from g6.evidence.certificate import _issue as _issuers_decision
 
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _ID = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
@@ -748,17 +749,14 @@ RECEIPT_GATES = ("not_a_receipt", "receipt_for_other_bytes", "check_changed_afte
                  "not_grounded", "not_in_ledger", "control_after_receipt")
 
 
-def _held(body: Mapping[str, object], check: Check, receipt: Receipt) -> ChainLedger:
-    """Without the ledger, the certificate's own account of what its ledger held, as ``verify`` takes it offline: the
-    check's controls and the receipt, less each it lists as unresolved. Consistency, not custody."""
+def _offline_resolution(body: Mapping[str, object]):
+    """The certificate's unresolved identities, with no invented choice of a control body.
+
+    The issuer's offline reading resolves identities only. Its shared decision
+    function selects backing controls; every supplied body reaches that rule.
+    """
     missing = {(str(kind), str(ident)) for kind, ident in body.get("unresolved") or []}
-    ledger, held = ChainLedger(), set()
-    for item in (*check.controls, receipt):
-        key = ("control", item.control_id) if isinstance(item, Control) else ("receipt", item.receipt_id)
-        if key not in missing and key not in held:
-            held.add(key)
-            record(ledger, item)
-    return ledger
+    return lambda kind, ident, _body: (kind, ident) not in missing
 
 
 def _gate(predicate: str, alone: Certificate) -> str:
@@ -778,7 +776,7 @@ def receipt_roles(body: Mapping[str, object], *, ledger: ChainLedger | None = No
     """For each receipt of the certificate ``body`` (``Certificate.as_dict``), in its order, the role the issuer gives
     that receipt alone for each predicate its check names, with the gate it did not meet (``RECEIPT_GATES``) when it has
     none: ``supports``, ``refutes`` or ``caveat`` exactly as ``issue`` decides for that one receipt, with the checks and
-    controls the body records and ``ledger`` (without one, the body's own account of what its ledger held, ``_held``),
+    controls the body records and ``ledger`` (without one, the issuer's offline identity resolution),
     else ``not counted`` (review 4's finding 3). No receipt is lent another's role. A receipt the issuer cannot read (a
     result, a position or a check it has no word for), or a body that does not record what it was decided from, is not
     counted for any predicate."""
@@ -797,8 +795,8 @@ def receipt_roles(body: Mapping[str, object], *, ledger: ChainLedger | None = No
             receipt = Receipt(**raw)
             if artifact is None or check is None:
                 raise TypeError("no check or artefact to read it with")
-            alone = issue(facts, artifact, checks, [receipt],
-                          ledger=ledger if ledger is not None else _held(body, check, receipt))
+            alone = (issue(facts, artifact, checks, [receipt], ledger=ledger) if ledger is not None else
+                     _issuers_decision(facts, artifact, checks, [receipt], (), None, _offline_resolution(body)))
         except (CertificateRefused, TypeError, ValueError):
             found.append(dict.fromkeys(names, ("not counted", "not_a_receipt")))
             continue

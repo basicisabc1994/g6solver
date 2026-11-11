@@ -111,6 +111,15 @@ def intended_reading(before, case):
         expected["completion"]["exit"] = None
         expected["completion"]["results"] = {NODE: "unknown"}
         expected["completion"]["tail"] = f"{before['record']['verdict']}: {before['record']['said']}"
+    elif case == "loaded_incomplete":
+        # The decided loading fact now withholds evidence in every reader;
+        # diagnostic verdicts, outcomes and recorded run fields stay released.
+        expected["verdicts"][NODE]["observation"] = "error"
+        expected["observations"][NODE] = "error"
+        expected["observed"] = {NODE: "error"}
+        expected["search"]["result"] = "error"
+        expected["search"]["detail"] = "the runner cannot say which code it loaded"
+        expected["search"].pop("observations", None)
     elif case == "teardown_skipped":
         # A passed call with skipped cleanup is not a complete passing check.
         expected["search"]["result"] = "error"

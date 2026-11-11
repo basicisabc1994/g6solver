@@ -63,7 +63,10 @@ def coding_oracle(*, mutation: bool = False, timeout_s: int = 300,
         if repo is None or not tests:
             return False
         result = (run or repo_tests.run)(repo, tests, timeout_s=timeout_s)
-        if result.get("verdict") != "passed":
+        report = repo_tests.read_report(result)
+        if (report.outcome != repo_tests.PASSED
+                or any(report.body_result(test) != repo_tests.PASSED for test in tests)
+                or repo_tests.loaded_from(repo, report) != {}):
             return False
         if mutation:
             return _mutants_killed(repo, tests, timeout_s=timeout_s, run=run or repo_tests.run)
@@ -82,9 +85,17 @@ def _mutants_killed(repo: Path, tests: Sequence[str], *, timeout_s: int, run: Ca
     for rel in changed:
         def run_mutant(source: str, seconds: int, rel: str = rel) -> SimpleNamespace:
             got = run(repo, list(tests), timeout_s=seconds, mutant=(rel, source))
-            ok = got.get("verdict") == "passed"
-            return SimpleNamespace(execution_id=uuid.uuid4().hex, passed=int(got.get("passed", ok)),
-                                   failed=0 if ok else 1, not_passed=0 if ok else 1, reason="")
+            report = repo_tests.read_report(got)
+            results = [report.body_result(test) for test in tests]
+            failed = report.outcome == repo_tests.FAILED and repo_tests.FAILED in results
+            passed = report.outcome == repo_tests.PASSED and all(value == repo_tests.PASSED for value in results)
+            if repo_tests.loaded_from(repo, report) != {}:
+                failed = passed = False
+            known = failed or passed
+            return SimpleNamespace(execution_id=uuid.uuid4().hex if known else "",
+                                   passed=report.data.get("passed", int(passed)) if known else 0,
+                                   failed=report.data.get("failed", int(failed)) if known else 0, not_passed=0,
+                                   reason="" if known else "the runner report has no body result")
 
         record = mutation_check.check((repo / rel).read_text(encoding="utf-8"), run_mutant,
                                       budget_s=float(timeout_s), base_duration_s=1.0)

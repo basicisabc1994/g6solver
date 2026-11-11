@@ -97,12 +97,16 @@ def result(passed=(), failed=(), *, verdict=None, output="", seconds=0.25, diges
     """One recorded ``repo_tests`` run result: these node ids passed or failed in their call; ``digest``, the copy's
     digest as the run began (a run in a copy only: an in-place run's is the artifact digest); ``messages``, the
     failure message pytest recorded for each node id that failed."""
+    from g6.workforce.repo_tests import probe_observations
+    if messages is None:
+        messages = {node: "AssertionError" for node in failed}
     outcomes = {**{node: {"setup": "passed", "call": "passed", "teardown": "passed"} for node in passed},
                 **{node: {"setup": "passed", "call": "failed", "teardown": "passed"} for node in failed}}
     verdict = verdict or ("failed" if failed else "passed")
     return {"verdict": verdict, "said": "", "passed": len(passed), "failed": len(failed), "not_passed": 0,
             "total": len(passed) + len(failed), "deselected": 0, "test_outcomes": outcomes,
             "collected_ids": sorted(outcomes), "omitted_ids": [], "changed": [], "output": output,
+            "probe_observations": probe_observations(output),
             "seconds": seconds, "python": sys.executable, "interpreter_source": "g6", "command": "pytest",
             "isolation": {"backend": "synthetic-unit-fixture", "why": ""}, "failed_ids": list(failed),
             "setup_errors": {}, "degraded": verdict not in ("passed", "failed"), "receipt": "", "rootdir": "",
@@ -305,7 +309,7 @@ def _read(spec, observations=()):
                                               f"FAILED {NODE} - PermissionError: [Errno 13] Permission denied\n"),
                "os_errors": [NODE]}
     elif spec == "unreadable":   # options such as --tb=no -rN hide how it failed, so G6 cannot rule out a refusal
-        ran = result(failed=[NODE], output="F\n1 failed in 0.01s\n")
+        ran = result(failed=[NODE], output="F\n1 failed in 0.01s\n", messages={})
     elif spec == "refused_via_library":   # review E12: a client library wraps the boundary's refusal; the line is cut
         ran = {**result(failed=[NODE], output=f"FAILED {NODE} - httpx.Conn...\n",
                         messages={NODE: "httpx.ConnectError: G6: network connections are refused for this test run"}),
