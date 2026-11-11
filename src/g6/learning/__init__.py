@@ -46,6 +46,7 @@ from g6.learning.failure_classifier import FAILURE_CODES, DefaultClassifier, Fai
 from g6.learning.observer import CallbackObserver, EventEmitter, JsonlObserver, LearningEvent, LogObserver
 from g6.learning.ooda import ObservationResult
 from g6.learning.paired import ArmComparison, PairedOutcome, sign_test
+from g6.learning.paired_eval import PairedEvaluator, PairReceipt
 from g6.learning.promotion import HeldOutEvidence, PromotionDecision, PromotionPolicy, promote
 from g6.learning.runner import LearningReport, compare_arms, run_learning
 from g6.learning.schema import (AgentReply, AgentTrace, Dataset, FailureAnalysis, PromptAddendum, ReviewRecord,
@@ -66,7 +67,8 @@ __g6_introduces__: tuple[str, ...] = ()
 __all__ = ["FAILURE_CODES", "NO_STRATEGY", "THEORY_TEMPLATES", "AgentReply", "AgentTrace", "ArmComparison", "CallbackObserver",
            "CandidateBundle", "Dataset", "DatasetBuilder", "DefaultClassifier", "EventEmitter", "FailureAnalysis",
            "FailureClassifier", "HeldOutEvidence", "JsonlObserver", "LearningEvent", "LearningReport",
-           "LearningStrategy", "LogObserver", "ObservationResult", "PairedOutcome", "PromotionDecision",
+           "LearningStrategy", "LogObserver", "ObservationResult", "PairReceipt", "PairedEvaluator", "PairedOutcome",
+           "PromotionDecision",
            "PromotionPolicy", "PromptAddendum", "ReviewRecord", "SkillDocument", "StrategyArtefact", "StrategyStore",
            "T3Strategy", "TaskInstance",
            "TaskResult", "Theory", "TheoryStore", "build_addendum", "compare_arms", "export_bundle", "import_bundle",
