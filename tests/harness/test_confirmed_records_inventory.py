@@ -121,6 +121,7 @@ COMPARISONS = {
     ("_shown", "len(outcomes) < 2"): "count",
     ("_shown", "label in NOT_CONFIRMING"): "label",
     ("_shown", "type(outcome) is not dict"): "type",
+    ("_shown", "'raises' in outcome"): "keys",
     ("_Field.__get__", "obj is None"): "none",
     ("_Record.__eq__", "type(other) is not type(self)"): "type",
     ("_Record.__eq__", "self.record == other.record"): "bytes",
@@ -149,7 +150,9 @@ COMPARISONS = {
     ("ExpectationStandard.contradicted_by", "type(new) is not ConfirmedExpectation"): "type",
     ("ExpectationStandard.contradicted_by", "_scenario(one) == scenario"): "bytes",
     ("ExpectationStandard.contradicted_by", "_meaning(one) != meaning"): "bytes",
-    ("ExpectationStandard.with_expectation", "_meaning(one) == meaning"): "bytes",
+    ("latest_confirmed", "answer_scenarios is None"): "none",
+    ("ExpectationStandard.with_expectation", "len(held) == len(self.expectations)"): "count",
+    ("ExpectationStandard.with_expectation", "one.answer_sha256 == old.answer_sha256"): "digest",
     ("ExpectationStandard.superseding", "one.expectation_id not in contradicted"): "digest",
 }
 #: What a side of a comparison may never be: a record, or a Python value read from one (an argument list, an outcome,

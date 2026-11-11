@@ -75,13 +75,15 @@ def _check_lease(path: Path) -> None:
 
 
 def atomic_write(path: Path, text: str) -> None:
-    """Replace a JSON file only after its unique temporary file in the same directory is closed."""
+    """Replace a JSON file only after its unique sibling temporary file is flushed, synced and closed."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(prefix=path.name + ".", suffix=".part", dir=path.parent)
     part = Path(name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
         _check_lease(path)
         os.replace(part, path)
     finally:

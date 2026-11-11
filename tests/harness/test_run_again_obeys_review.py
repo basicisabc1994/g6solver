@@ -277,6 +277,34 @@ def _tree(rel: str) -> ast.Module:
     return ast.parse((SRC / rel).read_text(encoding="utf-8"))
 
 
+def _child_diagnostic_handlers(rel: str, tree: ast.Module) -> set[int]:
+    """Only the recorder copied into the child may absorb a failure while describing its caught exception.
+
+    This is not a host execution-control exception: no host call site invokes the recorder. Require its exact
+    embedding seam, and exclude only handlers physically inside that function, never another function by name.
+    """
+    if rel != 'harness/behaviour_runner.py':
+        return set()
+    recorders = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_exception_observation']
+    if not recorders:  # the d09eca9 baseline predates the recorder
+        return set()
+    assert len(recorders) == 1
+    recorder = recorders[0]
+    assert not [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                and n.func.id == recorder.name], 'the host must not invoke the child diagnostic recorder'
+    bootstrap = next(n for n in tree.body if isinstance(n, ast.Assign)
+                     and any(isinstance(t, ast.Name) and t.id == 'BOOTSTRAP' for t in n.targets))
+    embeddings = [n for n in ast.walk(bootstrap)
+                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == 'getsource'
+                  and isinstance(n.func.value, ast.Name) and n.func.value.id == 'inspect'
+                  and len(n.args) == 1 and isinstance(n.args[0], ast.Name) and n.args[0].id == recorder.name]
+    assert embeddings, 'the recorder must be embedded in the isolated bootstrap'
+    references = {id(n) for n in ast.walk(tree)
+                  if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id == recorder.name}
+    assert references == {id(n.args[0]) for n in embeddings}, 'the host must not alias the child diagnostic recorder'
+    return {n.lineno for n in ast.walk(recorder) if isinstance(n, ast.ExceptHandler)}
+
+
 def _called_by_the_review() -> list[str]:
     """The harness modules the review imports, anywhere in it (its optional stages are imported inside functions)."""
     names = {f"{node.module}.{alias.name}" if node.module == "g6.harness" else node.module
@@ -321,10 +349,31 @@ def test_the_handlers_in_what_the_review_calls_that_catch_a_signal_are_known_and
     found = set()
     for rel in called:
         lines = _tree(rel)
+        child_diagnostics = _child_diagnostic_handlers(rel, lines)
         for function, _line in swallowing(lines, copies_allowed=True):
-            found.add((rel.removeprefix("harness/"), function))
+            if _line not in child_diagnostics:
+                found.add((rel.removeprefix("harness/"), function))
     assert sorted(found - set(OPEN)) == [], "a new handler catches an execution-control signal: let it through"
     assert all(why.strip() for why in OPEN.values())
+
+
+def test_child_diagnostic_classification_cannot_cover_a_host_signal_handler():
+    rel = 'harness/behaviour_runner.py'
+    tree = _tree(rel)
+    original = _child_diagnostic_handlers(rel, tree)
+    planted = ast.parse('def name():\n    try:\n        run()\n    except BaseException:\n        return None\n')
+    ast.increment_lineno(planted, max(n.end_lineno or n.lineno for n in tree.body))
+    tree.body.extend(planted.body)
+    assert _child_diagnostic_handlers(rel, tree) == original
+    assert any(function == 'name' and line not in original for function, line in swallowing(tree))
+    if original:
+        # A real host call to the recorder invalidates the classification, even if the embedding remains.
+        for source in ('_exception_observation(exc, {}, False)', 'alias = _exception_observation'):
+            planted = ast.parse(source).body
+            tree.body.extend(planted)
+            with pytest.raises(AssertionError, match='host must not'):
+                _child_diagnostic_handlers(rel, tree)
+            del tree.body[-len(planted):]
 
 
 def test_the_scan_finds_a_planted_handler_that_swallows_a_signal():

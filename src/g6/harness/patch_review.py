@@ -21,7 +21,8 @@
    commit (a moved test file runs there at its old path). One that does not pass at the base commit either is not
    counted against the patch: an unknown. Or the patch adds an import that a contract the
    repository declares (its import-linter configuration at the base commit) or the caller states forbids
-   (``forbidden_dependency_added``, a ``forbidden_dependency.v1`` template instance, read from the files);
+   (``forbidden_dependency_added``, a ``forbidden_dependency.v1`` template instance, read from the files); or a case
+   the person confirmed fails on the patch (``confirmed_expectation_failed``; ``confirmed``, below);
 3. ``insufficient_evidence``: no requirement stated, a requirement with no stated check, a stated check that did not
    run (missing, not collected, could not be collected in this environment, skipped, deselected, started and cut off
    by the time limit, never reached before it), the tier 1 run out of time, a test that touches a changed module
@@ -121,6 +122,15 @@ own verdict counts it as ``failed``, as it always has, and the issuer is told it
 never a pass (``observation``, ``at_base_observations``). The reading is total over what the runner reports (review 1 of
 slice 2's follow-up): every test any listing of its report names is read (``LISTINGS``), and a report, or a test's
 phases, that is partial, unrecognised, contradictory or unreadable is unknown, never a pass and never a killed control.
+
+G6 0.3, slice 3: optional ``confirmed``, the standard of the expectations the person confirmed for the task (over MCP,
+read from the task's question store, never from a tool argument). Each runs as its one example.v1 check, compiled
+from the question and the option the person chose (``g6.harness.confirmed_checks``), confined in copies of the patch
+and of the base commit's code, unless integrity is already in doubt. A failure on the patch is a defect
+(``confirmed_expectation_failed``, reproduced in ``assessment.completion``); one G6 could not run leaves the evidence
+short (``confirmed_expectation_not_run``). ``assessment.confirmed_expectations`` holds each question, the answer, the
+check's result and the issuer's statement under the expectation standard, apart from model results. With none, nothing
+of it runs and every field is as before.
 
 Every in-place run asks for a test receipt (``repo_tests.run(..., receipt=True)``): the scope lists each id, and the
 coding gate, which this review builds bound to its own snapshot digest (never a digest from the request), counts a
@@ -234,7 +244,12 @@ CheckProvenance = Literal["stated", "derived", "structural", "proposed", "adopte
 STATED, DERIVED, STRUCTURAL = "stated", "derived", "structural"
 #: A structural check of a stated contract that found an import the patch adds and the contract forbids: a defect.
 STRUCTURAL_DEFECT = "forbidden_dependency_added"
-DEFECT_CODES = frozenset({"check_failed", "derived_test_regressed", STRUCTURAL_DEFECT})
+#: G6 0.3, slice 3: a case the person confirmed that fails on the patch (a defect), and one G6 could not run on it.
+CONFIRMED_FAILED, CONFIRMED_NOT_RUN = "confirmed_expectation_failed", "confirmed_expectation_not_run"
+CONFIRMED_NOTE = ("each expectation is a question G6 asked and the option the person chose in the client's dialog; G6 "
+                  "compiled it into one example.v1 check and ran it on the patch. It is enforced on that one case "
+                  "only, whatever scope was confirmed, and a model's result is never among these")
+DEFECT_CODES = frozenset({"check_failed", "derived_test_regressed", STRUCTURAL_DEFECT, CONFIRMED_FAILED})
 INTEGRITY_SKIP = ("the review found an integrity problem, so the checks would run under tests or a test runner that "
                   "may be weakened")
 TIER_3_ADEQUACY = ("tier 3: mutation of the changed lines ran only for test adequacy (assessment.completion."
@@ -886,7 +901,7 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
                  expected_artifact_digest: str = "", timeout_s: int = 300, intent: dict | None = None,
                  proposed_checks: list[dict] | None = None, template_instances: list[dict] | None = None,
                  search: dict | None = None, import_roots: list[str] | tuple[str, ...] = (),
-                 llm=None) -> dict:
+                 llm=None, confirmed=None) -> dict:
     """Assess the working tree's patch against ``base`` on the stated requirements (``[{id, text, checks}]``, checks
     being pytest node ids) and the extra ``tests``. Never accepts claimed test results; never authorises a merge.
 
@@ -901,12 +916,21 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
     refused before anything runs, and one the tree gives nothing to apply to is refused and reported only. Optional
     ``search`` (``{"templates": bool, "test_adequacy": bool}``) runs free-form checks only, or measures test adequacy.
     Optional ``import_roots`` (at most ``MAX_IMPORT_ROOTS`` folders inside the repository, such as ``lib``) go first on
-    the import path of every run of the review, in place and in copies, and are recorded in its scope.
+    the import path of ordinary repository test runs and are recorded in its scope. G6-owned confirmed checks and
+    behaviour probes use the fixed top/src import path instead.
     ``search={"propose": true}`` asks a model for checks (``g6.harness.verification_proposer``): ``llm``, the caller to
     ask (Python only), else the model the person configured for G6; what it proposes stays untrusted.
+    Optional ``confirmed`` (Python only; over MCP, G6 reads it from the task's question store): the standard of the
+    expectations the person confirmed for this task (``g6.harness.confirmed_expectation.ExpectationStandard``), each
+    enforced on the patch as its one example.v1 check (``g6.harness.confirmed_checks``); with none, nothing of it runs.
     """
     started = time.monotonic()
     try:
+        if confirmed is not None:   # only for a standard: with none, nothing new is imported or runs
+            from g6.harness.confirmed_expectation import ExpectationStandard
+            if type(confirmed) is not ExpectationStandard:
+                raise _Refused("G6_E_INPUT_VALIDATION", "confirmed is the standard of the expectations the person "
+                                                        "confirmed (an ExpectationStandard)")
         stated, assumed, unmapped, proposed, instances, config = _inputs(
             task, claim, tests, sources, timeout_s, requirements, intent, proposed_checks, template_instances, search)
         root = repo_tests.checked_repo(repo)
@@ -916,6 +940,11 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
         if expected_artifact_digest and artifact != expected_artifact_digest:
             return blocked_reply("[G6_E_PATCH_STALE] working tree differs from the supplied artifact digest")
         change = repo_tests.change(root, base)
+        if (confirmed is not None and confirmed.expectations) or any(
+                one.template == 'differential.v1' for one in instances):
+            from g6.harness import verification_search
+
+            before = verification_search.bind_execution(change, before, deadline=started + timeout_s)
         placed = {}
         if proposed:
             from g6.harness import verification_search
@@ -933,7 +962,8 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
         return _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources,
                        deadline=started + timeout_s, started=started, listed=listed, assumed=assumed,
                        unmapped=unmapped, proposed=proposed, placed=placed, instances=instances, config=config,
-                       roots=roots, llm=llm)
+                       roots=roots, llm=llm, confirmed=confirmed if confirmed is not None and confirmed.expectations
+                       else None)
     except LETS_THROUGH:
         raise   # an operator stop, a spent allowance or unconfirmed process cleanup must reach the enclosing door
     except repo_tests.RepoRefused as exc:
@@ -976,7 +1006,7 @@ def _stage(stopped: list[dict], what: str, run, *args, **kwargs):
 
 def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources, *, deadline,
             started, listed=(), assumed=(), unmapped=(), proposed=(), placed=None, instances=(),
-            config=None, roots=(), llm=None) -> dict:
+            config=None, roots=(), llm=None, confirmed=None) -> dict:
     reasons: list[dict] = []
     unknowns: list[str] = list(unmapped)   # what an intent held that is not a check of this patch
     runs: list[dict] = []
@@ -1195,7 +1225,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             search = verification_search.not_run(checks, where, INTEGRITY_SKIP, origins)
         else:
             search = _stage(stopped, "the proposed and compiled checks", verification_search.search, change, checks,
-                            where, deadline=deadline, artifact=artifact, origins=origins, roots=roots)
+                            where, deadline=deadline, artifact=artifact, origins=origins, roots=roots,
+                            **({'before': before} if isinstance(before, verification_search.ExecutionSnapshot) else {}))
         for code, detail in (search.reasons if search is not None else ()):
             reason("evidence", code, detail)
         follow_ups = [*follow_ups, *(search.next_actions if search is not None else ())]
@@ -1224,6 +1255,31 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             unknowns.append(f"the proposer's {found['stage']} stage failed, so what it would have proposed is "
                             f"missing: {found['reason']}"[:400])
 
+    # G6 0.3, slice 3: each expectation the person confirmed, as its one example.v1 check, on the patch (confined, in
+    # copies): a failure is a defect the review reproduces, and one G6 could not run leaves the evidence short
+    enforced = None
+    if confirmed is not None:
+        from g6.harness import confirmed_checks
+        enforced = _stage(stopped, "the confirmed expectations", confirmed_checks.run, root, change, confirmed,
+                          deadline=deadline, artifact=artifact, roots=roots, before=before, task=task,
+                          skip=INTEGRITY_SKIP if any(r["stage"] == "integrity" for r in reasons) else "")
+        enforced = enforced if enforced is not None else [
+            {"expectation_id": one.expectation_id, "result": confirmed_checks.NOT_RUN, "runs": {},
+             "detail": "G6's own work stopped on an error (assessment.completion.activities)"}
+            for one in confirmed.expectations]
+        for found in enforced:
+            said = f"the case the person confirmed ({found['expectation_id'][:12]})"
+            if found.get("tree_changed"):   # review I4's rule, for a copy: a run that began on another tree
+                reason("integrity", "repository_changed_during_review", f"the run of {said} was to begin on a "
+                       "working tree other than the one under review (its digest is not the artifact digest)")
+            if found["result"] == confirmed_checks.FAILED:
+                detail = f"{said} fails on the patch: {found.get('detail', '')}"
+                reasons.append({"stage": "tier_1", "code": CONFIRMED_FAILED, "detail": detail})
+                defects.append({"code": CONFIRMED_FAILED, "node": found.get("node", ""), "detail": detail,
+                                "provenance": "person_confirmed", "reproduction": found["reproduction"]})
+            elif found["result"] != confirmed_checks.PASSED or found.get('scenario_unavailable'):
+                reason("evidence", CONFIRMED_NOT_RUN,
+                       f"{said} was not enforced: {found.get('scenario_unavailable') or found.get('detail', '')}")
     # G6 0.3: after the run at the base commit (each check's control), the checks it killed run again on the patch, so
     # the issuer has a receipt its control came before; last, so it takes no time from anything that decides a field
     again = _run_again(root, change, stated, norm, verdicts, runs, deadline, artifact, roots)
@@ -1299,7 +1355,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                           "model_calls": proposals.calls if proposals else 0}, roots=roots,
                   stopped=stopped, proposer=proposals,
                   issuer_inputs={"check_sha": check_sha, "written": lambda check: written.get(check, True),
-                                 "again": again, "observed": observed})
+                                 "again": again, "observed": observed},
+                  confirmed=(confirmed, enforced) if confirmed is not None else None)
 
 
 def _authored(check: str, change, root: Path) -> bool:
@@ -1592,15 +1649,14 @@ def _listed(listed, assumed) -> tuple[list[dict], list[dict]]:
 
 
 def _one_line(text: object) -> str:
-    """``text`` with each control character (a line break among them) shown as a space: a name a repository chose can
-    never start a line of its own in the reply's guidance. It decides nothing."""
+    """Historical guidance rendering; behaviour forms encode their attributed fields separately."""
     return "".join(" " if ord(ch) < 32 or ord(ch) == 127 else ch for ch in str(text))
 
 
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
            sources, started, follow_ups=(), listed=(), assumed=(), search=None, defects=(), prepared=None,
            adequacy=None, config=None, counts=None, roots=(), stopped=(), proposer=None, first_action="",
-           issuer_inputs=None) -> dict:
+           issuer_inputs=None, confirmed=None) -> dict:
     """The reply. ``first_action``: the next action that stands first for an insufficient-evidence outcome in place of
     the general one (the launch review's I6: a module the patch imports that is not installed here).
     ``issuer_inputs``: each stated check's SHA-256 and whether the patch wrote it, every other run that observed a
@@ -1608,7 +1664,10 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
     (``g6.harness.requirement_evidence``), the issuer's statement for each requirement beside the review's own reading."""
     from g6.harness import verification_search   # the completion report, in every reply
     # a repository's names reach these texts as they are; each is one line (the fresh review of the F1-F8 fix pass)
-    reasons = [{**r, "detail": _one_line(r["detail"])} for r in reasons]
+    from g6.harness.behaviour_question import caller_text
+
+    reasons = [{**r, "detail": caller_text(r['detail'], literal=False)
+                if r['code'] in {CONFIRMED_FAILED, CONFIRMED_NOT_RUN} else _one_line(r["detail"])} for r in reasons]
     unknowns = [_one_line(text) for text in unknowns]
     follow_ups, first_action = [_one_line(text) for text in follow_ups], _one_line(first_action)
     evaluated = [{**req, **{key: _one_line(req[key]) for key in ("reason", "suggested_test")
@@ -1665,6 +1724,31 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
         assessment["requirement_evidence"] = requirement_evidence.assess(
             evaluated, runs, artifact=artifact, base_commit=change.base_commit, environment=environment,
             integrity=[r["code"] for r in reasons if r["stage"] == "integrity"], **issuer_inputs)
+    if confirmed is not None:   # G6 0.3, slice 3: what the person confirmed and its check, apart from model results
+        from g6.harness import requirement_evidence
+        standard, enforced = confirmed
+        from g6.harness.behaviour_runner import LIMIT
+
+        confirmed_environment = {**environment, "execution_limit": LIMIT,
+            "execution_artifacts": [one["execution_artifact"] for one in enforced if "execution_artifact" in one],
+            'execution_runs': [{**run['execution_artifact'], 'bootstrap_sha256': run.get('bootstrap_sha256', '')}
+                               for one in enforced for run in one.get('runs', {}).values()
+                               if run.get('execution_artifact')],
+            "executable_sources": [{key: one.get(key, "") for key in
+                                   ("expectation_id", "source_sha256", "scenario_sha256")} for one in enforced]}
+        assessment["confirmed_expectations"] = {
+            "standard_sha256": standard.sha256, "revision": standard.revision, "supersedes": standard.supersedes,
+            "note": CONFIRMED_NOTE + " " + LIMIT,
+            "execution_environment": confirmed_environment,
+            "expectations": [{"expectation_id": one.expectation_id, "question": one.question.to_dict(),
+                              "question_sha256": one.question_sha256,
+                              "answer": {"option": one.option, "text": one.answer.text,
+                                         "answered_by": one.answered_by, "answered_at": one.answer.answered_at,
+                                         "identity": "recorded as given, not authenticated"},
+                              "check": found} for one, found in zip(standard.expectations, enforced, strict=True)],
+            "evidence": requirement_evidence.confirmed_evidence(
+                standard, enforced, artifact=artifact, base_commit=change.base_commit, environment=confirmed_environment,
+                integrity=[r["code"] for r in reasons if r["stage"] == "integrity"])}
     from g6.harness import patch_report   # A1: the readable report, derived from the fields above; it decides nothing
     assessment["report"] = patch_report.safe_render(assessment)
     card = warning_card(CODE, summary, next_actions[0])

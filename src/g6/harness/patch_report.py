@@ -24,6 +24,12 @@ line in parts 2 and 3 also says the evidence kind of its checks and how the issu
 requirement's status, reads it: checked, refuted, conflicting, or not counted yet and why. Model results and proposed
 checks are never among them: they stay in the Tested step, where none passes a requirement.
 
+Where the review enforced cases the person confirmed (``assessment.confirmed_expectations``, G6 0.3 slice 3), a part
+of its own follows what was demonstrated: each case, the option the person chose and its outcome, the scope, who
+answered (recorded as given, not authenticated), its check's result on the patch and the issuer's statement, at most
+``CONFIRMED_SHOWN`` of them and a header (so at most ``CONFIRMED_SHOWN`` + 2 lines beyond ``MAX_LINES``). No model
+result is among them. A case that fails is a reproduced finding too. Without that field the report is as it was.
+
 A list cut at its room ends with "and N more" and names the field that holds the rest. Text the repository or the
 caller wrote (node ids, paths, requirement text, messages, commands) is shown only inside code spans fenced against
 the backticks it holds, on one line, so it can neither break the Markdown nor read as G6's own words."""
@@ -52,7 +58,12 @@ INTEGRITY = {"test_weakened": "a test or a test helper was weakened",
              "repository_changed_during_review": "the working tree changed during the review",
              "gate_shortcut": "the diff of the tests takes a shortcut"}
 FAILED = {"check_failed": "A stated check failed", "derived_test_regressed": "A test of the changed code fails",
-          "forbidden_dependency_added": "The patch adds an import a stated contract forbids"}
+          "forbidden_dependency_added": "The patch adds an import a stated contract forbids",
+          "confirmed_expectation_failed": "A case the person confirmed fails"}
+#: G6 0.3, slice 3: what the person confirmed, shown in its own part when the review enforced any, at most this many.
+CONFIRMED_SHOWN = 3
+CONFIRMED_RESULT = {"passed": "its check passes on the patch", "failed": "its check fails on the patch",
+                    "not_run": "its check was not run on the patch"}
 UNCONFIRMED = {"counterexample": "A proposed check found a counterexample, not confirmed",
                "unconfirmed_failure": "A proposed check fails on the patch, not confirmed"}
 BUDGET = {"findings": 10, "missing": 5, "shown": 3, "decide": 5}
@@ -176,12 +187,17 @@ def _at_base(assessment: dict) -> dict[str, str]:
     return at_base_observations((assessment.get("scope") or {}).get("checks_run") or [])
 
 
-def code(value: object, limit: int = 140) -> str:
+def code(value: object, limit: int | None = 140, *, literal: bool = False, confirmed: bool = False) -> str:
     """``value`` as one inert code span: on one line, cut at ``limit`` characters, fenced by more backticks than any
     run inside it (padded where it begins or ends with one), so nothing in it is read as Markdown or HTML."""
-    text = " ".join(str(value).split())
-    text = "".join(ch if ch.isprintable() else "?" for ch in text) or "(empty)"
-    if len(text) > limit:
+    from g6.harness.behaviour_question import caller_text
+
+    if literal or confirmed:
+        text = caller_text(value, literal=literal) or "(empty)"
+    else:
+        text = " ".join(str(value).split())
+        text = "".join(ch if ch.isprintable() else "?" for ch in text) or "(empty)"
+    if limit is not None and len(text) > limit:
         text = text[:limit - 3] + "..."
     fence = "`" * (max((len(run) for run in re.findall(r"`+", text)), default=0) + 1)
     pad = " " if text[0] == "`" or text[-1] == "`" else ""
@@ -212,17 +228,20 @@ def _headline(assessment: dict) -> str:
 
 
 def _findings(assessment: dict) -> list[list[str]]:
+    from functools import partial
+
     completion = assessment.get("completion") or {}
     defects = completion.get("defects_reproduced") or {}
     items = [[f"- **Test integrity: {INTEGRITY.get(r['code'], 'the tests cannot be trusted')}** ({r['code']}): "
               f"{code(_words(str(r.get('detail', ''))))}", *([IGNORED_TO_DO] if r["code"] in TO_DO else [])]
              for r in assessment.get("reasons", []) if r.get("stage") == "integrity"]
     for found in defects.get("stated_and_repository_checks", []):
-        requirements = ", ".join(code(r) + _issuer(assessment, r, " ({})") for r in found.get("requirements", [])
+        show = partial(code, confirmed=found.get('code') == 'confirmed_expectation_failed')
+        requirements = ", ".join(show(r) + _issuer(assessment, r, " ({})") for r in found.get("requirements", [])
                                  ) or "no stated requirement"
         reproduction = found.get("reproduction") or {}
         head = (f"- **{FAILED.get(found.get('code'), 'A check failed')}** ({found.get('code')}) for {requirements}: "
-                f"{code(found.get('check', ''))}")
+                f"{show(found.get('check', ''))}")
         if reproduction.get("kind") == "static":
             imports = reproduction.get("imports") or [{}]
             first = imports[0]
@@ -230,6 +249,10 @@ def _findings(assessment: dict) -> list[list[str]]:
                    f"holds {code(first.get('text', ''))}; the base commit's files have no such import"
                    + (f"; the repository's own linter: {code(reproduction['command'])}" if reproduction.get("command")
                       else ""))
+        elif found.get("code") == "confirmed_expectation_failed":
+            how = (f"  - Reproduce: write its text (in {show('assessment.completion.defects_reproduced')}) to "
+                   f"{show(reproduction.get('file', ''), 80)}, then {_plain(reproduction.get('node', ''))}. G6 "
+                   f"compiled it from example.v1 and the person's answer. {EXACT}. {CAUTION}")
         else:
             base = ("passes at the base commit, fails on the patch" if found.get("code") == "derived_test_regressed"
                     else "not run at the base commit")
@@ -389,6 +412,57 @@ def _gate_note(assessment: dict) -> str:
     return f"; {count} proposed check{'s' if count != 1 else ''} could not be judged" if count else ""
 
 
+def _question_sha256(question: object) -> str:
+    """The digest of a question's record as the assessment holds it (its canonical JSON), which is its identity."""
+    from g6.core.ledger import digest
+
+    try:
+        return digest(question)
+    except (TypeError, ValueError, RecursionError):
+        return "(a question G6 cannot write)"
+
+
+def _confirmed(assessment: dict) -> list[list[str]]:
+    """G6 0.3, slice 3: each expectation the person confirmed (``assessment.confirmed_expectations``): the case asked
+    (its positional and keyword arguments) and the outcome chosen, shown as the behaviour form shows them, in the one
+    encoding of an outcome (``behaviour_question.shown_call``, ``shown_outcome``), the question's digest, so two cases
+    that differ never read alike even where a long one is cut, the option chosen, the scope, who answered (recorded as
+    given, not authenticated), its check's result on the patch and the issuer's statement. No model result is among
+    them."""
+    from g6.harness import behaviour_question as bq
+    from functools import partial
+
+    # Only confirmed-evidence lines use the form's caller-text encoding.
+    show = partial(code, confirmed=True)
+
+    held = assessment.get("confirmed_expectations") or {}
+    statements = {s.get("expectation"): s for s in (held.get("evidence") or {}).get("expectations", [])}
+    items = []
+    for one in held.get("expectations", []):
+        question, answer, check = one.get("question") or {}, one.get("answer") or {}, one.get("check") or {}
+        scope = str(question.get("scope", ""))
+        option = answer.get("option", "")
+        statement = statements.get(one.get("expectation_id")) or {}
+        issuer = ("checked" if statement.get("checked") else "refuted" if statement.get("refute") else
+                  f"not counted yet ({_words(statement.get('not_counted', '') or statement.get('gap', ''))})")
+        outcomes = question.get("outcomes") if isinstance(question.get("outcomes"), dict) else {}
+        items.append([f"- {show(bq.shown_call(question), 200)}: the person chose {show(option, 20)}, "
+                      f"{show(bq.shown_outcome(outcomes.get(option)), 120)} (question SHA-256 "
+                      f"{show(_question_sha256(question), 70)}), scope shown in full below, answered "
+                      f"by {show(answer.get('answered_by', ''), 60)} (recorded as given, not authenticated); "
+                      f"{CONFIRMED_RESULT.get(check.get('result'), 'its check gave no result')}; "
+                      f"the evidence issuer: {show(issuer, 120)}; Scope (exact text): "
+                      f"{show(scope, None, literal=True)}. "
+                      + _execution_limit()])
+    return items
+
+
+def _execution_limit() -> str:
+    from g6.harness.behaviour_runner import LIMIT
+
+    return LIMIT
+
+
 def render(assessment: dict) -> str:
     """The report of ``assessment`` (the module's order and rules), from its decided fields alone."""
     lines = [_headline(assessment), "", "## Reproduced findings"]
@@ -397,6 +471,9 @@ def render(assessment: dict) -> str:
     lines += _cut(_missing(assessment), BUDGET["missing"], "assessment.completion.not_established") or ["- None."]
     lines += ["", "## Demonstrated on the stated checks"]
     lines += _cut(_shown(assessment), BUDGET["shown"], "assessment.completion.demonstrated") or ["- None."]
+    if assessment.get("confirmed_expectations"):   # only when the review enforced any: otherwise the report is as it was
+        lines += ["", "## What the person confirmed"]
+        lines += _cut(_confirmed(assessment), CONFIRMED_SHOWN, "assessment.confirmed_expectations") or ["- None."]
     lines += ["", "## For you to decide", *_decide(assessment)[:BUDGET["decide"]]]
     lines += ["", "## How this was decided", *_steps(assessment), "", STANDING_NOTE]
     if assessment.get("not_checked"):

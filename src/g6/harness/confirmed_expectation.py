@@ -58,6 +58,7 @@ from g6.core.ledger import canonical, digest
 from g6.evidence.certificate import Check, Control, MissionFacts
 from g6.evidence.mapping import id_of
 from g6.harness.patch_review import NORMATIVE
+from g6.harness.observation_contract import observable_exception
 from g6.harness.verification_templates import (
     Call,
     ExampleBindings,
@@ -235,6 +236,8 @@ def _shown(record: dict, question_sha256: str) -> None:
     for label, outcome in outcomes.items():   # each outcome is an example.v1 case, checked before it is shown
         if type(outcome) is not dict:
             raise ValueError("each outcome states returns, raises or effect")
+        if 'raises' in outcome and not observable_exception(outcome['raises']):
+            raise ValueError('a raised outcome names an observable exception type')
         other = sorted(set(outcome) - OUTCOME_FIELDS)
         if other:   # the scenario is the question's alone: an outcome never restates or replaces it
             raise ValueError(f"outcome {label!r} holds {', '.join(other)}: an outcome states only "
@@ -498,6 +501,21 @@ def _copied(one: object) -> ConfirmedExpectation:
     return ConfirmedExpectation.from_record(one.record)
 
 
+def latest_confirmed(expectations: Iterable[ConfirmedExpectation],
+                     answer_scenarios: Mapping[str, str] | None = None) -> tuple[tuple[ConfirmedExpectation, str], ...]:
+    """The last recorded confirmation for each called scenario, with that answer's own scenario custody.
+
+    Record order decides recency, independently of the client's clock. Missing custody stays missing. Callers that
+    build a standard still check contradictions before selecting; the runner reads the same frozen selection.
+    """
+    custody = {} if answer_scenarios is None else answer_scenarios
+    selected = {}
+    for record in expectations:
+        one = _copied(record)
+        selected[_scenario(one)] = one, custody.get(one.answer_sha256, '')
+    return tuple(selected.values())
+
+
 @dataclass(frozen=True, eq=False)
 class ExpectationStandard:
     """A standard of confirmed expectations, each a predicate: an immutable sequence of answers with its revision and
@@ -571,14 +589,15 @@ class ExpectationStandard:
 
     def with_expectation(self, new: ConfirmedExpectation) -> ExpectationStandard:
         """The next revision with ``new`` added; ``ContradictsStandard`` when it contradicts one already accepted; this
-        standard when it already holds the same answer (under any citation)."""
+        standard when it already holds this exact answer record. A fresh equivalent answer replaces its predecessor."""
         contradicted = self.contradicted_by(new)
         if contradicted:
             raise ContradictsStandard(contradicted)
-        meaning = _meaning(new)
-        if any(_meaning(one) == meaning for one in self.expectations):
+        held = tuple(one for one, _ in latest_confirmed((*self.expectations, new)))
+        if len(held) == len(self.expectations) and all(
+                one.answer_sha256 == old.answer_sha256 for one, old in zip(held, self.expectations)):
             return self
-        return ExpectationStandard((*self.expectations, new), self.revision + 1, self.sha256, ())
+        return ExpectationStandard(held, self.revision + 1, self.sha256, ())
 
     def superseding(self, new: ConfirmedExpectation) -> ExpectationStandard:
         """A new standard that replaces the expectations ``new`` contradicts with ``new`` and names this one as the
@@ -597,4 +616,4 @@ class ExpectationStandard:
 
 __all__ = ["ANSWER_FIELDS", "NORMATIVE", "NOT_CONFIRMING", "OUTCOME_FIELDS", "PERSON_CONFIRMED", "QUESTION_FIELDS",
            "TIME_FORMAT", "Answer", "ConfirmedExpectation", "ContradictsStandard", "ExpectationStandard", "Question",
-           "Unconfirmed", "confirm", "normative"]
+           "Unconfirmed", "confirm", "latest_confirmed", "normative"]

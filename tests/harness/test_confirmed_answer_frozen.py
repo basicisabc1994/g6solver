@@ -132,7 +132,10 @@ def test_the_same_answer_under_another_citation_is_held_once():
         repeated = confirm(question(cited=cited), "A", answered_by="person:owner")
         assert repeated.question_sha256 != first.question_sha256   # another question, the same answer
         assert standard.contradicted_by(repeated) == ()
-        assert standard.with_expectation(repeated) is standard
+        latest = standard.with_expectation(repeated)
+        assert latest.expectations == (repeated,)
+        assert latest.revision == standard.revision + 1 and latest.previous == standard.sha256
+        assert standard.expectations == (first,)
 
 
 def test_another_outcome_for_the_same_scenario_still_contradicts_under_any_citation():
