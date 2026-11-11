@@ -89,5 +89,7 @@ def test_a_misnamed_bindings_name_is_one_inert_line_in_the_refusal(tmp_path, key
     message = got["warning_card"]["message"]
     assert got["warning_card"]["code"] == "G6_E_INPUT_VALIDATION"
     assert "\n" not in message and message.isprintable()
-    assert f"bindings.{json.dumps(key)} is not one of example.v1's bindings" in message, message
-    assert message.startswith("template_instances.0 (T1): bindings.function: Field required")   # plain names as before
+    # The entire refusal is now a lossless labelled literal when it holds G6 labels.
+    decoded = json.loads(message) if message.startswith('"') else message
+    assert f"bindings.{json.dumps(key)} is not one of example.v1's bindings" in decoded, message
+    assert decoded.startswith("template_instances.0 (T1): bindings.function: Field required")   # same labelled detail

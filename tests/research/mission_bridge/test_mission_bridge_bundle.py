@@ -18,8 +18,6 @@ from __future__ import annotations
 
 import pytest
 
-from g6.research.echa import FLAG as KERNEL_FLAG
-from g6.research.echa import ResearchDisabled as KernelDisabled
 from g6.research.echa import StandardRef, trace_claim
 from g6.research.mission_bridge import FLAG, MissionIR, ResearchDisabled
 from g6.research.mission_bridge import fixtures as fx
@@ -40,7 +38,6 @@ CALLER_DECLARED = "evidence_caller_declared"   # bundle.CALLER_DECLARED, the gap
 @pytest.fixture(autouse=True)
 def _on(monkeypatch):
     monkeypatch.setenv(FLAG, "1")
-    monkeypatch.setenv(KERNEL_FLAG, "1")
 
 
 def ir_of(name="medico_legal", *, complete=True) -> MissionIR:
@@ -122,11 +119,12 @@ def test_caller_declared_evidence_for_every_predicate_supports_every_claim_but_c
 def test_a_formal_certificate_the_caller_hands_in_is_a_claim_and_never_makes_the_mission_verified():
     # RESEARCH-01: a certificate checked for its shape only, and a vault entry the bundle writes for any 64-hex
     # digest, stand behind nothing G6 observed (fails while _bundle returns "verified")
-    ir, f = formal()
+    ir, f = formal(negative_control="f-ctl")   # G6 0.3: a formal check counts only with a negative control
+    _, f_control = formal(obs_id="f-ctl", result="fail", purpose="negative_control")
     nodes = {"applicable_standard_identified": "standards_check", "design_load_declared": "scope_check",
              "geometry_status_disclosed": "geometry_check", "human_engineer_review_if_required": "scope_check",
              "units_consistent": "scope_check"}
-    observations, claims = [f], [claim("c-calc", "calculation_reproduced", ["f1"])]
+    observations, claims = [f, f_control], [claim("c-calc", "calculation_reproduced", ["f1"])]
     for index, (predicate, node) in enumerate(nodes.items()):
         observations += [obs(f"e{index}", node, predicate, ir=ir), control_for(f"e{index}", node, predicate, ir=ir)]
         claims.append(claim(f"c{index}", predicate, [f"e{index}"]))
@@ -230,9 +228,14 @@ def formal(**over):
 
 
 def test_a_formal_check_with_a_certificate_from_the_named_formal_operation_is_accepted():
-    ir, f = formal()
-    b = bundle([claim("c-calc", "calculation_reproduced", ["f1"])], [f], ir=ir)
+    ir, f = formal(negative_control="f-ctl")
+    _, f_control = formal(obs_id="f-ctl", result="fail", purpose="negative_control")
+    b = bundle([claim("c-calc", "calculation_reproduced", ["f1"])], [f, f_control], ir=ir)
     assert state(b, "c-calc").state == "supported" and b.rejected == ()
+    # G6 0.3 (the probe case, through this path): a formal check with no negative control supports nothing
+    _, lone = formal()
+    alone = bundle([claim("c-calc", "calculation_reproduced", ["f1"])], [lone], ir=ir)
+    assert state(alone, "c-calc").state == "unknown" and "not_an_active_check" in state(alone, "c-calc").reasons
     assert "formal_methods.solve" in FORMAL_CHECKERS
 
 
@@ -353,13 +356,13 @@ def test_the_realistic_medico_legal_evidence_ends_as_a_qualified_draft_with_expl
 # --- flags ------------------------------------------------------------------------------------------------------------
 
 
-def test_the_bundle_needs_both_research_flags(monkeypatch):
+def test_the_bundle_needs_its_own_research_flag_and_the_kernel_none(monkeypatch):
     claims, observations, decisions = full_scenario()
     ir = ir_of()  # built while the flag is on, so only the bundle itself can refuse below
     monkeypatch.delenv(FLAG)
     with pytest.raises(ResearchDisabled):
         build_bundle(ir, standard_of(ir), claims, observations, decisions=set(decisions))
+    # G6 0.3 removed the kernel's flag (ECHA is a view over the issuer's records); the bundle keeps its own
     monkeypatch.setenv(FLAG, "1")
-    monkeypatch.delenv(KERNEL_FLAG)
-    with pytest.raises(KernelDisabled):
-        build_bundle(ir, standard_of(ir), claims, observations, decisions=set(decisions))
+    monkeypatch.delenv("G6_ECHA_RESEARCH", raising=False)
+    assert build_bundle(ir, standard_of(ir), claims, observations, decisions=set(decisions)).outcomes
