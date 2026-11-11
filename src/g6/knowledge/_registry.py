@@ -77,6 +77,7 @@ _SCHEMA = (
     "CREATE TABLE IF NOT EXISTS nodes (generation INTEGER NOT NULL, body TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS edges (generation INTEGER NOT NULL, id TEXT NOT NULL, subject TEXT NOT NULL, "
     "object TEXT NOT NULL, relation TEXT NOT NULL, body TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS proposed_edges (id TEXT PRIMARY KEY, registration_id TEXT NOT NULL, body TEXT NOT NULL)",
 )
 _HEX64 = "0123456789abcdef"
 
@@ -154,7 +155,8 @@ class Dependent(_Record):
     """A stored consumer of some passages of one registration: it must ask :meth:`ProjectStore.invalidated` before
     every use of what it stored."""
 
-    kind: Literal["cache", "pack", "snapshot", "graph_edge", "skill_trial", "skill_admission", "normative_grant"]
+    kind: Literal["cache", "pack", "snapshot", "graph_edge", "model_edge", "skill_trial", "skill_admission",
+                  "normative_grant"]
     ident: str
     registration_id: str
     passage_ids: tuple[str, ...] = ()
@@ -606,6 +608,22 @@ class ProjectStore:
                                                          (generation,))]
             return (nodes or None), edges
 
+    def propose_edge(self, ident: str, body: str, registration_id: str) -> None:
+        """Keep a model-proposed relation (``g6.knowledge._relations``): a lead, never evidence. Its writer registers
+        it as a stored consumer, and :meth:`erase` removes it with its registration."""
+        with self._writing() as conn:
+            conn.execute("INSERT OR IGNORE INTO proposed_edges VALUES (?, ?, ?)", (ident, registration_id, body))
+
+    def proposed_edges(self, registrations: Sequence[str]) -> list[str]:
+        """The proposed relations of ``registrations`` and of no other: the caller's scope is decided first."""
+        wanted = sorted(set(registrations))
+        with self._reading() as conn:
+            if not wanted or not self._has(conn, "proposed_edges"):
+                return []
+            marks = ",".join("?" * len(wanted))
+            return [row["body"] for row in conn.execute(
+                f"SELECT body FROM proposed_edges WHERE registration_id IN ({marks}) ORDER BY id", wanted)]
+
     def put_job(self, ident: str, body: str) -> None:
         with self._writing() as conn:
             conn.execute("INSERT OR REPLACE INTO jobs VALUES (?, ?)", (ident, body))
@@ -746,7 +764,7 @@ class ProjectStore:
             for start in range(0, len(ids), 500):
                 marks = ",".join("?" * len(ids[start:start + 500]))
                 conn.execute(f"DELETE FROM receipts WHERE item IN ({marks})", ids[start:start + 500])
-            for table in ("members", "member_passages", "rereads", "normative_grants"):
+            for table in ("members", "member_passages", "rereads", "normative_grants", "proposed_edges"):
                 conn.execute(f"DELETE FROM {table} WHERE registration_id = ?", (registration_id,))
             conn.execute("DELETE FROM nodes")   # the graph is derived: it is rebuilt without the source
             conn.execute("DELETE FROM edges")

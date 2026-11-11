@@ -97,11 +97,11 @@ def test_every_mcp_tool_that_reaches_the_engine_builds_its_access_from_the_host_
         # every engine function the tool names, called directly or handed to a worker thread
         called = {n.attr for n in ast.walk(tool) if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
                   and n.value.id == "engine"} & engine_functions
-        # the dispatcher takes the same access; the jobs take the host binding itself
+        # the dispatcher, the graph and the planner take the same access; the jobs take the host binding itself
         other = {n.value.id for n in ast.walk(tool) if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
-                 and n.value.id in ("_dispatch", "_jobs")}
+                 and n.value.id in ("_dispatch", "_jobs", "_graph", "_planner")}
         assert called or other, tool.name
-        called |= other & {"_dispatch"}
+        called |= other & {"_dispatch", "_graph", "_planner"}
         source = ast.unparse(tool)
         assert "host_binding()" in source, tool.name
         if called - {"preview", "commit", "discard_preview", "excluded_counts", "shared_with"}:   # everything that reads or changes a store
@@ -148,7 +148,7 @@ def test_every_stored_consumer_registers_a_dependent():
     assert snapshots.index(".invalidated(") < snapshots.index(".retained(")
 
 #: The registry's tables that hold a stored consumer's content, each with the registry method that writes it.
-CONSUMER_TABLES = {"snapshots": "keep_snapshot", "normative_grants": "grant_normative"}
+CONSUMER_TABLES = {"snapshots": "keep_snapshot", "normative_grants": "grant_normative", "proposed_edges": "propose_edge"}
 
 
 def test_every_registry_table_is_membership_or_a_consumer_whose_writer_registers_a_dependent():

@@ -32,6 +32,7 @@ TOO_MANY = "G6_E_KNOWLEDGE_FUSION_CANDIDATES"
 OVER_BUDGET = "G6_E_KNOWLEDGE_FUSION_BUDGET"
 #: Backends whose ranking is lexical (BM25 over words).
 LEXICAL = frozenset({"sqlite", "elastic_managed"})
+LEADS = "leads"   # the route name of model-proposed relations (g6.knowledge._relations)
 #: Word-set overlap above which two passages are shown as one presentation group. A declared heuristic.
 GROUP_OVERLAP = 0.7
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
@@ -88,14 +89,16 @@ def fuse(results: Sequence[tuple[BackendReport, Sequence[Hit], int]], *, top_k: 
     contributions: list[Contribution] = []
     for report, hits, generation in results:
         fallback = report.rung == "bm25" and report.backend not in LEXICAL
-        counted_once = fallback and lexical_answered
+        lead = report.route == LEADS   # a model's proposed relation led here: it is kept, with no evidence weight
+        counted_once = (fallback and lexical_answered) or lead
         seen: set[str] = set()
         for hit in hits:
             pid = hit.passage.id
             if pid in seen:
                 continue
             seen.add(pid)
-            reason = ("bm25 fallback: lexical, counted once with the lexical backend" if counted_once
+            reason = ("a model-proposed lead: a way to find the passage, no evidence weight" if lead
+                      else "bm25 fallback: lexical, counted once with the lexical backend" if counted_once
                       else "bm25 fallback: lexical, not semantic" if fallback else f"{report.route} match")
             made = Contribution(backend=report.backend, route=report.route, query=query, rank=hit.rank,
                                 score_scale=hit.score_scale, reason=reason, passage_id=pid, generation=generation)

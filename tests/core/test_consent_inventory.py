@@ -373,3 +373,35 @@ def test_every_context_engine_tool_has_its_source_contract_and_argument_kinds():
         assert set(TOOL_ARGUMENTS[name].values()) <= {'content', 'pointer'}, name
     declared = {name for name in TOOLS if name.startswith("g6_knowledge_")}
     assert declared == set(tools), "a declared Context Engine tool is not registered, or the reverse"
+
+
+def knowledge_model_calls(root=ROOT, extra=()):
+    """Every place the Context Engine's shared modules ask a model: (file:function, the receiver is ``guard(...)``,
+    the call lies inside ``with cloud_consent.request_sources(...)``). Read from the folder, so a new module is seen."""
+    rows = []
+    for path in [*sorted((root / 'src/g6/knowledge').glob('_*.py')), *extra]:
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+        for function in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:
+            inside = {id(call) for block in ast.walk(function) if isinstance(block, ast.With) and any(
+                isinstance(i.context_expr, ast.Call) and ast.unparse(i.context_expr.func) == 'cloud_consent.request_sources'
+                for i in block.items) for call in ast.walk(block)}
+            for call in ast.walk(function):
+                if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr in (
+                        'complete', 'complete_with_images'):
+                    receiver = call.func.value
+                    guarded = isinstance(receiver, ast.Call) and ast.unparse(receiver.func) == 'guard'
+                    rows.append((f'{path.name}:{function.name}', guarded, id(call) in inside))
+    return rows
+
+
+def test_every_model_call_of_the_context_engine_is_guarded_and_names_its_sources(tmp_path):
+    rows = knowledge_model_calls()
+    assert '_relations.py:extract' in {name for name, _, _ in rows}
+    assert all(guarded and inside for _, guarded, inside in rows), rows
+    text = (ROOT / 'src/g6/knowledge/_relations.py').read_text(encoding='utf-8')
+    assert 'from g6.core.consent_callers import guard' in text and 'from g6.core import cloud_consent' in text
+    # a new module that asks a model directly, or outside the sources of what it sends, fails the inventory
+    fresh = tmp_path / '_fresh.py'
+    fresh.write_text('def ask(caller, text):\n    return caller.complete("", text)\n\n\n'
+                     'def half(caller, text):\n    return guard(caller).complete("", text)\n', encoding='utf-8')
+    assert knowledge_model_calls(extra=(fresh,))[-2:] == [('_fresh.py:ask', False, False), ('_fresh.py:half', True, False)]
