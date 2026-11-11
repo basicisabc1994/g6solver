@@ -32,7 +32,7 @@ from g6.core.storage import PathRefused, contained, state_path
 from g6.knowledge._envelope import (MAX_TOP_K, BackendReport, Checked, Contribution, Denied, PassageItem,
                                     SearchRequest, SearchResponse)
 from g6.knowledge._index import IndexRefused
-from g6.knowledge._registry import Member, ProjectStore, Refused, Registration, source_uri
+from g6.knowledge._registry import Dependent, Member, ProjectStore, Refused, Registration, source_uri
 from g6.knowledge._scope import Access, Binding, ScopeDenied, bound, consent_scope, inside
 from g6.knowledge._types import Document, Passage, now, passage_problems, sha256_hex
 from g6.knowledge._view import label_view, view_of
@@ -322,9 +322,51 @@ def _visible_denied(acc: Access, denied: Sequence[Denied]) -> list[Denied]:
     return [d for d in denied if acc.local or (d.registration_id and _granted(acc, d.registration_id))]
 
 
-def search(acc: Access, request: SearchRequest, *, clock: Clock = _utc) -> tuple[SearchResponse,
-                                                                                tuple[cloud_consent.Source, ...]]:
-    """Lexical search of the project's published generation; see the module docstring for the order of its steps."""
+#: Routes a search uses when the request names none: the ones that are ready, in this order.
+DEFAULT_ROUTES = ("exact", "structure", "meaning")
+PACK_UNKNOWN = "G6_E_KNOWLEDGE_PACK"
+
+
+def _route_hits(store: ProjectStore, acc: Access, request: SearchRequest, generation: Any,
+                at: datetime) -> list[tuple[BackendReport, list, int]]:
+    """Each requested route's report and hits on the pinned generation. A route that is not ready is reported
+    ``unavailable`` with why and is not asked; a route name G6 does not know is ``unsupported``."""
+    from g6.knowledge import _dispatch
+
+    ready = {r.name: (r, why) for r, why in _dispatch.routes(store)}
+    wanted = request.routes if request.routes is not None else tuple(
+        name for name in DEFAULT_ROUTES if name in ready and not ready[name][1])
+    limit = min(request.top_k * OVERSAMPLE, 4 * MAX_TOP_K)
+    usable = _dispatch.usable_registrations(store, acc, at=at)
+    out = []
+    for name in dict.fromkeys(wanted):
+        if name not in ready or "search" not in ready[name][0].operations:
+            out.append((BackendReport(backend="", route=label_view(str(name))[:40], state="unsupported",
+                                      reason="no such search route"), [], generation.number))
+            continue
+        route, why = ready[name]
+        if why:
+            out.append((BackendReport(backend=route.backend, route=name, state="unavailable", reason=why), [],
+                        generation.number))
+            continue
+        held = _dispatch.answered(generation, route.backend)
+        scoped = None if held == ["*"] else [r for r in usable if r in held]
+        found = _dispatch.open_route(store, route, generation.number, registrations=scoped).find(request.query, limit)
+        state = {"ok": "answered", "empty": "empty", "unavailable": "unavailable", "failed": "failed"}[found.outcome]
+        if found.evidence.get("partial"):
+            state = "partial"
+        out.append((BackendReport(backend=route.backend, route=name, state=state, searched=found.searched,
+                                  rung=str(found.evidence.get("rung", "")),
+                                  reason="" if found.answered else str(found.evidence.get("code") or found.outcome)),
+                    list(found.hits), generation.number))
+    return out
+
+
+def _fused(acc: Access, request: SearchRequest, *, clock: Clock, budget_tokens: int | None = None):
+    """The steps every passage search takes (the module docstring), over one or several routes; returns the store,
+    the generation, the fusion and what was denied or withheld."""
+    from g6.knowledge._fuse import fuse
+
     store = ProjectStore(acc.binding)
     if request.sources is not None:
         narrowed = frozenset(request.sources)
@@ -332,23 +374,20 @@ def search(acc: Access, request: SearchRequest, *, clock: Clock = _utc) -> tuple
                      sources=narrowed if acc.sources is None else acc.sources & narrowed)
     generation = store.published()
     if generation is None:
-        report = BackendReport(backend="sqlite", route="exact", state="unavailable",
-                               reason="not_published: nothing is indexed for this project yet")
-        return SearchResponse(request=request, generation=None, backends=(report,)), ()
-    found = _lexical(store, generation.number).find(request.query, min(request.top_k * OVERSAMPLE, 4 * MAX_TOP_K))
-    state = {"ok": "answered", "empty": "empty", "unavailable": "unavailable", "failed": "failed"}[found.outcome]
-    report = BackendReport(backend="sqlite", route="exact", state=state, searched=found.searched,
-                           reason="" if found.answered else str(found.evidence.get("code") or found.outcome))
-    checkpoint("search:found")
+        return store, None, None, [], {}, {}
     at = clock()
-    members, denied = store.use(acc, [h.passage.id for h in found.hits], at=at, generation=generation.number)
+    results = _route_hits(store, acc, request, generation, at)
+    checkpoint("search:found")
+    candidates = {h.passage.id: h for _, hits, _ in results for h in hits}
+    members, denied = store.use(acc, list(candidates), at=at, generation=generation.number)
     by_passage = {pid: m for m in members for pid in m.passage_ids}
     registrations = {r.id: r for r in store.registrations()}
     withheld: dict[str, dict[str, str]] = {}
     granted: dict[str, bool] = {}
-    kept = []
-    for hit in found.hits:
-        member = by_passage.get(hit.passage.id)
+    documents: dict[str, Document | None] = {}
+    usable: dict[str, Member] = {}
+    for pid, hit in candidates.items():
+        member = by_passage.get(pid)
         if member is None:
             continue
         if member.registration_id not in granted:
@@ -356,10 +395,6 @@ def search(acc: Access, request: SearchRequest, *, clock: Clock = _utc) -> tuple
         if not granted[member.registration_id]:
             withheld[member.registration_id] = {"source": member.registration_id, "provider": acc.destination}
             continue
-        kept.append((hit, member))
-    documents: dict[str, Document | None] = {}
-    intact = []
-    for hit, member in kept:
         if member.uri not in documents:
             documents[member.uri], _ = _reread(acc.binding, registrations[member.registration_id], member)
             if documents[member.uri] is None:
@@ -369,29 +404,50 @@ def search(acc: Access, request: SearchRequest, *, clock: Clock = _utc) -> tuple
             if document is not None:
                 store.changed(member.registration_id, member.uri)
                 documents[member.uri] = None
-            denied.append(Denied(passage_id=hit.passage.id, registration_id=member.registration_id, why="changed"))
+            denied.append(Denied(passage_id=pid, registration_id=member.registration_id, why="changed"))
             continue
-        intact.append((hit, member))
+        usable[pid] = member
     checkpoint("search:checked")
-    _, late = store.use(acc, [h.passage.id for h, _ in intact], at=clock(), generation=generation.number)
-    refused = {d.passage_id for d in late}
+    _, late = store.use(acc, list(usable), at=clock(), generation=generation.number)
     denied.extend(late)
-    items, sources = [], []
-    for hit, member in intact:
-        if hit.passage.id in refused or len(items) >= request.top_k:
-            continue
-        contribution = Contribution(backend="sqlite", route="exact", query=request.query, rank=hit.rank,
-                                    score_scale=hit.score_scale, reason="lexical match",
-                                    passage_id=hit.passage.id, generation=generation.number)
-        items.append(_item(hit.passage, member, len(items) + 1, (contribution,)))
-        sources.append(_source(member, hit.passage))
-    shown = {i.source for i in items}
-    response = SearchResponse(
-        request=request, generation=generation.number, backends=(report,),
-        authorisation_revisions={rid: registrations[rid].authorisation_revision for rid in sorted(shown)},
-        payload={"kind": "passages", "items": [i.model_dump() for i in items]},
-        withheld=tuple(withheld[k] for k in sorted(withheld)),
-        denied=tuple(dict.fromkeys(_visible_denied(acc, denied))))
+    for refused in late:
+        usable.pop(refused.passage_id, None)
+    sources: dict[str, cloud_consent.Source] = {}
+
+    def render(hit: Any, rank: int, contributions: tuple[Contribution, ...]) -> PassageItem | None:
+        member = usable.get(hit.passage.id)
+        if member is None:
+            return None
+        sources[hit.passage.id] = _source(member, hit.passage)
+        return _item(hit.passage, member, rank, contributions)
+
+    fused = fuse(results, top_k=request.top_k, budget_tokens=budget_tokens, render=render, query=request.query)
+    shown = {i.source for i in fused.items}
+    meta = {"withheld": tuple(withheld[k] for k in sorted(withheld)),
+            "denied": tuple(dict.fromkeys(_visible_denied(acc, denied))),
+            "revisions": {rid: registrations[rid].authorisation_revision for rid in sorted(shown)}}
+    return store, generation, fused, [sources[i.passage_id] for i in fused.items], meta, usable
+
+
+def search(acc: Access, request: SearchRequest, *, clock: Clock = _utc) -> tuple[SearchResponse,
+                                                                                tuple[cloud_consent.Source, ...]]:
+    """Search the project's published generation over the requested routes (by default the ready ones) and fuse the
+    results by passage id; see the module docstring for the order of its steps."""
+    store, generation, fused, sources, meta, _ = _fused(acc, request, clock=clock)
+    if generation is None:
+        report = BackendReport(backend="sqlite", route="exact", state="unavailable",
+                               reason="not_published: nothing is indexed for this project yet")
+        return SearchResponse(request=request, generation=None, backends=(report,)), ()
+    payload: dict[str, Any] = {"kind": "passages", "items": [i.model_dump() for i in fused.items]}
+    if fused.groups or fused.cautions:
+        payload.update(groups=[list(g) for g in fused.groups if all(p in {i.passage_id for i in fused.items} for p in g)],
+                       cautions=[c for c in fused.cautions
+                                 if all(p in {i.passage_id for i in fused.items} for p in c["passages"])])
+    if fused.refused:
+        payload["refused"] = fused.refused
+    response = SearchResponse(request=request, generation=generation.number, backends=fused.backends,
+                              authorisation_revisions=meta["revisions"], payload=payload, withheld=meta["withheld"],
+                              denied=meta["denied"])
     from g6.knowledge import _snapshots
 
     kept_as = _snapshots.write(store, response)   # only for items of a registration that retains audit copies
@@ -399,6 +455,64 @@ def search(acc: Access, request: SearchRequest, *, clock: Clock = _utc) -> tuple
         response = response.model_copy(update={"snapshot": kept_as})
     return response, tuple(sources)
 
+
+def context(acc: Access, task: str, *, budget_tokens: int = 4000, routes: Sequence[str] | None = None,
+            clock: Clock = _utc) -> tuple[dict[str, Any], tuple[cloud_consent.Source, ...]]:
+    """A budgeted context for ``task``: the fused passages that fit ``budget_tokens``, every rendered field,
+    provenance and JSON overhead counted. The pack is saved (views only) and registered as a stored consumer, so
+    :func:`pack` denies it once a source in it is revoked, changed or deleted."""
+    request = SearchRequest(operation="context", query=task, top_k=MAX_TOP_K,
+                            routes=tuple(routes) if routes is not None else None)
+    store, generation, fused, sources, meta, usable = _fused(acc, request, clock=clock, budget_tokens=budget_tokens)
+    if generation is None:
+        return {"pack": "", "generation": None, "items": [], "tokens": 0, "omitted": 0, "refused": "",
+                "backends": [{"backend": "sqlite", "route": "exact", "state": "unavailable",
+                              "reason": "not_published: nothing is indexed for this project yet"}],
+                "withheld": [], "denied": []}, ()
+    shown = {i.passage_id for i in fused.items}
+    body = {"task_sha256": sha256_hex(task), "generation": generation.number, "budget_tokens": budget_tokens,
+            "items": [i.model_dump(mode="json") for i in fused.items], "tokens": fused.tokens,
+            "omitted": fused.omitted,
+            "refused": fused.refused, "backends": [b.model_dump() for b in fused.backends],
+            "groups": [list(g) for g in fused.groups if all(p in shown for p in g)],
+            "cautions": [c for c in fused.cautions if all(p in shown for p in c["passages"])]}
+    ident = "pack-" + sha256_hex(json.dumps(body, sort_keys=True, default=str))[:32] if fused.items else ""
+    if ident:
+        folder = store.folder / "packs"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"{ident}.json").write_text(json.dumps({**body, "destination": acc.destination}, sort_keys=True),
+                                              encoding="utf-8")
+        for registration_id in sorted({i.source for i in fused.items}):
+            store.depend(Dependent(kind="pack", ident=ident, registration_id=registration_id,
+                                   passage_ids=tuple(i.passage_id for i in fused.items if i.source == registration_id),
+                                   generation=generation.number))
+    return {"pack": ident, **body, "withheld": list(meta["withheld"]),
+            "denied": [d.model_dump() for d in meta["denied"]]}, tuple(sources)
+
+
+def pack(acc: Access, pack_id: str, *, clock: Clock = _utc) -> tuple[dict[str, Any], tuple[cloud_consent.Source, ...]]:
+    """A saved context, checked again at this use: denied when a source in it was revoked, changed, deleted or has
+    expired since, or is not granted to this destination; a saved pack never bypasses the check. A subagent's
+    context is built from this call, never from the file."""
+    store = ProjectStore(acc.binding)
+    path = store.folder / "packs" / f"{pack_id}.json"
+    if not isinstance(pack_id, str) or not pack_id.startswith("pack-") or not pack_id[5:].isalnum() or not path.is_file():
+        raise Refused(PACK_UNKNOWN, "no such saved context in this project")
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    at = clock()
+    invalid = store.invalidated("pack", pack_id, at=at)
+    ids = [i["passage_id"] for i in saved["items"]]
+    members, denied = store.use(acc, ids, at=at)
+    by_passage = {pid: m for m in members for pid in m.passage_ids}
+    ungranted = sorted({m.registration_id for m in members if not _granted(acc, m.registration_id)})
+    if invalid or denied or ungranted or set(by_passage) != set(ids):
+        reasons = sorted({d.why for d in (*invalid, *denied)} | ({"not_shared"} if ungranted else set()))
+        return {"pack": pack_id, "state": "denied", "why": reasons, "items": [],
+                "withheld": [{"source": r, "provider": acc.destination} for r in ungranted] if not acc.local else []}, ()
+    refs = tuple(cloud_consent.Source(consent_scope(i["source"]), i["passage_id"], sha256_hex(i["view"]["text"]))
+                 for i in saved["items"])
+    return {"pack": pack_id, "state": "usable", "generation": saved["generation"], "items": saved["items"],
+            "tokens": saved["tokens"], "cautions": saved["cautions"], "groups": saved["groups"]}, refs
 
 def fetch(acc: Access, passage_id: str, *, raw: bool = False, clock: Clock = _utc) -> tuple[dict[str, Any],
                                                                                           tuple[cloud_consent.Source, ...]]:
@@ -531,5 +645,6 @@ def sources(acc: Access) -> list[dict[str, Any]]:
     return out
 
 
-__all__ = ["CHUNKER", "INDEX", "INPUT", "PREVIEW_CHANGED", "Preview", "checkpoint", "commit", "delete",
+__all__ = ["CHUNKER", "DEFAULT_ROUTES", "INDEX", "INPUT", "PACK_UNKNOWN", "PREVIEW_CHANGED", "Preview", "checkpoint",
+           "commit", "context", "delete", "pack",
            "excluded_counts", "fetch", "preview", "refresh", "revoke", "search", "shared_with", "sources"]

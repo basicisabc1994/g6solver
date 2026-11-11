@@ -135,12 +135,15 @@ SOURCE_SITES = {
     # unknown client, a revoked grant, mixed sources) and tests/knowledge/test_engine_scope.py. _scope.access is here
     # for its `sources` argument, which narrows source registrations and builds no consent source.
     'g6.knowledge._engine._source',
+    'g6.knowledge._engine.pack',
     'g6.knowledge._scope.access',
     'g6.knowledge._support.support_for',
     'g6.mcp.knowledge._declined',
     'g6.mcp.knowledge._ok',
     'g6.mcp.knowledge._refused',
     'g6.mcp.knowledge._summary_source',
+    'g6.mcp.knowledge.register.g6_knowledge_context',
+    'g6.mcp.knowledge.register.g6_knowledge_count',
     'g6.mcp.knowledge.register.g6_knowledge_search',
 }
 

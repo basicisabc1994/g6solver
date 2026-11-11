@@ -73,6 +73,9 @@ _SCHEMA = (
     "generation INTEGER NOT NULL, body TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS normative_grants (id TEXT PRIMARY KEY, registration_id TEXT NOT NULL, body TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, body TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS nodes (generation INTEGER NOT NULL, body TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS edges (generation INTEGER NOT NULL, id TEXT NOT NULL, subject TEXT NOT NULL, "
+    "object TEXT NOT NULL, relation TEXT NOT NULL, body TEXT NOT NULL)",
 )
 _HEX64 = "0123456789abcdef"
 
@@ -481,6 +484,24 @@ class ProjectStore:
             row = conn.execute("SELECT body FROM snapshots WHERE id = ?", (ident,)).fetchone()
             return row["body"] if row is not None else None
 
+    def put_graph(self, generation: int, nodes: Sequence[str], edges: Sequence[tuple[str, str, str, str, str]]) -> None:
+        """Replace the graph kept for ``generation``: derived records, rebuilt from the files at any time."""
+        with self._writing() as conn:
+            conn.execute("DELETE FROM nodes WHERE generation = ?", (generation,))
+            conn.execute("DELETE FROM edges WHERE generation = ?", (generation,))
+            conn.executemany("INSERT INTO nodes VALUES (?, ?)", [(generation, body) for body in nodes])
+            conn.executemany("INSERT INTO edges VALUES (?, ?, ?, ?, ?, ?)", [(generation, *row) for row in edges])
+
+    def graph(self, generation: int) -> tuple[list[str] | None, list[str]]:
+        """The nodes and edges kept for ``generation``; ``(None, [])`` when no graph was built for it."""
+        with self._reading() as conn:
+            if not self._has(conn, "nodes"):
+                return None, []
+            nodes = [row["body"] for row in conn.execute("SELECT body FROM nodes WHERE generation = ?", (generation,))]
+            edges = [row["body"] for row in conn.execute("SELECT body FROM edges WHERE generation = ? ORDER BY id",
+                                                         (generation,))]
+            return (nodes or None), edges
+
     def put_job(self, ident: str, body: str) -> None:
         with self._writing() as conn:
             conn.execute("INSERT OR REPLACE INTO jobs VALUES (?, ?)", (ident, body))
@@ -601,6 +622,8 @@ class ProjectStore:
                 conn.execute("DELETE FROM member_passages WHERE registration_id = ?", (registration_id,))
                 conn.execute("DELETE FROM rereads WHERE registration_id = ?", (registration_id,))
                 conn.execute("DELETE FROM normative_grants WHERE registration_id = ?", (registration_id,))
+                conn.execute("DELETE FROM nodes")   # the graph is derived: it is rebuilt without the source
+                conn.execute("DELETE FROM edges")
                 conn.execute("DELETE FROM tombstones WHERE registration_id = ? AND uri != ''", (registration_id,))
                 conn.execute("UPDATE dependents SET passage_ids = '[]', uris = '[]' WHERE registration_id = ?",
                              (registration_id,))

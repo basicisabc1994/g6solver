@@ -20,7 +20,7 @@ from tests.knowledge.corpus import SUBJECTS
 from tests.knowledge.corpus.rig import make, serve
 
 CLAUDE = "anthropic:claude_code"
-TOOLS_ADDED = ("g6_knowledge_add", "g6_knowledge_delete", "g6_knowledge_passage", "g6_knowledge_refresh",
+TOOLS_ADDED = ("g6_knowledge_add", "g6_knowledge_context", "g6_knowledge_count", "g6_knowledge_delete", "g6_knowledge_job", "g6_knowledge_passage", "g6_knowledge_refresh",
                "g6_knowledge_revoke", "g6_knowledge_search", "g6_knowledge_sources")
 DOCS, NOTES = SUBJECTS[0], SUBJECTS[1]
 
@@ -81,7 +81,8 @@ def test_the_tools_are_registered_and_declared():
         assert TOOLS[name].classes == ("client_request",)
         assert set(tools[name].parameters.get("properties", {})) == set(TOOL_ARGUMENTS[name]), name
         assert tools[name].fn._g6_declaration is not None
-    assert set(tools["g6_knowledge_add"].parameters["properties"]) == {"path", "share", "expires_days", "retention"}
+    assert set(tools["g6_knowledge_add"].parameters["properties"]) == {"path", "share", "expires_days", "retention",
+                                                                        "backends"}
 
 
 @pytest.mark.parametrize("answer", ["decline", "cancel", "nameless", None])
@@ -380,3 +381,59 @@ def test_refresh_over_mcp_reports_what_changed_only_for_shared_sources(rig):
     assert again["result"]["state"] == "unchanged"
     bad = call(server, "g6_knowledge_refresh", {"source": "src-0000000000000000"}).data
     assert bad["ok"] is False and "G6_E_KNOWLEDGE_SOURCE" in bad["error"]
+
+def test_context_over_mcp_returns_only_shared_sources_within_the_budget(rig):
+    server = build_server()
+    shared, private, found, tight, routed = calls(server, [
+        ("g6_knowledge_add", {"path": str(rig.folder / "docs"), "share": True}),
+        ("g6_knowledge_add", {"path": str(rig.folder / "notes")}),
+        ("g6_knowledge_context", {"task": f"{DOCS} {NOTES} convention decision", "budget_tokens": 3000}),
+        ("g6_knowledge_context", {"task": DOCS, "budget_tokens": 5}),
+        ("g6_knowledge_search", {"query": DOCS, "routes": ["exact", "structure", "telepathy"]})], Dialog())
+    result = found["result"]
+    assert result["items"] and {i["source"] for i in result["items"]} == {shared["result"]["source"]}
+    assert result["tokens"] <= 3000 and result["pack"].startswith("pack-")
+    assert result["withheld"] == [{"source": private["result"]["source"], "provider": CLAUDE}]
+    assert f"The {NOTES} convention" not in json.dumps(found)
+    assert tight["result"]["items"] == [] and "G6_E_KNOWLEDGE_FUSION_BUDGET" in tight["result"]["refused"]
+    states = {b["route"]: b["state"] for b in routed["result"]["backends"]}
+    assert states == {"exact": "answered", "structure": "unavailable", "telepathy": "unsupported"}
+    assert routed["result"]["payload"]["items"]
+
+def test_backends_job_and_count_over_mcp(rig, monkeypatch):
+    import time
+
+    from tests.knowledge.corpus import fake_elastic
+
+    from g6.knowledge import _jobs
+
+    es, stop = fake_elastic.serve(monkeypatch)
+    # the action gate's own decision is exercised in tests/knowledge/test_dispatch_jobs.py; here the person's key
+    # file is taken to hold the server's key, which is what lets the gate allow the write
+    monkeypatch.setattr(_jobs, "elastic_gate", lambda: (lambda action: {"kind": "action_gate", "decision": "allow"}))
+    try:
+        server = build_server()
+        before = call(server, "g6_knowledge_count", {}).data["result"]
+        assert before["state"] == "unsupported" and before["kind"] == "structured"
+        added = call(server, "g6_knowledge_add", {"path": str(rig.folder), "share": True,
+                                                  "backends": ["elastic_managed"]}, Dialog()).data["result"]
+        assert added["job"]["state"] in ("queued", "running", "published", "partial") and added["job"]["id"]
+        for _ in range(100):
+            job = call(server, "g6_knowledge_job", {"job_id": added["job"]["id"]}).data["result"]
+            if job["state"] not in ("queued", "running"):
+                break
+            time.sleep(0.1)
+        assert job["state"] == "published", json.dumps(job)[:900]
+        assert job["backends"]["elastic_managed"]["read_back"] == job["backends"]["elastic_managed"]["written"] > 0
+        counted = call(server, "g6_knowledge_count", {"query": DOCS}).data["result"]
+        assert counted["state"] == "answered" and counted["answer"]["count"] > 0 and "items" not in counted
+        fused = call(server, "g6_knowledge_search", {"query": DOCS}).data["result"]
+        assert {b["route"]: b["state"] for b in fused["backends"]} == {"exact": "answered", "structure": "answered"}
+        assert {c["backend"] for c in fused["payload"]["items"][0]["contributions"]} == {"sqlite", "elastic_managed"}
+        unknown = call(server, "g6_knowledge_job", {"job_id": "job-0000000000000000"}).data
+        assert unknown["ok"] is False and "G6_E_KNOWLEDGE_JOB" in unknown["error"]
+        refused = call(server, "g6_knowledge_add", {"path": str(rig.folder / "docs"), "backends": ["sqlite"]},
+                       Dialog()).data["result"]
+        assert refused["job"]["state"] == "refused"
+    finally:
+        stop()

@@ -197,6 +197,31 @@ hash-chained ledger and vault in `g6.core`. Over MCP: `metaharness_*` tools, whe
 [Tune it to your work](metaharness.md). The studies run with it are on the [Research](research.md#the-meta-harness)
 page, as a worked example.
 
+## The Context Engine: the person's own files
+
+A person adds a folder of their own files, and an agent searches it and fetches cited passages through MCP. The index
+is on the person's machine, and indexing sends nothing to a model. The folder must be inside a root the person lists
+in `G6_KNOWLEDGE_ROOTS` in the client's server configuration. Whether a result may be returned to the calling client
+is decided per source and per provider by the same consent check as above: a source not shared with the client's
+provider contributes only its id and the provider, under `withheld`. Passages are untrusted data, never instructions.
+
+- `g6_knowledge_add(path, share, expires_days, retention, backends)` walks the folder and asks the person in the
+  client dialog, stating the file list's digest; only acceptance indexes anything. `share` asks, in a second dialog,
+  whether the source may be shared with the client's provider. `backends` may name `elastic_managed`.
+- `g6_knowledge_sources()` lists the sources of this project, their state and readiness.
+- `g6_knowledge_search(query, top_k, sources, routes)` returns cited passages as redacted views, each re-read from
+  disk and compared in the call that returns it, fused by passage id over the ready search routes.
+- `g6_knowledge_context(task, budget_tokens, sources)` returns the best passages that fit a token budget.
+- `g6_knowledge_passage(passage_id, raw)` returns one passage again by id; `raw` adds its exact text.
+- `g6_knowledge_count(query, sources)` answers how many indexed passages match, as a structured answer; it needs the
+  managed Elasticsearch backend and says `unsupported` without it.
+- `g6_knowledge_refresh(source)` reads the accepted files again and publishes what changed.
+- `g6_knowledge_job(job_id)` reports an indexing job for an optional backend: per-backend readiness and unread files.
+- `g6_knowledge_revoke(source)` denies a source at once, in every G6 process, without a dialog.
+- `g6_knowledge_delete(source, complete)` deletes a source after a deletion dialog of its own.
+
+Secret masking in a view is pattern-based and is not a confidentiality guarantee. Text already delivered to a client
+or a model cannot be recalled. G6 never starts, installs or bundles Elasticsearch.
 ## Cloud sharing consent
 
 The unbound model adapters and MCP session transport use one source/provider check at send time. A repository is a source; task text and other

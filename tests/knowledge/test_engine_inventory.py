@@ -57,17 +57,22 @@ def passage_functions() -> dict[str, tuple[ast.FunctionDef, dict[str, ast.Functi
 
 def test_every_engine_function_that_returns_passages_takes_an_access():
     found = passage_functions()
-    assert {"_engine.py:search", "_engine.py:fetch"} <= set(found)
+    assert {"_engine.py:search", "_engine.py:fetch", "_engine.py:context"} <= set(found)
     for name, (node, functions) in found.items():
         annotated = {a.arg: ast.unparse(a.annotation) for a in (*node.args.args, *node.args.kwonlyargs) if a.annotation}
         assert "Access" in annotated.values(), f"{name} returns passages without taking an Access"
-        uses = [n for n in ast.walk(node) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-                and n.func.attr == "use"]
-        assert len(uses) >= 2, f"{name} must call ProjectStore.use when it starts and again immediately before it returns"
-        last_use = max(u.lineno for u in uses)
-        builds = [n.lineno for n in ast.walk(node) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-                  and (n.func.id in BUILDERS or n.func.id in functions and _reach(functions, n.func.id) & BUILDERS)]
-        assert builds and min(builds) > last_use, f"{name} builds an item before its last use() check"
+        # the function itself, or the one function of the module it hands the work to, checks use() twice and
+        # builds no item before the second check
+        checked = []
+        for inner in [node, *(functions[n] for n in _names(node) if n in functions)]:
+            uses = [n for n in ast.walk(inner) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                    and n.func.attr == "use"]
+            builds = [n.lineno for n in ast.walk(inner) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                      and (n.func.id in BUILDERS or n.func.id in functions and _reach(functions, n.func.id) & BUILDERS)]
+            if len(uses) >= 2 and builds and min(builds) > max(u.lineno for u in uses):
+                checked.append(inner.name)
+        assert checked, (f"{name} must call ProjectStore.use when it starts and again immediately before it returns, "
+                         "and build no item before the second call")
 
 
 def test_the_item_builder_holds_a_view_and_never_the_raw_text():
@@ -82,7 +87,7 @@ def test_every_mcp_tool_that_reaches_the_engine_builds_its_access_from_the_host_
     engine_functions = set(_functions(ast.parse((KNOWLEDGE / "_engine.py").read_text(encoding="utf-8"))))
     tools = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
              and n.name.startswith("g6_")]
-    assert len(tools) >= 7
+    assert len(tools) >= 8
     for tool in tools:
         arguments = {a.arg for a in (*tool.args.args, *tool.args.kwonlyargs)}
         assert not arguments & {"project", "principal", "binding", "roots", "destination", "provider", "answer",
@@ -90,7 +95,11 @@ def test_every_mcp_tool_that_reaches_the_engine_builds_its_access_from_the_host_
         # every engine function the tool names, called directly or handed to a worker thread
         called = {n.attr for n in ast.walk(tool) if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
                   and n.value.id == "engine"} & engine_functions
-        assert called, tool.name
+        # the dispatcher takes the same access; the jobs take the host binding itself
+        other = {n.value.id for n in ast.walk(tool) if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
+                 and n.value.id in ("_dispatch", "_jobs")}
+        assert called or other, tool.name
+        called |= other & {"_dispatch"}
         source = ast.unparse(tool)
         assert "host_binding()" in source, tool.name
         if called - {"preview", "commit", "excluded_counts", "shared_with"}:   # everything that reads or changes a store
@@ -100,7 +109,7 @@ def test_every_mcp_tool_that_reaches_the_engine_builds_its_access_from_the_host_
 
 #: Tables of the registry that are the index's own membership and bookkeeping, not a stored consumer of passages.
 MEMBERSHIP_TABLES = frozenset({"registrations", "generations", "members", "member_passages", "tombstones", "receipts",
-                               "dependents", "rereads", "retained", "snapshot_sources", "jobs"})
+                               "dependents", "rereads", "retained", "snapshot_sources", "jobs", "nodes", "edges"})
 
 
 def stored_consumers() -> dict[str, str]:
@@ -163,3 +172,12 @@ def test_every_registry_table_is_membership_or_a_consumer_whose_writer_registers
 def _functions_of_class(source: str) -> dict[str, ast.FunctionDef]:
     return {n.name: n for cls in ast.parse(source).body if isinstance(cls, ast.ClassDef) for n in cls.body
             if isinstance(n, ast.FunctionDef)}
+
+def test_a_saved_pack_is_checked_again_at_every_use():
+    functions = _functions(ast.parse((KNOWLEDGE / "_engine.py").read_text(encoding="utf-8")))
+    source = ast.unparse(functions["pack"])
+    assert "Access" in ast.unparse(functions["pack"].args)
+    assert ".invalidated(" in source and ".use(" in source and "_granted(" in source
+    assert source.index(".invalidated(") < source.index("saved['items']") or source.index(".use(") < source.rindex("saved['items']")
+    readers = [name for name, node in functions.items() if "packs" in ast.unparse(node) and ".read_text(" in ast.unparse(node)]
+    assert readers == ["pack"], "one function reads a saved pack, and it is the one that checks"
