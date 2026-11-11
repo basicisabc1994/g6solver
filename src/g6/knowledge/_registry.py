@@ -1,0 +1,429 @@
+# SPDX-License-Identifier: Apache-2.0
+"""The Context Engine's per-project registry (design 12.6): source registrations, source-to-passage membership,
+generations and tombstones, in one SQLite file per project.
+
+``_``-prefixed, so it never registers as a component. The file is
+``$G6_HOME/knowledge/projects/<project>/registry.db``; every change is one ``BEGIN IMMEDIATE`` transaction, so two
+server processes on one project see one order of events.
+
+* A :class:`Registration` is one folder a person accepted in the client's dialog. Its id is random and stable for its
+  life. A revoked registration never becomes active again.
+* A :class:`Member` is one file of one registration in one generation, with the ids and offsets of its passages.
+* A :class:`Generation` is staged, filled, and published in one transaction only when every required backend's
+  receipt says it read back what was written. Readers use the published generation's number; a staged generation
+  left behind by a crash is marked abandoned by the next stage.
+* A :class:`Tombstone` is written, and the registration's deny epoch raised, before anything is deleted:
+  :meth:`ProjectStore.use` then denies the registration's passages (``revoked``) or one file's passages in the
+  generations that held the old bytes (``changed``) although an index may still hold the rows.
+
+:meth:`ProjectStore.use` is the check every return path calls, with the clock: it answers which of some passage ids
+may be used now, and why each other one may not.
+"""
+from __future__ import annotations
+
+import json
+import secrets
+import sqlite3
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict
+
+from g6.core.storage import state_path
+from g6.knowledge._envelope import BackendState, Denied
+from g6.knowledge._scope import Access, Binding, ScopeDenied, bound
+from g6.knowledge._types import instant, now, sha256_hex
+
+SOURCE_UNKNOWN = "G6_E_KNOWLEDGE_SOURCE"
+PREVIEW_USED = "G6_E_KNOWLEDGE_PREVIEW_USED"
+NOT_PUBLISHED = "G6_E_KNOWLEDGE_NOT_PUBLISHED"
+STATE = "G6_E_KNOWLEDGE_STATE"
+#: Published generations whose members and index file are kept: the current one and the one a reader may still pin.
+KEPT_GENERATIONS = 2
+_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS registrations (id TEXT PRIMARY KEY, root TEXT NOT NULL, label TEXT NOT NULL, "
+    "preview_sha256 TEXT NOT NULL UNIQUE, attribution_sha256 TEXT NOT NULL, created_at TEXT NOT NULL, "
+    "expires_at TEXT NOT NULL, retention TEXT NOT NULL, authorisation_revision INTEGER NOT NULL, "
+    "deny_epoch INTEGER NOT NULL, state TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS generations (number INTEGER PRIMARY KEY, state TEXT NOT NULL, backends TEXT NOT NULL, "
+    "published_at TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS members (generation INTEGER NOT NULL, registration_id TEXT NOT NULL, uri TEXT NOT NULL, "
+    "relative TEXT NOT NULL, file_sha256 TEXT NOT NULL, size INTEGER NOT NULL, document_sha256 TEXT NOT NULL, "
+    "media_type TEXT NOT NULL, converter TEXT NOT NULL, chunker TEXT NOT NULL, unread TEXT NOT NULL, "
+    "PRIMARY KEY (generation, uri))",
+    "CREATE TABLE IF NOT EXISTS member_passages (generation INTEGER NOT NULL, passage_id TEXT NOT NULL, "
+    "registration_id TEXT NOT NULL, uri TEXT NOT NULL, span_start INTEGER NOT NULL, span_end INTEGER NOT NULL, "
+    "position INTEGER NOT NULL, PRIMARY KEY (generation, passage_id))",
+    "CREATE TABLE IF NOT EXISTS tombstones (n INTEGER PRIMARY KEY AUTOINCREMENT, registration_id TEXT NOT NULL, "
+    "epoch INTEGER NOT NULL, at TEXT NOT NULL, reason TEXT NOT NULL, uri TEXT NOT NULL, generation INTEGER NOT NULL)",
+)
+
+
+class Refused(Exception):
+    """Something the Context Engine will not do, with its stable code and a reason that holds no source content."""
+
+    def __init__(self, code: str, reason: str) -> None:
+        super().__init__(f"[{code}] {reason}")
+        self.code, self.reason = code, reason
+
+
+class _Record(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class Registration(_Record):
+    id: str
+    root: str
+    label: str
+    preview_sha256: str
+    attribution_sha256: str
+    created_at: str
+    expires_at: str = ""
+    retention: Literal["none", "audit"] = "none"
+    authorisation_revision: int = 1
+    deny_epoch: int = 0
+    state: Literal["active", "revoked", "deleted"] = "active"
+
+
+class Member(_Record):
+    registration_id: str
+    generation: int
+    uri: str
+    relative: str
+    file_sha256: str
+    size: int
+    document_sha256: str
+    passage_ids: tuple[str, ...] = ()
+    spans: tuple[tuple[int, int], ...] = ()
+    media_type: str = "text/plain"
+    converter: str = ""
+    chunker: str = ""
+    unread: tuple[str, ...] = ()
+
+
+class Generation(_Record):
+    number: int
+    state: Literal["staging", "published", "abandoned"]
+    backends: dict[str, dict[str, Any]]
+    published_at: str = ""
+
+
+class Tombstone(_Record):
+    registration_id: str
+    epoch: int
+    at: str
+    reason: Literal["revoked", "changed", "deleted"]
+    uri: str = ""
+    generation: int = 0
+
+
+def new_registration_id() -> str:
+    return "src-" + secrets.token_hex(8)
+
+
+def source_uri(registration_id: str, relative: str) -> str:
+    """The address a file of a registration is cited by: no absolute path, so it names nothing about the machine."""
+    return f"g6-knowledge://{registration_id}/{relative}"
+
+
+class ProjectStore:
+    """The registry of one project; see the module docstring."""
+
+    def __init__(self, binding: Binding) -> None:
+        self.binding = bound(binding)
+        self.folder = state_path("knowledge", "projects", binding.project)
+        self.path = self.folder / "registry.db"
+
+    # -- the file -----------------------------------------------------------------------------------------------------
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.path, timeout=30.0, isolation_level=None)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    @contextmanager
+    def _reading(self) -> Iterator[sqlite3.Connection | None]:
+        if not self.path.exists():
+            yield None
+            return
+        conn = self._connect()
+        try:
+            yield conn
+        except sqlite3.Error as exc:
+            raise Refused(STATE, f"the project's registry could not be read ({type(exc).__name__})") from None
+        finally:
+            conn.close()
+
+    @contextmanager
+    def _writing(self) -> Iterator[sqlite3.Connection]:
+        self.folder.mkdir(parents=True, exist_ok=True)
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for statement in _SCHEMA:
+                conn.execute(statement)
+            yield conn
+            conn.execute("COMMIT")
+        except sqlite3.Error as exc:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise Refused(STATE, f"the project's registry could not be written ({type(exc).__name__})") from None
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _has(conn: sqlite3.Connection | None, table: str = "registrations") -> bool:
+        return conn is not None and conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone() is not None
+
+    def index_path(self, backend: str, generation: int) -> Path:
+        """Where the index of ``backend`` for ``generation`` lives; only this store names such a file."""
+        names = {"sqlite": "lexical"}
+        if backend not in names:
+            raise Refused(STATE, f"no local index file is kept for the {backend} backend")
+        return self.folder / f"{names[backend]}.g{int(generation)}.db"
+
+    # -- registrations ------------------------------------------------------------------------------------------------
+
+    def registrations(self) -> list[Registration]:
+        with self._reading() as conn:
+            if not self._has(conn):
+                return []
+            return [Registration(**dict(row)) for row in conn.execute("SELECT * FROM registrations ORDER BY created_at, id")]
+
+    def registration(self, registration_id: str) -> Registration | None:
+        return next((r for r in self.registrations() if r.id == registration_id), None)
+
+    def register(self, preview: Any, attribution: str) -> Registration:
+        """A new active registration for an accepted preview. A preview is committed once: its digest is refused a
+        second time, so a revoked registration cannot come back through the preview that made it."""
+        made = Registration(id=new_registration_id(), root=preview.root, label=preview.label,
+                            preview_sha256=preview.sha256, attribution_sha256=sha256_hex(attribution),
+                            created_at=now(), expires_at=preview.expires_at, retention=preview.retention)
+        with self._writing() as conn:
+            if conn.execute("SELECT 1 FROM registrations WHERE preview_sha256 = ?", (made.preview_sha256,)).fetchone():
+                raise Refused(PREVIEW_USED, "this preview was already committed; a new preview and a new dialog are "
+                                            "needed to add the folder again")
+            conn.execute("INSERT INTO registrations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", tuple(
+                made.model_dump()[k] for k in ("id", "root", "label", "preview_sha256", "attribution_sha256",
+                                               "created_at", "expires_at", "retention", "authorisation_revision",
+                                               "deny_epoch", "state")))
+        return made
+
+    def _tombstone(self, conn: sqlite3.Connection, registration_id: str, reason: str, uri: str,
+                   state: str | None) -> Tombstone:
+        row = conn.execute("SELECT * FROM registrations WHERE id = ?", (registration_id,)).fetchone()
+        if row is None:
+            raise Refused(SOURCE_UNKNOWN, "no such source registration in this project")
+        epoch = row["deny_epoch"] + 1
+        generation = conn.execute("SELECT COALESCE(MAX(number), 0) FROM generations WHERE state = 'published'").fetchone()[0]
+        made = Tombstone(registration_id=registration_id, epoch=epoch, at=now(), reason=reason, uri=uri,
+                         generation=generation)
+        conn.execute("UPDATE registrations SET deny_epoch = ?, authorisation_revision = authorisation_revision + ?, "
+                     "state = COALESCE(?, state) WHERE id = ?", (epoch, 1 if state else 0, state, registration_id))
+        conn.execute("INSERT INTO tombstones (registration_id, epoch, at, reason, uri, generation) VALUES (?, ?, ?, ?, ?, ?)",
+                     (made.registration_id, made.epoch, made.at, made.reason, made.uri, made.generation))
+        return made
+
+    def revoke(self, registration_id: str) -> Tombstone:
+        """Raise the deny epoch and write the tombstone, in one transaction, before anything is deleted."""
+        with self._writing() as conn:
+            row = conn.execute("SELECT state FROM registrations WHERE id = ?", (registration_id,)).fetchone()
+            if row is not None and row["state"] != "active":
+                last = conn.execute("SELECT * FROM tombstones WHERE registration_id = ? AND uri = '' ORDER BY n DESC "
+                                    "LIMIT 1", (registration_id,)).fetchone()
+                if last is not None:
+                    return Tombstone(**{k: last[k] for k in ("registration_id", "epoch", "at", "reason", "uri",
+                                                             "generation")})
+            return self._tombstone(conn, registration_id, "revoked", "", "revoked")
+
+    def changed(self, registration_id: str, uri: str) -> Tombstone:
+        """Deny one file's passages in every generation published so far: its bytes were observed to differ."""
+        with self._writing() as conn:
+            return self._tombstone(conn, registration_id, "changed", uri, None)
+
+    def tombstones(self) -> list[Tombstone]:
+        with self._reading() as conn:
+            if not self._has(conn, "tombstones"):
+                return []
+            return [Tombstone(**{k: row[k] for k in ("registration_id", "epoch", "at", "reason", "uri", "generation")})
+                    for row in conn.execute("SELECT * FROM tombstones ORDER BY n")]
+
+    # -- generations --------------------------------------------------------------------------------------------------
+
+    @staticmethod
+    def _generation(row: sqlite3.Row) -> Generation:
+        return Generation(number=row["number"], state=row["state"], backends=json.loads(row["backends"]),
+                          published_at=row["published_at"])
+
+    def stage(self, backends: Mapping[str, bool]) -> Generation:
+        """A new staging generation; one left staging by a crash is marked abandoned first."""
+        stale: list[int] = []
+        with self._writing() as conn:
+            stale = [r["number"] for r in conn.execute("SELECT number FROM generations WHERE state = 'staging'")]
+            for number in stale:
+                conn.execute("UPDATE generations SET state = 'abandoned' WHERE number = ?", (number,))
+                conn.execute("DELETE FROM members WHERE generation = ?", (number,))
+                conn.execute("DELETE FROM member_passages WHERE generation = ?", (number,))
+            number = conn.execute("SELECT COALESCE(MAX(number), 0) + 1 FROM generations").fetchone()[0]
+            made = Generation(number=number, state="staging",
+                              backends={name: {"required": bool(required), "state": "unavailable", "receipt": {}}
+                                        for name, required in backends.items()})
+            conn.execute("INSERT INTO generations VALUES (?, ?, ?, ?)",
+                         (made.number, made.state, json.dumps(made.backends, sort_keys=True), ""))
+        for number in stale:
+            self._drop_index_files(number)
+        return made
+
+    def record(self, generation: int, members: Sequence[Member]) -> None:
+        """The membership of a staging generation."""
+        with self._writing() as conn:
+            row = conn.execute("SELECT state FROM generations WHERE number = ?", (generation,)).fetchone()
+            if row is None or row["state"] != "staging":
+                raise Refused(STATE, "membership is recorded only in a staging generation")
+            for m in members:
+                if len(m.passage_ids) != len(m.spans):
+                    raise Refused(STATE, "a member's passage ids and spans must correspond")
+                conn.execute("INSERT INTO members VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                             (generation, m.registration_id, m.uri, m.relative, m.file_sha256, m.size,
+                              m.document_sha256, m.media_type, m.converter, m.chunker, json.dumps(list(m.unread))))
+                conn.executemany("INSERT INTO member_passages VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                 [(generation, pid, m.registration_id, m.uri, start, end, n)
+                                  for n, (pid, (start, end)) in enumerate(zip(m.passage_ids, m.spans, strict=True))])
+
+    def publish(self, generation: int, receipts: Mapping[str, dict]) -> Generation:
+        """Make ``generation`` the one readers use, in one transaction; :class:`Refused` (and nothing changed)
+        unless every required backend's receipt says it read back exactly the passages the membership lists."""
+        with self._writing() as conn:
+            row = conn.execute("SELECT * FROM generations WHERE number = ?", (generation,)).fetchone()
+            if row is None or row["state"] != "staging":
+                raise Refused(NOT_PUBLISHED, "only a staging generation can be published")
+            listed = conn.execute("SELECT count(*) FROM member_passages WHERE generation = ?", (generation,)).fetchone()[0]
+            backends = json.loads(row["backends"])
+            for name, entry in backends.items():
+                receipt = dict(receipts.get(name) or {})
+                complete = receipt.get("written") == listed and receipt.get("read_back") == listed
+                if entry["required"] and not complete:
+                    raise Refused(NOT_PUBLISHED, f"the {name} backend did not read back every passage of the "
+                                                 "generation, so it is not published")
+                state: BackendState = "answered" if complete else ("partial" if receipt else "unavailable")
+                entry.update(state=state, receipt=receipt)
+            published_at = now()
+            conn.execute("UPDATE generations SET state = 'published', backends = ?, published_at = ? WHERE number = ?",
+                         (json.dumps(backends, sort_keys=True), published_at, generation))
+            old = [r["number"] for r in conn.execute(
+                "SELECT number FROM generations WHERE state = 'published' ORDER BY number DESC LIMIT -1 OFFSET ?",
+                (KEPT_GENERATIONS,))]
+            for number in old:
+                conn.execute("DELETE FROM members WHERE generation = ?", (number,))
+                conn.execute("DELETE FROM member_passages WHERE generation = ?", (number,))
+        for number in old:
+            self._drop_index_files(number)
+        return Generation(number=generation, state="published", backends=backends, published_at=published_at)
+
+    def _drop_index_files(self, generation: int) -> None:
+        for suffix in ("", "-journal", "-wal", "-shm"):
+            try:
+                Path(f"{self.index_path('sqlite', generation)}{suffix}").unlink()
+            except OSError:
+                pass  # a reader still holds it, or it never existed; the registry no longer names it either way
+
+    def published(self) -> Generation | None:
+        with self._reading() as conn:
+            if not self._has(conn, "generations"):
+                return None
+            row = conn.execute("SELECT * FROM generations WHERE state = 'published' ORDER BY number DESC LIMIT 1").fetchone()
+            return self._generation(row) if row is not None else None
+
+    def generations(self) -> list[Generation]:
+        with self._reading() as conn:
+            if not self._has(conn, "generations"):
+                return []
+            return [self._generation(row) for row in conn.execute("SELECT * FROM generations ORDER BY number")]
+
+    def members(self, generation: int, registration_id: str | None = None) -> list[Member]:
+        with self._reading() as conn:
+            if not self._has(conn, "members"):
+                return []
+            return self._members(conn, generation, registration_id=registration_id)
+
+    @staticmethod
+    def _members(conn: sqlite3.Connection, generation: int, *, registration_id: str | None = None,
+                 uris: Sequence[str] | None = None) -> list[Member]:
+        query, args = "SELECT * FROM members WHERE generation = ?", [generation]
+        if registration_id is not None:
+            query, args = query + " AND registration_id = ?", [*args, registration_id]
+        rows = [r for r in conn.execute(query + " ORDER BY uri", args) if uris is None or r["uri"] in set(uris)]
+        out = []
+        for r in rows:
+            cut = conn.execute("SELECT passage_id, span_start, span_end FROM member_passages WHERE generation = ? "
+                               "AND uri = ? ORDER BY position", (generation, r["uri"])).fetchall()
+            out.append(Member(registration_id=r["registration_id"], generation=generation, uri=r["uri"],
+                              relative=r["relative"], file_sha256=r["file_sha256"], size=r["size"],
+                              document_sha256=r["document_sha256"], media_type=r["media_type"],
+                              converter=r["converter"], chunker=r["chunker"], unread=tuple(json.loads(r["unread"])),
+                              passage_ids=tuple(c["passage_id"] for c in cut),
+                              spans=tuple((c["span_start"], c["span_end"]) for c in cut)))
+        return out
+
+    # -- the check at every use ---------------------------------------------------------------------------------------
+
+    def use(self, access: Access, passage_ids: Sequence[str], *, at: datetime,
+            generation: int | None = None) -> tuple[list[Member], list[Denied]]:
+        """Which of ``passage_ids`` may be used now under ``access``: the members holding the ones that may, and a
+        :class:`Denied` for each that may not (``not_published``, ``unknown``, ``revoked``, ``expired``, ``changed``).
+        ``generation`` is the published generation a reader pinned; it defaults to the current one. A passage of a
+        registration outside the caller's narrowing is ``unknown``: narrowing never widens and never reveals."""
+        if not isinstance(access, Access) or bound(access.binding).project != self.binding.project:
+            raise ScopeDenied("the access is not bound to this project")
+        wanted = list(dict.fromkeys(passage_ids))
+        with self._reading() as conn:
+            if not self._has(conn, "generations"):
+                return [], [Denied(passage_id=p, registration_id="", why="not_published") for p in wanted]
+            if generation is None:
+                current = conn.execute("SELECT MAX(number) FROM generations WHERE state = 'published'").fetchone()[0]
+            else:
+                current = conn.execute("SELECT number FROM generations WHERE state = 'published' AND number = ?",
+                                       (generation,)).fetchone()
+                current = current[0] if current is not None else None
+            if current is None:
+                return [], [Denied(passage_id=p, registration_id="", why="not_published") for p in wanted]
+            registrations = {r["id"]: r for r in conn.execute("SELECT * FROM registrations")}
+            changed: dict[tuple[str, str], int] = {}
+            for t in conn.execute("SELECT registration_id, uri, MAX(generation) AS g FROM tombstones WHERE reason = "
+                                  "'changed' GROUP BY registration_id, uri"):
+                changed[t["registration_id"], t["uri"]] = t["g"]
+            allowed: list[str] = []
+            denied: list[Denied] = []
+            for pid in wanted:
+                row = conn.execute("SELECT registration_id, uri FROM member_passages WHERE generation = ? AND "
+                                   "passage_id = ?", (current, pid)).fetchone()
+                registration = registrations.get(row["registration_id"]) if row is not None else None
+                if registration is None or (access.sources is not None and registration["id"] not in access.sources):
+                    denied.append(Denied(passage_id=pid, registration_id="", why="unknown"))
+                    continue
+                expires = instant(registration["expires_at"]) if registration["expires_at"] else None
+                why = ""
+                if registration["state"] != "active":
+                    why = "revoked"
+                elif registration["expires_at"] and (expires is None or expires <= at):
+                    why = "expired"
+                elif changed.get((registration["id"], row["uri"]), -1) >= current:
+                    why = "changed"
+                if why:
+                    denied.append(Denied(passage_id=pid, registration_id=registration["id"], why=why))
+                else:
+                    allowed.append(row["uri"])
+            members = self._members(conn, current, uris=list(dict.fromkeys(allowed))) if allowed else []
+        return members, denied
+
+
+__all__ = ["KEPT_GENERATIONS", "NOT_PUBLISHED", "PREVIEW_USED", "SOURCE_UNKNOWN", "STATE", "Denied", "Generation",
+           "Member", "ProjectStore", "Refused", "Registration", "Tombstone", "new_registration_id", "source_uri"]

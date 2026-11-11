@@ -155,6 +155,8 @@ def build_server(surface: Any = None) -> Any:
     from g6.mcp.cloud_consent import install, public_tool, register
     install(server)
     register(server, Context)
+    from g6.mcp import knowledge
+    knowledge.register(server, Context)   # the Context Engine: the person's own folders, searched locally
 
     @server.tool()
     @public_tool

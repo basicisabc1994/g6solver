@@ -7,6 +7,7 @@ from __future__ import annotations
 import importlib
 import re
 import typing
+from pathlib import Path
 
 from g6.core import discovery, skills
 from g6.core.registry import get_registry
@@ -90,7 +91,8 @@ def test_every_python_name_it_gives_exists() -> None:
 def test_every_tool_and_code_it_names_is_real() -> None:
     import g6.mcp
 
-    source = open(g6.mcp.__file__, encoding="utf-8").read()
+    # the tools live in more than one module of g6.mcp (the Context Engine's are in g6/mcp/knowledge.py)
+    source = "\n".join(p.read_text(encoding="utf-8") for p in sorted(Path(g6.mcp.__file__).parent.glob("*.py")))
     for tool in set(re.findall(r"`(g6_[a-z_]+|metaharness_[a-z_]+)`", BOTH)):
         assert f"def {tool}(" in source, tool
     assert "Client-mediated consent may occur in the proposing session" in TEXT
@@ -117,7 +119,8 @@ def test_it_names_only_templates_review_parameters_and_bindings_that_exist() -> 
     known = set(templates.TEMPLATES) | set(templates.FORMAL_TEMPLATES)
     named = set(re.findall(r"`([a-z_]+\.v\d+)`", TEXT))
     assert known <= named and named <= known, (known - named, named - known)
-    source = open(g6.mcp.__file__, encoding="utf-8").read()
+    # the tools live in more than one module of g6.mcp (the Context Engine's are in g6/mcp/knowledge.py)
+    source = "\n".join(p.read_text(encoding="utf-8") for p in sorted(Path(g6.mcp.__file__).parent.glob("*.py")))
     signature = re.search(r"def g6_review_patch\((.*?)\) -> dict", source, re.S).group(1)
     parameters = set(re.findall(r"(\w+):", signature))
     forms = [definition.bindings for definition in {**templates.TEMPLATES, **templates.FORMAL_TEMPLATES}.values()]

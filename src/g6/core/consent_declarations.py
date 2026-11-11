@@ -87,6 +87,10 @@ TOOLS = {
     **{name: contract('g6_operational') for name in (
         'g6_cloud_grant', 'g6_cloud_revoke')},
     **{name: contract('source:consent_metadata') for name in ('g6_cloud_grants', 'g6_disclosures')},
+    # The Context Engine binds each reply to the source registrations whose content it carries (knowledge:<id>).
+    **{name: contract('client_request') for name in (
+        'g6_knowledge_add', 'g6_knowledge_passage', 'g6_knowledge_revoke', 'g6_knowledge_search',
+        'g6_knowledge_sources')},
 }
 
 def _arguments(content='', pointer=''):
@@ -130,6 +134,11 @@ TOOL_ARGUMENTS = {
     'metaharness_diagnose': _arguments(pointer='workflow'),
     'metaharness_approve': _arguments('decision_digest', 'workflow'),
     'metaharness_rollback': _arguments('version', 'workflow'),
+    'g6_knowledge_add': _arguments('share expires_days retention', 'path'),
+    'g6_knowledge_passage': _arguments('raw', 'passage_id'),
+    'g6_knowledge_revoke': _arguments(pointer='source'),
+    'g6_knowledge_search': _arguments('query top_k', 'sources'),
+    'g6_knowledge_sources': {},
 }
 
 
