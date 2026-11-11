@@ -54,6 +54,7 @@ from g6.learning.schema import (AgentReply, AgentTrace, Dataset, FailureAnalysis
 from g6.learning.scoring import score_instance, score_output
 from g6.learning.strategies import THEORY_TEMPLATES, LearningStrategy, T3Strategy
 from g6.learning.theory_store import TheoryStore
+from g6.learning.worth import Worth, WorthPolicy
 from g6.learning.seeds import load_seed_heuristics
 from g6.learning.strategy import NO_STRATEGY, StrategyArtefact, StrategyStore, seed_artefacts
 
@@ -71,6 +72,6 @@ __all__ = ["FAILURE_CODES", "NO_STRATEGY", "THEORY_TEMPLATES", "AgentReply", "Ag
            "PromotionDecision",
            "PromotionPolicy", "PromptAddendum", "ReviewRecord", "SkillDocument", "StrategyArtefact", "StrategyStore",
            "T3Strategy", "TaskInstance",
-           "TaskResult", "Theory", "TheoryStore", "build_addendum", "compare_arms", "export_bundle", "import_bundle",
+           "TaskResult", "Theory", "TheoryStore", "Worth", "WorthPolicy", "build_addendum", "compare_arms", "export_bundle", "import_bundle",
            "leakage_attestation", "load_seed_heuristics", "promote", "render_addendum", "run_learning", "scan_text", "score_instance",
            "score_output", "seed_artefacts", "sign_test", "trigger_matches"]

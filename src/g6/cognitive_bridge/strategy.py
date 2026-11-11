@@ -12,8 +12,8 @@ import hashlib
 from typing import Any, Callable, Sequence
 
 from .metacognition import (HEURISTIC, STRATEGY_ENGINE, STRATEGY_METHOD, STRATEGY_OP, EvaluatedTrial, MethodVariant,
-                            ProblemSignature)
-from .snapshot import number, publish, text
+                            ProblemSignature, _eligible)
+from .snapshot import number, publish, snapshot, text
 
 
 def heuristic_variant(artefact: Any, *, id: str, estimated_cost: float) -> MethodVariant:
@@ -98,4 +98,67 @@ def admit_trial(ledger: Any, store: Any, variants: Sequence[MethodVariant]) -> C
     return admit
 
 
-__all__ = ["PAIR_KIND", "admit_trial", "heuristic_variant", "trial_from"]
+#: A strategy row's fields: what ``rank_strategies`` writes, and all a row may carry. None is a success proxy or a
+#: score: a row is the paired statistic (``g6.learning.worth.Worth``) for one strategy's bytes, or "unmeasured".
+STRATEGY_ROW_FIELDS = ("variant_id", "content_digest", "status", "cases", "complete_cases", "incomplete_pairs", "wins",
+                       "losses", "net_benefit", "p_value", "cost_ratio", "time_ratio", "regressions",
+                       "critical_regressions", "meets_bar", "policy_digest")
+_ORDER = {"measured": 1, "insufficient": 2, "unmeasured": 3}
+
+
+def rank_strategies(context: ProblemSignature, variants: Sequence[MethodVariant], *, ledger: Any, store: Any,
+                    policy: Any) -> tuple[dict[str, Any], ...]:
+    """One row for each heuristic variant the context can afford, ranked by measured paired worth: those that are
+    measured and meet the frozen policy's bar first, by net benefit and then by cost; then the other measured ones;
+    then the insufficient; then the unmeasured, in id order. Worth is read from the evaluator's ledger and from nowhere
+    else, for the bytes the store resolves under the variant's content digest (a strategy whose bytes do not resolve
+    is unmeasured). It returns rows only: nothing is selected, applied or executed, and no row enters a selection."""
+    from g6.learning.paired_eval import receipts
+    from g6.learning.worth import worth
+
+    context = snapshot(context, where="context")
+    variants = snapshot(variants, where="variants")
+    heuristics = [v for v in variants if v.kind == HEURISTIC and _eligible(v, context)]
+    if len({v.id for v in heuristics}) != len(heuristics):
+        raise ValueError("duplicate strategy variant ids")
+    kept = receipts(ledger)
+    rows = []
+    for variant in heuristics:
+        try:
+            resolved = hashlib.sha256(store.resolve(variant.content_digest).to_bytes()).hexdigest()
+        except ValueError:
+            resolved = ""
+        found = worth(kept if resolved == variant.content_digest else (), variant.content_digest, policy)
+        row = {"variant_id": variant.id, "content_digest": variant.content_digest,
+               **{name: getattr(found, name) for name in STRATEGY_ROW_FIELDS[2:]}}
+        row["regressions"], row["critical_regressions"] = list(found.regressions), list(found.critical_regressions)
+        rows.append(row)
+
+    def key(row: dict[str, Any]) -> tuple[Any, ...]:
+        first = 0 if row["status"] == "measured" and row["meets_bar"] else _ORDER[row["status"]]
+        spend = row["cost_ratio"] if row["cost_ratio"] is not None else row["time_ratio"]
+        return (first, -(row["net_benefit"] or 0.0) if first < 2 else 0.0,
+                spend if first < 2 and spend is not None else float("inf"), row["variant_id"])
+
+    return publish(tuple(sorted(rows, key=key)), where="rank_strategies")
+
+
+def rank_seeds(context: ProblemSignature) -> tuple[dict[str, Any], ...]:
+    """The 16 seed strategies for a context, as ``rank_strategies`` rows, from the receipts kept under the person's G6
+    home (``strategies/receipts.jsonl``, with the strategy files beside it) when a measurement run wrote them there;
+    with none, every seed is ``unmeasured``."""
+    from g6.core.ledger import ChainLedger
+    from g6.core.storage import g6_home
+    from g6.learning.strategy import StrategyStore, seed_artefacts
+    from g6.learning.worth import DEFAULT_POLICY
+
+    home = g6_home() / "strategies"
+    seeds = seed_artefacts()
+    variants = [heuristic_variant(artefact, id=name, estimated_cost=0.0) for name, artefact in sorted(seeds.items())]
+    path = home / "receipts.jsonl"
+    ledger = ChainLedger(path) if path.is_file() else ChainLedger()
+    return rank_strategies(context, variants, ledger=ledger, store=StrategyStore(home), policy=DEFAULT_POLICY)
+
+
+__all__ = ["PAIR_KIND", "STRATEGY_ROW_FIELDS", "admit_trial", "heuristic_variant", "rank_seeds", "rank_strategies",
+           "trial_from"]
