@@ -118,6 +118,8 @@ class MethodVariantInput(BaseModel):
     expects: list[str] = Field(default_factory=list, max_length=50)
     # Over MCP a variant is a G6 solver op; reviewer and arm variants are ranked from Python, with their trials.
     kind: Literal["engine"] = "engine"
+    # A strategy's content digest belongs to a heuristic, which is not a variant over MCP: only the empty one is taken.
+    content_digest: Literal[""] = ""
 
 
 #: Each op the block answers, with what it does (its ``help`` answer).
