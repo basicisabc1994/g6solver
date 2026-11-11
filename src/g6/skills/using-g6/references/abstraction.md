@@ -24,5 +24,5 @@ The file tools (`load_dataset`, `save_state`, `load_state`) read or write a file
 refused unless the person who runs the server allows them, and every path stays inside the directory that person
 names. You can set neither.
 
-A status of `checked` means the gate's own checks passed on the recorded trace. It is not a claim that the
+The status "checked" means the gate's own checks passed on the recorded trace. It is not a claim that the
 abstraction holds on configurations nobody evaluated.

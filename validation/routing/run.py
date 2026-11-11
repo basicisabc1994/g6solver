@@ -8,6 +8,12 @@ one consent check first (``g6.agents._runtime.consent.consent_run``), with the f
 grant nothing is started and the task's transcript is ``refused`` with the consent code. The fixtures are synthetic:
 no user data is in them. ``sources`` lists exactly what a person grants before a run.
 
+What a transcript is evidence of: a session is ``completed`` only when the client exited with code 0 and printed its
+own terminal event; anything else is ``interrupted``. Each transcript records how it was produced (the client program
+and its version, or the stand-in that took its place), the exit code and the digest of the event log. The log holds
+one transcript per task and repeat: a second run into the same log is refused. Nothing runs, and nothing is scored,
+on a gate file or a task list that is not the pinned one (``frozen.json``).
+
 The two clients' command lines and event parsers below are written from each client's documented interface. No
 session was started when this was built, so neither has been observed: README.md, "Before the first run".
 
@@ -18,6 +24,7 @@ session was started when this was built, so neither has been observed: README.md
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -33,11 +40,16 @@ from typing import Any, Callable
 
 HERE = Path(__file__).resolve().parent
 TASKS, FINAL_TASKS, GATES, FIXTURES = HERE / "tasks.json", HERE / "final_tasks.json", HERE / "gates.json", HERE / "fixtures"
+#: The pinned digests: of the bars (the gate file with no final cohort bound) and of the development task list.
+PINS = HERE / "frozen.json"
 #: Tools that put a question to the person; a call of one is counted as a question asked.
 DIALOG_TOOLS = frozenset({"g6_confirm_behaviour", "g6_mission_confirm", "g6_mission_create", "g6_cloud_grant",
                           "g6_improve_start", "metaharness_confirm", "metaharness_approve", "metaharness_rollback"})
 WITHHOLD_ENV = "G6_ROUTING_WITHHOLD"
+#: The setting the server reads its host permissions from (``g6.core.door.SENSITIVE_ENV``).
+SENSITIVE_ENV = "G6_MCP_SENSITIVE"
 GRACE_S = 60.0
+UNFINISHED = "G6_E_ROUTING_SESSION_UNFINISHED"
 
 
 def _load(name: str, path: Path) -> Any:
@@ -54,21 +66,46 @@ Transcript = score.Transcript
 
 
 def route_digests(manifest: Any = None) -> dict[str, str]:
-    """Route id -> the digest that binds a route: its anchor, its detail files and its members. Adding a tool to a
-    route, or moving its anchor, changes that route's digest and no other's."""
+    """Route id -> the digest that binds a route: its anchor, its members, what its own section of the root skill
+    says and the bytes of each of its detail files. Adding a tool to a route, moving its anchor or changing what the
+    route tells an agent changes that route's digest and no other's."""
+    from g6.mcp import registrations
     from g6.skills import routing
 
     manifest = manifest or routing.load()
-    return {route_id: freeze.digest({
-        "id": route_id, "anchor": route.anchor, "detail": list(route.detail),
-        "members": sorted(key for key, entry in manifest.entries.items() if entry.route == route_id)})
-        for route_id, route in manifest.routes.items()}
+    package = registrations.package_root()
+    root = (package / routing.ROOT).read_text(encoding="utf-8")
+    out = {}
+    for route_id, route in manifest.routes.items():
+        said = routing.section(root, route.anchor) or ""
+        out[route_id] = freeze.digest({
+            "id": route_id, "anchor": route.anchor, "detail": list(route.detail),
+            "members": sorted(key for key, entry in manifest.entries.items() if entry.route == route_id),
+            "section": hashlib.sha256(said.encode("utf-8")).hexdigest(),
+            "detail_bytes": {path: hashlib.sha256((package / path).read_bytes()).hexdigest() if (package / path).is_file()
+                             else "" for path in route.detail}})
+    return out
+
+
+def pins() -> dict[str, str]:
+    found = freeze.read(PINS)
+    if set(found) != {"bars_digest", "tasks_digest"}:
+        raise freeze.FrozenError("frozen.json holds exactly bars_digest and tasks_digest")
+    return found
+
+
+def load_gates() -> dict[str, Any]:
+    """The gate file, when its bars are the pinned ones (``freeze.bound``, the final cohort's binding aside); a gate
+    file whose bars changed after the freeze is refused."""
+    return score.validate_gates(freeze.bound(GATES, pins()["bars_digest"], what="the routing bars",
+                                             mask={"final_tasks_digest": None}))
 
 
 def load_tasks(path: Path = TASKS, *, cohort: str = "development") -> dict[str, Any]:
-    """The task list at ``path``, checked: inside its format, every route bound to the manifest as it stands, and, for
-    the final cohort, frozen by the gate file. ``FrozenError`` or ``TaskError`` otherwise; nothing runs on a list that
-    does not bind."""
+    """The task list at ``path``, checked: inside its format; every route bound to the manifest and the guidance as
+    they stand; for the development cohort, every task the pinned list's own (a list may hold fewer tasks, never a
+    changed one); for the final cohort, the whole list bound by the gate file. ``FrozenError`` or ``TaskError``
+    otherwise; nothing runs on a list that does not bind."""
     tasks = score.validate_tasks(freeze.read(path))
     now = route_digests()
     for route_id, bound in tasks["routes"].items():
@@ -76,9 +113,15 @@ def load_tasks(path: Path = TASKS, *, cohort: str = "development") -> dict[str, 
             raise freeze.FrozenError(f"route {route_id!r} changed since its tasks were written (or is gone): review "
                                      "its tasks, then bind its new digest")
     if cohort == "final":
-        gates = score.validate_gates(freeze.read(GATES))
+        gates = load_gates()
         if gates["final_tasks_digest"] is None or gates["final_tasks_digest"] != freeze.digest(tasks):
             raise freeze.FrozenError("the final cohort is not frozen: gates.json does not bind this task list")
+    else:
+        frozen = {task["id"]: task for task in freeze.bound(TASKS, pins()["tasks_digest"],
+                                                           what="the development task list")["tasks"]}
+        for task in tasks["tasks"]:
+            if frozen.get(task["id"]) != task:
+                raise freeze.FrozenError(f"task {task['id']} is not the frozen development list's own task")
     return tasks
 
 
@@ -90,6 +133,19 @@ class Client:
     program: Callable[[], Any]                                         # its OutsideProgram, as G6's adapter declares it
     argv: Callable[[str, Path, Mapping[str, Any]], list[str]]          # (program path, mcp config file, config) -> argv
     parse: Callable[[str], tuple[list[dict[str, Any]], str, float | None]]   # event text -> calls, final text, cost
+    finished: Callable[[str], bool]                                    # whether the events hold the client's terminal event
+
+
+def _events(text: str) -> list[dict[str, Any]]:
+    out = []
+    for line in text.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict):
+            out.append(event)
+    return out
 
 
 def _tool(name: str) -> tuple[str, str]:
@@ -118,13 +174,7 @@ def parse_claude(text: str) -> tuple[list[dict[str, Any]], str, float | None]:
     refused or malformed call), and the last ``result`` event the final text and ``total_cost_usd``."""
     calls: dict[str, dict[str, Any]] = {}
     final, cost = "", None
-    for line in text.splitlines():
-        try:
-            event = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(event, dict):
-            continue
+    for event in _events(text):
         parts = (event.get("message") or {}).get("content") if isinstance(event.get("message"), dict) else None
         for part in parts if isinstance(parts, list) else ():
             if not isinstance(part, dict):
@@ -143,17 +193,18 @@ def parse_claude(text: str) -> tuple[list[dict[str, Any]], str, float | None]:
     return list(calls.values()), final, cost
 
 
+def finished_claude(text: str) -> bool:
+    """Claude Code's terminal event: a ``result`` event that is not an error."""
+    return any(event.get("type") == "result" and not event.get("is_error", False) for event in _events(text))
+
+
 def parse_codex(text: str) -> tuple[list[dict[str, Any]], str, float | None]:
     """Calls and final text from ``codex exec --json``: one JSON event a line; a completed item of type
     ``mcp_tool_call`` carries ``server``, ``tool``, ``arguments`` and ``status``, and one of type ``agent_message``
     the text. Codex reports tokens, not a cost, so the cost is ``None`` (never estimated)."""
     calls, final = [], ""
-    for line in text.splitlines():
-        try:
-            event = json.loads(line)
-        except ValueError:
-            continue
-        item = event.get("item") if isinstance(event, dict) else None
+    for event in _events(text):
+        item = event.get("item")
         if not isinstance(item, dict) or event.get("type") != "item.completed":
             continue
         if item.get("type") == "mcp_tool_call":
@@ -165,6 +216,13 @@ def parse_codex(text: str) -> tuple[list[dict[str, Any]], str, float | None]:
         elif item.get("type") == "agent_message":
             final = str(item.get("text") or "")
     return calls, final, None
+
+
+def finished_codex(text: str) -> bool:
+    """Codex's terminal event: ``turn.completed``, or the agent's completed final message."""
+    return any(event.get("type") == "turn.completed"
+               or (event.get("type") == "item.completed" and isinstance(event.get("item"), dict)
+                   and event["item"].get("type") == "agent_message") for event in _events(text))
 
 
 def _claude_argv(program: str, config_file: Path, config: Mapping[str, Any]) -> list[str]:
@@ -199,18 +257,39 @@ def _codex_program() -> Any:
 
 CLIENTS: dict[str, Client] = {
     "claude_code": Client("claude_code", "anthropic:claude_code", ".claude/skills", _claude_program, _claude_argv,
-                          parse_claude),
-    "codex": Client("codex", "openai:codex", ".codex/skills", _codex_program, _codex_argv, parse_codex),
+                          parse_claude, finished_claude),
+    "codex": Client("codex", "openai:codex", ".codex/skills", _codex_program, _codex_argv, parse_codex,
+                    finished_codex),
 }
 
 
-def mcp_config(task: Mapping[str, Any], python: str = sys.executable) -> dict[str, Any]:
+def mcp_config(task: Mapping[str, Any], python: str = sys.executable, home: Path | None = None) -> dict[str, Any]:
     """The servers one session gets: each of the task's servers, started through ``server.py`` so the task's withheld
-    tools are absent from what the client lists."""
-    withhold = ",".join(task.get("withhold", ()))
-    return {"mcpServers": {name: {"command": python, "args": ["-P", str(HERE / "server.py"), name],
-                                  "env": {WITHHOLD_ENV: withhold}}
+    tools are absent from what the client lists, with the host permissions the task states (and no other), and, when
+    ``home`` is given, with that folder as its G6 home so a session never touches the person's own G6 state."""
+    env = {WITHHOLD_ENV: ",".join(task.get("withhold", ()))}
+    if task.get("permissions"):
+        env[SENSITIVE_ENV] = ",".join(task["permissions"])
+    if home is not None:
+        env["G6_HOME"] = str(home)
+    return {"mcpServers": {name: {"command": python, "args": ["-P", str(HERE / "server.py"), name], "env": dict(env)}
                            for name in task.get("servers", ["g6"])}}
+
+
+def trial_home(out_dir: Path) -> Path:
+    """The G6 home the trial's servers use: a folder of the run, holding a copy of the person's sharing decisions (so
+    a granted source is not withheld from the session) and nothing else of theirs."""
+    from g6.core import cloud_consent as cloud
+    from g6.core.storage import g6_home
+
+    home = Path(out_dir).resolve() / "g6_home"
+    ledger = cloud.ledger_path()
+    if ledger.is_file():
+        target = home / ledger.relative_to(g6_home())
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ledger, target)
+    home.mkdir(parents=True, exist_ok=True)
+    return home
 
 
 def workspace_for(task: Mapping[str, Any], out_dir: Path) -> Path:
@@ -270,12 +349,27 @@ def sources(tasks: Mapping[str, Any], out_dir: Path, client: str, cohort: str) -
     return [{"source": source, "provider": provider, "what": what} for source, what in sorted(wanted.items())]
 
 
+def _log(out_dir: Path, client: str, cohort: str) -> Path:
+    return Path(out_dir) / f"transcripts-{client}-{cohort}.jsonl"
+
+
+def _record(log: Path, transcript: Any) -> None:
+    """The one place a row enters a transcript log."""
+    with log.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(transcript.to_json(), sort_keys=True) + "\n")
+
+
 def run(tasks_path: Path, out_dir: Path, *, client: str, cohort: str, runner: Any = None, repeat: int = 0,
         python: str = sys.executable) -> list[Any]:
     """One fresh session per task of ``cohort`` for ``client``; each transcript is appended to
-    ``<out_dir>/transcripts-<client>-<cohort>.jsonl`` as it ends, and all are returned. A consent refusal is
-    ``refused`` with its code and starts nothing; a client that is not installed is ``unavailable``; a deadline or a
-    failed start is ``interrupted``. ``runner`` stands in for the client in tests; the default starts the real one."""
+    ``<out_dir>/transcripts-<client>-<cohort>.jsonl`` as it ends, and all are returned.
+
+    A session is ``completed`` only on evidence that it finished: the client exited with code 0 and its events hold
+    its own terminal event. A consent refusal is ``refused`` with its code and starts nothing; a client that is not
+    installed is ``unavailable``; a deadline, a failed start, a non-zero exit and an event log with no terminal event
+    are ``interrupted``. A log that already holds a transcript for one of these tasks and this ``repeat`` refuses the
+    run before anything starts: a gate run happens once. ``runner`` stands in for the client in tests; its
+    transcripts say so (``produced``), and no stand-in's transcript can pass a gate's release reading."""
     from g6.agents._runtime.cli import OUTPUT_LOG, CliAgentRunner
     from g6.agents._runtime.consent import consent_run
     from g6.agents._runtime.model import AgentRefusal
@@ -284,17 +378,27 @@ def run(tasks_path: Path, out_dir: Path, *, client: str, cohort: str, runner: An
 
     spec = CLIENTS[client]
     tasks = load_tasks(Path(tasks_path), cohort=cohort)
-    runner = runner or CliAgentRunner(spec.program())
+    scheduled = sorted((t for t in tasks["tasks"] if t["cohort"] == cohort), key=lambda t: t["id"])
     out_dir = Path(out_dir)
+    held = {(t.task_id, t.repeat) for t in read_transcripts(out_dir, client, cohort)}
+    again = sorted(task["id"] for task in scheduled if (task["id"], repeat) in held)
+    if again:
+        raise freeze.FrozenError(f"this log already holds a transcript (repeat {repeat}) for {again[:3]}: a run is "
+                                 "made once; another run needs its own folder or repeat number")
+    real = runner is None
+    runner = runner or CliAgentRunner(spec.program())
     out_dir.mkdir(parents=True, exist_ok=True)
-    log = out_dir / f"transcripts-{client}-{cohort}.jsonl"
+    log, home = _log(out_dir, client, cohort), trial_home(out_dir)
     done: list[Any] = []
-    for task in sorted((t for t in tasks["tasks"] if t["cohort"] == cohort), key=lambda t: t["id"]):
-        base = {"task_id": task["id"], "client": client, "repeat": repeat}
+    for task in scheduled:
+        base = {"task_id": task["id"], "client": client, "repeat": repeat,
+                "produced": "" if real else f"stand-in:{type(runner).__name__}"}
         try:
             program = runner.locate() if hasattr(runner, "locate") else spec.name
+            if real:
+                base["produced"] = f"client:{program} {getattr(runner.require(), 'detail', '')}".strip()
             workspace = prepare(task, out_dir, spec)
-            config = mcp_config(task, python)
+            config = mcp_config(task, python, home)
             with tempfile.TemporaryDirectory(prefix="g6_routing_", ignore_cleanup_errors=True) as tmp:
                 scratch = Path(tmp)
                 config_file = scratch / "mcp.json"
@@ -306,22 +410,26 @@ def run(tasks_path: Path, out_dir: Path, *, client: str, cohort: str, runner: An
                 events = (scratch / OUTPUT_LOG).read_text(encoding="utf-8", errors="replace") \
                     if (scratch / OUTPUT_LOG).is_file() else str(getattr(ended, "output_tail", ""))
             calls, final, cost = spec.parse(events)
-            transcript = Transcript(state="completed", calls=tuple(calls), final_text=final, cost_usd=cost,
-                                    questions=sum(call["tool"] in DIALOG_TOOLS for call in calls),
-                                    seconds=float(getattr(ended, "elapsed_s", 0.0)), **base)
+            exit_code = getattr(ended, "exit_code", None)
+            finished = exit_code == 0 and spec.finished(events)
+            transcript = Transcript(
+                state="completed" if finished else "interrupted", code="" if finished else UNFINISHED,
+                calls=tuple(calls), final_text=final, cost_usd=cost, exit_code=exit_code,
+                events_sha256=hashlib.sha256(events.encode("utf-8")).hexdigest(),
+                questions=sum(call["tool"] in DIALOG_TOOLS for call in calls),
+                seconds=float(getattr(ended, "elapsed_s", 0.0)), **base)
         except AgentRefusal as refusal:
             consent = refusal.code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE)
             missing = refusal.code == outside.OUTSIDE_PROGRAM_MISSING
             transcript = Transcript(state="refused" if consent else "unavailable" if missing else "interrupted",
                                     code=refusal.code, **base)
-        with log.open("a", encoding="utf-8", newline="\n") as handle:
-            handle.write(json.dumps(transcript.to_json(), sort_keys=True) + "\n")
+        _record(log, transcript)
         done.append(transcript)
     return done
 
 
 def read_transcripts(out_dir: Path, client: str, cohort: str) -> list[Any]:
-    log = Path(out_dir) / f"transcripts-{client}-{cohort}.jsonl"
+    log = _log(out_dir, client, cohort)
     lines = log.read_text(encoding="utf-8").splitlines() if log.is_file() else []
     return [Transcript.from_json(json.loads(line)) for line in lines if line.strip()]
 
@@ -349,8 +457,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         states = [t.state for t in run(path, args.out, client=args.client, cohort=args.cohort, repeat=args.repeat)]
         print(json.dumps({state: states.count(state) for state in score.STATES}))
     else:
+        # the gate's reading: the pinned bars, the bound task list, and only rows a real client produced can pass
         report = score.score(load_tasks(path, cohort=args.cohort), read_transcripts(args.out, args.client, args.cohort),
-                             freeze.read(GATES), client=args.client, cohort=args.cohort, schemas=schemas())
+                             load_gates(), client=args.client, cohort=args.cohort, schemas=schemas(),
+                             require_client=True)
         target = args.out / f"report-{args.client}-{args.cohort}.json"
         target.write_text(freeze.render(report), encoding="utf-8", newline="\n")
         print(json.dumps({"decision": report["decision"], "gates": report["gates"], "report": str(target)}, indent=2))

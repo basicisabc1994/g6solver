@@ -1,16 +1,16 @@
 {
   "format": "g6.routing_tasks/1",
   "routes": {
-    "abstraction": "05ac02a44f1761e5593e07ff269562594262bb6fad8c746c6c2a58c28c7dfb07",
-    "compose": "f4c355e6190455c42182424928bb115e73669999bb67fca5a2f87b721dffc257",
-    "consent": "1f6489490b675ab85a68a91bfb12b1ad3406a94334d7ef771435d548c8863b79",
-    "discover": "db3c4fab17a92f79f8e019763ccf284efc17f4913062ca0ea28bd634be5e7b75",
-    "fit": "37ba7b2e42ad7487b05eef43a85f6feb60b6e60d7a9af1181c3c9016db937906",
-    "improve": "c60dccade913dfefcd9fa9b5399edf1fa3f1fdc59b2159f3cbc106982b563cdb",
-    "mission": "7a9206ffc5ee0385f2c4017b2a71b156fed71199aecaf5cbc16d6d7a668c0c20",
-    "question": "28a8bcb4a6a1c98cee8f60ddd6d6d7912b61db8b2de0edd0aec0af91803074fe",
-    "review": "661f68ac8fb19d2619c9223d92cf027eac262e64d4335905812d7445c08a3434",
-    "rules": "3f0066cd90cb53c1d19a88be7581bad9a121c35728659ecea896a9a2beb4b8ce"
+    "abstraction": "32481b86b3949694586898ef8a4b8b6cd3cd14857bb9daeb70dbf9ad520fdc3f",
+    "compose": "a8f5b071ef2f71bb23f5d608517ea4e63a1a659eecf46e7e50d4a99377abc72a",
+    "consent": "ce53edfea14af3b609f20a92df8a06be7ab4a42c357aa5fae9c233c8ade5ba1c",
+    "discover": "258fc396c053a9c2fbad7f9d18f73fb14a084cc3d930521bcdc6530eb6547ad9",
+    "fit": "586a3c09b7e76a924f93c225d29329079a6bec2acfdca922063c54aac653be2b",
+    "improve": "d217ce56641cd7a9c7e3f307536b225dc020e793eeb6810d92c3879eb40d3717",
+    "mission": "90fb9b37edf49836e393a40e1381561047f63ae5e11559e8a4b22101df9a4985",
+    "question": "6c9126d59336fd453c50e8f1bcc369da629421262fa18f500fcf37718bd1237d",
+    "review": "2bfebae9e6b4c3752ebc0a1f9fd65d15630e46132b8a8574ea8dec9d22226b90",
+    "rules": "17e5d9edb64927b2132ad910b4dfbd16b22f9f610e58da9e5cbe1b15dc9640cd"
   },
   "tasks": [
     {
@@ -548,7 +548,10 @@
         "seconds": 300,
         "calls": 12,
         "questions": 0
-      }
+      },
+      "permissions": [
+        "patch_review.review"
+      ]
     },
     {
       "id": "dev.rules.missing_tool.1",

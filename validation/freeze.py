@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -29,8 +30,16 @@ def digest(value: Any) -> str:
     return hashlib.sha256(canonical(value)).hexdigest()
 
 
+def _once(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    keys = [key for key, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise FrozenError(f"a frozen file names a key twice: {sorted(k for k in set(keys) if keys.count(k) > 1)}")
+    return dict(pairs)
+
+
 def read(path: Path) -> Any:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    """The JSON a file holds. A key written twice is refused: the second would silently win."""
+    return json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=_once)
 
 
 def file_digest(path: Path) -> str:
@@ -56,13 +65,15 @@ def freeze(path: Path, value: Any) -> str:
     return digest(value)
 
 
-def bound(path: Path, expected: str, *, what: str = "") -> Any:
-    """The JSON at ``path`` when its digest is ``expected``; ``FrozenError`` when the file changed or is absent."""
+def bound(path: Path, expected: str, *, what: str = "", mask: Mapping[str, Any] | None = None) -> Any:
+    """The JSON at ``path`` when its digest is ``expected``; ``FrozenError`` when the file changed or is absent.
+    ``mask`` names top-level fields that are bound elsewhere: each is hashed as the given value, and returned as
+    the file has it."""
     path = Path(path)
     if not path.is_file():
         raise FrozenError(f"{what or path.name}: {path.name} is absent")
     value = read(path)
-    found = digest(value)
+    found = digest({**value, **mask} if mask else value)
     if found != expected:
         raise FrozenError(f"{what or path.name}: {path.name} has digest {found}, and {expected} is the one bound")
     return value

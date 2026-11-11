@@ -16,7 +16,8 @@ TEXT = (GUIDE / "SKILL.md").read_text(encoding="utf-8")
 LIFECYCLE = (GUIDE / "references" / "lifecycle.md").read_text(encoding="utf-8")
 BOTH = TEXT + "\n" + LIFECYCLE
 #: The ceiling for SKILL.md's body: the cap every skill has (0.3 design, 14.1: the 1,800-word cap holds). The version
-#: tested on agents was about 900 words (TESTING.md, "Limits of this test"); the routing measurement covers the longer one.
+#: tested on agents was about 900 words (TESTING.md, "Limits of this test"); the longer one is not yet measured (the
+#: routing measurement under validation/routing is built and has not been run).
 MAX_WORDS = skills.MAX_WORDS
 
 

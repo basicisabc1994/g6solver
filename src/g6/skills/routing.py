@@ -31,6 +31,8 @@ from typing import Any
 FORMAT = "g6.routing/1"
 #: The root skill's key among the guidance texts: its path inside the ``g6`` package.
 ROOT = "skills/using-g6/SKILL.md"
+#: Where the root skill's reference files live, inside the ``g6`` package.
+REFERENCES = "skills/using-g6/references/"
 #: The root skill's word cap (``g6.core.skills.MAX_WORDS``; a test keeps the two equal).
 MAX_ROOT_WORDS = 1800
 #: The fewest characters a reason for an exemption has.
@@ -48,6 +50,7 @@ _VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 _TOOL = re.compile(r"(?<![\w.])((?:g6|metaharness)_[a-z0-9_]+)(\*)?")
 _PAIR = re.compile(r"`([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)`")
 _INVOKE = re.compile(r'g6_invoke\(\s*"([a-z_][a-z0-9_]*)"\s*,\s*"([a-z_][a-z0-9_]*)"')
+_BARE = re.compile(r"`([a-z][a-z0-9_]*)`")
 _HEADING = re.compile(r"(#{1,6}) \S")
 _ITEM = re.compile(r"\s*(?:[-*+]|\d+\.) ")
 
@@ -147,6 +150,9 @@ def loads(text: str) -> Manifest:
         detail = tuple(_text(path, f"route {route_id}: a detail file") for path in raw["detail"])
         if len(set(detail)) != len(detail) or any(p.startswith(("/", ".")) or "\\" in p or ".." in p for p in detail):
             raise ManifestError(f"route {route_id}: detail files are distinct paths inside the g6 package")
+        if ROOT in detail:
+            raise ManifestError(f"route {route_id}: the root skill is not a route's detail file; a route's place "
+                                "in the root skill is its anchor's own section")
         routes[route_id] = Route(route_id, anchor, detail)
     entries: dict[str, Entry] = {}
     for key, raw in data["entries"].items():
@@ -307,6 +313,10 @@ def check(manifest: Manifest, *, registrations: Mapping[str, Sequence[str]], ops
         if _parts(entry.since) > max(_parts(version), _parts(manifest.release)):
             add("SINCE", key, f"since {entry.since} is later than the code ({version}) and the manifest's release "
                               f"({manifest.release})")
+    ceiling = (_parts(version)[0] + 1, 0, 0)
+    if _parts(manifest.release) > ceiling:
+        add("SINCE", "release", f"the manifest's release {manifest.release} is past the next release after the "
+                                f"code ({version}): a manifest does not set its own ceiling")
     for route_id in sorted(set(manifest.routes) - used):
         add("UNKNOWN", f"route:{route_id}", "no agent-facing member takes this route")
 
@@ -329,6 +339,11 @@ def check(manifest: Manifest, *, registrations: Mapping[str, Sequence[str]], ops
             add("ANCHOR", f"route:{route_id}", f"the root skill does not have {route.anchor!r} exactly once, as a "
                                               "heading or the bold lead of a list item")
         sections[route_id] = found or ""
+        for other_id, other in sorted(manifest.routes.items()):
+            if other_id != route_id and other.anchor != route.anchor and found is not None \
+                    and section(found, other.anchor) is not None:
+                add("ANCHOR", f"route:{route_id}", f"its section of the root skill holds route {other_id!r}'s "
+                                                  "anchor: a route owns its own part, not another route's")
         for path in route.detail:
             if path not in files:
                 add("LINK", f"route:{route_id}", f"its detail file {path} does not exist")
@@ -362,6 +377,18 @@ def check(manifest: Manifest, *, registrations: Mapping[str, Sequence[str]], ops
             if tool in names or f"`{tool}`" in texts[surface] or f"`{tool}(" in texts[surface]:
                 add("EXEMPT_NAMED", surface, f"it names {tool}, which the manifest exempts from agent use")
 
+    # A tool of a server whose tools carry no g6_ prefix has one written form: a bare name in backticks, in its
+    # route's own detail file under the root skill's references. Every such name there is a registered tool of the
+    # route's servers, or it is stale.
+    for route_id, route in sorted(manifest.routes.items()):
+        owners = {key[4:].split("/", 1)[0] for key, entry in manifest.entries.items()
+                  if entry.route == route_id and key.startswith("mcp:")} - {"g6"}
+        offered = {tool for server in owners for tool in registrations.get(server, ())}
+        for path in route.detail if owners else ():
+            if path.startswith(REFERENCES) and path in detail_text:
+                for name in sorted(set(_BARE.findall(detail_text[path])) - offered):
+                    add("STALE", path, f"it names {name}, and no server of route {route_id!r} registers a tool "
+                                       "of that name")
     known = {target.split(":", 1)[0] for target in (servers or {}).values()}
     for module in sorted(set(sources) - known):
         add("SERVER", module, "this module constructs an MCP server the recorder does not know")

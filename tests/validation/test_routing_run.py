@@ -34,20 +34,51 @@ server = _load("g6_validation_routing_server", HERE / "server.py")
 freeze = _load("g6_validation_freeze", ROOT / "validation" / "freeze.py")
 
 
-#: Measurement runners written before section 16 that reach a provider outside the consent check, as (file, what it
-#: reaches). Found when this walk was first extended to `validation/`; each is repaired in its own change, and
-#: its row is then removed here.
+#: Measurement runners under ``validation/`` that reach a model provider outside the consent check: (file, the
+#: provider it reaches) -> the number of sites in that file. Found when the consent inventory's walk was first extended
+#: to ``validation/``; each is repaired in its own change, and its row is then removed here. The list may shrink and
+#: never grow: a new file, a new provider in a listed file and one more site in a listed file each fail the test below.
 EARLIER_RUNNERS_OUTSIDE_THE_CHECK = {
-    ("validation/frontier/round.py", "g6.core.llm.OllamaCaller"),
-    ("validation/v1_grounding/run.py", "g6.core.llm.provider_from_env"),
-    ("validation/v2_action_gating/run.py", "g6.core.llm.provider_from_env"),
-    ("validation/v6_metaharness/post_run/pilot.py", "g6.core.llm.OllamaCaller"),
-    ("validation/v6_metaharness/run.py", "g6.core.llm.OllamaCaller"),
-    ("validation/v6b_metaharness/run.py", "g6.core.llm.OllamaCaller"),
-    ("validation/v6b_metaharness/run.py", "new.CountingOllama"),
-    ("validation/v6b_metaharness/run.py", "g6.core.llm._post_json"),
-    ("validation/v7_swebench/shadow.py", "g6.core.llm.AnthropicCaller"),
+    ("validation/frontier/round.py", "g6.core.llm.OllamaCaller"): 2,
+    ("validation/v1_grounding/run.py", "g6.core.llm.provider_from_env"): 1,
+    ("validation/v2_action_gating/run.py", "g6.core.llm.provider_from_env"): 1,
+    ("validation/v6_metaharness/post_run/pilot.py", "g6.core.llm.OllamaCaller"): 1,
+    ("validation/v6_metaharness/run.py", "g6.core.llm.OllamaCaller"): 2,
+    ("validation/v6b_metaharness/run.py", "g6.core.llm.OllamaCaller"): 1,
+    ("validation/v6b_metaharness/run.py", "g6.core.llm._post_json"): 1,
+    ("validation/v7_swebench/shadow.py", "g6.core.llm.AnthropicCaller"): 1,
+    ("validation/worked_examples/evolve.py", "g6.core.llm.AnthropicCaller"): 1,
+    ("validation/worked_examples/loop.py", "g6.core.llm.AnthropicCaller"): 1,
 }
+
+
+def provider_sites(tree_root: Path) -> dict[tuple[str, str], int]:
+    """Every place under ``validation/`` that calls or subclasses a model provider outside the consent check, read
+    from the code: a callee or a base class whose last name is one of the consent inventory's provider symbols,
+    however the name is reached (a direct import, an alias's attribute, another module's attribute). A name imported
+    from ``g6.core.consent_callers`` is the guarded one and is not a site. Only the routing trials' synthetic
+    fixtures are left out of the walk."""
+    inventory = _load("g6_tests_consent_inventory", ROOT / "tests" / "core" / "test_consent_inventory.py")
+    providers = {symbol.rpartition(".")[2]: symbol for symbol in inventory.provider_symbols(tree_root)}
+    providers = {name: symbol for name, symbol in providers.items()
+                 if name.endswith("Caller") or name in ("provider_from_env", "_post_json")}
+    sites: dict[tuple[str, str], int] = {}
+    for path in sorted((tree_root / "validation").rglob("*.py")):
+        rel = path.relative_to(tree_root).as_posix()
+        if rel.startswith("validation/routing/fixtures/"):
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        guarded = {alias.asname or alias.name for node in ast.walk(tree)
+                   if isinstance(node, ast.ImportFrom) and node.module == "g6.core.consent_callers"
+                   for alias in node.names}
+        for node in ast.walk(tree):
+            reached = [node.func] if isinstance(node, ast.Call) else (
+                node.bases if isinstance(node, ast.ClassDef) else [])
+            for callee in reached:
+                name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
+                if name in providers and not (isinstance(callee, ast.Name) and name in guarded):
+                    sites[(rel, providers[name])] = sites.get((rel, providers[name]), 0) + 1
+    return sites
 
 
 def test_the_trial_server_withholds_a_tasks_tools_and_nothing_else() -> None:
@@ -151,19 +182,15 @@ def test_a_frozen_file_is_written_once_and_retired_with_a_reason(tmp_path: Path)
 
 
 def test_the_runners_model_calling_path_is_in_the_consent_inventory() -> None:
-    """Section 16: one check and one inventory. The inventory test on the consent line walks ``src/g6``; this adds the
-    measurement runners under ``validation/`` to the same walk, and pins that the routing runner reaches its client
-    only through ``consent_run`` inside ``request_sources``."""
-    inventory = _load("g6_tests_consent_inventory", ROOT / "tests" / "core" / "test_consent_inventory.py")
-    extra = sorted(path for path in (ROOT / "validation").rglob("*.py") if "fixtures" not in path.parts)
-    assert HERE / "run.py" in extra
-    rows = inventory.inventory(extra=extra)
-    names = {path.relative_to(ROOT).as_posix() for path in extra}
-    gaps = {(row[0], row[2]) for row in rows if row[0] in names and not row[3] and not row[4]}
-    assert not [gap for gap in gaps if gap[0].startswith(("validation/routing/", "validation/strategies/"))], gaps
-    # the walk also shows the earlier runners that reach a provider outside the check; the list may shrink, never grow
-    assert gaps == EARLIER_RUNNERS_OUTSIDE_THE_CHECK, (sorted(gaps - EARLIER_RUNNERS_OUTSIDE_THE_CHECK),
-                                                       sorted(EARLIER_RUNNERS_OUTSIDE_THE_CHECK - gaps))
+    """Section 16: one check and one inventory. The inventory test on the consent line walks ``src/g6``; this walks
+    the measurement runners under ``validation/`` for the same provider symbols, and pins that the routing runner
+    reaches its client only through ``consent_run`` inside ``request_sources``."""
+    sites = provider_sites(ROOT)
+    assert not [site for site in sites if site[0].startswith(("validation/routing/", "validation/strategies/"))], sites
+    # the earlier runners that reach a provider outside the check: file, provider and number of sites, exactly
+    assert sites == EARLIER_RUNNERS_OUTSIDE_THE_CHECK, (
+        sorted(set(sites.items()) - set(EARLIER_RUNNERS_OUTSIDE_THE_CHECK.items())),
+        sorted(set(EARLIER_RUNNERS_OUTSIDE_THE_CHECK.items()) - set(sites.items())))
     tree = ast.parse((HERE / "run.py").read_text(encoding="utf-8"))
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "run")
     sends = [node for node in ast.walk(function) if isinstance(node, ast.Call)

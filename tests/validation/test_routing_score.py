@@ -223,7 +223,9 @@ def test_clients_are_scored_apart_and_one_must_pass() -> None:
     absent = report(good, listed, client="claude_code")
     assert absent["decision"] == "not_run"
     assert score.release([codex, absent])["known_limits"] == {"claude_code": "not run"}
-    assert score.release([claude, absent])["decision"] == "fail" and score.release([])["decision"] == "not_run"
+    assert score.release([claude])["decision"] == "fail" and score.release([])["decision"] == "not_run"
+    with pytest.raises(score.TaskError):                 # one client's final cohort is read once
+        score.release([claude, absent])
 
 
 def test_consistency_is_published_with_no_bar() -> None:

@@ -264,3 +264,51 @@ def test_the_written_form_is_sorted_one_entry_a_line_and_reads_back() -> None:
     keys = [line.split('"')[1] for line in written.splitlines() if line.startswith('    "mcp:') or
             line.startswith('    "op:')]
     assert keys == sorted(base()["entries"])
+
+
+def test_every_manifest_field_is_bounded_by_something_the_manifest_does_not_hold() -> None:
+    """One inventory for the class "the manifest decides what it is checked against": for each field of the manifest's
+    three records (read from the dataclasses), a manifest that sets the field to suit itself is refused by the loader or
+    reported by the check. A field added later without its case fails here."""
+    import dataclasses
+
+    def release(d: dict) -> None:
+        d["release"] = "9.9.9"
+
+    def anchor(d: dict) -> None:
+        d["routes"]["beta"]["anchor"] = "# Using G6"                  # the top heading: every mention would be its own
+
+    def detail(d: dict) -> None:
+        d["routes"]["beta"]["detail"] = [ROOT]                        # the root skill as the route's own detail file
+
+    def key(d: dict) -> None:
+        d["entries"]["mcp:g6/g6_not_registered"] = {"agent_facing": True, "route": "beta", "since": "0.3.0"}
+
+    def facing(d: dict) -> None:
+        d["entries"]["mcp:g6/g6_beta"] = {"agent_facing": False, "since": "0.3.0",
+                                          "exemption": "declared not for agents, yet the root tells them to call it"}
+
+    def route(d: dict) -> None:
+        d["entries"]["mcp:g6/g6_beta"]["route"] = "discover"          # named in beta's section, not in discover's
+
+    def since(d: dict) -> None:
+        d["entries"]["mcp:g6/g6_beta"]["since"] = "0.9.0"
+
+    cases = {("Manifest", "format"): (lambda d: d.update(format="g6.routing/9"), "ManifestError"),
+             ("Manifest", "release"): (release, "SINCE"), ("Manifest", "routes"): (anchor, "ANCHOR"),
+             ("Manifest", "entries"): (key, "UNKNOWN"), ("Route", "id"): (route, "NOT_NAMED"),
+             ("Route", "anchor"): (anchor, "ANCHOR"), ("Route", "detail"): (detail, "ManifestError"),
+             ("Entry", "key"): (key, "UNKNOWN"), ("Entry", "agent_facing"): (facing, "EXEMPT_NAMED"),
+             ("Entry", "route"): (route, "NOT_NAMED"), ("Entry", "exemption"): (facing, "EXEMPT_NAMED"),
+             ("Entry", "since"): (since, "SINCE")}
+    fields = {(cls.__name__, field.name) for cls in (routing.Manifest, routing.Route, routing.Entry)
+              for field in dataclasses.fields(cls)}
+    assert fields == set(cases), fields ^ set(cases)
+    for (record, name), (change, expected) in cases.items():
+        data = base()
+        change(data)
+        try:
+            found = {problem.code for problem in run(data)}
+        except routing.ManifestError:
+            found = {"ManifestError"}
+        assert expected in found, (record, name, found)

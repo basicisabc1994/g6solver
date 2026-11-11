@@ -12,6 +12,8 @@ Standard library only; ``run.py`` and the tests load this file by path.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import re
 from collections.abc import Mapping, Sequence
@@ -53,6 +55,9 @@ class Transcript:
     final_text: str = ""
     repeat: int = 0                              # 0 is the run the gate reads; 1 and 2 are consistency repeats
     code: str = ""                               # the refusal code, when refused
+    produced: str = ""                           # "client:<program> <version>", or "stand-in:<what stood in>"
+    exit_code: int | None = None                 # the client process's exit code, when one ran
+    events_sha256: str = ""                      # the digest of the event log the transcript was read from
 
     def __post_init__(self) -> None:
         if self.state not in STATES:
@@ -61,7 +66,8 @@ class Transcript:
     def to_json(self) -> dict[str, Any]:
         return {"task_id": self.task_id, "client": self.client, "state": self.state,
                 "calls": [dict(call) for call in self.calls], "questions": self.questions, "seconds": self.seconds,
-                "cost_usd": self.cost_usd, "final_text": self.final_text, "repeat": self.repeat, "code": self.code}
+                "cost_usd": self.cost_usd, "final_text": self.final_text, "repeat": self.repeat, "code": self.code,
+                "produced": self.produced, "exit_code": self.exit_code, "events_sha256": self.events_sha256}
 
     @classmethod
     def from_json(cls, row: Mapping[str, Any]) -> "Transcript":
@@ -69,7 +75,8 @@ class Transcript:
                    calls=tuple(dict(call) for call in row.get("calls", ())), questions=int(row.get("questions", 0)),
                    seconds=float(row.get("seconds", 0.0)), cost_usd=row.get("cost_usd"),
                    final_text=str(row.get("final_text", "")), repeat=int(row.get("repeat", 0)),
-                   code=str(row.get("code", "")))
+                   code=str(row.get("code", "")), produced=str(row.get("produced", "")),
+                   exit_code=row.get("exit_code"), events_sha256=str(row.get("events_sha256", "")))
 
 
 def _need(condition: bool, said: str) -> None:
@@ -99,7 +106,7 @@ def validate_tasks(data: Any) -> dict[str, Any]:
         _need(task_id not in seen, f"task {task_id} is listed twice")
         seen.add(task_id)
         required = {"id", "route", "polarity", "cohort", "prompt", "fixture", "budget"}
-        optional = {"servers", "withhold", "expected_calls", "forbidden", "completion"}
+        optional = {"servers", "withhold", "expected_calls", "forbidden", "completion", "permissions"}
         _need(required <= set(task) <= required | optional, f"task {task_id}: fields {sorted(task)}")
         _need(task["route"] in data["routes"], f"task {task_id}: route {task['route']!r} has no bound digest")
         _need(task["polarity"] in POLARITIES and task["cohort"] in COHORTS, f"task {task_id}: polarity or cohort")
@@ -119,6 +126,10 @@ def validate_tasks(data: Any) -> dict[str, Any]:
         _need(forbidden == "any" or isinstance(forbidden, list), f"task {task_id}: forbidden is \"any\" or a list")
         for pattern in ([] if forbidden == "any" else forbidden):
             _pattern(task_id, pattern)
+        permissions = task.get("permissions", [])
+        _need(isinstance(permissions, list) and all(isinstance(p, str) and re.fullmatch(r"[a-z_]+(\.[a-z_]+)?", p)
+                                                    for p in permissions),
+              f"task {task_id}: permissions are host permissions, component or component.op")
         withhold = task.get("withhold", [])
         _need(isinstance(withhold, list) and all(isinstance(t, str) and t for t in withhold), f"task {task_id}: withhold")
         if task["polarity"] == "positive":
@@ -274,20 +285,41 @@ def _tally(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _digest(value: Any) -> str:
+    """The canonical digest ``validation/freeze.py`` gives the same value."""
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                                     allow_nan=False).encode("utf-8")).hexdigest()
+
+
 def score(tasks: Mapping[str, Any], transcripts: Sequence[Transcript], gates: Mapping[str, Any], *, client: str,
-          cohort: str, schemas: Mapping[str, Mapping[str, Any]] | None = None) -> dict[str, Any]:
+          cohort: str, schemas: Mapping[str, Mapping[str, Any]] | None = None,
+          require_client: bool = False) -> dict[str, Any]:
     """The report for one client on one cohort: per route and overall, every count with its denominator, each gate with
     its value, bar and ``passed``, and ``decision`` (``pass``, ``fail``, or ``not_run`` when no task was run at all).
 
     A transcript of another client or of a task outside the cohort is ignored; a scheduled task with no transcript is
-    ``unavailable``. Repeats (``repeat`` 1 and 2) feed only the consistency figure, which has no bar."""
+    ``unavailable``. Repeats (``repeat`` 1 and 2) feed only the consistency figure, which has no bar.
+
+    A gate is read from one transcript per task: two transcripts of one task and repeat raise ``TaskError``, so a
+    cohort run a second time cannot replace its first reading. ``decision`` is ``pass`` only when every gate passed
+    and no gate transcript says a stand-in produced it (``simulated``: a simulated session can fail a gate and never
+    passes one); with ``require_client``, the gate's own reading, a transcript that does not name the client program
+    that produced it cannot pass either (``unattributed``). The report names the digests of the task list and the
+    gate file it was scored with."""
     validate_tasks(dict(tasks))
     validate_gates(dict(gates))
     if cohort not in COHORTS:
         raise TaskError(f"cohort {cohort!r}")
     scheduled = [task for task in tasks["tasks"] if task["cohort"] == cohort]
     mine = [t for t in transcripts if t.client == client]
-    first = {t.task_id: t for t in mine if t.repeat == 0}
+    ids = {task["id"] for task in scheduled}
+    seen: set[tuple[str, int]] = set()
+    for transcript in mine:
+        key = (transcript.task_id, transcript.repeat)
+        if transcript.task_id in ids and key in seen:
+            raise TaskError(f"task {key[0]} has two transcripts for repeat {key[1]}: a gate is read from one run")
+        seen.add(key)
+    first = {t.task_id: t for t in mine if t.repeat == 0 and t.task_id in ids}
     rows = [judge(task, first.get(task["id"]), schemas) for task in scheduled]
     overall = _tally(rows)
     share = lambda part, whole: (part / whole) if whole else None   # noqa: E731
@@ -306,6 +338,20 @@ def score(tasks: Mapping[str, Any], transcripts: Sequence[Transcript], gates: Ma
         passed = value is not None and (value >= gates[bar] if direction == ">=" else value <= gates[bar])
         judged[bar] = {"value": None if value is None else round(value, 4), "bar": gates[bar], "passed": passed}
     ran = any(row["state"] != "unavailable" for row in rows)
+    made = [t.produced for t in first.values()]
+    produced = {"client": sum(p.startswith("client:") for p in made),
+                "stand_in": sum(p.startswith("stand-in") for p in made),
+                "unattributed": sum(not p.startswith(("client:", "stand-in")) for p in made)}
+    if not ran:
+        decision = "not_run"
+    elif not all(g["passed"] for g in judged.values()):
+        decision = "fail"
+    elif produced["stand_in"]:
+        decision = "simulated"
+    elif require_client and produced["unattributed"]:
+        decision = "unattributed"
+    else:
+        decision = "pass"
     repeats: dict[str, list[bool]] = {}
     by_id = {task["id"]: task for task in scheduled if task["polarity"] == "positive"}
     for transcript in mine:
@@ -314,13 +360,15 @@ def score(tasks: Mapping[str, Any], transcripts: Sequence[Transcript], gates: Ma
                 judge(by_id[transcript.task_id], transcript, schemas)["useful_completion"])
     thrice = {task_id: runs for task_id, runs in repeats.items() if len(runs) >= 3}
     return {
-        "format": FORMAT_REPORT, "client": client, "cohort": cohort, "overall": overall,
+        "format": FORMAT_REPORT, "client": client, "cohort": cohort,
+        "tasks_digest": _digest(dict(tasks)), "gates_digest": _digest(dict(gates)),
+        "bars_digest": _digest({**gates, "final_tasks_digest": None}), "produced": produced, "overall": overall,
         "routes": {route: _tally([row for row in rows if row["route"] == route])
                    for route in sorted({row["route"] for row in rows})},
         "tasks": rows, "gates": judged,
         "consistency": {"positive_tasks_run_three_times": len(thrice),
                         "passed_all_three": sum(all(runs) for runs in thrice.values()), "bar": None},
-        "decision": "not_run" if not ran else "pass" if all(g["passed"] for g in judged.values()) else "fail",
+        "decision": decision,
         "limits": list(LIMITS),
     }
 
@@ -328,8 +376,12 @@ def score(tasks: Mapping[str, Any], transcripts: Sequence[Transcript], gates: Ma
 def release(reports: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """The release reading of the final cohort's per-client reports: at least one client meets every bar; a client that
     missed is "routing bar not met" and one that was not run is "not run", each a known limit."""
-    clients = {report["client"]: report["decision"] for report in reports if report["cohort"] == "final"}
-    limits = {client: "routing bar not met" if decision == "fail" else "not run"
-              for client, decision in clients.items() if decision != "pass"}
+    final = [report for report in reports if report["cohort"] == "final"]
+    if len({report["client"] for report in final}) != len(final):
+        raise TaskError("two final reports for one client: a client's final cohort is read once")
+    clients = {report["client"]: report["decision"] for report in final}
+    said = {"fail": "routing bar not met", "not_run": "not run", "simulated": "simulated sessions only",
+            "unattributed": "transcripts do not name the client that produced them"}
+    limits = {client: said[decision] for client, decision in clients.items() if decision != "pass"}
     return {"decision": "pass" if "pass" in clients.values() else "fail" if clients else "not_run",
             "clients": clients, "known_limits": limits}
