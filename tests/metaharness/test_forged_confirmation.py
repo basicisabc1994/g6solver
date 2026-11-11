@@ -26,6 +26,8 @@ from fastmcp import Client  # noqa: E402
 
 from g6.mcp import build_server  # noqa: E402
 
+pytestmark = pytest.mark.usefixtures("declared_mcp_grants")
+
 SPEC = {"name": "echo", "task": "Echo {input}", "cases": [{"input": "a", "expected": "a"}, {"input": "b", "expected": "b"}],
         "baseline_code": {"main.py": "def solve(task):\n    return task.split(' ', 1)[1]\n"}}
 

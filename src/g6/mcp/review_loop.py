@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -63,7 +64,7 @@ def _evidence(state: dict, base: str) -> list[dict[str, Any]]:
             for n, one in enumerate(state.get("reviews") or [], 1)]
 
 
-def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
+def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
     """One step of the loop, for a job over MCP: see the module's docstring."""
     from g6.core.door import blocked_reply
     from g6.core.reliability_envelope import envelope_fields, warning_card
@@ -105,6 +106,34 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
     return {"ok": True, **said, **envelope_fields(
         reliability_label="qualified-draft", warning_card=warning_card(CODE, *card), evidence=evidence, request_id=request_id,
         run_id=folder.name, degradation_reason=card[0][:300])}
+
+
+def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
+    """Retain the run's saved origins; never rebind old report content to the current request."""
+    from g6.core.cloud_consent import Source, bind_output, repository_source
+    from g6.harness import completion_hook, completion_loop
+    result = _step(repo, task, session, base, reason)
+    if result.get('action') == completion_loop.WAIT:
+        # The running step owns the state. This reply contains only fresh host
+        # envelope fields and the fixed busy message; do not load its report.
+        from g6.mcp.consent_controls import public_instructions
+        return public_instructions(result)
+    from g6.core.cloud_consent import REQUIRED, current_capture, input_source
+    capture = current_capture()
+    if capture is not None:
+        capture.review_unsent = (result.get('ending') == 'untested' and
+            str(result.get('error', '')).startswith(f'[{REQUIRED}]'))
+    saved = completion_loop._load(completion_hook.folder(f'mcp:{session}')) if 'action' in result else {}
+    metadata = {key: result[key] for key in ('action', 'ending', 'request_id', 'run_id') if key in result}
+    metadata.update(has_report='report' in result, has_text='text' in result)
+    if capture is not None and capture.review_unsent and capture.refused_provider:
+        metadata['review_provider'] = capture.refused_provider
+    code = re.match(r'\[(G6_E_[A-Z0-9_]+)\]', result.get('error', ''))
+    if code:
+        metadata['error_code'] = code[1]
+    return bind_output(result, (Source.text(repository_source(repo), "completion-report", json.dumps(result)),
+                                Source.text(input_source(task), "task", task), *completion_loop.source_refs(saved)),
+                       metadata=metadata)
 
 
 __all__ = ["CODE", "step"]

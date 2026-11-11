@@ -24,6 +24,7 @@ import pytest
 
 import g6
 from g6.core import host_models, llm, model_calls, stop
+from g6.core.consent_callers import CallerWrapper, SDKClient
 from g6.core.llm import EmptyRetry, FakeLLM, FallbackCaller, LLMError
 from g6.core.vault import AccessDenied
 from g6.integrity import build_manifest
@@ -58,6 +59,8 @@ NOW = START + timedelta(days=2)
 FAST = Method(cycles=1, propose_budget=120, select_budget=400, race_block=12, reflect_calls=1)
 SETTINGS = LoopSettings(windows=(ProviderWindow("claude", 1_000_000, START),), method=FAST, audit_per_tick=60)
 
+pytestmark = pytest.mark.usefixtures('consented_provider_fakes')
+
 
 def _loop(tmp_path, domain=None, proposer=None, settings=SETTINGS, now=lambda: NOW, **kw):
     domain = domain if domain is not None else domains.WordProblems(tmp_path)
@@ -82,26 +85,32 @@ def _with_model(domain, caller) -> None:
 
 # Finding 1: a tick is charged what reached the backend, and stops at what it reserved -----------------------------------
 
-class Retrying(FakeLLM):
+class Retrying(CallerWrapper):
     """Answers through a backend it asks ``tries`` times, and notes none of them: the retries the reviewer counted."""
 
     def __init__(self, inner, tries: int = 8) -> None:
-        super().__init__()
-        self.inner, self.tries, self.backend = inner, tries, 0
+        super().__init__(FakeLLM())
+        self._answer, self.tries, self.backend = inner, tries, 0
 
     def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
         self.backend += self.tries
-        return self.inner(system, user)
+        return self._answer(system, user)
 
 
 def _retrying_blanks(base):
     """``base`` with a retry of a blank reply inside it, as a caller of a domain's own may have. No check can see that one, so
     these tests hold what the metering does about it. ``EmptyRetry`` itself is refused around a declared model."""
 
-    class RetriesBlanks(base):
+    class RetriesBlanks(CallerWrapper):
+        def __init__(self, *args, **kwargs):
+            super().__init__(base(*args, **kwargs))
+
+        def __getattr__(self, name):
+            return getattr(self.inner, name)
+
         def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
             for _ in range(4):
-                text = super().complete(system, user, max_tokens=max_tokens)
+                text = self.inner.complete(system, user, max_tokens=max_tokens)
                 if text.strip():
                     return text
             raise LLMError("empty completion on 4 attempts")
@@ -652,15 +661,15 @@ def test_a_request_that_failed_keeps_its_place():
 
 
 def test_a_childs_requests_which_have_no_boundary_are_counted_as_it_reports_them():
-    class Child:
+    class Child(CallerWrapper):
         def complete(self, system: str, user: str, *, max_tokens: int = 0) -> str:
-            model_calls.note_model_call()
+            self.inner.complete(system, user, max_tokens=max_tokens)
             model_calls.note_child_model_calls(scoped=2, process=2)
             return "an answer"
 
     requests = _Requests()
     requests.open(10)
-    _Counted(Child(), requests).complete("system", "user")
+    _Counted(Child(FakeLLM()), requests).complete("system", "user")
     assert requests.sent == 3
 
 
@@ -725,14 +734,14 @@ def test_a_resend_goes_out_only_while_what_was_reserved_has_room_for_it(monkeypa
     assert resending.complete("system", "user") == "an answer" and len(busy.sent) == requests.sent == 4
 
 
-class Own:
+class Own(CallerWrapper):
     """A caller of a domain's own, holding an HTTP caller under a name of its own."""
 
     def __init__(self, held) -> None:
-        self.held = held
+        super().__init__(held)
 
     def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
-        return self.held.complete(system, user, max_tokens=max_tokens)
+        return self.inner.complete(system, user, max_tokens=max_tokens)
 
 
 def test_a_resend_is_held_whatever_holds_the_caller_that_sends_it(monkeypatch):
@@ -783,11 +792,12 @@ def test_a_clean_tick_on_an_http_caller_reserves_what_any_other_does(tmp_path, m
     domain = domains.WordProblems(tmp_path)
     caller = _http_caller()
 
-    def answers(system: str, user: str, *, max_tokens: int = 1024) -> str:
-        llm._start_model_call()
-        return domain.tutor(system, user)
+    def answers(url, body, *args):
+        messages = body['messages']
+        answer = domain.tutor(messages[0]['content'], messages[1]['content'])
+        return {'choices': [{'message': {'content': answer}}]}
 
-    monkeypatch.setattr(caller, "complete", answers)
+    monkeypatch.setattr(llm, '_post_json', answers)
     plain, _ = _loop(tmp_path / "plain", domain=domains.WordProblems(tmp_path / "plain"))
     _with_model(domain, caller)
     loop, _ = _enrolled(tmp_path, domain=domain)
@@ -1460,15 +1470,16 @@ def test_the_workflow_a_person_enrolled_is_the_same_whichever_claude_caller_runs
 
 # The gate on a request stands on a bound file raising what an observer raises --------------------------------------------------
 
-class SendsThree:
+class SendsThree(CallerWrapper):
     """A caller that notes each of three requests and sends it, as a retry inside a caller does."""
 
     def __init__(self) -> None:
+        super().__init__(FakeLLM())
         self.sent = 0
 
     def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
         for _ in range(3):
-            model_calls.note_model_call()
+            self.inner.complete(system, user, max_tokens=max_tokens)
             self.sent += 1
         return "an answer"
 
@@ -1535,14 +1546,14 @@ def _claude_that_refuses(monkeypatch, *, is_error: bool = True) -> list[str]:
     return sent
 
 
-class Delegates:
-    """A wrapper of a domain's own, holding its caller as G6's wrappers do."""
+class Delegates(CallerWrapper):
+    """A request wrapper exposing its actual caller through G6's published contract."""
 
     def __init__(self, inner) -> None:
-        self._inner = inner
+        super().__init__(inner)
 
     def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
-        return self._inner.complete(system, user, max_tokens=max_tokens)
+        return self.inner.complete(system, user, max_tokens=max_tokens)
 
 
 class TriesAgain(Delegates):
@@ -1551,7 +1562,7 @@ class TriesAgain(Delegates):
     def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
         for _ in range(3):
             try:
-                return self._inner.complete(system, user, max_tokens=max_tokens)
+                return self.inner.complete(system, user, max_tokens=max_tokens)
             except LLMError:
                 continue
         return "no answer"
@@ -1562,7 +1573,7 @@ class Swallows(Delegates):
 
     def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
         try:
-            return self._inner.complete(system, user, max_tokens=max_tokens)
+            return self.inner.complete(system, user, max_tokens=max_tokens)
         except LLMError:
             return ""
 
@@ -1571,11 +1582,15 @@ class Declares(Delegates):
     """It declares one caller as ``_inner`` and sends through another: enrolment can only see what it declares."""
 
     def __init__(self, sends_through) -> None:
-        super().__init__(FakeLLM())
-        self.held = sends_through
+        super().__init__(sends_through)
+        self.declared = FakeLLM()  # the enrolment test's decoy stays; consent reads the real inner identity
+
+    @property
+    def _inner(self):
+        return self.declared
 
     def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
-        return self.held.complete(system, user, max_tokens=max_tokens)
+        return self.inner.complete(system, user, max_tokens=max_tokens)
 
 
 class ClaudeOfItsOwn(host_models.ClaudeCodeCaller):
@@ -1690,14 +1705,15 @@ def test_the_sender_of_a_request_is_read_at_the_request_for_each_kind_of_caller(
     monkeypatch.setattr(host_models, "_run", lambda argv, stdin, *rest: (0, answered, ""))
     monkeypatch.setattr(host_models.CodexCaller, "_reply", lambda self, *args: "x")
 
-    class Answers:
+    class Answers(SDKClient):
+        base_url = 'https://api.anthropic.com'
         class beta:
             class messages:
                 @staticmethod
                 def create(**kwargs):
                     return dataclasses.make_dataclass("Reply", [("content", list), ("stop_reason", str)])([], "end_turn")
 
-    for caller in (FakeLLM(), llm.OllamaCaller(), _keyed(), llm.AnthropicCaller(client=Answers()), host_models.ClaudeCodeCaller(),
+    for caller in (FakeLLM(), llm.OllamaCaller(), _keyed(), llm.AnthropicCaller(client=Answers(), base_url="https://api.anthropic.com"), host_models.ClaudeCodeCaller(),
                    host_models.CodexCaller()):
         requests, seen = _notes_who_sends()
         _Counted(Delegates(caller), requests).complete("system", "user")
@@ -1725,11 +1741,14 @@ class Rewrites(Delegates):
     out."""
 
     def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
-        return self._inner.complete("fixed system", "fixed request", max_tokens=max_tokens)
+        return self.inner.complete("fixed system", "fixed request", max_tokens=max_tokens)
 
 
-class RewritesItself(FakeLLM):
+class RewritesItself(CallerWrapper):
     """The same with nothing between: a subclass of a known caller, which sends for itself."""
+
+    def __init__(self):
+        super().__init__(FakeLLM())
 
     def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
         return super().complete("fixed system", "fixed request", max_tokens=max_tokens)
@@ -1772,8 +1791,11 @@ def test_what_a_caller_really_sends_is_read_at_the_request_for_each_kind_of_call
     monkeypatch.setattr(host_models.ClaudeCodeCaller, "locate", lambda self: "unused-program")
     monkeypatch.setattr(host_models.CodexCaller, "locate", lambda self: "unused-program")
     monkeypatch.setattr(host_models, "_run", lambda *args: went_out.append(args) or (0, "", ""))
+    class NeverReached(SDKClient):
+        base_url = 'https://api.anthropic.com'
+
     for caller in (Rewrites(FakeLLM()), RewritesItself(), Rewrites(llm.OllamaCaller()), Rewrites(_keyed()),
-                   Rewrites(llm.AnthropicCaller(client=object())), Rewrites(host_models.ClaudeCodeCaller()),
+                   Rewrites(llm.AnthropicCaller(client=NeverReached(), base_url="https://api.anthropic.com")), Rewrites(host_models.ClaudeCodeCaller()),
                    Rewrites(host_models.CodexCaller())):
         requests, _ = _notes_who_sends()
         requests.refused.add(FIXED)
@@ -1800,7 +1822,7 @@ class Varies(Delegates):
 
     def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
         self.times += 1
-        return self._inner.complete(system, f"{user} {self.times}", max_tokens=max_tokens)
+        return self.inner.complete(system, f"{user} {self.times}", max_tokens=max_tokens)
 
 
 def test_what_a_wrapper_was_asked_stays_refused_though_what_it_sends_varies():
@@ -1842,7 +1864,10 @@ def test_a_refusal_read_by_a_session_that_hands_over_a_prompt_alone_still_ends_t
     """As ``ToolSession`` does: there is no system text to bind, and a stop may never fall over for want of one."""
     refused = json.dumps({"type": "result", "is_error": True, "stop_reason": "refusal", "result": "Request denied"})
 
-    class Session(host_models.ClaudeCodeCaller):
+    class Session(CallerWrapper, host_models.ClaudeCodeCaller):
+        def __init__(self):
+            super().__init__(host_models.ClaudeCodeCaller())
+
         def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
             llm._start_model_call()
             return self._reply(1, refused, "", None, ("a prompt",))

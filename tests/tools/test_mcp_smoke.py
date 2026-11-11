@@ -8,6 +8,7 @@ import importlib.util
 import subprocess
 import sys
 from pathlib import Path
+import pytest
 
 from g6.core import discovery
 from g6.mcp import invoke_reply
@@ -16,6 +17,23 @@ TOOLS = Path(__file__).resolve().parents[2] / "tools"
 _spec = importlib.util.spec_from_file_location("mcp_smoke", TOOLS / "mcp_smoke.py")
 mcp_smoke = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(mcp_smoke)
+
+
+from tests.core import test_declared_scope_captures as scope_captures  # noqa: E402
+
+
+@pytest.mark.parametrize('granted', [False, True])
+@pytest.mark.parametrize('name', scope_captures.SOURCE_TOOLS)
+def test_all_declared_paths_at_the_recipient_boundary(tmp_path, monkeypatch, accepted_cloud_dialog, name, granted):
+    scope_captures.test_each_declared_tool_path_captures_retained_content(
+        tmp_path, monkeypatch, accepted_cloud_dialog, name, granted)
+
+
+@pytest.mark.parametrize('name,args', [('g6_help', {}), ('g6_components', {}),
+    ('g6_cloud_grant', {'source': 'fixture', 'provider': 'openai:codex'}),
+    ('g6_cloud_revoke', {'source': 'fixture', 'provider': 'openai:codex'})])
+def test_only_operational_metadata_with_other_scopes_planted(tmp_path, monkeypatch, name, args):
+    scope_captures.test_request_and_operational_tools_never_read_other_scopes(tmp_path, monkeypatch, name, args)
 
 
 def test_every_new_operation_is_its_components_own():
@@ -38,8 +56,8 @@ def test_a_missing_op_or_a_no_block_reply_is_a_problem():
     assert problems and any("G6_E_NO_BLOCK" in p for p in problems)
 
 
-def test_the_same_answers_come_over_a_real_stdio_server(tmp_path):
-    done = subprocess.run([sys.executable, str(TOOLS / "mcp_smoke.py"), "--server", sys.executable, "-P", "-c",
+def test_the_same_answers_come_over_a_real_stdio_server(tmp_path, cloud_smoke_dialog):
+    done = subprocess.run([sys.executable, str(cloud_smoke_dialog), str(TOOLS / "mcp_smoke.py"), "--server", sys.executable, "-P", "-c",
                            "from g6.mcp import main; main()"], capture_output=True, text=True, encoding="utf-8",
                           errors="replace", timeout=300, cwd=tmp_path)
     assert done.returncode == 0, done.stdout + done.stderr

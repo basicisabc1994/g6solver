@@ -38,7 +38,8 @@ from typing import Any
 from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, is_allowed
 from g6.core.ledger import LedgerError, digest as digest_of
 from g6.core.storage import g6_home
-from g6.metaharness.api import _blocked, _envelope
+from g6.mcp.consent_controls import public_instructions, refused_send
+from g6.metaharness.api import _blocked as _raw_blocked, _envelope
 from g6.self_maintenance import digest
 from g6.self_maintenance.envelope import (
     CYCLE_LOG,
@@ -96,12 +97,18 @@ ASK_AGAIN = ("Nothing started and nothing was recorded. Call g6_improve_start ag
              "the client's dialog, and agrees to that or not.")
 
 
+def _blocked(code: str, *args: Any, **kwargs: Any) -> dict:
+    # Each call supplies a module code constant; dynamic diagnostics stay private.
+    return refused_send(_raw_blocked(code, *args, **kwargs), code=code)
+
+
 def refused() -> dict | None:
     """The refusal of starting the runner, unless the host allows it."""
     if is_allowed(*SENSITIVE, allowed_sensitive()):
         return None
-    return blocked_reply(f"[G6_E_SENSITIVE_COMPONENT_DENIED] {WHO} starts a process that runs on its own; the host must "
-                         f"allow it, by adding {WHO} (or metaharness) to {SENSITIVE_ENV} where the server is registered")
+    return public_instructions(blocked_reply(
+        f"[G6_E_SENSITIVE_COMPONENT_DENIED] {WHO} starts a process that runs on its own; the host must "
+        f"allow it, by adding {WHO} (or metaharness) to {SENSITIVE_ENV} where the server is registered"))
 
 
 def _root(folder: str) -> Path:

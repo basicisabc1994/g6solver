@@ -117,9 +117,12 @@ class G6ChatClient(ChatCompletionClient):
         if os.environ.get("G6_DISABLE_LLM"):
             raise LLMError("G6_E_LLM_DISABLED: model calls are disabled by G6_DISABLE_LLM")
         offered = list(tools) if tool_choice != "none" else []
-        system, transcript = render(messages, offered)
         self.calls += 1
-        text = self.llm.complete(system, transcript, max_tokens=self.max_tokens)
+        from g6.core.consent_callers import guard
+        from g6.core.cloud_consent import prompt_state
+        with prompt_state(messages, offered) as (snapshot, schemas):
+            system, transcript = render(snapshot, schemas)
+            text = guard(self.llm).complete(system, transcript, max_tokens=self.max_tokens)
         calls = tool_calls(text) if offered else None
         if calls:
             return CreateResult(finish_reason="function_calls", content=calls, usage=self._usage, cached=False)

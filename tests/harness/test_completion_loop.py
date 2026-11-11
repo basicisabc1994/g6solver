@@ -474,7 +474,8 @@ def test_a_later_scout_is_skipped_when_the_hooks_time_is_spent(world, monkeypatc
     assert step.action == loop.STOP and "time" in step.text
 
 
-def test_a_scout_session_has_no_shell_no_hooks_no_servers_and_keeps_nothing(monkeypatch, tmp_path):
+def test_a_scout_session_has_no_shell_no_hooks_no_servers_and_keeps_nothing(monkeypatch, tmp_path,
+                                                                         accepted_cloud_dialog):
     seen = {}
 
     def run(argv, stdin, cwd, files, env, timeout, name):
@@ -489,6 +490,13 @@ def test_a_scout_session_has_no_shell_no_hooks_no_servers_and_keeps_nothing(monk
     monkeypatch.setattr(host_models, "_run", run)
     where = tmp_path / "work"
     where.mkdir()
+    # This is G6's own Anthropic scout, with repository reads and a prompt from
+    # model_inputs; the client's same-provider repository exemption does not apply.
+    from g6.core.cloud_consent import repository_source
+    accepted_cloud_dialog(repository_source(tmp_path), 'anthropic:claude_code', text='synthetic scout repository')
+    accepted_cloud_dialog(repository_source(where), 'anthropic:claude_code', text='synthetic scout output directory')
+    accepted_cloud_dialog('agent_environment', 'anthropic:claude_code', text='synthetic scout configuration')
+    accepted_cloud_dialog('model_inputs', 'anthropic:claude_code', text='the prompt')
     assert loop.ToolSession("a-model").run("the prompt", tmp_path, where, 30.0) == "finished"
     argv = seen["argv"]
     assert argv[argv.index("--tools") + 1] == "Read,Glob,Grep,Write"

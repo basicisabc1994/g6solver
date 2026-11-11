@@ -47,6 +47,7 @@ code as it was. L9's runner waits for the agent inside the loop, and a hook cann
 from __future__ import annotations
 
 import json
+import contextvars
 import os
 import re
 import shutil
@@ -64,7 +65,9 @@ from g6.context.redact import MASK, mask_paths, scrub, secret_spans
 from g6.core import host_models, keys
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
-from g6.core.llm import LLMCaller, LLMError, _start_model_call, provider_from_env
+from g6.core.llm import LLMCaller, LLMError, _start_model_call
+from g6.core import cloud_consent as cloud, consent_callers as consent
+from g6.core.consent_callers import provider_from_env
 from g6.core.storage import state_path
 from g6.harness import patch_report
 from g6.harness.completion_hook import CHILD
@@ -144,7 +147,7 @@ FOUND_NOTHING, UNREACHABLE, UNREADABLE, OVERSIZE = ("review_found_nothing", "rev
                                                     "review_too_long")
 UNCONFINED, UNASKED, UNAPPROVED, MASKED_LINES = "no_boundary", "no_task", "no_reviewer_approved", "review_masked_lines"
 #: The causes a profile cannot change: nothing failed, or only a person can put it right.
-NOT_CHANGEABLE = frozenset({FOUND_NOTHING, UNREACHABLE, UNCONFINED, UNASKED, UNAPPROVED, MASKED_LINES})
+NOT_CHANGEABLE = frozenset({FOUND_NOTHING, UNREACHABLE, UNCONFINED, UNASKED, UNAPPROVED, MASKED_LINES, "cloud_consent_missing"})
 #: Where those rows go, beside the sessions' folders: local, and never pushed.
 FAILURES = ("completion_loop", "failures.jsonl")
 #: An empty file named for each run that owes a row, as what a run owes must outlive that run's own calls (``settle``).
@@ -188,6 +191,7 @@ _PROBES = re.compile(r"/opt/we/(?:probes|hidden\d*)")
 _PLACE = re.compile(r"^.*?g6_check_[0-9a-f]{12}/")
 #: A scout's session: what it is asked, where it starts, the one folder it may write to, and its time.
 Host = Callable[[str, Path, Path, float], str]
+_SOURCE_STATE: contextvars.ContextVar[cloud.Capture | None] = contextvars.ContextVar('g6_completion_sources', default=None)
 
 
 def literal(text: str) -> str:
@@ -205,6 +209,7 @@ class Harness:
     critic: str
     critic_note: str
     review_ask: str
+    sources: tuple[cloud.Source, ...] = ()
 
 
 def harness(path: Path = HARNESS) -> Harness:
@@ -224,7 +229,9 @@ def harness(path: Path = HARNESS) -> Harness:
                    data["fixer"] + (f"\n\n{fixer}" if fixer else ""),
                    data["repair"] + (f"\n\n{literal(repair)}" if repair else ""),
                    data["critic"].replace("</task>", f"4. {critic}\n</task>", 1) if critic else data["critic"],
-                   data["critic_note"], data["review_ask"])
+                   data["critic_note"], data["review_ask"],
+                   (cloud.Source.text(cloud.repository_source(path), "harness-file", json.dumps(data)),)
+                   if added or path.resolve() != HARNESS.resolve() else ())
 
 
 @dataclass
@@ -359,26 +366,30 @@ def located(text: str, where: Path) -> str:
 
 # --- the sessions: the person's own sign-ins, each only with the line in their key file that approves it --------------------
 
-class ToolSession(host_models.ClaudeCodeCaller):
+class ToolSession(consent.ConsentClaude):
     """Claude Code, signed in as the person, with ``SCOUT_TOOLS``. What ``host_models`` gives a text completion, it gives
     this: the program found the same way, a clean environment, the prompt on stdin, a bounded run, and nothing kept on
     disk. It starts in ``cwd``, may write only there and in ``where``, and runs no hook and no MCP server."""
 
     def run(self, prompt: str, cwd: Path, where: Path, seconds: float) -> str:
-        _start_model_call()
-        program = self.locate()
-        with host_models._folders() as (_, files):
-            (files / "no_mcp_servers.json").write_text(host_models.NO_SERVERS, encoding="utf-8")
-            (files / "g6_settings.json").write_text(json.dumps(SCOUT_SETTINGS), encoding="utf-8")
-            argv = [program, "-p", "--output-format", "json", "--tools", SCOUT_TOOLS, "--permission-mode", "acceptEdits",
-                    "--add-dir", host_models._plain(where), "--strict-mcp-config",
-                    "--mcp-config", host_models._plain(files / "no_mcp_servers.json"),
-                    "--settings", host_models._plain(files / "g6_settings.json"), "--setting-sources", "user",
-                    "--no-session-persistence", "--max-turns", str(SCOUT_TURNS),
-                    "--max-budget-usd", f"{SCOUT_CAP_USD:.2f}", *(("--model", self.model) if self.model else ())]
-            env = host_models._environment(self.keep_env, files / "tmp") | {CHILD: "1"}
-            code, printed, errors = host_models._run(argv, prompt, cwd, files, env, seconds, self.program.name)
-            return self._reply(code, printed, errors, files, (prompt,))
+        refs = cloud.boundary_sources((cloud.Source.text('model_inputs', 'scout-request', prompt),
+                                       cloud.Source.text('agent_environment', 'scout-environment', '')),
+                                      directories=(cwd, where))
+        with cloud.admission("anthropic:claude_code", refs, cloud.sha256(prompt)):
+            _start_model_call()
+            program = self.locate()
+            with host_models._folders() as (_, files):
+                (files / "no_mcp_servers.json").write_text(host_models.NO_SERVERS, encoding="utf-8")
+                (files / "g6_settings.json").write_text(json.dumps(SCOUT_SETTINGS), encoding="utf-8")
+                argv = [program, "-p", "--output-format", "json", "--tools", SCOUT_TOOLS, "--permission-mode", "acceptEdits",
+                        "--add-dir", host_models._plain(where), "--strict-mcp-config",
+                        "--mcp-config", host_models._plain(files / "no_mcp_servers.json"),
+                        "--settings", host_models._plain(files / "g6_settings.json"), "--setting-sources", "user",
+                        "--no-session-persistence", "--max-turns", str(SCOUT_TURNS),
+                        "--max-budget-usd", f"{SCOUT_CAP_USD:.2f}", *(("--model", self.model) if self.model else ())]
+                env = host_models._environment(self.keep_env, files / "tmp") | {CHILD: "1"}
+                code, printed, errors = host_models._run(argv, prompt, cwd, files, env, seconds, self.program.name)
+                return self._reply(code, printed, errors, files, (prompt,))
 
 
 def scout_host() -> Host | None:
@@ -398,7 +409,7 @@ def critic_host() -> LLMCaller | None:
     It takes no tools (``host_models``), so it reads what ``_pack`` gives it and no file of the person's."""
     if (keys.get(CRITIC_LINE) or "").strip().lower() != "codex":
         return None
-    return host_models.CodexCaller(timeout=CRITIC_SECONDS)
+    return consent.guard(host_models.CodexCaller(timeout=CRITIC_SECONDS))
 
 
 # --- the probes: G6's rules for a check a model proposed, and its confined runs --------------------------------------------
@@ -434,8 +445,10 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
     A case that failed on an operating-system error is unknown, as a refused access looks like one. A run that did not
     finish, or tested code from outside its copy, leaves the set unusable."""
     code: int | None = 0
+    origins = []
     results, texts, tail, boundary = {}, {}, [], ""
     for ran in runs:
+        origins.extend(cloud.output_sources(ran) or (cloud.UNKNOWN,))
         boundary = (ran.get("isolation") or {}).get("backend") or boundary
         elsewhere, verdict = _loaded_elsewhere(change, ran), ran.get("verdict")
         if elsewhere or verdict not in repo_tests.RAN:
@@ -448,7 +461,8 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
         for named, phases in (ran.get("test_outcomes") or {}).items():
             results[_PLACE.sub("", full(named))] = "unknown" if named in refused else _outcome(phases)
         texts.update({_PLACE.sub("", full(named)): text for named, text in (ran.get("failure_messages") or {}).items()})
-    return ProbeRun(code, results, texts, "\n".join(tail), boundary)
+    return cloud.bind_output(ProbeRun(code, results, texts, "\n".join(tail), boundary),
+                             cloud.boundary_sources(carried=origins))
 
 
 def run_set(change: repo_tests.Change, probes: Path, *, at_base: bool, deadline: float, only: str = "") -> ProbeRun:
@@ -504,10 +518,12 @@ def _scout(change: repo_tests.Change, task: str, text: str, where: Path, host: H
             break
         try:
             with _base_copy(change, left) as copy:
-                host(asked + again, copy, where, left)
+                with cloud.request_sources((cloud.output_sources(got) or (cloud.UNKNOWN,)) if again else ()):
+                    host(asked + again, copy, where, left)
         except (LLMError, repo_tests.CopyNotRun, OSError) as exc:
             failed = f"{type(exc).__name__}: {exc}"[:400]
         got = run_set(change, where / "probes", at_base=True, deadline=deadline)
+        cloud.record_sources(cloud.output_sources(got) or (cloud.UNKNOWN,))
         wrong = _gate(where / "tree.json", got)
         if failed or not wrong:
             break
@@ -665,7 +681,8 @@ def critic_file(n: int) -> str:
 
 
 def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: str, where: Path, n: int = 1,
-               told: str = "", *, patch: str) -> dict:
+               told: str = "", *, patch: str, system_sources: tuple[cloud.Source, ...] | None = None,
+               told_sources: tuple[cloud.Source, ...] | None = None) -> dict:
     """L9's critic: another model family reads the finished patch once, and K's, ``n`` the review it is. One that fails is
     recorded and L9 goes on. Its test, if it has one, waits in ``where`` to run with the probes. ``told``: what follows the
     pack, for a reviewer sent back. ``patch``: what it reads, as the caller read it. What it gives names the model called,
@@ -679,7 +696,15 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
     sent, hidden = _masked_pack(change, patch, task, proof)
     masked = max(sent.count(MASK) - pack.count(MASK), 1) if sent != pack else 0
     try:
-        found = critic_report(caller.complete(system, sent + (f"\n\n{MASKED_NOTE}" if masked else "") + told), proof=proof)
+        refs = tuple(cloud.Source.text(cloud.repository_source(change.repo), rel, sent)
+                     for rel in (*change.sources, "candidate.patch"))
+        refs += (cloud.Source.text(cloud.input_source(task), "task", task),)
+        refs += system_sources if system_sources is not None else (cloud.UNKNOWN,)
+        if told:
+            refs += told_sources or (cloud.UNKNOWN,)
+        with cloud.request_sources(refs):
+            found = critic_report(consent.guard(caller).complete(
+                system, sent + (f"\n\n{MASKED_NOTE}" if masked else "") + told), proof=proof)
     except (LLMError, OSError) as exc:
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
     if hidden and found["verdict"] == "none":
@@ -721,15 +746,18 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     repair is spent: only where nothing else failed, as otherwise what failed goes back and a fresh review reads the repair.
     A review's ``unrun`` says why its test shows nothing on the latest run, so a later run updates it, or takes it away."""
     n, results, failed, failing, where = len(reviews) + 1, {}, {}, set(), session / "sets" / "critic"
+    diagnostics = {}
     patch, kept, mine = repo_tests.diff_text(change), session / "rounds" / f"round-{n}.patch", critic_file(n)
     kept.parent.mkdir(parents=True, exist_ok=True)
     kept.write_bytes(patch.encode("utf-8"))
     (where / mine).unlink(missing_ok=True)
-    said = (run_critic(change, task, critic, shipped.critic, where, n, patch=patch) if _read_whole(patch, task) else
+    said = (run_critic(change, task, critic, shipped.critic, where, n, patch=patch, system_sources=shipped.sources) if _read_whole(patch, task) else
             {"verdict": "failed", "rule": "", "why": "", "test": "", "error": TOO_LONG})
 
     def run(name: str) -> None:
         got = run_set(change, where, at_base=False, deadline=deadline, only=name)
+        diagnostics[name] = cloud.output_sources(got) or (cloud.UNKNOWN,)
+        cloud.record_sources(diagnostics[name])
         found = failures_of([("critic", got, None)])[0] if got.usable else set()    # one that will not run says nothing
         failing.update(found)
         failed[name] = sorted(case.removeprefix("critic:") for case in found)
@@ -751,9 +779,12 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
         (where / mine).unlink(missing_ok=True)
         del results[mine], failed[mine]
         said.update(run_critic(change, task, critic, shipped.critic, where, n, told=WOULD_NOT_RUN.format(error=told),
-                               patch=patch), told=told, claimed=claimed)
+                               patch=patch, system_sources=shipped.sources,
+                               told_sources=diagnostics[mine]), told=told, claimed=claimed)
         if (where / mine).is_file():
             run(mine)
+    if any(code in said.get("error", "") for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE)):
+        raise LLMError(said["error"])
     said.update(n=n, patch=digest(patch), file=mine, results=results, failed=failed)
     reviews.append(said)
     if said["verdict"] not in READ_VERDICTS or not failing:
@@ -829,7 +860,26 @@ def _load(session: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
 
 
+def source_refs(state: dict) -> tuple[cloud.Source, ...]:
+    """A saved run retains every input it used. Legacy/malformed origins stay unknown."""
+    rows = state.get('consent_sources')
+    if not rows or not isinstance(rows, list):
+        return (cloud.UNKNOWN,) if state else ()
+    try:
+        refs = tuple(cloud.Source(**row) for row in rows)
+    except (TypeError, ValueError):
+        return (cloud.UNKNOWN,)
+    left = state.get('left')
+    if left and not any(s.item_id == cloud.sha256('agent-reason') and
+                        s.content_sha256 == cloud.sha256(left) for s in refs):
+        refs += (cloud.UNKNOWN,)
+    return refs
+
+
 def _save(session: Path, state: dict) -> None:
+    capture = _SOURCE_STATE.get()
+    refs = tuple(capture.sources) if capture is not None else (*source_refs(state), cloud.UNKNOWN)
+    state['consent_sources'] = [asdict(source) for source in dict.fromkeys(refs)]
     session.mkdir(parents=True, exist_ok=True, mode=0o700)
     (session / "state.json.new").write_text(json.dumps(state), encoding="utf-8")
     os.replace(session / "state.json.new", session / "state.json")
@@ -1054,7 +1104,8 @@ def _scouts(change: repo_tests.Change, task: str, session: Path, state: dict, sh
     for label, text in [("scout", shipped.scout), *((f"held{i}", one) for i, one in enumerate(shipped.hidden_scouts))]:
         if label in state["sets"]:
             continue
-        made = _scout(change, task, text, session / "sets" / label, host, deadline)
+        with cloud.request_sources(shipped.sources):
+            made = _scout(change, task, text, session / "sets" / label, host, deadline)
         if when == BEFORE and made["left_out"] == NO_TIME:
             state["late"] = "the time for scouts before the fix ran out"
             break
@@ -1094,16 +1145,24 @@ def prepare(repo: str | Path, task: str, base: str, session: str | Path, *, scou
     if scout is None:
         return ""
     shipped, state = harness(), _load(session)
+    refs = cloud.boundary_sources((cloud.Source.text(cloud.repository_source(root), 'repository', ''),
+                                   cloud.Source.text(cloud.input_source(task), 'task', task)),
+                                  carried=(*source_refs(state), *shipped.sources))
     state.setdefault("sets", {})
-    try:
-        _scouts(repo_tests.change(root, base), task, session, state, shipped, scout, BEFORE)
-    except repo_tests.RepoRefused as exc:
-        if exc.code != ISOLATION_UNAVAILABLE:
-            raise
-        state["late"] = str(exc)[:300]
-    told = _told(state, shipped)
-    _save(session, state)
-    return told
+    with cloud.collect_sources() as capture, cloud.request_sources(refs):
+        token = _SOURCE_STATE.set(capture)
+        try:
+            try:
+                _scouts(repo_tests.change(root, base), task, session, state, shipped, scout, BEFORE)
+            except repo_tests.RepoRefused as exc:
+                if exc.code != ISOLATION_UNAVAILABLE:
+                    raise
+                state["late"] = str(exc)[:300]
+            told = _told(state, shipped)
+            _save(session, state)
+            return told
+        finally:
+            _SOURCE_STATE.reset(token)
 
 
 def _held(session: Path) -> Any:
@@ -1162,6 +1221,22 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
 
 def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host | None, critic: LLMCaller | None,
              said: str, answered: bool, agent: str) -> Step:
+    with cloud.collect_sources() as capture:
+        cloud.record_sources((*source_refs(_load(session)),
+            cloud.Source.text(cloud.repository_source(repo), 'repository', str(Path(repo).resolve())),
+            cloud.Source.text(cloud.input_source(task), 'task', task)))
+        if said.strip():
+            cloud.record_sources((cloud.Source.text(cloud.input_source(said), 'agent-reason', ' '.join(said.split())),))
+        token = _SOURCE_STATE.set(capture)
+        try:
+            with cloud.request_sources(capture.sources):
+                return _advance_inner(repo, task, base, session, scout, critic, said, answered, agent)
+        finally:
+            _SOURCE_STATE.reset(token)
+
+
+def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout: Host | None, critic: LLMCaller | None,
+             said: str, answered: bool, agent: str) -> Step:
     """One step, with the session held: the state is read here, so a step sees what the one before it wrote."""
     state = _load(session)
     if state.get("done"):
@@ -1173,13 +1248,13 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
     root = repo_tests.checked_repo(repo)
     change = repo_tests.change(root, base)
 
-    def refused(text: str, code: str, cause: str) -> Step:
+    def refused(text: str, code: str, cause: str, *, untested: bool = False) -> Step:
         state["stop"] = text
         now = _patch_now(root, base)
         _owe_row(task, base, session, state, now, cause)
         _write_row(session, state)
         reviews = state.get("reviews") or []
-        if not reviews:
+        if not reviews or untested:
             return _finish(session, state, text, code, "untested", patch=now)
         ending = _ending(text, reviews)      # what earlier rounds found stands: the refusal is why the loop stopped
         return _finish(session, state, _reviews_report(state, text, code, ending, ""), code, ending, patch=now)
@@ -1191,15 +1266,18 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
         return Step(STOP, note=ALREADY_READ)
     if not task.strip():
         return refused(NO_TASK, "G6_E_INPUT_VALIDATION", UNASKED)
-    why = proposer.boundary(root)
-    if why:
-        return refused(NO_BOUNDARY.format(why=why), ISOLATION_UNAVAILABLE, UNCONFINED)
     critic = critic or critic_host()
     reviewing = critic is not None and not _scouts_chosen()
+    why = proposer.boundary(root)
+    if why:
+        cloud.record_sources((cloud.Source.text('host:execution-boundary', 'diagnostic', why),))
+        return refused(NO_BOUNDARY.format(why=why), ISOLATION_UNAVAILABLE, UNCONFINED)
     if not reviewing:
         scout = scout or scout_host()
         if scout is None:
-            return refused((NOT_APPROVED if _scouts_chosen() else NOT_ON).format(path=keys.path()), keys.KEY_MISSING, UNAPPROVED)
+            path = keys.path()
+            cloud.record_sources((cloud.Source.text('host:configuration', 'configuration-path', str(path)),))
+            return refused((NOT_APPROVED if _scouts_chosen() else NOT_ON).format(path=path), keys.KEY_MISSING, UNAPPROVED)
     shipped = harness()
     state.setdefault("started", time.time())
     state.setdefault("sets", {})
@@ -1214,16 +1292,18 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
     def check() -> tuple[set[str], str]:
         if critic is not None and "critic" not in state:
             state["critic"] = run_critic(change, task, critic, shipped.critic, session / "sets" / "critic",
-                                         patch=repo_tests.diff_text(change))
+                                         patch=repo_tests.diff_text(change), system_sources=shipped.sources)
         seen = []
         state["ran"] = {}
         for label, one in state["sets"].items():
             if not one["left_out"]:
                 got = run_set(change, Path(one["where"]) / "probes", at_base=False, deadline=ends)
+                cloud.record_sources(cloud.output_sources(got) or (cloud.UNKNOWN,))
                 state["ran"][label], state["boundary"] = got.ran, got.boundary or state.get("boundary", "")
                 seen.append((label, got, ProbeRun(**one["at_base"])))
         if (state.get("critic") or {}).get("test"):
             got = run_set(change, session / "sets" / "critic", at_base=False, deadline=ends)
+            cloud.record_sources(cloud.output_sources(got) or (cloud.UNKNOWN,))
             if got.usable:     # a critic's test that will not run says nothing of the patch
                 state["ran"]["critic"] = got.ran
                 seen.append(("critic", got, None))
@@ -1241,6 +1321,12 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
         loop = Repairs(rounds, reviewed if reviewing else check, tree, answered, asks(said))
         got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
                     max_iterations=MAX_REPAIRS + 1, timeout_s=LOOP_S - (time.time() - state["started"]))
+    except LLMError as exc:
+        if not any(code in str(exc) for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE)):
+            raise
+        state["stop"] = "The review was not sent. " + cloud.WITHHELD
+        code = cloud.STATE_UNAVAILABLE if cloud.STATE_UNAVAILABLE in str(exc) else cloud.REQUIRED
+        return refused(state["stop"], code, "cloud_consent_missing", untested=True)
     except repo_tests.RepoRefused as exc:
         if exc.code != ISOLATION_UNAVAILABLE:
             raise
