@@ -16,7 +16,6 @@ from __future__ import annotations
 import pytest
 
 from g6.research.echa import (
-    FLAG,
     ClaimRecord,
     EvidenceRecord,
     Ledger,
@@ -53,8 +52,7 @@ def control(evidence_id: str = "ctl", **over) -> EvidenceRecord:
 
 
 @pytest.fixture
-def led(monkeypatch):
-    monkeypatch.setenv(FLAG, "1")
+def led():
     ledger = Ledger()
     ledger.add_standard(STD)
     ledger.add_vault("v1", FX, files=1, roots=1)
@@ -150,7 +148,12 @@ def test_echa_02_a_partial_invariant_that_passes_does_not_support_a_general_clai
 
 def test_a_formal_check_can_support_a_general_claim_but_only_relative_to_its_formalisation(led) -> None:
     led.add_evidence(ev("e1", oracle_category="FORMAL_CHECK", negative_control_ref="", scope="proof of lemma L"))
-    got = verdict(led, breadth="general", scope="lemma L holds")
+    lone = verdict(led, breadth="general", scope="lemma L holds")
+    # G6 0.3: a formal check too is active only with a negative control, as the issuer requires
+    assert lone["result"] == "inconclusive" and lone["structural"] == ["e1"]
+    led.add_evidence(control("ctl-f", oracle_category="FORMAL_CHECK"))
+    led.add_evidence(ev("e2", oracle_category="FORMAL_CHECK", negative_control_ref="ctl-f", scope="lemma L"))
+    got = verdict(led, claim_id="c2", evidence_ids=("e2",), breadth="general", scope="lemma L holds")
     assert got["result"] == "supported"
     assert any("formalisation" in item for item in got["limits"])
 

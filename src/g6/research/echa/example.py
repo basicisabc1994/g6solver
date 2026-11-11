@@ -4,7 +4,7 @@
 """A worked, synthetic end-to-end evidence trace (Checkpoint 1). Nothing here is a real result: the task, the oracle and
 every number are invented to show how a claim reaches its evidence and what each kind of evidence is allowed to support.
 
-    G6_ECHA_RESEARCH=1 python -P -m g6.research.echa.example OUT.jsonl
+    python -P -m g6.research.echa.example OUT.jsonl
 
 writes a ledger holding one supported claim (a differential probe with a negative control) and one inconclusive claim
 (three reviews by one model family), plus a check that cannot fail, which is recorded and supports nothing.
@@ -17,7 +17,6 @@ import sys
 from .adapters import evidence_from_mechanism_record, known_unknowns
 from .claims import evaluate_claim
 from .episodes import Episode
-from .flag import require_research
 from .ledger import Ledger
 from .records import ClaimRecord, EvidenceRecord, StandardRef
 from .trace import trace_claim
@@ -86,7 +85,6 @@ def build(ledger: Ledger) -> dict:
 
 
 def main(argv: list[str]) -> int:
-    require_research()
     if not argv:
         print("usage: python -P -m g6.research.echa.example OUT.jsonl", file=sys.stderr)
         return 2
