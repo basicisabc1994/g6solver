@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Competence and case retrieval over ECHA episodes (audits 015 and 026 §11). Research code, default OFF.
+"""Competence and case retrieval over ECHA episodes (audits 015 and 026 §11). Research code.
+
+Retired for selection (G6 0.3 design, section 6): the competence measure is a task family's success rate, not a
+mechanism's benefit, so nothing ranks, routes or selects by it. It is kept as a research analysis only.
 
 From the archive's experience loop: a Beta posterior over a task family's outcomes, computed from admissible episodes
 only, and advice to grant or refuse autonomy against a frozen policy. An episode is admissible when its stored record is
@@ -21,7 +24,6 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
 from .episodes import EpisodeRecord, verify_episode_body
-from .flag import require_research
 from .records import digest
 
 #: The weakest gate a policy may set; a looser one is refused rather than used (XL-003).
@@ -131,7 +133,6 @@ def _exclusion(record: EpisodeRecord, task_family: str, policy: CompetencePolicy
 
 def competence(episodes: Iterable[EpisodeRecord], *, task_family: str, policy: CompetencePolicy) -> CompetenceEstimate:
     """A Beta(1 + successes, 1 + failures) posterior over the admissible episodes of ``task_family``."""
-    require_research()
     excluded: Counter[str] = Counter()
     successes = failures = 0
     for record in episodes:
@@ -149,7 +150,6 @@ def competence(episodes: Iterable[EpisodeRecord], *, task_family: str, policy: C
 
 def autonomy_advice(estimate: CompetenceEstimate, policy: CompetencePolicy) -> Advice:
     """Advice to grant autonomy for the family, or the reason not to. The estimate must be under this same policy."""
-    require_research()
     if estimate.policy_digest != policy.digest:
         return Advice(False, "the estimate was made under another policy", policy.digest)
     if estimate.admissible_count < policy.min_episodes:
@@ -171,7 +171,6 @@ class ConsistencyVerdict:
 
 def success_claim_consistent(record: EpisodeRecord) -> ConsistencyVerdict:
     """Is a ``verified`` episode internally consistent? Necessary, never sufficient (it reads the record, not the world)."""
-    require_research()
     problems = list(verify_episode_body(record.to_dict()))
     kinds = [e.get("kind") for e in record.events]
     if record.outcome_state == "verified":
@@ -201,7 +200,6 @@ def similar_episodes(episodes: Iterable[EpisodeRecord], query: str, *, texts: Ma
     above ``min_score``, with the counts excluded and why. ``texts`` maps episode id to the caller's case text;
     ``make_retriever`` builds a ``g6.grounding`` retriever from it (e.g. ``TextRetriever.from_texts``), since the kernel
     imports nothing from the product."""
-    require_research()
     excluded: Counter[str] = Counter()
     pool: dict[str, str] = {}
     for record in episodes:

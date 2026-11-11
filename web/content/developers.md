@@ -84,7 +84,9 @@ no block but has MCP tools of its own, below.
 
 Outside the components: `g6.core.stop` (the stop switch), `g6.core.snapshots` (`g6 state`), `g6.integrity` (file
 hashes against a pinned manifest), `g6.triage` (Python error triage) and `g6.operator` (a budgeted loop with a
-simulated executor and an approval queue a person decides). `g6.research` is off unless `G6_ECHA_RESEARCH=1`.
+simulated executor and an approval queue a person decides). In `g6.research`, the evidence kernel is an audit view
+over the evidence issuer's records, with no flag; governed adaptation is off unless `G6_ECHA_RESEARCH=1`, and the
+mission bridge unless `G6_MISSION_BRIDGE=1`.
 
 ## Use it from your coding agent (MCP)
 
@@ -98,7 +100,7 @@ packages in the project's folder never replace G6's own, installs the `using-g6`
 For another client, register `g6-mcp` and give it `G6_MCP_SENSITIVE=patch_review.review` in its environment.
 
 Six discovery tools: `g6_help`, `g6_components`, `g6_find`, `g6_describe`, `g6_invoke` and `g6_compose`; `g6_review_patch`;
-`g6_review_until_clean`; `g6_premortem` and six `g6_mission_*` tools for a coding mission; three `g6_improve_*` tools for G6's self-improvement loop;
+`g6_review_until_clean`; `g6_premortem` and six `g6_mission_*` tools for a coding mission; `g6_confirm_behaviour`, one behaviour question for the person; three `g6_improve_*` tools for G6's self-improvement loop;
 and thirteen `metaharness_*` tools for [tuning](#tune-g6-to-your-workflow). The agent finds a component
 by describing its task, reads what the component can do and how mature it is, then calls one op. Every reply carries
 `completion_state`, a `warning_card` with a `G6_E_*` code, `evidence`, `request_id` and `run_id`. An op a component
@@ -140,6 +142,8 @@ confirms a standard, an agent cannot answer for the person, and there is no term
 client without a dialog leaves the mission unconfirmed, and an unconfirmed mission takes no patch. The name the person
 types is recorded as given; it is not an authenticated identity. Merging is the person's separate decision. An `R3`
 mission's patch approval is not over MCP yet: its status names the terminal command for the person.
+
+`g6_confirm_behaviour` asks the person one behaviour question about a task, in the client's own dialog, where the task may not decide the behaviour. The agent gives candidates (a call, two competing outcomes, a quote of the task and repository evidence), or a finished review of the same task and working tree whose `differential.v1` instances G6 saw the base commit and the patch disagree on; G6 takes only candidates whose two outcomes compete, picks one by a fixed priority and says why, and coverage stays unknown. The form shows the exact input, outcome A and outcome B, the cited scope, and the options neither, the premise is wrong, the task already says and skip, with a text box; a rule, when one is offered, is shown in full before it can be confirmed. One question per task by default, kept across calls under `G6_HOME`; the person allows more in the form, or sets `G6_QUESTIONS_PER_TASK` where the server is registered (0, or a value G6 cannot read, for none). G6 keeps the store's head beside it and refuses a store that is damaged, cut back, replaced or copied from another task, never reading it as empty; it does not defend against a process running as the same user that rewrites the store and its head together. The answer comes from the dialog only, and the name is recorded as given, not authenticated. What the person confirmed is checked on each later `g6_review_patch` of the same repository and task, as one `example.v1` check: a failure is a defect, and the report shows the question, the answer and the check's result apart from model results.
 
 `g6_improve_start`, `g6_improve_stop` and `g6_improve_status` control G6's self-improvement loop on a folder a person
 enrolled, at their own terminal. Starting needs `metaharness.improve`, and the person agrees in the client's dialog, as above: it starts a

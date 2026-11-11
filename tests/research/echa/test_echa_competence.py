@@ -6,17 +6,12 @@ import dataclasses
 
 import pytest
 
-from g6.research.echa import FLAG, Episode, ResearchDisabled, StandardRef
+from g6.research.echa import Episode, StandardRef
 from g6.research.echa.competence import (CompetencePolicy, autonomy_advice, competence, similar_episodes,
                                          success_claim_consistent)
 
 STD = StandardRef.from_text("std-c", "The function returns the sum.", "owner-approved task document", ("p1",))
 POLICY = CompetencePolicy(threshold=0.8, min_episodes=20)
-
-
-@pytest.fixture(autouse=True)
-def on(monkeypatch):
-    monkeypatch.setenv(FLAG, "1")
 
 
 def _record(i: int, outcome: str = "verified", *, independent: bool = True, family: str = "sum-fix",
@@ -32,11 +27,10 @@ def _record(i: int, outcome: str = "verified", *, independent: bool = True, fami
                      run_cost=0, latency_seconds=1)
 
 
-def test_the_research_flag_is_required(monkeypatch) -> None:
-    episodes = [_record(1)]
-    monkeypatch.delenv(FLAG)
-    with pytest.raises(ResearchDisabled):
-        competence(episodes, task_family="sum-fix", policy=POLICY)
+def test_there_is_no_research_flag_to_set(monkeypatch) -> None:
+    # G6 0.3 removed ECHA's flag: the measure runs as a research analysis with nothing set (it ranks nothing)
+    monkeypatch.delenv("G6_ECHA_RESEARCH", raising=False)
+    assert competence([_record(1)], task_family="sum-fix", policy=POLICY).admissible_count == 1
 
 
 def test_xl002_provenance_comes_from_the_stored_episodes_never_the_query() -> None:

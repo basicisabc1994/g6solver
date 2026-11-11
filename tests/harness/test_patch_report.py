@@ -184,7 +184,7 @@ def test_text_the_repository_or_the_caller_wrote_is_shown_inert(repo, monkeypatc
         assert token not in plain, (token, plain)
     assert not any(line.lstrip().startswith(("# heading", "#heading")) for line in report.splitlines())
     assert all(not line.startswith("#") or line.startswith("## ") for line in report.splitlines())
-    assert "<script>" in report   # shown, inside a code span, never dropped silently
+    assert "<script>" in report   # the ordinary report's historical code-span presentation
 
 
 def test_the_report_is_cut_at_its_limit_and_says_where_the_rest_is(repo, monkeypatch):

@@ -3,8 +3,9 @@
 
 """ECHA Checkpoint 1 (founder decision A1, 2026-10-09): the evidence kernel's records, ledger and episode trace.
 
-Research code only, default OFF. What must hold:
-- with the flag off nothing is created and nothing is written, and no product module can reach the kernel;
+Research code only. What must hold:
+- the kernel has no flag (G6 0.3: an audit and analysis view, not a second authority), every entry point works with
+  nothing set, and no product module can reach the kernel;
 - an unknown result is never a pass, and a record that claims a result its category cannot give is refused;
 - every record is content-hashed the same way (canonical JSON, sha256), and the ledger is a hash chain, so an edited,
   removed or reordered entry is found by ``verify``;
@@ -21,16 +22,13 @@ from pathlib import Path
 import pytest
 
 from g6.research.echa import (
-    FLAG,
     Episode,
     EvidenceRecord,
     Ledger,
     LedgerCorrupt,
     LedgerError,
-    ResearchDisabled,
     StandardRef,
     digest,
-    research_enabled,
 )
 from g6.research.echa import records as kernel_records
 
@@ -38,6 +36,8 @@ import g6 as _g6
 
 SRC = Path(_g6.__file__).resolve().parent
 KERNEL = SRC / "research" / "echa"
+#: The variable that gated the kernel until G6 0.3; AHI's research wrapper still reads it.
+OLD_FLAG = "G6_ECHA_RESEARCH"
 
 FX = "ab" * 32  # the digest of a sealed vault
 STD = StandardRef.from_text("std-keep-helpers", "A change must not alter a function it was not asked to alter.",
@@ -57,7 +57,7 @@ def ev(evidence_id: str = "e1", **over) -> EvidenceRecord:
 
 @pytest.fixture
 def on(monkeypatch):
-    monkeypatch.setenv(FLAG, "1")
+    monkeypatch.delenv(OLD_FLAG, raising=False)   # nothing set: the kernel has no flag
 
 
 @pytest.fixture
@@ -77,52 +77,38 @@ def _episode(**over) -> Episode:
     return Episode(**base)
 
 
-# --- the flag: default off, and nothing happens when it is off -------------------------------------------------------
+# --- no flag: the kernel is a research view, and every entry point works with nothing set ------------------------------
 
 
-@pytest.mark.parametrize("value", [None, "", "0", "false", "no", "off", "enabled", "2", " maybe "])
-def test_the_flag_is_off_unless_it_says_a_plain_yes(monkeypatch, value) -> None:
-    monkeypatch.delenv(FLAG, raising=False)
+@pytest.mark.parametrize("value", [None, "", "0", "off"])
+def test_every_entry_point_works_whatever_the_old_flag_says(monkeypatch, tmp_path, value) -> None:
+    # G6 0.3 removed the flag (design section 6: wire ECHA as a view, flag removed); what it gated now runs
+    import importlib
+
+    from g6.research.echa import Vault, evaluate_claim, guarded_read, trace_claim
+
+    monkeypatch.delenv(OLD_FLAG, raising=False)
     if value is not None:
-        monkeypatch.setenv(FLAG, value)
-    assert research_enabled() is False
-
-
-@pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on", " On "])
-def test_the_flag_is_on_for_a_plain_yes(monkeypatch, value) -> None:
-    monkeypatch.setenv(FLAG, value)
-    assert research_enabled() is True
-
-
-def test_with_the_flag_off_every_entry_point_refuses_and_writes_nothing(monkeypatch, tmp_path) -> None:
-    from g6.research.echa import (
-        Vault,
-        evaluate_claim,
-        guarded_read,
-        trace_claim,
-    )
-
-    monkeypatch.delenv(FLAG, raising=False)
+        monkeypatch.setenv(OLD_FLAG, value)
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("g6.research.echa.flag")
     target = tmp_path / "ledger.jsonl"
+    Ledger(target).add_standard(STD)
+    episode = _episode()
+    episode.append("forecast", {"status": "not_available"})
+    assert target.exists() and episode.freeze(candidate_artifact_hash="", outcome_state="not_recorded",
+                                              evidence_refs=(), known_unknowns=(), run_cost=None,
+                                              latency_seconds=0).outcome_state == "not_recorded"
     hidden = tmp_path / "hidden"
     hidden.mkdir()
     (hidden / "t.py").write_text("x", encoding="utf-8")
-    calls = [lambda: Ledger(target), lambda: Ledger(), lambda: _episode(),
-             lambda: Vault.seal([hidden], ledger=None), lambda: guarded_read(None, "builder", hidden / "t.py"),
-             lambda: evaluate_claim(None, "c1"), lambda: trace_claim(None, "c1")]
-    for call in calls:
-        with pytest.raises(ResearchDisabled):
-            call()
-    assert not target.exists()
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["hidden"]
-
-
-def test_the_flag_gate_can_fail(monkeypatch, tmp_path) -> None:
-    # survival control: with the flag on the same call succeeds, so the refusals above come from the flag
-    monkeypatch.setenv(FLAG, "1")
-    target = tmp_path / "ledger.jsonl"
-    Ledger(target).add_standard(STD)
-    assert target.exists()
+    ledger = Ledger()
+    vault = Vault.seal([hidden], ledger=ledger)
+    assert guarded_read(vault, "evaluator", hidden / "t.py") == b"x"
+    with pytest.raises(KeyError):   # no claim: the rule and the trace ran, and found none
+        evaluate_claim(ledger, "c1")
+    with pytest.raises(KeyError):
+        trace_claim(ledger, "c1")
 
 
 def _imports(source: str) -> set[str]:
@@ -136,9 +122,10 @@ def _imports(source: str) -> set[str]:
     return found
 
 
-# The chain and the vault graduated into product code (owner ruling Q5, DECISIONS #26; audit 037). The kernel builds on
-# exactly these two stdlib-only modules and imports nothing else from the product.
-GRADUATED = frozenset({"g6.core.ledger", "g6.core.vault"})
+# The chain and the vault graduated into product code (owner ruling Q5, DECISIONS #26; audit 037), and custody's binding
+# into the mapping table (G6 0.3 design, section 6: its binding structure is reused for receipts). The kernel builds on
+# exactly these and imports nothing else from the product.
+GRADUATED = frozenset({"g6.core.ledger", "g6.core.vault", "g6.evidence.mapping"})
 
 
 def _outside_the_kernel(directory: Path) -> set[str]:
@@ -169,7 +156,7 @@ def _reaches_the_kernel(directory: Path) -> list[str]:
     hits = []
     for path in directory.rglob("*.py"):
         text = path.read_text(encoding="utf-8", errors="ignore")
-        if "g6.research.echa" in text or FLAG in text:
+        if "g6.research.echa" in text or OLD_FLAG in text:
             hits.append(str(path))
     return hits
 

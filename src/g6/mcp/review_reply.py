@@ -62,9 +62,17 @@ def save(reply: dict, job_id: str) -> str | None:
     try:
         path = state_path("reviews", f"{job_id}.json")
         path.parent.mkdir(parents=True, exist_ok=True)
-        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8",
-                       newline="\n") as out:
-            json.dump(reply, out, ensure_ascii=False, indent=1, default=str)
+        data = json.dumps(reply, ensure_ascii=False, indent=1, default=str).encode("utf-8")
+        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as out:
+            out.write(data)
+            out.flush()
+            os.fsync(out.fileno())
+        from g6.mcp import review_binding
+
+        review_binding.write(path, reply, data)
+        from g6.harness import behaviour_runner
+
+        behaviour_runner.write_probes(path, reply, data)
     except (OSError, ValueError, TypeError):
         return None
     return str(path)
