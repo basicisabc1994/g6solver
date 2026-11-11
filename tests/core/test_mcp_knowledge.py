@@ -463,3 +463,31 @@ def test_paths_over_mcp_run_only_through_sources_shared_with_the_client(rig):
     assert after["result"]["payload"] == {"kind": "path", "paths": [], "start_found": False, "max_hops": 3,
                                           "more_beyond_max_hops": False}
     assert "parser" not in json.dumps(after) and bad["ok"] is False and "G6_E_KNOWLEDGE_GRAPH" in bad["error"]
+
+
+def test_planned_search_over_mcp_records_its_decision_and_respects_scope(rig):
+    server = build_server()
+    need = f"{DOCS} convention"
+    added, planned, hidden_from = calls(server, [
+        ("g6_knowledge_add", {"path": str(rig.folder), "share": True}),
+        ("g6_knowledge_search", {"query": f"how is the {DOCS} convention followed", "plan": True, "needs": [need, "zeppelins"]}),
+        ("g6_knowledge_search", {"query": DOCS, "plan": True, "routes": ["exact"]})], Dialog())
+    source = added["result"]["source"]
+    decision = planned["result"]["decision"]
+    assert decision["rule"] == "meaning-first" and decision["chosen"] == ["exact"] and decision["grants"] == {source: 1}
+    assert [n["state"] for n in decision["needs"]] == ["found", "missing"] and decision["costs"]["model_calls"] == 0
+    assert {a["route"] for a in decision["alternatives"]} == {"meaning", "structure"}
+    items = planned["result"]["payload"]["items"]
+    assert items and set(decision["needs"][0]["witnesses"]) <= {i["passage_id"] for i in items}
+    assert planned["completion_state"] == "qualified-draft" and "does not say" in planned["result"]["payload"]["coverage"]
+    assert hidden_from["ok"] is False and "G6_E_KNOWLEDGE_INPUT" in hidden_from["error"], "with plan, G6 chooses the routes"
+    logged = [s["item_id"] for d in cloud.disclosures() for s in d["sources"]]
+    assert {i["passage_id"] for i in items} <= set(logged), "a planned search's passages are disclosures like any other"
+    # needs alone ask for a plan; after the person revokes the sharing, the client's plan sees no source at all
+    revoked, after = calls(server, [("g6_cloud_revoke", {"source": f"knowledge:{source}", "provider": CLAUDE}),
+                                    ("g6_knowledge_search", {"query": DOCS, "needs": [need]})])
+    result = after["result"]
+    assert result["payload"]["items"] == [] and result["decision"]["grants"] == {}
+    assert [n["state"] for n in result["decision"]["needs"]] == ["unknown"] and result["decision"]["needs"][0]["witnesses"] == []
+    assert result["withheld"] == [{"source": source, "provider": CLAUDE}], "a withheld source leaves a need unknown, not missing"
+    assert "must be followed" not in json.dumps(after), "nothing of the source is in the reply"

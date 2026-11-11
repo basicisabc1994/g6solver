@@ -137,8 +137,10 @@ SOURCE_SITES = {
     'g6.knowledge._engine._source',
     'g6.knowledge._engine.pack',
     'g6.knowledge._graph.traverse',
-    # G6's own model call over indexed passages runs under the sources of what it sends. Planted case:
-    # tests/knowledge/test_relations.py (an extraction without a grant sends nothing).
+    # G6's own model calls over indexed passages run under the sources of what they send. Planted cases:
+    # tests/knowledge/test_relations.py (an extraction without a grant sends nothing) and tests/knowledge/test_planner.py
+    # (a reformulation by a model the sources are not shared with is refused).
+    'g6.knowledge._planner.run',
     'g6.knowledge._relations.extract',
     'g6.knowledge._scope.access',
     'g6.knowledge._support.support_for',

@@ -144,7 +144,7 @@ TOOL_ARGUMENTS = {
     'g6_knowledge_paths': _arguments('relation max_hops', 'start'),
     'g6_knowledge_refresh': _arguments(pointer='source'),
     'g6_knowledge_revoke': _arguments(pointer='source'),
-    'g6_knowledge_search': _arguments('query top_k routes', 'sources'),
+    'g6_knowledge_search': _arguments('query top_k routes plan needs', 'sources'),
     'g6_knowledge_sources': {},
 }
 

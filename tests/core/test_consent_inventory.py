@@ -396,7 +396,7 @@ def knowledge_model_calls(root=ROOT, extra=()):
 
 def test_every_model_call_of_the_context_engine_is_guarded_and_names_its_sources(tmp_path):
     rows = knowledge_model_calls()
-    assert '_relations.py:extract' in {name for name, _, _ in rows}
+    assert {'_relations.py:extract', '_planner.py:run'} <= {name for name, _, _ in rows}
     assert all(guarded and inside for _, guarded, inside in rows), rows
     text = (ROOT / 'src/g6/knowledge/_relations.py').read_text(encoding='utf-8')
     assert 'from g6.core.consent_callers import guard' in text and 'from g6.core import cloud_consent' in text

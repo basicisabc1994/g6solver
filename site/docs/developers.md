@@ -209,8 +209,10 @@ provider contributes only its id and the provider, under `withheld`. Passages ar
   client dialog, stating the file list's digest; only acceptance indexes anything. `share` asks, in a second dialog,
   whether the source may be shared with the client's provider. `backends` may name `elastic_managed`.
 - `g6_knowledge_sources()` lists the sources of this project, their state and readiness.
-- `g6_knowledge_search(query, top_k, sources, routes)` returns cited passages as redacted views, each re-read from
-  disk and compared in the call that returns it, fused by passage id over the ready search routes.
+- `g6_knowledge_search(query, top_k, sources, routes, plan, needs)` returns cited passages as redacted views, each
+  re-read from disk and compared in the call that returns it, fused by passage id over the ready search routes. With
+  `plan` or `needs`, G6 chooses the routes by fixed rules, returns its decision record and marks each declared need
+  found, conflicting, missing or unknown; no model is asked.
 - `g6_knowledge_context(task, budget_tokens, sources)` returns the best passages that fit a token budget.
 - `g6_knowledge_passage(passage_id, raw)` returns one passage again by id; `raw` adds its exact text.
 - `g6_knowledge_count(query, sources)` answers how many indexed passages match, as a structured answer; it needs the
