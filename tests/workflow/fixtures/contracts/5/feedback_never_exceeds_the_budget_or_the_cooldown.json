@@ -1,0 +1,105 @@
+{
+ "contract": 5,
+ "function": "feedback",
+ "inputs": {
+  "opt_in_env": "on",
+  "operations": [
+   {
+    "op": "may_invite"
+   },
+   {
+    "op": "may_invite",
+    "budget": 0
+   },
+   {
+    "op": "may_invite",
+    "reserved": 1
+   },
+   {
+    "op": "may_invite",
+    "report": false
+   },
+   {
+    "op": "may_invite",
+    "dialog": false
+   },
+   {
+    "op": "invite"
+   },
+   {
+    "op": "invite",
+    "days": 1
+   },
+   {
+    "op": "close",
+    "result": "skipped"
+   },
+   {
+    "op": "may_invite",
+    "days": 6
+   },
+   {
+    "op": "invite",
+    "days": 6
+   },
+   {
+    "op": "may_invite",
+    "days": 8
+   },
+   {
+    "op": "invite",
+    "days": 8
+   },
+   {
+    "op": "close",
+    "result": "cancelled",
+    "days": 8
+   },
+   {
+    "op": "invite",
+    "days": 9
+   }
+  ]
+ },
+ "expected": {
+  "steps": [
+   [
+    true,
+    ""
+   ],
+   [
+    false,
+    "the task's question budget has no room"
+   ],
+   [
+    false,
+    "the task's question budget has no room"
+   ],
+   [
+    false,
+    "the task has not reached its report"
+   ],
+   [
+    false,
+    "the client cannot show a typed dialog, and the question is never put to the agent"
+   ],
+   "invited",
+   "this project had a feedback invitation in the last 7 days",
+   "closed",
+   [
+    false,
+    "this project had a feedback invitation in the last 7 days"
+   ],
+   "this project had a feedback invitation in the last 7 days",
+   [
+    true,
+    ""
+   ],
+   "invited",
+   "closed",
+   "this project had a feedback invitation in the last 7 days"
+  ],
+  "invitations": 2,
+  "closed": 2
+ }
+}

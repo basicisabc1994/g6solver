@@ -40,6 +40,7 @@
     "mcp:g6/g6_confirm_behaviour": {"agent_facing": true, "route": "question", "since": "0.3.0"},
     "mcp:g6/g6_describe": {"agent_facing": true, "route": "discover", "since": "0.1.0"},
     "mcp:g6/g6_disclosures": {"agent_facing": true, "route": "consent", "since": "0.3.0"},
+    "mcp:g6/g6_feedback": {"agent_facing": true, "route": "workflow", "since": "0.3.0"},
     "mcp:g6/g6_find": {"agent_facing": true, "route": "discover", "since": "0.1.0"},
     "mcp:g6/g6_help": {"agent_facing": true, "route": "discover", "since": "0.1.0"},
     "mcp:g6/g6_improve_start": {"agent_facing": true, "route": "improve", "since": "0.3.0"},

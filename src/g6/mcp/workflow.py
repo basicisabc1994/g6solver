@@ -26,7 +26,7 @@ from g6.harness.workflow import adapters, lifecycle, policy, view
 from g6.harness.workflow.record import ProjectRecord, RecordUnreadable, now, project_id, workflow_source
 
 CODE = "G6_E_WORKFLOW_RECORD"
-TOOLS = ("g6_workflow_export", "g6_workflow_correct", "g6_workflow_delete", "g6_suggestion_decide")
+TOOLS = ("g6_workflow_export", "g6_workflow_correct", "g6_workflow_delete", "g6_suggestion_decide", "g6_feedback")
 #: The lifecycle tools act on the record itself, so their calls are not recorded in it.
 LIFECYCLE = TOOLS[:3]
 #: Said with a withheld reply. Fixed words: no path, no project id, nothing from the record.
@@ -358,6 +358,102 @@ async def decide(repo: str, task: str, intervention_id: str, ctx: Any) -> dict:
                   "A dismissed suggestion is not shown again except for a reason G6 states.")
 
 
+FEEDBACK_FORM = {"type": "object", "properties": {
+    "answer": {"type": "string", "enum": ["easier", "no_different", "harder", "skip"],
+               "description": "Your answer. Skip is fine."},
+    "do_not_ask_again": {"type": "boolean", "description": "Tick to stop G6 asking this in this repository."}},
+    "required": ["answer"]}
+
+
+def _has_dialog(ctx: Any) -> bool:
+    """Whether the client said it can show a form. Anything else means the question is not asked."""
+    try:
+        return getattr(ctx.session.client_params.capabilities, "elicitation", None) is not None
+    except (AttributeError, RuntimeError, TypeError):
+        return False
+
+
+def _feedback_reply(project: str, result: dict, summary: str, next_step: str, *, text: str = "") -> dict:
+    """A feedback reply: bound to the project's feedback source, a grant of its own."""
+    from g6.core.reliability_envelope import envelope_fields, warning_card
+    from g6.harness.workflow.feedback import feedback_source
+
+    reply = {"ok": True, "result": result, **envelope_fields(
+        reliability_label="qualified-draft", warning_card=warning_card(CODE, summary, next_step), evidence=[])}
+    source = cloud.Source.text(feedback_source(project), "feedback", text + json.dumps(result, sort_keys=True))
+    return cloud.bind_output(reply, (source,), metadata={"workflow_files": FILES})
+
+
+async def feedback(repo: str, task: str, ctx: Any, text: str = "") -> dict:
+    from datetime import UTC, datetime
+
+    from g6.harness import question_store as qs
+    from g6.harness.workflow import feedback as fb
+    from g6.mcp.consent import elicit
+    from g6.mcp.consent_transport import consent_form
+
+    project = _project(repo)
+    if project is None or not isinstance(task, str) or not task.strip():
+        return _refused("repo must be the full path of the repository's folder, and task the task's text")
+    try:
+        task_id = adapters.identities(repo, task)[1]
+    except Exception:  # noqa: BLE001 - a repository G6 cannot read names no task
+        return _refused("repo must be a git repository's folder")
+    try:
+        store = fb.FeedbackStore(project)
+        if text.strip():       # volunteered: kept as relayed, nothing asked, no budget spent
+            store.unsolicited(task_id, text.strip()[:fb.MAX_TEXT], relayed_by="the agent", at=now())
+            return _feedback_reply(project, {"status": "kept", "asked": False, "provenance": "attributed_label",
+                                             "note": "relayed by the agent, not authenticated"},
+                                   "The feedback was kept on this computer, as relayed.", "Nothing further is asked.",
+                                   text=text)
+        questions = qs.TaskQuestions(task_id)
+        state = questions.state() if questions.exists() else qs.State(default=qs.default_budget()[0],
+                                                                      budget_note=qs.default_budget()[1])
+        reached = any(e.kind == "report_returned" for e in ProjectRecord(project).events(task=task_id))
+        ok, why = fb.may_invite(project, task_id, questions=state, report_reached=reached, dialog=_has_dialog(ctx),
+                                now=datetime.now(UTC))
+        if ok:                  # both written before the dialog opens. The week's invitation first: losing that race
+            try:                # must not cost the task its one question (A's budget matters more than this one)
+                invitation = store.reserve_invitation(task_id, now=datetime.now(UTC))
+                try:
+                    questions.reserve("feedback")
+                except qs.BudgetSpent as spent:
+                    store.close(invitation, "unavailable", shown_at=now(), back_at=now(), seconds=0.0)
+                    ok, why = False, str(spent)
+            except fb.InvitationRefused as refused:
+                ok, why = False, str(refused)
+    except (RecordUnreadable, qs.StoreUnreadable):
+        ok, why = False, "a store G6 keeps for this task cannot be read, so it asks nothing"
+    if not ok:
+        return _feedback_reply(project, {"status": "not_asked", "asked": False, "why": why},
+                               "G6 did not ask the feedback question.", "Do not ask it yourself, and do not answer for "
+                               "the person. Feedback they volunteer can be passed in text.")
+    adapters.observe_task(repo, task, "feedback_invited", invitation, at=now())
+    shown_at, began = now(), time.monotonic()
+    with consent_form():        # fixed words only: the dialog shows nothing from the record
+        action, content, _error = await elicit(
+            ctx, fb.QUESTION + " This is about G6 on the task you just finished. Skipping is fine, G6 asks at most once "
+            "a week in this repository, and your answer changes nothing in the review.", FEEDBACK_FORM)
+    seconds, back_at = time.monotonic() - began, now()
+    answer = content.get("answer") if isinstance(content, dict) else None
+    result = {"decline": "declined", "cancel": "cancelled", "unavailable": "unavailable"}.get(action, "invalid")
+    if action == "accept" and answer in fb.OPTIONS:
+        result = "skipped" if answer == "skip" else "answered"
+    store.close(invitation, result, option=answer if result == "answered" else "", shown_at=shown_at, back_at=back_at,
+                seconds=seconds)                                          # written before the reply
+    adapters.observe_dialog(repo, task, "feedback", result, at=shown_at, seconds=seconds, native=invitation)
+    if result == "answered":
+        adapters.observe_task(repo, task, "feedback_answered", invitation, at=back_at, data={"option": answer},
+                              provenance="person_confirmed")
+    if isinstance(content, dict) and content.get("do_not_ask_again") is True:
+        store.opt("out", by="the person, in the feedback form", at=back_at, via="form")
+    return _feedback_reply(project, {"status": result, "asked": True, "retried": False},
+                           "The person answered in the client's dialog." if result == "answered" else
+                           "The question was shown once and not answered; it is not asked again this week.",
+                           "Do not ask again and do not answer for the person.")
+
+
 def register(server: Any, context_type: Any) -> None:
     """Add the lifecycle tools and the call observer to ``server``."""
     from g6.core.consent_declarations import TOOLS as DECLARED
@@ -394,12 +490,22 @@ def register(server: Any, context_type: Any) -> None:
         suggestion and cannot be dismissed. repo: the repository's folder, a full path."""
         return await decide(repo, task, intervention_id, ctx)
 
+    async def g6_feedback(repo: str, task: str, ctx: Any, text: str = "") -> dict:
+        """Feedback from the person about G6 on a task. With text: keep what the person volunteered (pass it as they
+        said it); nothing is asked. With no text: G6 may ask them once, in the client's own dialog, "Did this make
+        your work easier?", and only if they opted in, the task has its report, no behaviour question is pending, the
+        task's question budget has room and this repository had no such question in seven days; otherwise it asks
+        nothing and says why. You never answer it, there is no answer argument, and it is not retried. The answer
+        changes nothing in a review. repo: the repository's folder, a full path; task: the task's text."""
+        return await feedback(repo, task, ctx, text=text)
+
     g6_workflow_delete.__annotations__["ctx"] = g6_suggestion_decide.__annotations__["ctx"] = context_type
-    for tool in (g6_workflow_export, g6_workflow_correct, g6_workflow_delete, g6_suggestion_decide):
+    g6_feedback.__annotations__["ctx"] = context_type
+    for tool in (g6_workflow_export, g6_workflow_correct, g6_workflow_delete, g6_suggestion_decide, g6_feedback):
         tool._g6_declaration = DECLARED[tool.__name__]
         server.tool()(tool)
     install(server)
 
 
-__all__ = ["CODE", "FILES", "HELP", "TOOLS", "correct", "decide", "delete", "export", "finishing", "install", "register",
-           "stepped"]
+__all__ = ["CODE", "FILES", "HELP", "TOOLS", "correct", "decide", "delete", "export", "feedback", "finishing", "install",
+           "register", "stepped"]

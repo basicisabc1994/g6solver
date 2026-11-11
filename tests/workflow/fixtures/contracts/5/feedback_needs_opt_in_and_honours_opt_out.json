@@ -1,0 +1,57 @@
+{
+ "contract": 5,
+ "function": "feedback",
+ "inputs": {
+  "operations": [
+   {
+    "op": "may_invite"
+   },
+   {
+    "op": "opt",
+    "choice": "in"
+   },
+   {
+    "op": "may_invite"
+   },
+   {
+    "op": "invite"
+   },
+   {
+    "op": "close",
+    "result": "answered",
+    "option": "easier"
+   },
+   {
+    "op": "opt",
+    "choice": "out",
+    "days": 1
+   },
+   {
+    "op": "may_invite",
+    "days": 30
+   }
+  ]
+ },
+ "expected": {
+  "steps": [
+   [
+    false,
+    "the person has not opted in to the feedback question"
+   ],
+   "opted in",
+   [
+    true,
+    ""
+   ],
+   "invited",
+   "closed",
+   "opted out",
+   [
+    false,
+    "the person opted out of the feedback question"
+   ]
+  ],
+  "invitations": 1,
+  "closed": 1
+ }
+}

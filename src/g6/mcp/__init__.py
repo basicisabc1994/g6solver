@@ -19,7 +19,8 @@ use client-dialog grants and a source/provider disclosure ledger (``g6.mcp.cloud
 Three workflow-record tools (``g6_workflow_export``, ``g6_workflow_correct``, ``g6_workflow_delete``) let the person look at,
 correct and delete what G6 recorded about its own review work, through files they open and the client's own dialog;
 ``g6_suggestion_decide`` asks the person to adopt, dismiss or reopen one suggestion G6 showed, and takes no decision
-itself (``g6.mcp.workflow``).
+itself; ``g6_feedback`` keeps feedback the person volunteers and, only if they opted in, may ask them one question a
+week in the client's dialog (``g6.mcp.workflow``).
 Install
 with ``pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"`` and register with ``claude mcp add g6 -- g6-mcp`` (or, for Codex,
 ``codex mcp add g6 -- g6-mcp``). There is no account, key or network service.

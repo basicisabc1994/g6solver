@@ -71,6 +71,11 @@ BUDGET_ENV = "G6_QUESTIONS_PER_TASK"
 DEFAULT_BUDGET = 1
 MAX_BUDGET = 10
 ASKED, SHOWN, ANSWER, MORE = "asked", "shown", "answer", "more"
+#: A slot of the task's one budget held for a question that is not a behaviour question (design 17.3: the optional
+#: feedback question draws on the same budget). It counts against ``State.left`` like a question asked; only the
+#: person's own ``more`` expands the budget.
+RESERVED = "reserved"
+PURPOSES = ("feedback",)
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 
 
@@ -147,6 +152,9 @@ def _kind_rules(kind: str, ident: str, body: dict, seen) -> list[str]:
             if not isinstance(data, str) or Candidate.from_record(data).data != data:
                 return ["an asked entry holds the candidate it came from, as G6 made it"]
             return []
+        if kind == RESERVED:
+            ok = body.get("purpose") in PURPOSES and isinstance(body.get("reserved_at"), str) and body["reserved_at"]
+            return [] if ok else ["a reservation names its purpose and when it was made"]
         asked = {one: entry for (k, one), entry in seen.items() if k == ASKED}
         shas = {sha: one for one, entry in asked.items() for sha in (one, *(
             [_question(entry["rule"]).sha256] if entry.get("rule") else []))}
@@ -204,6 +212,7 @@ class State:
     budget_note: str = ""
     superseded: tuple[dict, ...] = field(default=())
     answer_scenarios: dict[str, str] = field(default_factory=dict)
+    reserved: tuple[dict, ...] = ()
 
     @property
     def allowance(self) -> int:
@@ -211,7 +220,7 @@ class State:
 
     @property
     def left(self) -> int:
-        return max(0, self.allowance - len(self.asked))
+        return max(0, self.allowance - len(self.asked) - len(self.reserved))
 
     def answer_to(self, asked: Asked) -> Answer | None:
         return next((one for one in self.answers if one.question_sha256 in asked.shas), None)
@@ -344,7 +353,7 @@ class TaskQuestions:
     @staticmethod
     def _read(ledger: ChainLedger, default: int, note: str) -> State:
         asked, answers, shown, more = [], [], [], 0
-        answer_scenarios = {}
+        answer_scenarios, reserved = {}, []
         for entry in ledger.entries():
             body = entry["body"]
             if entry["kind"] == ASKED:
@@ -358,9 +367,12 @@ class TaskQuestions:
                 shown.append(dict(body))
             elif entry["kind"] == MORE:
                 more += 1
+            elif entry["kind"] == RESERVED:
+                reserved.append(dict(body))
         state = State(tuple(asked), tuple(answers), tuple(shown), more, default, note,
                       answer_scenarios=answer_scenarios)
-        return State(state.asked, state.answers, state.shown, more, default, note, _standard(state)[1], answer_scenarios)
+        return State(state.asked, state.answers, state.shown, more, default, note, _standard(state)[1], answer_scenarios,
+                     reserved=tuple(reserved))
 
     def ask(self, question: Question, rule: Question | None, candidate: Candidate, *, at: str | None = None) -> Asked:
         """Record ``question`` as asked, before it is shown, when the budget has room (``BudgetSpent`` when not); a
@@ -418,6 +430,21 @@ class TaskQuestions:
                 raise AnswerRefused(f"[{REFUSED}] {exc}") from None
             return self._read(ledger, default, note)
 
+    def reserve(self, purpose: str, *, at: str | None = None) -> str:
+        """Hold one slot of this task's budget for ``purpose`` (one of ``PURPOSES``), under the lock that counts the
+        budget, before anything is shown: ``BudgetSpent`` when no question is left. The reservation's id."""
+        if purpose not in PURPOSES:
+            raise ValueError("a slot is reserved for a known purpose")
+        default, note = default_budget()
+        with _locked(self.path):
+            ledger = self._open()
+            state = self._read(ledger, default, note)
+            if state.left < 1:
+                raise BudgetSpent(note or f"the budget of {state.allowance} question(s) for this task is spent")
+            ident = digest([RESERVED, purpose, len(ledger.entries())])
+            self._append(ledger, RESERVED, ident, {"purpose": purpose, "reserved_at": at or now()})
+            return ident
+
     def allow_more(self, asked: Asked, *, by: str, at: str | None = None) -> None:
         """Record that the person, in ``asked``'s form, let G6 ask one more question on this task."""
         with _locked(self.path):
@@ -427,5 +454,6 @@ class TaskQuestions:
 
 
 __all__ = ["ANSWER", "ASKED", "AnswerRefused", "Asked", "BUDGET_ENV", "BudgetSpent", "DEFAULT_BUDGET", "MAX_BUDGET",
-           "MORE", "REFUSED", "SHOWN", "State", "StoreUnreadable", "TaskQuestions", "UNREADABLE", "default_budget",
+           "MORE", "PURPOSES", "REFUSED", "RESERVED", "SHOWN", "State", "StoreUnreadable", "TaskQuestions", "UNREADABLE",
+           "default_budget",
            "now", "task_identity"]
