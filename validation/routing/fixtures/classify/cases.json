@@ -1,0 +1,10 @@
+[
+  {"message": "I want my money back for the kettle", "label": "refund"},
+  {"message": "Please refund order 1182", "label": "refund"},
+  {"message": "Where is my parcel?", "label": "delivery"},
+  {"message": "The courier never came", "label": "delivery"},
+  {"message": "When will it be delivered?", "label": "delivery"},
+  {"message": "Can I change my address for the invoice?", "label": "other"},
+  {"message": "It arrived broken and I would like to be reimbursed", "label": "refund"},
+  {"message": "Do you sell gift cards?", "label": "other"}
+]

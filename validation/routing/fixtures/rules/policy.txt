@@ -1,0 +1,9 @@
+Facts
+  member(ana, finance).  member(ben, finance).  member(caro, sales).
+  manages(dee, ana).     manages(eli, dee).
+  owns(finance, payroll).
+  banned(ben).
+
+Rules
+  A member of the team that owns a folder can read it, unless banned.
+  Whoever manages someone who can read a folder can read it too, unless banned.

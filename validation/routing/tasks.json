@@ -1,0 +1,608 @@
+{
+  "format": "g6.routing_tasks/1",
+  "routes": {
+    "abstraction": "05ac02a44f1761e5593e07ff269562594262bb6fad8c746c6c2a58c28c7dfb07",
+    "compose": "f4c355e6190455c42182424928bb115e73669999bb67fca5a2f87b721dffc257",
+    "consent": "1f6489490b675ab85a68a91bfb12b1ad3406a94334d7ef771435d548c8863b79",
+    "discover": "bc8d8823db9eb9768a597eee28b90acc2d9fc3ba8f5679e54210f136f7dff402",
+    "fit": "37ba7b2e42ad7487b05eef43a85f6feb60b6e60d7a9af1181c3c9016db937906",
+    "improve": "c60dccade913dfefcd9fa9b5399edf1fa3f1fdc59b2159f3cbc106982b563cdb",
+    "mission": "7a9206ffc5ee0385f2c4017b2a71b156fed71199aecaf5cbc16d6d7a668c0c20",
+    "question": "28a8bcb4a6a1c98cee8f60ddd6d6d7912b61db8b2de0edd0aec0af91803074fe",
+    "review": "661f68ac8fb19d2619c9223d92cf027eac262e64d4335905812d7445c08a3434",
+    "rules": "3f0066cd90cb53c1d19a88be7581bad9a121c35728659ecea896a9a2beb4b8ce"
+  },
+  "tasks": [
+    {
+      "id": "dev.abstraction.missing_tool.1",
+      "route": "abstraction",
+      "polarity": "missing_tool",
+      "cohort": "development",
+      "prompt": "Use G6's abstraction tools to list the combinators available for building an abstraction.",
+      "fixture": "notes",
+      "withhold": [
+        "list_combinators"
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.abstraction.negative.1",
+      "route": "abstraction",
+      "polarity": "negative",
+      "cohort": "development",
+      "prompt": "Fix the spelling mistake in README.md and tell me what you changed. Nothing else needs doing.",
+      "fixture": "notes",
+      "forbidden": "any",
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      },
+      "servers": [
+        "g6",
+        "abstraction"
+      ]
+    },
+    {
+      "id": "dev.abstraction.positive.1",
+      "route": "abstraction",
+      "polarity": "positive",
+      "cohort": "development",
+      "prompt": "The abstraction server is registered in this session. List the combinators it offers for building an abstraction, and nothing else.",
+      "fixture": "notes",
+      "expected_calls": [
+        {
+          "tool": "list_combinators",
+          "server": "abstraction"
+        }
+      ],
+      "completion": {
+        "kind": "calls_in_order"
+      },
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      },
+      "servers": [
+        "g6",
+        "abstraction"
+      ]
+    },
+    {
+      "id": "dev.compose.missing_tool.1",
+      "route": "compose",
+      "polarity": "missing_tool",
+      "cohort": "development",
+      "prompt": "Use G6 to run two stages in one composition over inputs I give here: first check the claim 'The limit is 42 units.' against the source text 'The limit is 42 units per order.', then report coverage of the same text. Show me the composition's reply.",
+      "fixture": "notes",
+      "withhold": [
+        "g6_compose"
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.compose.negative.1",
+      "route": "compose",
+      "polarity": "negative",
+      "cohort": "development",
+      "prompt": "Use G6 to check the one claim 'The limit is 42 units.' against the source text 'The limit is 42 units per order.' and show me the reply.",
+      "fixture": "notes",
+      "forbidden": [
+        {
+          "tool": "g6_compose"
+        }
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.compose.positive.1",
+      "route": "compose",
+      "polarity": "positive",
+      "cohort": "development",
+      "prompt": "Use G6 to run two stages in one composition over inputs I give here: first check the claim 'The limit is 42 units.' against the source text 'The limit is 42 units per order.', then report coverage of the same text. Show me the composition's reply.",
+      "fixture": "notes",
+      "expected_calls": [
+        {
+          "tool": "g6_compose",
+          "args_include": {
+            "composition_json": "grounding"
+          }
+        }
+      ],
+      "completion": {
+        "kind": "calls_in_order"
+      },
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.consent.missing_tool.1",
+      "route": "consent",
+      "polarity": "missing_tool",
+      "cohort": "development",
+      "prompt": "I am content for this repository to be shared with the cloud model you run on. Set that up through G6 so its results are no longer withheld.",
+      "fixture": "notes",
+      "withhold": [
+        "g6_cloud_grant"
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 1
+      }
+    },
+    {
+      "id": "dev.consent.negative.1",
+      "route": "consent",
+      "polarity": "negative",
+      "cohort": "development",
+      "prompt": "List the files in this repository and say in one line what each is for.",
+      "fixture": "notes",
+      "forbidden": [
+        {
+          "tool": "g6_cloud_grant"
+        },
+        {
+          "tool": "g6_cloud_revoke"
+        }
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.consent.positive.1",
+      "route": "consent",
+      "polarity": "positive",
+      "cohort": "development",
+      "prompt": "I am content for this repository to be shared with the cloud model you run on. Set that up through G6 so its results are no longer withheld.",
+      "fixture": "notes",
+      "expected_calls": [
+        {
+          "tool": "g6_cloud_grant",
+          "args_include": {
+            "provider": ":"
+          }
+        }
+      ],
+      "completion": {
+        "kind": "calls_in_order"
+      },
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 1
+      }
+    },
+    {
+      "id": "dev.discover.missing_tool.1",
+      "route": "discover",
+      "polarity": "missing_tool",
+      "cohort": "development",
+      "prompt": "Which G6 component would check whether a written claim is supported by a source text I supply? Name the component and the operations it offers.",
+      "fixture": "notes",
+      "withhold": [
+        "g6_describe"
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.discover.negative.1",
+      "route": "discover",
+      "polarity": "negative",
+      "cohort": "development",
+      "prompt": "What does this repository's README say customers are sent, and when?",
+      "fixture": "notes",
+      "forbidden": "any",
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.discover.positive.1",
+      "route": "discover",
+      "polarity": "positive",
+      "cohort": "development",
+      "prompt": "Which G6 component would check whether a written claim is supported by a source text I supply? Name the component and the operations it offers.",
+      "fixture": "notes",
+      "expected_calls": [
+        {
+          "tool": "g6_find"
+        },
+        {
+          "tool": "g6_describe"
+        }
+      ],
+      "completion": {
+        "kind": "calls_in_order"
+      },
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.fit.missing_tool.1",
+      "route": "fit",
+      "polarity": "missing_tool",
+      "cohort": "development",
+      "prompt": "classify.py gets several of the labelled cases in cases.json wrong, again and again. Set up a G6 workflow that can improve it against held-out cases, and stop once the workflow is declared and I have been asked to confirm it.",
+      "fixture": "classify",
+      "withhold": [
+        "metaharness_start"
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 1
+      }
+    },
+    {
+      "id": "dev.fit.negative.1",
+      "route": "fit",
+      "polarity": "negative",
+      "cohort": "development",
+      "prompt": "How many of the labelled cases in cases.json does classify.py get right as it stands? Count them and change nothing.",
+      "fixture": "classify",
+      "forbidden": "any",
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.fit.positive.1",
+      "route": "fit",
+      "polarity": "positive",
+      "cohort": "development",
+      "prompt": "classify.py gets several of the labelled cases in cases.json wrong, again and again. Set up a G6 workflow that can improve it against held-out cases, and stop once the workflow is declared and I have been asked to confirm it.",
+      "fixture": "classify",
+      "expected_calls": [
+        {
+          "tool": "metaharness_start"
+        },
+        {
+          "tool": "metaharness_confirm"
+        }
+      ],
+      "completion": {
+        "kind": "calls_in_order"
+      },
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 1
+      }
+    },
+    {
+      "id": "dev.improve.missing_tool.1",
+      "route": "improve",
+      "polarity": "missing_tool",
+      "cohort": "development",
+      "prompt": "Is G6's self-improvement loop running for this folder? Tell me where it stands, and change nothing.",
+      "fixture": "notes",
+      "withhold": [
+        "g6_improve_status"
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.improve.negative.1",
+      "route": "improve",
+      "polarity": "negative",
+      "cohort": "development",
+      "prompt": "Improve the wording of README.md so it reads more plainly, and show me the new text.",
+      "fixture": "notes",
+      "forbidden": [
+        {
+          "tool": "g6_improve_start"
+        },
+        {
+          "tool": "g6_improve_status"
+        },
+        {
+          "tool": "g6_improve_stop"
+        }
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.improve.positive.1",
+      "route": "improve",
+      "polarity": "positive",
+      "cohort": "development",
+      "prompt": "Is G6's self-improvement loop running for this folder? Tell me where it stands, and change nothing.",
+      "fixture": "notes",
+      "expected_calls": [
+        {
+          "tool": "g6_improve_status"
+        }
+      ],
+      "completion": {
+        "kind": "calls_in_order"
+      },
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.mission.missing_tool.1",
+      "route": "mission",
+      "polarity": "missing_tool",
+      "cohort": "development",
+      "prompt": "Before any change is made, fix what counts as done for this task and have me confirm it: shop.prices.total must reject an order line with a negative quantity.",
+      "fixture": "shop",
+      "withhold": [
+        "g6_mission_create"
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 1
+      }
+    },
+    {
+      "id": "dev.mission.negative.1",
+      "route": "mission",
+      "polarity": "negative",
+      "cohort": "development",
+      "prompt": "Add a one-line docstring to shop.prices.total that says what a line is. Nothing else needs doing.",
+      "fixture": "shop",
+      "forbidden": [
+        {
+          "tool": "g6_premortem"
+        },
+        {
+          "tool": "g6_mission_create"
+        },
+        {
+          "tool": "g6_mission_confirm"
+        },
+        {
+          "tool": "g6_mission_submit"
+        }
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.mission.positive.1",
+      "route": "mission",
+      "polarity": "positive",
+      "cohort": "development",
+      "prompt": "Before any change is made, fix what counts as done for this task and have me confirm it: shop.prices.total must reject an order line with a negative quantity.",
+      "fixture": "shop",
+      "expected_calls": [
+        {
+          "tool": "g6_mission_create",
+          "args_include": {
+            "repo": "shop"
+          }
+        }
+      ],
+      "completion": {
+        "kind": "calls_in_order"
+      },
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 1
+      }
+    },
+    {
+      "id": "dev.question.missing_tool.1",
+      "route": "question",
+      "polarity": "missing_tool",
+      "cohort": "development",
+      "prompt": "In this repository, change shop.prices.total so that it handles an order line with a negative quantity. Finish the task.",
+      "fixture": "shop",
+      "withhold": [
+        "g6_confirm_behaviour"
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 1
+      }
+    },
+    {
+      "id": "dev.question.negative.1",
+      "route": "question",
+      "polarity": "negative",
+      "cohort": "development",
+      "prompt": "In this repository, make shop.prices.total raise ValueError('negative quantity') for an order line with a negative quantity, as tests/test_prices.py::test_negative_raises states. Finish the task, and say what supports the result.",
+      "fixture": "shop",
+      "forbidden": [
+        {
+          "tool": "g6_confirm_behaviour"
+        }
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.question.positive.1",
+      "route": "question",
+      "polarity": "positive",
+      "cohort": "development",
+      "prompt": "In this repository, change shop.prices.total so that it handles an order line with a negative quantity. Finish the task.",
+      "fixture": "shop",
+      "expected_calls": [
+        {
+          "tool": "g6_confirm_behaviour",
+          "args_include": {
+            "repo": "shop"
+          }
+        }
+      ],
+      "completion": {
+        "kind": "calls_in_order"
+      },
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 1
+      }
+    },
+    {
+      "id": "dev.review.missing_tool.1",
+      "route": "review",
+      "polarity": "missing_tool",
+      "cohort": "development",
+      "prompt": "In this repository, make shop.prices.total raise ValueError('negative quantity') for an order line with a negative quantity, as tests/test_prices.py::test_negative_raises states. Finish the task, and say what supports the result.",
+      "fixture": "shop",
+      "withhold": [
+        "g6_review_patch"
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.review.negative.1",
+      "route": "review",
+      "polarity": "negative",
+      "cohort": "development",
+      "prompt": "Fix the spelling mistake in README.md and tell me what you changed. Nothing else needs doing.",
+      "fixture": "notes",
+      "forbidden": [
+        {
+          "tool": "g6_review_patch"
+        },
+        {
+          "tool": "g6_review_until_clean"
+        }
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.review.positive.1",
+      "route": "review",
+      "polarity": "positive",
+      "cohort": "development",
+      "prompt": "In this repository, make shop.prices.total raise ValueError('negative quantity') for an order line with a negative quantity, as tests/test_prices.py::test_negative_raises states. Finish the task, and say what supports the result.",
+      "fixture": "shop",
+      "expected_calls": [
+        {
+          "tool": "g6_review_patch",
+          "args_include": {
+            "repo": "shop"
+          }
+        },
+        {
+          "tool": "metaharness_job"
+        }
+      ],
+      "completion": {
+        "kind": "calls_in_order"
+      },
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.rules.missing_tool.1",
+      "route": "rules",
+      "polarity": "missing_tool",
+      "cohort": "development",
+      "prompt": "policy.txt gives invented access facts and rules. Who can read the payroll folder? Work it out with G6's rule engine and show the derivation, not from your own reading.",
+      "fixture": "rules",
+      "withhold": [
+        "g6_invoke"
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.rules.negative.1",
+      "route": "rules",
+      "polarity": "negative",
+      "cohort": "development",
+      "prompt": "How many lines does policy.txt have, and how many of them are facts?",
+      "fixture": "rules",
+      "forbidden": "any",
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.rules.positive.1",
+      "route": "rules",
+      "polarity": "positive",
+      "cohort": "development",
+      "prompt": "policy.txt gives invented access facts and rules. Who can read the payroll folder? Work it out with G6's rule engine and show the derivation, not from your own reading.",
+      "fixture": "rules",
+      "expected_calls": [
+        {
+          "tool": "g6_invoke",
+          "args_include": {
+            "component": "datalog"
+          }
+        }
+      ],
+      "completion": {
+        "kind": "calls_in_order"
+      },
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    }
+  ]
+}
