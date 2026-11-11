@@ -20,7 +20,7 @@ class Declaration:
     classes: tuple[str, ...]
 
     def __post_init__(self):
-        if not self.classes or any(c not in ('client_request', 'client_repository', 'g6_operational')
+        if not self.classes or any(c not in ('client_request', 'client_repository', 'client_workflow', 'g6_operational')
                 and not re.fullmatch(r'source:[A-Za-z0-9_.:-]+', c) for c in self.classes):
             raise ValueError('unknown producer source class')
 
@@ -44,6 +44,14 @@ class Declaration:
                 except (ValueError, OSError):
                     # Validation belongs to the tool. An invalid client path
                     # must not replace its earlier refusal with a consent error.
+                    source = cloud.input_source(str(repo))
+            elif kind == 'client_workflow':
+                # What G6 recorded about its own work in the named repository (design 17.3): a source of its
+                # own, workflow:<the repository's hash>, which a grant for the repository does not cover.
+                repo = arguments.get('repo')
+                try:
+                    source = 'workflow:' + cloud.repository_source(repo).split(':', 1)[1] if repo else 'workflows'
+                except (ValueError, OSError):
                     source = cloud.input_source(str(repo))
             else:
                 source = kind.removeprefix('source:')
@@ -87,6 +95,8 @@ TOOLS = {
     **{name: contract('g6_operational') for name in (
         'g6_cloud_grant', 'g6_cloud_revoke')},
     **{name: contract('source:consent_metadata') for name in ('g6_cloud_grants', 'g6_disclosures')},
+    **{name: contract('client_request', 'client_workflow') for name in (
+        'g6_workflow_correct', 'g6_workflow_delete', 'g6_workflow_export')},
 }
 
 def _arguments(content='', pointer=''):
@@ -130,6 +140,9 @@ TOOL_ARGUMENTS = {
     'metaharness_diagnose': _arguments(pointer='workflow'),
     'metaharness_approve': _arguments('decision_digest', 'workflow'),
     'metaharness_rollback': _arguments('version', 'workflow'),
+    'g6_workflow_correct': _arguments(pointer='repo'),
+    'g6_workflow_delete': _arguments('scope task', 'repo run'),
+    'g6_workflow_export': _arguments(pointer='repo'),
 }
 
 

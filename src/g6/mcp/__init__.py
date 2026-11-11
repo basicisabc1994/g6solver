@@ -16,6 +16,9 @@ declared in the file ``G6_METAHARNESS`` names, where confirmation, approval and 
 client, including in the proposing session, and a failed attempt carries its recovery (``g6.metaharness.surface``).
 Four sharing tools (``g6_cloud_grant``, ``g6_cloud_revoke``, ``g6_cloud_grants``, ``g6_disclosures``)
 use client-dialog grants and a source/provider disclosure ledger (``g6.mcp.cloud_consent``).
+Three workflow-record tools (``g6_workflow_export``, ``g6_workflow_correct``, ``g6_workflow_delete``) let the person look at,
+correct and delete what G6 recorded about its own review work, through files they open and the client's own dialog
+(``g6.mcp.workflow``).
 Install
 with ``pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"`` and register with ``claude mcp add g6 -- g6-mcp`` (or, for Codex,
 ``codex mcp add g6 -- g6-mcp``). There is no account, key or network service.
@@ -160,7 +163,8 @@ def build_server(surface: Any = None) -> Any:
     @public_tool
     def g6_help() -> str:
         """How to use G6 from an agent. Call this first."""
-        return discovery.HELP
+        from g6.mcp.workflow import HELP as workflow_help
+        return discovery.HELP + " " + workflow_help
 
     @server.tool()
     def g6_components() -> list[str]:
@@ -197,6 +201,8 @@ def build_server(surface: Any = None) -> Any:
         return compose_reply(payload, allow_sensitive=allowed_sensitive())
 
     _metaharness_tools(server, surface, Context)
+    from g6.mcp import workflow
+    workflow.register(server, Context)   # after the consent egress above: it stays the last thing to touch a reply
     return server
 
 
@@ -294,7 +300,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         if not _allowed("patch_review", "review", allowed_sensitive()):
             return public_instructions(blocked_reply(f"{_DENIED} patch_review.review runs repository code; the host must allow it"))
         from g6.harness.question_store import StoreUnreadable
-        from g6.mcp import behaviour
+        from g6.mcp import behaviour, workflow
         from g6.mcp.review_reply import finish, review
 
         try:   # a store G6 cannot read refuses the review at once; what it holds is read again when the review runs
@@ -307,7 +313,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             review, repo, task, requirements=requirements or [], tests=tests or [], claim=claim, sources=sources,
             base=base, expected_artifact_digest=expected_artifact_digest, timeout_s=timeout_s, intent=intent,
             proposed_checks=proposed_checks, template_instances=template_instances, search=search,
-            import_roots=import_roots or []), compact=finish)
+            import_roots=import_roots or []), compact=workflow.finishing(finish, repo, task))
 
     @server.tool()
     def g6_review_until_clean(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
@@ -342,7 +348,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
                                  "must allow it, with patch_review.review"))
         from g6.mcp.review_loop import step
 
-        return jobs.start(lambda: step(repo, task, session, base, reason))
+        from g6.mcp import workflow
+        return jobs.start(lambda: workflow.stepped(step, repo, task, session, base, reason))
 
     def session(ctx: Any) -> str:
         return str(getattr(ctx, "session_id", None) or id(getattr(ctx, "session", ctx)))

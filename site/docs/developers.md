@@ -209,6 +209,19 @@ nothing. A local loopback model needs no cloud grant. Claude Code and Codex sign
 - `g6_cloud_grants()` lists active grants, their times and attribution hashes.
 - `g6_disclosures()` reads attempted disclosures: source/file/passage ids, hashes, provider and time, never text.
 
+## The workflow record
+
+G6 can keep a local record of its own review work on a task (runs, rounds, questions, tool calls and their times). It is
+off until the person sets `G6_WORKFLOW_RECORD=on` where the server is registered. It is the person's data and has its own
+source, `workflow:<the repository's identifier>`, which a grant for the repository does not cover.
+
+- `g6_workflow_export(repo)` writes `inspection.json` for the person to open; the reply never repeats the file.
+- `g6_workflow_correct(repo)` applies the `corrections.json` the person wrote beside it; no argument carries a correction.
+- `g6_workflow_delete(repo, scope, task, run)` deletes a run, a task or the project's record after the person confirms in
+  the client's dialog.
+
+What is kept, for how long, and what deletion does: `docs/product_global_specs/workflow_storage_policy.md`.
+
 Providers include `anthropic:claude_code`, `openai:codex`, `anthropic:api`, `openai:api`, `openrouter:api`, and an
 `endpoint:<sha256>` identity for a configured custom endpoint. Sources may be canonical repository paths or the opaque
 ids a producer records. Use an absolute path or `./relative/path` for a repository; a plain name is an opaque source id. Grants are in the hash-chained `cloud_consent/events.jsonl` under `G6_HOME`, protected by an OS
