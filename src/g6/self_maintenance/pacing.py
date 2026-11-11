@@ -27,7 +27,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from g6.operator.gates import amount_of, exact_number, exact_text, kind_of
+from g6.operator.gates import amount_of, exact_number, exact_text, kind_of, over
 from g6.operator.store import BudgetRefused, Held, OperatorStore, utc
 
 OWNER = "g6-loop"
@@ -38,7 +38,6 @@ REFRESH = timedelta(minutes=15)
 _ACCOUNT = "model"
 _WEEK = timedelta(days=7)
 _DAY = timedelta(days=1)
-_SLACK = 1e-9
 
 
 @dataclass(frozen=True)
@@ -100,13 +99,16 @@ def read_settings(root: str | Path) -> dict[str, Any]:
 
 
 def windows_from(settings: Mapping[str, Any]) -> tuple[ProviderWindow, ...]:
-    """The provider windows a settings file declares; a ``ValueError`` when there are none, or one makes no sense."""
+    """The provider windows a settings file declares; a ``ValueError`` when there are none, or one makes no sense. Each
+    value is handed to the window as the file gave it, which reads it by the one rule for its kind (``exact_text``,
+    ``amount_of``, ``exact_number``): nothing is turned into a number or a text on its way there, so a text that spells a
+    number, a flag and a number of a caller's own class are refused as they would be anywhere else."""
     rows = settings.get("windows")
     if not isinstance(rows, list) or not rows:
         raise ValueError(f"{SETTINGS_FILE} needs windows: a list of at least one provider's week")
     try:
-        return tuple(ProviderWindow(str(row["provider"]), float(row["allowance"]), utc(datetime.fromisoformat(row["week_start"])),
-                                    float(row.get("reserve_share", 0.2)), row.get("estimated", True) is not False)
+        return tuple(ProviderWindow(row["provider"], row["allowance"], utc(datetime.fromisoformat(exact_text(row["week_start"]))),
+                                    row.get("reserve_share", 0.2), row.get("estimated", True) is not False)
                      for row in rows)
     except (KeyError, TypeError, AttributeError) as exc:
         raise ValueError(f"{SETTINGS_FILE}: a window needs provider, allowance and week_start ({exc!r})") from None
@@ -337,7 +339,7 @@ class BudgetMeter:
 
         def decide() -> tuple[str, datetime, datetime, datetime]:
             look, _, start = self._look(provider, now)
-            if not look.reason and look.used + worst_case > look.ceiling + _SLACK:
+            if not look.reason and over(look.used + worst_case, look.ceiling):
                 look = replace(look, reason=f"{look.used:g} used plus a worst case of {worst_case:g} is over day "
                                             f"{look.day}'s ceiling of {look.ceiling:g}")
             seen.append((look, start))

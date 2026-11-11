@@ -122,6 +122,34 @@ def stored_amount(value: Any) -> float:
     return number
 
 
+#: What SQLite stores as it is given. A value of any other class is bound by what its own ``__conform__`` answers, each time
+#: it is bound.
+_BOUND = (str, int, float, bytes, type(None))
+
+
+def _name(value: Any, what: str) -> str:
+    """A name as it enters the store (a venture's name, a provider, an account, a month, a reservation): ``value`` as a
+    plain ``str``, converted once where it enters, which is all that is used after it. ``gates.exact_text`` is the one
+    conversion, for every method that takes a name: a method whose refusal is its own (no such venture, a reservation
+    refused, an owner or a status that is none) calls it and refuses its own way. A text of a caller's own class is read at
+    the text it holds; anything else is a ``ValueError`` here, which names its type and never renders it."""
+    text = gates.exact_text(value)
+    if text is None:
+        raise ValueError(f"{what} is named by text, not a {gates.kind_of(value)}")
+    return text
+
+
+def _plain(*values: Any) -> tuple[Any, ...]:
+    """What a statement of the store is given to bind, and nothing else is: values of the types SQLite stores as they are.
+    A value of any other class, a caller's own kind of text among them, is bound by what its ``__conform__`` answers, which
+    can differ between the statement that checks and the statement that writes; so none reaches a statement, and a
+    ``TypeError`` names its type."""
+    for value in values:
+        if type(value) not in _BOUND:
+            raise TypeError(f"a statement binds plain values, not a {gates.kind_of(value)}")
+    return values
+
+
 def append_only(table: str, key: str = "seq") -> str:
     """Triggers that refuse UPDATE, DELETE and a REPLACE over an existing ``key`` on ``table``."""
     return f"""
@@ -186,7 +214,11 @@ class BudgetRefused(RuntimeError):
 class OperatorStore:
     """``path`` defaults to ``$G6_HOME/operator.db``; ``":memory:"`` keeps nothing past the process. ``clock``: the store's
     own clock, which dates a settlement as it is written; the wall clock unless the owner of the store runs on another,
-    as a loop whose ticks run on a clock of their own does."""
+    as a loop whose ticks run on a clock of their own does. ``poisoned``: why nothing more is written on this connection, or
+    ``""``. It is set when a transaction that failed could not be shown to have rolled back (``OwnerScope.immediate``): what
+    it wrote may still be pending on the connection, where the next commit of anything would keep it. From then every
+    transaction and script on this store is refused; closing it drops what is pending, and a store opened again starts
+    clean."""
 
     def __init__(self, path: str | os.PathLike[str] = "operator.db", *,
                  clock: Callable[[], datetime] | None = None) -> None:
@@ -194,6 +226,7 @@ class OperatorStore:
         self.clock = utc_clock(clock or _wall_clock)
         self._writing = threading.RLock()     # every write and commit on this connection, one at a time (``immediate``)
         self._held = threading.local()        # how deep the thread that holds it is inside it
+        self.poisoned = ""
         self.script(_SCHEMA + append_only("evidence") + append_only("ledger") + append_only("week_spans", "ref")
                     + append_only("week_settled", "ref") + append_only("week_ticks", "ref"))
         with self._writing:                   # a grid kept before it carried the time of the reading it came from
@@ -203,9 +236,12 @@ class OperatorStore:
 
     def script(self, sql: str) -> None:
         """Run a script that commits on its own (``executescript`` does), holding the store's lock, so it can never commit
-        another thread's transaction half way."""
+        another thread's transaction half way. It is refused inside a transaction, whether this thread's own or one the
+        connection itself says is still open, and on a poisoned store, so its commit never keeps what a transaction left."""
         with self._writing:
-            if self.in_transaction():
+            if self.poisoned:
+                raise sqlite3.OperationalError(f"nothing more is written on this connection: {self.poisoned}")
+            if self.in_transaction() or self.conn.in_transaction:
                 raise RuntimeError("a script commits on its own, so it never runs inside a transaction")
             self.conn.executescript(sql)
 
@@ -224,13 +260,17 @@ class OwnerScope:
     """One owner's view of the store: the only handle the queue and the tick hold."""
 
     def __init__(self, store: OperatorStore, owner: str) -> None:
-        if not str(owner or "").strip():
+        name = gates.exact_text(owner)                # converted once: every statement binds this plain text
+        if name is None or not name.strip():
             raise ValueError("an owner scope needs an owner")
-        self.store, self.owner, self.conn = store, owner, store.conn
+        self.store, self.owner, self.conn = store, name, store.conn
 
     def resolve(self, venture_id: str) -> str:
-        row = self.conn.execute("SELECT venture_id FROM ventures WHERE venture_id=? AND owner=?",
-                                (str(venture_id), self.owner)).fetchone()
+        """The venture's id as the store holds it, which is all that is used after this. An id that is not text names no
+        venture, and gets the same refusal as one this owner does not hold."""
+        name = gates.exact_text(venture_id)
+        row = None if name is None else self.conn.execute("SELECT venture_id FROM ventures WHERE venture_id=? AND owner=?",
+                                                          _plain(name, self.owner)).fetchone()
         if row is None:
             raise LookupError(NOT_FOUND)
         return row["venture_id"]
@@ -239,6 +279,7 @@ class OwnerScope:
     def create_venture(self, name: str, *, caps: dict[str, float]) -> dict[str, Any]:
         """``caps`` gives each account in ``gates.ACCOUNTS`` a finite, non-negative monthly budget (0 = none may be
         spent). A missing or invalid cap is refused here, and would stop the venture if it reached the stop check."""
+        name = _name(name, "a venture")
         with self.immediate():
             venture_id = self._insert_venture(name, caps)
         return self.venture(venture_id)
@@ -251,15 +292,16 @@ class OwnerScope:
             raise ValueError(f"caps must give a finite, non-negative monthly budget for {bad}")
         venture_id = uuid.uuid4().hex[:12]
         self.conn.execute("INSERT INTO ventures VALUES (?, ?, ?, ?, 'active', ?)",
-                          (venture_id, self.owner, name, json.dumps(clean), _now()))
+                          _plain(venture_id, self.owner, name, json.dumps(clean), _now()))
         self._append_evidence(venture_id, "created", "", {"name": name, "caps": clean})
         return venture_id
 
     def has_venture(self, name: str) -> bool:
-        return self._named(name) is not None
+        return self._named(_name(name, "a venture")) is not None
 
     def _named(self, name: str) -> str | None:
-        row = self.conn.execute("SELECT venture_id FROM ventures WHERE owner=? AND name=?", (self.owner, name)).fetchone()
+        row = self.conn.execute("SELECT venture_id FROM ventures WHERE owner=? AND name=?",
+                                _plain(self.owner, name)).fetchone()
         return row["venture_id"] if row is not None else None
 
     # -- a provider's weeks ---------------------------------------------------------------
@@ -270,8 +312,9 @@ class OwnerScope:
 
     def kept_grid(self, provider: str) -> tuple[datetime | None, datetime | None]:
         """The kept grid (``week_grid``) and when the reading it came from was taken, ``None`` for one with no such time."""
+        provider = _name(provider, "a provider")
         row = self.conn.execute("SELECT reset, read_at FROM week_grids WHERE owner=? AND provider=?",
-                                (self.owner, provider)).fetchone()
+                                _plain(self.owner, provider)).fetchone()
         if row is None:
             return None, None
         return _instant(row["reset"]), _instant(row["read_at"]) if row["read_at"] else None
@@ -283,10 +326,20 @@ class OwnerScope:
         connection waits here until it ends, then opens its own and reads what the first one wrote. A use inside one the
         same thread already holds is a savepoint within it, so a store method that writes on its own can also be one step
         of a larger check: when that step fails, its own part rolls back, whatever the larger check then does, and the rest
-        stands."""
+        stands.
+
+        Whatever fails, and however (an error or an interrupt), nothing a failed transaction or step wrote is kept. The
+        outer transaction's begin, its work and its commit are one guarded step: when any of them fails it is rolled back
+        and the connection is asked whether it did (``_abandon``); a rollback that cannot be shown to have happened poisons
+        the store, which then refuses every transaction and script. A step whose undo fails marks the transaction it is in
+        (``_undo``): no further step starts in it, and it is rolled back whole when it ends."""
         store = self.store
         with store._writing:
+            if store.poisoned:
+                raise sqlite3.OperationalError(f"nothing more is written on this connection: {store.poisoned}")
             depth = getattr(store._held, "depth", 0)
+            if depth and store._held.broken:
+                raise sqlite3.OperationalError(f"nothing of this transaction is kept: {store._held.broken}")
             store._held.depth = depth + 1
             try:
                 if depth:
@@ -300,26 +353,47 @@ class OwnerScope:
                         raise
                 else:
                     store._held.broken = ""
-                    self.conn.execute("BEGIN IMMEDIATE")
                     try:
+                        self.conn.execute("BEGIN IMMEDIATE")
                         yield
                         if store._held.broken:
                             raise sqlite3.OperationalError(f"nothing of this transaction is kept: {store._held.broken}")
-                    except BaseException:
-                        self.conn.rollback()
+                        self.conn.commit()
+                        if self.conn.in_transaction is not False:
+                            raise sqlite3.OperationalError("the commit left its transaction open, so nothing of it is kept")
+                    except BaseException:          # the begin, the work or the commit failed: nothing of it is left
+                        self._abandon()
                         raise
-                    self.conn.commit()
             finally:
                 store._held.depth = depth
 
     def _undo(self, point: str) -> None:
-        """Roll a failed step back to its savepoint and release it. When that itself fails, the step's writes may still be
-        there, so the transaction it is in is marked: it can no longer commit, and is rolled back whole when it ends."""
+        """Roll a failed step back to its savepoint and release it. When that itself fails, for any reason, an interrupt
+        among them, the step's writes may still be there, so the transaction it is in is marked: no further step starts in
+        it, it can no longer commit, and it is rolled back whole when it ends. An interrupt goes on once that is marked."""
         try:
             self.conn.execute(f"ROLLBACK TO {point}")
             self.conn.execute(f"RELEASE {point}")
-        except Exception as exc:  # noqa: BLE001 - whatever stopped the undo, the transaction must not commit
+        except BaseException as exc:  # whatever stopped the undo, the transaction must not commit
             self.store._held.broken = f"a failed step could not be rolled back ({gates.kind_of(exc)})"
+            if not isinstance(exc, Exception):
+                raise
+
+    def _abandon(self) -> None:
+        """Roll back the transaction this thread holds, after it failed at its begin, in its work or at its commit, and ask
+        the connection whether it did. When the rollback fails, for any reason, or the connection still says a transaction
+        is open, what was written may still be pending on it, where the next commit of anything would keep it: the store is
+        poisoned (``OperatorStore.poisoned``), and nothing more is written on it. An interrupt goes on once that is marked."""
+        try:
+            self.conn.rollback()
+            pending = self.conn.in_transaction
+        except BaseException as exc:  # an undo whose outcome is not known: nothing more is admitted on this connection
+            self.store.poisoned = f"a failed transaction could not be rolled back ({gates.kind_of(exc)})"
+            if not isinstance(exc, Exception):
+                raise
+            return
+        if pending is not False:
+            self.store.poisoned = "a failed transaction was rolled back and the connection still holds one"
 
     def keep_grid(self, provider: str, reset: datetime, read_at: datetime | None = None) -> tuple[datetime, datetime | None]:
         """Where the provider's weeks fall, as a reading taken at ``read_at`` says: a moment one of them ends. A grid moves
@@ -328,6 +402,7 @@ class OwnerScope:
         weeks a reading looks at, and no reservation. It gives the grid that stands after it, and its reading's time. A kept
         row that does not read says nothing of where the weeks fall, so the reading's word replaces it."""
         reset, read_at = utc(reset), utc(read_at)
+        provider = _name(provider, "a provider")          # converted once: the grid it is checked against is the one written
         with self.immediate():
             try:
                 kept, kept_at = self.kept_grid(provider)
@@ -335,8 +410,8 @@ class OwnerScope:
                 kept, kept_at = None, None
             if kept is not None and kept_at is not None and (read_at is None or read_at <= kept_at):
                 return kept, kept_at
-            self.conn.execute("INSERT OR REPLACE INTO week_grids VALUES (?, ?, ?, ?)",
-                              (self.owner, provider, _week_name(reset), _week_name(read_at) if read_at is not None else ""))
+            self.conn.execute("INSERT OR REPLACE INTO week_grids VALUES (?, ?, ?, ?)", _plain(
+                self.owner, provider, _week_name(reset), _week_name(read_at) if read_at is not None else ""))
             return reset, read_at
 
     def week_venture(self, provider: str, week: datetime) -> str:
@@ -355,13 +430,14 @@ class OwnerScope:
         so does a charge the book code made with no time of its own. Every amount is read as one (``stored_amount``): one
         that does not read is a ``ValueError``, never zero."""
         start, end = utc(start), utc(end)
+        provider, account = _name(provider, "a provider"), _name(account, "an account")
         rows = self.conn.execute(
             "SELECT s.ref AS ref, t.at_us AS settled, l.kind AS kind, l.amount AS amount"
             " FROM week_spans s JOIN ledger l ON l.ref = s.ref"
             " JOIN ventures v ON v.venture_id = l.venture_id AND v.owner = s.owner"
             " LEFT JOIN week_settled t ON t.ref = s.ref"
             " WHERE s.owner = ? AND s.provider = ? AND l.account = ? AND s.start_us < ? AND (t.at_us IS NULL OR t.at_us >= ?)"
-            " ORDER BY l.seq", (self.owner, provider, account, _us(end), _us(start))).fetchall()
+            " ORDER BY l.seq", _plain(self.owner, provider, account, _us(end), _us(start))).fetchall()
         found: dict[str, dict[str, Any]] = {}
         for row in rows:
             held = found.setdefault(row["ref"], {"settled": row["settled"], "reserve": None, "charge": None})
@@ -403,9 +479,10 @@ class OwnerScope:
             if not why:
                 reservation = uuid.uuid4().hex
                 self._append_ledger(vid, month, account, "reserve", value, reservation)
-                self.conn.execute("INSERT INTO week_spans VALUES (?, ?, ?, ?, ?, ?)", (reservation, self.owner, provider, *span))
+                self.conn.execute("INSERT INTO week_spans VALUES (?, ?, ?, ?, ?, ?)",
+                                  _plain(reservation, self.owner, provider, *span))
                 if tick:
-                    self.conn.execute("INSERT INTO week_ticks VALUES (?, ?)", (reservation, tick))
+                    self.conn.execute("INSERT INTO week_ticks VALUES (?, ?)", _plain(reservation, tick))
         if why:
             raise BudgetRefused(why)
         return vid, reservation
@@ -416,7 +493,9 @@ class OwnerScope:
         loop recovers under its folder's tick lock: one tick holds it at a time, so an open reservation a tick made is one a
         tick that is gone left. One made outside a tick is never recovered: it stays open, and counts, until its maker
         settles it. All or none: every amount is read (``stored_amount``) before any is settled, and the whole is one
-        transaction, or one savepoint of the caller's, so one that does not read is a ``ValueError`` with nothing settled."""
+        transaction, or one savepoint of the caller's, so one that does not read is a ``ValueError`` with nothing settled.
+        Anything but ``False`` itself for ``made_by_a_tick`` settles only those a tick made, which is the fewer."""
+        provider, account = _name(provider, "a provider"), _name(account, "an account")
         with self.immediate():
             rows = self.conn.execute(
                 "SELECT l.venture_id, l.ref, l.amount FROM week_spans s JOIN ledger l ON l.ref = s.ref AND l.kind = 'reserve'"
@@ -424,7 +503,7 @@ class OwnerScope:
                 " WHERE s.owner = ? AND s.provider = ? AND l.account = ?"
                 " AND NOT EXISTS (SELECT 1 FROM ledger x WHERE x.ref = s.ref AND x.kind = 'release')"
                 " AND (? = 0 OR EXISTS (SELECT 1 FROM week_ticks k WHERE k.ref = s.ref)) ORDER BY l.seq",
-                (self.owner, provider, account, int(made_by_a_tick))).fetchall()
+                _plain(self.owner, provider, account, 0 if made_by_a_tick is False else 1)).fetchall()
             for row in rows:
                 stored_amount(row["amount"])
             return sum(self._settle(row["venture_id"], row["ref"], None, None) for row in rows)
@@ -435,8 +514,9 @@ class OwnerScope:
         later weeks could take over (``week_books``, and ``book_holders`` for where it went last). Nothing says when within
         those weeks one was made, so its span runs from the first of them to the end of the last: it counts in every week it
         may have been spent in, and is never forgotten, which would be an overspend. A charge is dated a second after the
-        ledger wrote it, as the ledger keeps whole seconds, when that is not before the span's start; otherwise it has no
-        time, and goes on top of every reading. One transaction, so a stop part way leaves the old rows as they were, read
+        ledger wrote it, as the ledger keeps whole seconds, and never before what the store has already recorded for the
+        provider (``_stamp``), when that is not before the span's start; otherwise it has no time, and goes on top of every
+        reading. One transaction, so a stop part way leaves the old rows as they were, read
         again on the next open. It returns why a provider's old rows cannot be read: that is a refusal to reserve until a
         person looks, never a fresh book."""
         providers = [name for name in map(gates.exact_text, providers) if name is not None]
@@ -453,8 +533,9 @@ class OwnerScope:
                                         "rows in operator.db")
                     continue
                 for ref, span in spans:
-                    self.conn.execute("INSERT INTO week_spans VALUES (?, ?, ?, ?, ?, ?)", (ref, self.owner, provider, *span))
-                    self._date_old_charge(ref, span[1])
+                    self.conn.execute("INSERT INTO week_spans VALUES (?, ?, ?, ?, ?, ?)",
+                                      _plain(ref, self.owner, provider, *span))
+                    self._date_old_charge(ref, provider, span[1])
         return unread
 
     def _old_reservations(self, providers: Sequence[str]) -> dict[str, list[sqlite3.Row]]:
@@ -462,7 +543,7 @@ class OwnerScope:
         rows = self.conn.execute(
             "SELECT l.ref, l.month, l.amount, v.name FROM ledger l JOIN ventures v ON v.venture_id = l.venture_id WHERE v.owner = ?"
             " AND l.kind = 'reserve' AND NOT EXISTS (SELECT 1 FROM week_spans s WHERE s.ref = l.ref) ORDER BY l.seq",
-            (self.owner,)).fetchall()
+            _plain(self.owner)).fetchall()
         return {provider: [row for row in rows if str(row["name"]).startswith(f"{provider}@")] for provider in providers}
 
     def _old_spans(self, provider: str, rows: Sequence[sqlite3.Row]) -> list[tuple[str, tuple[int, int, int]]]:
@@ -472,7 +553,8 @@ class OwnerScope:
         tables = {row["name"] for row in self.conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         moved: dict[datetime, set[datetime]] = {}           # a book's own week, and every week that may have used it
         for table in (name for name in _OLD_MOVES if name in tables):
-            for row in self.conn.execute(f"SELECT book, week FROM {table} WHERE owner=? AND provider=?", (self.owner, provider)):
+            for row in self.conn.execute(f"SELECT book, week FROM {table} WHERE owner=? AND provider=?",
+                                         _plain(self.owner, provider)):
                 moved.setdefault(_instant(row["book"]), set()).add(_instant(row["week"]))
         spans = []
         for row in rows:
@@ -482,25 +564,29 @@ class OwnerScope:
             spans.append((row["ref"], (_us(book), _us(min(weeks)), _us(max(weeks) + _WEEK))))
         return spans
 
-    def _date_old_charge(self, ref: str, start: int) -> None:
-        row = self.conn.execute("SELECT at FROM ledger WHERE ref=? AND kind='charge' ORDER BY seq DESC LIMIT 1", (ref,)).fetchone()
+    def _date_old_charge(self, ref: str, provider: str, start: int) -> None:
+        """Inside the caller's transaction: date the charge of a reservation found with no span, from the ledger's own time
+        for it, through the one rule for a stamp (``_stamp``). The ledger's time alone is not enough: the operator's own
+        ``reserve`` still writes such a reservation, and it may be charged after the store kept a reading."""
+        row = self.conn.execute("SELECT at FROM ledger WHERE ref=? AND kind='charge' ORDER BY seq DESC LIMIT 1",
+                                _plain(ref)).fetchone()
         try:
             settled = _us(_instant(row["at"]) + timedelta(seconds=1)) if row is not None else None
         except ValueError:
             settled = None
         if settled is not None and settled >= start:
-            self.conn.execute("INSERT INTO week_settled VALUES (?, ?)", (ref, settled))
+            self._stamp(ref, self.owner, provider, settled, start)
 
     def venture_named(self, name: str, *, caps: dict[str, float]) -> str:
         """The id of this owner's venture of this name, made once however many ask at the same moment."""
+        name = _name(name, "a venture")
         with self.immediate():
-            row = self.conn.execute("SELECT venture_id FROM ventures WHERE owner=? AND name=?",
-                                    (self.owner, name)).fetchone()
-            return row["venture_id"] if row is not None else self._insert_venture(name, caps)
+            return self._named(name) or self._insert_venture(name, caps)
 
     def venture(self, venture_id: str) -> dict[str, Any]:
-        row = self.conn.execute("SELECT * FROM ventures WHERE venture_id=? AND owner=?",
-                                (str(venture_id), self.owner)).fetchone()
+        name = gates.exact_text(venture_id)          # as ``resolve``: an id that is not text names no venture
+        row = None if name is None else self.conn.execute("SELECT * FROM ventures WHERE venture_id=? AND owner=?",
+                                                          _plain(name, self.owner)).fetchone()
         if row is None:
             raise LookupError(NOT_FOUND)
         out = dict(row)
@@ -508,15 +594,16 @@ class OwnerScope:
         return out
 
     def list_ventures(self) -> list[dict[str, Any]]:
-        rows = self.conn.execute("SELECT venture_id FROM ventures WHERE owner=? ORDER BY created_at", (self.owner,))
+        rows = self.conn.execute("SELECT venture_id FROM ventures WHERE owner=? ORDER BY created_at", _plain(self.owner))
         return [self.venture(r["venture_id"]) for r in rows.fetchall()]
 
     def set_status(self, venture_id: str, status: str, *, by: str) -> None:
+        status = gates.exact_text(status)            # converted once: the status that is checked is the one written
         if status not in STATUSES:
             raise ValueError(f"status must be one of {sorted(STATUSES)}")
         vid = self.resolve(venture_id)
         with self.immediate():
-            self.conn.execute("UPDATE ventures SET status=? WHERE venture_id=?", (status, vid))
+            self.conn.execute("UPDATE ventures SET status=? WHERE venture_id=?", _plain(status, vid))
             self._append_evidence(vid, "status", by, {"status": status})
 
     # -- evidence (append-only) -----------------------------------------------------------
@@ -531,27 +618,27 @@ class OwnerScope:
             if value is not None:
                 sql += f" AND {column}=?"
                 args.append(value)
-        rows = self.conn.execute(sql + " ORDER BY seq", args).fetchall()
+        rows = self.conn.execute(sql + " ORDER BY seq", _plain(*args)).fetchall()
         return [{**{k: r[k] for k in ("seq", "kind", "ref", "at")}, "detail": json.loads(r["detail_json"])}
                 for r in rows]
 
     def _append_evidence(self, vid: str, kind: str, ref: str, detail: dict[str, Any] | None) -> int:
         """Inside the caller's transaction: a state change and its history commit together or not at all."""
         cur = self.conn.execute("INSERT INTO evidence (venture_id, kind, ref, detail_json, at) VALUES (?, ?, ?, ?, ?)",
-                                (vid, kind, ref, json.dumps(detail or {}, default=str), _now()))
+                                _plain(vid, kind, ref, json.dumps(detail or {}, default=str), _now()))
         return int(cur.lastrowid)
 
     # -- the monthly ledger ---------------------------------------------------------------
     def committed(self, venture_id: str, month: str) -> dict[str, float]:
         """This month's charges plus open reservations, per account."""
-        return self._committed(self.resolve(venture_id), month)
+        return self._committed(self.resolve(venture_id), _name(month, "a month"))
 
     def _committed(self, vid: str, month: str) -> dict[str, float]:
         return self._month(vid, month, {"reserve": 1, "release": -1, "charge": 1})
 
     def outstanding(self, venture_id: str, month: str) -> dict[str, float]:
         """What is reserved and not yet settled, per account: the part of ``committed`` nothing has charged."""
-        return self._outstanding(self.resolve(venture_id), month)
+        return self._outstanding(self.resolve(venture_id), _name(month, "a month"))
 
     def _outstanding(self, vid: str, month: str) -> dict[str, float]:
         return self._month(vid, month, {"reserve": 1, "release": -1, "charge": 0})
@@ -561,7 +648,7 @@ class OwnerScope:
         read is a ``ValueError``, never zero."""
         totals: dict[str, float] = {}
         for row in self.conn.execute("SELECT account, kind, amount FROM ledger WHERE venture_id=? AND month=? ORDER BY seq",
-                                     (vid, month)):
+                                     _plain(vid, month)):
             totals[row["account"]] = totals.get(row["account"], 0.0) + signs[row["kind"]] * stored_amount(row["amount"])
         return totals
 
@@ -575,18 +662,25 @@ class OwnerScope:
         return gates.spend_refusal(self.venture(vid), committed, account, value) or ""
 
     def _append_ledger(self, vid: str, month: str, account: str, kind: str, amount: float, ref: str) -> None:
+        """Inside the caller's transaction: one row of the ledger. Its amount is written by the rule it is read back by
+        (``stored_amount``), so nothing is turned into a number on its way in: one that is not a finite number of zero or
+        more is a ``ValueError``."""
         self.conn.execute("INSERT INTO ledger (venture_id, month, account, kind, amount, ref, at)"
-                          " VALUES (?, ?, ?, ?, ?, ?, ?)", (vid, month, account, kind, float(amount), ref, _now()))
+                          " VALUES (?, ?, ?, ?, ?, ?, ?)", _plain(vid, month, account, kind, stored_amount(amount), ref, _now()))
 
     def reserve(self, venture_id: str, *, month: str, account: str, amount: float,
                 admit: Callable[[float, float], str] | None = None) -> str:
         """Reserve ``amount`` before a spend starts; the stop check and the write are one transaction. ``admit`` is a
         further check inside it, given this account's committed and outstanding amounts as they stand under the lock,
-        and returns why not, or nothing."""
+        and returns why not, or nothing. The month and the account are converted once, as they enter, to plain text: the
+        account that is checked against its cap is the account the ledger's row is written on."""
         vid = self.resolve(venture_id)
         value = gates.amount_of(amount)
         if value is None:
             raise BudgetRefused(f"a reservation must be a finite, positive amount, not a {gates.kind_of(amount)}")
+        month, account = gates.exact_text(month), gates.exact_text(account)
+        if month is None or account is None:
+            raise BudgetRefused("a reservation's month and account are text")
         with self.immediate():
             try:
                 said = "" if admit is None else admit(self._committed(vid, month).get(account, 0.0),
@@ -614,7 +708,9 @@ class OwnerScope:
 
         A reservation on a provider's weeks is dated as it settles, by the store's own clock alone, and never before it
         began: that one value ends its span (``week_held``) and dates its charge against a reading, for every reader
-        alike. No caller gives that time."""
+        alike. No caller gives that time. The reservation is converted once, as it enters, to plain text: every statement
+        of the settlement names that one reservation."""
+        reservation = _name(reservation, "a reservation")
         if metered is not None:
             given, metered = metered, gates.exact_number(metered)          # converted once; only this is used
             if metered is None or metered < 0:
@@ -630,10 +726,10 @@ class OwnerScope:
     def _settle(self, vid: str, reservation: str, reported: float | None, metered: float | None) -> float:
         """Inside the caller's transaction: ``settle``, of a venture already resolved."""
         row = self.conn.execute("SELECT month, account, amount FROM ledger WHERE venture_id=? AND ref=?"
-                                " AND kind='reserve'", (vid, reservation)).fetchone()
+                                " AND kind='reserve'", _plain(vid, reservation)).fetchone()
         if row is None:
             raise LookupError("no such reservation for this venture")
-        span = self.conn.execute("SELECT owner, provider, start_us FROM week_spans WHERE ref=?", (reservation,)).fetchone()
+        span = self.conn.execute("SELECT owner, provider, start_us FROM week_spans WHERE ref=?", _plain(reservation)).fetchone()
         reserved = stored_amount(row["amount"])
         charged = reserved
         reported_value = gates.amount_of(reported)
@@ -644,9 +740,16 @@ class OwnerScope:
         self._append_ledger(vid, row["month"], row["account"], "release", reserved, reservation)
         self._append_ledger(vid, row["month"], row["account"], "charge", charged, reservation)
         if span is not None:
-            ended = max(_us(self.store.clock()), span["start_us"], *self._kept_times(span["owner"], span["provider"]))
-            self.conn.execute("INSERT INTO week_settled VALUES (?, ?)", (reservation, ended))
+            self._stamp(reservation, span["owner"], span["provider"], _us(self.store.clock()), span["start_us"])
         return charged
+
+    def _stamp(self, ref: str, owner: str, provider: str, at: int, start: int) -> None:
+        """Inside the caller's transaction: the one statement that stamps a settlement, for one settled now (``_settle``) and
+        for a charge found with no stamp (``_date_old_charge``) alike. It is stamped at ``at``, and no earlier than its
+        reservation's start or anything the store has already recorded for the provider (``_kept_times``): one rule, so no
+        charge written after the store kept a reading is dated inside that reading, whichever way it is settled."""
+        self.conn.execute("INSERT INTO week_settled VALUES (?, ?)",
+                          _plain(ref, max(at, start, *self._kept_times(owner, provider))))
 
     def _kept_times(self, owner: str, provider: str) -> list[int]:
         """Inside the caller's transaction: the floor of a settlement's stamp from what the store has already recorded for
@@ -656,10 +759,11 @@ class OwnerScope:
         refused and replaced by the next reading (``keep_grid``)."""
         floors = []
         newest = self.conn.execute("SELECT MAX(t.at_us) FROM week_settled t JOIN week_spans s ON s.ref = t.ref"
-                                   " WHERE s.owner = ? AND s.provider = ?", (owner, provider)).fetchone()[0]
+                                   " WHERE s.owner = ? AND s.provider = ?", _plain(owner, provider)).fetchone()[0]
         if newest is not None:
             floors.append(int(newest))
-        row = self.conn.execute("SELECT read_at FROM week_grids WHERE owner = ? AND provider = ?", (owner, provider)).fetchone()
+        row = self.conn.execute("SELECT read_at FROM week_grids WHERE owner = ? AND provider = ?",
+                                _plain(owner, provider)).fetchone()
         try:
             if row is not None and row["read_at"]:
                 floors.append(_us(_instant(row["read_at"])) + 1)

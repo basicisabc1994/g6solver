@@ -834,7 +834,8 @@ def test_every_write_and_commit_on_the_stores_connection_holds_its_lock():
     functions = {line.split(":", 1)[0] for line in statements}
     known = {"g6.operator.store.immediate", "g6.operator.store.script", "g6.operator.store._append_ledger",
              "g6.operator.store._append_evidence", "g6.operator.store.set_status", "g6.operator.store.keep_grid",
-             "g6.operator.store.reserve_span", "g6.operator.store._settle", "g6.operator.store.__init__"}
+             "g6.operator.store.reserve_span", "g6.operator.store._stamp", "g6.operator.store._abandon",
+             "g6.operator.store.__init__"}                       # ``_settle``'s one statement of its own is ``_stamp``'s now
     assert known <= functions, sorted(known - functions)
     assert any(line.startswith("g6.operator.queue.") for line in statements), statements
     assert not loose, loose
@@ -938,16 +939,20 @@ def test_the_one_check_of_a_figure():
 # 1. The store's stamps never go backwards (review wks4, finding 3) -----------------------------------------------------------------
 
 def test_every_settlement_stamp_is_written_over_the_floor_the_store_already_holds():
-    """Listed from the code: the statements that stamp a settlement. A settlement's is ``_settle``'s, which takes the floor
-    of what the store already recorded for the provider (``_kept_times``); the only other is adoption's dating of a charge the
-    book code made before spans, which is in the past of everything recorded since."""
+    """Listed from the code: the statements that stamp a settlement. There is one, ``_stamp``'s, which takes the floor of
+    what the store already recorded for the provider (``_kept_times``), and both ways a settlement is dated go through it: one
+    settled now (``_settle``) and a charge found with no span (``_date_old_charge``). Review wksfu2's finding 11 was the second
+    writing its own stamp with no floor: such a charge is not always in the past of what is recorded, as the operator's own
+    ``reserve`` still writes a reservation with no span."""
     trees = _package_trees()
     stamps = sorted({(name, _enclosing(tree, node)) for name, tree in trees.items() for node in ast.walk(tree)
                      if isinstance(node, ast.Constant) and isinstance(node.value, str)
                      and re.search(r"INSERT\s+(?:OR\s+\w+\s+)?INTO\s+week_settled\b", node.value, re.I)})
-    assert stamps == [("g6.operator.store", "_date_old_charge"), ("g6.operator.store", "_settle")], stamps
-    settle = next(f for f in _functions(trees["g6.operator.store"]) if f.name == "_settle")
-    assert "_kept_times(" in ast.unparse(settle)
+    assert stamps == [("g6.operator.store", "_stamp")], stamps
+    functions = {f.name: ast.unparse(f) for f in _functions(trees["g6.operator.store"])}
+    assert "_kept_times(" in functions["_stamp"]
+    callers = sorted(name for name, text in functions.items() if "self._stamp(" in text)
+    assert callers == ["_date_old_charge", "_settle"], callers
 
 
 # 4. A caller's value is converted once, where it enters, and only that is used (review wksfu1) ------------------------------------

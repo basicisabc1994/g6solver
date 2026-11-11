@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from typing import Any
 
 ACCOUNTS = ("model", "cash")
-_SLACK = 1e-9   # float sums such as 0.1 + 0.2 must not read as over a cap they meet exactly
+_SLACK = 1e-9   # the share of a cap a sum may pass it by: 0.1 + 0.2 must not read as over the 0.3 it meets exactly
 
 
 def kind_of(value: Any) -> str:
@@ -76,6 +76,25 @@ def cap_of(caps: Mapping[str, Any] | None, account: str) -> float | None:
     return number if number is not None and number >= 0 else None
 
 
+def over(total: float, cap: float) -> bool:
+    """Whether ``total`` is past ``cap``: the one comparison of a sum with a limit, for this module's stop check and for the
+    loop's weekly ceiling alike (``g6.self_maintenance.pacing``). The slack is a share of the cap, so it is as small as the
+    cap is: a float sum that meets its cap is not over it, nothing past a cap by more than that share is under it at any
+    scale, and a cap of zero has no slack at all. Only a total shown to be within the cap is: one that does not compare (a
+    NaN, an infinity, a sum that overflowed) is over."""
+    return not total - cap <= _SLACK * cap
+
+
+def _committed(committed: Mapping[str, Any], account: str) -> float | None:
+    """What ``committed`` holds for ``account`` as a plain number (``exact_number``), 0 when it names none; ``None`` when
+    it cannot be read, or is no number."""
+    try:
+        raw = committed.get(account, 0.0)
+    except Exception:  # noqa: BLE001 - a sum that cannot be read is not zero
+        return None
+    return exact_number(raw)
+
+
 def stop_reason(venture: Mapping[str, Any], committed: Mapping[str, float]) -> str | None:
     """Why the venture may not start new work this month, or None when it may.
 
@@ -86,8 +105,10 @@ def stop_reason(venture: Mapping[str, Any], committed: Mapping[str, float]) -> s
         cap = cap_of(venture.get("caps"), account)
         if cap is None:
             return f"no valid {account} budget is set; an unknown budget stops the venture"
-        used = float(committed.get(account, 0.0))
-        if used > cap + _SLACK:
+        used = _committed(committed, account)
+        if used is None:
+            return f"what is committed on {account} cannot be read as a number, which stops the venture"
+        if over(used, cap):
             return f"budget_exhausted: {account} {used:.2f} is over this month's cap of {cap:.2f}"
     return None
 
@@ -101,8 +122,10 @@ def spend_refusal(venture: Mapping[str, Any], committed: Mapping[str, float], ac
     cap = cap_of(venture.get("caps"), account)
     if cap is None:
         return f"no valid {account} budget is set; an unknown budget stops the venture"
-    used = float(committed.get(account, 0.0))
-    if used + amount > cap + _SLACK:
-        return (f"budget_exhausted: committing {amount:.2f} would take {account} to {used + amount:.2f}, "
+    used, value = _committed(committed, account), exact_number(amount)
+    if used is None or value is None or value < 0:
+        return f"what is committed on {account}, or the amount to commit, cannot be read as a number, so it is not committed"
+    if over(used + value, cap):
+        return (f"budget_exhausted: committing {value:.2f} would take {account} to {used + value:.2f}, "
                 f"over this month's cap of {cap:.2f}")
     return None

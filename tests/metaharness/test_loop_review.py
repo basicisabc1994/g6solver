@@ -355,7 +355,7 @@ def _source_copy(folder: Path) -> Path:
 
 @pytest.mark.parametrize("name,old,new", [
     ("operator/store.py", "charged = float(metered)", "charged = 0.0"),            # the reviewer's edit
-    ("operator/gates.py", "if used + amount > cap + _SLACK:", "if False:"),
+    ("operator/gates.py", "if over(used + value, cap):", "if False:"),
     ("core/vault.py", "return any(_inside(real, root) for root in self.roots)", "return False"),
     ("integrity/__init__.py", "return _sha(manifest_text(manifest).encode(\"utf-8\"))", "return \"\""),
     ("self_maintenance/constraints.py", "ranked = sorted(", "ranked = list("),
