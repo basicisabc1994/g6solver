@@ -236,7 +236,7 @@ FAR_OFF = int(datetime(2050, 1, 1, tzinfo=UTC).timestamp())
 
 def test_a_reset_past_the_end_of_its_own_window_is_no_reset():
     got = limits_reading(_limits(100, resets=FAR_OFF), WINDOW, NOW)
-    assert got.limited_until == NOW + usage.REFRESH and got.resets_at == WINDOW.week_end(NOW)
+    assert got.limited_until == NOW + usage.REFRESH and got.resets_at is None      # none is made up in its place
 
 
 def test_a_reset_with_no_stated_window_is_held_to_a_week():
@@ -253,7 +253,16 @@ def test_a_limit_with_a_reset_past_its_window_holds_no_folder_for_decades():
 def test_a_figure_with_a_reset_past_its_window_stands_no_longer_than_the_week():
     reader = AccountReader((WINDOW,), ask={"codex": lambda: _limits(40, resets=FAR_OFF)})
     reader.refresh(NOW)
-    assert reader.readings["codex"].resets_at == WINDOW.week_end(NOW)
+    assert reader.readings["codex"].resets_at is None           # the reply's own reset cannot be believed, and none is made up
+    week_end = WINDOW.week_end(NOW)
+    store = OperatorStore(":memory:", clock=lambda: NOW)
+    try:
+        meter = BudgetMeter((WINDOW,), store=store, read_account=reader)
+        assert meter.reading("codex", week_end - timedelta(minutes=1)).used == 400.0
+        gone = meter.reserve("codex", week_end + timedelta(minutes=1), 1)   # the week the store puts the reading in is over
+        assert not gone.admitted and "not known" in gone.reason
+    finally:
+        store.close()
 
 
 def test_a_reset_as_long_as_its_window_is_taken():
@@ -363,7 +372,7 @@ def test_only_a_provider_whose_tool_reports_is_read():
 def test_asking_the_reader_never_runs_the_tool_so_a_tick_starts_no_process():
     tool = Tool(_limits(25))
     reader = AccountReader((WINDOW,), ask={"codex": tool})
-    assert reader("codex", START) is None and tool.calls == 0
+    assert reader("codex", START).unread and tool.calls == 0     # asked of nothing yet, the account is not known
 
 
 def test_the_tool_is_asked_at_most_once_in_a_while():
@@ -396,11 +405,21 @@ def test_the_week_a_tool_reports_reaches_the_meter_and_is_said():
 
 
 def test_a_reply_with_no_reset_stays_on_the_week_the_tool_last_reported():
-    """A figure with no reset of its own falls back on the window's week, so that week must be the one the tool reported."""
+    """A figure with no reset of its own falls back on the week the tool last reported, which is the store's to keep: the
+    reader hands on no reset the reply did not give, and the meter stays on the store's grid."""
     reader = AccountReader((WINDOW,), ask={"codex": Tool(_limits(25, resets=OFF_THE_GRID), _limits(30, resets=None))})
-    reader.refresh(NOW)
-    reader.refresh(NOW + usage.REFRESH)
-    assert reader("codex", START).resets_at == datetime.fromtimestamp(OFF_THE_GRID, UTC)
+    reported = datetime.fromtimestamp(OFF_THE_GRID, UTC)
+    store = OperatorStore(":memory:", clock=lambda: NOW)
+    try:
+        meter = BudgetMeter((WINDOW,), store=store, read_account=reader)
+        reader.refresh(NOW)
+        assert meter.reading("codex", NOW).ends == reported
+        later = NOW + usage.REFRESH
+        reader.refresh(later)
+        assert reader("codex", START).resets_at is None and reader("codex", START).used == 300.0
+        assert meter.reading("codex", later).ends == reported and meter.scope.week_grid("codex") == reported
+    finally:
+        store.close()
 
 
 def test_a_reset_passing_is_read_at_once_and_not_up_to_a_refresh_later():
@@ -474,13 +493,21 @@ def test_a_figure_kept_through_a_failure_goes_when_its_own_reset_passes():
 
 
 def test_a_figure_read_with_no_reset_goes_when_the_providers_week_ends():
+    """The week is the one the store's grid puts the reading in, as the reply named none: the meter lets the figure go."""
     week_end = START + timedelta(days=7)
     reader = AccountReader((WINDOW,), ask={"codex": Tool(_limits(25, resets=None), usage.UsageUnavailable("down"))})
-    reader.refresh(NOW)
-    reader.refresh(week_end - timedelta(minutes=1))
-    assert reader("codex", START).used == 250.0
-    reader.refresh(week_end + usage.REFRESH)
-    assert reader("codex", START).unread
+    store = OperatorStore(":memory:", clock=lambda: NOW)
+    try:
+        meter = BudgetMeter((WINDOW,), store=store, read_account=reader)
+        reader.refresh(NOW)
+        reader.refresh(week_end - timedelta(minutes=1))
+        assert reader("codex", START).used == 250.0
+        assert meter.reading("codex", week_end - timedelta(minutes=1)).used == 250.0
+        reader.refresh(week_end + usage.REFRESH)
+        gone = meter.reserve("codex", week_end + usage.REFRESH, 1)
+        assert not gone.admitted and "not known" in gone.reason
+    finally:
+        store.close()
 
 
 def test_a_reply_with_no_week_in_it_leaves_the_figure_and_adds_its_limit():

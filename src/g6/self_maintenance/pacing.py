@@ -99,7 +99,8 @@ def read_settings(root: str | Path) -> dict[str, Any]:
 
 
 def windows_from(settings: Mapping[str, Any]) -> tuple[ProviderWindow, ...]:
-    """The provider windows a settings file declares; a ``ValueError`` when there are none, or one makes no sense. Each
+    """The provider windows a settings file declares; a ``ValueError`` when there are none, one makes no sense, or two
+    are of one provider (``windows_by_provider``). Each
     value is handed to the window as the file gave it, which reads it by the one rule for its kind (``exact_text``,
     ``amount_of``, ``exact_number``): nothing is turned into a number or a text on its way there, so a text that spells a
     number, a flag and a number of a caller's own class are refused as they would be anywhere else."""
@@ -107,11 +108,25 @@ def windows_from(settings: Mapping[str, Any]) -> tuple[ProviderWindow, ...]:
     if not isinstance(rows, list) or not rows:
         raise ValueError(f"{SETTINGS_FILE} needs windows: a list of at least one provider's week")
     try:
-        return tuple(ProviderWindow(row["provider"], row["allowance"], utc(datetime.fromisoformat(exact_text(row["week_start"]))),
-                                    row.get("reserve_share", 0.2), row.get("estimated", True) is not False)
-                     for row in rows)
+        found = tuple(ProviderWindow(row["provider"], row["allowance"], utc(datetime.fromisoformat(exact_text(row["week_start"]))),
+                                     row.get("reserve_share", 0.2), row.get("estimated", True) is not False)
+                      for row in rows)
     except (KeyError, TypeError, AttributeError) as exc:
         raise ValueError(f"{SETTINGS_FILE}: a window needs provider, allowance and week_start ({exc!r})") from None
+    windows_by_provider(found)
+    return found
+
+
+def windows_by_provider(windows: Sequence[ProviderWindow]) -> dict[str, ProviderWindow]:
+    """``windows`` by the provider each is of: the one way a list of windows becomes what a meter or a reader looks a
+    provider up in. A provider named twice is a ``ValueError``: two allowances for one account are two caps, and taking
+    either would spend past the other without a word."""
+    found: dict[str, ProviderWindow] = {}
+    for window in windows:
+        if window.provider in found:
+            raise ValueError(f"{window.provider} is given two windows: one provider has one allowance and one week")
+        found[window.provider] = window
+    return found
 
 
 def target(allowance: float, day: int) -> float:
@@ -209,15 +224,18 @@ class Admission:
 def _used(held: Sequence[Held], account: AccountReading | None) -> tuple[float, bool]:
     """What a week has used, from the reservations that overlap it, and whether the account's figure is what set it. A
     charge settled by the time the figure was read may already be in it, so the larger of the two stands. A charge settled
-    after it cannot be, nor can one with no time, nor a reservation still open, so each goes on top. A reading with no
-    time of its own cannot say which charges it holds, so every charge goes on top of it: high, never low."""
-    pending = sum(h.amount for h in held if h.charged is None)
-    charged = sum(h.charged for h in held if h.charged is not None)
+    after it cannot be, nor can one with no time, nor a reservation still open, so each goes on top. The store stamps every
+    settlement it writes after a reading was given to the meter later than that reading (``OwnerScope.keep_reading``), so
+    a charge whose stamp is not after a reading's time was written before that reading reached the meter. A reading with
+    no time of its own cannot say which charges it holds, so every charge goes on top of it: high, never low. The sums
+    are exact (``math.fsum``)."""
+    pending = math.fsum(h.amount for h in held if h.charged is None)
+    charged = math.fsum(h.charged for h in held if h.charged is not None)
     if account is None:
         return charged + pending, False
     read_at = account.read_at
-    since = sum(h.charged for h in held
-                if h.charged is not None and (read_at is None or h.settled is None or h.settled > read_at))
+    since = math.fsum(h.charged for h in held
+                      if h.charged is not None and (read_at is None or h.settled is None or h.settled > read_at))
     figure = account.used + since
     above = figure > charged
     return (figure if above else charged) + pending, above
@@ -227,8 +245,9 @@ class BudgetMeter:
     def __init__(self, windows: Sequence[ProviderWindow], *, store: OperatorStore,
                  read_account: Callable[[str, datetime], AccountReading | None] | None = None) -> None:
         """``read_account(provider, now)``: what the account says at ``now``, or ``None``."""
-        self.windows = {w.provider: w for w in windows}
+        self.windows = windows_by_provider(windows)
         self.scope = store.for_owner(OWNER)
+        self.scope.ask_reader = self._account        # before the store stamps or admits, it hears the reading held now
         self._read_account = read_account
         self._limits: dict[str, datetime] = {}
 
@@ -242,7 +261,10 @@ class BudgetMeter:
 
     def _account(self, provider: str, now: datetime) -> AccountReading | None:
         """The one reader of what ``read_account`` hands back, for every use of it: an ``AccountReading`` of that very class,
-        or ``None`` for no reading. Anything else it gives, and any failure of its own, is an unread reading."""
+        or ``None`` for no reading. Anything else it gives, and any failure of its own, is an unread reading. This is where
+        a reading reaches the meter, whoever made it and whether or not it names a reset, so this is where the store is
+        told when it was taken (``OwnerScope.keep_reading``): before the meter looks, and, as the store asks here before
+        it stamps or admits (``ask_reader``), before any settlement or adoption written after the reading was taken."""
         now = utc(now)
         if self._read_account is None:
             return None
@@ -250,9 +272,12 @@ class BudgetMeter:
             given = self._read_account(provider, now)
         except Exception as exc:  # noqa: BLE001 - a reader that fails says nothing of the account, whatever it raised
             return AccountReading(unread=f"what reads the account failed ({kind_of(exc)})")
-        if given is None or type(given) is AccountReading:
-            return given
-        return AccountReading(unread=f"what reads the account gave a {kind_of(given)}, not a reading")
+        if given is None:
+            return None
+        if type(given) is not AccountReading:
+            return AccountReading(unread=f"what reads the account gave a {kind_of(given)}, not a reading")
+        self.scope.keep_reading(provider, given.read_at)
+        return given
 
     def limit_reached(self, provider: str, until: datetime) -> None:
         """A limit a request ran into, which the account's figure may not show yet: it stands as a reported one does. It
@@ -278,28 +303,34 @@ class BudgetMeter:
         where they fall now moves it there. That moves no reservation: each counts in whichever week its span overlaps.
         Any reservation of this provider written with no span, as the book code wrote them and the operator's own
         ``reserve`` still can, is read into its span first (``OwnerScope.adopt_books``), inside the same transaction when
-        this decides an admission; one that cannot be read refuses every reservation, with why, until a person looks."""
+        this decides an admission; one that cannot be read refuses every reservation, with why, until a person looks. The
+        account is read before that, so the store knows of the reading before it stamps any charge it finds. Only a reset
+        the reading itself names moves the kept week. A figure whose reading names none is of the week the store's own
+        grid puts that reading in, and stands no longer than that week."""
         now = utc(now)
         window = self.windows.get(provider)
         if window is None:
             return Admission(provider, 0, 0.0, 0.0, 0.0, False, reason=f"no budget window for {provider!r}"), None, now
+        given = self._account(provider, now)
         refused = self.scope.adopt_books((provider,)).get(provider, "")
         try:
             grid, grid_at = self.scope.kept_grid(provider)
         except ValueError as exc:
             grid, grid_at, refused = None, None, refused or f"where {provider}'s weeks fall cannot be read from operator.db ({exc})"
-        given = self._account(provider, now)
         account = standing(given, now)
-        if account is not None and account.unread:
-            refused = refused or (f"{provider}'s account is not known ({account.unread}), so nothing is reserved on it until "
-                                  "it is read again")
         reset = (account.resets_at or account.ended_at) if account is not None else None
+        named = account is not None and account.resets_at is not None      # the reading itself says when its week ends
         if reset is not None:              # a grid moves only forward: the store keeps the newer reading's (``keep_grid``)
             read_at = given.read_at if given is not None else None
             if (grid, grid_at) != (reset, read_at):
                 grid, grid_at = self.scope.keep_grid(provider, reset, read_at)
         if grid is not None:
             window = self.windows[provider] = window.aligned(grid)
+        if account is not None and not account.unread and account.resets_at is None and account.read_at is not None:
+            account = standing(replace(account, resets_at=window.week_end(account.read_at)), now)
+        if account is not None and account.unread:
+            refused = refused or (f"{provider}'s account is not known ({account.unread}), so nothing is reserved on it until "
+                                  "it is read again")
         start, day = window.place(now)
         try:
             held = self.scope.week_held(provider, _ACCOUNT, start, start + _WEEK)
@@ -310,7 +341,7 @@ class BudgetMeter:
         reported = account.limited_until if account is not None else None
         wait = max((at for at in (reported, utc(self._limits.get(provider))) if at is not None), default=None)
         limited = wait is not None and now < wait
-        won = reset is not None and grid == reset and account.resets_at is not None       # the reading's own reset stands
+        won = reset is not None and grid == reset and named                              # the reading's own reset stands
         ends = (reset if won else None) or window.week_end(now)
         reason = refused or (f"at a reported limit; waiting for the reset at {wait.isoformat()}" if limited else "")
         return Admission(provider, day, used, target(window.allowance, day),
@@ -389,4 +420,4 @@ class BudgetMeter:
 
 
 __all__ = ["REFRESH", "AccountReading", "Admission", "BudgetMeter", "ProviderWindow", "SETTINGS_FILE", "ceiling",
-           "figure_of", "read_settings", "standing", "target", "utc", "windows_from"]
+           "figure_of", "read_settings", "standing", "target", "utc", "windows_by_provider", "windows_from"]

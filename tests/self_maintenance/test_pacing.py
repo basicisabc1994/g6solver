@@ -127,8 +127,10 @@ def test_the_whole_accounts_use_counts_and_the_loop_gives_way():
 
 
 def test_the_ledger_is_never_read_below_what_the_loop_itself_committed():
-    meter = _meter(read_account=lambda provider, start: AccountReading(used=10, read_at=_day(3) + timedelta(hours=1)))
+    readings = [None]                                            # the reading is taken an hour after the settlement
+    meter = _meter(read_account=lambda provider, start: readings[0])
     _settle_at(meter, meter.reserve("claude", _day(3), 300), 300, _day(3))
+    readings[0] = AccountReading(used=10, read_at=_day(3) + timedelta(hours=1))
     assert meter.reading("claude", _day(3) + timedelta(hours=1)).used == 300
 
 
@@ -237,8 +239,10 @@ def test_7_a_pending_reservation_adds_to_what_the_account_reports():
 
 
 def test_7_a_charge_can_already_be_in_the_accounts_figure_so_it_does_not_add():
-    meter = _meter(read_account=lambda provider, start: AccountReading(used=350, read_at=_day(3) + timedelta(hours=1)))
+    readings = [None]
+    meter = _meter(read_account=lambda provider, start: readings[0])
     _settle_at(meter, meter.reserve("claude", _day(3), 200), 100, _day(3))   # settled before it was read: the 350 may include it
+    readings[0] = AccountReading(used=350, read_at=_day(3) + timedelta(hours=1))
     assert meter.reading("claude", _day(3) + timedelta(hours=1)).used == 350
 
 
@@ -263,9 +267,10 @@ def test_7_the_estimate_flag_follows_whichever_figure_was_used():
     meter = _meter(read_account=lambda provider, start: AccountReading(used=350, estimated=True))
     meter.reserve("claude", _day(3), 200)
     assert meter.reading("claude", _day(3)).estimated
-    quiet = _meter(read_account=lambda provider, start: AccountReading(used=10, estimated=True,
-                                                                       read_at=_day(3) + timedelta(hours=1)))
+    readings = [None]
+    quiet = _meter(read_account=lambda provider, start: readings[0])
     _settle_at(quiet, quiet.reserve("claude", _day(3), 100), 100, _day(3))
+    readings[0] = AccountReading(used=10, estimated=True, read_at=_day(3) + timedelta(hours=1))
     assert not quiet.reading("claude", _day(3) + timedelta(hours=1)).estimated
 
 # Finding 8: the ceiling is checked in the transaction that reserves --------------------------------------------------------
@@ -405,9 +410,10 @@ def test_another_connections_charge_after_a_snapshot_is_not_absorbed_into_its_ba
 
 
 def test_a_charge_settled_when_a_reading_was_taken_may_be_in_it():
-    reading = AccountReading(used=300, read_at=_day(3))
-    meter = _meter(read_account=lambda *_: reading)
+    readings = [None]                         # settled first, and the reading is taken in that same instant: it may hold it
+    meter = _meter(read_account=lambda *_: readings[0])
     _settle_at(meter, meter.reserve("claude", _day(3) - timedelta(minutes=5), 200), 200, _day(3))
+    readings[0] = AccountReading(used=300, read_at=_day(3))
     assert meter.reading("claude", _day(3)).used == 300
 
 
@@ -837,7 +843,8 @@ def test_an_old_charge_is_dated_a_second_after_the_ledger_wrote_it(tmp_path):
     store = OperatorStore(path, clock=_Clock())
     try:
         later = now + timedelta(seconds=30)
-        after = BudgetMeter((window,), store=store, read_account=lambda *_: AccountReading(used=500, read_at=later))
+        assert BudgetMeter((window,), store=store).reading("codex", later).used == 200     # read into its span before any
+        after = BudgetMeter((window,), store=store, read_account=lambda *_: AccountReading(used=500, read_at=later))  # reading
         assert after.reading("codex", later).used == 500
         before = BudgetMeter((window,), store=store,
                              read_account=lambda *_: AccountReading(used=500, read_at=now - timedelta(minutes=1)))

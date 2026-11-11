@@ -1088,9 +1088,15 @@ def _account(percent: int) -> dict:
     return {"rateLimits": {"primary": {"usedPercent": percent, "windowDurationMins": 10080, "resetsAt": WEEK_END.timestamp()}}}
 
 
-def _reading(tmp_path, ask, **kw):
-    """A loop whose account is read just before an evaluation, as ``open_loop`` makes one, and no read otherwise."""
-    reader = AccountReader(SETTINGS.windows, ask={"claude": ask})
+def _reading(tmp_path, ask, *, first=True, **kw):
+    """A loop whose account is read just before an evaluation, as ``open_loop`` makes one, and no read otherwise but the one
+    a runner makes before a tick: a reader that has never read knows nothing of the account, and nothing is reserved on it
+    (review wksfu3, finding 5). That first read says nothing is used, is none of ``ask``'s, and is taken a second before
+    the loop's clock, as a runner's read comes before its tick; ``first=False`` leaves it to the test."""
+    replies = [_account(0)] if first else []
+    reader = AccountReader(SETTINGS.windows, ask={"claude": lambda: replies.pop() if replies else ask()})
+    if first:
+        reader.refresh((kw["now"]() if "now" in kw else NOW) - timedelta(seconds=1))
     return _enrolled(tmp_path, read_account=reader, read_now=reader.read_now, **kw)
 
 
@@ -1141,7 +1147,7 @@ def test_a_tick_with_nothing_to_evaluate_reads_nothing(tmp_path):
 
 def test_a_tick_is_read_once_whatever_the_reader_read_just_before_it(tmp_path):
     asked = []
-    loop, _ = _reading(tmp_path, lambda: asked.append(1) or _account(5))
+    loop, _ = _reading(tmp_path, lambda: asked.append(1) or _account(5), first=False)
     loop.meter._read_account.refresh(NOW)
     assert loop.tick()["outcome"] == "adopted" and len(asked) == 2
 

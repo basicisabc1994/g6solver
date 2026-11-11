@@ -79,7 +79,15 @@ from g6.core.llm import LLMError
 from g6.core.outside import clean_environment, find_program
 from g6.core.process_tree import ProcessTreeError
 from g6.operator.gates import exact_number, kind_of
-from g6.self_maintenance.pacing import REFRESH, AccountReading, ProviderWindow, figure_of, standing, utc
+from g6.self_maintenance.pacing import (
+    REFRESH,
+    AccountReading,
+    ProviderWindow,
+    figure_of,
+    standing,
+    utc,
+    windows_by_provider,
+)
 
 MODEL_REFUSED = "G6_E_MODEL_REFUSED"
 #: Claude Code's ``api_error`` values that say something other than the model's own reply stopped the turn.
@@ -97,6 +105,8 @@ _ASKED = ({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "g
           {"id": 2, "method": READ_LIMITS, "params": {"excludeResetCreditDetails": True}})
 # COPY: Why a provider has no account figure.
 NOT_REPORTED = "its tool reports no usage without a model call, so the meter counts model calls"
+# COPY: A provider whose tool reports, before it has been read.
+NOT_READ = "its usage has not been read yet"
 #: The start of what a request raises at a limit, which is G6's own words. A server's body comes after them. Of what a host
 #: program prints, only the two JSON fields of a Claude Code error result: see the module docstring for why. The search for
 #: them ends at the next caller's failure, whose text a model may have written.
@@ -281,7 +291,10 @@ def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datet
     makes no sense loses the whole reply, since a reply that wrong says nothing about the rest. A limit whose reset has
     passed is still a limit, so it is looked at again as one with no reset is. A week whose own reset has passed is another
     matter: a tool that has not caught up is saying last week's use, so that figure is left out and nothing stands for it.
-    That reset is kept apart as ``ended_at``: it says where the provider's weeks fall, and it ends no tick."""
+    That reset is kept apart as ``ended_at``: it says where the provider's weeks fall, and it ends no tick. A reading's
+    ``resets_at`` is the provider's own word or nothing: when the reply names no reset that can be believed the reading
+    names none, and the meter puts its figure in the week the store's own grid says (``BudgetMeter._look``). No reset is
+    made up here: one that was would move the kept week as if the provider had said it."""
     now = utc(now)
     try:
         snapshot, allowed = limits.get("rateLimits"), limits.get("ordinaryUsageAllowed")
@@ -303,7 +316,7 @@ def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datet
     if week is None:
         return AccountReading(limited_until=until)
     return AccountReading(used=window.allowance * week["usedPercent"] / FULL, estimated=False, limited_until=until,
-                          resets_at=_reset(week, now) or window.week_end(now))
+                          resets_at=_reset(week, now))
 
 
 def _holds(reading: AccountReading | None) -> bool:
@@ -319,15 +332,18 @@ class AccountReader:
     count. A read that fails, a process that does not end cleanly (``_ran``) among them, or a reply that does not read,
     says nothing new, so the last good reading stands while ``standing`` keeps it, and what is charged meanwhile goes on
     top. Past that the account is not known, and nothing is admitted on it until a read succeeds: the owner uses this
-    account too, so a broken tool must not make the meter read low. This is held in memory, so a restart whose first read
-    fails knows nothing, and admits nothing."""
+    account too, so a broken tool must not make the meter read low. This is held in memory, and every provider whose tool
+    is asked starts unread: before its first read, and after a restart or a read that ends in any way without a reading,
+    it is not known, and admits nothing. Where a provider's weeks fall is the store's to keep, and is not kept here."""
 
     def __init__(self, windows: Sequence[ProviderWindow],
                  ask: Mapping[str, Callable[[], Mapping[str, Any] | None]] | None = None) -> None:
-        self.windows = {w.provider: w for w in windows}
+        self.windows = windows_by_provider(windows)
         self.ask = {"codex": codex_limits} if ask is None else ask
-        self.readings: dict[str, AccountReading] = {}
-        self.said = {provider: NOT_REPORTED for provider in self.windows}
+        asked = set(self.windows) & set(self.ask)
+        self.readings: dict[str, AccountReading] = {provider: AccountReading(unread=NOT_READ) for provider in asked}
+        self.said = {provider: f"{NOT_READ}, so nothing is reserved on it until it is read" if provider in asked
+                     else NOT_REPORTED for provider in self.windows}
         self._asked: datetime | None = None
 
     def _lapsed(self, now: datetime) -> bool:
@@ -363,8 +379,7 @@ class AccountReader:
                 continue
             self.readings[provider] = replace(found, read_at=now)
             self.said[provider] = f"reported by its own tool at {now.isoformat(timespec='minutes')}"
-            if found.resets_at is not None:      # so a reply with no reset falls back on the week the tool last reported
-                self.windows[provider] = self.windows[provider].aligned(found.resets_at)
+            if found.resets_at is not None:
                 self.said[provider] += f"; its week ends at {found.resets_at.isoformat(timespec='minutes')}"
 
     def read_now(self, now: datetime) -> None:

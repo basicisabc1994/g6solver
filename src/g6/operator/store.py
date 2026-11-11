@@ -17,12 +17,18 @@ began. It is filed under the week it was made in, for good: nothing moves betwee
 fall elsewhere, and a reading counts every reservation whose span, from its start to its settlement or, while open, on
 without end, overlaps the week it reads (``week_held``).
 
+The store's own times never go backwards, whatever its clock does. It records the time of every reading of a provider's
+account its meter is given (``keep_reading``), before it writes any stamp. A settlement is stamped after the newest of
+those and no earlier than the newest stamp (``_stamp``), and a reservation is refused while the clock reads earlier than
+either (``reserve_span``): the week an admission is checked in is never one the store has already left.
+
 Every instant that enters this module goes through ``utc`` first, so two renderings of one instant are one instant: two
 times in one zone compare by their wall clocks, which repeat in the hour a clock goes back.
 """
 from __future__ import annotations
 
 import json
+import math
 import os
 import sqlite3
 import threading
@@ -60,6 +66,8 @@ CREATE TABLE IF NOT EXISTS week_spans (ref TEXT PRIMARY KEY, owner TEXT NOT NULL
 CREATE INDEX IF NOT EXISTS week_spans_by_start ON week_spans (owner, provider, start_us);
 CREATE TABLE IF NOT EXISTS week_settled (ref TEXT PRIMARY KEY, at_us INTEGER NOT NULL CHECK (typeof(at_us) = 'integer'));
 CREATE TABLE IF NOT EXISTS week_ticks (ref TEXT PRIMARY KEY, tick TEXT NOT NULL CHECK (length(tick) > 0));
+CREATE TABLE IF NOT EXISTS week_readings (owner TEXT NOT NULL, provider TEXT NOT NULL,
+    read_us INTEGER NOT NULL CHECK (typeof(read_us) = 'integer'), PRIMARY KEY (owner, provider));
 CREATE TRIGGER IF NOT EXISTS week_settled_after_start BEFORE INSERT ON week_settled
     WHEN NEW.at_us < (SELECT start_us FROM week_spans WHERE ref = NEW.ref)
 BEGIN SELECT RAISE(ABORT, 'a settlement cannot end before its reservation began'); END;
@@ -264,6 +272,9 @@ class OwnerScope:
         if name is None or not name.strip():
             raise ValueError("an owner scope needs an owner")
         self.store, self.owner, self.conn = store, name, store.conn
+        #: Set by a meter on this scope: called with a provider and a moment before the store reads what it has recorded
+        #: of the provider's times (``_kept_times``), so the reading the meter can be given now is recorded first.
+        self.ask_reader: Callable[[str, datetime], Any] | None = None
 
     def resolve(self, venture_id: str) -> str:
         """The venture's id as the store holds it, which is all that is used after this. An id that is not text names no
@@ -331,26 +342,32 @@ class OwnerScope:
         Whatever fails, and however (an error or an interrupt), nothing a failed transaction or step wrote is kept. The
         outer transaction's begin, its work and its commit are one guarded step: when any of them fails it is rolled back
         and the connection is asked whether it did (``_abandon``); a rollback that cannot be shown to have happened poisons
-        the store, which then refuses every transaction and script. A step whose undo fails marks the transaction it is in
-        (``_undo``): no further step starts in it, and it is rolled back whole when it ends."""
+        the store, which then refuses every transaction and script. A step whose savepoint fails, or whose undo fails
+        (``_undo``), marks the transaction it is in: a savepoint that failed may still be there, under the name the next
+        step at its depth takes, where a later undo would roll back to it. A marked transaction is rolled back whole when
+        it ends, and every step in it from then on ends in that error, so none is told it was kept."""
         store = self.store
         with store._writing:
             if store.poisoned:
                 raise sqlite3.OperationalError(f"nothing more is written on this connection: {store.poisoned}")
             depth = getattr(store._held, "depth", 0)
-            if depth and store._held.broken:
-                raise sqlite3.OperationalError(f"nothing of this transaction is kept: {store._held.broken}")
             store._held.depth = depth + 1
             try:
                 if depth:
                     point = f"g6_step_{depth}"
-                    self.conn.execute(f"SAVEPOINT {point}")
+                    try:
+                        self.conn.execute(f"SAVEPOINT {point}")
+                    except BaseException as exc:   # it may have been made all the same: the transaction must not commit
+                        store._held.broken = store._held.broken or f"a step could not be begun ({gates.kind_of(exc)})"
+                        raise
                     try:
                         yield
                         self.conn.execute(f"RELEASE {point}")
                     except BaseException:          # the step, or its own release, failed: nothing of it is left
                         self._undo(point)
                         raise
+                    if store._held.broken:
+                        raise sqlite3.OperationalError(f"nothing of this transaction is kept: {store._held.broken}")
                 else:
                     store._held.broken = ""
                     try:
@@ -369,8 +386,9 @@ class OwnerScope:
 
     def _undo(self, point: str) -> None:
         """Roll a failed step back to its savepoint and release it. When that itself fails, for any reason, an interrupt
-        among them, the step's writes may still be there, so the transaction it is in is marked: no further step starts in
-        it, it can no longer commit, and it is rolled back whole when it ends. An interrupt goes on once that is marked."""
+        among them, the step's writes may still be there, so the transaction it is in is marked: it can no longer commit,
+        every step in it ends in that error, and it is rolled back whole when it ends. An interrupt goes on once that is
+        marked."""
         try:
             self.conn.execute(f"ROLLBACK TO {point}")
             self.conn.execute(f"RELEASE {point}")
@@ -425,10 +443,11 @@ class OwnerScope:
         """Every reservation of ``provider`` on ``account`` whose span overlaps [``start``, ``end``), as it stands, in one
         read, so a settlement on another connection is all in it or not at all.
 
-        A reservation's span runs from its start to when it was settled. While it is open it runs on without end, as a
-        request it sent may still come back and be charged, so it counts in every week from its start until it is settled;
-        so does a charge the book code made with no time of its own. Every amount is read as one (``stored_amount``): one
-        that does not read is a ``ValueError``, never zero."""
+        A reservation's span runs from its start to when it was settled. While it is open it has no end, as a request it
+        sent may still come back and be charged, so it counts in every week until it is settled, whatever its start: a
+        clock set back over a week's end must not read the week before as empty of it. So does a charge the book code made
+        with no time of its own. Every amount is read as one (``stored_amount``): one that does not read is a
+        ``ValueError``, never zero. Amounts are summed exactly (``math.fsum``)."""
         start, end = utc(start), utc(end)
         provider, account = _name(provider, "a provider"), _name(account, "an account")
         rows = self.conn.execute(
@@ -436,15 +455,16 @@ class OwnerScope:
             " FROM week_spans s JOIN ledger l ON l.ref = s.ref"
             " JOIN ventures v ON v.venture_id = l.venture_id AND v.owner = s.owner"
             " LEFT JOIN week_settled t ON t.ref = s.ref"
-            " WHERE s.owner = ? AND s.provider = ? AND l.account = ? AND s.start_us < ? AND (t.at_us IS NULL OR t.at_us >= ?)"
+            " WHERE s.owner = ? AND s.provider = ? AND l.account = ? AND (t.at_us IS NULL OR (s.start_us < ? AND t.at_us >= ?))"
             " ORDER BY l.seq", _plain(self.owner, provider, account, _us(end), _us(start))).fetchall()
         found: dict[str, dict[str, Any]] = {}
         for row in rows:
-            held = found.setdefault(row["ref"], {"settled": row["settled"], "reserve": None, "charge": None})
+            held = found.setdefault(row["ref"], {"settled": row["settled"], "reserve": [], "charge": []})
             if row["kind"] in ("reserve", "charge"):
-                held[row["kind"]] = (held[row["kind"]] or 0.0) + stored_amount(row["amount"])
-        return [Held(held["reserve"], held["charge"], None if held["settled"] is None else _moment(held["settled"]))
-                for held in found.values() if held["reserve"] is not None]
+                held[row["kind"]].append(stored_amount(row["amount"]))
+        return [Held(math.fsum(held["reserve"]), math.fsum(held["charge"]) if held["charge"] else None,
+                     None if held["settled"] is None else _moment(held["settled"]))
+                for held in found.values() if held["reserve"]]
 
     def reserve_span(self, provider: str, *, account: str, amount: float, caps: dict[str, float],
                      decide: Callable[[], tuple[str, datetime, datetime, datetime]], tick: str = "") -> tuple[str, str]:
@@ -456,7 +476,13 @@ class OwnerScope:
         change before it is written. A refusal is ``BudgetRefused``, raised once the transaction has ended with no
         reservation in it: what ``decide`` itself kept, such as where the provider's weeks fall, stays kept. ``tick``: the
         tick that makes it, recorded with it, or ``""`` for none (``settle_open``). Every value given is converted once, as it
-        enters, to a plain one (``gates.exact_number``, ``gates.exact_text``), and only that is used."""
+        enters, to a plain one (``gates.exact_number``, ``gates.exact_text``), and only that is used. A reservation is
+        refused while the clock is behind the book: when the start it is given and the store's own clock both read earlier
+        than a time the store has already recorded for the provider (``_kept_times``: a settlement's stamp, a reading). The
+        clock has then been set back, and the week the reservation names may be one the store has left. One microsecond
+        before is not before: the store itself stamps a settlement that far after a reading of the same instant. The
+        store's clock is read only when the start is behind; when it is not behind too, the store and its caller are on
+        two clocks, and the caller's time is taken as it always was."""
         value = gates.amount_of(amount)
         if value is None:
             raise BudgetRefused(f"a reservation must be a finite, positive amount, not a {gates.kind_of(amount)}")
@@ -473,6 +499,12 @@ class OwnerScope:
                 span = _us(week), _us(start), _us(end)
                 if not span[0] <= span[1] < span[2]:
                     raise ValueError("a reservation starts in the week it is made under and ends after it starts")
+                stamps, readings = self._kept_times(self.owner, provider, span[1])
+                recorded = max((*stamps, *readings), default=None)
+                if recorded is not None and span[1] + 1 < recorded and _us(self.store.clock()) + 1 < recorded:
+                    why = (f"the clock reads earlier than a time already recorded for {provider} (a settlement or a reading "
+                           "of its account), so nothing is reserved on it until the clock has caught up")
+            if not why:
                 month = _week_name(week)
                 vid = self._named(f"{provider}@{month}") or self._insert_venture(f"{provider}@{month}", caps)
                 why = self._refusal(vid, month, account, value)
@@ -506,7 +538,7 @@ class OwnerScope:
                 _plain(self.owner, provider, account, 0 if made_by_a_tick is False else 1)).fetchall()
             for row in rows:
                 stored_amount(row["amount"])
-            return sum(self._settle(row["venture_id"], row["ref"], None, None) for row in rows)
+            return math.fsum([self._settle(row["venture_id"], row["ref"], None, None) for row in rows])
 
     def adopt_books(self, providers: Sequence[str]) -> dict[str, str]:
         """Read into spans, once, every reservation of ``providers`` that the book code before spans kept: under a week's
@@ -645,12 +677,13 @@ class OwnerScope:
 
     def _month(self, vid: str, month: str, signs: dict[str, int]) -> dict[str, float]:
         """A month's rows summed per account by ``signs``, each amount read as one (``stored_amount``): a row that does not
-        read is a ``ValueError``, never zero."""
-        totals: dict[str, float] = {}
+        read is a ``ValueError``, never zero. The sum is exact (``math.fsum``): a running sum of floats stops moving once it
+        is large, and every small amount after that would be admitted against a cap already met."""
+        terms: dict[str, list[float]] = {}
         for row in self.conn.execute("SELECT account, kind, amount FROM ledger WHERE venture_id=? AND month=? ORDER BY seq",
                                      _plain(vid, month)):
-            totals[row["account"]] = totals.get(row["account"], 0.0) + signs[row["kind"]] * stored_amount(row["amount"])
-        return totals
+            terms.setdefault(row["account"], []).append(signs[row["kind"]] * stored_amount(row["amount"]))
+        return {account: math.fsum(amounts) for account, amounts in terms.items()}
 
     def _refusal(self, vid: str, month: str, account: str, value: float) -> str:
         """Inside the caller's transaction: why the operator's stop check refuses ``value`` this month, or ``""``. A month
@@ -746,27 +779,61 @@ class OwnerScope:
     def _stamp(self, ref: str, owner: str, provider: str, at: int, start: int) -> None:
         """Inside the caller's transaction: the one statement that stamps a settlement, for one settled now (``_settle``) and
         for a charge found with no stamp (``_date_old_charge``) alike. It is stamped at ``at``, and no earlier than its
-        reservation's start or anything the store has already recorded for the provider (``_kept_times``): one rule, so no
-        charge written after the store kept a reading is dated inside that reading, whichever way it is settled."""
+        reservation's start or anything the store has already recorded for the provider (``_kept_times``): no earlier than
+        the newest stamp already written, and a microsecond after the newest reading, as a settlement written after a
+        reading was given cannot be in that reading's figure. One rule, so no charge written after a reading reached the
+        meter is dated inside that reading, whichever way it is settled."""
+        stamps, readings = self._kept_times(owner, provider, at)
         self.conn.execute("INSERT INTO week_settled VALUES (?, ?)",
-                          _plain(ref, max(at, start, *self._kept_times(owner, provider))))
+                          _plain(ref, max(at, start, *stamps, *(read + 1 for read in readings))))
 
-    def _kept_times(self, owner: str, provider: str) -> list[int]:
-        """Inside the caller's transaction: the floor of a settlement's stamp from what the store has already recorded for
-        the provider, so its stamps never go backwards whatever its clock does. A settlement written after the store kept
-        a reading cannot be in that reading's figure, so it is stamped after it (a microsecond on); and no settlement is
-        stamped before the newest one already written. A kept time that does not read sets no floor: such a grid is
-        refused and replaced by the next reading (``keep_grid``)."""
-        floors = []
+    def keep_reading(self, provider: str, read_at: datetime | None) -> None:
+        """Record that a reading of the provider's account taken at ``read_at`` has been given to the meter: the newest such
+        time, which only moves forward. Every reading is recorded, whether or not it says when the provider's week ends, and
+        before any stamp is written after it (``_kept_times``), so no charge settled after a reading was taken is dated
+        inside it. ``None`` is no time, and records nothing."""
+        read_at = utc(read_at)
+        provider = _name(provider, "a provider")
+        if read_at is None:
+            return
+        at = _us(read_at)
+        kept = self._read_time(self.owner, provider)
+        if kept is not None and kept >= at:
+            return
+        with self.immediate():
+            kept = self._read_time(self.owner, provider)       # looked at again under the lock, before it is written
+            if kept is None or kept < at:
+                self.conn.execute("INSERT OR REPLACE INTO week_readings VALUES (?, ?, ?)", _plain(self.owner, provider, at))
+
+    def _read_time(self, owner: str, provider: str) -> int | None:
+        """The newest time of a reading recorded for the provider (``keep_reading``), or ``None``."""
+        row = self.conn.execute("SELECT read_us FROM week_readings WHERE owner = ? AND provider = ?",
+                                _plain(owner, provider)).fetchone()
+        return row["read_us"] if row is not None and type(row["read_us"]) is int else None
+
+    def _kept_times(self, owner: str, provider: str, at: int) -> tuple[list[int], list[int]]:
+        """Inside the caller's transaction: the times the store has already recorded for the provider, which are the
+        floors of a settlement's stamp (``_stamp``) and of a reservation's start (``reserve_span``) alike, so its times
+        never go backwards whatever its clock does: the newest settlement stamp, and the times of the readings it was
+        given (the newest recorded, with or without a reset, and the one the kept grid came from). Whoever reads the
+        account is asked first (``ask_reader``, at the moment ``at``), so a reading the meter can be given now is recorded
+        before these are read. A kept time that does not read sets no floor: such a grid is refused and replaced by the
+        next reading (``keep_grid``)."""
+        if self.ask_reader is not None and owner == self.owner:
+            self.ask_reader(provider, _moment(at))
+        stamps, readings = [], []
+        read = self._read_time(owner, provider)
+        if read is not None:
+            readings.append(read)
         newest = self.conn.execute("SELECT MAX(t.at_us) FROM week_settled t JOIN week_spans s ON s.ref = t.ref"
                                    " WHERE s.owner = ? AND s.provider = ?", _plain(owner, provider)).fetchone()[0]
         if newest is not None:
-            floors.append(int(newest))
+            stamps.append(int(newest))
         row = self.conn.execute("SELECT read_at FROM week_grids WHERE owner = ? AND provider = ?",
                                 _plain(owner, provider)).fetchone()
         try:
             if row is not None and row["read_at"]:
-                floors.append(_us(_instant(row["read_at"])) + 1)
+                readings.append(_us(_instant(row["read_at"])))
         except ValueError:
             pass
-        return floors
+        return stamps, readings
