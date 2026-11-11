@@ -55,6 +55,7 @@
     "mcp:g6/g6_premortem": {"agent_facing": true, "route": "mission", "since": "0.3.0"},
     "mcp:g6/g6_review_patch": {"agent_facing": true, "route": "review", "since": "0.2.0"},
     "mcp:g6/g6_review_until_clean": {"agent_facing": true, "route": "review", "since": "0.3.0"},
+    "mcp:g6/g6_suggestion_decide": {"agent_facing": true, "route": "workflow", "since": "0.3.0"},
     "mcp:g6/g6_workflow_correct": {"agent_facing": true, "route": "workflow", "since": "0.3.0"},
     "mcp:g6/g6_workflow_delete": {"agent_facing": true, "route": "workflow", "since": "0.3.0"},
     "mcp:g6/g6_workflow_export": {"agent_facing": true, "route": "workflow", "since": "0.3.0"},

@@ -219,6 +219,9 @@ source, `workflow:<the repository's identifier>`, which a grant for the reposito
 - `g6_workflow_correct(repo)` applies the `corrections.json` the person wrote beside it; no argument carries a correction.
 - `g6_workflow_delete(repo, scope, task, run)` deletes a run, a task or the project's record after the person confirms in
   the client's dialog.
+- ``g6_suggestion_decide(repo, task, intervention_id)`` asks the person, in the client's dialog, to adopt, dismiss or reopen
+  one suggestion G6 showed for a task. No argument carries the decision. It answers only once suggestions are switched
+  on, which waits for their measured gate.
 
 What is kept, for how long, and what deletion does: `docs/product_global_specs/workflow_storage_policy.md`.
 

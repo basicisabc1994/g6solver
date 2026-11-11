@@ -29,7 +29,7 @@ and Fit.
   tools search a design space for abstractions that hold up (`references/abstraction.md`).
 - **workflow.** G6's local record of its own review work on a task, off until the person turns it on.
   `g6_workflow_export` writes a file for the person to open, `g6_workflow_correct` applies the corrections file they
-  wrote, and `g6_workflow_delete` asks them in the client's dialog. ``g6_feedback`` keeps feedback they volunteer. Never answer for them.
+  wrote, and `g6_workflow_delete` and `g6_suggestion_decide` ask them in the client's dialog. ``g6_feedback`` keeps feedback they volunteer. Never answer for them.
 ## Deliver a coding task with G6
 
 For a Python task, work in this order.

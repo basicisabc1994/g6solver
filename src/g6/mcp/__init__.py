@@ -17,8 +17,9 @@ client, including in the proposing session, and a failed attempt carries its rec
 Four sharing tools (``g6_cloud_grant``, ``g6_cloud_revoke``, ``g6_cloud_grants``, ``g6_disclosures``)
 use client-dialog grants and a source/provider disclosure ledger (``g6.mcp.cloud_consent``).
 Three workflow-record tools (``g6_workflow_export``, ``g6_workflow_correct``, ``g6_workflow_delete``) let the person look at,
-correct and delete what G6 recorded about its own review work, through files they open and the client's own dialog
-(``g6.mcp.workflow``).
+correct and delete what G6 recorded about its own review work, through files they open and the client's own dialog;
+``g6_suggestion_decide`` asks the person to adopt, dismiss or reopen one suggestion G6 showed, and takes no decision
+itself (``g6.mcp.workflow``).
 Install
 with ``pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"`` and register with ``claude mcp add g6 -- g6-mcp`` (or, for Codex,
 ``codex mcp add g6 -- g6-mcp``). There is no account, key or network service.

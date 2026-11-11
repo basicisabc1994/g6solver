@@ -26,7 +26,9 @@ from g6.harness.workflow import adapters, lifecycle, policy, view
 from g6.harness.workflow.record import ProjectRecord, RecordUnreadable, now, project_id, workflow_source
 
 CODE = "G6_E_WORKFLOW_RECORD"
-TOOLS = ("g6_workflow_export", "g6_workflow_correct", "g6_workflow_delete")
+TOOLS = ("g6_workflow_export", "g6_workflow_correct", "g6_workflow_delete", "g6_suggestion_decide")
+#: The lifecycle tools act on the record itself, so their calls are not recorded in it.
+LIFECYCLE = TOOLS[:3]
 #: Said with a withheld reply. Fixed words: no path, no project id, nothing from the record.
 FILES = ("The workflow record stays on this computer. The person can open inspection.json, and write corrections.json, "
          "in this project's folder under workflow in G6's state folder. To share the record with this provider, the "
@@ -158,7 +160,7 @@ def install(server: Any) -> None:
                     args = context.message.arguments or {}
                     repo, task = args.get("repo"), args.get("task")
                     if policy.enabled()[0] and isinstance(repo, str) and isinstance(task, str) and task.strip() \
-                            and context.message.name not in TOOLS:
+                            and context.message.name not in LIFECYCLE:
                         # a request is one call of one session of this process: its id alone repeats across sessions
                         ctx = context.fastmcp_context
                         request = f"{adapters.PROCESS}:{id(getattr(ctx, 'session', None))}:{getattr(ctx, 'request_id', '')}"
@@ -277,6 +279,85 @@ async def delete(repo: str, ctx: Any, scope: str = "task", task: str = "", run: 
                   "Tell the person what was removed. Saved reviews and answers are kept by their own rules.")
 
 
+NOT_ADMITTED = ("[G6_E_WORKFLOW_NOT_ADMITTED] Suggestions are not switched on: the measured gate that admits them has not "
+                "been passed, or the person has turned the view down. Nothing was shown or recorded.")
+DECIDE_FORM = {"type": "object", "properties": {
+    "decision": {"type": "string", "enum": ["adopt", "dismiss for this task", "dismiss for this project", "reopen"],
+                 "description": "What you decide. No reason is asked for."},
+    "expires_in_days": {"type": "integer", "minimum": 1, "maximum": 365,
+                        "description": "Optional, for a dismissal: show it again after this many days."},
+    "name": {"type": "string", "description": "Your name (recorded as supplied, not authenticated)"}},
+    "required": ["decision", "name"]}
+CHOICES = {"adopt": ("adopted", "task"), "dismiss for this task": ("dismissed", "task"),
+           "dismiss for this project": ("dismissed", "project"), "reopen": ("reopened", "task")}
+
+
+async def decide(repo: str, task: str, intervention_id: str, ctx: Any) -> dict:
+    from datetime import UTC, datetime, timedelta
+
+    from g6.harness.workflow import suggest
+    from g6.harness.workflow.decisions import Decisions
+    from g6.harness.workflow.record import TIME_FORMAT
+    from g6.mcp.consent import elicit
+
+    project = _project(repo)
+    if project is None or not isinstance(task, str) or not task.strip():
+        return _refused("repo must be the full path of the repository's folder, and task the task's text")
+    if view.level() != "suggestions":
+        from g6.core.door import blocked_reply
+        from g6.mcp.consent_controls import public_instructions
+
+        return public_instructions(blocked_reply(NOT_ADMITTED))
+    try:
+        task_id = adapters.identities(repo, task)[1]
+        record = ProjectRecord(project)
+        shown = suggest.displayed(record.events(task=task_id), intervention_id)
+    except RecordUnreadable as exc:
+        return _unreadable(project, exc)
+    except Exception:  # noqa: BLE001 - a repository G6 cannot read names no task
+        return _refused("repo must be a git repository's folder")
+    if shown is None:
+        return _reply(project, "decide", {"status": "not_shown", "recorded": False},
+                      "G6 has not shown that suggestion for this task, so there is nothing to decide.",
+                      "Use the intervention_id of a suggestion in a review reply's workflow field.")
+    said, target = suggest.WORDS[shown.data["kind"]], shown.data.get("target") or ""
+    message = (f"G6 suggested, for this task: {said}" + (f" ({target})" if target else "") + ". Adopt it, dismiss it or "
+               "reopen it? A dismissal is for this task's text unless you choose the project, and it is kept: G6 does "
+               "not show the suggestion again until you reopen it, an expiry you choose here passes, the task's stated "
+               "outcome is replaced, or 365 days pass (the storage policy's period for decisions). No reason is asked "
+               "for. A finding in the report is not a suggestion and is never hidden by this.")
+    began, at = time.monotonic(), now()
+    action, content, _error = await elicit(ctx, message, DECIDE_FORM)      # shows workflow data: section 16 applies
+    import uuid
+
+    adapters.observe_dialog(repo, task, "suggestion_decision", action, at=at, seconds=time.monotonic() - began,
+                            native=uuid.uuid4().hex)      # each dialog shown is one event, even two in a second
+    choice = content.get("decision") if isinstance(content, dict) else None
+    name = content.get("name") if isinstance(content, dict) else None
+    days = content.get("expires_in_days") if isinstance(content, dict) else None
+    if action != "accept" or choice not in CHOICES or not isinstance(name, str) or not name.strip() \
+            or not (days is None or type(days) is int and 1 <= days <= 365):
+        return _reply(project, "decide", {"status": "not_recorded", "dialog": action, "recorded": False,
+                                         "how": "Nothing was recorded: neither adoption nor dismissal. Without a dialog "
+                                         "the person can add a decision entry to corrections.json and ask G6 to "
+                                         "apply corrections."},
+                      "Nothing was decided: the person did not answer in the client's dialog.",
+                      "Do not ask again and do not decide for them.")
+    decision, scope = CHOICES[choice]
+    expires = (datetime.now(UTC) + timedelta(days=days)).strftime(TIME_FORMAT) if days and decision == "dismissed" else None
+    Decisions(project).record(intervention_id, decision, task=task_id, scope=scope, by=name.strip(), at=now(),
+                              expires_at=expires, reopen_rule="outcome_superseded" if decision == "dismissed" else "never",
+                              outcome_sha256=shown.data.get("outcome_sha256") or "")      # on disk before the reply
+    if decision != "reopened":
+        suggest.record_event(record, task_id, f"suggestion_{decision}", {
+            "intervention_id": intervention_id, **{key: shown.data[key] for key in ("kind", "target", "scope")}},
+            at=now(), native=now())
+    return _reply(project, "decide", {"status": "recorded", "recorded": True, "decision": decision, "scope": scope,
+                                     "expires_at": expires, "intervention_id": intervention_id},
+                  "The person's decision was recorded before this reply.",
+                  "A dismissed suggestion is not shown again except for a reason G6 states.")
+
+
 def register(server: Any, context_type: Any) -> None:
     """Add the lifecycle tools and the call observer to ``server``."""
     from g6.core.consent_declarations import TOOLS as DECLARED
@@ -304,12 +385,21 @@ def register(server: Any, context_type: Any) -> None:
         answers are kept. repo: the repository's folder, a full path."""
         return await delete(repo, ctx, scope=scope, task=task, run=run)
 
-    g6_workflow_delete.__annotations__["ctx"] = context_type
-    for tool in (g6_workflow_export, g6_workflow_correct, g6_workflow_delete):
+    async def g6_suggestion_decide(repo: str, task: str, intervention_id: str, ctx: Any) -> dict:
+        """Ask the person, in the client's own dialog, to adopt, dismiss or reopen one suggestion G6 showed for a task
+        (intervention_id: from the suggestion in a review reply's workflow field; task: the task's text as given to
+        the review). It takes no decision: no argument adopts or dismisses, you never answer the dialog, and a
+        decline, a cancel or a client without a dialog records nothing. The decision is kept before the reply; a
+        dismissed suggestion is not shown again except for a reason G6 states. A finding in the report is not a
+        suggestion and cannot be dismissed. repo: the repository's folder, a full path."""
+        return await decide(repo, task, intervention_id, ctx)
+
+    g6_workflow_delete.__annotations__["ctx"] = g6_suggestion_decide.__annotations__["ctx"] = context_type
+    for tool in (g6_workflow_export, g6_workflow_correct, g6_workflow_delete, g6_suggestion_decide):
         tool._g6_declaration = DECLARED[tool.__name__]
         server.tool()(tool)
     install(server)
 
 
-__all__ = ["CODE", "FILES", "HELP", "TOOLS", "correct", "delete", "export", "finishing", "install", "register",
+__all__ = ["CODE", "FILES", "HELP", "TOOLS", "correct", "decide", "delete", "export", "finishing", "install", "register",
            "stepped"]

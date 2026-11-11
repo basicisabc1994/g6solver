@@ -96,7 +96,7 @@ TOOLS = {
         'g6_cloud_grant', 'g6_cloud_revoke')},
     **{name: contract('source:consent_metadata') for name in ('g6_cloud_grants', 'g6_disclosures')},
     **{name: contract('client_request', 'client_workflow') for name in (
-        'g6_workflow_correct', 'g6_workflow_delete', 'g6_workflow_export')},
+        'g6_suggestion_decide', 'g6_workflow_correct', 'g6_workflow_delete', 'g6_workflow_export')},
 }
 
 def _arguments(content='', pointer=''):
@@ -140,6 +140,7 @@ TOOL_ARGUMENTS = {
     'metaharness_diagnose': _arguments(pointer='workflow'),
     'metaharness_approve': _arguments('decision_digest', 'workflow'),
     'metaharness_rollback': _arguments('version', 'workflow'),
+    'g6_suggestion_decide': _arguments('task intervention_id', 'repo'),
     'g6_workflow_correct': _arguments(pointer='repo'),
     'g6_workflow_delete': _arguments('scope task', 'repo run'),
     'g6_workflow_export': _arguments(pointer='repo'),
