@@ -108,7 +108,8 @@ class DomainStandard:
 @record
 class EvidenceArtifact:
     id: str
-    content: bytes
+    content: bytes = field(metadata={'max_bytes': 2_000_000,
+                                    'size_error': 'artifact exceeds 2MB conservative prototype cap'})
     kind: str
     claimed_by: str
     source_ref: str
@@ -121,8 +122,6 @@ class EvidenceArtifact:
             raise TypeError("evidence content must be bytes")
         if not all((self.id, self.content, self.kind, self.claimed_by, self.source_ref, self.claim_id)):
             raise ValueError("evidence needs bytes, claim, origin, kind and source reference")
-        if len(self.content) > 2_000_000:
-            raise ValueError("artifact exceeds 2MB conservative prototype cap")
 
     @property
     def digest(self) -> str:

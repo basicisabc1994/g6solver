@@ -95,6 +95,16 @@ READERS = {"number", "text", "plain", "snapshot", "fresh", "returned", "affirmed
 #: The functions that read a value the bridge did not construct raw, by design: the boundary and the readers it hands a
 #: value to. Their parameters are what reads a value, so they are not listed as values read.
 READER_FUNCTIONS = {
+    ("mixed_methods.py", "_admit_model"): "exact encoded-size admission of native declarative model data before copying",
+    ("block.py", "_admit_outer_input"): "protocol value's native field size before detachment, using the same schema",
+    ("block.py", "_admit_model_input"): "direct Pydantic validation enters the same owned schema admission before items",
+    ("block.py", "_admit_input"): "exact native/model fields and owned schema limits before the boundary copy",
+    ("engine.py", "_admit_hypotheses"): "native cardinality admission before copying or scoring",
+    ("mixed_methods.py", "_admit_claims"): "native count and exact ClaimIR field lengths before copying",
+    ("engine.py", "LLMProposer._admit_reply"): "parser-owned JSON counts, field lengths and argument size before plain",
+    ("engine.py", "LLMIdeaGenerator._admit_reply"): "parser-owned JSON counts and field lengths before plain",
+    ("mixed_methods.py", "LLMClaimCompiler._admit_reply"): "parser-owned JSON claim count before plain",
+    ("critique.py", "LLMMetacognitiveCritic._admit_reply"): "parser-owned JSON candidate count before plain",
     ("codes.py", "_is_type"): "exact kind identity only; challenged by the metaclass inventory",
     ("codes.py", "_type_mro"): "actual class MRO through the built-in descriptor, without metaclass overrides",
     ("codes.py", "_has_member"): "exact type MRO and namespace through type's built-in descriptors",
@@ -455,6 +465,8 @@ def _block_functions():
 #: what it takes. What validation makes is the bridge's own typed input (``_unchanged`` compares two such, from the
 #: boundary's two reads, and the conversion inventory checks every validation reads what the boundary made).
 EXPECTED_BETWEEN = {
+    "_admit_outer_input": "one raw protocol field admitted before _walk detaches it",
+    "_admit_input": "read native kinds, lengths and scalar bounds from the owned model schema before any copy",
     "CognitiveBridgeBlock.screen_raw": "the caller's raw arguments, read once, by _arguments; it keeps that read",
     "CognitiveBridgeBlock.infer": "the caller's arguments (or the registry's typed input), read once by _arguments; "
                                   "and screen_raw's read, by _held",
@@ -520,6 +532,11 @@ def between() -> dict[str, set[str]]:
             if callee in short and (callee == "_held" or any(_carried(a, names) for a in arguments)):
                 target = short[callee]
                 todo.append((target, {a.arg for a in functions[target].args.args if a.arg != "self"}))
+            if callee == '_walk':
+                for keyword in call.keywords:
+                    if keyword.arg == 'preflight' and isinstance(keyword.value, ast.Name) and keyword.value.id in short:
+                        target = short[keyword.value.id]
+                        todo.append((target, {a.arg for a in functions[target].args.args if a.arg != 'self'}))
     return reached
 
 

@@ -40,7 +40,7 @@ from g6.cognitive_bridge import (
 
 PACKAGE = Path(snapshot.__file__).resolve().parent
 #: The boundary: the functions that take a caller's or a collaborator's value into the bridge.
-BOUNDARY = ("snapshot", "fresh", "plain", "text")
+BOUNDARY = ("snapshot", "fresh", "plain", "text", "_prompt_value")
 
 
 class _Text(str):
@@ -160,12 +160,24 @@ def untaken(function) -> list[str]:
     fn = tree.body[0]
     parent = _parents(tree)
     code = _code_types()
+    # Admission reads only exact native kind/length or the owned schema. It
+    # neither converts nor replaces the caller's value; snapshot is still
+    # required as the first subsequent read. One-over instrumentation covers
+    # each of these helpers in test_followup4_repair1_limits.
+    admissions = {'_admit_length', '_admit_hypotheses', '_admit_claims'}
+    def admission_read(node):
+        up = parent.get(node)
+        while up is not None and not isinstance(up, ast.stmt):
+            if isinstance(up, ast.Call) and isinstance(up.func, ast.Name) and up.func.id in admissions:
+                return True
+            up = parent.get(up)
+        return False
     bad = []
     for arg in [*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs]:
         if arg.arg in ("self", "cls") or _outer_names(arg.annotation) & code:
             continue
         loads = sorted((n for n in ast.walk(fn) if isinstance(n, ast.Name) and n.id == arg.arg
-                        and isinstance(n.ctx, ast.Load)), key=lambda n: (n.lineno, n.col_offset))
+                        and isinstance(n.ctx, ast.Load) and not admission_read(n)), key=lambda n: (n.lineno, n.col_offset))
         if not loads:
             continue
         if all(isinstance(parent[n], ast.Call) and ast.unparse(parent[n].func) == "affirmed"

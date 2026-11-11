@@ -12,13 +12,14 @@ NOT a calibrated probability of research success.
 from __future__ import annotations
 
 import math
+from dataclasses import field
 from typing import Any, Callable, Mapping, Sequence
 
 from .assurance import canonical_json, is_risk, sha256
 from .codes import _is_type
 from .codes import MODEL_MISSING, OBLIGATION_NOT_PLANNED, SELECTION_INCOMPLETE, affirmed, only_fields, refusal, settled
 from .mixed_methods import ENGINE_SPECS, ENGINE_OP_VARIANTS, ClaimIR, MethodRouter, MethodPlan
-from .snapshot import publish, record_data, fresh, issue, number, record, returned, snapshot
+from .snapshot import publish, record_data, _admit_length, fresh, issue, number, record, returned, snapshot
 
 CAPABILITIES = frozenset(ENGINE_SPECS)
 #: The splits a trial can come from (``EvaluatedTrial.split``); a selector learns from the ones its ``learn_from`` names.
@@ -135,10 +136,11 @@ class EvaluatedTrial:
     resolved: bool
     actual_cost: float
     evaluator_ref: str
-    oracle_digest: str
+    oracle_digest: str = field(metadata={'max_length': 64, 'size_error': 'frozen oracle digest required'})
     split: str = "heldout"
     critical_regression: bool = False
-    variant_digest: str = ""
+    variant_digest: str = field(default='', metadata={'max_length': 64,
+                                'size_error': "a variant digest is a 64-digit SHA-256 of the variant's definition"})
 
     def __post_init__(self) -> None:
         if not all((self.trial_id, self.case_id, self.cohort_id, self.domain,
@@ -150,9 +152,9 @@ class EvaluatedTrial:
             raise ValueError("evaluation split invalid")
         if not math.isfinite(self.actual_cost) or self.actual_cost < 0:
             raise ValueError("trial cost invalid")
-        if len(self.oracle_digest) != 64 or any(x not in '0123456789abcdef' for x in self.oracle_digest):
+        if len(self.oracle_digest) < 64 or any(x not in '0123456789abcdef' for x in self.oracle_digest):
             raise ValueError("frozen oracle digest required")
-        if self.variant_digest and (len(self.variant_digest) != 64
+        if self.variant_digest and (len(self.variant_digest) < 64
                                     or any(x not in '0123456789abcdef' for x in self.variant_digest)):
             raise ValueError("a variant digest is a 64-digit SHA-256 of the variant's definition")
 
@@ -291,6 +293,8 @@ class MetacognitiveMethodSelector:
     def select(self, context: ProblemSignature, variants: Sequence[MethodVariant],
                *, required_methods: Sequence[str],
                max_optional: int = 0) -> SelectionDecision:
+        _admit_length(variants, 100, "method selector cap: at most 100 explicit variants")
+        _admit_length(required_methods, 5, "method selector cap: at most 5 obligations")
         context = snapshot(context, where="context")
         variants = snapshot(variants, where="variants")
         required_methods = snapshot(required_methods, where="required_methods")
@@ -308,8 +312,6 @@ class MetacognitiveMethodSelector:
             raise ValueError("duplicate candidate method variant ids")
         options = [v for v in variants if _eligible(v, context)]
         scored = [self._score(v, context, trials=trials) for v in options]
-        if len(variants) > 100:
-            raise ValueError("method selector cap: at most 100 explicit variants")
         selected: list[dict[str, Any]] = []
         missing: list[str] = []
         remaining = context.budget

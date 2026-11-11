@@ -140,10 +140,14 @@ EXPECTED_WALKS = {
     ("snapshot.py", "_frozen"), ("snapshot.py", "_has_record"), ("snapshot.py", "_not_json"),
     ("snapshot.py", "_renewed"), ("snapshot.py", "_same"), ("snapshot.py", "_taken"), ("snapshot.py", "view"),
     ("snapshot.py", "_walk"),
+    ("snapshot.py", "_encoded_size.visit"),
     ("xai.py", "extract_tree.visit"),
 }
 #: A function that calls itself but does not recurse into a value, with why.
 NOT_INTO_A_VALUE = {
+    ("snapshot.py", "_encoded_size.visit"):
+        "only a detached, depth-admitted projection from _admit_json reaches this exact ASCII-size counter; "
+        "the raw-input depth refusal still runs in view's _walk before it",
     ("metacognition.py", "MetacognitiveMethodSelector.select.search"):
         "it recurses over the selector's own list of pools by index, one level per required method: its depth is the "
         "number of methods required, not the nesting of a caller's value",

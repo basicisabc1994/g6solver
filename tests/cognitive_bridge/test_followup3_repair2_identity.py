@@ -291,6 +291,9 @@ def test_estimator_array_conversion_requires_a_declared_type_capability():
         def __init__(self):
             self.tolist = lambda: [1, 2]
 
-    assert _native(DeclaredArray(), where="array") == [1, 2]
+    # Owner ruling: a declared converter without a measurable size is refused
+    # before conversion; declaration alone cannot establish a size bound.
+    with pytest.raises(codes.NotPlainData, match="size"):
+        _native(DeclaredArray(), where="array")
     with pytest.raises(codes.NotPlainData):
         _native(ClaimedArray(), where="array")

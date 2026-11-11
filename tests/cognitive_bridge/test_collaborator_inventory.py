@@ -64,6 +64,15 @@ EXPECTED = sorted([
 #: Parameters typed as code that are not a caller's code: the functions that walk a value to copy or read it once, and
 #: the one place a check is called (each check is the bridge's own function: test_every_check_is_the_bridges_own).
 DATA_WALKERS = {
+    ('block.py', '_admit_outer_input', 'value'),  # known field supplied by the outer-mapping walker
+    ('block.py', '_admit_model_input', 'given'),  # raw direct-model input, admitted by the owned schema
+    ('block.py', '_admit_input', 'given'),  # raw data inspected only through exact kinds and owned schema
+    ('engine.py', '_admit_hypotheses', 'value'),  # native length, never a collaborator
+    ('mixed_methods.py', '_admit_claims', 'claims'),  # count and exact record fields
+    ('engine.py', '_admit_reply', 'data'),  # json.loads' own dict, before boundary copy
+    ('engine.py', '_admit_reply', 'doc'),
+    ('critique.py', '_admit_reply', 'doc'),
+    ('mixed_methods.py', '_admit_reply', 'doc'),
     ("xai.py", "_native", "value"),                  # reads a numpy scalar's Python value
     ("codes.py", "claims", "value"),                 # walks a snapshot the bridge holds, to find a claim in it
 }

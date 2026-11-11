@@ -58,6 +58,89 @@ MAX_ITEMS = 100_000
 MAX_SIZE = 4_000_000
 
 
+def _admit_array(value: Any, *, where: str) -> memoryview:
+    """Admit native conversion from buffer shape and byte count before tolist."""
+    # A small native buffer cannot bound a Python override of tolist, attribute
+    # access, or buffer export. Resolve slots from the actual MRO without
+    # invoking any of them; only native descriptors have this storage contract.
+    pending = {'tolist', '__getattribute__', '__buffer__'}
+    for base in _type_mro(type(value)):
+        members = type.__dict__['__dict__'].__get__(base)
+        if any(type(key) is not str for key in members):
+            raise NotPlainData(where, "array size cannot be admitted from a foreign slot namespace")
+        for name in tuple(pending):
+            if name in members:
+                member = members[name]
+                native = ((types.MethodDescriptorType,) if name == 'tolist' else
+                          (types.MethodDescriptorType, types.WrapperDescriptorType))
+                if not _is_type(type(member), native):
+                    raise NotPlainData(where, f"array size cannot be admitted before conversion: non-native {name}")
+                pending.remove(name)
+    try:
+        buffer = memoryview(value)
+    except (BufferError, TypeError, ValueError):
+        raise NotPlainData(where, "array size cannot be admitted before conversion") from None
+    try:
+        if len(buffer.shape) > DEPTH:
+            raise _too_deep(where)
+        visits, prefix = 1, 1
+        for dimension in buffer.shape:
+            prefix *= dimension
+            visits += prefix
+            if visits > MAX_ITEMS:
+                raise NotPlainData(where, "size exceeds the bridge's limit")
+        if buffer.nbytes > MAX_SIZE:
+            raise NotPlainData(where, "size exceeds the bridge's limit")
+    except BaseException:
+        buffer.release()
+        raise
+    return buffer  # keep native storage pinned through conversion
+
+
+def _admit_bytes(value: Any, cap: int, message: str) -> None:
+    """A byte buffer's native length, before its immutable copy."""
+    if _is_type(type(value), (bytes, bytearray, memoryview)):
+        size = value.nbytes if type(value) is memoryview else len(value)
+        if size > cap:
+            raise ValueError(message)
+
+
+def _admit_fields(value: Any, cls: type) -> None:
+    """Record-local buffer bounds also precede detachment and reconstruction."""
+    for field in dataclasses.fields(cls):
+        if 'max_bytes' not in field.metadata and 'max_length' not in field.metadata:
+            continue
+        if type(value) is dict:
+            if field.name not in value:
+                continue  # the schema reader supplies defaults/names missing fields
+            item = value[field.name]
+        else:
+            item = getattr(value, field.name)
+        if 'max_bytes' in field.metadata:
+            _admit_bytes(item, field.metadata['max_bytes'], field.metadata['size_error'])
+        if 'max_length' in field.metadata:
+            _admit_length(item, field.metadata['max_length'], field.metadata['size_error'])
+
+
+def _admit_length(value: Any, cap: int | None, error: str, *, minimum: int = 0) -> None:
+    """Read native length before detaching; unfamiliar kinds go to the boundary."""
+    if _is_type(type(value), (str, list, tuple, dict, FrozenMap)):
+        if len(value) < minimum or (cap is not None and len(value) > cap):
+            raise ValueError(error)
+
+
+def _prompt_value(value: Any, *, where: str) -> Any:
+    """Detach for size admission without serializing prompt input first.
+
+    Unknown outer kinds go through snapshot now, before a caller can iterate
+    them to select context. Typed reads and round trips still follow admission.
+    """
+    taken = _walk(value, where)
+    if not _is_type(type(taken), (str, list, tuple, dict, FrozenMap, int, float, bool, type(None))):
+        return snapshot(taken, where=where)
+    return taken
+
+
 def generated(count: int, make: Callable[[int], Any], *, where: str) -> tuple[Any, ...]:
     """Generate only an admitted count, charging the walker before the next item.
 
@@ -82,7 +165,8 @@ def generated(count: int, make: Callable[[int], Any], *, where: str) -> tuple[An
 
 def _walk(value: Any, where: str, depth: int = 0, *, budget: list[int] | None = None,
           schema: type | None = None, capability: bool = False,
-          models: tuple[type, ...] = (), truncate: bool = False, outer: bool = False) -> Any:
+          models: tuple[type, ...] = (), truncate: bool = False, outer: bool = False,
+          preflight: Callable[[str, Any], None] | None = None) -> Any:
     """Detach input before any other traversal, counting every reach before reading it.
 
     Repeated references spend the budget again. Unknown kinds are opaque here:
@@ -123,6 +207,8 @@ def _walk(value: Any, where: str, depth: int = 0, *, budget: list[int] | None = 
             # Native unpacking uses dict storage for a dict subtype whose
             # iterator is unchanged; it deliberately bypasses mapping hooks.
             native = any(base is dict for base in bases) and iteration is dict.__iter__
+            if native and 2 * dict.__len__(value) > MAX_ITEMS - budget[0]:
+                raise NotPlainData(where, "size exceeds the bridge's limit")
             keys = dict.keys(value) if native else value.keys()
             items = {}
             for key in keys:
@@ -132,7 +218,9 @@ def _walk(value: Any, where: str, depth: int = 0, *, budget: list[int] | None = 
                 if budget[0] >= MAX_ITEMS:
                     raise NotPlainData(where, "size exceeds the bridge's limit")
                 item = dict.__getitem__(value, key) if native else value[key]
-                items[key] = _walk(item, f"{where}.{key}", depth + 1, budget=budget)
+                if preflight is not None:
+                    preflight(key, item)
+                items[key] = _walk(item, f"{where}.{key}", depth + 1, budget=budget, models=models)
             return items
         except NotPlainData:
             raise
@@ -150,6 +238,7 @@ def _walk(value: Any, where: str, depth: int = 0, *, budget: list[int] | None = 
         return fields
     if schema is not None or _is_record(value):
         cls = schema if schema is not None else kind
+        _admit_fields(value, cls)
         made = object.__new__(cls)
         kinds = _kinds(cls)
         for field in dataclasses.fields(cls):
@@ -165,10 +254,14 @@ def _walk(value: Any, where: str, depth: int = 0, *, budget: list[int] | None = 
             object.__setattr__(made, field.name, item)
         return made
     if _is_type(kind, ARRAYS):
+        if len(value) > MAX_ITEMS - budget[0]:
+            raise NotPlainData(where, "size exceeds the bridge's limit")
         items = [_walk(item, f"{where}[{index}]", depth + 1, budget=budget, models=models, truncate=truncate)
                  for index, item in enumerate(value)]
         return tuple(items) if kind is tuple else items
     if _is_type(kind, OBJECTS):
+        if 2 * len(value) > MAX_ITEMS - budget[0]:
+            raise NotPlainData(where, "size exceeds the bridge's limit")
         items = {}
         for key, item in value.items():
             key = _walk(key, f"{where} (a key)", depth + 1, budget=budget)
@@ -179,16 +272,75 @@ def _walk(value: Any, where: str, depth: int = 0, *, budget: list[int] | None = 
     return value
 
 
-def canonical_json(value: Any) -> bytes:
-    """The bounded encoder: project records, check depth and size, then serialize."""
+def _encoded_size(value: Any, cap: int) -> int:
+    """Exact ensure_ascii JSON size, stopping at the cap without building text.
+
+    Input is already detached and JSON-checked. Each character costs 1, 2, 6,
+    or 12 ASCII bytes; integers/floats are bounded by the numeric reader.
+    """
+    size = 0
+
+    def charge(count: int) -> None:
+        nonlocal size
+        size += count
+        if size > cap:
+            raise NotPlainData("a value", "encoded size exceeds the bridge's limit")
+
+    def string(item: str) -> None:
+        charge(2)
+        # Even an unescaped string cannot fit: refuse without scanning it.
+        if len(item) > cap - size:
+            charge(len(item))
+        for char in item:
+            point = ord(char)
+            charge(2 if char in '\"\\\b\f\n\r\t' else
+                   6 if point < 32 or 127 <= point <= 65535 else
+                   12 if point > 65535 else 1)
+
+    def visit(item: Any) -> None:
+        kind = type(item)
+        if kind is str:
+            string(item)
+        elif kind is dict:
+            charge(2 + max(0, len(item) - 1) + len(item))
+            for key, child in item.items():
+                string(key)
+                visit(child)
+        elif kind is list:
+            charge(2 + max(0, len(item) - 1))
+            for child in item:
+                visit(child)
+        elif item is None:
+            charge(4)
+        elif kind is bool:
+            charge(4 if item else 5)
+        else:
+            charge(len(int.__repr__(item) if kind is int else float.__repr__(item)))
+
+    visit(value)
+    return size
+
+
+def _admit_json(value: Any, *, cap: int | None = None, error: str | None = None) -> Any:
+    """Project and admit exact encoded size without allocating encoded output."""
     projected = view(value)
     found = _not_json(projected, "a value", 0)
     if found:
         raise NotPlainData(*found)
+    try:
+        _encoded_size(projected, MAX_SIZE if cap is None else min(cap, MAX_SIZE))
+    except NotPlainData:
+        if error is not None and cap is not None and cap <= MAX_SIZE:
+            raise ValueError(error) from None
+        raise
+    return projected
+
+
+def canonical_json(value: Any, *, cap: int | None = None, error: str | None = None) -> bytes:
+    """The bounded encoder: admit escaped size before either output allocation."""
+    projected = _admit_json(value, cap=cap, error=error)
     encoded = json.dumps(projected, sort_keys=True, separators=(",", ":"),
                          ensure_ascii=True, allow_nan=False).encode("utf-8")
-    if len(encoded) > MAX_SIZE:
-        raise NotPlainData("a value", "encoded size exceeds the bridge's limit")
     return encoded
 
 
@@ -380,14 +532,23 @@ def _kinds(cls: type) -> dict[str, tuple[Any, ...]]:
         except Exception:  # annotations that cannot be resolved where the type was made: its fields are data
             hints = {}
         kinds = {field.name: _kind(hints.get(field.name, Any)) for field in dataclasses.fields(cls)}
+        for field in dataclasses.fields(cls):
+            if kinds[field.name][0] == 'bytes' and 'max_bytes' in field.metadata:
+                kinds[field.name] += (field.metadata['max_bytes'], field.metadata['size_error'])
         cls.__record_kinds__ = kinds
     return kinds
 
 
-def _bytes(value: Any, where: str) -> bytes:
+def _bytes(value: Any, where: str, cap: int | None = None, error: str = "buffer exceeds size cap") -> bytes:
     if not _is_type(type(value), (bytes, bytearray, memoryview)):
         raise NotPlainData(where, f"a {_named(value)} is not bytes")
-    return bytes(value)
+    buffer = memoryview(value)
+    try:
+        if cap is not None:
+            _admit_bytes(buffer, cap, error)
+        return bytes(value)
+    finally:
+        buffer.release()
 
 
 def _leaf(kind: str, value: Any, where: str, depth: int) -> Any:
@@ -417,7 +578,7 @@ def _field(kind: tuple[Any, ...], value: Any, where: str, depth: int) -> Any:
         return None if value is None and kind[1] else _leaf(name, value, where, depth)
     if name in ("bytes", "bytes*"):
         if name == "bytes":
-            taken: Any = _bytes(value, where)
+            taken: Any = _bytes(value, where, *kind[1:])
         elif not _is_type(type(value), (list, tuple)):
             raise NotPlainData(where, f"a {_named(value)} is not a list of bytes")
         else:
@@ -593,6 +754,8 @@ def returned(value: Any, check: Callable[..., T], *against: Any) -> T:
     and bridge records, made again, else refused), then ``check(copy, *against)``, which raises, or returns what is
     used from then on. Nothing else of ``value`` is read. The copy, and what the check makes of it, claim no state at
     any depth (``codes.unclaimed``), else ``ValueError``."""
+    if check is json_reply:
+        _admit_reply(value, against[0])
     copy = snapshot(value, where=f"an answer taken by {check.__name__}")
     unclaimed(view(copy), where=f"an answer taken by {check.__name__}")
     out = check(copy, *against)
@@ -606,20 +769,27 @@ def _unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return dict(pairs)
 
 
-def json_reply(reply: Any, cap: int) -> Any:
+def _admit_reply(reply: Any, cap: int) -> None:
+    """The local reply cap, also used before returned detaches raw text."""
+    if type(reply) is not str:
+        raise ValueError(f"a model's reply is text, not a {type(reply).__name__}")
+    if len(reply) > cap:
+        raise ValueError(f"a model's reply is longer than its {cap}-character cap")
+
+
+def json_reply(reply: Any, cap: int, preflight: Callable[[Any], None] | None = None) -> Any:
     """A :func:`returned` check for a model's reply: text of at most ``cap`` characters, read as JSON with no repeated
     key, and taken as plain data (:func:`plain`); the value it holds (so :func:`returned` reads what is used), or a
     ``ValueError``. A reply nested past what the JSON parser reads is far deeper than ``codes.DEPTH``, and refused as
     too deep."""
-    if type(reply) is not str:
-        raise ValueError(f"a model's reply is text, not a {type(reply).__name__}")
+    _admit_reply(reply, cap)
     reply = text(reply, where="a model's reply")
-    if len(reply) > cap:
-        raise ValueError(f"a model's reply is longer than its {cap}-character cap")
     try:
         parsed = json.loads(reply, object_pairs_hook=_unique)
     except RecursionError:
         raise _too_deep("a model's reply") from None
+    if preflight is not None:
+        preflight(parsed)
     return plain(parsed, where="a model's reply")
 
 

@@ -430,17 +430,13 @@ RULES = {"number", "text", "_estimated", "_numbers", "type", "isinstance"}
 _ENCODED_BYTES = ("own", "the bounded canonical encoder's own bytes, decoded without changing their data")
 EXPECTED_CONVERSIONS.update({
     ('critique.py', 'LLMMetacognitiveCritic.propose', 'decode',
-     "canonical_json({'objective': objective, 'model_summary': model_summary, 'evidence_summary': list(evidence_summary)[-8:], 'allowed_methods': sorted(ENGINE_SPECS), 'max_items': self.max_items})"): _ENCODED_BYTES,
+     "canonical_json(payload, cap=25000, error='critique prompt cap exceeded')"): _ENCODED_BYTES,
     ('engine.py', 'LLMIdeaGenerator.generate', 'decode',
      "canonical_json({'objective': objective[:2000], 'observations': list(observations)[-6:], 'max_ideas': self.max_ideas})"): _ENCODED_BYTES,
     ('engine.py', 'LLMProposer.propose', 'decode',
-     "canonical_json(item['arguments'])"): _ENCODED_BYTES,
-    ('engine.py', 'LLMProposer.propose', 'decode',
      "canonical_json({'objective': objective[:2500], 'hypotheses': [{'id': h.id, 'statement': h.statement, 'prior': h.prior} for h in hypotheses], 'history': list(history)[-6:], 'allowed_tools': [{'name': t.name, 'cost': t.cost, 'assumed_match_probability': t.assumed_match_probability} for t in tools.values()], 'max_probes': self.max_probes})"): _ENCODED_BYTES,
     ('mixed_methods.py', 'LLMClaimCompiler.draft', 'decode',
-     "canonical_json({'question': question, 'context': list(context)[-6:], 'supported_methods': {k: {'required': list(v['required']), 'allowed': list(v['allowed'])} for k, v in ENGINE_SPECS.items()}, 'max_claims': self.max_claims})"): _ENCODED_BYTES,
-    ('mixed_methods.py', 'MethodRouter.plan', 'decode',
-     'canonical_json(dict(given))'): _ENCODED_BYTES,
+     "canonical_json(payload, cap=15000, error='question and context exceed prompt cap')"): _ENCODED_BYTES,
     ('snapshot.py', 'record_data', 'json.loads',
      'canonical_json(value)'): _ENCODED_BYTES,
 })

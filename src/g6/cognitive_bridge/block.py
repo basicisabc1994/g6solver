@@ -17,14 +17,15 @@ every function between the boundary and typed validation.
 """
 from __future__ import annotations
 
-from typing import Any, Literal
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from collections.abc import Mapping
+from typing import Any, Literal, get_args
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from g6.core.ai_block import AIBlock
 from g6.core.contract_decorator import block_contract
 from g6.core.maturity import component_maturity
 from g6.core.result import Result
-from .codes import INPUT, STATES, NotPlainData, refusal, settled, unclaimed
+from .codes import INPUT, STATES, NotPlainData, refusal, settled, unclaimed, _is_type, _type_mro
 from .engine import BayesianUpdater, Hypothesis, InformationGainSelector, Probe, check_beliefs
 from .mixed_methods import ClaimIR, MethodRouter
 from .metacognition import MetacognitiveMethodSelector, ProblemSignature, MethodVariant
@@ -36,8 +37,35 @@ from .snapshot import publish, canonical_json, plain, _walk
 _STRICT = ConfigDict(extra="forbid", strict=True)
 
 
+def _admit_model_input(cls: type[BaseModel], given: Any) -> Any:
+    """The same native admission for direct constructors and model_validate.
+
+    Read the owned model's schema, including when its validator is inherited;
+    never give an extension class authority to replace the bridge's limits.
+    """
+    for base in _type_mro(cls):
+        if _is_type(base, (CognitiveInput, *_NESTED)):
+            def preflight(key: str, item: Any) -> None:
+                _admit_input({key: item}, model=base)
+            if any(parent is dict or parent is Mapping for parent in _type_mro(type(given))):
+                taken = _walk(given, "an input model", outer=True, preflight=preflight,
+                              models=(CognitiveInput, *_NESTED))
+            elif _is_type(type(given), (CognitiveInput, *_NESTED)):
+                taken = _walk(given, "an input model", models=(CognitiveInput, *_NESTED))
+            else:
+                raise NotPlainData("an input model", "unmeasured model input is not native object data")
+            _admit_input(taken, model=base)
+            # Validate the detached tree's real JSON round trip. Keep its exact
+            # container kinds for Pydantic's strict schema; it reads only this
+            # checked, detached tree, never the caller's value a second time.
+            plain(taken, where="an input model")
+            return taken
+    raise NotPlainData("an input model", "unmeasured model schema cannot admit conversion")
+
+
 class HypothesisInput(BaseModel):
     model_config = _STRICT
+    _admit_size = model_validator(mode='before')(classmethod(_admit_model_input))
     id: str = Field(min_length=1, max_length=100)
     statement: str = Field(min_length=1, max_length=1500)
     prior: float = Field(ge=0, le=1)
@@ -45,6 +73,7 @@ class HypothesisInput(BaseModel):
 
 class ProbeInput(BaseModel):
     model_config = _STRICT
+    _admit_size = model_validator(mode='before')(classmethod(_admit_model_input))
     id: str = Field(min_length=1, max_length=100)
     question: str = Field(min_length=1, max_length=1500)
     tool: str = Field(min_length=1, max_length=150)
@@ -57,6 +86,7 @@ class ProbeInput(BaseModel):
 
 class ClaimInput(BaseModel):
     model_config = _STRICT
+    _admit_size = model_validator(mode='before')(classmethod(_admit_model_input))
     id: str = Field(min_length=1, max_length=100)
     statement: str = Field(min_length=1, max_length=3000)
     evidence_needs: list[Literal["graph", "causal", "formal", "predictive", "optimisation"]] = Field(min_length=1, max_length=5)
@@ -67,6 +97,7 @@ class ClaimInput(BaseModel):
 
 class ProblemSignatureInput(BaseModel):
     model_config = _STRICT
+    _admit_size = model_validator(mode='before')(classmethod(_admit_model_input))
     domain: str = Field(min_length=1, max_length=200)
     uncertainty: str = Field(min_length=1, max_length=200)
     claim_kind: str = Field(min_length=1, max_length=200)
@@ -77,6 +108,7 @@ class ProblemSignatureInput(BaseModel):
 
 class MethodVariantInput(BaseModel):
     model_config = _STRICT
+    _admit_size = model_validator(mode='before')(classmethod(_admit_model_input))
     id: str = Field(min_length=1, max_length=100)
     method: Literal["graph", "causal", "formal", "predictive", "optimisation"]
     representation: str = Field(min_length=1, max_length=100)
@@ -100,6 +132,7 @@ _OPS: dict[str, str] = {
 
 class CognitiveInput(BaseModel):
     model_config = _STRICT
+    _admit_size = model_validator(mode='before')(classmethod(_admit_model_input))
     op: Literal["ops", "help", "rank", "update", "plan_methods", "rank_methods", "assurance_schema"] = "ops"
     claims: list[ClaimInput] = Field(default_factory=list, max_length=20)
     context: ProblemSignatureInput | None = None
@@ -124,18 +157,72 @@ _NESTED: tuple[type[BaseModel], ...] = (HypothesisInput, ProbeInput, ClaimInput,
                                         MethodVariantInput)
 
 
+def _admit_input(given: Any, *, model: type[BaseModel] = CognitiveInput) -> None:
+    """Use the owned schema's native bounds before detaching any model field.
+
+    This visits only the fixed model topology: the root and its declared child
+    models. Each collection is admitted before its entries are inspected. Unknown
+    kinds and malformed leaves are still refused by the common boundary.
+    """
+    pending = [(model, given, "the block's arguments")]
+    while pending:
+        cls, value, path = pending.pop()
+        if _is_type(type(value), (cls,)):
+            values = object.__getattribute__(value, '__dict__')
+        elif type(value) is dict:
+            values = value
+        else:
+            continue
+        for name, info in cls.model_fields.items():
+            if name not in values:
+                continue
+            item = values[name]
+            where = f'{path}.{name}'
+            for rule in info.metadata:
+                for bound in ('max_length', 'min_length', 'ge', 'gt', 'le', 'lt'):
+                    limit = getattr(rule, bound, None)
+                    if limit is None:
+                        continue
+                    if bound.endswith('length') and _is_type(type(item), (str, list, tuple, dict)):
+                        measured = len(item)
+                    elif bound in ('ge', 'gt', 'le', 'lt') and _is_type(type(item), (int, float)):
+                        measured = item
+                    else:
+                        continue
+                    refused = (measured > limit if bound in ('max_length', 'le') else
+                               measured < limit if bound in ('min_length', 'ge') else
+                               measured >= limit if bound == 'lt' else measured <= limit)
+                    if refused:
+                        raise NotPlainData(where, f'outside the declared {bound} bound of {limit}')
+            hints = (info.annotation, *get_args(info.annotation))
+            child = next((model for model in _NESTED if any(hint is model for hint in hints)), None)
+            if child is not None:
+                if type(item) is list:
+                    pending.extend((child, entry, f'{where}[{index}]') for index, entry in enumerate(item))
+                else:
+                    pending.append((child, item, where))
+
+
+def _admit_outer_input(key: str, value: Any) -> None:
+    """Admit a protocol's field before the walker detaches that field."""
+    _admit_input({key: value})
+
+
 def _as_given(given: Any) -> Any:
     """What the block was handed, as the boundary reads it: an exact :class:`CognitiveInput` as its fields, each exact
     nested model (:data:`_NESTED`, alone or an item of an exact list) as its fields. An outer mapping is copied by the
     mapping protocol as the bound registry, within the visit budget; only its entries are input data, not its class or extra attributes. Nested
     values are never converted here. Nothing is serialized: ``model_dump`` erased nested mapping subclasses before
     the boundary saw them (review 3 of PR #8's second follow-up, finding 2)."""
+    _admit_input(given)
     if type(given) is dict:
         return _walk(given, "the block's arguments")
     if type(given) is not CognitiveInput:
         # Apply the agreed outer mapping protocol directly, as the registry does.
         # A class or instance attribute must not decide whether copying is allowed.
-        return _walk(given, "the block's arguments", outer=True)
+        copied = _walk(given, "the block's arguments", outer=True, preflight=_admit_outer_input)
+        _admit_input(copied)
+        return copied
     return _walk(given, "the block's arguments", models=(CognitiveInput, *_NESTED))
 
 

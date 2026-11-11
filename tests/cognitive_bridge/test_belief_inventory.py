@@ -112,6 +112,10 @@ def test_every_public_entry_applies_the_belief_rule_where_the_value_enters(modul
     # the first statement that reads the beliefs takes them through the boundary, and the next applies the rule (or
     # one statement does both): nothing reads them before the rule has
     body = [s for s in _fn(module, name).body if _reads(s, param)]
+    # Native cardinality admission must precede the copy. The copy and the
+    # numeric belief rule remain mandatory immediately afterward.
+    assert isinstance(body[0], ast.Expr) and _calls(body[0], '_admit_hypotheses')
+    body = body[1:]
     first = body[0]
     assert isinstance(first, ast.Assign) and _calls(first.value, "snapshot"), ast.unparse(first)[:100]
     ruled = first if _calls(first.value, "_beliefs") else body[1]

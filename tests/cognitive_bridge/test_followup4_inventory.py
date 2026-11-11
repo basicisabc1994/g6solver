@@ -27,6 +27,8 @@ def scalar_sites():
 
 
 def classify(site, expression):
+    if (site, expression) == ('block.py:_admit_input', 'while pending'):
+        return 'fixed model topology; native collection counts admitted before pending receives their entries'
     if (site, expression) == ('engine.py:CognitiveAgent.run', 'range(max_steps)'):
         source = inspect.getsource(__import__('g6.cognitive_bridge.engine', fromlist=['CognitiveAgent']).CognitiveAgent.run)
         assert source.index('<= 20') < source.index('range(max_steps)')

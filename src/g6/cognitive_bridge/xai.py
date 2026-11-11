@@ -24,7 +24,7 @@ from typing import Any, Mapping, Sequence
 from .codes import FrozenMap
 from .codes import _has_member, _is_type
 from .codes import DEPTH, NotPlainData, _read_as, settled, unclaimed
-from .snapshot import publish, record_data, _too_deep, canonical_json, fresh, generated, number, plain, record, returned, snapshot, text
+from .snapshot import publish, record_data, _admit_array, _too_deep, _admit_length, canonical_json, fresh, generated, number, plain, record, returned, snapshot, text
 
 
 def _native(value: Any, *, where: str) -> Any:
@@ -32,7 +32,13 @@ def _native(value: Any, *, where: str) -> Any:
     estimator's values: Python's own values (numpy's ``tolist``, for an array or a numpy scalar), taken by the boundary
     (``snapshot.plain``: a NaN, a set, bytes, a subclass of a JSON type or any other object is refused, never
     converted). Each value is then read by the rule for its kind."""
-    return plain(value.tolist() if _has_member(value, "tolist") else value, where=where)
+    if _has_member(value, "tolist"):
+        buffer = _admit_array(value, where=where)
+        try:
+            return plain(value.tolist(), where=where)
+        finally:
+            buffer.release()
+    return plain(value, where=where)
 
 
 def _estimated(value: Any, *, where: str, index: bool = False) -> int | float:
@@ -247,6 +253,9 @@ def distill_blackbox(blackbox: Any, X_train: Sequence[Sequence[float]],
     The returned rule tree describes approximated *model behaviour*, not
     ground truth or causal influence.
     """
+    _admit_length(feature_names, 100, "invalid feature names", minimum=1)
+    _admit_length(X_train, None, "need at least 10 training and 5 independent held-out rows", minimum=10)
+    _admit_length(X_holdout, None, "need at least 10 training and 5 independent held-out rows", minimum=5)
     X_train = snapshot(X_train, where="X_train")
     X_holdout = snapshot(X_holdout, where="X_holdout")
     feature_names = snapshot(feature_names, where="feature_names")
@@ -261,13 +270,9 @@ def distill_blackbox(blackbox: Any, X_train: Sequence[Sequence[float]],
             or not 1 <= number(min_samples_leaf, where="min_samples_leaf") <= 1000):
         raise ValueError("surrogate complexity outside supported bounds")
     names = _distinct_names(feature_names)
-    if not 1 <= len(names) <= 100:
-        raise ValueError("invalid feature names")
     # Tuples: the black box is handed fresh copies, so the rows checked here are the rows fitted and scored.
     train = tuple(tuple(_float32(x) for x in row) for row in X_train)
     holdout = tuple(tuple(_float32(x) for x in row) for row in X_holdout)
-    if len(train) < 10 or len(holdout) < 5:
-        raise ValueError("need at least 10 training and 5 independent held-out rows")
     if any(len(row) != len(names) for row in train + holdout):
         raise ValueError("wrong number of features")
     if set(train) & set(holdout):

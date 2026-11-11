@@ -29,7 +29,7 @@ from g6.core import door
 from .assurance import canonical_json, sha256
 from .codes import _is_type
 from .codes import NO_PROBE, OBJECTS, STEP_FAILED, affirmed, claims, refusal, settled, unclaimed
-from .snapshot import publish, record_data, FrozenMap, fresh, json_reply, number, plain, record, returned, snapshot, text
+from .snapshot import publish, record_data, FrozenMap, _admit_json, _admit_length, fresh, json_reply, number, plain, record, returned, snapshot, text
 
 
 @record
@@ -80,6 +80,10 @@ class Updater(Protocol):
     def update(self, beliefs: Mapping[str, float], probe: Probe, positive: bool) -> dict[str, float]: ...
 
 
+def _admit_hypotheses(value: Any) -> None:
+    _admit_length(value, 32, "supply 2–32 competing hypotheses", minimum=2)
+
+
 def _beliefs(beliefs: Mapping[str, float]) -> dict[str, float]:
     """The one rule for a belief map, wherever it enters (the caller's priors, a belief map handed to an update, a
     ranking or an information gain, an updater's posterior): 2 to 32 hypotheses, each named by nonempty text, each
@@ -88,8 +92,7 @@ def _beliefs(beliefs: Mapping[str, float]) -> dict[str, float]:
     ``tests/cognitive_bridge/test_belief_inventory.py`` lists every place beliefs enter."""
     if not _is_type(type(beliefs), OBJECTS):
         raise ValueError("beliefs are a mapping of hypothesis IDs to probabilities")
-    if not 2 <= len(beliefs) <= 32:
-        raise ValueError("supply 2–32 competing hypotheses")
+    _admit_hypotheses(beliefs)
     if any(type(h) is not str or not h for h in beliefs):
         raise ValueError("hypothesis IDs must be nonempty and unique; statements nonempty")
     numbers = {h: number(v, where=f"the belief in {h!r}") for h, v in beliefs.items()}
@@ -101,6 +104,7 @@ def _beliefs(beliefs: Mapping[str, float]) -> dict[str, float]:
 
 
 def check_beliefs(hypotheses: Sequence[Hypothesis]) -> dict[str, float]:
+    _admit_hypotheses(hypotheses)
     hypotheses = snapshot(hypotheses, where="hypotheses")
     ids = [h.id for h in hypotheses]
     if any(not h.statement for h in hypotheses) or len(set(ids)) != len(ids):
@@ -135,6 +139,7 @@ def _likelihood(probe: Probe, hypothesis_id: str, positive: bool) -> float:
 
 def expected_information_gain(beliefs: Mapping[str, float], probe: Probe) -> float:
     """Mutual information I(H;O) under an explicitly assumed binary likelihood model."""
+    _admit_hypotheses(beliefs)
     beliefs = snapshot(beliefs, where="beliefs")
     beliefs = _beliefs(beliefs)  # the rule priors follow, where the beliefs enter
     probe = snapshot(probe, where="probe")
@@ -160,6 +165,7 @@ class InformationGainSelector:
             raise ValueError("invalid selector configuration")
 
     def rank(self, beliefs: Mapping[str, float], probes: Sequence[Probe], budget: float) -> list[dict]:
+        _admit_hypotheses(beliefs)
         beliefs = snapshot(beliefs, where="beliefs")
         beliefs = _beliefs(beliefs)  # the rule priors follow, where the beliefs enter
         probes = snapshot(probes, where="probes")
@@ -168,8 +174,11 @@ class InformationGainSelector:
             raise ValueError("budget must be finite and nonnegative")
         scored = []
         for probe in probes:
+            _validate_probe(probe, beliefs)
+            if probe.cost > budget:
+                continue
             gain = expected_information_gain(beliefs, probe)
-            if probe.cost <= budget and gain >= self.min_gain:
+            if gain >= self.min_gain:
                 scored.append({"id": probe.id, "expected_information_bits": gain, "cost": probe.cost,
                                "novelty_preference": probe.novelty,
                                "score": gain / (1 + probe.cost) + self.novelty_weight * probe.novelty})
@@ -178,6 +187,7 @@ class InformationGainSelector:
 
 class BayesianUpdater:
     def update(self, beliefs: Mapping[str, float], probe: Probe, positive: bool) -> dict[str, float]:
+        _admit_hypotheses(beliefs)
         beliefs = snapshot(beliefs, where="beliefs")
         beliefs = _beliefs(beliefs)  # the rule priors follow, where the beliefs enter
         probe = snapshot(probe, where="probe")
@@ -221,6 +231,19 @@ class LLMProposer:
         if not 1 <= number(self.max_probes, where="max_probes") <= 12:
             raise ValueError("max_probes must be 1–12")
 
+    def _admit_reply(self, data: Any) -> None:
+        if type(data) is not dict or type(data.get('probes')) is not list:
+            return  # the schema reader names malformed shapes
+        _admit_length(data['probes'], self.max_probes, "model proposed too many probes")
+        for item in data['probes']:
+            if type(item) is not dict:
+                continue
+            if 'arguments' in item:
+                _admit_json(item['arguments'], cap=2000, error="model tool arguments invalid or too large")
+            for name, cap in (('id', 100), ('question', 1000)):
+                if name in item:
+                    _admit_length(item[name], cap, "model probe string length exceeds cap")
+
     def propose(self, objective: str, hypotheses: Sequence[Hypothesis], history: Sequence[dict]) -> list[Probe]:
         objective = text(objective, where="objective")
         hypotheses = snapshot(hypotheses, where="hypotheses")
@@ -242,11 +265,9 @@ class LLMProposer:
             "allowed_tools": [{"name": t.name, "cost": t.cost,
                                "assumed_match_probability": t.assumed_match_probability} for t in tools.values()],
             "max_probes": self.max_probes}).decode("utf-8")
-        data = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=1500), json_reply, 12000)
+        data = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=1500), json_reply, 12000, self._admit_reply)
         if not _is_type(type(data), (dict, FrozenMap,)) or not _is_type(type(data.get("probes")), (list,)):
             raise ValueError("model did not return the required probes array")
-        if len(data["probes"]) > self.max_probes:
-            raise ValueError("model proposed too many probes")
         hypotheses_ids = {h.id for h in hypotheses}
         probes = []
         for item in data["probes"]:
@@ -255,7 +276,7 @@ class LLMProposer:
             tool = tools.get(item["tool"])
             if tool is None:
                 raise ValueError(f"model requested non-allowlisted tool {item['tool']!r}")
-            if not _is_type(type(item["arguments"]), (dict, FrozenMap,)) or len(canonical_json(item["arguments"]).decode("utf-8")) > 2000:
+            if not _is_type(type(item["arguments"]), (dict, FrozenMap,)):
                 raise ValueError("model tool arguments invalid or too large")
             if not _is_type(type(item["positive_if"]), (dict, FrozenMap,)) or set(item["positive_if"]) != hypotheses_ids:
                 raise ValueError("model must predict all hypotheses")
@@ -266,8 +287,6 @@ class LLMProposer:
                           novelty=item["novelty"], cost=tool.cost,
                           assumed_match_probability=tool.assumed_match_probability)
             _validate_probe(probe, {h.id: h.prior for h in hypotheses})
-            if len(probe.id) > 100 or len(probe.question) > 1000:
-                raise ValueError("model probe string length exceeds cap")
             probes.append(probe)
         if len({p.id for p in probes}) != len(probes):
             raise ValueError("model proposed duplicate probe ids")
@@ -298,6 +317,7 @@ class MLAcquisitionSelector:
         number(self.min_gain, where="min_gain")
 
     def rank(self, beliefs: Mapping[str, float], probes: Sequence[Probe], budget: float) -> list[dict]:
+        _admit_hypotheses(beliefs)
         beliefs = snapshot(beliefs, where="beliefs")
         beliefs = _beliefs(beliefs)  # the rule priors follow, where the beliefs enter
         probes = snapshot(probes, where="probes")
@@ -535,6 +555,16 @@ class LLMIdeaGenerator:
         if not 1 <= number(self.max_ideas, where="max_ideas") <= 10:
             raise ValueError("max_ideas must be 1–10")
 
+    def _admit_reply(self, doc: Any) -> None:
+        if type(doc) is not dict or type(doc.get('ideas')) is not list:
+            return
+        _admit_length(doc['ideas'], self.max_ideas, "invalid idea schema or count")
+        for item in doc['ideas']:
+            if type(item) is dict:
+                for name in ('id', 'statement', 'cross_domain_analogy', 'falsifying_question'):
+                    if name in item:
+                        _admit_length(item[name], 1000, "idea fields must be bounded nonempty strings", minimum=1)
+
     def generate(self, objective: str, observations: Sequence[dict]) -> list[IdeaHypothesis]:
         objective = text(objective, where="objective")
         observations = snapshot(observations, where="observations")
@@ -547,15 +577,15 @@ class LLMIdeaGenerator:
         )
         user = canonical_json({"objective": objective[:2000], "observations": list(observations)[-6:],
                            "max_ideas": self.max_ideas}).decode("utf-8")
-        doc = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=1200), json_reply, 12000)
-        if not _is_type(type(doc), (dict, FrozenMap,)) or not _is_type(type(doc.get("ideas")), (list,)) or len(doc["ideas"]) > self.max_ideas:
+        doc = returned(self.llm.complete(fresh(system), fresh(user), max_tokens=1200), json_reply, 12000, self._admit_reply)
+        if not _is_type(type(doc), (dict, FrozenMap,)) or not _is_type(type(doc.get("ideas")), (list,)):
             raise ValueError("invalid idea schema or count")
         result = []
         for item in doc["ideas"]:
             fields = {"id", "statement", "cross_domain_analogy", "falsifying_question"}
             if not _is_type(type(item), (dict, FrozenMap,)) or set(item) != fields:
                 raise ValueError("idea schema mismatch")
-            if any(not _is_type(type(item[k]), (str,)) or not 1 <= len(item[k]) <= 1000 for k in fields):
+            if any(not _is_type(type(item[k]), (str,)) for k in fields):
                 raise ValueError("idea fields must be bounded nonempty strings")
             result.append(IdeaHypothesis(**item))
         if len({x.id for x in result}) != len(result):

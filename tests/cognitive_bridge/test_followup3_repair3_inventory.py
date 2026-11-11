@@ -11,6 +11,7 @@ from tests.cognitive_bridge.test_depth_inventory import _functions
 
 
 GATES = {'snapshot', 'plain', 'fresh', 'returned', '_walk', '_plain', 'text', 'number',
+         '_admit_json', '_prompt_value',
          'only_fields', 'checked_report', 'checked_selection', '_arguments', '_native', '_estimated', 'canonical_json',
          'view', '_answered'}
 
@@ -74,6 +75,17 @@ xai.py:distill_blackbox
 # These routines consume an owned schema, a parser's bounded text, or only a
 # detached result passed by a listed caller. No exemption is inferred by name.
 OWNED = {
+    'block.py:_admit_model_input': 'actual model MRO selects the owned schema before direct field validation',
+    'block.py:_admit_input': 'owned fixed model topology, native lengths and numeric metadata bounds before detachment',
+    'mixed_methods.py:_admit_claims': 'native 1..20 count before exact ClaimIR length admission; no conversion',
+    'engine.py:LLMProposer._admit_reply': 'native parsed count admitted before per-item length and encoded-size checks',
+    'engine.py:LLMIdeaGenerator._admit_reply': 'native parsed count admitted before field length checks',
+    'critique.py:LLMMetacognitiveCritic._admit_reply': 'native parsed count before owned field metadata width checks',
+    'snapshot.py:_admit_array': 'native buffer shape dimensions, before tolist; storage pinned through conversion',
+    'snapshot.py:_admit_fields': 'owned record schema; byte counts and field lengths before copy',
+    'snapshot.py:_encoded_size.string': 'exact escaped-size counter over detached text; charge stops at cap',
+    'snapshot.py:_encoded_size.visit': 'detached depth/item-admitted projection from _admit_json; output counted before dumps',
+    'snapshot.py:_admit_json': 'view detaches before validation; exact ASCII size admitted before any encoded output',
     'snapshot.py:generated': 'count preflight and root visit before tuple consumes the lazy items',
     'snapshot.py:generated.items': 'shared item/size budget checked before make(index), then the one walker',
     'codes.py:_state_fields': 'G6 door/envelope schema, created in this function',
