@@ -113,7 +113,7 @@ recovery is not itself evidence that the integrated code passes.
 
 ### Independent review fix pass
 
-- Final read-only review identified three material findings, documented in CONTINUATION_REVIEW.md.
+- Final read-only review identified three material findings, documented in [CONTINUATION_REVIEW.md](CONTINUATION_REVIEW.md).
 - Fixed a reproduced sandbox parent-read escape through a child-created symlink. Output collection now refuses
   linked/special files and validates the bounded opened file. Synthetic sentinel only, no real secrets inspected.
 - Fixed overlapping evaluations spending the same held-out use: complete API operations acquire reentrant thread
@@ -221,7 +221,7 @@ recovery is not itself evidence that the integrated code passes.
 
 - Owner exercised discovery, lexical conflict handling, stop/continue composition controls, invalid mappings,
   terminal consent, proposal separation, one AppContainer evaluation and missing-safety-evidence promotion refusal.
-  These are owner observations, not unfamiliar-user or utility evidence; see releases/UAT_ROUND_1.md.
+  These are owner observations, not unfamiliar-user or utility evidence; see [releases/UAT_ROUND_1.md](releases/UAT_ROUND_1.md).
 - Reproduced Codex prompt loss: FastMCP's primitive wrapper adds a top-level schema title, rejected by Codex's
   typed schema parser, returning cancellation. Minimal SDK form schema now passes automated decline/cancel/accept
   on isolated Codex 0.164.0 and installed 0.165.0. No model turns or human UI claims. Exact-version old/new comparison

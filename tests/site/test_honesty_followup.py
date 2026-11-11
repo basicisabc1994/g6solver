@@ -156,19 +156,29 @@ def test_foreign_readers_are_inventoried_from_the_code(honesty):
                 if name.endswith('.read_text'):
                     reads.append(function.name)
                 if name in {'json.loads', 'yaml.safe_load', 'front_matter', 'reader.feed',
-                            'views.markdown_html', 'markdown.markdown'}:
+                            'views.markdown_html', 'markdown.markdown', 'Message', 'media.get_content_type',
+                            'urlsplit', 'render_to_string', 'build'}:
                     parsers.append((function.name, name))
-    assert sorted(reads) == ['_file_copy', 'docs_extensions'], reads
+    assert sorted(reads) == ['_file_copy', 'docs_extensions', 'exported_pages', 'public_documents'], reads
     assert set(parsers) == {
         ('docs_extensions', 'yaml.safe_load'), ('handle_endtag', 'json.loads'),
         ('_markdown_copy', 'front_matter'), ('_reader', 'reader.feed'),
         ('_markdown_copy', 'views.markdown_html'), ('_docs_site_html', 'markdown.markdown'),
+        ('handle_starttag', 'Message'), ('handle_starttag', 'media.get_content_type'),
+        ('_is_address', 'urlsplit'), ('public_documents', 'urlsplit'),
+        ('product_names', 'render_to_string'), ('exported_pages', 'build'),
     }, parsers
 
 
 def test_json_ld_inventory_covers_every_routed_page(honesty, client):
-    for page in honesty.PAGES:
-        honesty.structured_inventory(client.get('/' + page.path).content.decode())
+    # Keep this callable's signature: earlier independent reviews invoke it directly.
+    # The builder's files, including 404 and auxiliary HTML, are the public export inventory.
+    essay_paths = {page.path + 'index.html' for page in honesty.PAGES if page.namespace == 'blog'}
+    for name, page in honesty.exported_pages().items():
+        honesty.structured_inventory(page)
+        essay = name in essay_paths  # preserve the existing blog policy, including its index
+        refused = honesty.g6_claims(page) if essay else honesty.claims(honesty._page_copy(page))
+        assert not refused, (name, refused)
 
 
 def test_claim_vocabulary_does_not_turn_other_word_stems_into_claims(honesty):
@@ -225,7 +235,7 @@ def test_regex_calls_have_named_roles_from_the_code(honesty):
     compiled = {node.targets[0].id for node in tree.body
                 if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
                 and ast.unparse(node.value.func) == 're.compile'}
-    assert compiled == {'CLAIM', 'STATE_LIST', 'MENTION', '_INVISIBLE', '_ABBREVIATION'}
+    assert compiled == {'CLAIM', 'STATE_LIST', 'MENTION', '_INVISIBLE'}
     calls = set()
     for function in tree.body:
         if not isinstance(function, ast.FunctionDef) or function.name.startswith('test_'):
@@ -236,7 +246,8 @@ def test_regex_calls_have_named_roles_from_the_code(honesty):
     assert calls == {
         ('_all_states', 're.findall'), ('_diagram', 're.sub'), ('_resolve', 're.match'),
         ('_docs_site_html', 're.sub'), ('claims', 're.sub'), ('claims', 're.escape'),
-        ('g6_claims', 're.search'), ('sentences', 're.finditer'),
+        ('g6_claims', 're.search'), ('g6_claims', 're.escape'), ('sentences', 're.finditer'),
+        ('_normalise', 're.sub'),
     }, calls
 
 

@@ -27,13 +27,19 @@ import ast
 import html
 import json
 import re
+import shutil
 import unicodedata
+from email.message import Message
 from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
+from uuid import uuid4
 
 import markdown
 import pytest
 import yaml
+from django.template.loader import render_to_string
+from django.test import RequestFactory
 
 from g6.core.skills import front_matter
 from pages import views
@@ -41,9 +47,14 @@ from pages.routes import PAGES
 
 OSS = Path(__file__).resolve().parents[2]
 
-#: The existing verification-family stem, with its prefixes and inflections; only claims() decides a claim.
-#: Keep the old whole-word boundary around identifiers: digits and underscores are not word inflections.
-CLAIM = re.compile(r"\b[^\W\d_]*verif[^\W\d_]*\b", re.IGNORECASE)
+#: One closed vocabulary for claims and quoted mentions. Counter is retained from the earlier tested vocabulary.
+#: Identifiers keep the existing word boundary: digits and underscores are not English inflections.
+VERIFICATION_ENDINGS = ('y', 'ies', 'ied', 'ying', 'ier', 'iers', 'iable', 'iably', 'iability',
+                        'ication', 'ications', 'icatory')
+VERIFICATION_PREFIXES = ('re', 'un', 'pre', 'non', 'self', 'auto', 'co', 'counter')
+VERIFICATION_WORD = (rf"(?:(?:{'|'.join(VERIFICATION_PREFIXES)})-?)?"
+                     rf"verif(?:{'|'.join(VERIFICATION_ENDINGS)})")
+CLAIM = re.compile(rf"\b{VERIFICATION_WORD}\b", re.IGNORECASE)
 STATE_NAMES = ("verified", "qualified-draft", "blocked-escalated")
 _STATE = r"(?:verified|qualified-draft|blocked-escalated)"
 _SEP = r"(?:\s*[,;/]\s*|\s+)(?:(?:or|and)\s+)?"
@@ -54,8 +65,10 @@ STATE_LIST = re.compile(rf"\b{_STATE}{_SEP}{_STATE}{_SEP}{_STATE}\b", re.IGNOREC
 def _all_states(text: str) -> bool:
     return {state.lower() for state in re.findall(_STATE, text, re.IGNORECASE)} == set(STATE_NAMES)
 #: The bare word in quotation marks, double or single, straight or curly, mentions it; a quoted phrase is read.
-MENTION = re.compile(r"(?:\"\s*verif\w*[.,;:!?]?\s*\"|(?<!\w)'\s*verif\w*[.,;:!?]?\s*'(?!\w)"
-                     r"|\u201c\s*verif\w*[.,;:!?]?\s*\u201d|\u2018\s*verif\w*[.,;:!?]?\s*\u2019)", re.IGNORECASE)
+MENTION = re.compile(rf'(?:"\s*{VERIFICATION_WORD}[.,;:!?]?\s*"'
+                     rf"|(?<!\w)'\s*{VERIFICATION_WORD}[.,;:!?]?\s*'(?!\w)"
+                     rf"|\u201c\s*{VERIFICATION_WORD}[.,;:!?]?\s*\u201d"
+                     rf"|\u2018\s*{VERIFICATION_WORD}[.,;:!?]?\s*\u2019)", re.IGNORECASE)
 #: Names left as they are, each with the reason; the report lists where each one stands.
 LEFT = {
     "work called verified when the evidence does not support it":
@@ -87,7 +100,26 @@ MARKDOWN = sorted({
 #: Elements that end a run of text: the HTML block-level elements, as Python-Markdown, the site's renderer, lists them.
 #: Every other element (a, span, em, br, tspan) sits inside a line, and a line break is whitespace.
 _BLOCK = frozenset(markdown.util.BLOCK_LEVEL_ELEMENTS)
-_SHOWN = ("title", "alt", "aria-label", "aria-description", "placeholder")
+#: HTML Living Standard, https://html.spec.whatwg.org/multipage/indices.html#attributes-3
+#: Global title; image/area/input alternative text; input/textarea placeholders;
+#: option/optgroup/track labels; th abbreviation. WAI-ARIA: author-supplied spoken/braille text
+#: (https://www.w3.org/TR/wai-aria/#state_prop_def).
+#: Empty tag tuples mean global attributes. This table drives both extraction and its planted inventory.
+SHOWN_ATTRIBUTES = {
+    'title': (), 'alt': ('img', 'area', 'input'), 'placeholder': ('input', 'textarea'),
+    'label': ('option', 'optgroup', 'track'), 'abbr': ('th',),
+    'aria-label': (), 'aria-description': (), 'aria-valuetext': (), 'aria-roledescription': (),
+    'aria-placeholder': (), 'aria-braillelabel': (), 'aria-brailleroledescription': (),
+}
+#: HTML input states that display their value. Invalid/missing types use the standard's text default.
+#: Passwords, non-textual controls and hidden inputs do not display value as copy.
+INPUT_VALUE_STATES = {
+    'text': True, 'search': True, 'tel': True, 'url': True, 'email': True, 'date': True, 'month': True,
+    'week': True, 'time': True, 'datetime-local': True, 'number': True, 'button': True, 'submit': True, 'reset': True,
+    'hidden': False, 'password': False, 'checkbox': False, 'radio': False, 'file': False,
+    'color': False, 'range': False, 'image': False,
+}
+SHOWN_INPUT_TYPES = tuple(kind for kind, shown in INPUT_VALUE_STATES.items() if shown)
 #: Every structured string is copy unless its own key names machine data. Objects beneath a URL-capable
 #: field still have their children read: an image's caption or name is copy, its URL is an address.
 _MACHINE_FIELDS = frozenset({"@context", "@type", "@id", "url", "image", "sameAs", "logo", "contentUrl",
@@ -97,10 +129,17 @@ _MACHINE_FIELDS = frozenset({"@context", "@type", "@id", "url", "image", "sameAs
 _COPY_FIELDS = frozenset({"headline", "description", "name", "alternativeHeadline", "abstract", "text",
                           "articleBody", "keywords", "jobTitle", "programmingLanguage", "caption"})
 _OBJECT_FIELDS = frozenset({"author", "publisher", "mainEntityOfPage", "mainEntity", "acceptedAnswer", "@graph"})
+#: JSON-LD 1.1, section 3's syntax keywords; @context is an opaque machine subtree, at every depth.
+_JSONLD_KEYWORDS = frozenset({'@base', '@container', '@context', '@direction', '@graph', '@id', '@import',
+                            '@included', '@index', '@json', '@language', '@list', '@nest', '@none', '@prefix',
+                            '@propagate', '@protected', '@reverse', '@set', '@type', '@value', '@version', '@vocab'})
 #: The meta tags a reader or a search engine is shown, by their name or property; an address tag is not one.
-_META_READ = frozenset({"description", "og:title", "og:description", "og:site_name", "og:image:alt", "twitter:title",
-                        "twitter:description", "twitter:image:alt"})
-_BUTTONS = ("button", "submit", "reset")                  # an <input> of these types shows its value
+#: HTML standard metadata names, Open Graph text properties and Twitter card text fields. Addresses, tokens,
+#: dimensions and presentation hints (theme-color, viewport, robots) are machine data, as before.
+SHOWN_META_NAMES = frozenset({'application-name', 'description', 'author', 'keywords',
+                             'og:title', 'og:description', 'og:site_name', 'og:image:alt',
+                             'twitter:title', 'twitter:description', 'twitter:image:alt',
+                             'twitter:label1', 'twitter:data1', 'twitter:label2', 'twitter:data2'})
 #: Characters a reader never sees: the soft hyphen and the zero-width ones.
 _INVISIBLE = re.compile("[\u00ad\u200b-\u200d\u2060\ufeff]")
 #: What an exempt code span becomes: a neutral word, so the words and the quotation marks around it stay as they were.
@@ -111,7 +150,10 @@ def _normalise(text: str) -> str:
     """The text as a reader reads it: compatibility forms folded (NFKC: a ligature is its letters), the characters
     nobody sees taken out, the marks on a letter taken off (a combining mark cannot split a word), whitespace
     collapsed."""
-    text = _INVISIBLE.sub("", unicodedata.normalize("NFKC", text))
+    # A discretionary wrap removes the hyphen AND its following newline/indentation, before whitespace folds.
+    text = re.sub(r"\u00ad(?:(?:\r\n|[\n\r\v\f\x85\u2028\u2029])[ \t]*)?", "",
+                  unicodedata.normalize("NFKC", text))
+    text = _INVISIBLE.sub("", text)
     text = "".join(ch for ch in unicodedata.normalize("NFD", text) if unicodedata.category(ch) != "Mn")
     return " ".join(unicodedata.normalize("NFC", text).split())
 
@@ -154,15 +196,28 @@ class _Span(str):
     """An inline code span's text, kept apart until the words around it are known."""
 
 
+def _is_address(value: str) -> bool:
+    """JSON-LD string values which are URLs or site paths, through the URL reader, wherever they occur."""
+    if not value or any(ch.isspace() for ch in value):
+        return False
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return False
+    return bool(parts.scheme or parts.netloc or value.startswith(('/', './', '../', '#')))
+
+
 def _fields(value: object, key: str = ""):
     """All structured strings, except a scalar explicitly named as machine data, at every depth."""
+    if key == '@context':
+        return
     if isinstance(value, dict):
         for name, item in value.items():
             yield from _fields(item, name)
     elif isinstance(value, list):
         for item in value:
             yield from _fields(item, key)
-    elif isinstance(value, str) and key not in _MACHINE_FIELDS:
+    elif isinstance(value, str) and key not in _MACHINE_FIELDS and not _is_address(value):
         yield value
 
 
@@ -181,22 +236,40 @@ class _Reader(HTMLParser):
         self.data: list[str] | None = None    # a structured-data script being read
         self.structured: list[object] = []
         self.json_errors: list[str] = []
+        self.lead: list[str] | None = None
+        self.continuations: list[tuple[str, list[str]]] = []
+        self.links: list[str] = []
+        self.site_names: set[str] = set()
 
     def end_run(self) -> None:
         if "".join(self.run).strip():
-            self.units.append(self.run)
+            prefix = self.continuations[-1][1] if self.continuations else []
+            unit = [*prefix, ' ', *self.run] if prefix else self.run
+            self.units.append(unit)
+            self.lead = unit if ''.join(self.run).rstrip().endswith(':') else None
         self.run = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = {name: value or "" for name, value in attrs}     # html.parser gives attribute names in lower case
         name, prop = values.get("name", "").lower(), values.get("property", "").lower()
-        self.units += [[values[shown]] for shown in _SHOWN if values.get(shown)]
-        if tag == "input" and values.get("type", "").lower() in _BUTTONS and values.get("value"):
+        self.units += [[values[shown]] for shown, tags in SHOWN_ATTRIBUTES.items()
+                       if values.get(shown) and (not tags or tag in tags)]
+        shown_value = INPUT_VALUE_STATES.get(values.get('type', 'text').lower(), INPUT_VALUE_STATES['text'])
+        if tag == "input" and shown_value and values.get("value"):
             self.units.append([values["value"]])
-        if tag == "meta" and values.get("content") and ({name, prop} & _META_READ):
+        if tag == "meta" and values.get("content") and ({name, prop} & SHOWN_META_NAMES):
             self.units.append([values["content"]])                  # read by its key; an address key is not one
         classes = values.get("class", "").lower().split()
-        if tag == "script" and values.get("type", "").lower() == "application/ld+json":
+        if tag in ('a', 'area') and values.get('href'):
+            self.links.append(values['href'])
+        if tag == 'meta' and prop == 'og:site_name' and values.get('content'):
+            self.site_names.add(values['content'])
+        json_ld = False
+        if tag == 'script':
+            media = Message()
+            media['content-type'] = values.get('type', '')
+            json_ld = media.get_content_type() == 'application/ld+json'
+        if tag == "script" and json_ld:
             self.data = []
         elif tag in ("script", "style"):
             self.hidden += 1
@@ -211,12 +284,16 @@ class _Reader(HTMLParser):
             (self.code if self.code is not None else self.run).append("\n")    # a line break is whitespace
         elif tag in _BLOCK:
             self.end_run()
+            if tag in ('ul', 'ol', 'dd'):
+                inherited = self.continuations[-1][1] if self.continuations else []
+                self.continuations.append((tag, self.lead or inherited))
+                self.lead = None
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "script" and self.data is not None:
             try:
-                data = json.loads("".join(self.data))
-            except json.JSONDecodeError as error:
+                data = json.loads("".join(self.data), parse_constant=_invalid_json_constant)
+            except ValueError as error:
                 self.json_errors.append(str(error))
                 data = None                                          # unreadable copy also fails the inventory
             self.structured.append(data)
@@ -232,6 +309,9 @@ class _Reader(HTMLParser):
             self.code = None
         elif tag in _BLOCK:
             self.end_run()
+            if self.continuations and self.continuations[-1][0] == tag:
+                self.continuations.pop()
+                self.lead = None
 
     def handle_data(self, data: str) -> None:
         if self.data is not None:
@@ -246,6 +326,10 @@ class _Reader(HTMLParser):
                 self.run.append(_diagram(data))
         else:
             self.run.append(data)
+
+
+def _invalid_json_constant(value: str):
+    raise ValueError(f'Not a JSON constant: {value}')
 
 
 def _reader(page: str) -> _Reader:
@@ -270,14 +354,15 @@ def structured_inventory(page: str) -> set[str]:
         if isinstance(value, dict):
             for key, item in value.items():
                 fields.add(key)
-                visit(item)
+                if key != '@context':
+                    visit(item)
         elif isinstance(value, list):
             for item in value:
                 visit(item)
 
     for data in reader.structured:
         visit(data)
-    unknown = fields - _COPY_FIELDS - _MACHINE_FIELDS - _OBJECT_FIELDS
+    unknown = fields - _COPY_FIELDS - _MACHINE_FIELDS - _OBJECT_FIELDS - _JSONLD_KEYWORDS
     assert not unknown, f"Unclassified JSON-LD fields: {sorted(unknown)}"
     return fields
 
@@ -344,22 +429,97 @@ def _markdown_copy(text: str, *, docs_site: bool = False) -> str:
     return "\n\n".join([*front_matter(text).values(), _page_copy(page)])
 
 
-# An abbreviation's periods stay inside the sentence. Initials are capital letters; decimals stay whole too.
-_ABBREVIATION = re.compile(r"\b(?:(?i:e\.g\.|i\.e\.|etc\.|vs\.)|(?:[A-Z]\.)+)(?=\s)|(?<=\d)\.(?=\d)")
-
-
 def sentences(text: str) -> list[str]:
-    """The one sentence reader for ordinary copy and essays, preserving ordinary abbreviations."""
+    """End only at a certain terminal boundary; uncertain abbreviations/initials keep the subject with its claim.
+
+    Terminal punctuation may have closing quotes/brackets before whitespace, followed by a capital or an opening
+    quote. A single letter, dotted token or capitalised token of up to three letters may be an abbreviation.
+    This intentionally refuses the ambiguous 'G6 checks C. Other tools verify it.' (owner, repair 1).
+    """
     text = _normalise(text)
-    # Mask positions rather than characters: any character the copy already contains is preserved.
-    protected = {index for match in _ABBREVIATION.finditer(text)
-                 for index in range(match.start(), match.end()) if text[index] == "."}
-    # A space following a protected period cannot be a boundary. Splitting whitespace at other punctuation
-    # keeps the original text (including quotes and abbreviation spelling) intact.
-    boundaries = [match.start() for match in re.finditer(r"(?<=[.!?])\s+", text)
-                  if match.start() - 1 not in protected]
+    boundaries = []
+    for match in re.finditer(r'''(?P<token>[\w.]+)[.!?]["'”’\)\]\}]*\s+(?=(?P<next>[^\W\d_]|["'“‘]))''', text):
+        token, following = match.group('token', 'next')
+        uncertain = ('.' in token or len(token) == 1
+                     or (token.isalpha() and token[0].isupper() and len(token) <= 3))
+        if not uncertain and (following.isupper() or following in '\"\'“‘'):
+            boundaries.append(match.end())
     return [text[start:end].strip() for start, end in zip([0, *boundaries], [*boundaries, len(text)])
             if text[start:end].strip()]
+
+
+def product_names() -> tuple[str, ...]:
+    """Identity names from the templates as rendered with site settings, rather than a second spelling list."""
+    names = set()
+    for template in ('base.html', 'blog/base_post.html'):
+        reader = _reader(render_to_string(template, request=RequestFactory().get('/')))
+        assert not reader.json_errors, reader.json_errors
+        names.update(reader.site_names)
+        for data in reader.structured:
+            if isinstance(data, dict):
+                publisher = data.get('publisher', {})
+                if isinstance(publisher, dict) and publisher.get('name'):
+                    names.add(publisher['name'])
+    assert names, 'No site identity names'
+    return tuple(sorted(names))
+
+
+PRODUCT_NAMES = product_names()
+
+
+def exported_pages() -> dict[str, str]:
+    """The static builder's actual HTML export list, including auxiliary pages (not just routed pages)."""
+    from pages.management.commands.build_static import build
+
+    workspace = (OSS / '.build').resolve()
+    folder = (workspace / ('honesty-export-' + uuid4().hex)).resolve()
+    assert folder.is_relative_to(workspace)
+    folder.mkdir(parents=True)
+    try:
+        problems = build(folder)
+        assert not problems, problems
+        return {path.relative_to(folder).as_posix(): path.read_text(encoding='utf-8')
+                for path in sorted(folder.rglob('*.html'))}
+    finally:
+        assert folder.resolve().is_relative_to(workspace) and not folder.is_symlink()
+        shutil.rmtree(folder)
+
+
+def _excluded_document(path: Path) -> bool:
+    """Only the already documented scope exclusions; this is not a claim exemption."""
+    rel = path.relative_to(OSS).as_posix()
+    return (rel.startswith(('docs/theory/', 'docs/validation/', 'docs/superpowers/'))
+            or rel == 'docs/releases/PLAN_AUDIT.md' or 'vendor' in path.relative_to(OSS).parts
+            or 'certificate' in path.relative_to(OSS).parts)
+
+
+def public_documents(seeds) -> list[Path]:
+    """Transitive public-document links, parsed as Markdown/HTML, constrained to the repository and old exclusions."""
+    seen, pending = set(seeds), list(seeds)
+    while pending:
+        path = pending.pop()
+        # Read Markdown links before the site's URL rewrite; the docs renderer uses the same Markdown reader.
+        page = _docs_site_html(views._PLANNED.sub(lambda m: m.group(1), path.read_text(encoding='utf-8')))
+        for link in _reader(page).links:
+            address = urlsplit(link)
+            # Public repository links use the site's own canonical source prefix (no network access).
+            repository = views.evidence.REPO
+            if link.startswith(repository):
+                address = urlsplit('/' + link[len(repository):])
+            if address.scheme or address.netloc or not address.path:
+                continue
+            target = ((OSS if address.path.startswith('/') else path.parent)
+                      / unquote(address.path).lstrip('/')).resolve()
+            if not target.is_relative_to(OSS) or target.suffix.lower() not in {'.md', '.txt'}:
+                continue
+            if target in seen or _excluded_document(target) or not target.is_file():
+                continue
+            seen.add(target)
+            pending.append(target)
+    return sorted(seen)
+
+
+MARKDOWN = public_documents(MARKDOWN)
 
 
 def claims(copy: str) -> list[str]:
@@ -388,7 +548,8 @@ def g6_claims(page: str) -> list[str]:
             read = sentence
             for key, value in spans.items():
                 read, sentence = read.replace(key, value), sentence.replace(key, PLACEHOLDER)
-            if re.search(r"\bG6\b", _normalise(read), re.IGNORECASE) and claims(sentence):
+            names = '|'.join(re.escape(_normalise(name)) for name in PRODUCT_NAMES)
+            if re.search(rf"\b(?:{names})\b", _normalise(read), re.IGNORECASE) and claims(sentence):
                 found.append(_normalise(read))
     return found
 
