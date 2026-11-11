@@ -136,6 +136,7 @@ SOURCE_SITES = {
     # for its `sources` argument, which narrows source registrations and builds no consent source.
     'g6.knowledge._engine._source',
     'g6.knowledge._engine.pack',
+    'g6.knowledge._graph.traverse',
     'g6.knowledge._scope.access',
     'g6.knowledge._support.support_for',
     'g6.mcp.knowledge._declined',
