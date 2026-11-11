@@ -119,9 +119,14 @@ def claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> StandIn:
 
 
 @pytest.fixture
-def workspace(tmp_path: Path) -> Path:
+def workspace(tmp_path: Path, key_file, accepted_cloud_dialog) -> Path:
+    # Choose the test's home before granting. A later key_file fixture must not
+    # replace the home that holds the repository/environment grants.
     folder = tmp_path / "project"
     folder.mkdir()
+    from g6.core.cloud_consent import repository_source
+    accepted_cloud_dialog(repository_source(folder), "anthropic:claude_code", text="synthetic workspace")
+    accepted_cloud_dialog('agent_environment', 'anthropic:claude_code', text='synthetic CLI environment')
     return folder
 
 
@@ -162,6 +167,40 @@ def _values(argv: list[str], flag: str) -> list[str]:
             break
         out.append(arg)
     return out
+
+
+def test_workspace_grants_survive_the_key_file_fixture(workspace, key_file):
+    from g6.core import cloud_consent as cloud
+    assert cloud.is_granted(cloud.repository_source(workspace), 'anthropic:claude_code')
+    assert cloud.is_granted('agent_environment', 'anthropic:claude_code')
+
+
+@pytest.mark.parametrize('missing', ['repository', 'agent_environment'])
+def test_d1_launch_without_each_required_grant_starts_no_session(claude, tmp_path, key_file,
+                                                               accepted_cloud_dialog, missing, monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from g6.agents._runtime.cli import CliAgentRunner
+    from g6.core import cloud_consent as cloud
+    # Reach admission without an installed program or a protected temporary
+    # folder. No process is needed to measure a denied launch.
+    @contextmanager
+    def scratch(_):
+        folder = tmp_path / 'scratch'
+        folder.mkdir()
+        yield folder
+
+    monkeypatch.setattr(CliAgentRunner, 'require', lambda *a, **k: SimpleNamespace(where='fake-claude', version='test'))
+    monkeypatch.setattr(CliAgentRunner, 'session', scratch)
+    folder = tmp_path / 'project'
+    folder.mkdir()
+    scope = cloud.repository_source(folder) if missing == 'agent_environment' else 'agent_environment'
+    accepted_cloud_dialog(scope, 'anthropic:claude_code', text='synthetic CLI input')
+    reply = live(folder)
+    assert reply['completion_state'] == 'blocked-escalated'
+    assert 'G6_E_CLOUD_CONSENT_REQUIRED' in str(reply), reply
+    assert all(call == ['--version'] for call in claude.calls())
+    assert not (claude.folder / 'record.json').exists()
 
 
 # --- D1: never more than the person declared (overprivileged_agent, unguarded_tool_use) ------------------------------

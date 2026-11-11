@@ -80,7 +80,7 @@ def public_settings(s: dict[str, str]) -> dict[str, Any]:
 
 
 def caller_from_settings(s: dict[str, str]):
-    from g6.core.llm import provider_from_env
+    from g6.core.consent_callers import provider_from_env
 
     env = {"G6_LLM_PROVIDER": s["provider"], "G6_LLM_MODEL": s["model"]}   # the key comes from the key file
     if s["provider"] == "ollama" and os.environ.get("OLLAMA_BASE_URL"):

@@ -26,7 +26,7 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from g6.core import git_env
+from g6.core import cloud_consent as cloud, git_env
 from g6.core.door import (
     SENSITIVE_ENV,
     allowed_sensitive,
@@ -42,6 +42,7 @@ from g6.harness import verification_search
 from g6.harness.patch_review import DEFECT, INTEGRITY
 from g6.intent_engine import IntentElicitor
 from g6.mcp import review_reply
+from g6.mcp.consent_controls import host_controls, public_instructions
 from g6.reliability_pipeline import premortem as checklist
 from g6.workforce import acceptance, api, bench, coding, repo_tests
 
@@ -97,8 +98,9 @@ def refused() -> dict | None:
     """The refusal of a tool that runs the repository's code, unless the host allows it."""
     if is_allowed(*SENSITIVE, allowed_sensitive()):
         return None
-    return blocked_reply(f"[G6_E_SENSITIVE_COMPONENT_DENIED] {WHO} runs the repository's code; the host must allow it, "
-                         f"by adding {WHO} (or workforce) to {SENSITIVE_ENV} where the server is registered")
+    return public_instructions(blocked_reply(
+        f"[G6_E_SENSITIVE_COMPONENT_DENIED] {WHO} runs the repository's code; the host must allow it, "
+        f"by adding {WHO} (or workforce) to {SENSITIVE_ENV} where the server is registered"))
 
 
 def _here(value: Any) -> Any:
@@ -113,8 +115,9 @@ def _here(value: Any) -> Any:
     return value
 
 
-def reply(found: dict) -> dict:
+def reply(found: dict, *, control_id: str | None = None) -> dict:
     """``found`` in the library envelope: the state a closed mission reached, a ``qualified-draft`` while it is open."""
+    sources = cloud.output_sources(found)
     said = said_state(found) if found.get("completion_state") else "qualified-draft"
     if said == "blocked-escalated":
         shown = card(None, "G6_E_BLOCKED", f"{WHO} reported blocked-escalated: {found.get('result')}"[:500])
@@ -123,7 +126,15 @@ def reply(found: dict) -> dict:
                                                      (found.get("review") or {}).get("said") or DRAFT)
     envelope = door_envelope(said, who=WHO, value=found, warning_card=shown, run_id=str(found.get("mission_id") or ""))
     state = envelope["completion_state"]
-    return {"ok": state != "blocked-escalated", **corrected_result(_here(found), state), **envelope}
+    value = {"ok": state != "blocked-escalated", **corrected_result(_here(found), state), **envelope}
+    controls = {"request_id": envelope["request_id"]}
+    # Only the explicit producer callsite knows whether a handle is host-minted
+    # or was literally supplied by this client. Result field names establish neither.
+    if control_id is not None:
+        controls["mission_id"] = control_id
+        if envelope["run_id"] == control_id:
+            controls["run_id"] = control_id
+    return host_controls(value, controls, sources=sources)
 
 
 def _refusal(said: str, code: str = REFUSED) -> dict:
@@ -200,15 +211,17 @@ def create(name: str, objective: str, *, lines: list[str] | None = None, who: st
         wf = api.bind()
         if lines is not None:
             api.allow_execution(wf, name, _bound(lines, who), reason="allowed in the client's dialog")
-        return reply(api.create_coding_mission(wf, objective, name, module=module or None, function=function or None,
-                                               helpers=helpers, risk=risk, budget_cents=budget_cents))
+        found = api.create_coding_mission(wf, objective, name, module=module or None, function=function or None,
+                                          helpers=helpers, risk=risk, budget_cents=budget_cents)
+        return reply(found, control_id=found.get("mission_id"))
 
     return _guarded(work)
 
 
 def clarify(mission_id: str, replay_semantics: str) -> dict:
     """Answer the replay question a mission asks before its standard is frozen. This is no confirmation."""
-    return _guarded(lambda: reply(api.answer_clarification(api.bind(), mission_id, replay_semantics)))
+    return _guarded(lambda: reply(api.answer_clarification(api.bind(), mission_id, replay_semantics),
+                                  control_id=mission_id))
 
 
 def asked(mission_id: str) -> tuple[list[str], str, str] | dict:
@@ -238,7 +251,8 @@ def confirm(mission_id: str, lines: list[str], sha: str, who: str) -> dict:
         if wf.missions.acceptance(mission_id).sha256 != sha:
             raise ValueError(STANDARD_CHANGED)
         try:
-            return reply(api.confirm(wf, mission_id, _bound(lines, who), reason="confirmed in the client's dialog"))
+            return reply(api.confirm(wf, mission_id, _bound(lines, who), reason="confirmed in the client's dialog"),
+                         control_id=mission_id)
         except api.NotConfirmed as exc:
             raise ValueError(LINES_CHANGED) from exc
 
@@ -296,7 +310,8 @@ def submit(mission_id: str, repo: str, *, claim: str = "", timeout_s: int = 300)
         outcome = assessment.get("outcome")
         kept = {"outcome": outcome, "artifact_digest": reviewed.get("artifact_digest"), "held": outcome in HELD,
                 "reasons": [r.get("code") for r in assessment.get("reasons") or [] if isinstance(r, dict)]}
-        mission = _guarded(lambda: reply(_reviewed(wf, mission_id, api.submit_patch(wf, mission_id, files, review=kept))))
+        mission = _guarded(lambda: reply(_reviewed(wf, mission_id, api.submit_patch(wf, mission_id, files, review=kept)),
+                                         control_id=mission_id))
         if mission["completion_state"] == "blocked-escalated":
             reviewed = {**reviewed, "ok": False, "completion_state": "blocked-escalated",
                         "reliability_label": "blocked-escalated"}
@@ -314,7 +329,7 @@ def finish(found: Any, job_id: str) -> Any:
 def status(mission_id: str, detail: str = "summary") -> dict:
     def work() -> dict:
         wf = api.bind()
-        return reply(_reviewed(wf, mission_id, api.status(wf, mission_id, detail)))
+        return reply(_reviewed(wf, mission_id, api.status(wf, mission_id, detail)), control_id=mission_id)
 
     return _guarded(work)
 
@@ -324,7 +339,7 @@ def certificate(mission_id: str) -> dict:
     def work() -> dict:
         wf = api.bind()
         return reply(_reviewed(wf, mission_id, {"mission_id": mission_id,
-                                                "certificate": api.certificate(wf, mission_id)}))
+                                                "certificate": api.certificate(wf, mission_id)}), control_id=mission_id)
 
     return _guarded(work)
 

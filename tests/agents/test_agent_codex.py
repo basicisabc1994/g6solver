@@ -104,9 +104,13 @@ def codex(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> StandIn:
 
 
 @pytest.fixture
-def workspace(tmp_path: Path) -> Path:
+def workspace(tmp_path: Path, monkeypatch, accepted_cloud_dialog) -> Path:
+    monkeypatch.setenv('G6_HOME', str(tmp_path / 'consent-home'))
     folder = tmp_path / "project"
     folder.mkdir()
+    from g6.core.cloud_consent import repository_source
+    accepted_cloud_dialog(repository_source(folder), "openai:codex", text="synthetic workspace")
+    accepted_cloud_dialog('agent_environment', 'openai:codex', text='synthetic CLI environment')
     return folder
 
 
