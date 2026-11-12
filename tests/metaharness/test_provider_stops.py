@@ -1307,7 +1307,9 @@ def test_ref2_11_the_log_reads_back_what_was_said_exactly_and_a_write_it_cannot_
     from g6.metaharness import loop as loop_module
 
     assert note_refusal(tmp_path, "a" * 64, "said \ud800 here")
-    assert (tmp_path / REFUSED_FILE).read_bytes().decode("utf-8", "surrogatepass").split(" ", 1)[1].startswith("said \ud800")
+    # what was said is kept by the one rule every stop path's text is (``envelope.utf8``, the stop follow-up's): plain
+    # UTF-8, read back exactly as it was written, a lone surrogate spelled out where UTF-8 cannot carry it
+    assert (tmp_path / REFUSED_FILE).read_bytes().decode("utf-8").split(" ", 1)[1] == "said \\ud800 here\n"
     loop = ShadowLoop.__new__(ShadowLoop)
     loop.root, loop.cannot_record = tmp_path, ""
     monkeypatch.setattr(loop_module, "note_refusal", lambda *args: (_ for _ in ()).throw(ValueError("cannot encode")))

@@ -1216,13 +1216,14 @@ def _ask_to_stop(root: str | Path, reason: str = "", *, record_id: str | None, m
 def note_refusal(root: str | Path, request: str, said: str) -> bool:
     """Keep what a classifier or a permission refused, first and in an append-only file, because a refused
     request is never sent again whether or not its cycle reaches the log, or a tick is open at all. ``request``: a digest, never
-    its text. It is on the disk before this returns ``True``. What was said is kept as UTF-8 with any lone surrogate kept as it
-    is, so it is written and read back exactly. Each row stands on a line of its own: after a row a crash cut short, the new one
+    its text. It is on the disk before this returns ``True``. What was said is written by the one rule every stop path's text
+    is (``utf8``): plain UTF-8, a lone surrogate spelled out with a backslash, so every reader reads the file as UTF-8 and no
+    caller's words keep the row from being written. Each row stands on a line of its own: after a row a crash cut short, the new one
     begins with a line break, in the same write. One that cannot be written raises nothing and returns ``False``: the caller
     decides what this process does, since only it still holds the refusal. Every synchronous append and fsync holds the
     admission lock; path and text conversion, like the hook calling this writer, precede that lock."""
     try:
-        row = f"{request} {' '.join(said.split())}\n".encode("utf-8", "surrogatepass")
+        row = utf8(f"{request} {' '.join(said.split())}\n")
         path = Path(root) / REFUSED_FILE
         # Admission excludes lock-waiting readers and caller hooks; its own durable write stays locked through fsync.
         with _REFUSAL_WRITE_LOCK, open(path, "a+b") as kept:
