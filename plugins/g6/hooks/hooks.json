@@ -12,6 +12,17 @@
             "statusMessage": "G6 is reading the task"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": ["-P", "-m", "g6._allowance.hook"],
+            "timeout": 2,
+            "statusMessage": "G6 is reading cached allowance advice"
+          }
+        ]
       }
     ],
     "Stop": [
