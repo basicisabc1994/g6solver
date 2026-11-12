@@ -326,6 +326,7 @@ def reads(tree: ast.Module) -> set[tuple[str, str, str]]:
 BINDING = "a custody binding's own part (CheckBinding)"
 THROUGH = "through the accessor: an About the accessor returned"
 ISSUER = "the issuer's own value (Check, Receipt, Certificate, MissionFacts), not a record"
+FORMAL = "the formal path's evidence (FormalEvidence), from which it builds the record; the mapping reads that record"
 #: Every (module, function, receiver) that reads a part's field, with its role and what the receiver is.
 PLACES: dict[tuple[str, str, str], tuple[str, str]] = {
     ("evidence/mapping.py", "check_id_of", "binding"): ("binding", BINDING),
@@ -383,6 +384,12 @@ PLACES: dict[tuple[str, str, str], tuple[str, str]] = {
     ("research/mission_bridge/bundle.py", "build_bundle", "spec"): ("other", "a claim's specification"),
     ("research/mission_bridge/bundle.py", "build_bundle", "standard"): ("other", "a standard (StandardRef)"),
     ("research/mission_bridge/bundle.py", "_bundle", "ir.standard"): ("other", "the mission IR's standard"),
+    # the formal path (design section 15): what a formal result rests on, before it is made a record
+    ("harness/formalisation/receipts.py", "certificate_sha256", "found"): ("other", FORMAL),
+    ("harness/formalisation/receipts.py", "problems", "found"): ("other", FORMAL),
+    ("harness/formalisation/receipts.py", "problems", "scope"): (
+        "other", "the acceptance's scope binding (ScopeBinding), which names the standard it was bound to"),
+    ("harness/formalisation/receipts.py", "source_record", "found"): ("other", FORMAL),
 }
 ROLES = frozenset({"accessor", "binding", "through", "other"})
 

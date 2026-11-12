@@ -75,8 +75,10 @@ def _check_kinds_in_code() -> set[str]:
 
 
 def kinds_in_code() -> set[str]:
+    from g6.harness.formalisation.receipts import KINDS as FORMAL_KINDS   # section 15's two kinds, read from its code
+
     return {*issuer.EVIDENCE_KINDS, *ORACLE_CATEGORIES, *typing.get_args(patch_review.CheckProvenance),
-            PERSON_CONFIRMED, *_check_kinds_in_code()}
+            PERSON_CONFIRMED, *FORMAL_KINDS, *_check_kinds_in_code()}
 
 
 def test_every_evidence_kind_in_the_code_has_one_row_and_every_row_is_a_kind_in_the_code():
@@ -101,7 +103,7 @@ def test_each_row_fixes_every_part(kind):
     for part in ("artefact", "model", "standard", "check", "environment", "negative_control", "independence",
                  "ordering", "conflicts"):
         assert str(getattr(row, part)).strip(), (kind, part)
-    assert row.source in ("issuer", "echa", "patch_review")
+    assert row.source in ("issuer", "echa", "patch_review", "formalisation")
     assert row.issuer_kind in ("", *issuer.EVIDENCE_KINDS)
     assert row.issuer_kind not in ("process", "heuristic_review", "no_evidence")   # a lead is never promoted
 
@@ -109,7 +111,8 @@ def test_each_row_fixes_every_part(kind):
 def test_only_kinds_that_can_be_shown_to_fail_are_promoted():
     promoted = {kind for kind, row in m.MAPPING.items() if row.issuer_kind}
     assert promoted == {"independent_executable", "formal_checked", "partial_falsifier", "FORMAL_CHECK",
-                        "INDEPENDENT_EXECUTABLE", "PARTIAL_FALSIFIER", "stated", "person_confirmed"}
+                        "INDEPENDENT_EXECUTABLE", "PARTIAL_FALSIFIER", "stated", "person_confirmed",
+                        "formal_accepted"}
 
 
 def facts() -> MissionFacts:

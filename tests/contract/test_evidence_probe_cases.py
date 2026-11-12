@@ -261,3 +261,39 @@ def test_a_confirmed_expectation_is_bound_to_the_question_it_answers():
     with pytest.raises(ValueError, match="question"):
         got.for_question(other)   # an answer to one question never stands for another
     assert json.loads(json.dumps(got.to_dict()))["provenance"] == "person_confirmed"
+
+# --- 3. the formal path of design section 15: the same two probes, through its own record ------------------------------
+
+
+def test_a_formal_result_on_an_accepted_statement_with_no_control_is_refused_and_one_with_its_control_counts():
+    pytest.importorskip("z3")
+    from g6.evidence import mapping
+    from tests.formalisation.test_receipts import ARTEFACT, evidence, facts as formal_facts, store
+    from g6.harness.formalisation.receipts import source_record
+
+    held, _ = store()
+    lone = source_record(evidence(controls=()), resolve=held.get)
+    assert lone.kind == "formal_model_result"
+    with pytest.raises(mapping.PromotionRefused):
+        mapping.promote(lone, facts=formal_facts(), artifact=ARTEFACT)
+    out = mapping.issue_records(formal_facts(), ARTEFACT, [lone])
+    assert out.certificate.verified_predicates == () and out.promoted == ()
+    controlled = source_record(evidence(), resolve=held.get)   # positive control: the same result with its control
+    counted = mapping.issue_records(formal_facts(), ARTEFACT, [controlled])
+    assert counted.certificate.verified_predicates == formal_facts().predicates and counted.certificate.formal
+
+
+def test_a_formal_result_cannot_be_retargeted_to_another_artefact():
+    pytest.importorskip("z3")
+    from g6.evidence import mapping
+    from tests.formalisation.test_receipts import ARTEFACT, evidence, facts as formal_facts, store
+    from g6.harness.formalisation.receipts import source_record
+
+    held, _ = store()
+    rec = source_record(evidence(), resolve=held.get)
+    other = Artifact(B, ARTEFACT.producer, ARTEFACT.seq)          # a patch the check never ran on
+    with pytest.raises(mapping.PromotionRefused) as refused:
+        mapping.promote(rec, facts=formal_facts(), artifact=other)
+    assert mapping.OTHER_ARTEFACT in [code for code, _ in refused.value.codes]
+    assert mapping.issue_records(formal_facts(), other, [rec]).certificate.verified_predicates == ()
+    mapping.promote(rec, facts=formal_facts(), artifact=ARTEFACT)   # positive control: its own artefact

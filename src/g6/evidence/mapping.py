@@ -121,10 +121,14 @@ BINDING_CHECK = "G6_E_EVIDENCE_BINDING_CHECK"
 BINDING_UNREADABLE = "G6_E_EVIDENCE_BINDING_UNREADABLE"
 #: A record its source does not believe, whatever it says (the patch review's integrity problem): refused whole.
 NOT_BELIEVED = "G6_E_EVIDENCE_RUN_NOT_BELIEVED"
+#: A formal result with no resolvable acceptance by a person of the exact statement, and one with no correspondence
+#: to the code shown (``g6.harness.formalisation.receipts``): each stays a result about its model, never promoted.
+NO_ACCEPTANCE = "G6_E_EVIDENCE_NO_ACCEPTANCE"
+NO_CORRESPONDENCE = "G6_E_EVIDENCE_NO_CORRESPONDENCE"
 CODES = (UNMAPPED, NOT_PROMOTED, NO_ARTEFACT, OTHER_ARTEFACT, OTHER_PRODUCER, OTHER_ORDER, NO_MODEL, NO_STANDARD,
          OTHER_STANDARD, NO_CHECK, NO_ENVIRONMENT, NO_CONTROL, NO_INDEPENDENCE, NO_ORDER, NO_SCOPE, NO_RESULT,
          CONFLICTING, BINDING_ARTEFACT, BINDING_STANDARD, BINDING_PREDICATE, BINDING_CHECK, BINDING_UNREADABLE,
-         NOT_BELIEVED)
+         NOT_BELIEVED, NO_ACCEPTANCE, NO_CORRESPONDENCE)
 #: The ledger kind under which a promoted receipt's environment, model, scope and source are kept beside it.
 PROVENANCE_KIND = "provenance"
 #: The issuer kind a refused record's observation is kept as (``caveat_of``): with no control, a check of this kind can
@@ -137,8 +141,9 @@ class Row:
     """One evidence kind: what identifies each part of its records, and what it may become in the issuer's terms."""
 
     kind: str
-    #: Where the kind is produced: ``issuer`` (the issuer's own kinds), ``echa`` (ECHA's oracle categories) or
-    #: ``patch_review`` (the patch review's check provenance, and a person's confirmed expectation).
+    #: Where the kind is produced: ``issuer`` (the issuer's own kinds), ``echa`` (ECHA's oracle categories),
+    #: ``patch_review`` (the patch review's check provenance, and a person's confirmed expectation) or
+    #: ``formalisation`` (an engine's result on a formal statement, design section 15).
     source: str
     #: The issuer kind a record is promoted as; "" when the kind is a lead and never a source of evidence.
     issuer_kind: str
@@ -242,6 +247,27 @@ MAPPING: dict[str, Row] = {row.kind: row for row in (
         "the run's environment record", "the compiled check failing on a defect G6 seeds, or on the base commit's code "
         "for new behaviour", "the person is the author; the patch's producer never is", _ORDER +
         "; a contradicting answer starts a superseding standard", _BELNAP),
+    # --- formal results on a statement (design section 15) --------------------------------------------------------
+    Row("formal_model_result", "formalisation", "",
+        "none: the result is about the formal statement, not about any artefact's bytes",
+        "the SHA-256 of the formal statement the engine decided", "the standard whose confirmed examples the statement "
+        "was checked against, when there is one", "the engine's named query, with its quantifier, and its native verdict",
+        "the engine and its version", "none shown for the code: negative control unavailable, enforcement not "
+        "established", "the drafting model's family; a person's confirmation never makes the statement theirs",
+        "none", "a lead only: a model result supports its modelled claim and never a requirement about code"),
+    Row("formal_accepted", "formalisation", "formal_checked", _BYTES,
+        "the SHA-256 of the formal statement a person accepted, bound with its definitions, assumptions, adapter and "
+        "rendering by the acceptance's scope, each digest resolving to its bytes",
+        "the frozen standard's SHA-256, at the revision the acceptance was bound to",
+        "the digest of the statement, its scope binding and the correspondence check's version; the certificate is the "
+        "digest of the acceptance, the five translation checks' assessment, the engine's query and verdict and the "
+        "replays on the real code", _RUN,
+        "a seeded function that returns an outcome the person rejected, which the same check rejects with a "
+        "counterexample reproduced on it; without one the result stays a lead",
+        "the drafting model's family is the author, whatever the person confirmed; a statement the artefact's "
+        "producer family drafted is promoted as a partial falsifier", _ORDER +
+        "; the scope is the statement's stated domain and observation, and the code only as the restricted reader "
+        "reads it and the replays showed it", _BELNAP, needs_model=True, needs_certificate=True),
 )}
 
 
