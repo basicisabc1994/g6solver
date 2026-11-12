@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures('declared_mcp_grants')   # replies go to an identified, granted client
+
 SRC = Path(__file__).resolve().parents[3] / "src" / "g6"
 CODEX = {"ordinaryUsageAllowed": True, "rateLimits": {
     "primary": {"usedPercent": 10, "windowDurationMins": 300, "resetsAt": 2000000000}}}

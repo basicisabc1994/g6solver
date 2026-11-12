@@ -52,7 +52,10 @@ def cloud_argument_sources(arguments):
         for ordered in (False, True):
             scopes.add(input_source(json.dumps(value, sort_keys=ordered, default=str)))
         if isinstance(value, str):
-            scopes.add(input_source(value))
+            try:
+                scopes.add(input_source(value))
+            except UnicodeEncodeError:
+                pass  # a lone surrogate has no UTF-8 bytes; its JSON forms above name it
         elif isinstance(value, dict):
             for key, child in value.items():
                 if key in ('repo', 'workspace', 'folder') and isinstance(child, str) and child.strip():

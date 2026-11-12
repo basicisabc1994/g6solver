@@ -5,6 +5,10 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.usefixtures('declared_mcp_grants')   # replies go to an identified, granted client
+
 NOW = datetime(2026, 11, 8, tzinfo=UTC)
 
 

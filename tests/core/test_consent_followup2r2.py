@@ -12,6 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+pytestmark = pytest.mark.usefixtures('declared_mcp_grants')   # replies go to an identified, granted client
 from fastmcp import Client
 
 from g6.mcp import build_server, improve

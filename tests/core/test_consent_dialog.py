@@ -12,6 +12,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures('declared_mcp_grants')   # replies go to an identified, granted client
+
 fastmcp = pytest.importorskip("fastmcp")
 from fastmcp import Client  # noqa: E402
 from fastmcp.client.elicitation import ElicitResult  # noqa: E402

@@ -16,10 +16,11 @@ wait, for the person's answer.
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from pathlib import Path
 from typing import Any
+
+from g6.invariants import ERROR_CODE_PATTERN
 
 #: The card a step carries: the stable code of a result that is a draft, whatever the loop found.
 CODE = "G6_E_REVIEW_UNTIL_CLEAN"
@@ -137,9 +138,10 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
     metadata.update(has_report='report' in result, has_text='text' in result)
     if capture is not None and capture.review_unsent and capture.refused_provider:
         metadata['review_provider'] = capture.refused_provider
-    code = re.match(r'\[(G6_E_[A-Z0-9_]+)\]', result.get('error', ''))
-    if code:
-        metadata['error_code'] = code[1]
+    said = str(result.get('error', ''))
+    word = said[1:said.find(']')] if said.startswith('[') and ']' in said else ''
+    if ERROR_CODE_PATTERN.match(word):
+        metadata['error_code'] = word
     return bind_output(result, (Source.text(repository_source(repo), "completion-report", body),
                                 Source.text(input_source(task), "task", task), *(refs or ()),
                                 *(capture.sources if capture is not None else ())),

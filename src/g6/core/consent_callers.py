@@ -322,8 +322,11 @@ def watched_host(caller: object) -> str:
     are looked up in loaded modules only, as ``CALLER_KINDS`` is read.
     """
     usage = sys.modules.get('g6.self_maintenance.usage')
+    watched = getattr(usage, '_Watched', None) if usage is not None else None
+    if not isinstance(watched, type) or getattr(type(caller), 'complete', None) is not watched.complete:
+        return ''                 # a completion replaced after the class was made is not the owned path
     for name, provider in _WATCHED_HOSTS:
-        kind = getattr(usage, name, None) if usage is not None else None
+        kind = getattr(usage, name, None)
         if isinstance(kind, type) and isinstance(caller, kind):
             return provider
     return ''
