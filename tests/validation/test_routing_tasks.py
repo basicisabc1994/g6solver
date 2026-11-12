@@ -47,7 +47,7 @@ def test_every_route_has_a_positive_and_a_negative_task_in_each_cohort() -> None
     is in ``tasks.json``; the final cohort is written by someone other than a slice's builder after the last route of
     the release has merged, so until ``final_tasks.json`` exists only its shape is fixed (in ``gates.json``)."""
     score.validate_tasks(TASKS)
-    assert set(TASKS["routes"]) == set(MANIFEST.routes)
+    assert set(TASKS["routes"]) == set(MANIFEST.routes) | {run.EVERY_ROUTE}      # and what every session reads
     for route in MANIFEST.routes:
         assert _of("development", route, "positive") and _of("development", route, "negative"), route
     if run.FINAL_TASKS.is_file():

@@ -34,10 +34,14 @@ server = _load("g6_validation_routing_server", HERE / "server.py")
 freeze = _load("g6_validation_freeze", ROOT / "validation" / "freeze.py")
 
 
-#: Measurement runners under ``validation/`` that reach a model provider outside the consent check: (file, the
-#: provider it reaches) -> the number of sites in that file. Found when the consent inventory's walk was first extended
-#: to ``validation/``; each is repaired in its own change, and its row is then removed here. The list may shrink and
-#: never grow: a new file, a new provider in a listed file and one more site in a listed file each fail the test below.
+#: Measurement runners under ``validation/`` that reach a model provider outside the consent check: (file, what it
+#: reaches) -> the number of sites in that file, as ``provider_sites`` reads them: a provider class or factory of
+#: ``g6.core.llm``, ``runner-class:<Class>`` (a subclass of one that the runner defines and builds), ``sdk-send:<where>``
+#: (a provider SDK's send) and ``credential-handed-on:<NAME>`` (a provider credential put in the environment of a
+#: process the runner starts, or in a file for one: how ``v7_swebench/run_arm.py`` and ``worked_examples/run.py``
+#: start Claude Code). Each is repaired in its own change, and its row is then removed here. The list may shrink and
+#: never grow: a new file, a new way of reaching a provider in a listed file and one more site in a listed file each
+#: fail the test below.
 EARLIER_RUNNERS_OUTSIDE_THE_CHECK = {
     ("validation/frontier/round.py", "g6.core.llm.OllamaCaller"): 2,
     ("validation/v1_grounding/run.py", "g6.core.llm.provider_from_env"): 1,
@@ -46,38 +50,179 @@ EARLIER_RUNNERS_OUTSIDE_THE_CHECK = {
     ("validation/v6_metaharness/run.py", "g6.core.llm.OllamaCaller"): 2,
     ("validation/v6b_metaharness/run.py", "g6.core.llm.OllamaCaller"): 1,
     ("validation/v6b_metaharness/run.py", "g6.core.llm._post_json"): 1,
+    ("validation/v6b_metaharness/run.py", "runner-class:CountingOllama"): 1,
+    ("validation/v7_swebench/run_arm.py", "credential-handed-on:ANTHROPIC_API_KEY"): 2,
     ("validation/v7_swebench/shadow.py", "g6.core.llm.AnthropicCaller"): 1,
+    ("validation/v7_swebench/shadow.py", "sdk-send:Recorder.create"): 1,
     ("validation/worked_examples/evolve.py", "g6.core.llm.AnthropicCaller"): 1,
     ("validation/worked_examples/loop.py", "g6.core.llm.AnthropicCaller"): 1,
+    ("validation/worked_examples/run.py", "credential-handed-on:ANTHROPIC_API_KEY"): 4,
 }
+
+#: Calls that read a credential's name and hand it to nothing: the environment's own readers and G6's key file.
+_KEY_READERS = frozenset({"os.environ.get", "os.environ.pop", "os.getenv", "g6.core.keys.Key"})
+_CHECKS = frozenset({"g6.core.cloud_consent.admission", "g6.agents._runtime.consent.process_admission"})
+
+
+def credential_names(tree_root: Path) -> frozenset[str]:
+    """The environment names G6's provider modules declare as a provider's credential or address: the values of
+    ``g6.core.llm.PROVIDER_KEYS`` and the names in ``g6.core.host_models.NEVER_PASSED``, read from the tree's source.
+    A tree whose provider modules declare neither is an error, never an empty list."""
+    names: set[str] = set()
+    for module, constant in (("llm", "PROVIDER_KEYS"), ("host_models", "NEVER_PASSED")):
+        tree = ast.parse((tree_root / "src" / "g6" / "core" / f"{module}.py").read_text(encoding="utf-8"))
+        for node in tree.body:
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) \
+                else []
+            if any(isinstance(target, ast.Name) and target.id == constant for target in targets):
+                value = ast.literal_eval(node.value)
+                names |= set(value.values() if isinstance(value, dict) else value)
+    if not names:
+        raise AssertionError("the provider modules declare no credential names: the walk has nothing to look for")
+    return frozenset(names)
+
+
+def handed_on(tree: ast.Module, names: frozenset[str]) -> dict[str, list[int]]:
+    """Credential name -> the places in one file that hand it on: the name (or ``NAME=value``) in a list, tuple, set
+    or dict, as the target of an item assignment, as a returned or assigned value, or as an argument of any call that
+    is not one of the readers above. A comparison and a read of the environment hand nothing on. A place inside a
+    ``with`` of the consent check is covered and not counted."""
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            aliases.update({alias.asname or alias.name: alias.name for alias in node.names})
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            aliases.update({alias.asname or alias.name: f"{node.module}.{alias.name}" for alias in node.names})
+
+    def qualified(node: ast.AST) -> str:
+        if isinstance(node, ast.Name):
+            return aliases.get(node.id, node.id)
+        return qualified(node.value) + "." + node.attr if isinstance(node, ast.Attribute) else ""
+
+    def named(node: ast.AST) -> str:
+        text = node.value if isinstance(node, ast.Constant) else (
+            node.values[0].value if isinstance(node, ast.JoinedStr) and node.values
+            and isinstance(node.values[0], ast.Constant) else None)
+        if not isinstance(text, str):
+            return ""
+        return text if text in names else text.split("=", 1)[0] if "=" in text and text.split("=", 1)[0] in names else ""
+
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    found: dict[str, list[int]] = {}
+    for node in ast.walk(tree):
+        name = named(node)
+        parent = parents.get(node)
+        if not name or isinstance(parent, (ast.JoinedStr, ast.Compare, ast.Expr)):
+            continue                                   # a part of a counted f-string, a comparison, a docstring
+        if isinstance(parent, ast.Subscript) and isinstance(parent.ctx, ast.Load):
+            continue                                   # a read: environ[NAME]
+        if isinstance(parent, ast.Call) and qualified(parent.func) in _KEY_READERS:
+            continue
+        ancestor, covered = node, False
+        while ancestor in parents:
+            ancestor = parents[ancestor]
+            covered |= isinstance(ancestor, ast.With) and any(
+                isinstance(item.context_expr, ast.Call) and qualified(item.context_expr.func) in _CHECKS
+                for item in ancestor.items)
+        if not covered:
+            found.setdefault(name, []).append(node.lineno)
+    return found
+
+
+def _module_names(tree: ast.Module) -> dict[str, str]:
+    """Local name -> the dotted name it is bound to, from one file's imports and its plain assignments."""
+    names: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update({alias.asname or alias.name: alias.name for alias in node.names})
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            names.update({alias.asname or alias.name: f"{node.module}.{alias.name}" for alias in node.names})
+    for _ in range(4):
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and isinstance(node.value, (ast.Name, ast.Attribute)):
+                bound = _dotted(node.value, names)
+                names.update({target.id: bound for target in node.targets if isinstance(target, ast.Name) and bound})
+    return names
+
+
+def _dotted(node: ast.AST, names: dict[str, str]) -> str:
+    if isinstance(node, ast.Name):
+        return names.get(node.id, node.id)
+    return _dotted(node.value, names) + "." + node.attr if isinstance(node, ast.Attribute) else ""
 
 
 def provider_sites(tree_root: Path) -> dict[tuple[str, str], int]:
-    """Every place under ``validation/`` that calls or subclasses a model provider outside the consent check, read
-    from the code: a callee or a base class whose last name is one of the consent inventory's provider symbols,
-    however the name is reached (a direct import, an alias's attribute, another module's attribute). A name imported
-    from ``g6.core.consent_callers`` is the guarded one and is not a site. Only the routing trials' synthetic
-    fixtures are left out of the walk."""
+    """Every place under ``validation/`` that reaches a model provider outside the consent check, read by the
+    consent inventory's own three walks (``tests/core/test_consent_inventory.py``), run over ``validation/`` as they
+    run over ``src/g6``: a provider class or factory called or subclassed, each name resolved through the file's
+    imports and assignments (``inventory``); a client process started (the same call, its ``host-process:`` rows);
+    a provider SDK's send (``sdk_resources``). Two readings the three walks do not make for ``src/g6`` are added,
+    because the runners here need them: a provider reached through another runner's module (``distill.llm.X`` is
+    followed into ``distill.py``'s own imports), and a provider credential handed on to a process or a file
+    (``handed_on``). A site inside the consent check is not counted. Only the routing trials' synthetic fixtures
+    are left out."""
+    import tempfile
+
     inventory = _load("g6_tests_consent_inventory", ROOT / "tests" / "core" / "test_consent_inventory.py")
-    providers = {symbol.rpartition(".")[2]: symbol for symbol in inventory.provider_symbols(tree_root)}
-    providers = {name: symbol for name, symbol in providers.items()
-                 if name.endswith("Caller") or name in ("provider_from_env", "_post_json")}
-    sites: dict[tuple[str, str], int] = {}
-    for path in sorted((tree_root / "validation").rglob("*.py")):
+    files = [path for path in sorted((tree_root / "validation").rglob("*.py"))
+             if not path.relative_to(tree_root).as_posix().startswith("validation/routing/fixtures/")]
+    found: set[tuple[str, int, str]] = set()
+    rows = inventory.inventory(tree_root, extra=tuple(files))
+    # the walk gives every file outside src the module name ``new``: a file with a row that rests on such a name is
+    # walked again alone, so a class of one runner is never taken for a class of another
+    for path in files:
         rel = path.relative_to(tree_root).as_posix()
-        if rel.startswith("validation/routing/fixtures/"):
-            continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        guarded = {alias.asname or alias.name for node in ast.walk(tree)
-                   if isinstance(node, ast.ImportFrom) and node.module == "g6.core.consent_callers"
-                   for alias in node.names}
-        for node in ast.walk(tree):
-            reached = [node.func] if isinstance(node, ast.Call) else (
-                node.bases if isinstance(node, ast.ClassDef) else [])
-            for callee in reached:
-                name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
-                if name in providers and not (isinstance(callee, ast.Name) and name in guarded):
-                    sites[(rel, providers[name])] = sites.get((rel, providers[name]), 0) + 1
+        if any(row[0] == rel and "new." in row[2] for row in rows):
+            rows = [row for row in rows if row[0] != rel] + [
+                row for row in inventory.inventory(tree_root, extra=(path,)) if row[0] == rel]
+    # a class the runner defines itself is named by the walk as ``new.<Class>``: shown here as ``runner-class:<Class>``
+    found |= {(rel, line, "runner-class:" + symbol[4:] if symbol.startswith("new.") else symbol)
+              for rel, line, symbol, covered, _debt in rows if rel.startswith("validation/") and not covered}
+    providers = inventory.provider_symbols(tree_root)
+    trees = {path: ast.parse(path.read_text(encoding="utf-8")) for path in files}
+    names = {path: _module_names(tree) for path, tree in trees.items()}
+
+    def beside(path: Path, head: str) -> Path | None:
+        """The runner module a bare module name means in ``path``: the file of that name beside it, or the only
+        one of that name under ``validation/``."""
+        if path.with_name(head + ".py") in trees:
+            return path.with_name(head + ".py")
+        same = [other for other in trees if other.stem == head]
+        return same[0] if len(same) == 1 else None
+
+    def through(path: Path, dotted: str, depth: int = 0) -> str:
+        head, _, rest = dotted.partition(".")
+        target = beside(path, head)
+        if target is None or not rest or depth > 6:
+            return ""
+        first, _, more = rest.partition(".")
+        bound = names[target].get(first)
+        if bound is None:
+            return ""
+        resolved = bound + ("." + more if more else "")
+        return resolved if resolved in providers else through(target, resolved, depth + 1)
+
+    credentials = credential_names(tree_root)
+    with tempfile.TemporaryDirectory() as nothing:       # a root with no src: the SDK walk reads one runner at a time
+        for path, tree in trees.items():
+            rel = path.relative_to(tree_root).as_posix()
+            for node in ast.walk(tree):
+                reached = [node.func] if isinstance(node, ast.Call) else (
+                    node.bases if isinstance(node, ast.ClassDef) else [])
+                for callee in reached:
+                    dotted = _dotted(callee, names[path])
+                    symbol = "" if dotted in providers else through(path, dotted)
+                    if symbol and not symbol.startswith(inventory.SAFE + "."):
+                        found.add((rel, node.lineno, symbol))
+            for number, (identity, _declared, guarded) in enumerate(inventory.sdk_resources(Path(nothing),
+                                                                                           extra=(path,))):
+                if not guarded:
+                    found.add((rel, -number - 1, "sdk-send:" + identity.removeprefix("new.")))
+            for name, lines in handed_on(tree, credentials).items():
+                found |= {(rel, line, "credential-handed-on:" + name) for line in lines}
+    sites: dict[tuple[str, str], int] = {}
+    for rel, _line, symbol in found:
+        sites[(rel, symbol)] = sites.get((rel, symbol), 0) + 1
     return sites
 
 
@@ -96,7 +241,7 @@ def test_a_session_gets_only_its_tasks_servers_through_the_trial_server() -> Non
     assert set(config["mcpServers"]) == {"g6", "abstraction"}
     for name, entry in config["mcpServers"].items():
         assert entry["args"] == ["-P", str(HERE / "server.py"), name]
-        assert entry["env"] == {run.WITHHOLD_ENV: "g6_find,g6_describe"}
+        assert entry["env"] == {run.WITHHOLD_ENV: "g6_find,g6_describe", run.BOUND_ENV: run.package_digest()}
     assert set(run.mcp_config({}, python="python")["mcpServers"]) == {"g6"}
     claude = run.CLIENTS["claude_code"].argv("claude", Path("mcp.json"), config)
     assert "--strict-mcp-config" in claude and {"mcp__g6", "mcp__abstraction"} <= set(claude)

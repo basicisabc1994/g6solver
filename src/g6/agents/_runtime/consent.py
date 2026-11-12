@@ -50,8 +50,36 @@ def process_admission(provider, prompt, cwd, *, local=False, directories=()):
         raise AgentRefusal(code, str(exc)) from None
 
 
-def consent_run(runner, argv, *, provider, prompt, cwd, **kwargs):
-    from g6.agents._runtime.cli import CliAgentRunner
+def _takes_stop(run):
+    import inspect
+    try:
+        parameters = inspect.signature(run).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(p.name == 'stop' or p.kind is p.VAR_KEYWORD for p in parameters)
+
+
+def consent_run(runner, argv, *, provider, prompt, cwd, stop=None, **kwargs):
+    """The one start of a cloud coding client's session, shared by the Claude Code and Codex adapters and by the
+    routing trials' runner. Before anything is started it refuses while model calls are switched off
+    (``G6_DISABLE_LLM``) and while G6's stop is engaged (``stop``, or ``g6.core.stop.engaged`` when none is given:
+    in process, ``G6_STOP``, or the ``STOP`` file); each refusal carries ``detail["started"] = False``. The stop is
+    then handed to the runner, so a session under way is ended when it engages. A stand-in whose ``run`` takes no
+    ``stop`` is still held to the check before the start."""
+    import os
+    from g6.agents._runtime import codes
+    from g6.agents._runtime.cli import CliAgentRunner, _stopped
+    from g6.core import stop as core_stop
+    given = stop is not None
+    stop = stop or core_stop.engaged
+    if os.environ.get('G6_DISABLE_LLM'):
+        raise AgentRefusal('G6_E_LLM_DISABLED', 'model calls are disabled by G6_DISABLE_LLM, and a coding client runs '
+                                                'a model, so nothing was started', detail={'started': False})
+    why = _stopped(stop)
+    if why:
+        raise AgentRefusal(codes.STOPPED, f'G6 is stopped: {why}, so nothing was started', detail={'started': False})
+    if given or _takes_stop(runner.run):
+        kwargs['stop'] = stop
     if isinstance(runner, CliAgentRunner):
         return runner.run(argv, prompt=prompt, cwd=cwd, **kwargs)
     with process_admission(provider, prompt, cwd):

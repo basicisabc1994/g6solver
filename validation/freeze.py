@@ -47,6 +47,15 @@ def file_digest(path: Path) -> str:
     return digest(read(path))
 
 
+def tree_digest(folder: Path) -> str:
+    """The digest of a folder as it stands: each file's path inside it and the sha256 of its bytes (``__pycache__``
+    aside, which the interpreter writes). Two folders with one digest hold the same files."""
+    folder = Path(folder)
+    return digest({path.relative_to(folder).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                   for path in sorted(folder.rglob("*"))
+                   if path.is_file() and "__pycache__" not in path.relative_to(folder).parts})
+
+
 def render(value: Any) -> str:
     """How a frozen file is written: indented, keys in the order given, a final newline."""
     return json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + "\n"

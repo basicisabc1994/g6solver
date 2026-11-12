@@ -7,7 +7,9 @@ default: a member with no entry is a problem, never "not for agents", and so is 
 
 A route is a short instruction in the root skill (its ``anchor``: a heading, or the bold lead of a list item) with
 linked detail files. A prose mention alone is not a route: a routed MCP tool has to be named in its route's own
-section or in one of that route's detail files.
+section or in one of that route's detail files, in one of the written forms ``forms`` reads. ``owned`` is the text a
+route owns and ``forms`` the names a text gives in those forms: the question "does the route name this tool" and
+the question "does every name the route gives exist" read the same two functions.
 
 Keys are ``mcp:<server>/<tool>`` and ``op:<component>/<op>``, so one tool name on two servers is two members.
 ``since`` is the G6 version a member first ships in; ``release`` is the release the manifest is written for, so an
@@ -47,10 +49,12 @@ CODES = ("MISSING", "UNKNOWN", "UNROUTED", "ANCHOR", "LINK", "NOT_NAMED", "STALE
 _KEY = re.compile(r"(mcp:[a-z0-9_-]+/[A-Za-z0-9_]+|op:[a-z0-9_]+/[a-z0-9_]+)\Z")
 _ROUTE_ID = re.compile(r"[a-z][a-z0-9_]*\Z")
 _VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
-_TOOL = re.compile(r"(?<![\w.])((?:g6|metaharness)_[a-z0-9_]+)(\*)?")
+# A prefixed name with a dotted attribute after it (``g6_adapter.surface_state``) is a path into a module, not a tool.
+_TOOL = re.compile(r"(?<![\w.])((?:g6|metaharness)_[a-z0-9_]+)(?![a-z0-9_])(\*)?(?!\.[A-Za-z_])")
 _PAIR = re.compile(r"`([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)`")
 _INVOKE = re.compile(r'g6_invoke\(\s*"([a-z_][a-z0-9_]*)"\s*,\s*"([a-z_][a-z0-9_]*)"')
-_BARE = re.compile(r"`([a-z][a-z0-9_]*)`")
+_BARE = re.compile(r"`([a-z][a-z0-9_]*)(?:\([^`\n]*\))?`")
+_CLIENT = re.compile(r"(?<![\w.])mcp__([a-z0-9_-]+?)__([A-Za-z0-9_]+)")
 _HEADING = re.compile(r"(#{1,6}) \S")
 _ITEM = re.compile(r"\s*(?:[-*+]|\d+\.) ")
 
@@ -266,8 +270,37 @@ def section(root: str, anchor: str) -> str | None:
     return "\n".join(line for line, _ in lines[start:end])
 
 
-def _names(tool: str, text: str) -> bool:
-    return re.search(rf"(?<![\w.]){re.escape(tool)}(?!\w)", text) is not None
+@dataclass(frozen=True)
+class Forms:
+    """The names one text gives in the written forms that name a tool."""
+    prefixed: frozenset[str]             # a g6_ or metaharness_ name wherever it stands; a prefix keeps its star
+    bare: frozenset[str]                 # a name in backticks, alone or as a call: `name`, `name(...)`
+    client: frozenset[tuple[str, str]]   # (server, tool) written as a client names an MCP tool: mcp__server__tool
+
+    def names(self, server: str, tool: str) -> bool:
+        """Whether the text names ``tool`` of ``server``. A prose word is not a name: a tool the prefix does not
+        mark is named only in backticks or in the client's form."""
+        return tool in self.prefixed or tool in self.bare or (server, tool) in self.client
+
+
+def forms(text: str) -> Forms:
+    """The one reading of "this text names a tool". The client's form is read first and is not read again as a
+    bare name; a name the prefix marks is a prefixed name, in backticks or out of them."""
+    client = frozenset(_CLIENT.findall(text))
+    rest = _CLIENT.sub(" ", text)
+    return Forms(frozenset(name + "*" if star or name.endswith("_") else name for name, star in _TOOL.findall(rest)),
+                 frozenset(name for name in _BARE.findall(rest) if not _TOOL.fullmatch(name)), client)
+
+
+def owned(manifest: Manifest, root: str | None, texts: Mapping[str, str]) -> dict[str, dict[str, str]]:
+    """Route id -> the text the route owns, by surface: its anchor's own section of the root skill (under ``ROOT``)
+    and each of its detail files whose text is in ``texts``. A route whose anchor does not resolve owns no section."""
+    out: dict[str, dict[str, str]] = {}
+    for route_id, route in manifest.routes.items():
+        mine = {ROOT: section(root, route.anchor) or ""} if root is not None else {}
+        mine.update({path: texts[path] for path in route.detail if path in texts})
+        out[route_id] = mine
+    return out
 
 
 def _parts(version: str) -> tuple[int, int, int]:
@@ -278,7 +311,8 @@ def _parts(version: str) -> tuple[int, int, int]:
 def check(manifest: Manifest, *, registrations: Mapping[str, Sequence[str]], ops: Mapping[str, Sequence[str]],
           texts: Mapping[str, str], root_words: int, version: str, files: Collection[str],
           details: Mapping[str, str] | None = None, sources: Collection[str] = (),
-          servers: Mapping[str, str] | None = None) -> list[Problem]:
+          servers: Mapping[str, str] | None = None,
+          identifiers: Mapping[str, Collection[str]] | None = None) -> list[Problem]:
     """Every problem in the join of the manifest with the code, sorted; ``[]`` when each MCP tool and each typed op
     resolves to a route or a reasoned exemption and the guidance names nothing else.
 
@@ -286,12 +320,15 @@ def check(manifest: Manifest, *, registrations: Mapping[str, Sequence[str]], ops
     guidance surface to its text, the root skill under ``ROOT``. ``root_words``: the root skill's body length.
     ``version``: the version the code reports. ``files``: the files that exist inside the g6 package. ``details``:
     the text of detail files that are not themselves guidance surfaces. ``sources``: the modules that construct an
-    MCP server, and ``servers`` the known ones (server id to ``module:attribute``).
+    MCP server, and ``servers`` the known ones (server id to ``module:attribute``). ``identifiers``: for a detail
+    file that is a component's own skill, the names that exist in that component's code and the registered
+    components' names.
 
     Codes: ``MISSING`` a member with no entry; ``UNKNOWN`` an entry or a route with no member; ``UNROUTED`` a route id
     that is not a route; ``ANCHOR`` an anchor absent from the root skill, repeated in it or shared by two routes;
     ``LINK`` a detail file that does not exist; ``NOT_NAMED`` a routed MCP tool that its route's section and detail
-    files never name; ``STALE`` guidance naming a tool or a ``component.op`` that is not a member; ``EXEMPT_NAMED``
+    files never name in a written form (``forms``); ``STALE`` guidance or a route's own text naming a tool or a
+    ``component.op`` that is not a member; ``EXEMPT_NAMED``
     guidance naming an exempt member; ``SINCE`` an entry from a later version than the manifest's release and the
     code; ``WORDS`` a root skill over its cap; ``SERVER`` a server the recorder does not know, or a known one that
     was not recorded; ``ABSENT_RULE`` a root skill without the rule for a tool the person's server does not list.
@@ -347,12 +384,13 @@ def check(manifest: Manifest, *, registrations: Mapping[str, Sequence[str]], ops
         for path in route.detail:
             if path not in files:
                 add("LINK", f"route:{route_id}", f"its detail file {path} does not exist")
-            else:
-                sections[route_id] += "\n" + detail_text.get(path, "")
+    mine = owned(manifest, root, detail_text)
+    written = {route_id: {surface: forms(text) for surface, text in surfaces.items()}
+               for route_id, surfaces in mine.items()}
     for key, entry in sorted(manifest.entries.items()):
         if entry.agent_facing and key.startswith("mcp:") and entry.route in sections and key in have:
-            tool = key.split("/", 1)[1]
-            if not _names(tool, sections[entry.route]):
+            server, tool = key[4:].split("/", 1)
+            if not any(found.names(server, tool) for found in written[entry.route].values()):
                 add("NOT_NAMED", key, f"route {entry.route!r} names it neither in its section of the root skill nor "
                                       "in a detail file; a mention elsewhere is not a route")
 
@@ -360,7 +398,8 @@ def check(manifest: Manifest, *, registrations: Mapping[str, Sequence[str]], ops
     exempt = {key: entry for key, entry in manifest.entries.items() if not entry.agent_facing}
     exempt_tools = {key.split("/", 1)[1] for key in exempt if key.startswith("mcp:")}
     exempt_ops = {key[3:].replace("/", ".", 1) for key in exempt if key.startswith("op:")}
-    for surface, names in sorted(named(texts).items()):
+    own = {"tool:" + key[4:]: key.split("/", 1)[1] for key in exempt if key.startswith("mcp:")}
+    for surface, names in sorted(named(detail_text).items()):
         for name in sorted(names):
             if "." in name:
                 component, op = name.split(".", 1)
@@ -374,21 +413,32 @@ def check(manifest: Manifest, *, registrations: Mapping[str, Sequence[str]], ops
             elif name not in tools:
                 add("STALE", surface, f"it names {name}, and no server registers a tool of that name")
         for tool in sorted(exempt_tools):
-            if tool in names or f"`{tool}`" in texts[surface] or f"`{tool}(" in texts[surface]:
+            if own.get(surface) == tool:
+                continue                      # a server shows each tool's description; a description names its tool
+            if tool in names or tool in forms(detail_text[surface]).bare:
                 add("EXEMPT_NAMED", surface, f"it names {tool}, which the manifest exempts from agent use")
 
-    # A tool of a server whose tools carry no g6_ prefix has one written form: a bare name in backticks, in its
-    # route's own detail file under the root skill's references. Every such name there is a registered tool of the
-    # route's servers, or it is stale.
-    for route_id, route in sorted(manifest.routes.items()):
+    # The client's form names a server and a tool wherever it stands: both exist, or it is stale.
+    for surface, text in sorted(detail_text.items()):
+        for server, tool in sorted(forms(text).client):
+            if tool not in registrations.get(server, ()):
+                add("STALE", surface, f"it names mcp__{server}__{tool}, and no such server registers a tool of that "
+                                      "name")
+    # A tool the prefix does not mark is named in backticks, alone or as a call. In the text a route owns, every
+    # such name is a tool of the route's servers; in a component's own skill it may also be a name of that
+    # component's code or a registered component (``identifiers``); any other is stale. A route none of whose servers registers such a tool
+    # is not read this way: its backticks hold words of every kind, and its tools are found by their prefix.
+    plain = {server for server, listed in registrations.items() if any(not _TOOL.fullmatch(tool) for tool in listed)}
+    for route_id in sorted(manifest.routes):
         owners = {key[4:].split("/", 1)[0] for key, entry in manifest.entries.items()
-                  if entry.route == route_id and key.startswith("mcp:")} - {"g6"}
+                  if entry.route == route_id and key.startswith("mcp:")}
+        if not owners & plain:
+            continue
         offered = {tool for server in owners for tool in registrations.get(server, ())}
-        for path in route.detail if owners else ():
-            if path.startswith(REFERENCES) and path in detail_text:
-                for name in sorted(set(_BARE.findall(detail_text[path])) - offered):
-                    add("STALE", path, f"it names {name}, and no server of route {route_id!r} registers a tool "
-                                       "of that name")
+        for surface, found in sorted(written[route_id].items()):
+            for name in sorted(found.bare - offered - set((identifiers or {}).get(surface, ()))):
+                add("STALE", surface, f"it names {name}, and no server of route {route_id!r} registers a tool "
+                                      "of that name")
     known = {target.split(":", 1)[0] for target in (servers or {}).values()}
     for module in sorted(set(sources) - known):
         add("SERVER", module, "this module constructs an MCP server the recorder does not know")

@@ -8,6 +8,11 @@ tool the skill names. The unit is the task. Every rate keeps its full denominato
 be run or was interrupted stays in it and counts against every gate it belongs to, so neither calling everything nor
 refusing everything can pass. Results are per client and never pooled.
 
+``score`` scores the transcripts it is handed. The gate's own reading is ``run.py``'s ``gate_reading``, which hands
+it transcripts read again from each session's kept event log and adds the ``evidence`` block; ``release`` reads
+``pass`` from no report without that block, without a client named for every row, or scored on bars other than the
+pinned ones (``frozen.json``, beside this file).
+
 Standard library only; ``run.py`` and the tests load this file by path.
 """
 from __future__ import annotations
@@ -18,6 +23,7 @@ import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 FORMAT_TASKS = "g6.routing_tasks/1"
@@ -33,6 +39,13 @@ BARS = ("min_positive_completion", "min_positive_lower_bound", "max_negative_unn
 FIND = "g6_find"
 _ABSENT = re.compile(r"\b(absent|not (?:available|listed|registered|installed|present|there)|unavailable|missing|"
                      r"does(?:n't| not) (?:exist|list|have)|is(?:n't| not) (?:available|listed))\b", re.IGNORECASE)
+#: The pinned digests of the bars and of the development task list; ``pinned`` reads them.
+PINS = Path(__file__).resolve().parent / "frozen.json"
+#: What a client's final reading is called when it is not ``pass``.
+READINGS = {"fail": "routing bar not met", "not_run": "not run", "simulated": "simulated sessions only",
+            "unattributed": "transcripts do not name the client that produced them",
+            "unevidenced": "not read from the sessions' kept event logs",
+            "other_bars": "scored on bars that are not the pinned ones"}
 #: What a pass does not show, carried in every report.
 LIMITS = ("The repositories are synthetic and the tasks are short, so a pass is an upper bound for real work.",
           "A task that was refused, could not be run or was interrupted counts against every gate it belongs to.",
@@ -77,6 +90,32 @@ class Transcript:
                    final_text=str(row.get("final_text", "")), repeat=int(row.get("repeat", 0)),
                    code=str(row.get("code", "")), produced=str(row.get("produced", "")),
                    exit_code=row.get("exit_code"), events_sha256=str(row.get("events_sha256", "")))
+
+
+def _once(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    keys = [key for key, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise TaskError("the pin file names a key twice")
+    return dict(pairs)
+
+
+def pinned(path: Path | None = None) -> dict[str, str]:
+    """The pinned digests: exactly ``bars_digest`` and ``tasks_digest``. ``TaskError`` for any other file."""
+    try:
+        found = json.loads(Path(path or PINS).read_text(encoding="utf-8"), object_pairs_hook=_once)
+    except TaskError:
+        raise
+    except (OSError, ValueError) as exc:
+        raise TaskError(f"the pin file could not be read: {type(exc).__name__}") from exc
+    if not isinstance(found, dict) or set(found) != {"bars_digest", "tasks_digest"} \
+            or not all(isinstance(v, str) and re.fullmatch(r"[0-9a-f]{64}", v) for v in found.values()):
+        raise TaskError("frozen.json holds exactly bars_digest and tasks_digest")
+    return found
+
+
+def named_client(produced: str) -> bool:
+    """Whether a transcript names the client program that produced it: ``client:`` and then the program."""
+    return produced.startswith("client:") and bool(produced[len("client:"):].strip())
 
 
 def _need(condition: bool, said: str) -> None:
@@ -293,7 +332,7 @@ def _digest(value: Any) -> str:
 
 def score(tasks: Mapping[str, Any], transcripts: Sequence[Transcript], gates: Mapping[str, Any], *, client: str,
           cohort: str, schemas: Mapping[str, Mapping[str, Any]] | None = None,
-          require_client: bool = False) -> dict[str, Any]:
+          require_client: bool = True) -> dict[str, Any]:
     """The report for one client on one cohort: per route and overall, every count with its denominator, each gate with
     its value, bar and ``passed``, and ``decision`` (``pass``, ``fail``, or ``not_run`` when no task was run at all).
 
@@ -303,9 +342,10 @@ def score(tasks: Mapping[str, Any], transcripts: Sequence[Transcript], gates: Ma
     A gate is read from one transcript per task: two transcripts of one task and repeat raise ``TaskError``, so a
     cohort run a second time cannot replace its first reading. ``decision`` is ``pass`` only when every gate passed
     and no gate transcript says a stand-in produced it (``simulated``: a simulated session can fail a gate and never
-    passes one); with ``require_client``, the gate's own reading, a transcript that does not name the client program
-    that produced it cannot pass either (``unattributed``). The report names the digests of the task list and the
-    gate file it was scored with."""
+    passes one), and every gate transcript names the client program that produced it (``unattributed`` otherwise;
+    ``require_client=False`` is for a caller that wants the gates' arithmetic alone and reads no decision from it).
+    The report names the digests of the task list and the gate file it was scored with. It scores what it is handed:
+    whether those transcripts are the kept event logs' own reading is ``run.py``'s ``gate_reading`` to say."""
     validate_tasks(dict(tasks))
     validate_gates(dict(gates))
     if cohort not in COHORTS:
@@ -339,9 +379,9 @@ def score(tasks: Mapping[str, Any], transcripts: Sequence[Transcript], gates: Ma
         judged[bar] = {"value": None if value is None else round(value, 4), "bar": gates[bar], "passed": passed}
     ran = any(row["state"] != "unavailable" for row in rows)
     made = [t.produced for t in first.values()]
-    produced = {"client": sum(p.startswith("client:") for p in made),
+    produced = {"client": sum(named_client(p) for p in made),
                 "stand_in": sum(p.startswith("stand-in") for p in made),
-                "unattributed": sum(not p.startswith(("client:", "stand-in")) for p in made)}
+                "unattributed": sum(not named_client(p) and not p.startswith("stand-in") for p in made)}
     if not ran:
         decision = "not_run"
     elif not all(g["passed"] for g in judged.values()):
@@ -373,15 +413,36 @@ def score(tasks: Mapping[str, Any], transcripts: Sequence[Transcript], gates: Ma
     }
 
 
-def release(reports: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def reading(report: Mapping[str, Any], bars_digest: str) -> str:
+    """What one report's decision counts as at release. ``pass`` only when the report says so, was scored on the
+    pinned bars, names a client for every gate row and no stand-in, and carries the gate reading's ``evidence`` block
+    with no row left unevidenced. Anything else, a decision this file does not know included, is not a pass."""
+    decision = report.get("decision")
+    if decision != "pass":
+        return decision if decision in READINGS else "fail"
+    produced = report.get("produced") if isinstance(report.get("produced"), Mapping) else {}
+    evidence = report.get("evidence")
+    if report.get("bars_digest") != bars_digest:
+        return "other_bars"
+    if produced.get("stand_in"):
+        return "simulated"
+    if produced.get("unattributed") or not produced.get("client"):
+        return "unattributed"
+    if not isinstance(evidence, Mapping) or evidence.get("unevidenced") != {} or not evidence.get("rederived"):
+        return "unevidenced"
+    return "pass"
+
+
+def release(reports: Sequence[Mapping[str, Any]], *, bars_digest: str | None = None) -> dict[str, Any]:
     """The release reading of the final cohort's per-client reports: at least one client meets every bar; a client that
-    missed is "routing bar not met" and one that was not run is "not run", each a known limit."""
+    missed is "routing bar not met" and one that was not run is "not run", each a known limit. Each report is read
+    by ``reading``, against the pinned bars (``bars_digest``, or the pin file's own). A report is a file anyone can
+    write: ``run.py release`` makes each report again from its folder's kept event logs before it calls this."""
+    bars_digest = bars_digest or pinned()["bars_digest"]
     final = [report for report in reports if report["cohort"] == "final"]
     if len({report["client"] for report in final}) != len(final):
         raise TaskError("two final reports for one client: a client's final cohort is read once")
-    clients = {report["client"]: report["decision"] for report in final}
-    said = {"fail": "routing bar not met", "not_run": "not run", "simulated": "simulated sessions only",
-            "unattributed": "transcripts do not name the client that produced them"}
-    limits = {client: said[decision] for client, decision in clients.items() if decision != "pass"}
+    clients = {report["client"]: reading(report, bars_digest) for report in final}
+    limits = {client: READINGS[decision] for client, decision in clients.items() if decision != "pass"}
     return {"decision": "pass" if "pass" in clients.values() else "fail" if clients else "not_run",
             "clients": clients, "known_limits": limits}

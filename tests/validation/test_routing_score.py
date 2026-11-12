@@ -73,8 +73,21 @@ def ideal(task: dict[str, Any], client: str = "codex") -> Any:
 
 
 def report(transcripts: list[Any], listed: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
+    """The gates' arithmetic alone: these transcripts name no client, so the scorer's own default (a row that names
+    no client cannot pass) is set aside here and held in ``test_the_default_reading_needs_a_named_client``."""
+    kwargs.setdefault("require_client", False)
     return score.score(listed or tasks(), transcripts, GATES, client=kwargs.pop("client", "codex"), cohort="final",
                        **kwargs)
+
+
+def test_the_default_reading_needs_a_named_client() -> None:
+    listed = tasks()
+    rows = [ideal(task) for task in listed["tasks"]]
+    assert score.score(listed, rows, GATES, client="codex", cohort="final")["decision"] == "unattributed"
+    assert report(rows, listed)["decision"] == "pass"
+    named = [T(t.task_id, t.client, t.state, calls=t.calls, seconds=t.seconds, final_text=t.final_text,
+               produced="client:codex 0.1") for t in rows]
+    assert score.score(listed, named, GATES, client="codex", cohort="final")["decision"] == "pass"
 
 
 def test_a_well_routed_agent_passes_every_gate() -> None:
@@ -218,6 +231,12 @@ def test_clients_are_scored_apart_and_one_must_pass() -> None:
     codex = report(good + bad, listed, client="codex")
     claude = report(good + bad, listed, client="claude_code")
     assert codex["decision"] == "pass" and claude["decision"] == "fail"
+    # the release reading takes a pass only from a gate reading: the pinned bars, a client named for every row, and
+    # the evidence block ``run.gate_reading`` adds; a scorer's bare report says ``pass`` and is not one
+    assert score.release([codex, claude])["clients"]["codex"] in ("other_bars", "unattributed")
+    gate = dict(codex, bars_digest=score.pinned()["bars_digest"], produced={"client": 45, "stand_in": 0, "unattributed": 0})
+    assert score.release([gate, claude])["clients"] == {"codex": "unevidenced", "claude_code": "fail"}
+    codex = dict(gate, evidence={"rederived": 45, "unevidenced": {}})
     assert score.release([codex, claude]) == {"decision": "pass", "clients": {"codex": "pass", "claude_code": "fail"},
                                               "known_limits": {"claude_code": "routing bar not met"}}
     absent = report(good, listed, client="claude_code")
@@ -311,7 +330,8 @@ def test_run_with_every_grant_starts_one_session_per_task_and_records_what_it_sa
         {"type": "assistant", "message": {"content": [
             {"type": "tool_use", "id": "t1", "name": "mcp__g6__g6_find", "input": {"query": "claims"}}]}},
         {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "[]"}]}},
-        {"type": "result", "result": "Found nothing.", "total_cost_usd": 0.01}))
+        {"type": "result", "subtype": "success", "is_error": False, "result": "Found nothing.",
+         "total_cost_usd": 0.01}))
     client = StandIn(events)
     done = run.run(run.TASKS, out, client="claude_code", cohort="development", runner=client)
     assert len(client.started) == len(done) and {t.state for t in done} == {"completed"}

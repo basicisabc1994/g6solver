@@ -478,8 +478,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         the task, an optional intent contract ({goal, success_criteria, non_goals, failure_criteria, assumptions}) and
         the repository's file names. It returns the intent contract; a proposed standard, each requirement with the
         test file it names as its stated check, or marked not_established; the competing failure hypotheses, each with
-        what would test it, ranked by nothing; and at most 3 questions for the person. It is a proposal: nothing is
-        frozen or confirmed here."""
+        what would test it, ranked by nothing; and the open questions it found, three at the most: one question per
+        task is the default for what you put to the person. It is a proposal: nothing is frozen or confirmed here."""
         from g6.mcp import mission
         return mission.premortem(repo, task, intent)
 
