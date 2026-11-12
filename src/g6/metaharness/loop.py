@@ -2430,22 +2430,30 @@ class ShadowLoop:
             if not isinstance(exc, Exception):
                 raise
 
-    def _closed(self, why: str) -> None:
+    def _closed(self, why: str, here: _Folder | None = None) -> None:
         """This process spends no more, and the folder is stopped: ``STOP`` and ``stops.log`` are other files than the
         log, so a restart stays closed until a person starts it again, and should those fail too, this process still
-        ends on what it holds here. An interrupt or an exit that lands inside the stop's own write has it asked for
-        once more, since nothing else is left to hold it, and then goes on up."""
-        self.cannot_record = why
+        ends on what it holds here. The stop is held on the folder's record a caller already found (``here``), or on the
+        one found now, and never waits on a second lookup; a lookup that fails takes nothing from the ``STOP`` file. An
+        interrupt or an exit that lands inside the stop's own write has it asked for once more, since nothing else is
+        left to hold it, and then goes on up."""
         try:
-            ask_to_stop(self.root, why)
-        except Exception:  # noqa: BLE001 - the run still ends on what is held here, whatever kept the file
-            pass
-        except BaseException:  # an interrupt or an exit landed inside the stop's own write: nothing else is left to
-            try:               # hold it, so it is asked for once more before that goes on up
+            here = here if here is not None else self._found()
+            if here is not None:
+                with _LOCK:           # every admission of the folder that read its stop before this reads it again
+                    here.cannot_record = why
+                    _RECORD.moved += 1
+        finally:
+            try:
                 ask_to_stop(self.root, why)
-            except Exception:  # noqa: BLE001 - as above
+            except Exception:  # noqa: BLE001 - the run still ends on what is held here, whatever kept the file
                 pass
-            raise
+            except BaseException:  # an interrupt or an exit landed inside the stop's own write: nothing else is left to
+                try:               # hold it, so it is asked for once more before that goes on up
+                    ask_to_stop(self.root, why)
+                except Exception:  # noqa: BLE001 - as above
+                    pass
+                raise
 
     def _keep_limit(self, provider: str, until: datetime) -> None:
         """A limit or capacity a provider reported, met in the tick that just closed: this process holds it, and the log keeps
@@ -2512,7 +2520,7 @@ class ShadowLoop:
             why = _writable(f"{_stopped_by(refusal['said'])} and the log would not take that cycle "
                             f"({type(exc).__name__}: {exc})")[:400]
         if refusal is not None or safety or lost >= MAX_FAILED_CYCLES:
-            self._closed(why)
+            self._closed(why, here)
         return _blocked(CANNOT_RECORD, why, "A person frees the log, then starts the loop again with g6_improve_start.")
 
     def _still_frozen(self) -> Held | dict[str, Any]:
