@@ -65,7 +65,13 @@ def test_the_tool_adapter_is_only_handed_to_the_door():
         handed = {id(kw.value) for node in ast.walk(tree) if isinstance(node, ast.Call)
                   and ((isinstance(node.func, ast.Attribute) and node.func.attr == "invoke_checked")
                        or (isinstance(node.func, ast.Name) and node.func.id == "invoke_checked"))
-                  for kw in node.keywords if kw.arg == "registry"}
+                  for kw in node.keywords if kw.arg == "registry" and isinstance(kw.value, ast.Call)
+                  and isinstance(kw.value.func, ast.Name) and kw.value.func.id == "GuardedRegistry"}
+        # The adapter remains an immediate input of the door, now inside the
+        # shared consent wrapper. No other owner may receive a tool adapter.
+        handed |= {id(node.args[0]) for node in ast.walk(tree) if isinstance(node, ast.Call)
+                   and id(node) in handed and isinstance(node.func, ast.Name)
+                   and node.func.id == "GuardedRegistry" and len(node.args) == 1 and not node.keywords}
         bad += [f"{path.name}:{node.lineno}" for node in ast.walk(tree) if isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name) and node.func.id == "_ToolDoor" and id(node) not in handed]
     assert bad == [], "the tool adapter is built for something other than the door: " + ", ".join(bad)

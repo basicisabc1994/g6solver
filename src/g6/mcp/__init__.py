@@ -109,17 +109,10 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
     if not isinstance(params, dict):
         return blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object", request_id=request_id)
     allow = allowed_sensitive() if allow_sensitive is None else allow_sensitive
-    from g6.core.consent_callers import guard
+    from g6.core.consent_registry import GuardedRegistry
     from g6.core.registry import ComponentRegistry, get_registry
     target = registry if registry is not None else get_registry()
-    class GuardedRegistry:
-        def __getattr__(self, name):
-            return getattr(target, name)
-        def invoke(self, *args, **kwargs):
-            if kwargs.get("llm") is not None:
-                kwargs["llm"] = guard(kwargs["llm"])
-            return target.invoke(*args, **kwargs)
-    reply = invoke_checked(component, op, params, allow=allow, registry=GuardedRegistry(), request_id=request_id,
+    reply = invoke_checked(component, op, params, allow=allow, registry=GuardedRegistry(target), request_id=request_id,
                           how_to_allow=f"Only the person who runs this server can allow it, by adding {component}.{op} "
                                        f"(or {component}) to {SENSITIVE_ENV} where the server is registered.")
     # The host's permission refusal runs no component code. Operations, including

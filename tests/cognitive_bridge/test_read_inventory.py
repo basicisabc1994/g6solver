@@ -362,7 +362,7 @@ EXPECTED_READS = sorted([
     ("mixed_methods.py", "LLMClaimCompiler.draft", "self.llm.complete(fresh(system), fresh(user), max_tokens=2200)",
      _RETURNED),
     ("mixed_methods.py", "MixedMethodExecutor.__init__", "registry", _KEPT.format("registry")),
-    ("mixed_methods.py", "MixedMethodExecutor._invoke", "self.registry", "handed whole to invoke_checked"),
+    ("mixed_methods.py", "MixedMethodExecutor._invoke", "self.registry", "handed whole to GuardedRegistry"),
     ("orchestration.py", "CognitiveAssuranceOrchestrator.__init__", "registry", _KEPT.format("registry")),
     ("orchestration.py", "CognitiveAssuranceOrchestrator.__init__", "selector", _KEPT.format("selector")),
     ("orchestration.py", "CognitiveAssuranceOrchestrator.assess", "epistemic_gate",
@@ -398,6 +398,8 @@ EXPECTED_READS = sorted([
 ])
 #: Where a value is handed whole outside the package's listed functions, with why.
 OUTSIDE_HANDOFFS = {
+    "GuardedRegistry": "g6.core.consent_registry: delegates to the supplied registry after guarding the model; "
+                       "only invoke_checked receives the adapter (test_consent_inventory)",
     "invoke_checked": "G6's door (g6.core.door), which calls the registry and hands the bridge back only an answer the "
                       "door passed, taken by the boundary (test_boundary_inventory, the tools' answers)",
     "issued": "snapshot.issued: reads a maker by its identity in the record of what it issued; never calls it",

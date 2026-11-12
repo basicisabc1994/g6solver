@@ -25,6 +25,7 @@ from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 from returns.result import Failure, Success
 
 from g6.core import door
+from g6.core.consent_registry import GuardedRegistry
 
 from .assurance import canonical_json, sha256
 from .codes import _is_type
@@ -450,7 +451,8 @@ class CognitiveAgent:
         and why it is not used (``""`` when it is)."""
         reply = door.invoke_checked(
             f"tool:{tool.name}", "observe", {"question": probe.question, "arguments": dict(probe.arguments)},
-            allow=door.allowed_sensitive() | frozenset(snapshot(self.allow, where="allow")), registry=_ToolDoor(tool),
+            allow=door.allowed_sensitive() | frozenset(snapshot(self.allow, where="allow")),
+            registry=GuardedRegistry(_ToolDoor(tool)),
             how_to_allow=f"Allow it in your own code with CognitiveAgent(..., allow=('tool:{tool.name}',)).")
         if not affirmed(reply.get("ok")):
             error = reply.get("error")  # the door's own text; anything else is not read as a reason

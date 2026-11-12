@@ -8,6 +8,113 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 RAW = {'g6.core.llm', 'g6.core.host_models'}
 SAFE = 'g6.core.consent_callers'
+GUARDED_REGISTRY = 'g6.core.consent_registry.GuardedRegistry'
+
+
+def door_inventory(root=ROOT, extra=()):
+    """Discover door calls, including import aliases and local factory aliases.
+
+    Only the two exact certificate-bound call sites await the issuance window.
+    Every unbound site must hand the door the shared guarded registry directly;
+    a new person_model call cannot take a registry and is therefore a gap.
+    """
+    rows = []
+    for path in [*(root / 'src').rglob('*.py'), *extra]:
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+        relative = path.relative_to(root).as_posix() if root in path.parents else path.name
+        module = '.'.join(path.relative_to(root / 'src').with_suffix('').parts) if root / 'src' in path.parents else 'new'
+        package = module.rpartition('.')[0]
+        if module.endswith('.__init__'):
+            package = module.removesuffix('.__init__')
+        aliases = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    aliases[alias.asname or alias.name.split('.')[0]] = alias.name if alias.asname else alias.name.split('.')[0]
+            elif isinstance(node, ast.ImportFrom):
+                base = node.module or ''
+                if node.level:
+                    base = importlib.util.resolve_name('.' * node.level + base, package)
+                aliases.update({a.asname or a.name: f'{base}.{a.name}' for a in node.names})
+            elif isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+                aliases[node.name] = f'{module}.{node.name}'
+
+        def qualified(node):
+            if isinstance(node, ast.Name):
+                return aliases.get(node.id, node.id)
+            if isinstance(node, ast.Attribute):
+                return qualified(node.value) + '.' + node.attr
+            return ''
+
+        assignments = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)]
+        for _ in range(len(assignments) + 1):
+            previous = dict(aliases)
+            for node in assignments:
+                if isinstance(node.value, ast.Name | ast.Attribute):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name) and not any(
+                                isinstance(n, ast.Name) and n.id == target.id for n in ast.walk(node.value)):
+                            aliases[target.id] = qualified(node.value)
+            if aliases == previous:
+                break
+        parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+        for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
+            symbol = qualified(call.func)
+            name = symbol.rpartition('.')[2]
+            if name not in ('invoke_checked', 'person_model'):
+                continue
+            owner = call
+            while owner in parents and not isinstance(owner, ast.FunctionDef | ast.AsyncFunctionDef):
+                owner = parents[owner]
+            owner_name = getattr(owner, 'name', '')
+            issuance = (relative, owner_name, name) in {
+                ('src/g6/__init__.py', 'invoke', 'invoke_checked'),
+                ('src/g6/core/door.py', 'invoke_checked', 'person_model'),
+            }
+            registry = next((kw.value for kw in call.keywords if kw.arg == 'registry'), None)
+            guarded = (name == 'invoke_checked' and isinstance(registry, ast.Call)
+                       and qualified(registry.func) == GUARDED_REGISTRY)
+            rows.append((relative, call.lineno, symbol, guarded, issuance))
+    return rows
+
+
+def test_every_unbound_door_call_passes_the_guarded_registry():
+    rows = door_inventory()
+    assert rows
+    assert not [r[:3] for r in rows if not r[3] and not r[4]], rows
+    assert sorted((r[0], r[2].rpartition('.')[2]) for r in rows if r[4]) == [
+        ('src/g6/__init__.py', 'invoke_checked'), ('src/g6/core/door.py', 'person_model')]
+
+
+def test_new_door_calls_and_aliases_cannot_bypass_registry_rule(tmp_path):
+    fresh = tmp_path / 'new_door.py'
+    fresh.write_text('from g6.core import door as d\n'
+        'from g6.core.door import invoke_checked as checked, person_model as model\n'
+        'from g6.core.consent_registry import GuardedRegistry as Guard\n'
+        'again = checked\n'
+        'def call():\n'
+        '    d.invoke_checked("c", "op", {}, registry=raw)\n'
+        '    checked("c", "op", {})\n'
+        '    again("c", "op", {}, registry=Other())\n'
+        '    model()\n'
+        '    d.person_model()\n'
+        '    checked("c", "op", {}, registry=Guard(raw))\n', encoding='utf-8')
+    rows = [r for r in door_inventory(extra=(fresh,)) if Path(r[0]).name == fresh.name]
+    assert len(rows) == 6
+    assert len([r for r in rows if not r[3] and not r[4]]) == 5
+    assert rows[-1][3] and not rows[-1][4]
+
+
+def test_a_shadowed_guard_factory_fails_the_door_inventory(tmp_path):
+    for number, shadow in enumerate(('def Safe(value):\n    return value\n', 'class Safe:\n    pass\n')):
+        fresh = tmp_path / f'shadow_{number}.py'
+        fresh.write_text('from g6.core.door import invoke_checked\n'
+            'from g6.core.consent_registry import GuardedRegistry as Safe\n' + shadow +
+            'def send(registry):\n'
+            '    return invoke_checked("c", "op", {}, registry=Safe(registry))\n', encoding='utf-8')
+        rows = [r for r in door_inventory(extra=(fresh,)) if Path(r[0]).name == fresh.name]
+        assert len(rows) == 1
+        assert not rows[0][3] and not rows[0][4], 'a shadowed import was credited as the shared guard'
 
 
 def provider_symbols(root):
@@ -38,6 +145,8 @@ def provider_symbols(root):
 
 def inventory(root=ROOT, extra=()):
     providers = provider_symbols(root)
+    doors = door_inventory(root, extra)
+    guarded_door_rule = bool(doors) and all(row[3] or row[4] for row in doors)
     rows = []
     paths = [*(root / 'src/g6').rglob('*.py'), *extra]
     parsed = {}
@@ -152,14 +261,17 @@ def inventory(root=ROOT, extra=()):
                     if isinstance(current, ast.With) and any(isinstance(i.context_expr, ast.Call)
                         and qualified(i.context_expr.func) == 'g6.core.cloud_consent.admission' for i in current.items):
                         covered = True
-                # Bound door construction has no unbound seam for direct library/CLI use. Keep visible as issuance debt.
+                # This bound factory is covered only while every unbound door
+                # call passes the shared adapter. The Python API's exact bound
+                # call remains a certificate issuance-window obligation above.
                 enclosing = node
                 while enclosing in parents and not isinstance(enclosing, ast.FunctionDef):
                     enclosing = parents[enclosing]
-                debt = (module == 'g6.core.door' and symbol == 'g6.core.llm.provider_from_env'
-                        and isinstance(enclosing, ast.FunctionDef) and enclosing.name == 'person_model')
+                if (module == 'g6.core.door' and symbol == 'g6.core.llm.provider_from_env'
+                        and isinstance(enclosing, ast.FunctionDef) and enclosing.name == 'person_model'):
+                    covered = guarded_door_rule
                 rows.append((path.relative_to(root).as_posix() if root in path.parents else path.name,
-                             node.lineno, symbol, covered, debt))
+                             node.lineno, symbol, covered, False))
     # Discover native prompt-process classes too: the Claude/Codex agent adapters
     # do not instantiate a core.llm or core.host_models provider.
     runners = set()
@@ -215,9 +327,18 @@ def inventory(root=ROOT, extra=()):
 def test_every_unbound_provider_entry_has_consent_check():
     rows = inventory()
     assert rows, 'no provider callers discovered'
-    gaps = [r[:3] for r in rows if not r[3] and not r[4]]
+    gaps = [r[:3] for r in rows if not r[3]]
     assert not gaps, f'provider callers bypass consent: {gaps}'
-    assert len([r for r in rows if r[4]]) == 1, 'the existing bound door debt may not grow'
+    assert not any(r[4] for r in rows), 'no provider factory may bypass the wrapper rule as debt'
+
+
+def test_a_new_door_bypass_invalidates_factory_coverage(tmp_path):
+    fresh = tmp_path / 'bypass.py'
+    fresh.write_text('from g6.core.door import invoke_checked\n'
+                     'def send():\n    return invoke_checked("c", "op", {})\n', encoding='utf-8')
+    rows = inventory(extra=(fresh,))
+    assert any(r[0] == 'src/g6/core/door.py' and r[2] == 'g6.core.llm.provider_from_env'
+               and not r[3] and not r[4] for r in rows)
 
 
 def test_new_alias_or_subclass_fails_inventory(tmp_path):
