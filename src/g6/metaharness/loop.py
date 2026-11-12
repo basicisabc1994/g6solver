@@ -1963,7 +1963,7 @@ class ShadowLoop:
             try:
                 self._hold_what_is_on_record()
                 self.unreadable = ""
-            except LedgerError:
+            except Exception:  # noqa: BLE001 - what was refused here still cannot be read, however it fails: a stop
                 return _Halted(RECORDS_UNREADABLE, self.unreadable)
         found = self._stop()
         if found:
