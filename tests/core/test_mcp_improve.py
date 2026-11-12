@@ -43,6 +43,8 @@ from g6.self_maintenance.envelope import (  # noqa: E402
 )
 from g6.self_maintenance.pacing import read_settings  # noqa: E402
 
+pytestmark = pytest.mark.usefixtures("declared_mcp_grants")
+
 START = datetime(2026, 10, 26, 8, 0, tzinfo=UTC)
 NOW = START + timedelta(days=2)
 ENROLLED_BY = "Bo"

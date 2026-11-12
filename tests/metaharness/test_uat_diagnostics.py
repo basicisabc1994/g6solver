@@ -14,6 +14,73 @@ from g6.metaharness.api import _envelope  # noqa: E402
 from g6.metaharness.surface import Surface  # noqa: E402
 from g6.core.reliability_envelope import envelope_fields  # noqa: E402
 
+pytestmark = pytest.mark.usefixtures("declared_mcp_grants")
+
+
+@pytest.mark.parametrize('sharing_scope', ['missions', 'improvement', 'component_data', 'jobs'])
+@pytest.mark.parametrize('scope_granted', [False, True])
+def test_real_retained_scope_capture(tmp_path, monkeypatch, sharing_scope, scope_granted, accepted_cloud_dialog):
+    """Seed actual stores, then capture only at the MCP recipient boundary."""
+    monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
+    marker = 'PLANTED_REAL_RETAINED_' + sharing_scope.upper()
+    jobs = None
+    if sharing_scope == 'missions':
+        from g6.workforce import api, bench, service
+        monkeypatch.delenv(bench.ENV_DB_DIR, raising=False)
+        wf = api.bind()
+        made = service.create(wf, objective=marker, risk_tier='R2', budget_cents=0)
+        tool, args = 'g6_mission_status', {'mission_id': made['mission_id'], 'detail': 'full'}
+        assert marker in json.dumps(api.status(wf, made['mission_id'], detail='full'))
+        server = build_server()
+    elif sharing_scope == 'improvement':
+        from tests.core.test_mcp_improve import Rig
+        rig = Rig(tmp_path, monkeypatch)
+        (rig.root / 'STOP').write_text(marker, encoding='utf-8')
+        tool, args = 'g6_improve_status', {'folder': str(rig.root)}
+        server = rig.server
+    elif sharing_scope == 'component_data':
+        from g6.workspace.align_prompt_library import ops
+        made = ops.put('prompt', 'retained', marker)
+        assert made.completion_state != 'blocked-escalated'
+        tool, args = 'g6_invoke', {'component': 'align_prompt_library', 'op': 'get',
+                                 'params_json': json.dumps({'name': 'retained'})}
+        server = build_server()
+    else:
+        import g6.metaharness.jobs as module
+        from g6.core.consent_declarations import declares
+        jobs = module.Jobs()
+        monkeypatch.setattr(module, 'Jobs', lambda: jobs)
+        path = tmp_path / 'retained.txt'
+        path.write_text(marker, encoding='utf-8')
+        from g6.core import cloud_consent as cloud
+        source = cloud.repository_source(path)
+        accepted_cloud_dialog(source, 'openai:codex', text=marker)
+        server = build_server()
+        @server.tool()
+        @declares('source:jobs')
+        def retain_for_later() -> dict:
+            def read_retained():
+                text = path.read_text(encoding='utf-8')
+                return cloud.bind_output({'result': text}, (cloud.Source.text(source, path.name, text),))
+            return jobs.start(read_retained)
+        tool, args = 'metaharness_job', {}
+    async def read():
+        async with Client(server) as client:
+            if jobs is not None:
+                handle = (await client.call_tool('retain_for_later', {})).data['job_id']
+                for _ in range(200):
+                    received = await client.call_tool(tool, {'job_id': handle})
+                    if received.data.get('status') not in ('pending', 'running'):
+                        return str(received)
+                    await asyncio.sleep(.005)
+                pytest.fail('the retained fake job did not finish')
+            return str(await client.call_tool(tool, args))
+    try:
+        assert (marker in asyncio.run(read())) is scope_granted
+    finally:
+        if jobs is not None:
+            jobs.close()
+
 
 @pytest.mark.parametrize("action", ["accept", "decline", "cancel"])
 def test_consent_uses_portable_schema_and_reports_client_outcome(tmp_path, monkeypatch, action):

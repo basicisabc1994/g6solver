@@ -62,7 +62,8 @@ from g6.core.storage import g6_home
 from g6.core.reliability_envelope import envelope_fields, warning_card
 from g6.invariants import ERROR_CODE_PATTERN
 from g6.mcp.consent import question as _question
-from g6.metaharness.api import _blocked, _envelope
+from g6.mcp.consent_controls import public_instructions, refused_send
+from g6.metaharness.api import _blocked as _raw_blocked, _envelope
 from g6.self_maintenance import digest
 from g6.self_maintenance.envelope import (
     CYCLE_LOG,
@@ -146,12 +147,18 @@ CHANGED_SINCE = ("Nothing was recorded. Call the tool again: the person reads wh
                  "agrees to that or not.")
 
 
+def _blocked(code: str, *args: Any, **kwargs: Any) -> dict:
+    # Each call supplies a module code constant; dynamic diagnostics stay private.
+    return refused_send(_raw_blocked(code, *args, **kwargs), code=code)
+
+
 def refused() -> dict | None:
     """The refusal of starting the runner, unless the host allows it."""
     if is_allowed(*SENSITIVE, allowed_sensitive()):
         return None
-    return blocked_reply(f"[G6_E_SENSITIVE_COMPONENT_DENIED] {WHO} starts a process that runs on its own; the host must "
-                         f"allow it, by adding {WHO} (or metaharness) to {SENSITIVE_ENV} where the server is registered")
+    return public_instructions(blocked_reply(
+        f"[G6_E_SENSITIVE_COMPONENT_DENIED] {WHO} starts a process that runs on its own; the host must "
+        f"allow it, by adding {WHO} (or metaharness) to {SENSITIVE_ENV} where the server is registered"))
 
 
 def _root(folder: str, *, stop_request: bool = False) -> Path:
@@ -1216,7 +1223,7 @@ def status(folder: str) -> dict:
                          last_cycle=_shown(cycles[-1]) if cycles else None, cycles=len(cycles), pause=pause,
                          stop=halted.reason, stop_code=halted.code, started=started, generation=generations["current"],
                          lineage=generations["recent"],
-                         digest={"path": str(page), "text": page.read_text(encoding="utf-8")} if page else None,
+                         digest={"path": str(page), "text": digest.read(page)} if page else None,
                          g6_status=STATUS_LINE)
     except Exception as exc:  # noqa: BLE001 - whatever status cannot read or use past the stop is said, never raised
         return _unread_status(root, halted, exc)

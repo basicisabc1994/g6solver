@@ -29,6 +29,7 @@ from g6.harness import verification_search as vs
 from g6.metaharness.domain import FailureRecord
 from g6.workforce import repo_tests
 from g6.workspace import _coordination
+from tests.s16r3.test_retained_files import write_completed_state
 
 BASE = "def double(x):\n    return x + 2\n"
 FIXED = "def double(x):\n    return x * 2\n"
@@ -245,7 +246,7 @@ def test_the_loops_time_is_held_across_hooks(world, monkeypatch):
     world.advance()
     state = world.state()
     state["started"] = time.time() - loop.LOOP_S - 1
-    (world.session / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    write_completed_state(world.session / 'state.json', state)
     world.edit(FIXED + "# late\n")
     step = world.advance()
     assert step.action == loop.STOP
@@ -476,7 +477,8 @@ def test_a_later_scout_is_skipped_when_the_hooks_time_is_spent(world, monkeypatc
     assert step.action == loop.STOP and "time" in step.text
 
 
-def test_a_scout_session_has_no_shell_no_hooks_no_servers_and_keeps_nothing(monkeypatch, tmp_path):
+def test_a_scout_session_has_no_shell_no_hooks_no_servers_and_keeps_nothing(monkeypatch, tmp_path,
+                                                                         accepted_cloud_dialog):
     seen = {}
 
     def run(argv, stdin, cwd, files, env, timeout, name):
@@ -491,6 +493,13 @@ def test_a_scout_session_has_no_shell_no_hooks_no_servers_and_keeps_nothing(monk
     monkeypatch.setattr(host_models, "_run", run)
     where = tmp_path / "work"
     where.mkdir()
+    # This is G6's own Anthropic scout, with repository reads and a prompt from
+    # model_inputs; the client's same-provider repository exemption does not apply.
+    from g6.core.cloud_consent import repository_source
+    accepted_cloud_dialog(repository_source(tmp_path), 'anthropic:claude_code', text='synthetic scout repository')
+    accepted_cloud_dialog(repository_source(where), 'anthropic:claude_code', text='synthetic scout output directory')
+    accepted_cloud_dialog('agent_environment', 'anthropic:claude_code', text='synthetic scout configuration')
+    accepted_cloud_dialog('model_inputs', 'anthropic:claude_code', text='the prompt')
     assert loop.ToolSession("a-model").run("the prompt", tmp_path, where, 30.0) == "finished"
     argv = seen["argv"]
     assert argv[argv.index("--tools") + 1] == "Read,Glob,Grep,Write"
@@ -1077,7 +1086,7 @@ def test_the_loops_time_is_held_across_hooks_and_running_out_is_no_clean_review(
     world.advance(critic=critic)
     state = world.state()
     state["started"] = time.time() - loop.LOOP_S - 1
-    (world.session / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    write_completed_state(world.session / 'state.json', state)
     world.edit(FIXED + "# late\n")
     step = world.advance(critic=critic)
     assert step.action == loop.STOP and "time ran out" in step.text and step.code == loop.NO_CLEAN_REVIEW
@@ -2838,7 +2847,7 @@ def test_the_loops_time_is_the_cause(world, monkeypatch):
     world.advance(critic=critic)
     state = world.state()
     state["started"] = time.time() - loop.LOOP_S - 1
-    (world.session / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    write_completed_state(world.session / 'state.json', state)
     world.edit(FIXED + "# late\n")
     world.advance(critic=critic)
     assert the_row(world)["cause"] == "loop_time_ran_out"

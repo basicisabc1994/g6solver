@@ -8,12 +8,13 @@ break the page nor pose as one of its headings.
 """
 from __future__ import annotations
 
-import os
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import date
 from pathlib import Path
 from typing import Any
+
+from g6.core import cloud_consent as cloud
 
 DIGEST_FOLDER = "digests"
 #: The most lines a page may have.
@@ -152,10 +153,18 @@ def write(root: str | Path, day: date, text: str) -> Path:
     """Write one day's page, whole or not at all: a later write of the same day replaces it."""
     path = digest_path(root, day)
     path.parent.mkdir(parents=True, exist_ok=True)
-    spare = path.with_suffix(".tmp")
-    spare.write_text(text, encoding="utf-8")
-    os.replace(spare, path)
+    cloud.write_retained(path, text.encode('utf-8'))
     return path
+
+
+def read(path: Path) -> str:
+    """Only a page matching the writer's completed snapshot may be disclosed."""
+    try:
+        expected = path.with_suffix('.sha256').read_text(encoding='ascii')
+        return cloud.read_retained(path, expected).decode('utf-8')
+    except (OSError, TypeError, ValueError):
+        cloud.record_sources((cloud.UNKNOWN,))
+        return cloud.WITHHELD
 
 
 def latest(root: str | Path) -> Path | None:
@@ -163,4 +172,4 @@ def latest(root: str | Path) -> Path | None:
     return max((Path(root) / DIGEST_FOLDER).glob("*.md"), default=None)
 
 
-__all__ = ["DIGEST_FOLDER", "MOST_LINES", "digest_path", "latest", "render", "write"]
+__all__ = ["DIGEST_FOLDER", "MOST_LINES", "digest_path", "latest", "read", "render", "write"]

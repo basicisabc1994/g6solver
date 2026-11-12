@@ -159,4 +159,10 @@ def test_one_file_a_day_under_the_loops_folder_and_the_latest_is_found(tmp_path)
     write(tmp_path, DAY, "second again\n")
     assert latest(tmp_path) == digest_path(tmp_path, DAY) == tmp_path / "digests" / "2026-11-01.md"
     assert latest(tmp_path).read_text(encoding="utf-8") == "second again\n"
-    assert len(list((tmp_path / "digests").iterdir())) == 2
+    reports = list((tmp_path / "digests").glob("*.md"))
+    assert len(reports) == 2
+    assert {item.name for item in (tmp_path / "digests").iterdir()} == {
+        name for report in reports for name in (report.name, report.with_suffix(".sha256").name)}
+    import hashlib
+    for report in reports:
+        assert report.with_suffix(".sha256").read_text() == hashlib.sha256(report.read_bytes()).hexdigest()

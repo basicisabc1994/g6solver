@@ -62,9 +62,12 @@ class G6Model(Model):
                  **kwargs: Any) -> ChatMessage:
         if os.environ.get("G6_DISABLE_LLM"):
             raise LLMError("G6_E_LLM_DISABLED: model calls are disabled by G6_DISABLE_LLM")
-        system, transcript = render(messages)
         self.calls += 1
-        text = self.llm.complete(system, transcript, max_tokens=self.max_tokens)
+        from g6.core.consent_callers import guard
+        from g6.core.cloud_consent import prompt_state
+        with prompt_state(messages, tools_to_call_from) as (snapshot, _):
+            system, transcript = render(snapshot)
+            text = guard(self.llm).complete(system, transcript, max_tokens=self.max_tokens)
         for stop in stop_sequences or ():
             if stop and stop in text:
                 text = text[:text.index(stop)]

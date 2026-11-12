@@ -16,6 +16,8 @@ import g6
 from g6.cli.setup import SERVER_ARGS
 from g6.harness import completion_hook as hook
 from g6.harness import completion_loop as loop
+from g6.core import cloud_consent as cloud
+from tests.s16r3.test_retained_files import write_completed_state
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / "plugins" / "g6"
@@ -80,7 +82,7 @@ def test_prompts_before_the_loop_starts_add_to_the_task_and_never_move_the_base(
 def test_once_the_loop_has_begun_testing_a_prompt_changes_nothing(repo, monkeypatch, capsys):
     hooked(monkeypatch, capsys, "prompt", prompt(repo, "the task"))
     before = recorded()
-    (hook.folder("s1") / "state.json").write_text('{"started": 1}', encoding="utf-8")
+    write_completed_state(hook.folder('s1') / 'state.json', {'started': 1})
     hooked(monkeypatch, capsys, "prompt", prompt(repo, "thanks"))
     assert recorded() == before
 
@@ -267,7 +269,7 @@ def test_a_report_is_shown_before_any_line(repo, monkeypatch, capsys):
 def test_a_prompt_after_a_loop_ended_records_the_new_task_and_base_and_a_run_of_its_own(repo, monkeypatch, capsys):
     hooked(monkeypatch, capsys, "prompt", prompt(repo, "the task"))
     first = recorded()
-    (hook.folder("s1") / "state.json").write_text(json.dumps({"done": True, "reviews": [{"patch": "the digest"}]}), encoding="utf-8")
+    write_completed_state(hook.folder('s1') / 'state.json', {"done": True, "reviews": [{"patch": "the digest"}]})
     (repo / "new.txt").write_text("n", encoding="utf-8")
     git(repo, "add", ".")
     git(repo, "commit", "-qm", "later")
@@ -276,7 +278,9 @@ def test_a_prompt_after_a_loop_ended_records_the_new_task_and_base_and_a_run_of_
     assert recorded() == {**first, "task": "the next task", "base": git(repo, "rev-parse", "HEAD"), "run": 1}
     run = hook.current("s1", recorded())
     assert run != hook.folder("s1") and run.parent == hook.folder("s1").parent
-    assert json.loads((run / "state.json").read_text(encoding="utf-8")) == {}      # that review was of another base
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    assert cloud.UNKNOWN in loop.source_refs(state)  # the synthetic earlier run supplied no origin receipt
+    assert {key: value for key, value in state.items() if key != 'consent_sources'} == {}  # another base
 
 
 def test_a_prompt_that_cannot_get_its_turn_changes_nothing_and_says_so(repo, monkeypatch, capsys):
@@ -291,10 +295,12 @@ def test_a_prompt_that_cannot_get_its_turn_changes_nothing_and_says_so(repo, mon
 
 def test_a_prompt_on_the_same_base_keeps_what_the_ended_loop_read(repo, monkeypatch, capsys):
     hooked(monkeypatch, capsys, "prompt", prompt(repo, "the task"))
-    (hook.folder("s1") / "state.json").write_text(json.dumps({"done": True, "reviews": [{"patch": "the digest"}]}), encoding="utf-8")
+    write_completed_state(hook.folder('s1') / 'state.json', {"done": True, "reviews": [{"patch": "the digest"}]})
     hooked(monkeypatch, capsys, "prompt", prompt(repo, "thanks"))
     run = hook.current("s1", recorded())
-    assert json.loads((run / "state.json").read_text(encoding="utf-8")) == {"reviewed": "the digest"}
+    state = json.loads((run / "state.json").read_text(encoding="utf-8"))
+    assert cloud.UNKNOWN in loop.source_refs(state)
+    assert {key: value for key, value in state.items() if key != 'consent_sources'} == {"reviewed": "the digest"}
 
 def test_with_nothing_to_say_the_turn_just_ends(repo, monkeypatch, capsys):
     hooked(monkeypatch, capsys, "prompt", prompt(repo))

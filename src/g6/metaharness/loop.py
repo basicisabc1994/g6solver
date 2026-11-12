@@ -129,6 +129,8 @@ from g6.self_maintenance.usage import (
     request_digest,
     telling_stops,
 )
+from g6.core.consent_callers import guard
+from g6.core.cloud_consent import REQUIRED as CONSENT_REQUIRED, STATE_UNAVAILABLE as CONSENT_STATE, telling_refusals
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import BUSY as HELD_BY_ANOTHER
 from g6.workspace._envelope import WorkspaceRefused
@@ -167,7 +169,7 @@ HOLDS = (*BARRED, UNNAMED_REQUEST)
 JUDGE_UNPINNED = "G6_E_LOOP_JUDGE_UNPINNED"
 ANSWER_UNIDENTIFIABLE = "G6_E_LOOP_ANSWER_UNIDENTIFIABLE"
 #: A cycle's safety stops: each holds the loop for a person (``_must_stop``), whatever code its row was given.
-SAFETY_STOPS = (SEALED_BREACH, UNMETERED_CALLER, CLASSIFIER_STOP, HOST_UNKNOWN, *HOLDS)
+SAFETY_STOPS = (SEALED_BREACH, UNMETERED_CALLER, CLASSIFIER_STOP, CONSENT_REQUIRED, CONSENT_STATE, HOST_UNKNOWN, *HOLDS)
 #: The order the one rule codes a cycle by (``_coded``), first ranking highest; a status not here ranks after them all.
 #: A rollback first: it has happened, the chain went back a generation, and the log counts generations by that outcome.
 #: Then a frozen change, above every safety stop: nothing the cycle measured stands, and the next tick is refused until a
@@ -886,7 +888,9 @@ class _Requests:
         ordered by their own reentrant lock, which no admission reader holds, so a paused stop reader cannot exclude one.
         Every target meter's keeper is tried, whatever one of them raised, and the first of those leaves once they have
         been. A hold for an unknown outcome is latched as ``hold`` and a stated refusal as ``refusal`` (``_unread``)."""
-        said = refused_by(str(failed))
+        consent_code = next((code for code in (CONSENT_REQUIRED, CONSENT_STATE)
+                             if str(failed).startswith(code + ':')), '')
+        said = consent_code or refused_by(str(failed))
         if not said:
             return
         identity = request.identity if isinstance(request, Send) else request
@@ -912,6 +916,8 @@ class _Requests:
                                 meter.hold = {"said": writable, "request": identity}
                             else:
                                 meter.refusal = {"said": writable, "request": identity}
+                                if consent_code:
+                                    meter.refusal["code"] = consent_code
                     return any(meter.limit != math.inf for meter, _ in targets)
                 finally:
                     _RECORD.writing.discard(token)
@@ -1120,6 +1126,9 @@ class _Counted:
                 self.requests.met_a_limit(self.requests.now() + timedelta(seconds=max(hint, 0.0)),
                                           "HTTP 429: the provider's limit was met")
 
+        def withheld(error: LLMError) -> None:
+            self.requests.at_a_refusal(error, None, call.generation)
+
         def finish(latched: bool) -> None:
             try:
                 ended.set()
@@ -1131,10 +1140,10 @@ class _Counted:
 
         with (_call_scope(call, ended) as around, counting(before_call=next_request) as noted,
               _gating_resends(resend, limited),
-              telling_stops(_Gate(self.requests, call))):
+              telling_stops(_Gate(self.requests, call)), telling_refusals(withheld)):
             try:
                 text = (_complete_host(self.inner, system, user, max_tokens=max_tokens) if _host_kind(self.inner)
-                        else self.inner.complete(system, user, max_tokens=max_tokens))
+                        else guard(self.inner).complete(system, user, max_tokens=max_tokens))
             except LLMError as failed:
                 try:
                     if isinstance(failed, ProviderStop):  # told already, unless the reply was read where the gate is not
@@ -2371,7 +2380,7 @@ class ShadowLoop:
             row["classifier_stop"] = refusal
             if hold is not None:
                 row["unknown_hold"] = hold
-            held.append({"outcome": "blocked", "code": CLASSIFIER_STOP,
+            held.append({"outcome": "blocked", "code": refusal.get("code", CLASSIFIER_STOP),
                          "reason": f"{_stopped_by(refusal['said'])}: nothing is adopted, it is not sent again, and a "
                                    "person reads this before the loop goes on"})
         elif hold is not None:        # no classifier said anything: its own code and field, and the same pause for a person
