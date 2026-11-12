@@ -542,7 +542,17 @@ def test_every_path_that_ends_a_tick_reads_what_it_latched_as_it_closes():
     run = _function(tree, "ShadowLoop._run")
     tried = next(node for node in ast.walk(run) if isinstance(node, ast.Try) and node.finalbody)
     final = [ast.unparse(statement) for statement in tried.finalbody]
-    assert final[0] == "self.requests.close()" and final[1] == "ended = self.requests.closed"
+    # The close comes first, and what it kept is read in the step after it, whatever the close raised (the freeze
+    # follow-up keeps what a cycle met before anything that can fail): a close that raised before it ended the tick (its
+    # generation unmoved) leaves the tick's latches, read in one step under the lock (``_Requests.latched``).
+    closing = tried.finalbody[0]
+    assert isinstance(closing, ast.Try) and not closing.handlers and [ast.unparse(s) for s in closing.body] == [
+        "self.requests.close()"]
+    assert ast.unparse(closing.finalbody[0]) == (
+        "ended = self.requests.closed if self.requests.generation != opened else self.requests.latched()")
+    body = [ast.unparse(s) for s in run.body]
+    opening = body.index("self.requests.open(spend.amount, spend.ends)")
+    assert body[opening + 1] == "opened = self.requests.generation", "the tick's generation is read as it opens"
     assert any("ended.met" in statement and "_keep_limit" in statement for statement in final)
     assert final.index(next(s for s in final if "_keep_limit" in s)) < final.index(next(s for s in final if "settle" in s))
     assert all(handler.name in (None, "reached", "exc") for handler in tried.handlers)

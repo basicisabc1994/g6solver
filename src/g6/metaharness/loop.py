@@ -589,6 +589,13 @@ class _Requests:
                                  self.hold)
             self._reset(math.inf, None)
 
+    def latched(self) -> _Ended:
+        """What the tick has latched, read in one step under the lock without ending it: what a tick whose ``close`` raised
+        before it ended leaves by (``ShadowLoop._run``), so a refusal or a hold it met is kept on its way out all the
+        same. It names no closing (``tick``) and decides nothing of how the tick ends."""
+        with self._lock:
+            return _Ended(self.sent, self.unseen, self.stopped, self.refusal, self.limited, self.met, "", self.hold)
+
     def ends_by(self, moment: datetime) -> None:
         """A provider has said the tick's week ends at ``moment``, which can come to light only once it is under way. What it
         reserved covers nothing after that. A later end buys it nothing, and outside a tick there is no week to end."""
@@ -2285,6 +2292,7 @@ class ShadowLoop:
         self._rca: TickRecord | str | None = None     # what this tick's analysis reads once it has tuned, or why it could not
         self._began = len(self.mh.adoption_rows())    # every generation after these is this cycle's (``_made``)
         self.requests.open(spend.amount, spend.ends)
+        opened = self.requests.generation         # a close that ends this tick moves it on (``_Requests._reset``)
         with sealed_closed(self.domain.sealed().vault) as breaches:
             try:                      # a sealed file already held open: no cycle starts over it
                 row = self._row() if breaches else self._cycle(recommended)
@@ -2297,13 +2305,16 @@ class ShadowLoop:
                 row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
                        "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]}
             finally:             # whatever ended it, the tick closes in one step with what it latched, which decides from here
-                self.requests.close()
-                ended = self.requests.closed
-                # what the cycle met, kept before anything else that can fail (``_carried``), and its limits on disk with
-                # it; a tick that leaves by a raise from here on writes what it met on its way out (``tick``, ``_keep``)
-                self._met = (breaches, ended.refusal, ended.unseen, halted, ended.hold)
-                for until, _ in ended.met:          # every limit it met, in the order met, kept before its charges settle
-                    self._keep_limit(spend.provider, until)
+                try:
+                    self.requests.close()
+                finally:         # a close that raised before it ended the tick: what it latched, read in one step
+                    ended = self.requests.closed if self.requests.generation != opened else self.requests.latched()
+                    # what the cycle met, kept before anything else that can fail (``_carried``), and its limits on disk
+                    # with it; a tick that leaves by a raise from here on writes what it met on its way out (``tick``,
+                    # ``_keep``)
+                    self._met = (breaches, ended.refusal, ended.unseen, halted, ended.hold)
+                    for until, _ in ended.met:      # every limit it met, in the order met, kept before its charges settle
+                        self._keep_limit(spend.provider, until)
                 # use nobody could count stays charged at its worst case
                 charged = self.meter.settle(spend, spend.amount if ended.unseen else ended.sent)
         stopped = ended.stopped
