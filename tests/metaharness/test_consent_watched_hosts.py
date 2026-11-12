@@ -126,6 +126,45 @@ def test_a_session_launch_step_outside_its_run_sends_nothing(programs, accepted_
     assert programs == [] and cloud.disclosures() == []
 
 
+@pytest.fixture
+def lookups(monkeypatch):
+    """Each lookup of a host program, recorded; the lookup itself is the real one, which under the suite's guard finds no
+    program. Nothing is started."""
+    looked = []
+    for kind in (host_models.ClaudeCodeCaller, host_models.CodexCaller):
+        def locate(self, _real=kind.locate):
+            looked.append(type(self).__name__)
+            return _real(self)
+        monkeypatch.setattr(kind, "locate", locate)
+    monkeypatch.setattr(host_models, "_run", lambda *args: pytest.fail("a host program was started"))
+    return looked
+
+
+@pytest.mark.parametrize("base,provider", HOSTS)
+def test_a_watched_host_with_no_grant_is_refused_for_consent_before_its_program_is_looked_for(lookups, base, provider):
+    with pytest.raises(host_models.LLMError, match=cloud.REQUIRED):
+        base().complete("system", "PLANTED_UNGRANTED")
+    assert lookups == [], "the program was looked for before the sharing check refused"
+    assert cloud.disclosures() == [] and not usage._SENT
+
+
+@pytest.mark.parametrize("base,provider", HOSTS)
+def test_a_watched_host_with_a_grant_and_no_program_says_the_program_is_missing(lookups, accepted_cloud_dialog, base,
+                                                                                  provider):
+    accepted_cloud_dialog("model_inputs", provider, text="synthetic host request")
+    with pytest.raises(host_models.LLMError, match="G6_E_OUTSIDE_PROGRAM_MISSING"):
+        base().complete("system", "request")
+    assert len(lookups) == 1 and cloud.disclosures() == [] and not usage._SENT
+
+
+def test_a_session_with_no_grant_is_refused_for_consent_before_its_program_is_looked_for(lookups, tmp_path):
+    meter = loop._Requests()
+    meter.open(10)
+    with pytest.raises(loop._Refused, match=cloud.REQUIRED):
+        loop._Counted(Scout(tmp_path), meter).complete("system", "user")
+    assert lookups == [] and meter.refusal["code"] == cloud.REQUIRED and cloud.disclosures() == []
+
+
 @pytest.mark.parametrize("base,provider", HOSTS)
 def test_a_watched_host_is_its_provider_and_the_guard_leaves_it_as_it_is(base, provider):
     host = base()

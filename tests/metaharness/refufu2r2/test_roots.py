@@ -139,7 +139,8 @@ def test_a_read_refusal_survives_a_reader_failure_in_the_tail(monkeypatch, provi
 
 @pytest.mark.parametrize("host", HOSTS)
 @pytest.mark.parametrize("exception", FAILURES)
-def test_cleanup_finishes_the_captured_gate_if_forgetting_raises(fake_host, monkeypatch, host, exception):
+def test_cleanup_finishes_the_captured_gate_if_forgetting_raises(fake_host, monkeypatch, host, exception,
+                                                                 consented_provider_fakes):
     provider = "claude" if host is usage.WatchedClaude else "codex"
     original = usage._forget
     done = loop._Gate.done

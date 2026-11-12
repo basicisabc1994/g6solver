@@ -148,6 +148,10 @@ SOURCE_SITES = {
     'g6.core.cloud_consent.collect_sources',
     'g6.core.cloud_consent.request_sources',
     'g6.core.cloud_consent.admission',
+    # admission's own rule, decided before an owned host launch looks for its program. Planted cases:
+    # tests/metaharness/test_consent_watched_hosts.py (a watched Claude or Codex, or a session, with no grant is refused
+    # for consent and its program is never looked for).
+    'g6.core.cloud_consent.refuse_unshared',
     'g6.core.cloud_consent.record_sources',
     'g6.core.cloud_consent.withheld_message',
     'g6.mcp.cloud_consent.withheld_reply',

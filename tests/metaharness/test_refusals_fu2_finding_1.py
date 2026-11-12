@@ -12,7 +12,7 @@ from g6.metaharness.loop import _Counted, _Requests
 from g6.self_maintenance import usage
 
 
-def test_a_required_host_input_cannot_escape_through_a_directory_link(monkeypatch):
+def test_a_required_host_input_cannot_escape_through_a_directory_link(monkeypatch, consented_provider_fakes):
     root = Path(__file__).resolve().parents[2] / '.review' / 'finding-1' / uuid4().hex
     work, files, outside = root / 'call' / 'work', root / 'call' / 'files', root / 'outside'
     for folder in (work, files, outside):
