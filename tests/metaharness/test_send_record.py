@@ -1227,10 +1227,16 @@ HANDLE_STATE = {
     "domain": "given", "settings": "given", "_now": "given", "domain_file": "given", "_read_now": "given", "_clock": "given",
     "root": "given", "beat_fields": "given", "requests": "given", "_proposer": "given", "provider": "given",
     "problems": "given", "cut": "given", "workflow": "given",
+    # whether this handle beats: set as it is made, and false only where a person's command made it
+    "beats": "given",
     # the folder's files, read again before each operation (``_exclusive``), each reservation (``_reserve``) or each admission
     "log": "files", "mh": "files", "meter": "files", "unreadable": "files",
+    # the stop reader's parse of the folder's records, which stands only for the very bytes it reads again at every
+    # admission (``stop_in_force``'s ``known``): what decides is the files
+    "_records_known": "files",
     # one tick's working state, which ends with the tick
     "evaluating": "tick", "tuned": "tick", "_rca": "tick", "_tuning_failed": "tick",
+    "_began": "tick", "_met": "tick", "_written": "tick", "_frozen_seen": "tick",
     # a count a row reports, which stops nothing
     "waited": "reported",
 }
@@ -1253,9 +1259,15 @@ def test_every_fact_a_handle_holds_is_the_processs_the_folders_files_or_its_own(
         held = inspect.getattr_static(ShadowLoop, name)
         assert isinstance(held, property) and "self._here." in inspect.getsource(held.fget)
     assert "_RECORD.folder(self.root)" in inspect.getsource(inspect.getattr_static(ShadowLoop, "_here").fget)
-    read = {node.attr for qualified in ("ShadowLoop._halted", "ShadowLoop.stopped_by")
-            for node in ast.walk(_function(tree, qualified)) if isinstance(node, ast.Attribute)
+    # What stops a send is read in ``_halted``, ``stopped_by`` and the stop reader both call (``_stop``); a read through
+    # ``getattr(self, "<name>", ...)`` is a read of that attribute as surely as ``self.<name>`` is.
+    readers = [_function(tree, qualified) for qualified in ("ShadowLoop._halted", "ShadowLoop.stopped_by", "ShadowLoop._stop")]
+    read = {node.attr for reader in readers for node in ast.walk(reader) if isinstance(node, ast.Attribute)
             and ast.unparse(node.value) == "self" and node.attr in HANDLE_STATE}
+    read |= {node.args[1].value for reader in readers for node in ast.walk(reader) if isinstance(node, ast.Call)
+             and ast.unparse(node.func) == "getattr" and ast.unparse(node.args[0]) == "self"
+             and isinstance(node.args[1], ast.Constant)}
+    assert read <= set(HANDLE_STATE), f"a stop reader reads what the handle list does not classify: {read - set(HANDLE_STATE)}"
     assert read and {HANDLE_STATE[name] for name in read} <= {"process", "files", "given"}
     init = ast.unparse(_function(tree, "ShadowLoop.__init__"))
     assert "self._keep_refusal, self._on_record)" in init

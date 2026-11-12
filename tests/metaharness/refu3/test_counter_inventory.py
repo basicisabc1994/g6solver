@@ -17,7 +17,8 @@ INVENTORY = builder.test_every_change_this_process_makes_to_what_admission_reads
 def _changed(*edits: tuple[str, str]) -> str:
     source = inspect.getsource(loop_module)
     for old, new in edits:
-        assert source.count(old) == 1, f"the fixture's edit no longer finds its one place: {old!r}"
+        if source.count(old) != 1:     # no AssertionError: a case below expects one, and would pass on an edit never made
+            pytest.fail(f"the fixture's edit no longer finds its one place: {old!r}")
         source = source.replace(old, new)
     compile(source, "a_changed_loop.py", "exec")           # the changed copy is still a module that compiles
     return source
@@ -36,13 +37,23 @@ def test_the_inventory_passes_on_the_code_as_it_is(monkeypatch):
     _run_inventory_on(monkeypatch, inspect.getsource(loop_module))
 
 
-STOP_READ = "        return self.cannot_record or stop_standing(self.root, self.log.started())"
+#: The stop reader's first read: this process's own stop for the folder, before the folder's files (``ShadowLoop._stop``).
+STOP_READ = ("        if self.cannot_record:\n"
+             "            return _Stopped(Stop(CANNOT_RECORD, self.cannot_record))")
 
 CASES = {
     # the stop on the record that was found, stored with the lock and no move of the counter
     "the keeper's stop moves no counter": [
-        ("                    here.cannot_record = why\n                    _RECORD.moved += 1\n        finally:",
-         "                    here.cannot_record = why\n        finally:")],
+        ("                with _LOCK:           # an admission that read the folder's stop before this reads it again\n"
+         "                    here.cannot_record = why\n                    _RECORD.moved += 1\n",
+         "                with _LOCK:           # an admission that read the folder's stop before this reads it again\n"
+         "                    here.cannot_record = why\n")],
+    # the stop a closing stores on the record it was handed or found, with the lock and no move of the counter
+    "the closing's stop moves no counter": [
+        ("                with _LOCK:           # every admission of the folder that read its stop before this reads it again\n"
+         "                    here.cannot_record = why\n                    _RECORD.moved += 1\n",
+         "                with _LOCK:           # every admission of the folder that read its stop before this reads it again\n"
+         "                    here.cannot_record = why\n")],
     # the same store with no lock at all
     "the setter's stop is stored outside the lock": [
         ("            with _LOCK:               # an admission that read the folder's stop before this reads it again\n"
@@ -50,16 +61,19 @@ CASES = {
          "            here.cannot_record = why\n")],
     # a fact of the folder's record the stop reader starts to read, whose stores were never counted
     "the stop reader reads the count of lost cycles": [
-        (STOP_READ, STOP_READ.replace("self.cannot_record or", "self.cannot_record or str(self._here.lost_cycles or '') or"))],
+        (STOP_READ, STOP_READ.replace("if self.cannot_record:", "if self.cannot_record or str(self._here.lost_cycles or ''):"))],
     # the folder's refused requests changed in bulk, outside any pending refusal write
     "the folder's set is changed outside a refusal write": [
         ("        self.requests.unknown |= held\n",
          "        self.requests.unknown |= held\n        self._here.refused.update(refused)\n")],
     # something of the handle itself that the stop reader starts to read, and any method may set
     "the stop reader reads a new attribute of the handle": [
-        (STOP_READ, STOP_READ.replace("self.cannot_record or", "self.cannot_record or self.waiting or")),
+        (STOP_READ, STOP_READ.replace("if self.cannot_record:", "if self.cannot_record or self.waiting:")),
         ("        self.evaluating = True\n\n    def _keep_refusal",
          "        self.evaluating = True\n        self.waiting = 'an evaluation'\n\n    def _keep_refusal")],
+    # the same, read through ``getattr``, as the stop reader reads its own parse of the records
+    "the stop reader reads a new attribute of the handle through getattr": [
+        (STOP_READ, STOP_READ.replace("if self.cannot_record:", "if self.cannot_record or getattr(self, 'waiting', ''):"))],
     # an attribute a reader reads that is given once, set again elsewhere
     "the handle's folder is set outside its construction": [
         ("        self.evaluating = True\n\n    def _keep_refusal",
