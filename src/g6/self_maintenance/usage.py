@@ -78,9 +78,17 @@ from g6.core import component_process, host_models
 from g6.core.llm import LLMError
 from g6.core.outside import clean_environment, find_program
 from g6.core.process_tree import ProcessTreeError
-from g6.self_maintenance.pacing import AccountReading, ProviderWindow
+from g6.operator.gates import exact_number, kind_of
+from g6.self_maintenance.pacing import (
+    REFRESH,
+    AccountReading,
+    ProviderWindow,
+    figure_of,
+    standing,
+    utc,
+    windows_by_provider,
+)
 
-REFRESH = timedelta(minutes=15)
 MODEL_REFUSED = "G6_E_MODEL_REFUSED"
 #: Claude Code's ``api_error`` values that say something other than the model's own reply stopped the turn.
 _STOPPED_BY = ("dlp_request_denied", "safety_monitor_blocked")
@@ -97,6 +105,8 @@ _ASKED = ({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "g
           {"id": 2, "method": READ_LIMITS, "params": {"excludeResetCreditDetails": True}})
 # COPY: Why a provider has no account figure.
 NOT_REPORTED = "its tool reports no usage without a model call, so the meter counts model calls"
+# COPY: A provider whose tool reports, before it has been read.
+NOT_READ = "its usage has not been read yet"
 #: The start of what a request raises at a limit, which is G6's own words. A server's body comes after them. Of what a host
 #: program prints, only the two JSON fields of a Claude Code error result: see the module docstring for why. The search for
 #: them ends at the next caller's failure, whose text a model may have written.
@@ -111,40 +121,54 @@ class UsageUnavailable(RuntimeError):
     """The tool gave no reading: it is missing, stopped, took too long, or said something that does not read."""
 
 
+def _ran(argv: Sequence[str], *, stdin: int, stdout: int, timeout: float) -> None:
+    """Run ``argv`` contained, in a folder of its own and with a clean environment, and read how it ended. This is the one
+    place a process result is read here: a clean exit, status 0, is the only success. Any other status, of any value or
+    kind, a window that ran out or a tree that could not be ended is ``UsageUnavailable``: no reading, never a figure,
+    whatever the process printed before it ended."""
+    try:
+        with tempfile.TemporaryDirectory(prefix="g6-usage-", ignore_cleanup_errors=True) as work, \
+                component_process.window(timeout):
+            status = component_process.run_process(list(argv), env=clean_environment(("CODEX_HOME",)), cwd=work,
+                                                   stdin=stdin, stdout=stdout)
+    except (OSError, ProcessTreeError, subprocess.SubprocessError) as exc:   # the window's expiry is an OSError too
+        raise UsageUnavailable(f"{type(exc).__name__}: {exc}"[:200]) from None
+    if type(status) is not int or status != 0:
+        raise UsageUnavailable(f"the tool ended with status {status!r}, so what it printed is no reading")
+
+
 def read_limits(argv: Sequence[str], *, timeout: float = ASK_TIMEOUT) -> dict[str, Any]:
-    """One answer from a program that speaks ``codex app-server``'s protocol. Its input stays open until the answer is in,
-    because the server stops at the end of its input, before a read it is waiting on comes back. Its process tree is
-    ended either way."""
+    """One answer from a program that speaks ``codex app-server``'s protocol, from a run that ended cleanly (``_ran``). Its
+    input stays open until the answer is in, because the server stops at the end of its input, before a read it is waiting
+    on comes back. Then its input ends, and what it still prints is read and left, so it can stop as it chooses rather
+    than on a pipe closed under it. Its process tree is ended either way."""
     into_read, into_write = os.pipe()
     back_read, back_write = os.pipe()
     answers: list[dict[str, Any]] = []
 
     def talk() -> None:
         try:
-            with os.fdopen(into_write, "w", encoding="utf-8") as asking, os.fdopen(back_read, encoding="utf-8",
-                                                                                    errors="replace") as told:
-                asking.write("".join(json.dumps(line) + "\n" for line in _ASKED))
-                asking.flush()
-                for line in told:
-                    try:
-                        found = json.loads(line)
-                    except ValueError:
-                        continue
-                    if isinstance(found, dict) and found.get("id") == _ASKED[-1]["id"]:
-                        answers.append(found)
-                        return
+            with os.fdopen(back_read, encoding="utf-8", errors="replace") as told:
+                with os.fdopen(into_write, "w", encoding="utf-8") as asking:
+                    asking.write("".join(json.dumps(line) + "\n" for line in _ASKED))
+                    asking.flush()
+                    for line in told:
+                        try:
+                            found = json.loads(line)
+                        except ValueError:
+                            continue
+                        if isinstance(found, dict) and found.get("id") == _ASKED[-1]["id"]:
+                            answers.append(found)
+                            break
+                for _ in told:
+                    pass
         except OSError:                     # it stopped while being asked: no answer, which is what the caller is told
             return
 
     talking = threading.Thread(target=talk, daemon=True, name="g6-usage-read")
     talking.start()
     try:
-        with tempfile.TemporaryDirectory(prefix="g6-usage-", ignore_cleanup_errors=True) as work, \
-                component_process.window(timeout):
-            component_process.run_process(list(argv), env=clean_environment(("CODEX_HOME",)), cwd=work, stdin=into_read,
-                                          stdout=back_write)
-    except (OSError, ProcessTreeError, subprocess.SubprocessError) as exc:   # the window's expiry is an OSError too
-        raise UsageUnavailable(f"{type(exc).__name__}: {exc}"[:200]) from None
+        _ran(argv, stdin=into_read, stdout=back_write, timeout=timeout)
     finally:
         os.close(into_read)
         os.close(back_write)
@@ -166,6 +190,7 @@ def limit_ends(said: str, now: datetime) -> datetime | None:
     """When the limit a failed request ran into ends, from the text it raised, or ``None`` when that text is no limit. A
     wait a server asked for is taken as asked. Anything else says no time G6 can read, so the limit is looked at again, as
     one with no reset is, and that look costs one refused request."""
+    now = utc(now)
     limit = _LIMIT.match(said)
     if limit is None:
         return None
@@ -224,34 +249,43 @@ def read_stops(sender: Any) -> None:
         sender.__class__ = type(kind.__name__, (WatchedClaude, kind), {})
 
 
-def _number(value: Any) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool)
-
-
 def _time(value: Any) -> datetime | None:
-    """``value`` as a moment, or ``None`` when no clock could show it."""
+    """``value``, seconds since 1970, as a moment, or ``None`` when no clock could show it. The number is converted once
+    (``exact_number``) before any clock reads it."""
+    seconds = exact_number(value)
     try:
-        return datetime.fromtimestamp(value, UTC) if _number(value) else None
+        return utc(datetime.fromtimestamp(seconds, UTC)) if seconds is not None else None
     except (OverflowError, OSError, ValueError):
         return None
 
 
-def _reads(window: Any) -> bool:
-    """Whether a window's figures can be believed. Written so that a NaN fails, as it fails every comparison. The tool may
-    leave out how long a window is and when it resets, and it may not send nonsense for either."""
-    if not isinstance(window, Mapping):
-        return False
-    percent, minutes, reset = window.get("usedPercent"), window.get("windowDurationMins"), window.get("resetsAt")
-    return (_number(percent) and 0 <= percent <= FULL and (minutes is None or _number(minutes) and minutes > 0)
-            and (reset is None or _time(reset) is not None))
+def _window(raw: Any) -> dict[str, Any] | None:
+    """A window of the tool's reply as plain values, each read once and converted where it enters: its percentage
+    (``figure_of``, to 100), its length in minutes and when it resets. ``None`` when any of them does not read, so a NaN, a
+    subclass that answers its own way and nonsense alike lose the reply, and nothing of the reply is used after this. The
+    tool may leave out how long a window is and when it resets, and it may not send nonsense for either."""
+    try:
+        if not isinstance(raw, Mapping):
+            return None
+        percent, minutes, reset = raw.get("usedPercent"), raw.get("windowDurationMins"), raw.get("resetsAt")
+    except Exception:  # noqa: BLE001 - a window that cannot be read is none
+        return None
+    used, length, at = figure_of(percent, FULL), None if minutes is None else figure_of(minutes), _time(reset)
+    if used is None or (minutes is not None and not length) or (reset is not None and at is None):
+        return None
+    return {"usedPercent": used, "windowDurationMins": length, "resetsAt": at}
 
 
 def _reset(window: Mapping[str, Any], now: datetime) -> datetime | None:
-    """When a window resets: ahead of ``now`` and no further than the window is long, or a week where it does not say. Any
-    other figure is no reset: a limit that outlasts its own window cannot be believed."""
-    at = _time(window.get("resetsAt"))
-    longest = (window.get("windowDurationMins") or WEEK_MINUTES) * 60
-    return at if at is not None and 0 < (at - now).total_seconds() <= longest else None
+    """When a converted window (``_window``) resets, or reset, where that can be believed: no further from ``now`` than
+    the window is long (a week where it does not say), ahead or behind. The one rule for a reset in both directions, and
+    the one reader of a window's reset: a limit that outlasts its own window cannot be believed, and neither can a week
+    said to have ended longer ago than a week lasts. Any other value is no reset: it ends no limit, names no week's end
+    and moves no kept week."""
+    now = utc(now)
+    at = window["resetsAt"]
+    longest = (window["windowDurationMins"] or WEEK_MINUTES) * 60
+    return at if at is not None and abs((at - now).total_seconds()) <= longest else None
 
 
 def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datetime) -> AccountReading | None:
@@ -260,97 +294,165 @@ def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datet
     makes no sense loses the whole reply, since a reply that wrong says nothing about the rest. A limit whose reset has
     passed is still a limit, so it is looked at again as one with no reset is. A week whose own reset has passed is another
     matter: a tool that has not caught up is saying last week's use, so that figure is left out and nothing stands for it.
-    That reset is kept apart as ``ended_at``: it says where the provider's weeks fall, and it ends no tick."""
-    snapshot, allowed = limits.get("rateLimits"), limits.get("ordinaryUsageAllowed")
-    if not isinstance(snapshot, Mapping) or not isinstance(allowed, bool | None):
+    That reset is kept apart as ``ended_at``: it says where the provider's weeks fall while the store keeps no word of it,
+    and it ends no tick. A reading's ``resets_at`` and ``ended_at`` are the provider's own word or nothing, and what can
+    be believed of it is one rule in both directions (``_reset``): a reset further from now than a week is long, ahead or
+    behind, names no week's end. Its figure is then kept as one with no reset, as the percentage is the provider's own
+    whatever its reset says and counting it can only refuse more; the meter puts it in the week the store's own grid says
+    (``BudgetMeter.stands``). No reset is made up here: one that was would move the kept week as if the provider had said
+    it."""
+    now = utc(now)
+    try:
+        snapshot, allowed = limits.get("rateLimits"), limits.get("ordinaryUsageAllowed")
+        if not isinstance(snapshot, Mapping) or not isinstance(allowed, bool | None):
+            return None
+        raw = [w for w in (snapshot.get("primary"), snapshot.get("secondary")) if w is not None]
+    except Exception:  # noqa: BLE001 - a reply that cannot be read is no reading
         return None
-    seen = [w for w in (snapshot.get("primary"), snapshot.get("secondary")) if w is not None]
-    if not seen or not all(_reads(w) for w in seen):
+    seen = [_window(w) for w in raw]
+    if not seen or any(w is None for w in seen):
         return None
-    week = next((w for w in seen if w.get("windowDurationMins") == WEEK_MINUTES), None)
+    week = next((w for w in seen if w["windowDurationMins"] == WEEK_MINUTES), None)
     full = [w for w in seen if w["usedPercent"] >= FULL]
-    resets = [at for w in (full or seen) if (at := _reset(w, now)) is not None]
+    resets = [at for w in (full or seen) if (at := _reset(w, now)) is not None and at > now]
     until = (max(resets) if resets else now + REFRESH) if full or allowed is False else None
-    ended = week is not None and (_time(week.get("resetsAt")) or now + WEEK) <= now
-    if ended:
-        return AccountReading(limited_until=until, ended_at=_time(week.get("resetsAt")))
     if week is None:
         return AccountReading(limited_until=until)
+    reset = _reset(week, now)
+    if reset is not None and reset <= now:           # its week has ended: last week's figure says nothing of this one
+        return AccountReading(limited_until=until, ended_at=reset)
     return AccountReading(used=window.allowance * week["usedPercent"] / FULL, estimated=False, limited_until=until,
-                          resets_at=_reset(week, now) or window.week_end(now))
+                          resets_at=reset)
 
 
-def _stands(reading: AccountReading | None, now: datetime) -> bool:
-    """Whether what a reading said still holds: its limit is still ahead, or the week its figure is of has not ended."""
-    return reading is not None and any(at is not None and at > now for at in (reading.limited_until, reading.resets_at))
+def _holds(reading: AccountReading | None) -> bool:
+    """Whether what ``standing`` gave still says something: a reading, and not an unread one."""
+    return reading is not None and not reading.unread
 
 
 class AccountReader:
     """The ``read_account`` of a ``BudgetMeter``. Calling it only hands back what ``refresh`` last read, which the runner
-    calls between ticks. A provider whose tool reports nothing has no reading, and ``said`` says why: the meter then stays
-    on its own count. A read that fails, or a reply that does not read, says nothing new, so the last good reading stands
-    until a good read replaces it or its reset passes, and what is charged meanwhile goes on top. The owner uses this
-    account too, so a broken tool must not make the meter read low. This is held in memory, so a restart whose first read
-    fails has forgotten it."""
+    calls between ticks, as it stands when asked (``standing``, the one rule for whether a reading holds): once the week
+    its figure is of has reset, that figure is last week's and is not handed back, and once nothing it said stands, it is
+    unread. A provider whose tool reports nothing has no reading, and ``said`` says why: the meter then stays on its own
+    count. A read that fails, a process that does not end cleanly (``_ran``) among them, or a reply that does not read,
+    says nothing new, so the last good reading stands while ``standing`` keeps it, and what is charged meanwhile goes on
+    top. Past that the account is not known, and nothing is admitted on it until a read succeeds: the owner uses this
+    account too, so a broken tool must not make the meter read low. This is held in memory, and every provider whose tool
+    is asked starts unread: before its first read, and after a restart or a read that ends in any way without a reading,
+    it is not known, and admits nothing. Where a provider's weeks fall is the store's to keep, and is not kept here. The
+    meter it reads for binds it (``bind_meter``): from then the store is told when a reading is taken in the step that
+    makes it anyone's to use, so another meter or process on that store stamps after it at once; and whether a figure
+    still stands is the meter's one rule (``BudgetMeter.stands``), which gives a figure with no reset the week's end the
+    store's grid says."""
 
     def __init__(self, windows: Sequence[ProviderWindow],
                  ask: Mapping[str, Callable[[], Mapping[str, Any] | None]] | None = None) -> None:
-        self.windows = {w.provider: w for w in windows}
+        self.windows = windows_by_provider(windows)
         self.ask = {"codex": codex_limits} if ask is None else ask
-        self.readings: dict[str, AccountReading] = {}
-        self.said = {provider: NOT_REPORTED for provider in self.windows}
+        asked = set(self.windows) & set(self.ask)
+        self.readings: dict[str, AccountReading] = {provider: AccountReading(unread=NOT_READ) for provider in asked}
+        self.said = {provider: f"{NOT_READ}, so nothing is reserved on it until it is read" if provider in asked
+                     else NOT_REPORTED for provider in self.windows}
         self._asked: datetime | None = None
+        self._meter: Any = None
 
-    def _reset_since(self, now: datetime) -> bool:
-        """Whether a week has ended since the tool was last asked, so what it said then says nothing of this one."""
-        return any(r.resets_at is not None and self._asked < r.resets_at <= now for r in self.readings.values())
+    def bind_meter(self, meter: Any) -> None:
+        """Read for ``meter`` (a ``BudgetMeter``, which calls this as it is made; the one made last holds). What is already
+        held is told to its store now; a reading whose time the store will not take is no reading."""
+        self._meter = meter
+        for provider, held in list(self.readings.items()):
+            if not self._told(provider, held):
+                self.readings[provider] = AccountReading(unread="its reading could not be recorded in the store")
+
+    def _told(self, provider: str, reading: AccountReading) -> bool:
+        """Tell the store of the meter this reads for when ``reading`` was taken (``BudgetMeter.tell``), and say whether it
+        took it. With no meter there is no store to tell, and no admission to guard."""
+        if self._meter is None:
+            return True
+        try:
+            self._meter.tell(provider, reading.read_at)
+        except Exception:  # noqa: BLE001 - whatever stopped it, the store does not know of this reading
+            return False
+        return True
+
+    def _stands(self, provider: str, reading: AccountReading | None, now: datetime) -> AccountReading | None:
+        """What ``reading`` still says at ``now``, by the one rule: the meter's (``BudgetMeter.stands``), and ``standing``
+        alone before a meter binds this reader."""
+        now = utc(now)
+        return standing(reading, now) if self._meter is None else self._meter.stands(provider, reading, now)
+
+    def _lapsed(self, now: datetime) -> bool:
+        """Whether a reading that held when the tool was last asked no longer does because the reset it named has passed:
+        then what it said then says nothing now, and the tool is asked again at once. A figure that names no reset is not
+        asked for early: the meter refuses on it once the store's week ends, and the tool is asked at its next refresh."""
+        now = utc(now)
+        return self._asked is not None and any(_holds(standing(r, self._asked)) and not _holds(standing(r, now))
+                                               for r in self.readings.values())
 
     def refresh(self, now: datetime) -> None:
-        if self._asked is not None and now - self._asked < REFRESH and not self._reset_since(now):
+        now = utc(now)
+        if self._asked is not None and now - self._asked < REFRESH and not self._lapsed(now):
             return
         self._asked = now
         for provider in set(self.windows) & set(self.ask):
             try:
-                found = limits_reading(self.ask[provider]() or {}, self.windows[provider], now)
+                answer = self.ask[provider]()
+                found = limits_reading({} if answer is None else answer, self.windows[provider], now)
             except (OSError, UsageUnavailable) as exc:
                 self._no_reading(provider, now, f"its usage could not be read ({str(exc)[:120]})")
+                continue
+            except Exception as exc:  # noqa: BLE001 - a reader that fails any other way says nothing new either
+                self._no_reading(provider, now, f"its usage could not be read ({kind_of(exc)})")
                 continue
             if found is None:
                 self._no_reading(provider, now, "its reply could not be read")
                 continue
             known = self.readings.get(provider)
-            if found.estimated and known is not None and not known.estimated and _stands(known, now):
+            if found.estimated and known is not None and not known.estimated and self._stands(provider, known, now) is known:
                 limits = (at for at in (known.limited_until, found.limited_until) if at is not None)   # no week in it
                 self.readings[provider] = replace(known, limited_until=max(limits, default=None))
                 self._no_reading(provider, now, "its reply gave no week")
                 continue
-            self.readings[provider] = replace(found, read_at=now)
+            taken = replace(found, read_at=now)
+            if not self._told(provider, taken):          # the store first: nobody holds a reading it does not know of
+                self._no_reading(provider, now, "its reading could not be recorded in the store")
+                continue
+            self.readings[provider] = taken
             self.said[provider] = f"reported by its own tool at {now.isoformat(timespec='minutes')}"
-            if found.resets_at is not None:      # so a reply with no reset falls back on the week the tool last reported
-                self.windows[provider] = self.windows[provider].aligned(found.resets_at)
+            if found.resets_at is not None:
                 self.said[provider] += f"; its week ends at {found.resets_at.isoformat(timespec='minutes')}"
 
     def read_now(self, now: datetime) -> None:
         """Ask the tool whenever it was last asked: the one read a tick makes, just before a held-out evaluation."""
+        now = utc(now)
         self._asked = None
         self.refresh(now)
 
     def _no_reading(self, provider: str, now: datetime, why: str) -> None:
-        """What the last good reading said stands while it holds. ``read_at`` stays as it was, so the meter goes on adding
-        what is charged after it. Past that, the meter is on its own count."""
+        """No reading never replaces the last good one: it stands while ``standing`` keeps it, and ``read_at`` stays as it
+        was, so the meter goes on adding what is charged after it. When nothing it said stands, nothing known of the account
+        is left: the reading says why (``unread``), and the meter admits nothing on it until a read succeeds, as the ledger
+        alone holds only G6's own use and would read low."""
+        now = utc(now)
         known = self.readings.get(provider)
-        if not _stands(known, now):
-            self.readings.pop(provider, None)
-            self.said[provider] = f"{why}, so the meter counts model calls"
-        elif known.limited_until is not None and known.limited_until > now:
-            self.said[provider] = f"{why}; the limit it last reported stands until {known.limited_until.isoformat()}"
-        else:
-            self.said[provider] = (f"{why}; the last figure stands until {known.resets_at.isoformat()}, with the model calls "
+        kept = self._stands(provider, known, now)
+        if not _holds(kept):
+            self.readings[provider] = AccountReading(unread=why)
+            self.said[provider] = (f"{why}, and nothing it reported still stands, so nothing is reserved on it until it "
+                                   "reads again")
+        elif kept.limited_until is not None and kept.limited_until > now:
+            self.said[provider] = f"{why}; the limit it last reported stands until {kept.limited_until.isoformat()}"
+        elif kept.resets_at is not None:
+            self.said[provider] = (f"{why}; the last figure stands until {kept.resets_at.isoformat()}, with the model calls "
                                    "charged since on top")
+        else:
+            self.said[provider] = f"{why}; what it last reported stands until its week ends or a read replaces it"
 
-    def __call__(self, provider: str, start: datetime) -> AccountReading | None:
-        return self.readings.get(provider)
-
+    def __call__(self, provider: str, now: datetime) -> AccountReading | None:
+        """What was last read of ``provider``, as it stands at ``now`` (``_stands``, the one rule)."""
+        now = utc(now)
+        return self._stands(provider, self.readings.get(provider), now)
 
 __all__ = ["AccountReader", "MODEL_REFUSED", "NOT_REPORTED", "REFRESH", "UsageUnavailable", "WatchedClaude", "codex_limits",
            "limit_ends", "limits_reading", "read_limits", "read_stops", "refused_by", "telling_stops"]

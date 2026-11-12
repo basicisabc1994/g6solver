@@ -31,7 +31,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +56,7 @@ from g6.self_maintenance.envelope import (
     stop_to_lift,
     stops_asked,
 )
-from g6.self_maintenance.pacing import SETTINGS_FILE, read_settings, windows_from
+from g6.self_maintenance.pacing import SETTINGS_FILE, read_settings, utc, windows_from
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
 
@@ -272,14 +272,14 @@ def start(root: Path, who: str, shown: str | None = None) -> dict:
             return _blocked(TERMS_CHANGED, "what the person read is no longer what would start, so nothing was started",
                             ASK_AGAIN, running=False, folder=str(root))
         with Coordination(root / ".tick").mutex():
-            CycleLog(root / CYCLE_LOG).start(who, at=datetime.now().astimezone().isoformat(), settings=digest_of(settings),
+            CycleLog(root / CYCLE_LOG).start(who, at=utc(datetime.now(UTC)).isoformat(), settings=digest_of(settings),
                                              stops=stops, **agreed)
         why = stop_reason(root)
         if why:
-            record_stop(root, why, at=datetime.now().astimezone().isoformat())
+            record_stop(root, why, at=utc(datetime.now(UTC)).isoformat())
             return _blocked(START_STOPPED, f"a stop arrived while the start was being recorded, so nothing was started: {why}"
                             [:500], NOT_ASKED, running=False, folder=str(root))
-        spawned = datetime.now().astimezone()              # before the spawn: a runner can beat before this process looks
+        spawned = utc(datetime.now(UTC))              # before the spawn: a runner can beat before this process looks
         return {**_watch(root, _spawn(root, settings), spawned), "started_by": who}
     except (OSError, LedgerError, WorkspaceRefused, ValueError) as exc:
         return _blocked(START_FAILED, f"the runner could not be started: {type(exc).__name__}: {exc}"[:500], running=False,
@@ -296,7 +296,7 @@ def stop(folder: str, reason: str = "") -> dict:
     except OSError as exc:
         return _blocked(STOP_FAILED, f"the stop could not be written: {type(exc).__name__}: {exc}"[:400],
                         running=runner_alive(root), folder=str(root))
-    record_stop(root, why, at=datetime.now().astimezone().isoformat())
+    record_stop(root, why, at=utc(datetime.now(UTC)).isoformat())
     running = runner_alive(root)
     said = ("the runner has been asked to stop and is still alive: it ends once it sees the STOP file, at its next model "
             "call, or within a minute while it waits" if running else "the STOP file is in place and no runner is alive")

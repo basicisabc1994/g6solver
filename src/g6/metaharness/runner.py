@@ -50,7 +50,7 @@ import time
 from collections.abc import Callable, Sequence
 from ctypes import wintypes
 from dataclasses import asdict
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Any
 
@@ -80,7 +80,8 @@ from g6.self_maintenance.envelope import (
     stop_reason,
     stops_asked,
 )
-from g6.self_maintenance.pacing import SETTINGS_FILE, read_settings, windows_from
+from g6.operator.store import utc_clock
+from g6.self_maintenance.pacing import SETTINGS_FILE, read_settings, utc, windows_from
 from g6.self_maintenance.usage import AccountReader
 from g6.workspace._envelope import WorkspaceRefused
 
@@ -101,8 +102,9 @@ _TUNING = ("method", "seed", "audit_per_tick", "eval_calls", "provider")
 _MODULE = "g6_loop_domain"
 
 
-def _local_now() -> datetime:
-    return datetime.now().astimezone()
+def _machine_now() -> datetime:
+    """The machine's clock, as UTC. The days a digest is written for are still the machine's own (``Runner._day``)."""
+    return utc(datetime.now(UTC))
 
 
 def _in_job() -> bool | None:
@@ -148,7 +150,7 @@ def _pinned(root: Path) -> str:
     return (enrolled or {}).get("frozen", {}).get("domain_file") or ""
 
 
-def open_loop(root: Path, *, now: Callable[[], datetime] = _local_now, pinned: str | None = None,
+def open_loop(root: Path, *, now: Callable[[], datetime] = _machine_now, pinned: str | None = None,
               settings: dict[str, Any] | None = None) -> tuple[ShadowLoop, AccountReader | None]:
     """The loop a folder declares, and what reads its account, when the settings leave that on. ``settings``: what a
     caller already read and checked, so a later write to the file is not what runs."""
@@ -162,9 +164,13 @@ def open_loop(root: Path, *, now: Callable[[], datetime] = _local_now, pinned: s
 
 
 class Runner:
-    def __init__(self, loop: ShadowLoop, *, now: Callable[[], datetime] = _local_now,
-                 sleep: Callable[[float], None] = time.sleep, nap: float = NAP, reader: Any = None) -> None:
-        self.loop, self.now, self.sleep, self.nap, self.reader = loop, now, sleep, nap, reader
+    def __init__(self, loop: ShadowLoop, *, now: Callable[[], datetime] = _machine_now,
+                 sleep: Callable[[float], None] = time.sleep, nap: float = NAP, reader: Any = None,
+                 calendar: tzinfo | None = None) -> None:
+        """``now``: the runner's clock, read as UTC (``utc_clock``). ``calendar``: the zone a digest's days are in, the
+        machine's own unless one is given."""
+        self.loop, self.sleep, self.nap, self.reader, self.calendar = loop, sleep, nap, reader, calendar
+        self.now = utc_clock(now)
         self.last: dict[str, Any] = {}              # the last tick's reply
         self.not_before: datetime | None = None     # what that reply asked for
         self.day: date | None = None                # the day the digest last covered
@@ -201,16 +207,20 @@ class Runner:
         if halted:
             self._end(now, halted)
             return None
-        if self.day != now.date():
+        if self.day != self._day(now):
             self._digest(now)               # before the tick, so the page of the day that ended holds that day and no more
         due, resting = self._due(now)
-        if now >= due:
+        if utc(now) >= utc(due):
             self._tick(now)
             now = self.now()
             due, resting = self._due(now)
             self._digest(now)
         self._beat(now, "resting" if resting else "waiting", due)
-        return min(self.nap, max(LEAST_NAP, (due - now).total_seconds()))
+        return min(self.nap, max(LEAST_NAP, (utc(due) - utc(now)).total_seconds()))
+
+    def _day(self, instant: datetime) -> date:
+        """The day ``instant`` falls on in the digest's calendar: the zone given, or the machine's own."""
+        return (instant.astimezone(self.calendar) if self.calendar is not None else instant.astimezone()).date()
 
     def _rest(self) -> tuple[int, datetime | None]:
         """How many cycles in a row found nothing to try, and when the rest they earned ends."""
@@ -221,9 +231,11 @@ class Runner:
         return quiet, datetime.fromisoformat(last) + min(FIRST_REST * 2 ** min(quiet - 1, 16), LONGEST_REST)
 
     def _due(self, now: datetime) -> tuple[datetime, bool]:
-        """When the next tick may run, and whether a rest is what it waits for."""
-        rest = self._rest()[1]
-        asked = self.not_before or now
+        """When the next tick may run, and whether a rest is what it waits for. Compared as instants (``utc``), as what a
+        budget wait asks for is an instant a reading or a reservation gave."""
+        now = utc(now)
+        rest = utc(self._rest()[1])
+        asked = utc(self.not_before) or now
         return (rest, True) if rest is not None and rest > asked else (asked, False)
 
     def _tick(self, now: datetime) -> None:
@@ -244,13 +256,14 @@ class Runner:
     def _after(self, reply: dict[str, Any], now: datetime) -> datetime:
         """When the tick after ``reply`` may run. A cycle that reached a result is followed at once, for the budget and
         the rest to bound. A budget wait lasts until a ceiling can rise, or a reported limit ends if that is sooner."""
+        now = utc(now)
         code = reply["warning_card"]["code"]
         if code == STOPPED:
             return now                      # the next pass reads the stop and ends the run
         if code == BUDGET_WAIT:
             room = self.loop.meter.next_room(now)
             told = reply.get("wait_until")
-            return min(datetime.fromisoformat(told), room) if told else room
+            return min(utc(datetime.fromisoformat(told)), utc(room)) if told else utc(room)
         if code == BUSY:
             return now + BUSY_AGAIN
         return now if reply.get("outcome") in ENDS_A_STREAK else now + AGAIN
@@ -310,7 +323,7 @@ class Runner:
     def _page(self, day: date, now: datetime, halted: str) -> str:
         cycles = self.loop.log.cycles()
         named = [c for c in cycles if c.get("constraint")]
-        today = [c for c in cycles if c.get("at") and datetime.fromisoformat(c["at"]).astimezone(now.tzinfo).date() == day]
+        today = [c for c in cycles if c.get("at") and self._day(datetime.fromisoformat(c["at"])) == day]
         try:
             generations = lineage(self.loop.root / "workspace", last=5)
         except ValueError as exc:
@@ -326,7 +339,7 @@ class Runner:
         """Today's page, and the day just ended, whole, when the date has moved on. A pass closes a day before its tick,
         and only a tick that began on that day can still add to it. A page that cannot be written is left for the next
         pass: it never ends the run."""
-        day = now.date()
+        day = self._day(now)
         try:
             if self.day is not None and self.day != day:
                 digest.write(self.loop.root, self.day, self._page(self.day, now, ""))
@@ -363,6 +376,7 @@ def _not_started(root: Path) -> str:
 
 
 def _refuse(root: Path, code: str, why: str, now: Callable[[], datetime]) -> int:
+    now = utc_clock(now)
     print(why, file=sys.stderr)
     beat(root, state="not-running", code=code, reason=why, pid=os.getpid(), in_job=_in_job(), at=now().isoformat())
     return 1
@@ -382,12 +396,13 @@ def _launch_risk() -> str:
     return ""
 
 
-def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable[[float], None] = time.sleep,
+def run(root: Path, *, now: Callable[[], datetime] = _machine_now, sleep: Callable[[float], None] = time.sleep,
         unsafe: str = "") -> int:
     """Hold the folder and run until a stop. A stop already there ends it before anything is opened, so a restart after
     a reboot honours it, and a folder with no start in force is refused before any of its code runs. ``unsafe``: why this
     process could run something other than the pinned source (``_launch_risk``), which refuses it once the folder is open,
     so its records say why."""
+    now = utc_clock(now)                    # every instant the runner records is UTC, where its clock is taken in
     if not root.is_dir():
         print(f"{root} is not a folder", file=sys.stderr)
         return 1

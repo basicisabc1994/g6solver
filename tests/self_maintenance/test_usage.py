@@ -236,7 +236,7 @@ FAR_OFF = int(datetime(2050, 1, 1, tzinfo=UTC).timestamp())
 
 def test_a_reset_past_the_end_of_its_own_window_is_no_reset():
     got = limits_reading(_limits(100, resets=FAR_OFF), WINDOW, NOW)
-    assert got.limited_until == NOW + usage.REFRESH and got.resets_at == WINDOW.week_end(NOW)
+    assert got.limited_until == NOW + usage.REFRESH and got.resets_at is None      # none is made up in its place
 
 
 def test_a_reset_with_no_stated_window_is_held_to_a_week():
@@ -253,7 +253,16 @@ def test_a_limit_with_a_reset_past_its_window_holds_no_folder_for_decades():
 def test_a_figure_with_a_reset_past_its_window_stands_no_longer_than_the_week():
     reader = AccountReader((WINDOW,), ask={"codex": lambda: _limits(40, resets=FAR_OFF)})
     reader.refresh(NOW)
-    assert reader.readings["codex"].resets_at == WINDOW.week_end(NOW)
+    assert reader.readings["codex"].resets_at is None           # the reply's own reset cannot be believed, and none is made up
+    week_end = WINDOW.week_end(NOW)
+    store = OperatorStore(":memory:", clock=lambda: NOW)
+    try:
+        meter = BudgetMeter((WINDOW,), store=store, read_account=reader)
+        assert meter.reading("codex", week_end - timedelta(minutes=1)).used == 400.0
+        gone = meter.reserve("codex", week_end + timedelta(minutes=1), 1)   # the week the store puts the reading in is over
+        assert not gone.admitted and "not known" in gone.reason
+    finally:
+        store.close()
 
 
 def test_a_reset_as_long_as_its_window_is_taken():
@@ -363,7 +372,7 @@ def test_only_a_provider_whose_tool_reports_is_read():
 def test_asking_the_reader_never_runs_the_tool_so_a_tick_starts_no_process():
     tool = Tool(_limits(25))
     reader = AccountReader((WINDOW,), ask={"codex": tool})
-    assert reader("codex", START) is None and tool.calls == 0
+    assert reader("codex", START).unread and tool.calls == 0     # asked of nothing yet, the account is not known
 
 
 def test_the_tool_is_asked_at_most_once_in_a_while():
@@ -396,11 +405,21 @@ def test_the_week_a_tool_reports_reaches_the_meter_and_is_said():
 
 
 def test_a_reply_with_no_reset_stays_on_the_week_the_tool_last_reported():
-    """A figure with no reset of its own falls back on the window's week, so that week must be the one the tool reported."""
+    """A figure with no reset of its own falls back on the week the tool last reported, which is the store's to keep: the
+    reader hands on no reset the reply did not give, and the meter stays on the store's grid."""
     reader = AccountReader((WINDOW,), ask={"codex": Tool(_limits(25, resets=OFF_THE_GRID), _limits(30, resets=None))})
-    reader.refresh(NOW)
-    reader.refresh(NOW + usage.REFRESH)
-    assert reader("codex", START).resets_at == datetime.fromtimestamp(OFF_THE_GRID, UTC)
+    reported = datetime.fromtimestamp(OFF_THE_GRID, UTC)
+    store = OperatorStore(":memory:", clock=lambda: NOW)
+    try:
+        meter = BudgetMeter((WINDOW,), store=store, read_account=reader)
+        reader.refresh(NOW)
+        assert meter.reading("codex", NOW).ends == reported
+        later = NOW + usage.REFRESH
+        reader.refresh(later)
+        assert reader("codex", START).resets_at is None and reader("codex", START).used == 300.0
+        assert meter.reading("codex", later).ends == reported and meter.scope.week_grid("codex") == reported
+    finally:
+        store.close()
 
 
 def test_a_reset_passing_is_read_at_once_and_not_up_to_a_refresh_later():
@@ -412,6 +431,22 @@ def test_a_reset_passing_is_read_at_once_and_not_up_to_a_refresh_later():
     assert tool.calls == 1
     reader.refresh(reset + timedelta(seconds=1))
     assert tool.calls == 2 and reader("codex", START).used == 0
+
+
+def test_a_figure_past_its_reset_is_never_handed_back_even_before_the_tool_is_read_again():
+    """Review-l4's finding 4, at the reader: it handed back last week's figure after the reset until a refresh replaced it,
+    as inside a tick, where nothing refreshes. Where the provider's weeks fall, and a limit still ahead, still stand."""
+    reset = NOW + timedelta(minutes=1)
+    session = {"usedPercent": 100, "windowDurationMins": 300, "resetsAt": int((reset + timedelta(hours=1)).timestamp())}
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(_limits(90, resets=int(reset.timestamp()), secondary=session))})
+    reader.refresh(NOW)
+    assert reader("codex", NOW).used == 900
+    gone = reader("codex", reset)
+    assert (gone.used, gone.read_at, gone.resets_at) == (0, None, reset)
+    assert gone.limited_until == reset + timedelta(hours=1)
+    meter = BudgetMeter((WINDOW,), store=OperatorStore(":memory:"), read_account=reader)
+    seen = meter.reading("codex", reset + timedelta(minutes=1))
+    assert seen.used == 0 and seen.wait_until == reset + timedelta(hours=1)
 
 
 def test_a_reset_gets_one_read_however_many_ticks_look_after_it():
@@ -453,17 +488,26 @@ def test_a_figure_kept_through_a_failure_goes_when_its_own_reset_passes():
     reader.refresh(NOW + usage.REFRESH)
     assert reader("codex", START).used == 250.0
     reader.refresh(reset + usage.REFRESH)
-    assert reader("codex", START) is None and "model calls" in reader.said["codex"]
+    gone = reader("codex", START)                       # not known now: nothing is admitted on it until a read succeeds
+    assert gone.used == 0 and gone.unread and "nothing is reserved" in reader.said["codex"]
 
 
 def test_a_figure_read_with_no_reset_goes_when_the_providers_week_ends():
+    """The week is the one the store's grid puts the reading in, as the reply named none: the meter lets the figure go."""
     week_end = START + timedelta(days=7)
     reader = AccountReader((WINDOW,), ask={"codex": Tool(_limits(25, resets=None), usage.UsageUnavailable("down"))})
-    reader.refresh(NOW)
-    reader.refresh(week_end - timedelta(minutes=1))
-    assert reader("codex", START).used == 250.0
-    reader.refresh(week_end + usage.REFRESH)
-    assert reader("codex", START) is None
+    store = OperatorStore(":memory:", clock=lambda: NOW)
+    try:
+        meter = BudgetMeter((WINDOW,), store=store, read_account=reader)
+        reader.refresh(NOW)
+        reader.refresh(week_end - timedelta(minutes=1))
+        assert reader("codex", START).used == 250.0
+        assert meter.reading("codex", week_end - timedelta(minutes=1)).used == 250.0
+        reader.refresh(week_end + usage.REFRESH)
+        gone = meter.reserve("codex", week_end + usage.REFRESH, 1)
+        assert not gone.admitted and "not known" in gone.reason
+    finally:
+        store.close()
 
 
 def test_a_reply_with_no_week_in_it_leaves_the_figure_and_adds_its_limit():
@@ -517,8 +561,10 @@ def test_a_limit_kept_through_a_failure_lifts_at_the_first_read_past_its_reset()
     assert reader("codex", START) is not None
     assert not meter.reserve("codex", reset - timedelta(seconds=1), 10).admitted    # up to its reset, it stands
     past = reset + usage.REFRESH
-    reader.refresh(past)
-    assert meter.reserve("codex", past, 10).admitted
+    reader.refresh(past)                               # the limit is over, and the read past it fails too
+    refused = meter.reserve("codex", past, 10)
+    assert not refused.admitted and refused.wait_until is None and "could not be read" in refused.reason
+    assert meter.next_room(past) == past + usage.REFRESH
 
 
 def test_a_failed_read_past_the_limits_reset_forgets_it():
@@ -526,7 +572,18 @@ def test_a_failed_read_past_the_limits_reset_forgets_it():
     reader = AccountReader((WINDOW,), ask={"codex": Tool(_at_the_limit(reset), usage.UsageUnavailable("down"))})
     reader.refresh(NOW)
     reader.refresh(NOW + usage.REFRESH)
-    assert reader("codex", START) is None and "model calls" in reader.said["codex"]
+    assert reader("codex", START).unread and "nothing is reserved" in reader.said["codex"]
+
+
+def test_a_good_read_after_a_failure_that_left_nothing_standing_admits_again():
+    reset = NOW + timedelta(minutes=1)
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(_at_the_limit(reset), usage.UsageUnavailable("down"), _limits(10))})
+    meter = BudgetMeter((WINDOW,), store=OperatorStore(":memory:"), read_account=reader)
+    reader.refresh(NOW)
+    reader.refresh(NOW + usage.REFRESH)
+    assert not meter.reserve("codex", NOW + usage.REFRESH, 10).admitted
+    reader.refresh(NOW + usage.REFRESH * 2)
+    assert meter.reserve("codex", NOW + usage.REFRESH * 2, 10).admitted
 
 
 def test_a_good_read_lifts_a_limit_kept_through_a_failure():
@@ -679,3 +736,116 @@ def test_an_ordinary_answer_comes_back_as_it_did():
 def test_a_codex_refusal_is_not_read_since_it_prints_text():
     """The limit of this: what Codex prints cannot be told from a reply, as with its limits. It waits for an issuance window."""
     assert refused_by(_codex("ERROR: This content may violate our usage policies.")) == ""
+
+
+# Review wks1, finding 4: a failed process is no reading ------------------------------------------------------------------
+
+def _answers_then_exits(code, answer):
+    """``run_process`` as a tool that answers, then ends with ``code``: no program starts."""
+    import os
+
+    def ran(argv, *, stdin, stdout, **kwargs):
+        os.read(stdin, 4096)
+        os.write(stdout, (json.dumps({"id": 2, "result": answer}) + "\n").encode())
+        return code
+
+    return ran
+
+
+@pytest.mark.parametrize("exit_code", [1, 2, 73, 431, -9, None, "0", True])
+def test_failed_usage_process_cannot_replace_last_good_figure(tmp_path, monkeypatch, exit_code):
+    from contextlib import nullcontext
+
+    start = datetime(2026, 10, 26, tzinfo=UTC)
+    now = start + timedelta(days=6, hours=1)
+    reset = start + timedelta(days=7)
+    window = ProviderWindow("codex", 1000, start)
+
+    def limits(percent):
+        return {"rateLimits": {"primary": {"usedPercent": percent, "windowDurationMins": 10080,
+                                           "resetsAt": reset.timestamp()}}}
+
+    monkeypatch.setattr(usage.component_process, "run_process", _answers_then_exits(exit_code, limits(0)))
+    monkeypatch.setattr(usage.tempfile, "TemporaryDirectory", lambda **_: nullcontext(str(tmp_path)))
+    reader = usage.AccountReader((window,), ask={"codex": lambda: limits(95)})
+    reader.refresh(now)
+    assert reader("codex", now).used == 950
+    reader.ask["codex"] = lambda: usage.read_limits(["fake-usage-tool"])
+    later = now + timedelta(seconds=1)
+    reader.read_now(later)
+    store = OperatorStore(":memory:")
+    try:
+        meter = BudgetMeter((window,), store=store, read_account=reader)
+        admitted = meter.reserve("codex", later, 200)
+        assert not admitted.admitted, f"failed usage tool (exit {exit_code!r}) replaced 950 with 0 and admitted 200"
+        assert reader("codex", later).used == 950
+    finally:
+        store.close()
+
+def test_failed_read_stays_unread_after_its_last_retained_limit_expires(tmp_path):
+    """Review wks2, finding 3: whether a reading held was decided by two rules, so the reader handed back a reading that
+    no longer held, and the refresh, by the other rule, saw no reason to ask again."""
+    start = datetime(2026, 10, 26, tzinfo=UTC)
+    reset = start + timedelta(days=7)
+    limit_end = reset + timedelta(minutes=5)
+    clock = [reset - timedelta(minutes=1)]
+    window = ProviderWindow("codex", 1000, start)
+    asks = []
+
+    def ask():
+        asks.append(clock[0])
+        if len(asks) > 1:
+            raise usage.UsageUnavailable("fake usage reader is down")
+        return {"rateLimits": {
+            "primary": {"usedPercent": 95, "windowDurationMins": 10080, "resetsAt": reset.timestamp()},
+            "secondary": {"usedPercent": 100, "windowDurationMins": 60, "resetsAt": limit_end.timestamp()}}}
+
+    reader = AccountReader((window,), ask={"codex": ask})
+    store = OperatorStore(tmp_path / "operator.db", clock=lambda: clock[0])
+    try:
+        meter = BudgetMeter((window,), store=store, read_account=reader)
+        reader.refresh(clock[0])
+        assert reader("codex", clock[0]).used == 950
+        clock[0] = reset
+        reader.refresh(clock[0])
+        assert not meter.reserve("codex", clock[0], 1).admitted
+        clock[0] = limit_end + timedelta(seconds=1)
+        reader.refresh(clock[0])                                    # what held no longer does: it is asked again
+        got = meter.reserve("codex", clock[0], 200)
+        assert not got.admitted and "not known" in got.reason, (got.amount, got.used, got.reason)
+        assert len(asks) == 2           # not at the reset, as the limit still stood; at once when nothing did
+    finally:
+        store.close()
+
+
+_EXPIRY = [  # (reading, now, what stands): every reader of a reading is held to these
+    ("figure ahead", dict(used=500, estimated=False, resets_at=NOW + timedelta(hours=1)), NOW, "figure"),
+    ("at its reset", dict(used=500, estimated=False, resets_at=NOW), NOW, "unread"),
+    ("past its reset, limit ahead", dict(used=500, estimated=False, resets_at=NOW - timedelta(hours=1),
+                                         limited_until=NOW + timedelta(hours=1)), NOW, "limit"),
+    ("past its reset, limit at now", dict(used=500, estimated=False, resets_at=NOW - timedelta(hours=1),
+                                          limited_until=NOW), NOW, "unread"),
+    ("no reset", dict(used=500), NOW, "figure"),
+    ("unread", dict(unread="down"), NOW, "unread"),
+]
+
+
+@pytest.mark.parametrize("case, fields, now, stands", _EXPIRY, ids=[c[0] for c in _EXPIRY])
+def test_every_reader_of_a_reading_reads_one_answer_to_whether_it_holds(case, fields, now, stands):
+    from g6.self_maintenance.pacing import standing
+
+    reading = AccountReading(**fields)
+    given = standing(reading, now)
+    assert {"figure": given is reading, "limit": given is not reading and not given.unread,
+            "unread": bool(given.unread)}[stands]
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(usage.UsageUnavailable("down"))})
+    reader.readings["codex"] = reading
+    assert reader("codex", now) == given                            # what the reader hands back
+    reader._asked = now - timedelta(minutes=1)
+    held_then = not standing(reading, reader._asked).unread
+    assert reader._lapsed(now) == (held_then and bool(given.unread))  # what its refresh asks again for
+    reader._no_reading("codex", now, "down")                         # what a failed read keeps
+    assert bool(reader("codex", now).unread) == bool(given.unread)
+    meter = BudgetMeter((WINDOW,), store=OperatorStore(":memory:"), read_account=lambda *_: reading)
+    refused = meter.reserve("codex", now, 1)
+    assert refused.admitted == (stands == "figure")                  # what the meter admits on

@@ -30,6 +30,7 @@ import os
 import sys
 import threading
 import time
+import uuid
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -73,7 +74,7 @@ from g6.metaharness.propose import DevRunner, ProposerView
 from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, SuiteCase, Workflow, default_objectives
 from g6.metaharness.select import race_calls
 from g6.metaharness.shadow import SCOPE, adapt_shadow
-from g6.operator.store import OperatorStore
+from g6.operator.store import OperatorStore, utc_clock
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
 from g6.self_maintenance.envelope import (
     CYCLE_LOG,
@@ -89,7 +90,7 @@ from g6.self_maintenance.envelope import (
     refused_requests,
     stop_standing,
 )
-from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
+from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow, utc
 from g6.self_maintenance.usage import limit_ends, read_stops, refused_by, telling_stops
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
@@ -246,11 +247,11 @@ class _Requests:
     refused here, which never goes out again. It only grows, and ``keeping`` is told of each as it happens, before any record
     of the tick is written, so no failure of those records can send one twice."""
 
-    def __init__(self, now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    def __init__(self, now: Callable[[], datetime] = lambda: utc(datetime.now(UTC)),
                  halted: Callable[[], _Halted | None] = lambda: None,
                  barring: Callable[[Any], _Halted | None] = lambda sender: None,
                  keeping: Callable[[str, str], None] = lambda request, said: None) -> None:
-        self.now, self.halted, self.barring, self.keeping = now, halted, barring, keeping
+        self.now, self.halted, self.barring, self.keeping = utc_clock(now), halted, barring, keeping
         self.refused: set[str] = set()
         self._lock = threading.Lock()
         self.generation = 0
@@ -259,6 +260,7 @@ class _Requests:
     def open(self, limit: float, ends: datetime | None = None) -> None:
         """A tick's limits, from here on. ``generation`` moves with each opening and closing, so a request that took its
         look at one tick cannot be admitted under the next, or under none."""
+        ends = utc(ends)
         with self._lock:
             self.sent, self.limit, self.ends, self.stopped, self.unseen, self.refusal = 0, limit, ends, "", False, None
             self.limited: tuple[datetime, str] | None = None
@@ -270,8 +272,9 @@ class _Requests:
     def ends_by(self, moment: datetime) -> None:
         """A provider has said the tick's week ends at ``moment``, which can come to light only once it is under way. What it
         reserved covers nothing after that. A later end buys it nothing, and outside a tick there is no week to end."""
+        moment = utc(moment)
         with self._lock:
-            if self.ends is not None and moment < self.ends:
+            if self.ends is not None and moment < utc(self.ends):
                 self.ends = moment
 
     def admit(self, wait: float = 0.0, *, places: int = 0, generation: int | None = None,
@@ -279,7 +282,7 @@ class _Requests:
         """Refuse what would pass the limit, and take ``places`` in ``sent`` in that same step. ``wait``: the seconds a
         server asked for before this one goes out. ``generation``: the tick the request's call began in, and ``live`` whether
         that call is still running, both checked again under the lock, as the stop is read outside it and the call can return,
-        and its tick close, while it is read."""
+        and its tick close, while it is read. The clock and the week's end are compared as instants (``utc``)."""
         if self.refusal is not None:
             raise _Refused(self.refusal["said"])
         if self.limited is not None:
@@ -296,7 +299,7 @@ class _Requests:
                 raise LLMError(f"{TICK_BUDGET_SPENT}: this request came after its call returned, so nothing reserved covers it")
             if self.unseen or self.sent >= self.limit:
                 self.stopped = f"this tick has sent {self.sent} of the {self.limit:g} it reserved"
-            elif self.ends is not None and self.now() + timedelta(seconds=wait) >= self.ends:
+            elif self.ends is not None and utc(self.now()) + timedelta(seconds=wait) >= utc(self.ends):
                 self.stopped = f"this tick's week ended at {self.ends.isoformat()} and nothing is reserved in the new one"
             else:
                 self.sent += places
@@ -580,12 +583,13 @@ def _exclusive(method: Callable[..., dict[str, Any]]) -> Callable[..., dict[str,
 
 class ShadowLoop:
     def __init__(self, domain: Domain, root: str | Path, settings: LoopSettings, *, proposer: Any,
-                 now: Callable[[], datetime] = lambda: datetime.now(UTC),
+                 now: Callable[[], datetime] = lambda: utc(datetime.now(UTC)),
                  clock: Callable[[], float] = time.monotonic,
                  read_account: Callable[[str, datetime], AccountReading | None] | None = None,
                  read_now: Callable[[datetime], None] | None = None,
                  domain_file: str | Path | None = None) -> None:
-        self.domain, self.settings, self._now, self.domain_file, self._read_now = domain, settings, now, domain_file, read_now
+        self.domain, self.settings, self.domain_file, self._read_now = domain, settings, domain_file, read_now
+        self._now = utc_clock(now)                # every instant the loop reads is UTC, where its clock is taken in
         self.beat_fields: dict[str, Any] = {}     # what a runner adds to every heartbeat
         self.lost_cycles = 0                      # cycles in a row the log would not take: it cannot hold this count
         self.cannot_record = ""                   # why this process spends no more, set at MAX_FAILED_CYCLES of those
@@ -601,7 +605,7 @@ class ShadowLoop:
             raise ValueError(f"[{EVALUATOR_IN_REACH}] the loop's folder overlaps {', '.join(reach)}: it never writes "
                              "what judges it")
         self.log = CycleLog(self.root / CYCLE_LOG)
-        self.meter = BudgetMeter(settings.windows, store=OperatorStore(self.root / "operator.db"),
+        self.meter = BudgetMeter(settings.windows, store=OperatorStore(self.root / "operator.db", clock=self._now),
                                  read_account=read_account)
         for provider, until in self.log.limits().items():
             self.meter.limit_reached(provider, until)
@@ -882,8 +886,12 @@ class ShadowLoop:
              tick=len(self.log.cycles()), state=state, code=code)
 
     def _reserve(self) -> tuple[Admission | None, dict[str, Any] | None]:
-        """This tick's worst case on the provider its calls go to, or the wait: room on another pays for none of them."""
-        spend = self.meter.reserve(self.provider, self._now(), self.worst_case())
+        """This tick's worst case on the provider its calls go to, or the wait: room on another pays for none of them. A
+        tick runs under its folder's tick lock, which one tick holds at a time, so a reservation a tick made that is still
+        open here is one a tick that is gone left: it is settled in full first, or it would count in every week to come.
+        One made outside a tick is left to its maker (``BudgetMeter.recover``). This tick's own is recorded as a tick's."""
+        self.meter.recover(self.provider)
+        spend = self.meter.reserve(self.provider, self._now(), self.worst_case(), tick=uuid.uuid4().hex)
         if spend.admitted:
             return spend, None
         return None, _blocked(BUDGET_WAIT, f"{spend.provider}: {spend.reason}",

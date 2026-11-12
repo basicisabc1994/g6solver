@@ -355,7 +355,7 @@ def _source_copy(folder: Path) -> Path:
 
 @pytest.mark.parametrize("name,old,new", [
     ("operator/store.py", "charged = float(metered)", "charged = 0.0"),            # the reviewer's edit
-    ("operator/gates.py", "if used + amount > cap + _SLACK:", "if False:"),
+    ("operator/gates.py", "if over(used + value, cap):", "if False:"),
     ("core/vault.py", "return any(_inside(real, root) for root in self.roots)", "return False"),
     ("integrity/__init__.py", "return _sha(manifest_text(manifest).encode(\"utf-8\"))", "return \"\""),
     ("self_maintenance/constraints.py", "ranked = sorted(", "ranked = list("),
@@ -1088,9 +1088,15 @@ def _account(percent: int) -> dict:
     return {"rateLimits": {"primary": {"usedPercent": percent, "windowDurationMins": 10080, "resetsAt": WEEK_END.timestamp()}}}
 
 
-def _reading(tmp_path, ask, **kw):
-    """A loop whose account is read just before an evaluation, as ``open_loop`` makes one, and no read otherwise."""
-    reader = AccountReader(SETTINGS.windows, ask={"claude": ask})
+def _reading(tmp_path, ask, *, first=True, **kw):
+    """A loop whose account is read just before an evaluation, as ``open_loop`` makes one, and no read otherwise but the one
+    a runner makes before a tick: a reader that has never read knows nothing of the account, and nothing is reserved on it
+    (review wksfu3, finding 5). That first read says nothing is used, is none of ``ask``'s, and is taken a second before
+    the loop's clock, as a runner's read comes before its tick; ``first=False`` leaves it to the test."""
+    replies = [_account(0)] if first else []
+    reader = AccountReader(SETTINGS.windows, ask={"claude": lambda: replies.pop() if replies else ask()})
+    if first:
+        reader.refresh((kw["now"]() if "now" in kw else NOW) - timedelta(seconds=1))
     return _enrolled(tmp_path, read_account=reader, read_now=reader.read_now, **kw)
 
 
@@ -1110,11 +1116,13 @@ def test_a_limit_read_just_before_an_evaluation_leaves_the_split_unspent(tmp_pat
 
 
 def test_the_candidate_a_limit_held_back_is_evaluated_once_it_ends(tmp_path):
-    now, answers = [NOW], iter((_account(100), _account(5)))
+    now, answers = [NOW], iter((_account(100), _account(5), _account(5)))
     loop, _ = _reading(tmp_path, lambda: next(answers), now=lambda: now[0])
     before = loop.mh.held_out_left()
     loop.tick()
     now[0] = WEEK_END + timedelta(seconds=1)
+    assert _code(loop.tick()) == "G6_E_LOOP_BUDGET_WAIT"      # nothing read since the reset: the account is not known
+    loop.meter._read_account.refresh(now[0])                    # as the runner reads it before each tick
     assert loop.tick()["outcome"] == "adopted" and loop.mh.held_out_left() == before - 1
 
 
@@ -1139,7 +1147,7 @@ def test_a_tick_with_nothing_to_evaluate_reads_nothing(tmp_path):
 
 def test_a_tick_is_read_once_whatever_the_reader_read_just_before_it(tmp_path):
     asked = []
-    loop, _ = _reading(tmp_path, lambda: asked.append(1) or _account(5))
+    loop, _ = _reading(tmp_path, lambda: asked.append(1) or _account(5), first=False)
     loop.meter._read_account.refresh(NOW)
     assert loop.tick()["outcome"] == "adopted" and len(asked) == 2
 

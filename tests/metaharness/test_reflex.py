@@ -520,14 +520,14 @@ def test_the_digest_leads_with_what_the_rows_say_now_and_not_with_what_the_last_
         loop.tick()
     last = loop.log.cycles()[-1]
     assert last["reflex"]["stuck"] is False                        # it opened on two cycles of the same
-    page = Runner(loop, now=lambda: NOW)._page(NOW.date(), NOW, "")
+    page = Runner(loop, now=lambda: NOW, calendar=UTC)._page(NOW.date(), NOW, "")
     assert page.splitlines()[2].startswith("**What limits progress: distinct, at the loop level.** Stuck for 3 cycles")
 
 
 def test_a_page_over_a_log_older_than_this_step_has_no_such_line(tmp_path):
     loop, _ = _loop(tmp_path)
     loop.enrol("Ada")
-    assert "What limits progress" not in Runner(loop, now=lambda: NOW)._page(NOW.date(), NOW, "")
+    assert "What limits progress" not in Runner(loop, now=lambda: NOW, calendar=UTC)._page(NOW.date(), NOW, "")
 
 
 @pytest.mark.parametrize("name", ["metaharness/reflex.py", "metaharness/lessons.py"])

@@ -74,7 +74,7 @@ def _runner(tmp_path, *, domain=None, proposer=None, settings=SETTINGS, read_acc
     loop = ShadowLoop(domain, tmp_path / "loop", settings, proposer=proposer, now=time.now, clock=domains.Clock(),
                       read_account=read_account)
     assert loop.enrol("Ada")["completion_state"] == "qualified-draft"
-    return Runner(loop, now=time.now, sleep=time.sleep, nap=nap, reader=reader), time, domain
+    return Runner(loop, now=time.now, sleep=time.sleep, nap=nap, reader=reader, calendar=UTC), time, domain
 
 
 def _windows(*allowances):
@@ -379,7 +379,7 @@ def test_a_rest_survives_a_restart(tmp_path):
     runner, time, _ = _runner(tmp_path, domain=domain, nap=3600)
     runner.step()
     assert len(runner.loop.log.cycles()) == 1
-    again = Runner(runner.loop, now=time.now, sleep=time.sleep, nap=3600)
+    again = Runner(runner.loop, now=time.now, sleep=time.sleep, nap=3600, calendar=UTC)
     time.sleep(60)
     again.step()
     assert len(runner.loop.log.cycles()) == 1                            # the count lives in the records, not the runner
