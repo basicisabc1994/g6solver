@@ -415,6 +415,9 @@ PLACES: dict[tuple[str, str, str], str] = {
         "an entry's id, not an outcome"),
     ("harness/question_store.py", "show", "digest(['shown', asked.question.sha256, len(ledger.entries())])"): (
         "an entry's id, not an outcome"),
+    # section 17 S7: a slot of the task's budget held for a purpose (the feedback question) before anything is shown
+    ("harness/question_store.py", "reserve", "digest([RESERVED, purpose, len(ledger.entries())])"): (
+        "a reservation entry's id, not an outcome"),
     ("harness/question_store.py", "task_identity", "digest({'repository': str(Path(root).resolve()), 'task': task})"): (
         "a task's identity, not an outcome"),
 }
