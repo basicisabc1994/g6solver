@@ -18,8 +18,9 @@ from g6.core import host_models
 from g6.core.host_models import ClaudeCodeCaller, CodexCaller
 from g6.core.llm import RATE_LIMITED, FakeLLM, LLMError
 from g6.metaharness import Model
-from g6.metaharness.loop import LoopSettings, ShadowLoop, _AtLimit, _Counted, _Refused, _request_digest, _Requests
+from g6.metaharness.loop import IDLE, LoopSettings, ShadowLoop, _AtLimit, _Counted, _Refused, _request_digest, _Requests
 from g6.metaharness.method import Method
+from g6.metaharness.shadow import Held
 from g6.self_maintenance.envelope import REFUSED_FILE, note_refusal, refused_requests, stop_reason
 from g6.self_maintenance import usage                      # its new names are read in each test, so each fails on its own
 from g6.self_maintenance.pacing import ProviderWindow
@@ -1220,9 +1221,16 @@ def _bare_loop(root, now, keeping=None):
     loop = ShadowLoop.__new__(ShadowLoop)
     loop.root, loop.log, loop.cannot_record = root, CycleLog(root / CYCLE_LOG), ""
     loop.requests = _Requests(now=lambda: now, keeping=keeping or (lambda identity, said: note_refusal(root, identity, said)))
-    loop._now, loop._beat, loop._row = (lambda: now), (lambda *args, **kwargs: None), (lambda: {"outcome": "idle"})
+    loop._now, loop._beat = (lambda: now), (lambda *args, **kwargs: None)
+    # a cycle's own end as every cycle states one, with its code, which the joined ``_run`` codes by (``_coded``)
+    loop._row = lambda: {"outcome": "idle", "code": IDLE, "reason": ""}
     loop.domain = SimpleNamespace(sealed=lambda: SimpleNamespace(vault=None))
     loop._reserve = lambda: (SimpleNamespace(provider="codex", amount=10, ends=now + timedelta(days=1)), None)
+    # what ``_run`` reads of a handle since the freeze follow-up joined it: no chain of adoptions and no row written yet,
+    # and nothing judges a bare loop, so the cycle's last check holds the reading it was given
+    loop.mh = SimpleNamespace(adoption_rows=lambda: [])
+    loop._written, loop._met, loop._began = False, None, None
+    loop._still_frozen = lambda: Held({})
     return loop, nullcontext
 
 

@@ -124,6 +124,7 @@ def test_shared_folder_refusal_is_published_after_durable_write(tmp_path, monkey
 def test_lost_cycle_resolves_folder_custody_before_taking_admission(tmp_path, monkeypatch):
     shadow = object.__new__(loop.ShadowLoop)
     shadow.root = tmp_path
+    shadow._written, shadow._met = False, None     # a handle with no tick under way, as ``__init__`` makes one
     original_folder = loop._RECORD.folder
     reads = []
 

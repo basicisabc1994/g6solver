@@ -198,7 +198,8 @@ from g6.metaharness.loop import ShadowLoop, _Requests
 stop.engaged = lambda: None                      # G6's own stop is another matter: this asks about the folder's
 for line in sys.stdin:
     root = Path(line.strip())
-    loop = SimpleNamespace(root=root, cannot_record="")
+    # the stop reader also reads the handle's note of a store it could not read (the refusals follow-up): none here
+    loop = SimpleNamespace(root=root, cannot_record="", unreadable="")
     loop._stop = lambda: ShadowLoop._stop(loop)
     requests = _Requests(halted=lambda: ShadowLoop._halted(loop))
     requests.open(10)
@@ -295,7 +296,8 @@ ARRIVALS = {
 
 
 def _tick(root: Path):
-    loop = SimpleNamespace(root=root, cannot_record="")
+    # the stop reader also reads the handle's note of a store it could not read (the refusals follow-up): none here
+    loop = SimpleNamespace(root=root, cannot_record="", unreadable="")
     loop._stop = lambda: ShadowLoop._stop(loop)
     return loop
 

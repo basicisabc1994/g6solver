@@ -34,6 +34,7 @@ from g6.metaharness.domain import caller_problems, sender_problems
 from g6.metaharness.loop import (BUDGET_WAIT, CLASSIFIER_STOP, LoopSettings, ShadowLoop, _AtLimit, _Counted, _Halted,
                                  _Refused, _request_digest, _Requests)
 from g6.metaharness.method import Method
+from g6.metaharness.shadow import Held
 from g6.operator.store import OperatorStore
 from g6.self_maintenance import usage
 from g6.self_maintenance.envelope import (CYCLE_LOG, MAX_FAILED_CYCLES, REFUSED_FILE, CycleLog, note_refusal,
@@ -93,7 +94,18 @@ def _bare_loop(root, *, keeping=None, on_record=None):
     loop._now, loop._beat = lambda: NOW, lambda *args, **kwargs: None
     loop.domain = SimpleNamespace(name="fake", sealed=lambda: SimpleNamespace(vault=None))
     loop._reserve = lambda: (SimpleNamespace(provider="codex", amount=10, ends=NOW + timedelta(days=1)), None)
+    # what ``_run`` reads of a handle since the freeze follow-up joined it: no chain of adoptions and no row written yet,
+    # and nothing judges a bare loop, so the cycle's last check holds the reading it was given
+    loop.mh = SimpleNamespace(adoption_rows=lambda: [])
+    loop._written, loop._met, loop._began = False, None, None
+    loop._still_frozen = lambda: Held({})
     return loop
+
+
+def _idle_row():
+    """A cycle's own end as every cycle states one, with its code: the joined ``_run`` codes a row by the one rule
+    (``_coded``), which reads each status's code."""
+    return {"outcome": "idle", "code": loop_module.IDLE, "reason": ""}
 
 
 def _limit_rows(loop):
@@ -293,7 +305,7 @@ def test_ref4_6_a_rejected_note_offsets_no_imported_child_usage():
 def test_ref4_7_a_limit_met_while_the_tick_closes_is_kept_before_settlement(tmp_path, monkeypatch):
     first, second = NOW + timedelta(minutes=15), NOW + timedelta(hours=2)
     loop = _bare_loop(tmp_path)
-    loop._row = lambda: {"outcome": "idle"}
+    loop._row = lambda: _idle_row()
     monkeypatch.setattr(loop_module, "sealed_closed", lambda vault: nullcontext([]))
     deliver, received = threading.Event(), threading.Event()
     observed_generation = []
@@ -376,7 +388,7 @@ def test_ref4_8_a_refusal_latched_before_the_tick_closes_decides_its_outcome(tmp
 
     def cycle(recommended):
         thread.start()
-        return {"outcome": "idle"}
+        return _idle_row()
 
     loop._cycle, loop._record = cycle, lambda row: row
     loop.meter = SimpleNamespace(settle=lambda admission, charged: charged,
@@ -807,7 +819,7 @@ def test_a_limit_and_a_refusal_at_each_step_from_admission_to_close(tmp_path, mo
             assert _Counted(AnswersThenHearsLate(), loop.requests).complete("system", "asked") == "an answer"
             heard.set()                                   # the call has returned, and the tick is still open
             late[0].join(10)
-        return {"outcome": "idle"}
+        return _idle_row()
 
     real_close = loop.requests.close
 
@@ -825,7 +837,7 @@ def test_a_limit_and_a_refusal_at_each_step_from_admission_to_close(tmp_path, mo
         rows_at_settlement.extend(_limit_rows(loop))
         return charged
 
-    loop._cycle, loop._record, loop._row = cycle, (lambda row: row), (lambda: {"outcome": "idle"})
+    loop._cycle, loop._record, loop._row = cycle, (lambda row: row), (lambda: _idle_row())
     loop.meter = SimpleNamespace(settle=settle, limit_reached=lambda provider, until: None,
                                  reading=lambda provider, when: SimpleNamespace(provider=provider, day=1, used=0,
                                                                                target=10, ceiling=10, estimated=False))
@@ -973,7 +985,7 @@ def test_the_rows_a_tick_writes_are_its_own_and_in_the_order_it_met_them(tmp_pat
             except _AtLimit:
                 pass
 
-    loop._cycle, loop._row = cycle, (lambda: {"outcome": "idle"})
+    loop._cycle, loop._row = cycle, (lambda: _idle_row())
     loop.meter = SimpleNamespace(settle=lambda admission, charged: charged, limit_reached=lambda provider, until: None)
     for _ in range(2):
         assert loop._run()["warning_card"]["code"] == BUDGET_WAIT
