@@ -16,15 +16,18 @@ The package sits under ``g6.harness`` because every top-level package of ``g6`` 
 """
 from __future__ import annotations
 
-from g6.harness.formalisation import smt_adapter
+from g6.harness.formalisation import render_smt, smt_adapter
 from g6.harness.formalisation.adapters import ADAPTERS, FRAGMENTS, Bound, ExampleObservation, from_expectation, register
-from g6.harness.formalisation.checks import CheckOutcome, check_domain, check_examples
+from g6.harness.formalisation.checks import Assessment, CheckOutcome, assess, check_domain, check_examples, check_rendering
+from g6.harness.formalisation.render import RENDERERS, Rendering, Unrenderable, render
 from g6.harness.formalisation.query import DECIDED, READINGS, EngineQuery, QueryResult, differ, valid_under, witness
 from g6.harness.formalisation.statement import FormalStatement, Observation
 
 UNSUPPORTED = "G6_E_FORMALISATION_UNSUPPORTED"
 
-register(smt_adapter.ADAPTER, language="smt", tests=("tests/formalisation/test_smt_adapter.py",))
+register(smt_adapter.ADAPTER, language="smt", tests=("tests/formalisation/test_smt_adapter.py",),
+         renderer=render_smt.ID)
+RENDERERS[smt_adapter.FRAGMENT] = render_smt.render
 
 
 class Unsupported(ValueError):
@@ -45,6 +48,7 @@ def supported(statement: FormalStatement) -> None:
         raise Unsupported(f"[{UNSUPPORTED}] {why}")
 
 
-__all__ = ["ADAPTERS", "DECIDED", "FRAGMENTS", "READINGS", "UNSUPPORTED", "Bound", "CheckOutcome", "EngineQuery",
+__all__ = ["ADAPTERS", "DECIDED", "FRAGMENTS", "READINGS", "RENDERERS", "UNSUPPORTED", "Assessment", "Bound",
+           "CheckOutcome", "EngineQuery", "Rendering", "Unrenderable", "assess", "check_rendering", "render",
            "ExampleObservation", "FormalStatement", "Observation", "QueryResult", "Unsupported", "check_domain",
            "check_examples", "differ", "from_expectation", "register", "supported", "valid_under", "witness"]

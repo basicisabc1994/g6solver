@@ -225,4 +225,81 @@ def check_domain(statement: FormalStatement, cases: Sequence[ExampleObservation]
     return tally.outcome("domain", detail)
 
 
-__all__ = ["CHECKS", "STATUSES", "CheckOutcome", "check_domain", "check_examples"]
+def check_rendering(statement: FormalStatement) -> tuple[CheckOutcome, Any]:
+    """Check 4: the statement itself has a rendering by its fragment's exhaustive renderer, the same every time.
+    ``(outcome, rendering)``; no rendering when it is unsupported."""
+    from g6.harness.formalisation.render import Unrenderable, render
+
+    try:
+        shown = render(statement)
+        again = render(statement)
+    except Unrenderable as exc:
+        return CheckOutcome("rendering", "unsupported", (str(exc),)), None
+    if shown != again or shown.formal_text != statement.text or shown.statement_sha256 != statement.sha256:
+        return CheckOutcome("rendering", "failed", ("the renderer did not give one rendering of this statement",)), None
+    return CheckOutcome("rendering", "passed", (), detail=MappingProxyType(
+        {"renderer": shown.renderer, "rendering_sha256": shown.sha256})), shown
+
+
+@dataclass(frozen=True)
+class Assessment:
+    """What the five checks found for one statement. ``ready_for_person`` only when all five passed: there is no
+    accepting state here, because only the person's recorded answer accepts a formalisation."""
+
+    status: Literal["unconfirmed", "ready_for_person"]
+    outcomes: tuple[CheckOutcome, ...]
+    reasons: tuple[str, ...]
+    statement: FormalStatement
+    rendering: Any
+    scope: Any
+    cases: tuple[ExampleObservation, ...] = ()
+
+    @property
+    def sha256(self) -> str:
+        import hashlib
+
+        from g6.core.ledger import canonical
+
+        return hashlib.sha256(canonical({
+            "status": self.status, "statement_sha256": self.statement.sha256,
+            "rendering_sha256": self.rendering.sha256 if self.rendering is not None else "",
+            "scope_sha256": self.scope.sha256 if self.scope is not None else "",
+            "outcomes": [{"check": one.check, "status": one.status, "reasons": list(one.reasons),
+                          "queries": [[q.query.native_query, q.native, q.reading] for q in one.queries]}
+                         for one in self.outcomes]}).encode("ascii")).hexdigest()
+
+    def outcome(self, check: str) -> CheckOutcome:
+        return next(one for one in self.outcomes if one.check == check)
+
+
+def assess(statement: FormalStatement, standard: Any, cases: Sequence[ExampleObservation], *,
+           comparison: CheckOutcome | None = None, timeout: float = 10.0) -> Assessment:
+    """All five checks, in order (examples, domain, comparison, rendering, scope), on one statement against one
+    standard. A comparison that was not run is ``incomplete``. Whatever the outcome, the statement, its diagnostics
+    and the confirmed examples are kept as they were."""
+    from g6.harness.formalisation.scope import bind_scope, check_scope
+
+    if comparison is None:
+        comparison = CheckOutcome("comparison", "incomplete", ("no diverse-candidate comparison was run",))
+    if comparison.check != "comparison":
+        raise ValueError("the comparison outcome is the comparison check's")
+    cases = tuple(cases)
+    shown_outcome, shown = check_rendering(statement)
+    if shown is None:
+        scope, bound = None, CheckOutcome("scope", "incomplete", ("there is no rendering to bind a scope to",))
+    else:
+        try:
+            scope = bind_scope(statement, shown, standard, cases)
+            bound = check_scope(scope, statement, shown, standard)
+        except ValueError as exc:
+            scope, bound = None, CheckOutcome("scope", "failed", (str(exc),))
+    outcomes = (check_examples(statement, cases, timeout=timeout), check_domain(statement, cases, timeout=timeout),
+                comparison, shown_outcome, bound)
+    ready = all(one.status == "passed" for one in outcomes)
+    reasons = tuple(f"{one.check}: {why}" for one in outcomes for why in one.reasons)
+    return Assessment("ready_for_person" if ready else "unconfirmed", outcomes, reasons, statement, shown, scope,
+                      cases)
+
+
+__all__ = ["CHECKS", "STATUSES", "Assessment", "CheckOutcome", "assess", "check_domain", "check_examples",
+           "check_rendering"]
