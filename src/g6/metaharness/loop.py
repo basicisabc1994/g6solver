@@ -86,6 +86,7 @@ from g6.self_maintenance.envelope import (
     TICK_BUDGET_SPENT,
     CycleLog,
     Stop,
+    admission,
     ask_to_stop,
     beat,
     end_start,
@@ -736,14 +737,16 @@ class ShadowLoop:
     def _stop(self) -> _Stopped:
         """This folder's stop, as a code and a reason (``("", "")`` with none), which a tick and the runner read alike: if
         the runner read less, a tick refused for a stop would leave it going, and asking again. It is ``stop_in_force``'s
-        reading of what is on disk, taken before each request, and that reading comes with it (``_Stopped.reading``). The
+        reading of what is on disk, decided as every admission is (``admission``: the stop lock is asked for beside it, so
+        a stop another process could not write is met here too), before each request, and that reading comes with it
+        (``_Stopped.reading``). The
         start, any stop after it and the enrolment on record are kept against the digest of the very records' bytes they
         were parsed from, in that same reading, so a later reading parses again only when its bytes differ; records that
         cannot be read stop it. An enrolment on record that the start did not show is a stop with a code of its own
         (``ENROLMENT_CHANGED``), so no request goes out on an enrolment its start did not agree to."""
         if self.cannot_record:
             return _Stopped(Stop(CANNOT_RECORD, self.cannot_record))  # this process's own stop: the log took no cycle
-        found = stop_in_force(self.root, known=getattr(self, "_on_record", None))
+        found = admission(self.root, stop_in_force(self.root, known=getattr(self, "_on_record", None)))
         self._on_record = (None if found.code == STOP_UNREADABLE else
                            (found.records_sha256, found.start, found.revoked, found.seen.enrolled))
         return _Stopped(found)

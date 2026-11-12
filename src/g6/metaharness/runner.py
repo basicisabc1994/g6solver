@@ -95,6 +95,7 @@ from g6.self_maintenance.envelope import (
     ENROLMENT_CHANGED,
     CycleLog,
     Stop,
+    admission,
     beat,
     beat_holding,
     end_start,
@@ -402,7 +403,7 @@ def _gated(root: Path, settings: dict[str, Any]) -> tuple[str, str, Stop]:
     canonical stops and the records, the start, any stop after it and the enrolment on record among them, so a start a
     stop on record ended stands no more, and one whose enrolment is no longer the one on record ends as a stop does. It
     runs nothing and opens none of those files itself."""
-    halted = stop_in_force(root)
+    halted = admission(root, stop_in_force(root))   # as every path that admits work decides: the stop lock beside it
     if halted.code == STOP_UNREADABLE:
         return (STOP_UNREADABLE, f"{halted.reason}, so nothing ran: a person makes it readable, then g6_improve_start"[:400],
                 halted)
@@ -532,7 +533,7 @@ def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable
     included, is this runner's own ending."""
     if not root.is_dir():                   # no folder: nothing to note and no page or heartbeat to write in it
         return _ending(root, NOT_A_FOLDER, f"{root} is not a folder", now(), lock=NOT_HELD)
-    reading = stop_in_force(root)           # the preflight takes the one reading every reader takes, before anything else
+    reading = admission(root, stop_in_force(root))  # the preflight decides as every admission does, before anything else
     taken = False
     try:
         beat_holding(root, state="starting", pid=os.getpid(), in_job=_in_job(), at=now().isoformat())  # word, early

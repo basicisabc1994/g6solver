@@ -30,6 +30,13 @@ reading (``canonical_stops``): one recorded since the last start is a stop in fo
 read, a stop this process is still writing or could not write among it, is unreadable as any other file is. So is the
 enrolment on record, which ends a start that named another (``G6_E_LOOP_ENROLMENT_CHANGED``).
 
+**Does the denial reach every process?** A stop's writes are made holding ``stop_lock``. A stop whose canonical record
+does not stand keeps that lock for as long as its request denies the folder, which is as long as its process lives, so
+the denial is in the operating system and not only in the memory of the process that was asked. Every path that admits
+work decides through ``admission``: beside its reading it asks for that lock, and a lock it cannot have, held by a stop
+that is being written or could not be written, is a stop in force, ``G6_E_LOOP_STOP_UNREADABLE``, for a runner already
+alive, a restart and the server alike. A start holds the same lock while it reads and writes its row.
+
 **Rows, words and endings.** Every file of rows here, the records, the journal, the ``STOP`` file and the log of refusals,
 holds to one rule for where a row ends (``fresh_line``): at its newline, or at the end of the file for a last row with none,
 as the ledger reads its own file, so every append starts on a fresh line. Every write makes bytes of text by one rule that
@@ -80,6 +87,9 @@ _STOP_PENDING: dict[object, str | Path] = {}
 STOP_LOCK = ".stops"
 #: The longest a stop waits for that lock, in seconds, before it writes without it: a start holds it for milliseconds.
 STOP_WAIT = 1.0
+#: The longest an admission waits for that lock before it refuses: a stop being written holds it for milliseconds, and
+#: one whose record does not stand keeps it for as long as its process lives.
+ADMISSION_WAIT = 1.0
 #: A stop is in force, and says why.
 STOPPED = "G6_E_LOOP_STOPPED"
 #: A record that says whether a stop was asked for cannot be read, so a stop is in force: nothing can show it was lifted.
@@ -133,8 +143,31 @@ def _begin_stop(root: str | Path) -> object:
 
 
 def _finish_stop(token: object) -> None:
-    """Completion releases only this request, never another request's folder."""
+    """Completion releases only this request, never another request's folder, and with it any stop lock the request
+    kept (``_Held``)."""
     _STOP_PENDING.pop(token, None)
+    kept = getattr(token, "holds", None)
+    if kept is not None:
+        kept.release()
+
+
+class _Held:
+    """The stop lock a stop keeps while its canonical record does not stand: let go when its request is finished, when
+    nothing refers to the request any more, or when its process ends, which the operating system sees to."""
+
+    def __init__(self, stack: contextlib.ExitStack) -> None:
+        self._stack = stack
+
+    def release(self) -> None:
+        stack, self._stack = self._stack, None
+        if stack is not None:
+            try:
+                stack.close()
+            except Exception:  # noqa: BLE001 - a lock that cannot be let go is let go with its process
+                pass
+
+    def __del__(self) -> None:
+        self.release()
 
 
 def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dict]) -> list[str]:
@@ -811,6 +844,46 @@ def stop_lock(root: str | Path, wait: float | None = None) -> ContextManager[Non
     return Coordination(Path(root) / STOP_LOCK).mutex(wait=wait)
 
 
+def _stop_held(root: Path) -> str:
+    """Why the stop lock refuses an admission, or ``""``: another holds it past ``ADMISSION_WAIT``, a stop that is being
+    written or one that could write no record and keeps it, or it cannot be tried at all. A folder where no stop and no
+    start ever took the lock has none to ask for, absent by the reading's own rule (``_absent``), so nothing is written
+    there; nor is anything made in a folder that is gone, which the reading itself refuses."""
+    try:
+        if not root.is_dir() or _absent(root / STOP_LOCK / "mutex", root):
+            return ""
+        with stop_lock(root, wait=ADMISSION_WAIT):
+            return ""
+    except WorkspaceRefused as exc:
+        if exc.code == HELD_BY_ANOTHER:
+            return (f"a stop is being written on this folder, or could not be written and is held by the process that was "
+                    f"asked: the stop lock ({STOP_LOCK}) is held")
+        return f"the stop lock ({STOP_LOCK}) cannot be tried ({exc.code})"
+    except Exception as exc:  # noqa: BLE001 - a lock that cannot be tried, however, admits nothing
+        return f"the stop lock ({STOP_LOCK}) cannot be tried ({type(exc).__name__})"
+
+
+def admission(root: str | Path, reading: Stop) -> Stop:
+    """What every path that admits work decides on: a tick's guard and the gate before each of its requests, the
+    runner's preflight and gate, a restart's among them, and the start's dialog and the start. ``reading`` is the one
+    reading the caller has just taken (``stop_in_force``); this asks for the stop lock beside it (``_stop_held``). A
+    stop's durable write is made under that lock, and a stop that could write no record keeps it from before its first
+    write for as long as its process lives, so no admission that asks after such a stop began has the lock: it is a stop
+    in force, ``STOP_UNREADABLE``, with the rest of the reading as it was read. So the denial of a stop reaches a process
+    that shares no memory with the one that was asked. A stop that finished its write is in the reading itself; only a
+    request whose own check overlapped that write is admitted on a reading from before it, as one checked a moment
+    earlier would be. A caller that holds the stop lock itself, a start under its locks, decides on ``stop_in_force``
+    alone."""
+    if reading.code == STOP_UNREADABLE:
+        return reading
+    held = _stop_held(Path(root))
+    if not held:
+        return reading
+    return Stop(STOP_UNREADABLE, f"{held}, so a stop is in force until it is let go", reading.start, reading.revoked,
+                reading.seen, reading.log, reading.records_sha256, reading.digest, (*reading.unread, STOP_LOCK),
+                reading.records)
+
+
 def stop_standing(root: str | Path) -> str:
     """Why this folder is stopped, or ``""``: the reason of ``stop_in_force``'s one full reading, the start on record and
     any stop after it among what it read."""
@@ -1061,18 +1134,30 @@ def _ask_to_stop(root: str | Path, reason: str = "", *, record_id: str | None, m
     written so can be read before it is on disk, so a start flushes the journal itself before its row binds it
     (``flush_journal``). Both are rows of their own whatever the file ended with, and in whatever words the caller gave
     (``_durably``), so nothing a caller wrote keeps a stop from being written. The canonical record is written under
-    that lock too."""
+    that lock too, and a stop whose canonical record does not stand keeps the lock, with its request (``_Held``), so
+    every other process's admission meets it (``admission``). What can wait on that lock, the stop's own reading back of
+    what it wrote, and what runs outside this module, the caller's allocator of the legacy identity, run with it let go
+    or, for the allocator, only once the canonical record stands."""
     root = Path(root)
     with contextlib.ExitStack() as held:
+        locked = False
         try:
             if root.is_dir():       # a folder that is not there is not made for a lock: the stop is refused below
                 held.enter_context(stop_lock(root, wait=STOP_WAIT))
+                locked = True
         except BaseException as exc:  # a stop never fails for a lock, whatever keeps it from it
             if not managed and not isinstance(exc, Exception):
                 raise  # raw Python cancellation propagates: the process denial stands, and nothing was established
         errors, canonical_id, root = _establish_stop(root)
         _STOP_PENDING[_denial] = root  # keep the scope captured before any later working-directory change
         if errors:
+            if not locked:                          # it could not be had before: once more, now that nothing stands
+                try:
+                    if root.is_dir():
+                        held.enter_context(stop_lock(root, wait=0))
+                except BaseException:  # noqa: BLE001 - another holds it, or it cannot be had: the request still denies here
+                    pass
+            _denial.holds = _Held(held.pop_all())   # no record stands: the lock is kept for as long as this request denies
             return StopReceipt(STOP_STATE_UNREADABLE.replace("stop state is uncertain; ", ""), errors, canonical_id)
         _denial.established = True  # a cancellation may release this latch, never the durable stop
         ident = canonical_id
@@ -1256,7 +1341,7 @@ def heartbeat(root: str | Path) -> dict | None:
 
 __all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "ENROLMENT_CHANGED", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES",
            "NOTHING_TO_TRY", "REFUSED_FILE", "RUNNER_LOCK", "STOPPED", "STOPS_FILE", "STOP_FILE", "STOP_LOCK",
-           "STOP_UNREADABLE", "Stop", "StopSeen", "StopUnreadable", "TICK_BUDGET_SPENT", "ask_to_stop", "beat",
+           "STOP_UNREADABLE", "Stop", "StopSeen", "StopUnreadable", "TICK_BUDGET_SPENT", "admission", "ask_to_stop", "beat",
            "beat_holding", "end_start", "enrolment_changed", "enrolment_digest", "enrolment_id",
            "file_digest", "flush_journal", "fresh_line",
            "heartbeat",

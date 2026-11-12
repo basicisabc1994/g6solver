@@ -1198,6 +1198,14 @@ def _reaches(function: ast.AST, node: ast.AST, through: str) -> bool:
     return through in _reads(node, _assigned(function))
 
 
+
+
+
+
+
+
+
+
 # The merge with the stop's follow-up: the rows of the merged start and stop.
 for _gone in (
         ('mcp/improve.py', '_start_on_record', "return {'the start': bool(ours) and (not stop_standing(root, started))}"),
@@ -1212,6 +1220,8 @@ for _gone in (
 AROUND.update({
     ('mcp/improve.py', '_revoke', 'except Exception around ask_to_stop(root, why)'): ("after", HANDED),
     ('mcp/improve.py', '_revoke', 'except Exception around writer.stop(why, at=datetime.now().astim'): ("after", HANDED),
+    ('mcp/improve.py', '_revoke', 'return False'): ("after", HANDED),
+    ('mcp/improve.py', '_revoke', 'return True'): ("after", HANDED),
     ('mcp/improve.py', '_start_as_recorded', 'except Exception around found = _start_on_record(root, ident)'): ("after", ITSELF),
     ('mcp/improve.py', '_start_as_recorded', 'return reply'): ("after", ITSELF),
     ('mcp/improve.py', '_start_on_record', "return {'the start': bool(ours) and (not found)}"): ("after", ITSELF),
@@ -1221,8 +1231,8 @@ AROUND.update({
     ('mcp/improve.py', 'start', 'return _failed(root, exc, lambda reply: _start_as_recorded(root, ident, reply'): ("after", "_start_as_recorded"),
     ('mcp/improve.py', 'start', 'return _refusal(root, held, TERMS_CHANGED, MOVED, ASK_AGAIN, running=False, f'): ("before", ""),
     ('mcp/improve.py', 'start', 'return _refusal(root, reading, TERMS_CHANGED, NOT_AS_READ, ASK_AGAIN, running'): ("before", ""),
+    ('mcp/improve.py', 'start', 'return _start_as_recorded(root, ident, _refusal(root, ended if ended or not n'): ("after", "_start_as_recorded"),
     ('mcp/improve.py', 'start', 'return _start_as_recorded(root, ident, _refusal(root, halted, START_STOPPED, '): ("after", "_start_as_recorded"),
-    ('mcp/improve.py', 'start', 'return _start_as_recorded(root, ident, _refusal(root, stop_in_force(root), TE'): ("after", "_start_as_recorded"),
     ('mcp/improve.py', 'start', 'return _start_as_recorded(root, ident, {**_watch(root, _spawn(root, settings)'): ("after", "_start_as_recorded"),
     ('mcp/improve.py', 'stop', 'except BaseException around record_stop(root, why, at=datetime.now()'): ("after", "_stop_read_back"),
     ('mcp/improve.py', 'stop', 'except Exception around denial = _begin_stop(folder)'): ("after", NOT_KNOWN),

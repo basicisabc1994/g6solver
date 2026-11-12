@@ -77,6 +77,7 @@ from g6.self_maintenance.envelope import (
     _begin_stop,
     _finish_stop,
     _STOP_PENDING,
+    admission,
     ask_to_stop_receipt as ask_to_stop,
     canonical_stop_record,
     canonical_stops,
@@ -368,12 +369,12 @@ def asked(folder: str) -> tuple[Path, str, dict[str, Any]] | dict:
     try:
         root = _root(folder)
         for _ in range(DIALOG_TRIES):
-            reading = stop_in_force(root)
+            reading = admission(root, stop_in_force(root))
             cannot, _ = _cannot_start(root, reading)
             if cannot is not None:
                 return cannot
             made = _dialog(root, reading)
-            again = stop_in_force(root)
+            again = admission(root, stop_in_force(root))
             cannot, settings = _cannot_start(root, again)
             if cannot is not None:
                 return cannot
@@ -540,17 +541,23 @@ def _appended_onto(landed: Stop, approved: Stop) -> bool:
             and row.endswith(b"\n") and row.count(b"\n") == 1)
 
 
-def _revoke(root: Path, writer: CycleLog) -> None:
-    """End a start whose row did not land where it was approved: a stop row after it, by the writer that wrote it, and a
-    ``STOP`` file when even that will not take, so nothing runs on it either way."""
-    why = "the start's row did not land on the records the person's terms bind, so it starts nothing"
+def _revoke(root: Path, writer: CycleLog, waits: bool = True) -> bool:
+    """End a start whose row did not land where it was approved, or that a reading taken after its row found stopped: a
+    stop row after it, by the writer that wrote it, and a stop through the stop's own writer when even that will not take,
+    so nothing runs on it either way. It returns whether the row was written. ``waits``: whether the stop's own writer
+    may be called, which waits on the stop lock: under the start's locks it may not, so there only the row is written,
+    durably, and the start calls this again once its locks are let go if the row would not take."""
+    why = "the start's row did not land on the records the person's terms bind, or a stop met it, so it starts nothing"
     try:
         writer.stop(why, at=datetime.now().astimezone().isoformat())
-    except Exception:  # noqa: BLE001 - whatever keeps the row from being written, the STOP file stands in for it
-        try:
-            ask_to_stop(root, why)
-        except Exception:  # noqa: BLE001 - nothing more can be written; the start's caller is refused all the same
-            pass
+        return True
+    except Exception:  # noqa: BLE001 - whatever keeps the row from being written, the stop's own writer stands in for it
+        if waits:
+            try:
+                ask_to_stop(root, why)
+            except Exception:  # noqa: BLE001 - nothing more can be written; the start's caller is refused all the same
+                pass
+        return False
 
 
 #: Why a start whose records moved under it starts nothing.
@@ -576,16 +583,19 @@ def start(root: Path, who: str, shown: dict[str, Any] | None = None) -> dict:
     records themselves: once the writer has opened them and the journal is flushed, a reading must find exactly the
     approved bytes, or no row is written, and the ledger appends only onto the head it opened, so a crash or a failed write
     after the append can leave a start only on approved bytes. A stop that lands after the reading is in nothing the row
-    binds, so it stands, and the start says so once its locks are let go. Once the row is written a reading must find those
-    bytes with that one row after them, and on every way out of the append, an exception included, anything else that
-    landed is revoked by a stop row (a ``STOP`` file when that will not take) and nothing is spawned. Every statement that
+    binds, so it stands, and the start says so once its locks are let go. Once the row is written every reading the start
+    takes is decided whole: the reading of what landed, under both locks, must find those bytes with that one row after
+    them and no stop in force, of any code, one that cannot be read among them; anything else is revoked by a stop row
+    written under the locks (the stop's own writer, which waits on the stop lock, once they are let go), the start is
+    refused on that reading itself, and nothing is spawned, whatever is repaired a moment later. So it is on every way
+    out of the append, an exception included, and for the reading taken once the locks are let go (``admission``). Every statement that
     touches a file runs inside its one handler, and every refusal is ``_refusal``'s, made from the reading it stands on: a
     reading that cannot be made, anywhere, starts nothing and says so as any reader does. Once it has tried to record,
     its reply says what the folder holds of that start, read back (``_start_as_recorded``), whichever step failed."""
-    ident = ""                              # the identity of the row it writes, once it tries to
+    ident, ended, fits, noted = "", None, True, True   # the row's identity once it tries to write; what ended it after
     try:
         who = utf8_text(who)
-        reading = stop_in_force(root)
+        reading = admission(root, stop_in_force(root))
         if shown is not None and reading.code != STOP_UNREADABLE and not _still_read(root, shown, reading):
             return _refusal(root, reading, TERMS_CHANGED, NOT_AS_READ, ASK_AGAIN, running=False, folder=str(root))
         cannot, settings = _cannot_start(root, reading)                # the settings it records and runs on
@@ -612,14 +622,26 @@ def start(root: Path, who: str, shown: dict[str, Any] | None = None) -> dict:
                     writer.start(who, record_id=ident, at=datetime.now().astimezone().isoformat(),
                                  settings=digest_of(settings), **reading.seen.binding())
                 except BaseException:            # every way out of the append: whatever landed starts nothing
-                    if stop_in_force(root).records != reading.records:
-                        _revoke(root, writer)
+                    failed = stop_in_force(root)
+                    if failed.code == STOP_UNREADABLE or failed.records != reading.records:
+                        _revoke(root, writer, False)
                     raise
-            if not _appended_onto(stop_in_force(root), reading):
-                _revoke(root, writer)            # the row did not land on the approved records: it starts nothing
-                return _start_as_recorded(root, ident, _refusal(root, stop_in_force(root), TERMS_CHANGED, MOVED, ASK_AGAIN,
-                                                                running=False, folder=str(root)))
-        halted = stop_in_force(root)
+            landed = stop_in_force(root)         # one reading of what landed, decided whole, under both locks
+            fits = _appended_onto(landed, reading)
+            if landed or not fits:               # a stop of any code in it, or a row not on the approved records
+                noted = _revoke(root, writer, False)             # the row that revokes it, durably, under the locks
+                ended = landed
+        if ended is not None:                    # refused on that reading itself, whatever is repaired after it
+            if not noted:
+                _revoke(root, writer)            # the stop's own writer waits on the stop lock: only with it let go
+            end_start(root, ended.code, ended.reason, ended)         # and a stop a repair can lift is written beside it
+            code, why, then = ((TERMS_CHANGED, MOVED, ASK_AGAIN) if not fits else
+                               (START_STOPPED, f"a stop met the start as it was being recorded, so nothing was started: "
+                                f"{ended.reason}"[:500], NOT_ASKED))
+            now = stop_in_force(root)            # the revocation is in it: a refusal names the stop in force
+            return _start_as_recorded(root, ident, _refusal(root, ended if ended or not now else now, code, why, then,
+                                                            running=False, folder=str(root)))
+        halted = admission(root, stop_in_force(root))
         if halted:
             record_stop(root, halted.reason, at=datetime.now().astimezone().isoformat())
             end_start(root, halted.code, halted.reason, halted)      # a stop a repair can lift, written beside the note

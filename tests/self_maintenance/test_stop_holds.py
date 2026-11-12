@@ -922,6 +922,7 @@ def test_a_crash_right_after_the_append_leaves_a_start_only_on_the_approved_byte
 
 #: Every stop path: no handler in these may name a list narrower than ``Exception``, unless a try around it does.
 STOP_PATHS = {"g6/self_maintenance/envelope.py": ["_absent", "_read_file", "_parsed", "_start_of", "stop_in_force",
+                                                  "admission", "_stop_held",
                                                   "_ask_to_stop", "_establish_stop", "canonical_stops",
                                                   "_canonical_stops_on_disk", "canonical_stop_record", "what_stops",
                                                   "record_stop", "ask_to_stop", "stop_seen", "stop_reason", "stop_standing",
