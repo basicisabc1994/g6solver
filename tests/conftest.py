@@ -15,6 +15,27 @@ from types import SimpleNamespace
 import pytest
 
 
+#: A program path that does not exist: its folder is never made.
+NO_HOST_PROGRAM = os.path.join(tempfile.gettempdir(), 'g6-tests-no-host-program', 'no-host-program')
+
+
+def pytest_configure(config):
+    config.addinivalue_line('markers', 'real_host_program: the test may look for the installed Claude Code and Codex')
+
+
+@pytest.fixture(autouse=True)
+def no_real_host_program(monkeypatch, request):
+    """No test starts the person's installed Claude Code or Codex.
+
+    G6_CLAUDE and G6_CODEX name a program that does not exist, so looking for either finds nothing and a host runs only
+    where a test stands one in (tests/host_stand_in.py). A test that must look for the real programs carries the
+    real_host_program marker; none does.
+    """
+    if request.node.get_closest_marker('real_host_program') is None:
+        for name in ('G6_CLAUDE', 'G6_CODEX'):
+            monkeypatch.setenv(name, NO_HOST_PROGRAM)
+
+
 @pytest.fixture(autouse=True)
 def isolated_proxy_environment(monkeypatch):
     """Offline fakes have explicit routes; ambient machine proxies are not test inputs.
