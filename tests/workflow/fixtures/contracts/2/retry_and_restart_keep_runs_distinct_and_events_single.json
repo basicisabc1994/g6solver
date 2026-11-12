@@ -1,0 +1,78 @@
+{
+ "contract": 2,
+ "function": "identities",
+ "inputs": {
+  "operations": [
+   {
+    "op": "start",
+    "origin": "session-a"
+   },
+   {
+    "op": "event",
+    "run": 1,
+    "kind": "tool_call",
+    "native": "request-1",
+    "seconds": 1
+   },
+   {
+    "op": "event",
+    "run": 1,
+    "kind": "tool_call",
+    "native": "request-1",
+    "seconds": 2
+   },
+   {
+    "op": "restart"
+   },
+   {
+    "op": "start",
+    "origin": "session-a",
+    "seconds": 60
+   },
+   {
+    "op": "event",
+    "run": 1,
+    "kind": "tool_call",
+    "native": "request-1",
+    "seconds": 61
+   },
+   {
+    "op": "event",
+    "run": 1,
+    "kind": "tool_call",
+    "native": "request-2",
+    "seconds": 62
+   },
+   {
+    "op": "start",
+    "origin": "session-b",
+    "seconds": 120
+   },
+   {
+    "op": "start",
+    "origin": "session-a",
+    "kind": "review_job",
+    "seconds": 130
+   }
+  ]
+ },
+ "expected": {
+  "steps": [
+   "run-1",
+   true,
+   false,
+   "run-1",
+   false,
+   true,
+   "run-2",
+   "run-3"
+  ],
+  "runs": 3,
+  "tasks": 1,
+  "events": [
+   3,
+   1,
+   1
+  ]
+ }
+}

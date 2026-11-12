@@ -1,0 +1,18 @@
+{
+ "contract": 1,
+ "function": "view",
+ "inputs": {
+  "request": "fix this bug"
+ },
+ "expected": {
+  "block": [
+   "## Outcome, obstacle and next step (optional; decides nothing above)",
+   "- **Stated outcome:** not stated. G6 asks nothing more about it here.",
+   "- **Observation is insufficient:** G6 recorded nothing for this task; nothing G6 can show a receipt for stands in the way of a stated check. No obstacle is named.",
+   "- **A next check you may run:** none",
+   "- **G6's own cost on this task:** 0 question(s), 0 approval(s), 0 tool call(s); not measured: provider_calls, wall_seconds, active_g6_seconds. **Value to your work:** not measured."
+  ],
+  "obstacles": [],
+  "next_check": null
+ }
+}

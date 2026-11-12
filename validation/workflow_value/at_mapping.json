@@ -1,0 +1,222 @@
+{
+ "schema": "workflow.at_mapping.v1",
+ "specification": "G6-UX-VALUE-001",
+ "spec_sha256": "d2ce8085b6229decafea7ed3e20b32b8a8754e7fa4ac6d383c3bf45c7c948f57",
+ "note": "Each acceptance test is bound to the owner's text by digest; the text itself is not in this repository. A row is accepted only when its scope is 0.3.0, its status is run and its result is recorded; a partial or deferred row is never reported as accepted.",
+ "rows": [
+  {
+   "id": "AT-001",
+   "title": "Goal understanding",
+   "definition_sha256": "ed45edad821dfab14eb197ee292d6b8ce9394fae34394e1a847610df2b10f878",
+   "spec_sha256": "d2ce8085b6229decafea7ed3e20b32b8a8754e7fa4ac6d383c3bf45c7c948f57",
+   "scope": "partial",
+   "slices": "S3",
+   "gate": "",
+   "tests": [
+    "tests/workflow/test_view.py::test_literal_request_and_stated_outcome_are_shown_apart",
+    "tests/workflow/test_obstacle.py::test_unknown_intent_gives_no_outcome_and_asks_nothing"
+   ],
+   "fixtures": [
+    "1/unknown_intent_keeps_the_obstacle_and_states_no_outcome"
+   ],
+   "local_contracts": [
+    1
+   ],
+   "status": "bound",
+   "result": null,
+   "deferred_part": "G6 inferring an underlying outcome the person did not state"
+  },
+  {
+   "id": "AT-002",
+   "title": "Workflow reconstruction",
+   "definition_sha256": "b925b8f7cffe0413c6943300417bc9cffbe29584a49cfcf5ef5cc6f5933fbce4",
+   "spec_sha256": "d2ce8085b6229decafea7ed3e20b32b8a8754e7fa4ac6d383c3bf45c7c948f57",
+   "scope": "partial",
+   "slices": "S1, S2",
+   "gate": "",
+   "tests": [
+    "tests/workflow/test_lifecycle.py::test_export_lists_runs_rounds_and_rework_with_observed_and_derived_entries_apart",
+    "tests/workflow/test_lifecycle.py::test_correction_appends_and_never_overwrites_a_host_event"
+   ],
+   "fixtures": [
+    "4/local_lifecycle_needs_no_hosted_call"
+   ],
+   "local_contracts": [
+    2,
+    4
+   ],
+   "status": "bound",
+   "result": null,
+   "deferred_part": "a model built from a workflow description, dependencies beyond G6's own paths, and the visual map"
+  },
+  {
+   "id": "AT-003",
+   "title": "Constraint discrimination",
+   "definition_sha256": "5f9488e7a17d4c2f4e3909069575dc1df6245e16cacb28bea3442bd7338b4305",
+   "spec_sha256": "d2ce8085b6229decafea7ed3e20b32b8a8754e7fa4ac6d383c3bf45c7c948f57",
+   "scope": "0.3.0",
+   "slices": "S5",
+   "gate": "G3",
+   "tests": [
+    "tests/workflow/test_diagnose.py::test_slow_noncritical_stage_forces_no_winner",
+    "tests/workflow/test_diagnose.py::test_explicit_blocking_dependency_gives_the_scoped_obstacle_and_hypothesis",
+    "tests/workflow/test_diagnose.py::test_overlapping_work_forces_no_winner_and_no_capacity_view"
+   ],
+   "fixtures": [
+    "1/slow_noncritical_stage_forces_no_winner",
+    "1/explicit_blocking_dependency_gives_the_scoped_obstacle",
+    "1/overlapping_work_forces_no_winner"
+   ],
+   "local_contracts": [
+    1
+   ],
+   "status": "bound",
+   "result": null
+  },
+  {
+   "id": "AT-004",
+   "title": "Evidence integrity",
+   "definition_sha256": "7b911de78fca2c6248e2dd458c42b9e22b87c0366ffc4002276cf3db73b6e138",
+   "spec_sha256": "d2ce8085b6229decafea7ed3e20b32b8a8754e7fa4ac6d383c3bf45c7c948f57",
+   "scope": "0.3.0",
+   "slices": "S3, S5",
+   "gate": "G2, G3",
+   "tests": [
+    "tests/workflow/test_obstacle.py::test_missing_events_give_insufficient_observation",
+    "tests/workflow/test_diagnose.py::test_missing_events_abstain",
+    "tests/workflow/test_view.py::test_no_definite_constraint_wording",
+    "tests/workflow/test_diagnose.py::test_no_probability_or_score_field_exists"
+   ],
+   "fixtures": [
+    "1/missing_events_abstain",
+    "1/missing_events_say_observation_is_insufficient"
+   ],
+   "local_contracts": [
+    1
+   ],
+   "status": "bound",
+   "result": null
+  },
+  {
+   "id": "AT-005",
+   "title": "End-to-end value",
+   "definition_sha256": "d75a2be66071a90e0f98e2d9a84fc25a18211489af99a5c25f4da90730edf34d",
+   "spec_sha256": "d2ce8085b6229decafea7ed3e20b32b8a8754e7fa4ac6d383c3bf45c7c948f57",
+   "scope": "0.3.0",
+   "slices": "S6",
+   "gate": "G4",
+   "tests": [
+    "tests/workflow/test_suggest.py::test_action_addressing_the_stated_outcome_outranks_a_local_speedup",
+    "tests/workflow/test_suggest.py::test_order_is_class_then_burden_then_id"
+   ],
+   "fixtures": [],
+   "local_contracts": [
+    3
+   ],
+   "status": "bound",
+   "result": null
+  },
+  {
+   "id": "AT-006",
+   "title": "Alternative solutions",
+   "definition_sha256": "2013c0f65dd8935a0b16572c875dbdc12a0d5c94ac8ca87464f1c094186bef51",
+   "spec_sha256": "d2ce8085b6229decafea7ed3e20b32b8a8754e7fa4ac6d383c3bf45c7c948f57",
+   "scope": "partial",
+   "slices": "S6",
+   "gate": "",
+   "tests": [
+    "tests/workflow/test_suggest.py::test_a_non_g6_action_can_rank_first_and_do_nothing_is_offered",
+    "tests/workflow/test_suggest.py::test_do_nothing_is_offered_when_nothing_is_supported"
+   ],
+   "fixtures": [],
+   "local_contracts": [
+    3
+   ],
+   "status": "bound",
+   "result": null,
+   "deferred_part": "proposing other software, a human specialist or a resequenced process"
+  },
+  {
+   "id": "AT-007",
+   "title": "User autonomy",
+   "definition_sha256": "0113d40e1c8da883195db1d6fede6cd01d1abb3897afdef7b9946fe29bd5cf32",
+   "spec_sha256": "d2ce8085b6229decafea7ed3e20b32b8a8754e7fa4ac6d383c3bf45c7c948f57",
+   "scope": "0.3.0",
+   "slices": "S6",
+   "gate": "G4",
+   "tests": [
+    "tests/workflow/test_decisions.py::test_dismissal_survives_retry_restart_paraphrase_new_receipt_and_order_version_change",
+    "tests/workflow/test_decisions.py::test_reopen_states_its_reason",
+    "tests/workflow/test_decisions.py::test_new_mandatory_finding_is_still_shown_after_a_dismissal",
+    "tests/core/test_mcp_suggestion.py::test_no_explanation_is_asked_for"
+   ],
+   "fixtures": [],
+   "local_contracts": [
+    3
+   ],
+   "status": "bound",
+   "result": null
+  },
+  {
+   "id": "AT-008",
+   "title": "Verification distinction",
+   "definition_sha256": "f376fb9d36a5785e6080e9a2be348341ef370b005220549df73f12a482d9c91c",
+   "spec_sha256": "d2ce8085b6229decafea7ed3e20b32b8a8754e7fa4ac6d383c3bf45c7c948f57",
+   "scope": "0.3.0",
+   "slices": "S3, S5",
+   "gate": "G5",
+   "tests": [
+    "tests/workflow/test_view.py::test_checked_patch_with_no_outcome_measurement_says_value_not_measured",
+    "tests/workflow/test_reassess.py::test_removed_obstacle_does_not_claim_sole_constraint_or_delivery_gain"
+   ],
+   "fixtures": [],
+   "local_contracts": [
+    5
+   ],
+   "status": "bound",
+   "result": null
+  },
+  {
+   "id": "AT-009",
+   "title": "Constraint migration",
+   "definition_sha256": "9af0a66ff7d745fcee344106885497d05ba897f82114fc0c5ea79a9ba410e2c0",
+   "spec_sha256": "d2ce8085b6229decafea7ed3e20b32b8a8754e7fa4ac6d383c3bf45c7c948f57",
+   "scope": "partial",
+   "slices": "S5",
+   "gate": "",
+   "tests": [
+    "tests/workflow/test_reassess.py::test_changed_apparent_constraint_is_recorded",
+    "tests/workflow/test_reassess.py::test_contradicted_prediction_retires_the_hypothesis"
+   ],
+   "fixtures": [],
+   "local_contracts": [
+    1
+   ],
+   "status": "bound",
+   "result": null,
+   "deferred_part": "reassessing a whole workflow beyond the one task's observed runs"
+  },
+  {
+   "id": "AT-010",
+   "title": "Self-friction",
+   "definition_sha256": "03abba7b9d967405230edb795b80fa01d0e31bf72ca03a79f520029844e8c942",
+   "spec_sha256": "d2ce8085b6229decafea7ed3e20b32b8a8754e7fa4ac6d383c3bf45c7c948f57",
+   "scope": "partial",
+   "slices": "S2, S6",
+   "gate": "G2, G3, G4, G5",
+   "tests": [
+    "tests/workflow/test_friction.py::test_retry_is_counted_apart_from_the_logical_call",
+    "tests/workflow/test_suggest.py::test_g6_as_obstacle_suggests_a_named_switch_and_never_a_safeguard"
+   ],
+   "fixtures": [
+    "2/unobserved_work_and_person_effort_stay_unknown"
+   ],
+   "local_contracts": [
+    2
+   ],
+   "status": "bound",
+   "result": null,
+   "deferred_part": "G6 applying a simplification itself"
+  }
+ ]
+}

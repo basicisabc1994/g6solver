@@ -99,12 +99,14 @@ packages in the project's folder never replace G6's own, installs the `using-g6`
 `g6`, setup stops; remove it with `claude mcp remove --scope user g6` (or `codex mcp remove g6`) and run setup again.
 For another client, register `g6-mcp` and give it `G6_MCP_SENSITIVE=patch_review.review` in its environment.
 
-51 MCP tools: six discovery tools, `g6_help`, `g6_components`, `g6_find`, `g6_describe`, `g6_invoke` and `g6_compose`;
+56 MCP tools: six discovery tools, `g6_help`, `g6_components`, `g6_find`, `g6_describe`, `g6_invoke` and `g6_compose`;
 `g6_allowances` for both providers' quota windows and advisory pacing; `g6_review_patch`;
 `g6_review_until_clean`; `g6_premortem` and six `g6_mission_*` tools for a coding mission; `g6_confirm_behaviour`, one behaviour question for the person; six `g6_improve_*` tools for G6's self-improvement loop;
 thirteen `metaharness_*` tools for [tuning](#tune-g6-to-your-workflow); four sharing tools,
 `g6_cloud_grant`, `g6_cloud_revoke`, `g6_cloud_grants` and `g6_disclosures` ([cloud sharing consent](#cloud-sharing-consent));
-and eleven `g6_knowledge_*` tools for the Context Engine, which searches the person's own folders on their machine. The agent finds a component
+eleven `g6_knowledge_*` tools for the Context Engine, which searches the person's own folders on their machine;
+and five tools for [the workflow record](#the-workflow-record), `g6_workflow_export`, `g6_workflow_correct`,
+`g6_workflow_delete`, `g6_suggestion_decide` and `g6_feedback`. The agent finds a component
 by describing its task, reads what the component can do and how mature it is, then calls one op. Every reply carries
 `completion_state`, a `warning_card` with a `G6_E_*` code, `evidence`, `request_id` and `run_id`. An op a component
 marks sensitive is refused over MCP unless the person who runs the server lists it in `G6_MCP_SENSITIVE`.
@@ -246,6 +248,25 @@ nothing. A local loopback model needs no cloud grant. Claude Code and Codex sign
 - `g6_cloud_revoke(source, provider)` stops later sharing without another dialog.
 - `g6_cloud_grants()` lists active grants, their times and attribution hashes.
 - `g6_disclosures()` reads attempted disclosures: source/file/passage ids, hashes, provider and time, never text.
+
+## The workflow record
+
+G6 can keep a local record of its own review work on a task (runs, rounds, questions, tool calls and their times). It is
+off until the person sets `G6_WORKFLOW_RECORD=on` where the server is registered. It is the person's data and has its own
+source, `workflow:<the repository's identifier>`, which a grant for the repository does not cover.
+
+- `g6_workflow_export(repo)` writes `inspection.json` for the person to open; the reply never repeats the file.
+- `g6_workflow_correct(repo)` applies the `corrections.json` the person wrote beside it; no argument carries a correction.
+- `g6_workflow_delete(repo, scope, task, run)` deletes a run, a task or the project's record after the person confirms in
+  the client's dialog.
+- `g6_suggestion_decide(repo, task, intervention_id)` asks the person, in the client's dialog, to adopt, dismiss or reopen
+  one suggestion G6 showed for a task. No argument carries the decision. It answers only once suggestions are switched
+  on, which waits for their measured gate.
+- `g6_feedback(repo, task, volunteered)` keeps feedback the person volunteers. With none, and only if the person opted in
+  (`G6_FEEDBACK_QUESTION=on`), G6 may ask one question in the client's dialog, at most once a week for a repository,
+  inside the task's one-question budget. It has its own source, `workflow-feedback:<the repository's identifier>`.
+
+What is kept, for how long, and what deletion does: `docs/product_global_specs/workflow_storage_policy.md`.
 
 Providers include `anthropic:claude_code`, `openai:codex`, `anthropic:api`, `openai:api`, `openrouter:api`, and an
 `endpoint:<sha256>` identity for a configured custom endpoint. Sources may be canonical repository paths or the opaque

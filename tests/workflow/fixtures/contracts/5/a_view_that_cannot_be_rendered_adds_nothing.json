@@ -1,0 +1,18 @@
+{
+ "contract": 5,
+ "function": "report_order",
+ "inputs": {
+  "report": "# Review\n\n## What the reviews found\n- **Ending:** `fixed`: each reviewer's test that failed now passes.\n- **Fixed:** review 1: `add returns the sum`; its test passes now.\n\n## Integrity\n- **Integrity finding:** `tests/test_calc.py` was changed by the patch.\n\n## Unknowns\n- None.",
+  "view": {
+   "obstacles": [
+    {
+     "kind": "unknown"
+    }
+   ]
+  }
+ },
+ "expected": {
+  "starts_with_the_report": true,
+  "added": []
+ }
+}

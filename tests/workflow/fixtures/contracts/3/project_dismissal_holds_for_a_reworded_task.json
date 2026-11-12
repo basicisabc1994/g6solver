@@ -1,0 +1,116 @@
+{
+ "contract": 3,
+ "function": "decisions",
+ "events": [
+  {
+   "run": "r1",
+   "kind": "run_started",
+   "seconds": 0
+  },
+  {
+   "run": "r1",
+   "kind": "loop_round",
+   "native": "1",
+   "seconds": 10,
+   "data": {
+    "round": 1
+   }
+  },
+  {
+   "run": "r1",
+   "kind": "loop_ended",
+   "native": "end",
+   "seconds": 20,
+   "data": {
+    "ending": "clean",
+    "reviews": 1
+   }
+  },
+  {
+   "run": "r1",
+   "kind": "report_returned",
+   "native": "end",
+   "seconds": 20,
+   "data": {
+    "run_seconds": 20.0
+   }
+  }
+ ],
+ "inputs": {
+  "operations": [
+   {
+    "op": "dismissed",
+    "kind": "run_reproduction",
+    "target": "R1",
+    "scope": "project"
+   },
+   {
+    "op": "show",
+    "assessment": {
+     "report": "REPORT",
+     "outcome": "defect_detected",
+     "requirements": [
+      {
+       "id": "R1",
+       "status": "failed",
+       "provenance": "stated",
+       "checks": [
+        {
+         "id": "tests/test_calc.py::test_add",
+         "verdict": "failed",
+         "provenance": "stated"
+        }
+       ]
+      }
+     ],
+     "reasons": []
+    }
+   },
+   {
+    "op": "show",
+    "assessment": {
+     "report": "REPORT",
+     "outcome": "defect_detected",
+     "requirements": [
+      {
+       "id": "R1",
+       "status": "failed",
+       "provenance": "stated",
+       "checks": [
+        {
+         "id": "tests/test_calc.py::test_add",
+         "verdict": "failed",
+         "provenance": "stated"
+        }
+       ]
+      }
+     ],
+     "reasons": []
+    },
+    "task": "the same task, reworded"
+   }
+  ]
+ },
+ "expected": {
+  "shows": [
+   {
+    "shown": [
+     "rerun_at_base"
+    ],
+    "shown_again": [],
+    "findings": [
+     "failing_accepted_check"
+    ]
+   },
+   {
+    "shown": [
+     "rerun_at_base"
+    ],
+    "shown_again": [],
+    "findings": [
+     "failing_accepted_check"
+    ]
+   }
+  ]
+ }
+}

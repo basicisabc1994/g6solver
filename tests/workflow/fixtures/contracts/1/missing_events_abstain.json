@@ -1,0 +1,9 @@
+{
+ "contract": 1,
+ "function": "obstacles",
+ "inputs": {},
+ "expected": {
+  "obstacles": [],
+  "next_check": null
+ }
+}

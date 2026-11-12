@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """g6-mcp — a stdio MCP server exposing G6's progressive discovery surface.
 
-51 tools: six discovery tools, ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
+56 tools: six discovery tools, ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
 ``g6_allowances`` for both providers' quota windows and advisory pacing (``g6.allowance``);
 ``g6_review_patch``, which assesses a Python patch against stated requirements in confined test runs, as a job;
 ``g6_review_until_clean``, one step of the completion loop for a client the plugin's hook cannot reach (``g6.mcp.review_loop``),
@@ -23,6 +23,11 @@ Eleven Context Engine tools (``g6_knowledge_add``, ``g6_knowledge_sources``, ``g
 ``g6_knowledge_job``, ``g6_knowledge_revoke``, ``g6_knowledge_delete``, ``g6_knowledge_paths``) index folders the person accepts in the client's
 dialog, on their machine, and return cited, re-read passages only from sources shared with the client's provider
 (``g6.mcp.knowledge``).
+Three workflow-record tools (``g6_workflow_export``, ``g6_workflow_correct``, ``g6_workflow_delete``) let the person look at,
+correct and delete what G6 recorded about its own review work, through files they open and the client's own dialog;
+``g6_suggestion_decide`` asks the person to adopt, dismiss or reopen one suggestion G6 showed, and takes no decision
+itself; ``g6_feedback`` keeps feedback the person volunteers and, only if they opted in, may ask them one question a
+week in the client's dialog (``g6.mcp.workflow``).
 Install
 with ``pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"`` and register with ``claude mcp add g6 -- g6-mcp`` (or, for Codex,
 ``codex mcp add g6 -- g6-mcp``). There is no account, key or network service.
@@ -170,7 +175,8 @@ def build_server(surface: Any = None) -> Any:
     @public_tool
     def g6_help() -> str:
         """How to use G6 from an agent. Call this first."""
-        return discovery.HELP
+        from g6.mcp.workflow import HELP as workflow_help
+        return discovery.HELP + " " + workflow_help
 
     @server.tool()
     def g6_allowances(useful_parallel_work: bool = False) -> dict:
@@ -221,6 +227,8 @@ def build_server(surface: Any = None) -> Any:
         return compose_reply(payload, allow_sensitive=allowed_sensitive())
 
     _metaharness_tools(server, surface, Context)
+    from g6.mcp import workflow
+    workflow.register(server, Context)   # after the consent egress above: it stays the last thing to touch a reply
     return server
 
 
@@ -317,7 +325,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         if not _allowed("patch_review", "review", allowed_sensitive()):
             return public_instructions(blocked_reply(f"{_DENIED} patch_review.review runs repository code; the host must allow it"))
         from g6.harness.question_store import StoreUnreadable
-        from g6.mcp import behaviour
+        from g6.mcp import behaviour, workflow
         from g6.mcp.review_reply import finish, review
 
         try:   # a store G6 cannot read refuses the review at once; what it holds is read again when the review runs
@@ -330,7 +338,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             review, repo, task, requirements=requirements or [], tests=tests or [], claim=claim, sources=sources,
             base=base, expected_artifact_digest=expected_artifact_digest, timeout_s=timeout_s, intent=intent,
             proposed_checks=proposed_checks, template_instances=template_instances, search=search,
-            import_roots=import_roots or []), compact=finish)
+            import_roots=import_roots or []), compact=workflow.finishing(finish, repo, task, intent))
 
     @server.tool()
     def g6_review_until_clean(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
@@ -365,7 +373,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
                                  "must allow it, with patch_review.review"))
         from g6.mcp.review_loop import step
 
-        return jobs.start(lambda: step(repo, task, session, base, reason))
+        from g6.mcp import workflow
+        return jobs.start(lambda: workflow.stepped(step, repo, task, session, base, reason))
 
     def session(ctx: Any) -> str:
         return str(getattr(ctx, "session_id", None) or id(getattr(ctx, "session", ctx)))

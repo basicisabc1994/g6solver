@@ -248,6 +248,8 @@ READS = {
         ("answer", "self._open()"), ("answer", "self._read(ledger, default, note)"),
         ("ask", "self._open()"), ("ask", "self._read(ledger, default, note)"),
         ("counting", "self._open()"), ("counting", "self._read(self._open(), default, note)"),
+        # design section 17: a reserved slot of the one budget; it reads as ask does, from the ledger _open returned
+        ("reserve", "ledger.entries()"), ("reserve", "self._open()"), ("reserve", "self._read(ledger, default, note)"),
         ("show", "ledger.entries()"), ("show", "self._open()"),
         ("state", "self._open()"), ("state", "self._read(self._open(), default, note)"),
     ],
@@ -269,7 +271,7 @@ def test_every_read_of_a_store_entry_or_a_saved_review_checks_its_binding():
     validate = next(n for n in ast.walk(store) if isinstance(n, ast.FunctionDef) and n.name == "_validate")
     assert ast.unparse(validate.body[-1]) == "return _rules(kind, ident, body, seen, self.identity)"
     # every ledger an entry is read from is one _open returned: the methods that read take it from there
-    for method in ("state", "ask", "show", "answer", "allow_more", "counting"):
+    for method in ("state", "ask", "show", "answer", "allow_more", "counting", "reserve"):
         body = next(n for n in ast.walk(store) if isinstance(n, ast.FunctionDef) and n.name == method)
         assert "self._open()" in ast.unparse(body), method
     for name, rel in (("_review_candidates", "mcp/behaviour.py"),):

@@ -1,0 +1,49 @@
+{
+ "contract": 5,
+ "function": "report_order",
+ "inputs": {
+  "report": "# Review\n\n## What the reviews found\n- **Ending:** `fixed`: each reviewer's test that failed now passes.\n- **Fixed:** review 1: `add returns the sum`; its test passes now.\n\n## Integrity\n- **Integrity finding:** `tests/test_calc.py` was changed by the patch.\n\n## Unknowns\n- None.",
+  "view": {
+   "level": "narrow",
+   "outcome": {
+    "shown": "add returns the sum",
+    "provenance": "attributed_label"
+   },
+   "obstacles": [
+    {
+     "kind": "integrity_block",
+     "scope": "this patch, as reviewed",
+     "requirement": "",
+     "receipt": {
+      "kind": "review",
+      "id": "job-1",
+      "sha256": "454349e422f05297191ead13e21d3db520e5abef52055e4964b82fb213f593a1"
+     }
+    }
+   ],
+   "next_check": null,
+   "friction": {
+    "questions": 0,
+    "approvals": 0,
+    "tool_calls": 2,
+    "active_g6_seconds": 1.5,
+    "missing": []
+   },
+   "missing": [],
+   "value_result": "not_measured"
+  }
+ },
+ "expected": {
+  "starts_with_the_report": true,
+  "added": [
+   "",
+   "",
+   "## Outcome, obstacle and next step (optional; decides nothing above)",
+   "- **Stated outcome (as the request stated it):** `add returns the sum`",
+   "- **Observed, with a receipt:** the review found an integrity problem in the tests or their runner; scope: `this patch, as reviewed`; receipt `review:job-1`",
+   "- **Not shown by this:** that it is the only obstacle, that delivery improves, or that your wider workflow was observed.",
+   "- **A next check you may run:** none",
+   "- **G6's own cost on this task:** 0 question(s), 0 approval(s), 2 tool call(s), 1.5 s of G6 time. **Value to your work:** not measured."
+  ]
+ }
+}

@@ -12,7 +12,8 @@
     "mission": {"anchor": "**mission.**", "detail": ["skills/using-g6/references/lifecycle.md"]},
     "question": {"anchor": "**question.**", "detail": []},
     "review": {"anchor": "## Deliver a coding task with G6", "detail": ["skills/using-g6/references/lifecycle.md", "skills/using-g6/references/templates.md"]},
-    "rules": {"anchor": "**rules.**", "detail": ["skills/using-g6/references/rules.md"]}
+    "rules": {"anchor": "**rules.**", "detail": ["skills/using-g6/references/rules.md"]},
+    "workflow": {"anchor": "**workflow.**", "detail": ["harness/workflow/skill/SKILL.md"]}
   },
   "entries": {
     "mcp:abstraction/advise_pruning": {"agent_facing": true, "route": "abstraction", "since": "0.1.0"},
@@ -40,6 +41,7 @@
     "mcp:g6/g6_confirm_behaviour": {"agent_facing": true, "route": "question", "since": "0.3.0"},
     "mcp:g6/g6_describe": {"agent_facing": true, "route": "discover", "since": "0.1.0"},
     "mcp:g6/g6_disclosures": {"agent_facing": true, "route": "consent", "since": "0.3.0"},
+    "mcp:g6/g6_feedback": {"agent_facing": true, "route": "workflow", "since": "0.3.0"},
     "mcp:g6/g6_find": {"agent_facing": true, "route": "discover", "since": "0.1.0"},
     "mcp:g6/g6_help": {"agent_facing": true, "route": "discover", "since": "0.1.0"},
     "mcp:g6/g6_improve_start": {"agent_facing": true, "route": "improve", "since": "0.3.0"},
@@ -66,6 +68,10 @@
     "mcp:g6/g6_premortem": {"agent_facing": true, "route": "mission", "since": "0.3.0"},
     "mcp:g6/g6_review_patch": {"agent_facing": true, "route": "review", "since": "0.2.0"},
     "mcp:g6/g6_review_until_clean": {"agent_facing": true, "route": "review", "since": "0.3.0"},
+    "mcp:g6/g6_suggestion_decide": {"agent_facing": true, "route": "workflow", "since": "0.3.0"},
+    "mcp:g6/g6_workflow_correct": {"agent_facing": true, "route": "workflow", "since": "0.3.0"},
+    "mcp:g6/g6_workflow_delete": {"agent_facing": true, "route": "workflow", "since": "0.3.0"},
+    "mcp:g6/g6_workflow_export": {"agent_facing": true, "route": "workflow", "since": "0.3.0"},
     "mcp:g6/metaharness_approve": {"agent_facing": true, "route": "fit", "since": "0.1.0"},
     "mcp:g6/metaharness_confirm": {"agent_facing": true, "route": "fit", "since": "0.2.0"},
     "mcp:g6/metaharness_decide": {"agent_facing": true, "route": "fit", "since": "0.1.0"},

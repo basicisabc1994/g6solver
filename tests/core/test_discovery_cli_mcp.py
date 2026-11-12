@@ -91,6 +91,9 @@ def test_mcp_server_exposes_only_the_discovery_surface() -> None:
                           "g6_knowledge_add", "g6_knowledge_passage", "g6_knowledge_revoke", "g6_knowledge_search",
                           "g6_knowledge_sources", "g6_knowledge_refresh", "g6_knowledge_delete", "g6_knowledge_context",
                           "g6_knowledge_job", "g6_knowledge_count", "g6_knowledge_paths",   # the Context Engine (``g6.mcp.knowledge``)
+                          # the workflow record of G6 0.3's design section 17 (``g6.mcp.workflow``)
+                          "g6_workflow_export", "g6_workflow_correct", "g6_workflow_delete", "g6_suggestion_decide",
+                          "g6_feedback",
                           "metaharness_start", "metaharness_confirm", "metaharness_propose_code",
                           "metaharness_evaluate_start", "metaharness_job", "metaharness_run",
                           "metaharness_inspect", "metaharness_propose", "metaharness_evaluate", "metaharness_decide",

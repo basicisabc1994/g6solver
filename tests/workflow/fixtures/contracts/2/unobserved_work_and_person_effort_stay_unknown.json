@@ -1,0 +1,35 @@
+{
+ "contract": 2,
+ "function": "friction",
+ "events": [
+  {
+   "run": "r1",
+   "kind": "run_started",
+   "seconds": 0
+  },
+  {
+   "run": "r1",
+   "kind": "loop_round",
+   "native": "1",
+   "seconds": 36000,
+   "data": {
+    "round": 1
+   }
+  }
+ ],
+ "inputs": {},
+ "expected": {
+  "wall_seconds": null,
+  "active_g6_seconds": null,
+  "wait_seconds": null,
+  "question_seconds": 0.0,
+  "questions": 0,
+  "missing": [
+   "provider_retries",
+   "dialogs_outside_task_tools",
+   "wall_seconds",
+   "active_g6_seconds",
+   "wait_seconds"
+  ]
+ }
+}

@@ -230,11 +230,22 @@ def on_stop(event: dict) -> dict:
     asked = _task(session)
     run = current(event["session_id"], asked)
     step = loop.advance(asked["repo"], asked["task"], asked["base"], run, said=_said(event), agent=_model(event))
+    from g6.harness.workflow import policy as workflow_policy
+
+    if workflow_policy.enabled()[0]:    # the workflow record of this step, off unless the person turned it on
+        from g6.harness.workflow import adapters
+
+        adapters.observe_step(asked["repo"], asked["task"], run, step, base=asked["base"])    # never fails the hook
     if step.action == loop.CONTINUE:
         return {"decision": "block", "reason": step.text}
     if step.note:      # no loop ran, so nothing but this tells the next prompt that a turn ended
         (run / TURN_ENDED).touch()
     said = step.text or step.note
+    if step.text and workflow_policy.enabled()[0]:    # after the whole report: the optional view of the task
+        from g6.harness.workflow import view
+
+        said = view.appended(asked["repo"], asked["task"], said, provider="anthropic:claude_code", loop={
+            "ending": step.ending, "error": f"[{step.code}]" if step.code else "", "run_id": run.name, "report": step.text})
     return {"systemMessage": said} if said else {}
 
 

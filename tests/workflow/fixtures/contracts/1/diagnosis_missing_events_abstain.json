@@ -1,0 +1,15 @@
+{
+ "contract": 1,
+ "function": "diagnose",
+ "inputs": {
+  "goal": "add returns the sum"
+ },
+ "expected": {
+  "status": "insufficient_observation",
+  "rules": [],
+  "obstacles": [],
+  "overlapping": false,
+  "capacity_calculated": false,
+  "lines": []
+ }
+}

@@ -174,6 +174,13 @@ SOURCE_SITES = {
     # Planted cases: tests/learning/test_paired_receipts.py (a cloud agent with no grant: both arms refused, nothing
     # sent; both sends inside request_sources).
     'g6.learning.paired_eval.PairedEvaluator._arm',
+    # design section 17: the workflow tools' one reply maker, the feedback reply maker, and the two places a review
+    # reply gains the workflow field or note (planted cases: tests/core/test_mcp_workflow_consent.py,
+    # test_mcp_workflow_view.py, test_mcp_feedback.py)
+    'g6.mcp.workflow._feedback_reply',
+    'g6.mcp.workflow._noted',
+    'g6.mcp.workflow._reply',
+    'g6.mcp.workflow.attach',
 }
 
 
@@ -640,6 +647,9 @@ OPERATIONAL_FACTORIES = {
     # person did not accept.
     'g6.mcp.knowledge._declined',
     'g6.mcp.knowledge._refused',
+    # design section 17: a bad argument's fixed refusal, and the fixed refusal while suggestions are not admitted
+    'g6.mcp.workflow._refused',
+    'g6.mcp.workflow.decide',
 }
 
 
