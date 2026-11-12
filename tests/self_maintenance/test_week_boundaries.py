@@ -456,6 +456,17 @@ def test_every_comparison_and_sum_with_a_reservation_span_reading_or_reset_insta
                 inventory.append(where)
                 if not all(readers.acceptable(side, function) for side in sides):
                     loose.append(where)
+    # What only shares a name with a producer's instant, each by its exact text: the refusals follow-up's ``_Book.settled``
+    # (``metaharness/loop.py``) counts the calls a metered call's children already settled, a whole number of requests.
+    # The allowance (``g6._allowance``) carries none of the budget's instants: it reads ``usage``'s raw reader alone, and
+    # orders its own readings, whose ``read_at`` shares a name with a reading of the budget's, by its own one rule
+    # (``g6.allowance.ahead``) on its own UTC clock (``utc_now``); its import inventory admits no module of the budget's.
+    counts = {"g6.metaharness.loop.settle: max(total - book.notes - book.settled, 0)",
+              "g6.metaharness.loop.settle: total - book.notes - book.settled",
+              "g6._allowance.store.observe_claude: saved >= now"}
+    named_alike = {where for where in loose if re.sub(r":\d+:", ":", where, count=1) in counts}
+    assert {re.sub(r":\d+:", ":", where, count=1) for where in named_alike} == counts, sorted(named_alike)
+    loose = [where for where in loose if where not in named_alike]
     readers = {line.split(":", 1)[0] for line in inventory}
     known = {"g6.metaharness.loop.admit", "g6.metaharness.loop.ends_by",                          # the request cutoff
              "g6.metaharness.runner._after", "g6.metaharness.runner._due", "g6.metaharness.runner.step",  # a budget wait
@@ -714,6 +725,12 @@ def test_every_clock_the_budget_reads_gives_utc_where_it_is_defined():
     assert known <= set(inventory), sorted(known - set(inventory))
     assert any(line.startswith("g6.mcp.improve:") for line in inventory), inventory    # the start records, read as UTC
     assert sum(".now(" in line for line in inventory) >= 8, inventory
+    # The allowance's own clock (``g6._allowance``, which carries none of the budget's instants: see the comparisons'
+    # inventory above), given to its Codex reader and read as ``g6.allowance.utc_now`` reads it, in UTC.
+    own = {"g6._allowance.store.refresh_codex(now): now()"}
+    allowance = [where for where in loose if re.sub(r":\d+:", ":", where, count=1) in own]
+    assert {re.sub(r":\d+:", ":", where, count=1) for where in allowance} == own, sorted(allowance)
+    loose = [where for where in loose if where not in allowance]
     assert not loose, loose
 
 
