@@ -307,19 +307,52 @@ def test_evaluation_calls_pass_the_consent_check(tmp_path: Path, monkeypatch: py
     assert rig(tmp_path / "local", local)[0].run(CASES[:1], candidate=X.content_digest, replay_id="r1")[0].complete
 
 
-def test_the_evaluators_call_site_is_in_the_consent_inventory() -> None:
-    import ast
+def test_the_evaluators_sends_are_section_16s_own_and_each_is_made_under_its_declared_source(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Read from the objects and from a run, never from a spelling: the guard, the agent call and the scorer the
+    evaluator uses are section 16's and ``g6.learning``'s own objects; its module binds no provider module, class or
+    factory but the caller protocol; a model caller it is handed is replaced by the guard's; and when each send is
+    made, by the agent and by the judge, the declared source is the prompt that arm was sent."""
     import inspect
+    import json
 
-    from g6.learning import paired_eval
+    from g6.core import consent_callers, host_models
+    from g6.learning import paired_eval, scoring
 
-    tree = ast.parse(inspect.getsource(paired_eval))
-    imported = " ".join(ast.unparse(node) for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom)))
-    assert "from g6.core.consent_callers import guard" in imported
-    assert "provider_from_env" not in imported and "host_models" not in imported
-    arm = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "_arm")
-    sends = [node for node in ast.walk(arm) if isinstance(node, ast.Call) and getattr(node.func, "id", "") in
-             ("call_agent", "score_instance")]
-    guarded = [node for node in ast.walk(arm) if isinstance(node, ast.With)
-               and any("request_sources" in ast.unparse(item.context_expr) for item in node.items)]
-    assert len(sends) == 2 and all(any(send in ast.walk(block) for block in guarded) for send in sends)
+    assert paired_eval.guard is consent_callers.guard and paired_eval.cloud is cloud
+    assert paired_eval.call_agent is scoring.call_agent and paired_eval.score_instance is scoring.score_instance
+    providers = [value for module in (llm, host_models) for value in vars(module).values()
+                 if (inspect.isclass(value) or inspect.isfunction(value)) and value.__module__ == module.__name__]
+    bound = sorted(name for name, value in vars(paired_eval).items()
+                   if value is llm or value is host_models or any(value is known for known in providers))
+    assert bound == ["LLMCaller"], f"the evaluator's module binds provider objects: {bound}"
+
+    handed: list[Any] = []
+    guarded = object()
+    model, judging = llm.FakeLLM(lambda system, user: "2"), llm.FakeLLM(lambda system, user: "{}")
+    with monkeypatch.context() as patched:
+        patched.setattr(paired_eval, "guard", lambda caller: handed.append(caller) or guarded)
+        evaluator, _, _ = rig(tmp_path / "guarded", model, judge=judging)
+    assert handed == [model, judging] and evaluator.agent is guarded and evaluator.judge is guarded
+
+    sent: list[tuple[str, tuple]] = []
+    judged: list[tuple] = []
+
+    def agent(prompt: str) -> str:
+        sent.append((prompt, cloud.current_sources()))
+        return "four"
+
+    def judge(text: str) -> str:
+        judged.append(cloud.current_sources())
+        return json.dumps({"score": 1.0, "reason": "compared"})
+
+    case = TaskInstance(input="Write two plus two as a word.", expected_output="four", instance_id="words-1",
+                        metadata={"rubric": "The answer is the word four."})
+    evaluator, _, _ = rig(tmp_path / "declared", agent, judge=judge)
+    receipt = evaluator.run([case], candidate=X.content_digest, replay_id="r1")[0]
+    assert receipt.complete and len(sent) == 2 and len(judged) == 2
+    assert cloud.current_sources() == ()                               # nothing stays declared after the run
+    declared = [cloud.boundary_sources((cloud.Source.text(cloud.input_source(prompt), "strategy-pair-prompt", prompt),))
+                for prompt, _ in sent]
+    assert [sources for _, sources in sent] == declared and all(declared)
+    assert judged == declared                                          # each verdict is asked under its own arm's prompt

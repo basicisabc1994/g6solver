@@ -323,6 +323,7 @@
     "op:cognitive_bridge/plan_methods": {"agent_facing": true, "route": "discover", "since": "0.3.0"},
     "op:cognitive_bridge/rank": {"agent_facing": true, "route": "discover", "since": "0.3.0"},
     "op:cognitive_bridge/rank_methods": {"agent_facing": true, "route": "discover", "since": "0.3.0"},
+    "op:cognitive_bridge/rank_strategies": {"agent_facing": true, "route": "discover", "since": "0.3.0"},
     "op:cognitive_bridge/update": {"agent_facing": true, "route": "discover", "since": "0.3.0"},
     "op:complexity/atlas": {"agent_facing": true, "route": "discover", "since": "0.3.0"},
     "op:complexity/impact": {"agent_facing": true, "route": "discover", "since": "0.3.0"},
