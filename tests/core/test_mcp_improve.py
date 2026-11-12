@@ -188,7 +188,9 @@ def test_a_decline_a_cancel_no_name_or_a_client_with_no_dialog_starts_nothing(ri
     before = _files(rig.root)
     got = rig.start(handler)
     assert got["completion_state"] == "blocked-escalated" and check_envelope(got) == []
-    assert _code(got) == "G6_E_META_APPROVAL_REQUIRED" and rig.spawned == []
+    # changed on purpose: each way the dialog ended has its own code (was G6_E_META_APPROVAL_REQUIRED for all four)
+    assert _code(got) == {declined: "G6_E_CONSENT_DECLINED", cancelled: "G6_E_CONSENT_CANCELLED", nameless: "G6_E_CONSENT_NO_NAME",
+                          None: "G6_E_CONSENT_NO_DIALOG"}[handler] and rig.spawned == []
     assert _files(rig.root) == before and TERMINAL not in json.dumps(got)
     assert "Nothing started" in got["next_action"] and "no other way" in got["next_action"]
 
@@ -209,7 +211,8 @@ def test_it_refuses_while_a_runner_is_alive_and_says_what_to_do(rig):
 def test_it_refuses_a_folder_with_no_enrolled_domain_and_a_person_still_enrols(rig):
     got = rig.start()
     assert _code(got) == "G6_E_LOOP_NOT_ENROLLED" and rig.asked == [] and rig.spawned == []
-    assert "g6.metaharness.loop enrol" in got["next_action"] and "An agent cannot" in got["next_action"]
+    # changed on purpose: a person enrols in the client's dialog, never at a terminal
+    assert "g6_improve_enrol" in got["next_action"] and "an agent cannot" in got["next_action"]
 
 
 def test_a_python_file_that_is_not_the_one_a_person_enrolled_is_refused_before_it_could_run(rig):
@@ -217,7 +220,7 @@ def test_a_python_file_that_is_not_the_one_a_person_enrolled_is_refused_before_i
     rig.domain_file.write_text("# something else now\n", encoding="utf-8")
     got = rig.start()
     assert _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "did not run" in got["message"]
-    assert rig.asked == [] and rig.spawned == [] and "g6.metaharness.loop enrol" in got["next_action"]
+    assert rig.asked == [] and rig.spawned == [] and "g6_improve_enrol" in got["next_action"]
 
 
 def test_settings_pointed_at_another_file_after_enrolment_are_refused_the_same_way(rig, tmp_path):
@@ -428,8 +431,10 @@ def test_the_runner_is_detached_so_it_outlives_the_session(rig, monkeypatch):
     monkeypatch.undo()                                                  # the real _spawn
     monkeypatch.setattr(subprocess, "Popen", popen)
     improve._spawn(rig.root, {})
-    assert seen["argv"][1:4] == ["-P", "-B", "-X"] and seen["argv"][4].startswith("pycache_prefix=")
-    assert seen["argv"][5:] == ["-m", "g6.metaharness.loop", "run", str(rig.root)]
+    assert seen["argv"][1:4] == ["-I", "-B", "-X"] and seen["argv"][4].startswith("pycache_prefix=")
+    assert seen["argv"][5:7] == ["-c", improve._BOOTSTRAP]
+    assert json.loads(seen["argv"][7]) == improve._import_path()
+    assert seen["argv"][8:] == ["-m", "g6.metaharness.loop", "run", str(rig.root)]
     assert seen["argv"][0] == sys.executable and seen["stdin"] == subprocess.DEVNULL
     if os.name == "nt":
         assert seen["creationflags"] & subprocess.DETACHED_PROCESS
@@ -458,7 +463,8 @@ def test_a_pinned_python_runs_the_runner_isolated_so_no_working_tree_can_come_fi
     improve._spawn(rig.root, {"python": str(pinned)})
     argv = seen["argv"]
     assert argv[:4] == [str(pinned), "-I", "-B", "-X"] and argv[4].startswith("pycache_prefix=")
-    assert argv[5:] == ["-m", "g6.metaharness.loop", "run", str(rig.root)]
+    assert argv[5:7] == ["-c", improve._BOOTSTRAP] and json.loads(argv[7]) == []
+    assert argv[8:] == ["-m", "g6.metaharness.loop", "run", str(rig.root)]
 
 
 def test_the_dialog_names_a_pinned_python_and_what_having_none_means(rig, tmp_path):

@@ -88,8 +88,8 @@ This is Propose -> Test -> Gate -> Approve.
 
 Below 30 held-out cases is exploration only. A split of answers the proposer already saw is not independent evidence.
 Generated-code activation also requires a host-configured safety/injection evaluator. Never invent its observations.
-Client-mediated consent may occur in the proposing session; the recorded name is not authenticated. If elicitation
-is unavailable, relay the terminal command. After a decline or cancel, ask the person; offer no other way to confirm.
+Client-mediated consent may occur in the proposing session; the recorded name is not authenticated. No
+dialog, no confirmation. After a decline or cancel, ask the person; offer no other way to confirm.
 A job ID is pending work, not success; restart loses process-local handles.
 
 ## Read and ask

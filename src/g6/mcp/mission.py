@@ -42,6 +42,7 @@ from g6.core.ledger import digest
 from g6.harness import verification_search
 from g6.harness.patch_review import DEFECT, INTEGRITY
 from g6.intent_engine import IntentElicitor
+from g6.invariants import ERROR_CODE_PATTERN
 from g6.mcp import review_reply
 from g6.reliability_pipeline import premortem as checklist
 from g6.workforce import acceptance, api, bench, coding, repo_tests
@@ -92,7 +93,6 @@ _DIALOG = {"confirm": "call g6_mission_confirm, which asks the person in the cli
            "allow": "call g6_mission_create, which asks the person in the client's dialog"}
 _TERMINAL = re.compile(r'(?:confirm it at your terminal: )?`?python -P -m g6\.workforce\.decide (confirm|allow) \S+ '
                        r'--reason "\.\.\."`?')
-_CODED = re.compile(r"\b(G6_E_[A-Z0-9_]+)\b")
 MAX_CHECKS_STATED = 200
 MAX_TEST_FILES = 200
 
@@ -135,13 +135,13 @@ def _refusal(said: str, code: str = REFUSED) -> dict:
 
 
 def _guarded(work: Callable[[], dict]) -> dict:
-    """``work()``, or what refused it as a blocked reply with its code: the exception's, the one its words name, or
-    ``REFUSED``."""
+    """``work()``, or what refused it as a blocked reply with its code: the exception's, the first word of its words that
+    is a G6 code by G6's own rule (``g6.invariants.ERROR_CODE_PATTERN``), or ``REFUSED``."""
     try:
         return work()
     except (ValueError, LookupError, OSError, subprocess.SubprocessError) as exc:
-        named = _CODED.search(str(exc))
-        return _refusal(str(exc), getattr(exc, "code", "") or (named[1] if named else REFUSED))
+        named = next(filter(ERROR_CODE_PATTERN.match, re.findall(r"\w+", str(exc))), None)
+        return _refusal(str(exc), getattr(exc, "code", "") or named or REFUSED)
 
 
 def _bound(shown: list[str], who: str) -> api.Approver:

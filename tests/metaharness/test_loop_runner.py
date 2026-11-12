@@ -32,6 +32,7 @@ from g6.self_maintenance.envelope import (
     CycleLog,
     ask_to_stop,
     beat,
+    enrolment_digest,
     heartbeat,
     runner_alive,
     runner_lock,
@@ -693,8 +694,10 @@ def test_a_second_runner_on_a_folder_does_nothing(tmp_path, capsys, monkeypatch)
 
 
 def _agreed(root: Path, log: CycleLog) -> None:
-    """A person's start as ``g6_improve_start`` records it."""
-    log.start("Ada", at=START.isoformat(), settings=digest(read_settings(root)), stops=stops_asked(root))
+    """A person's start as ``g6_improve_start`` records it. Changed on purpose (consent repair 2): a start records the
+    enrolment its dialog showed, and the runner runs only that one."""
+    log.start("Ada", at=START.isoformat(), settings=digest(read_settings(root)), stops=stops_asked(root),
+              enrolment=enrolment_digest(log))
 
 
 def _grow_allowance(root: Path) -> None:
@@ -782,23 +785,40 @@ def test_the_bytes_that_were_checked_are_the_bytes_that_run(tmp_path, monkeypatc
     assert not marker.exists() and rig.read_bytes() == before
 
 
-def test_lifting_a_pause_does_not_run_a_domain_file_changed_since_it_was_enrolled(tmp_path, monkeypatch, capsys):
+def _agreed_in_the_dialog(act_name: str, root: Path, generation: int | None = None) -> dict:
+    """A person's act as ``g6_improve_*`` does it once the dialog agreed, here in this process (``g6.mcp.improve``).
+    Changed on purpose: these acts were typed at a terminal before (owner's standing rule: the client's dialog only)."""
+    from g6.mcp import improve
+
+    found = improve.asked_act(act_name, str(root), generation)
+    if isinstance(found, dict):
+        return found
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(improve, "_run_act", lambda root, settings, request: runner_act(request))
+        return improve.act(act_name, found[0], "Ada", found[2], generation)
+
+
+def runner_act(request: dict) -> dict:
+    from g6.metaharness.runner import act
+
+    return act(request)
+
+
+def test_lifting_a_pause_does_not_run_a_domain_file_changed_since_it_was_enrolled(tmp_path):
     root, loop = _enrolled_folder(tmp_path)
     loop.log.pause("three failed cycles in a row")
     changed, marker = _plants_a_marker(tmp_path)
     (tmp_path / "domain.py").write_text(changed, encoding="utf-8")
-    monkeypatch.setattr("g6.metaharness.runner._at_a_terminal", lambda: True)
-    assert main(["resume", str(root), "--as", "Ada"]) == 1 and not marker.exists()
-    assert CycleLog(root / CYCLE_LOG).paused() and "enrolled" in capsys.readouterr().err
+    got = _agreed_in_the_dialog("resume", root)
+    assert got["warning_card"]["code"] == "G6_E_LOOP_FROZEN_CHANGED" and not marker.exists()
+    assert CycleLog(root / CYCLE_LOG).paused()
 
 
-def test_a_person_enrolling_again_accepts_a_changed_domain_file(tmp_path, monkeypatch):
+def test_a_person_enrolling_again_accepts_a_changed_domain_file(tmp_path):
     root, _ = _enrolled_folder(tmp_path)
     path = tmp_path / "domain.py"
     path.write_text(path.read_text(encoding="utf-8") + "\n# one line more\n", encoding="utf-8")
-    monkeypatch.setattr("g6.metaharness.runner._at_a_terminal", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda prompt: "word-problems")
-    assert main(["enrol", str(root), "--as", "Ada"]) == 0
+    assert _agreed_in_the_dialog("enrol", root)["warning_card"]["code"] == "G6_E_LOOP_ENROLLED"
 
 
 def test_a_start_the_person_agreed_to_lets_a_restart_run(tmp_path):
@@ -868,7 +888,7 @@ def test_a_lifted_stop_left_on_disk_lets_a_restart_run_and_any_stop_after_it_end
     root, loop = _enrolled_folder(tmp_path, started=False)
     (root / "STOP").write_text("an old stop\n", encoding="utf-8")
     loop.log.start("Ada", at=START.isoformat(), settings=digest(read_settings(root)), stops=stops_asked(root),
-                   **stop_to_lift(root))
+                   enrolment=enrolment_digest(loop.log), **stop_to_lift(root))
 
     def a_stop_after_a_tick(seconds: float) -> None:
         ask_to_stop(root, "a newer stop")
@@ -915,49 +935,35 @@ def test_a_run_holds_the_lock_while_it_lives(tmp_path):
     assert seen == [True] and not runner_alive(root)
 
 
-def test_only_a_person_at_a_terminal_enrols_a_domain(tmp_path, capsys):
+def test_the_command_line_enrols_nothing_and_says_it_is_done_over_mcp(tmp_path, capsys):
+    """Changed on purpose (owner's standing rule): a person enrolled here by typing the domain's name back."""
     root = _folder(tmp_path)
-    assert main(["enrol", str(root), "--as", "Ada"]) == 1              # the test's input is no terminal
-    assert "terminal" in capsys.readouterr().err
+    assert main(["enrol", str(root), "--as", "Ada"]) == 1
+    assert "g6_improve_enrol" in capsys.readouterr().err
     loop, _ = open_loop(root, now=lambda: START)
     assert loop.log.enrolled() is None
 
 
-def test_a_person_enrols_by_typing_the_domains_name_back(tmp_path, monkeypatch, capsys):
+def test_a_person_enrols_in_the_dialog(tmp_path):
     root = _folder(tmp_path)
-    monkeypatch.setattr("g6.metaharness.runner._at_a_terminal", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda prompt: "word-problems")
-    assert main(["enrol", str(root), "--as", "Ada"]) == 0
+    assert _agreed_in_the_dialog("enrol", root)["warning_card"]["code"] == "G6_E_LOOP_ENROLLED"
     assert open_loop(root, now=lambda: START)[0].log.enrolled()["by"] == "Ada"
-    assert "word-problems" in capsys.readouterr().out
 
 
-def test_the_wrong_name_typed_back_enrols_nothing(tmp_path, monkeypatch):
+def test_an_agents_name_enrols_nothing(tmp_path):
     root = _folder(tmp_path)
-    monkeypatch.setattr("g6.metaharness.runner._at_a_terminal", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda prompt: "yes")
-    assert main(["enrol", str(root), "--as", "Ada"]) == 1
+    assert open_loop(root, now=lambda: START)[0].enrol("auto:loop")["completion_state"] == "blocked-escalated"
     assert open_loop(root, now=lambda: START)[0].log.enrolled() is None
 
 
-def test_an_agents_name_enrols_nothing_even_at_a_terminal(tmp_path, monkeypatch):
-    root = _folder(tmp_path)
-    monkeypatch.setattr("g6.metaharness.runner._at_a_terminal", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda prompt: "word-problems")
-    assert main(["enrol", str(root), "--as", "auto:loop"]) == 1
-    assert open_loop(root, now=lambda: START)[0].log.enrolled() is None
-
-
-def test_only_a_person_at_a_terminal_lifts_a_pause(tmp_path, monkeypatch, capsys):
+def test_the_command_line_lifts_no_pause_and_the_dialog_does(tmp_path, capsys):
     root = _folder(tmp_path)
     loop, _ = open_loop(root, now=lambda: START)
     loop.enrol("Ada")
     loop.log.pause("three failed cycles in a row")
-    assert main(["resume", str(root), "--as", "Ada"]) == 1
+    assert main(["resume", str(root), "--as", "Ada"]) == 1 and "g6_improve_resume" in capsys.readouterr().err
     assert loop.log.paused()
-    monkeypatch.setattr("g6.metaharness.runner._at_a_terminal", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda prompt: "word-problems")
-    assert main(["resume", str(root), "--as", "Ada"]) == 0
+    assert _agreed_in_the_dialog("resume", root)["warning_card"]["code"] == "G6_E_LOOP_RESUMED"
     loop.log.reload()
     assert loop.log.paused() == ""
 
@@ -976,34 +982,25 @@ def _chain_length(root: Path) -> int:
     return len(lineage_of(root)["recent"])
 
 
-def test_a_person_takes_a_generation_back_by_typing_the_domains_name(tmp_path, monkeypatch, capsys):
+def test_a_person_takes_a_generation_back_in_the_dialog(tmp_path):
     root = _adopted_folder(tmp_path)
-    monkeypatch.setattr("g6.metaharness.runner._at_a_terminal", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda prompt: "word-problems")
-    assert main(["demote", str(root), "1", "--as", "Ada"]) == 0
-    assert lineage_of(root)["recent"][-1]["asked_by"] == "Ada" and "generation 1" in capsys.readouterr().out
+    got = _agreed_in_the_dialog("demote", root, 1)
+    assert lineage_of(root)["recent"][-1]["asked_by"] == "Ada" and "generation 1" in got["message"]
 
 
-def test_only_a_person_at_a_terminal_takes_a_generation_back(tmp_path, capsys):
+def test_the_command_line_takes_no_generation_back(tmp_path, capsys):
+    """Changed on purpose (owner's standing rule): a person took a generation back here by typing the domain's name."""
     root = _adopted_folder(tmp_path)
     assert main(["demote", str(root), "1", "--as", "Ada"]) == 1
-    assert "terminal" in capsys.readouterr().err and _chain_length(root) == 1
+    assert "g6_improve_demote" in capsys.readouterr().err and _chain_length(root) == 1
 
 
-def test_the_wrong_name_typed_back_takes_nothing_back(tmp_path, monkeypatch):
-    root = _adopted_folder(tmp_path)
-    monkeypatch.setattr("g6.metaharness.runner._at_a_terminal", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda prompt: "yes")
-    assert main(["demote", str(root), "1", "--as", "Ada"]) == 1 and _chain_length(root) == 1
-
-
-def test_taking_a_generation_back_does_not_run_a_domain_file_changed_since_it_was_enrolled(tmp_path, monkeypatch, capsys):
+def test_taking_a_generation_back_does_not_run_a_domain_file_changed_since_it_was_enrolled(tmp_path):
     root = _adopted_folder(tmp_path)
     changed, marker = _plants_a_marker(tmp_path)
     (tmp_path / "domain.py").write_text(changed, encoding="utf-8")
-    monkeypatch.setattr("g6.metaharness.runner._at_a_terminal", lambda: True)
-    assert main(["demote", str(root), "1", "--as", "Ada"]) == 1 and not marker.exists()
-    assert "enrolled" in capsys.readouterr().err and _chain_length(root) == 1
+    got = _agreed_in_the_dialog("demote", root, 1)
+    assert got["warning_card"]["code"] == "G6_E_LOOP_FROZEN_CHANGED" and not marker.exists() and _chain_length(root) == 1
 
 def test_the_module_runs_as_a_command_with_python_minus_p():
     env = {**os.environ, "PYTHONPATH": str(Path(g6.__file__).resolve().parents[1])}

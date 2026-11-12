@@ -366,6 +366,10 @@ WRITES = {
     ("_durably", "open"): "every row of the journal, the STOP file and the refusals, and the end of the records' last row: "
                           "on a fresh line (fresh_line), as utf8 writes it",
     ("CycleLog._append", "_chain.append"): "every row of the records, after _durably ends the last one",
+    # The merge with the consent follow-up: rows written with an identity of their own, and the stop's canonical record.
+    ("CycleLog._write_record", "_chain.append"): "every row written with its identity, after _durably ends the last one",
+    ("_establish_stop", "os.open"): "a stop's canonical record, a new file of G6's own id and time, and the marker "
+                                    "that stands in when its folder cannot be made",
     ("_parsed", "os.fdopen"): "a copy of the bytes a reading took, whole, for the ledger to read",
     ("flush_journal", "os.open"): "the journal flushed, writing no byte",
     ("beat", "write_bytes"): "a whole heartbeat, swapped in, as utf8 writes it",
@@ -476,7 +480,10 @@ def test_every_stop_write_takes_any_text_and_the_reading_reads_it_back(active, w
 
 
 #: Where text becomes bytes on a stop path: the one rule, and nothing else.
-ENCODES = {("g6/self_maintenance/envelope.py", "utf8"): "the one rule: UTF-8, what it cannot carry spelled out"}
+ENCODES = {("g6/self_maintenance/envelope.py", "utf8"): "the one rule: UTF-8, what it cannot carry spelled out",
+           # The merge with the consent follow-up: the one writer appends, in text mode with LF, what utf8 has already
+           # made storable, so the stream's own encoding adds no rule and a write cut short is seen as one.
+           ("g6/self_maintenance/envelope.py", "_durably"): "appends what utf8 made storable, as UTF-8 with LF"}
 
 
 def _encodes_in(source: str, names: set[str] | None) -> set[str]:

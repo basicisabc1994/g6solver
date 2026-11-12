@@ -31,6 +31,7 @@ from g6.core.reliability_envelope import envelope_fields, warning_card
 from g6.core.storage import g6_home, state_path
 from g6.harness import Memory, run
 from g6.integrity import build_manifest, manifest_sha256
+from g6.invariants import ERROR_CODE_PATTERN
 from g6.learning import TheoryStore
 from g6.metaharness.evaluate import EvaluationReport, evaluate, standard_for
 from g6.metaharness.artifacts import ArtifactError, ArtifactStore
@@ -56,6 +57,7 @@ from g6.metaharness.schema import (
     SCHEMA,
     SELECTED,
     STANDARD_CHANGED,
+    WORKFLOW_CHANGED,
     WORKFLOW_INVALID,
     Profile,
     Proposal,
@@ -158,6 +160,19 @@ def versions_path(workspace: Path) -> Path:
     written into the store since, is never the version that runs."""
     confirmation = confirmations_path(workspace)
     return confirmation.parent.parent / "versions" / confirmation.name
+
+
+def recorded_versions(store: ProfileStore, workspace: Path) -> list[dict]:
+    """The store's version rows G6 recorded for ``workspace`` as it appended them (``versions_path``), oldest first: the
+    last is the head a harness on it runs (``MetaHarness._head``), read here by anything that must name it without one."""
+    import json
+
+    try:
+        recorded = {(int(number), str(profile)) for number, profile in
+                    json.loads(versions_path(workspace).read_text(encoding="utf-8"))}
+    except (OSError, ValueError, TypeError):
+        recorded = set()
+    return [row for row in store.versions() if (row["version"], row["profile_digest"]) in recorded]
 
 
 def _write_state(target: Path, data: Any) -> None:
@@ -291,15 +306,8 @@ class MetaHarness:
         _write_state(confirmations_path(self.workspace), self.store.confirmed())
 
     def _ours(self) -> list[dict]:
-        """The store's version rows G6 recorded here as it appended them (``versions_path``), oldest first."""
-        import json
-
-        try:
-            recorded = {(int(number), str(profile)) for number, profile in
-                        json.loads(versions_path(self.workspace).read_text(encoding="utf-8"))}
-        except (OSError, ValueError, TypeError):
-            recorded = set()
-        return [row for row in self.store.versions() if (row["version"], row["profile_digest"]) in recorded]
+        """The store's version rows G6 recorded here as it appended them (``recorded_versions``), oldest first."""
+        return recorded_versions(self.store, self.workspace)
 
     def _append(self, kind: str, profile: Profile, **fields: Any) -> int:
         """``store.append_version``, then recorded under G6's state folder; ``OSError`` when the record cannot be
@@ -399,14 +407,23 @@ class MetaHarness:
 
     # --- the loop -----------------------------------------------------------------------------------------------
     @_serialized
-    def confirm(self, accepted_by: str, *, initial: Profile | Mapping[str, Any] | None = None) -> dict[str, Any]:
-        """A person confirms the standard, the capabilities and the held-out provenance; the workflow is frozen."""
+    def confirm(self, accepted_by: str, *, initial: Profile | Mapping[str, Any] | None = None,
+                workflow_digest: str | None = None) -> dict[str, Any]:
+        """A person confirms the standard, the capabilities and the held-out provenance; the workflow is frozen.
+        ``workflow_digest``: the digest the person agreed to in a dialog. It is checked here, holding the workspace's lock
+        and before anything is written, and it is the digest recorded, so a workflow that changed after the person's
+        agreement is not confirmed (``WORKFLOW_CHANGED``)."""
         refused = self._refusal(need_confirmed=False)
         if refused:
             return refused
         if not accepted_by.strip() or is_automated(accepted_by):
             return _blocked(APPROVAL_REQUIRED, "a person must confirm the workflow (no empty or auto: name)")
         digest_now, judging = self.workflow.digest(), judging_sha256()
+        if workflow_digest is not None and digest_now != workflow_digest:
+            return _blocked(WORKFLOW_CHANGED, "the workflow changed after the person agreed: its digest is not the one they "
+                            "read, so nothing was confirmed", "No consent was applied. Inspect the workflow "
+                            "(metaharness_inspect), then ask about the digest that stands.", consent_status="workflow_changed")
+        digest_now = digest_now if workflow_digest is None else workflow_digest
         vault = self.workflow.held_out_vault
         if vault is not None:
             changed = self._vault_changed()
@@ -532,9 +549,9 @@ class MetaHarness:
         try:
             raw = list(strategy.propose(view, runner))
         except LLMError as exc:
-            why = str(exc)
-            code = re.search(r"\bG6_E_[A-Z0-9_]+\b", why)
-            return _blocked(code.group() if code else "G6_E_META_MODEL_FAILED", why, why)
+            why = str(exc)          # the code its words name: the first word that is a G6 code by G6's own rule
+            code = next(filter(ERROR_CODE_PATTERN.match, re.findall(r"\w+", why)), None)
+            return _blocked(code or "G6_E_META_MODEL_FAILED", why, why)
         except Exception as exc:  # noqa: BLE001 - a failing strategy proposes nothing; it never raises through
             why = f"{type(exc).__name__}: {exc}"
             plan = recovery.for_proposal(why, ())

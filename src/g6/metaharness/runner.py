@@ -11,9 +11,11 @@ a crashed tick is charged its worst case, a rest is read back from the log, and 
 agreed to in the client's dialog (``g6_improve_start``). So ``run`` from a shell starts nothing of its own, and it is
 refused before any of the folder's code runs. A scheduled restart carries on a start until a stop ends it, and a stop ends
 it for good, even if its file is later removed: a start records the journal of stops it saw, and any stop since closes
-it, whether or not the records could be written at the time. What says so is ``stop_in_force``, as for every reader. This
-is a check and not a boundary: a process with the owner's rights can reach this code, or write the records, which are
-hash-chained and not signed.
+it, whether or not the records could be written at the time. What says so is ``stop_in_force``, as for every reader. A
+start also records the enrolment its dialog showed, by digest, and it runs only that one: the run opens that enrolment's
+bytes, and any other enrolment on record, read at the start of the run and before each request of a tick, ends it as a
+stop does (``G6_E_LOOP_ENROLMENT_CHANGED``). This is a check and not a boundary: a process with the owner's rights can
+reach this code, or write the records, which are hash-chained and not signed.
 
 **What it never does.** It starts no engineer, pushes nothing, and spends only within the pacing rule. A pause, a changed
 frozen item, records that do not check out or a spent held-out split stop the ticks until a person acts, and the runner
@@ -33,8 +35,11 @@ calls are billed to one provider, so with more than one window ``provider`` name
 without it. Nothing else is read from it, so neither file can reach ``person_free_adoption_outside_shadow``. Enrolling pins
 its digest, so an edit is a changed frozen item, and ``g6_improve_start`` refuses it before it could run.
 
-``enrol``, ``resume`` and ``demote`` are a person's: as in ``g6.workforce.decide``, an answer counts only when the domain's
-name is typed back at an interactive terminal. That is a convenience check, not proof that a person typed it.
+Enrolling, lifting a pause and taking a generation back are a person's, given only in the client's dialog through
+``g6_improve_enrol``, ``g6_improve_resume`` and ``g6_improve_demote`` (``g6.mcp.improve``). Each runs here (``act``), on the
+interpreter the runner uses, bound to what the dialog showed (``person_terms``): it runs only the bytes that binding names
+and checks it again under the folder's lock before it runs or records anything. ``enrol``, ``resume`` and ``demote`` on
+the command line record nothing and say so: there is no terminal fallback and no agent answer.
 
 Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been
 established.
@@ -46,43 +51,61 @@ import contextlib
 import ctypes
 import hashlib
 import importlib.util
+import json
 import os
 import sys
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from ctypes import wintypes
 from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
+import g6
 from g6.core import stop
-from g6.core.ledger import digest as digest_of
+from g6.core.ledger import LedgerError, digest as digest_of
+from g6.metaharness.api import _blocked, _envelope
 from g6.metaharness.loop import (
     BUDGET_WAIT,
     BUSY,
     CANNOT_RECORD,
     CYCLE_FAILED,
+    ENROLLED,
     FOLDER_STOPS,
     FROZEN_CHANGED,
+    RESUMED,
     STATUS_LINE,
     LoopSettings,
     ShadowLoop,
+    envelope_sha256,
+    folder_lock,
+    must_stop,
 )
 from g6.metaharness import reflex
-from g6.metaharness.shadow import lineage
+from g6.metaharness.schema import CONSENT_DIALOG_ONLY
+from g6.metaharness.shadow import DEMOTED, lineage, restores
 from g6.self_maintenance import digest
 from g6.self_maintenance.envelope import (
+    CYCLE_LOG,
     ENDS_A_STREAK,
     STOP_UNREADABLE,
     STOPPED,
+    ENROLMENT_CHANGED,
+    CycleLog,
     Stop,
+    admission,
     beat,
     beat_holding,
     end_start,
+    enrolment_digest,
+    enrolment_id,
+    file_digest,
     record_stop,
     runner_lock,
     stop_in_force,
+    utf8_text,
     writable,
 )
 from g6.operator.store import utc_clock
@@ -104,6 +127,8 @@ CACHED_BYTECODE = "G6_E_LOOP_CACHED_BYTECODE"
 NOT_A_FOLDER = "G6_E_LOOP_NOT_A_FOLDER"
 RUNNER_ALIVE = "G6_E_LOOP_RUNNER_ALIVE"
 #: The stops a run ends on, each noted in the records as it ends (``_ending``): this folder's, and this process's own.
+#: A run that a pass ended on an enrolment its start did not name notes that too (``Runner._end``); the gate, which
+#: refuses such a start before anything ran, writes nothing, so a restart is refused again for the same reason.
 ENDING_STOPS = (*FOLDER_STOPS, CANNOT_RECORD)
 #: How a run stands to its folder's runner lock as it ends, which alone says whether its ending writes the folder's page
 #: and terminal heartbeat (``_ending``): the lock's holder does (``HOLDS``), and so does a run whose try for the lock failed
@@ -217,7 +242,7 @@ class Runner:
         the records, the last page and the heartbeat, all with that reading's code and reason, never a tick's before it."""
         _ending(self.loop.root, halted.code, halted.reason, now, status=0, state="stopped", lock=HOLDS,  # a Runner runs only
                 fields=lambda: self._fields(now), page=lambda: self._pages(now, halted.reason),   # on a lock held (``run``)
-                reading=halted)
+                reading=halted, also=(ENROLMENT_CHANGED,))
 
     def _fields(self, now: datetime) -> dict[str, Any]:
         """What a heartbeat of this run says beside its state and code."""
@@ -228,7 +253,7 @@ class Runner:
     def step(self) -> float | None:
         """One pass. The seconds to sleep, or ``None`` when a stop ended the run."""
         now = self.now()
-        halted = self.loop._stop()
+        halted = self.loop._stop().reading
         if halted:
             return self._end(now, halted)
         if self.day != self._day(now):
@@ -282,7 +307,7 @@ class Runner:
         the rest to bound. A budget wait lasts until a ceiling can rise, or a reported limit ends if that is sooner."""
         now = utc(now)
         code = reply["warning_card"]["code"]
-        if code in FOLDER_STOPS:
+        if code in (*FOLDER_STOPS, ENROLMENT_CHANGED):
             return now                      # the next pass reads the stop and ends the run
         if code == BUDGET_WAIT:
             room = self.loop.meter.next_room(now)
@@ -319,8 +344,8 @@ class Runner:
         found = []
         pause = self._pause()
         if pause is not None and self.loop.log.paused():
-            found.append("The loop is paused. Read why below, then lift it at your terminal: python -P -m "
-                         "g6.metaharness.loop resume <folder> --as <your name>")
+            found.append("The loop is paused. Read why below, then lift it with g6_improve_resume, which asks you in the "
+                         "client's dialog.")
         elif pause is not None:
             found.append(f"{pause['reason']}. {self.last.get('next_action', '')}")
         return [*found, *(f"The allowance for {w.provider} is an estimate: put the real figure in {SETTINGS_FILE} when there "
@@ -385,14 +410,25 @@ def _gate(root: Path, settings: dict[str, Any]) -> tuple[str, str]:
     return _gated(root, settings)[:2]
 
 
+def _admission(root: Path, settings: dict[str, Any]) -> tuple[str, str, str]:
+    """``_gate``'s code and reason, and the digest of the Python file the start's enrolment froze, from the same reading
+    (``_gated``): the start records the enrolment its dialog showed (``g6.mcp.improve.start``), so a run opens only the
+    bytes of that enrolment, and any other on record, or a start that names none, is refused."""
+    code, why, reading = _gated(root, settings)
+    return code, why, "" if code else _pinned(reading)
+
+
 def _gated(root: Path, settings: dict[str, Any]) -> tuple[str, str, Stop]:
-    """``_gate``'s code and reason, and the reading they stand on: ``stop_in_force``'s one reading of the stop's files and
-    the records, the start and any stop after it among them, so a start a stop on record ended stands no more. It runs
-    nothing and opens none of those files itself."""
-    halted = stop_in_force(root)
+    """``_gate``'s code and reason, and the reading they stand on: ``stop_in_force``'s one reading of the stop's files, the
+    canonical stops and the records, the start, any stop after it and the enrolment on record among them, so a start a
+    stop on record ended stands no more, and one whose enrolment is no longer the one on record ends as a stop does. It
+    runs nothing and opens none of those files itself."""
+    halted = admission(root, stop_in_force(root))   # as every path that admits work decides: the stop lock beside it
     if halted.code == STOP_UNREADABLE:
         return (STOP_UNREADABLE, f"{halted.reason}, so nothing ran: a person makes it readable, then g6_improve_start"[:400],
                 halted)
+    if halted.code == ENROLMENT_CHANGED:    # the start covers another enrolment: its own code and reason, as it is
+        return halted.code, halted.reason, halted
     if halted:                  # a stop in force keeps its own code: the gate never says it in other words
         return halted.code, (f"a stop is in force, so nothing ran ({halted.reason}): only a new g6_improve_start undoes "
                              "that")[:400], halted
@@ -406,6 +442,9 @@ def _gated(root: Path, settings: dict[str, Any]) -> tuple[str, str, Stop]:
     if start.get("settings") != digest_of(settings):
         return SETTINGS_CHANGED, (f"{SETTINGS_FILE} is not what the person agreed to at the last start, so nothing ran: "
                                   "g6_improve_start shows them what stands now"), halted
+    if "enrolment" not in start:
+        return ENROLMENT_CHANGED, ("the last start names no enrolment, so it covers none and nothing ran: g6_improve_start "
+                                   f"shows the person the enrolment that stands ({ENROLMENT_CHANGED})"), halted
     return "", "", halted
 
 
@@ -416,7 +455,7 @@ def _not_started(root: Path) -> str:
 
 def _ending(root: Path, code: str, why: str, at: datetime, *, lock: str, status: int = 1, state: str = "not-running",
             fields: Callable[[], dict[str, Any]] = dict, page: Callable[[], None] | None = None,
-            reading: Stop | None = None) -> int:
+            reading: Stop | None = None, also: tuple[str, ...] = ()) -> int:
     """The one way a run ends, whatever ended it: a stop at the preflight, the gate, a stop a pass read, this process's own
     cannot-record stop, a folder that cannot be opened or held, or anything that raised before the hand-off to ``Runner``.
     A stop is noted in the records (``record_stop``, which never raises; what it could not note, the heartbeat says), and
@@ -433,7 +472,7 @@ def _ending(root: Path, code: str, why: str, at: datetime, *, lock: str, status:
     write neither, and say how they ended on standard error alone. ``status``: the exit status; a refusal is also said on
     standard error."""
     said: dict[str, Any] = {"reason": why}
-    if code in ENDING_STOPS:
+    if code in ENDING_STOPS or code in also:    # ``also``: what this ending notes beside them
         unnoted = record_stop(root, why, at=at.isoformat())
         if unnoted:
             said["not_noted"] = unnoted
@@ -515,7 +554,7 @@ def run(root: Path, *, now: Callable[[], datetime] = _machine_now, sleep: Callab
     now = utc_clock(now)                    # every instant the runner records is UTC, where its clock is taken in
     if not root.is_dir():                   # no folder: nothing to note and no page or heartbeat to write in it
         return _ending(root, NOT_A_FOLDER, f"{root} is not a folder", now(), lock=NOT_HELD)
-    reading = stop_in_force(root)           # the preflight takes the one reading every reader takes, before anything else
+    reading = admission(root, stop_in_force(root))  # the preflight decides as every admission does, before anything else
     taken = False
     try:
         beat_holding(root, state="starting", pid=os.getpid(), in_job=_in_job(), at=now().isoformat())  # word, early
@@ -562,49 +601,270 @@ def _stopped(reading: Stop) -> tuple[str, str, int, str]:
     return reading.code, why, 0 if by_file else 1, "stopped" if stopped else "not-running"
 
 
-def _at_a_terminal() -> bool:
+#: A person's acts on a folder, each given only in the client's dialog, through its tool (``g6.mcp.improve``).
+DIALOG = {"enrol": ("Enrolment", "g6_improve_enrol"), "resume": ("Lifting a pause", "g6_improve_resume"),
+          "demote": ("Taking a generation back", "g6_improve_demote")}
+#: The code ``g6_improve_start`` gives the same fact: what the person read no longer stands.
+TERMS_CHANGED = "G6_E_LOOP_TERMS_CHANGED"
+
+
+def _dialog_only(act_name: str) -> int:
+    """The command line's answer to a person's act: it records nothing, and says where the act is done."""
+    what, tool = DIALOG[act_name]
+    print(f"{what} is done from a client session over MCP: {tool} asks the person in the client's dialog, and nothing "
+          f"else records it. Nothing was recorded ({CONSENT_DIALOG_ONLY}).", file=sys.stderr)
+    return 1
+
+
+def enrol(root: Path, who: str = "") -> int:
+    return _dialog_only("enrol")
+
+
+def resume(root: Path, who: str = "") -> int:
+    return _dialog_only("resume")
+
+
+def demote(root: Path, generation: int = 0, who: str = "") -> int:
+    return _dialog_only("demote")
+
+
+def held(log: CycleLog | None) -> str:
+    """What holds the ticks until a person lifts it: the pause on record, or what the cycles themselves say."""
+    return (log.paused() or must_stop(log)) if log is not None else ""
+
+
+#: The fields of a person's act's binding that the act itself uses: the bytes it runs, and the settings it runs on.
+FILE_SHA = "Python file SHA-256"
+SETTINGS_DIGEST = "Settings digest"
+#: The fields of a demotion's binding that name what it restores (``g6.metaharness.shadow.restores``), by the name the
+#: demotion gives each when it is about to write (``ShadowHarness.demote``).
+RESTORING = {"generation": "Goes back to generation", "profile_digest": "Profile it goes back to (SHA-256)",
+             "undoes": "Takes back the adoption of generation"}
+#: The fields of a person's act's binding that name the G6 the act runs, on the Python of this server: the folder its
+#: ``g6`` is loaded from, and that code by digest, by the rule an enrolment freezes it with (``envelope_sha256``).
+G6_FOLDER = "G6 it runs"
+G6_SHA = "G6 code SHA-256"
+
+
+def _g6_terms(settings: Mapping[str, Any]) -> dict[str, str]:
+    """What a person's act's binding names of the G6 it runs (``G6_FOLDER``, ``G6_SHA``), read of the ``g6`` this process
+    imported. ``g6.mcp.improve`` starts the act on its own import path (``_import_path``), so the act's process imports
+    G6 from the folder the server's was loaded from, and reading these again there, before it runs anything, refuses
+    any other G6, or this one changed. A pinned interpreter imports the G6 installed for it, which the server cannot
+    read without running it, so the binding names it by that interpreter."""
+    if settings.get("python"):
+        return {G6_FOLDER: "the G6 installed for the Python it runs on, isolated from PYTHONPATH and the folder"}
+    return {G6_FOLDER: str(Path(g6.__file__).resolve().parent), G6_SHA: envelope_sha256()}
+
+
+def person_terms(act_name: str, root: Path, *, generation: int | None = None) -> dict[str, Any]:
+    """The binding of a person's act on ``root``: all its dialog shows and the act stands on, read once from the folder as
+    it is now, as the fields the dialog shows (``g6.mcp.consent.question``). That is the folder, the Python file by path
+    and digest (the only bytes the act runs), the interpreter and the G6 it runs (``_g6_terms``), the whole settings file
+    by digest, the enrolment on record, what holds the ticks for a pause, and for one taken back the generation, the
+    chain, and what taking it back restores, by the one rule that decides it (``g6.metaharness.shadow.restores``).
+    ``g6.mcp.improve`` builds the dialog from it and passes it to the act, which reads it again under the folder's lock
+    before it runs or records anything (``act``), so a change in between runs and records nothing."""
+    settings = read_settings(root)
+    path = root / CYCLE_LOG
+    log = CycleLog(path) if path.is_file() else None
+    enrolled = log.enrolled() if log is not None else None
+    domain_file = settings.get("domain_file")
+    bound: dict[str, Any] = {"Folder": str(root), "Python file": str(domain_file), FILE_SHA: file_digest(domain_file),
+                             "Runs on": settings.get("python") or "the Python of this server", **_g6_terms(settings),
+                             SETTINGS_DIGEST: digest_of(settings), "Enrolment record id": enrolment_id(log)}
+    if enrolled is not None and act_name == "enrol":
+        bound |= {"It replaces the enrolment by": f"{enrolled['by']} (the name they gave)",
+                  "Enrolment it replaces": enrolment_digest(log)}
+    elif enrolled is not None:
+        bound |= {"Domain": str(enrolled.get("domain", "")), "Enrolled by": f"{enrolled['by']} (the name they gave)",
+                  "Enrolment on record": enrolment_digest(log)}
+    if act_name == "resume":
+        bound |= {"Paused because": held(log), "Cycles on record": len(log.cycles()) if log is not None else 0}
+    if act_name == "demote":
+        chain, found = lineage(root / "workspace"), restores(root / "workspace") or {}
+        head = chain["recent"][-1] if chain["recent"] else {}
+        bound |= {"Generation": generation, "Its change": str(head.get("change", "")),
+                  "Measured": json.dumps(head.get("measured", {}), sort_keys=True, default=str),
+                  **{label: found.get(name) for name, label in RESTORING.items()}, "Chain of generations": digest_of(chain)}
+    return bound
+
+
+_ABSENT = object()
+
+
+def moved(act_name: str, root: Path, bound: Any, *, generation: int | None = None) -> list[str]:
+    """The parts of a person's binding (``person_terms``) that no longer stand on ``root``, by name: each whose value
+    moved, appeared or went, the whole folder when it no longer reads (a bound file that does not read has moved), or
+    the binding itself when what was given is none. Empty while all the person read stands. It is the one rule for
+    whether their agreement still stands: ``g6.mcp.improve`` applies it first once they have answered, before anything
+    else it checks, so a change to what they read is named as one, and the act's process applies it again under the
+    folder's lock (``act``)."""
+    if not isinstance(bound, Mapping):
+        return ["the binding its dialog was built from"]
     try:
-        return sys.stdin.isatty() and sys.stdout.isatty()
-    except (AttributeError, ValueError):
-        return False
+        now = person_terms(act_name, root, generation=generation)
+    except (OSError, ValueError, LedgerError) as exc:
+        return [f"the folder, which no longer reads ({type(exc).__name__})"]
+    return sorted(name for name in {*bound, *now} if bound.get(name, _ABSENT) != now.get(name, _ABSENT))
 
 
-def _person(root: Path, who: str, verb: str, pinned: str | None = None) -> ShadowLoop | None:
-    """The folder's loop when a person is at this terminal and types its domain's name back. A convenience check."""
-    if not _at_a_terminal():
-        print(f"Only a person at an interactive terminal can {verb}: nothing was recorded.", file=sys.stderr)
-        return None
+#: What each person's act replies when it is done (``g6.mcp.improve.ACT_DONE`` names the same), and the parts it
+#: writes, as its reply names them in ``recorded``: the act's own effect first, which is what counts, then any note.
+DONE = {"enrol": ENROLLED, "resume": RESUMED, "demote": DEMOTED}
+#: The keys every reply's envelope carries, beside what a reply adds of its own.
+_ENVELOPE_KEYS = frozenset(_blocked("G6_E_LOOP_STATUS", "", "-")) | {"recorded"}
+ACT_PARTS = {"enrol": ("the enrolment",), "resume": ("the lifted pause",),
+             "demote": ("the demotion", "its note in the constraint log")}
+
+
+def on_record(request: Mapping[str, Any]) -> dict[str, bool]:
+    """Each part of a person's act (``ACT_PARTS``) with whether its folder holds it now, read back from the folder's
+    files afresh, as a reopened folder shows it, and never from which of the act's steps raised. The enrolment is a
+    row written with the request's unique id; the lifted pause, a folder nothing holds; the demotion,
+    a head one generation on from the one named, the person's rollback; its note, the constraint log's row of that
+    demotion, by the person, at that generation. ``OSError``, ``ValueError`` or ``LedgerError`` when the request names no
+    act on a folder or the records do not read, and then nothing can say what of the act counts."""
+    name, folder, bound = request.get("act"), request.get("folder"), request.get("binding")
+    if name not in ACT_PARTS or not folder or not isinstance(bound, Mapping):
+        raise ValueError("the request names no person's act on a folder")
+    root, who = Path(str(folder)).resolve(), utf8_text(str(request.get("who", ""))).strip()
+    path = root / CYCLE_LOG
+    log = CycleLog(path) if path.is_file() else None
+    if name == "enrol":
+        row = log.record("enrolled", str(request.get("record_id", ""))) if log is not None else None
+        return {"the enrolment": row is not None}
+    if name == "resume":
+        return {"the lifted pause": log is not None and not held(log)}
+    after = int(request.get("generation") or 0) + 1
+    chain = lineage(root / "workspace", last=1)
+    head = chain["recent"][-1] if chain["recent"] else {}
+    return {"the demotion": chain["current"] == after and head.get("kind") == "rollback" and head.get("asked_by") == who,
+            "its note in the constraint log": log is not None and any(
+                kind == "demoted" and body.get("by") == who and body.get("head_version") == after
+                for kind, body in log._rows())}
+
+
+def as_recorded(request: Mapping[str, Any], reply: dict[str, Any] | None, failed: BaseException | None = None) -> dict:
+    """The reply to a person's act, decided by what its folder holds once the act is over (``on_record``), never by
+    which of its steps raised. With the act's effect on record it is the act done, whatever failed after, naming any
+    part that is not; without it, the act's own refusal as it was, or what failed, which says nothing counts only when
+    no part of the act is on record. ``reply``: what the act returned, or ``None`` when it raised ``failed``. Records that
+    do not read back say so, and claim nothing either way: the act's own reply keeps its code, done or refused, and one
+    that raised says it did not finish. Either way the reply names each part in ``recorded``."""
+    name = request["act"]
+    why = f"{type(failed).__name__}: {failed}" if failed is not None else str((reply or {}).get("message", ""))
+    done = reply is not None and reply.get("completion_state") == "qualified-draft" and reply.get("code") == DONE[name]
     try:
-        loop, _ = open_loop(root, pinned=pinned)
-    except DomainChanged as exc:
-        print(f"{exc}: nothing was recorded.", file=sys.stderr)
-        return None
-    loop.beats = False                      # only the runner lock's holder writes the heartbeat, and a person's is not it
-    print(f"Domain: {loop.domain.name}. Folder: {root}. Name given: {who}, recorded as given and not authenticated.")
-    if input(f"Type the domain's name to {verb}: ").strip() != loop.domain.name:
-        print("That is not the domain's name: nothing was recorded.", file=sys.stderr)
-        return None
-    return loop
+        found = on_record(request)
+    except (OSError, ValueError, LedgerError) as exc:
+        unknown = f"its folder's records do not read back now ({type(exc).__name__}), so what of it counts is not known"
+        if done:
+            return {**reply, "recorded": None}
+        if reply is not None:                   # its refusal stands, and what of the act is on record is not known
+            own = {key: value for key, value in reply.items() if key not in _ENVELOPE_KEYS}
+            return _envelope(reply["completion_state"], reply["warning_card"]["code"], f"{why}; {unknown}"[:500],
+                             next_action=reply.get("next_action") or "g6_improve_status says what the folder's records "
+                             "hold.", **own, recorded=None)
+        return _blocked(CANNOT_RECORD, f"the act did not finish ({why}), and {unknown}"[:500],
+                        "g6_improve_status says what the folder's records hold.", recorded=None)
+    effect = ACT_PARTS[name][0]
+    stands = [part for part, held in found.items() if held]
+    missing = [part for part, held in found.items() if not held]
+    if found[effect] and done and not missing:
+        return {**reply, "recorded": found}
+    if found[effect]:
+        late = f"; not on record: {', '.join(missing)}" if missing else ""
+        return _envelope("qualified-draft", DONE[name], f"{effect} is on record, read back from its folder, so the act "
+                         f"counts, though the act did not end as done ({why}){late}"[:500],
+                         next_action="g6_improve_status shows where the loop stands.", recorded=found)
+    if reply is not None and not done and not stands:
+        return {**reply, "recorded": found}
+    if not stands:
+        return _blocked(CANNOT_RECORD, f"the act could not be recorded ({why}): read back from its folder, none of it is "
+                        "on record"[:500], "Nothing counts. Free the folder, then call the tool again: the person agrees "
+                        "again.", recorded=found)
+    return _blocked(CANNOT_RECORD, f"the act could not be recorded ({why}): read back from its folder, {', '.join(stands)} "
+                    f"is on record and {', '.join(missing)} is not"[:500], "g6_improve_status shows what stands.",
+                    recorded=found)
 
 
-def _said(reply: dict[str, Any]) -> int:
-    print(reply["message"])
+def act(request: dict[str, Any]) -> dict[str, Any]:
+    """A person's act that the client's dialog agreed to (``g6.mcp.improve``), in a process like the runner's, so what an
+    enrolment freezes is what a tick on that interpreter compares. ``request["binding"]`` is what the dialog showed
+    (``person_terms``). The act holds the folder's lock from reading that binding again, before it runs anything, to its
+    write, and refuses on any difference. It runs only the Python file's bytes the binding names, by digest, never the
+    current enrolment's, and the enrolment it records freezes those bytes. A demotion writes only the generation and the
+    profile the binding names (``RESTORING``): what the harness would restore is checked against them just before its
+    row is written. Every reply it gives, done, refused or failed, is decided by what the folder holds once it is over,
+    read back (``as_recorded``), so none says what is on record from which step it reached. Like the start, this is a
+    check and not a boundary: a process with the owner's rights can reach this code, and an editor that takes no lock
+    can still write the folder's files between the last read and the write."""
+    name, root, who = request["act"], Path(request["folder"]).resolve(), utf8_text(str(request["who"]))
+    if name == "enrol":
+        request.setdefault("record_id", uuid4().hex)
+    generation, bound = request.get("generation"), request["binding"]
+    again = "Call the tool again: the person reads what stands now, in the client's dialog."
+
+    def unchanged(given: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
+        """``None`` while what the person read still stands (``moved``), and ``given``, what the act is about to write,
+        is what it names: for an enrolment the bytes it freezes, for a demotion what it restores. A refusal otherwise,
+        naming what moved, which reaches the person only through ``as_recorded``."""
+        changed = moved(name, root, bound, generation=generation)
+        if not changed and given is not None and not (
+                given.get("domain_file") == bound[FILE_SHA] if name == "enrol" else
+                all(given.get(field) == bound.get(label) for field, label in RESTORING.items())):
+            changed = ["what it was about to write"]
+        if not changed:
+            return None
+        return _blocked(TERMS_CHANGED, f"what the person read is no longer what stands ({', '.join(changed)}), so the act "
+                        "went no further"[:500], again)
+
+    try:
+        with folder_lock(root):
+            refused = unchanged()
+            if refused is not None:
+                return as_recorded(request, refused)
+            try:
+                settings = read_settings(root)
+                if digest_of(settings) != bound[SETTINGS_DIGEST]:
+                    return as_recorded(request, _blocked(TERMS_CHANGED, f"{SETTINGS_FILE} changed after the person read "
+                                                         "it, so the act went no further", again))
+                loop, _ = open_loop(root, pinned=bound[FILE_SHA], settings=settings)
+                loop.beats = False          # only the runner lock's holder writes the heartbeat, and a person's is not it
+            except DomainChanged as exc:
+                return as_recorded(request, _blocked(FROZEN_CHANGED, str(exc)[:500], again))
+            except Exception as exc:  # noqa: BLE001 - the domain file is the person's own code: say why
+                return as_recorded(request, _blocked(CANNOT_OPEN, f"The loop could not be opened: {type(exc).__name__}: "
+                                                     f"{exc}"[:500]))
+            try:
+                if name == "enrol":
+                    reply = loop.enrol(who, last_check=unchanged, record_id=request["record_id"])
+                elif name == "resume":
+                    reply = loop.resume(who, last_check=unchanged)
+                else:
+                    reply = loop.demote(int(generation), who, last_check=unchanged)
+            except Exception as exc:  # noqa: BLE001 - a step failed: what counts is what the folder holds, read back
+                return as_recorded(request, None, exc)
+            return as_recorded(request, reply)
+    except WorkspaceRefused:
+        return as_recorded(request, _blocked(BUSY, "another operation is running on this folder, so this act went no "
+                                             "further", again))
+
+
+def act_main() -> int:
+    """The entry ``g6.mcp.improve`` starts: the request on standard input, the reply as the last line of standard output.
+    It refuses, as ``run`` does, where cached bytecode could run in place of G6's source. Each reply it writes says what
+    its folder holds of the act, read back (``as_recorded``), or, for a request that names no folder to read, that this
+    is not known (``recorded`` is ``None``)."""
+    unsafe = _launch_risk()
+    try:
+        request = json.loads(sys.stdin.read())
+        reply = as_recorded(request, _blocked(CACHED_BYTECODE, unsafe[:500])) if unsafe else act(request)
+    except (ValueError, KeyError, TypeError) as exc:
+        reply = _blocked(CANNOT_OPEN, f"the request could not be read: {type(exc).__name__}", recorded=None)
+    sys.stdout.write(json.dumps(reply, default=str) + "\n")
     return 1 if reply["completion_state"] == "blocked-escalated" else 0
-
-
-def enrol(root: Path, who: str) -> int:
-    loop = _person(root, who, "enrol it")
-    return 1 if loop is None else _said(loop.enrol(who))
-
-
-def resume(root: Path, who: str) -> int:
-    loop = _person(root, who, "lift the pause", pinned=_pinned(stop_in_force(root)))
-    return 1 if loop is None else _said(loop.resume(who))
-
-
-def demote(root: Path, generation: int, who: str) -> int:
-    loop = _person(root, who, f"take generation {generation} back", pinned=_pinned(stop_in_force(root)))
-    return 1 if loop is None else _said(loop.demote(generation, who))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -612,20 +872,17 @@ def main(argv: list[str] | None = None) -> int:
                                      description="Run G6's self-improvement loop on a folder, or act on it as a person.")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("run", help="run ticks until a STOP file appears").add_argument("folder")
-    for name, about in (("enrol", "confirm what judges this folder's domain"), ("resume", "lift a pause, having read why"),
-                        ("demote", "take back the generation at the head, having read the digest")):
-        command = commands.add_parser(name, help=about)
+    for name, (what, tool) in DIALOG.items():
+        command = commands.add_parser(name, help=f"{what.lower()} is done over MCP, with {tool}: this records nothing")
         command.add_argument("folder")
         if name == "demote":
-            command.add_argument("generation", type=int, help="the generation at the head, as the digest shows it")
-        command.add_argument("--as", dest="who", required=True, help="your name; recorded as given, not authenticated")
+            command.add_argument("generation", nargs="?", help="not used")
+        command.add_argument("--as", dest="who", default="", help="not used: a name comes only from the client's dialog")
     args = parser.parse_args(argv)
-    root = Path(args.folder).expanduser().resolve()
     if args.command == "run":
-        return run(root, unsafe=_launch_risk())
-    if args.command == "demote":
-        return demote(root, args.generation, args.who)
-    return {"enrol": enrol, "resume": resume}[args.command](root, args.who)
+        return run(Path(args.folder).expanduser().resolve(), unsafe=_launch_risk())
+    return _dialog_only(args.command)
 
 
-__all__ = ["FIRST_REST", "LONGEST_REST", "NAP", "Runner", "demote", "enrol", "main", "open_loop", "resume", "run"]
+__all__ = ["FIRST_REST", "LONGEST_REST", "NAP", "Runner", "act", "act_main", "as_recorded", "demote", "enrol", "held", "main",
+           "moved", "on_record", "open_loop", "person_terms", "resume", "run"]
