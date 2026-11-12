@@ -114,6 +114,8 @@ def _beliefs(beliefs: Mapping[str, float]) -> dict[str, float]:
 def check_beliefs(hypotheses: Sequence[Hypothesis]) -> dict[str, float]:
     _admit_hypotheses(hypotheses)
     hypotheses = snapshot(hypotheses, where="hypotheses", bound=_admit_hypotheses)
+    if not _is_type(type(hypotheses), (tuple,)) or any(type(h) is not Hypothesis for h in hypotheses):
+        raise TypeError("hypotheses are a list of Hypothesis records")
     ids = [h.id for h in hypotheses]
     if any(not h.statement for h in hypotheses) or len(set(ids)) != len(ids):
         raise ValueError("hypothesis IDs must be nonempty and unique; statements nonempty")

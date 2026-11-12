@@ -43,7 +43,7 @@ from .epistemic import CrossMethodConflictGate, ScopedAssertion, assertions_sha2
 from .metacognition import (MethodVariant, MetacognitiveMethodSelector,
                             ProblemSignature, SelectionDecision, checked_selection, _admit_variants)
 from .mixed_methods import (ENGINE_SPECS, ClaimIR, MethodPlan, MethodRouter, MixedMethodExecutor, step_digest,
-                            _admit_models)
+                            MODELS)
 from .snapshot import publish, record_data, fresh, issue, issued, number, plain, record, returned, snapshot, text
 
 
@@ -169,7 +169,7 @@ class CognitiveAssuranceOrchestrator:
         context = snapshot(context, where="context")
         standard = snapshot(standard, where="standard")
         variants = snapshot(variants, where="variants", bound=_admit_variants)
-        variant_models = snapshot(variant_models, where="variant_models", bound=_admit_models)
+        variant_models = snapshot(variant_models, where="variant_models", shape=MODELS)
         max_supplemental = snapshot(max_supplemental, where="max_supplemental")
         number(max_supplemental, where="max_supplemental")
         if context.risk < standard.risk or context.domain != standard.id:

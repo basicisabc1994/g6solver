@@ -27,7 +27,7 @@ from g6.core.maturity import component_maturity
 from g6.core.result import Result
 from .codes import INPUT, STATES, NotPlainData, refusal, settled, unclaimed, _is_type, _type_mro
 from .engine import BayesianUpdater, Hypothesis, InformationGainSelector, Probe, check_beliefs
-from .mixed_methods import ClaimIR, MethodRouter, _admit_claim
+from .mixed_methods import CLAIM_SHAPE, ClaimIR, MethodRouter
 from .metacognition import MetacognitiveMethodSelector, ProblemSignature, MethodVariant
 from .assurance import DOCUMENT_FIELDS
 from .snapshot import publish, canonical_json, plain, _attributes, _text_keys, _walk
@@ -49,9 +49,9 @@ def _admit_model_input(cls: type[BaseModel], given: Any) -> Any:
                 _admit_input({key: item}, model=base)
             if any(parent is dict or parent is Mapping for parent in _type_mro(type(given))):
                 taken = _walk(given, "an input model", outer=True, preflight=preflight,
-                              models=(CognitiveInput, *_NESTED))
+                              models=(CognitiveInput, *_NESTED), shape=_shape(base))
             elif _is_type(type(given), (CognitiveInput, *_NESTED)):
-                taken = _walk(given, "an input model", models=(CognitiveInput, *_NESTED))
+                taken = _walk(given, "an input model", models=(CognitiveInput, *_NESTED), shape=_shape(base))
             else:
                 raise NotPlainData("an input model", "unmeasured model input is not native object data")
             _admit_input(taken, model=base)
@@ -204,15 +204,15 @@ def _admit_input(given: Any, *, model: type[BaseModel] = CognitiveInput) -> None
                     pending.extend((child, entry, f'{where}[{index}]') for index, entry in enumerate(item))
                 else:
                     pending.append((child, item, where))
-        if cls is ClaimInput:
-            # A claim's own bounds (its models' size cap among them) are declared once, beside the router: read here
-            # on the raw arguments, before anything is encoded (review 3 of the fourth follow-up, finding 2).
-            try:
-                _admit_claim(values)
-            except NotPlainData:
-                raise
-            except ValueError as exc:
-                raise NotPlainData(path, str(exc)) from None
+
+
+def _shape(model: type[BaseModel]) -> tuple | None:
+    """Where a claim's declared sizes stand in an input model's raw data: the one declaration (``CLAIM_SHAPE``, beside
+    the router), which the copy pass measures as it takes the arguments, so what is admitted is what is copied and
+    nothing is encoded first (reviews 3 and 4 of the fourth follow-up, findings 2 and 7)."""
+    if model is CognitiveInput:
+        return ("field", {"claims": ("each", CLAIM_SHAPE)})
+    return CLAIM_SHAPE if model is ClaimInput else None
 
 
 def _admit_outer_input(key: str, value: Any) -> None:
@@ -228,14 +228,15 @@ def _as_given(given: Any) -> Any:
     the boundary saw them (review 3 of PR #8's second follow-up, finding 2)."""
     _admit_input(given)
     if type(given) is dict:
-        return _walk(given, "the block's arguments")
+        return _walk(given, "the block's arguments", shape=_shape(CognitiveInput))
     if type(given) is not CognitiveInput:
         # Apply the agreed outer mapping protocol directly, as the registry does.
         # A class or instance attribute must not decide whether copying is allowed.
-        copied = _walk(given, "the block's arguments", outer=True, preflight=_admit_outer_input)
+        copied = _walk(given, "the block's arguments", outer=True, preflight=_admit_outer_input,
+                       shape=_shape(CognitiveInput))
         _admit_input(copied)
         return copied
-    return _walk(given, "the block's arguments", models=(CognitiveInput, *_NESTED))
+    return _walk(given, "the block's arguments", models=(CognitiveInput, *_NESTED), shape=_shape(CognitiveInput))
 
 
 def _arguments(given: Any) -> Any:

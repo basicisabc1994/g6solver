@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-from .codes import unclaimed
+from .codes import FrozenMap, unclaimed
 from .snapshot import publish, number, snapshot, text
 
 #: Exactly the features passed to MLAcquisitionSelector.predict(...).
@@ -28,6 +28,8 @@ def evaluated_trace_rows(history: Sequence[dict[str, Any]]) -> list[dict[str, fl
         raise ValueError("no observed research episodes")
     result = []
     for index, row in enumerate(history):
+        if type(row) is not FrozenMap:
+            raise TypeError("every episode of a history is a mapping")
         if row.get("measured_utility") is None or not row.get("evaluator_ref"):
             raise ValueError("every exported episode needs externally scored utility and evaluator_ref")
         result.append({name: float(number(row[name], where=f"history[{index}].{name}"))  # a number, as a float

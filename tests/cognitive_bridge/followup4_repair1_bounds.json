@@ -5080,9 +5080,20 @@
   {
     "source": [
       "block.py",
-      "_admit_input",
+      "_shape",
       "comparison",
-      "cls is ClaimInput"
+      "model is CognitiveInput"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "block.py",
+      "_shape",
+      "comparison",
+      "model is ClaimInput"
     ],
     "disposition": "semantic",
     "probes": [],
@@ -5351,6 +5362,17 @@
     "disposition": "semantic",
     "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
     "probes": []
+  },
+  {
+    "source": [
+      "codes.py",
+      "_named.read",
+      "comparison",
+      "type(found) is str"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
   },
   {
     "source": [
@@ -6347,6 +6369,17 @@
       "scalar:surrogate.min_leaf.lower",
       "scalar:number.float.upper"
     ]
+  },
+  {
+    "source": [
+      "engine.py",
+      "check_beliefs",
+      "comparison",
+      "type(h) is not Hypothesis"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
   },
   {
     "source": [
@@ -9939,28 +9972,29 @@
   {
     "source": [
       "mixed_methods.py",
-      "_admit_model",
-      "admission",
-      "_admit_json(given, cap=250000, error='model exceeds 250 kB declarative-data cap')"
+      "",
+      "budget-definition",
+      "MODEL_CAP = ('size', 250000, 'model exceeds 250 kB declarative-data cap')"
     ],
     "disposition": "resource",
-    "reason": "Explicit native-count/length or encoded-size admission call before its operation.",
+    "reason": "The one declaration of the 250 kB model cap; the copy pass measures it as it copies, at every door.",
     "probes": [
+      "size:record:1",
+      "size:block:1",
+      "size:compile:1",
       "model"
     ]
   },
   {
     "source": [
       "mixed_methods.py",
-      "_admit_model",
-      "declared-bound",
-      "cap=250000"
+      "MethodRouter.plan",
+      "comparison",
+      "type(claim) is not ClaimIR"
     ],
-    "disposition": "resource",
-    "reason": "Explicit native-count/length or encoded-size admission call before its operation.",
-    "probes": [
-      "model"
-    ]
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
   },
   {
     "source": [
@@ -10981,6 +11015,17 @@
       "quantitative.py",
       "evaluated_trace_rows",
       "comparison",
+      "type(row) is not FrozenMap"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "quantitative.py",
+      "evaluated_trace_rows",
+      "comparison",
       "row.get('measured_utility') is None"
     ],
     "disposition": "semantic",
@@ -11106,7 +11151,7 @@
       "snapshot.py",
       "_admit_array",
       "comparison",
-      "re.fullmatch('[@=<>!|]?(?:[cbB?hHiIlLqQnNefdPO]|\\\\d*[spw])', buffer.format) is None"
+      "re.fullmatch(f'[@=<>!|]?(?:[{_SCALAR_ITEMS}]|\\\\d*[{_TEXT_ITEMS}])', buffer.format) is None"
     ],
     "disposition": "resource",
     "reason": "The buffer's item format, read before conversion: one native scalar (or one text or bytes item) is one value.",
@@ -11233,6 +11278,39 @@
     "probes": [
       "text-keys:budget"
     ]
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_attributes",
+      "comparison",
+      "type(name) is str"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_attributes",
+      "comparison",
+      "type(member) is types.MemberDescriptorType"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_attributes",
+      "comparison",
+      "name not in mapping"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
   },
   {
     "source": [
@@ -11467,6 +11545,262 @@
   {
     "source": [
       "snapshot.py",
+      "_text_cost",
+      "comparison",
+      "len(item) + 2 > room"
+    ],
+    "disposition": "resource",
+    "reason": "A string that cannot fit a declared size even unescaped is answered by its length, unscanned.",
+    "probes": [
+      "size:record:1",
+      "size:block:1",
+      "size:compile:1",
+      "size:artifact:1",
+      "encoded:'a'"
+    ]
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_text_cost",
+      "comparison",
+      "char in '\"\\\\\\x08\\x0c\\n\\r\\t'"
+    ],
+    "disposition": "resource",
+    "reason": "Exact ASCII escaped size before dumps or encode; counter stops at the cap.",
+    "probes": [
+      "encoded:'\\x00'",
+      "encoded:'\\U0001f600'",
+      "encoded:'\\\\'",
+      "encoded:'\"'",
+      "encoded:'\\n'",
+      "encoded:'a'",
+      "encoded:'\\ud800'",
+      "encoded:all-bmp",
+      "arguments",
+      "model",
+      "prompt:critique",
+      "prompt:claims"
+    ]
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_text_cost",
+      "comparison",
+      "point < 32"
+    ],
+    "disposition": "resource",
+    "reason": "Exact ASCII escaped size before dumps or encode; counter stops at the cap.",
+    "probes": [
+      "encoded:'\\x00'",
+      "encoded:'\\U0001f600'",
+      "encoded:'\\\\'",
+      "encoded:'\"'",
+      "encoded:'\\n'",
+      "encoded:'a'",
+      "encoded:'\\ud800'",
+      "encoded:all-bmp",
+      "arguments",
+      "model",
+      "prompt:critique",
+      "prompt:claims"
+    ]
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_text_cost",
+      "comparison",
+      "127 <= point <= 65535"
+    ],
+    "disposition": "resource",
+    "reason": "Exact ASCII escaped size before dumps or encode; counter stops at the cap.",
+    "probes": [
+      "encoded:'\\x00'",
+      "encoded:'\\U0001f600'",
+      "encoded:'\\\\'",
+      "encoded:'\"'",
+      "encoded:'\\n'",
+      "encoded:'a'",
+      "encoded:'\\ud800'",
+      "encoded:all-bmp",
+      "arguments",
+      "model",
+      "prompt:critique",
+      "prompt:claims"
+    ]
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_text_cost",
+      "comparison",
+      "point > 65535"
+    ],
+    "disposition": "resource",
+    "reason": "Exact ASCII escaped size before dumps or encode; counter stops at the cap.",
+    "probes": [
+      "encoded:'\\x00'",
+      "encoded:'\\U0001f600'",
+      "encoded:'\\\\'",
+      "encoded:'\"'",
+      "encoded:'\\n'",
+      "encoded:'a'",
+      "encoded:'\\ud800'",
+      "encoded:all-bmp",
+      "arguments",
+      "model",
+      "prompt:critique",
+      "prompt:claims"
+    ]
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_leaf_cost",
+      "comparison",
+      "item is None"
+    ],
+    "disposition": "resource",
+    "reason": "Exact ASCII escaped size before dumps or encode; counter stops at the cap.",
+    "probes": [
+      "encoded:'\\x00'",
+      "encoded:'\\U0001f600'",
+      "encoded:'\\\\'",
+      "encoded:'\"'",
+      "encoded:'\\n'",
+      "encoded:'a'",
+      "encoded:'\\ud800'",
+      "encoded:all-bmp",
+      "arguments",
+      "model",
+      "prompt:critique",
+      "prompt:claims"
+    ]
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_leaf_cost",
+      "comparison",
+      "kind is bool"
+    ],
+    "disposition": "resource",
+    "reason": "Exact ASCII escaped size before dumps or encode; counter stops at the cap.",
+    "probes": [
+      "encoded:'\\x00'",
+      "encoded:'\\U0001f600'",
+      "encoded:'\\\\'",
+      "encoded:'\"'",
+      "encoded:'\\n'",
+      "encoded:'a'",
+      "encoded:'\\ud800'",
+      "encoded:all-bmp",
+      "arguments",
+      "model",
+      "prompt:critique",
+      "prompt:claims"
+    ]
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_leaf_cost",
+      "comparison",
+      "kind is int"
+    ],
+    "disposition": "resource",
+    "reason": "Exact ASCII escaped size before dumps or encode; counter stops at the cap.",
+    "probes": [
+      "encoded:'\\x00'",
+      "encoded:'\\U0001f600'",
+      "encoded:'\\\\'",
+      "encoded:'\"'",
+      "encoded:'\\n'",
+      "encoded:'a'",
+      "encoded:'\\ud800'",
+      "encoded:all-bmp",
+      "arguments",
+      "model",
+      "prompt:critique",
+      "prompt:claims"
+    ]
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_leaf_cost",
+      "comparison",
+      "kind is float"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_charge",
+      "comparison",
+      "meter[0] > meter[1]"
+    ],
+    "disposition": "resource",
+    "reason": "A declared size, measured by the copy pass as it copies, in the canonical encoder's exact bytes; refused the moment it is passed.",
+    "probes": [
+      "size:record:1",
+      "size:block:1",
+      "size:compile:1",
+      "size:artifact:1"
+    ]
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_inside",
+      "comparison",
+      "shape is None"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_inside",
+      "comparison",
+      "shape[0] == 'each'"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_inside",
+      "comparison",
+      "shape[0] == 'field'"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_inside",
+      "comparison",
+      "key is not None"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
       "_admit_held",
       "comparison",
       "entry is not None"
@@ -11684,7 +12018,7 @@
       "snapshot.py",
       "_walk",
       "comparison",
-      "taken is None"
+      "kind is list"
     ],
     "disposition": "semantic",
     "probes": [],
@@ -11695,16 +12029,76 @@
       "snapshot.py",
       "_walk",
       "comparison",
-      "count > MAX_ITEMS - budget[0]"
+      "(2 * native if mapping else native) > MAX_ITEMS - budget[0]"
     ],
     "disposition": "resource",
-    "reason": "One bounded raw walker before child reads; known container lower bounds use native length first. Depth paths retain the existing depth inventory.",
+    "reason": "The native length (list, tuple or dict storage) against the visit budget, before the take and again on the take.",
     "probes": [
       "walk:list",
       "walk:mapping",
-      "walk:text",
-      "walk:depth"
+      "length:list",
+      "length:dict"
     ]
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_walk",
+      "comparison",
+      "(2 * len(taken) if mapping else len(taken)) > MAX_ITEMS - budget[0]"
+    ],
+    "disposition": "resource",
+    "reason": "The native length (list, tuple or dict storage) against the visit budget, before the take and again on the take.",
+    "probes": [
+      "walk:list",
+      "walk:mapping",
+      "length:list",
+      "length:dict"
+    ]
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_walk",
+      "comparison",
+      "shape is not None"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_walk",
+      "comparison",
+      "shape[0] == 'size'"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_walk",
+      "comparison",
+      "kind is str"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_walk",
+      "comparison",
+      "taken is None"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
   },
   {
     "source": [
@@ -11927,6 +12321,17 @@
       "snapshot.py",
       "_walk",
       "comparison",
+      "declared[3] is not None"
+    ],
+    "disposition": "semantic",
+    "probes": [],
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_walk",
+      "comparison",
       "kinds[name][0] == 'code'"
     ],
     "disposition": "semantic",
@@ -11961,126 +12366,6 @@
       "_encoded_size.charge",
       "comparison",
       "size > cap"
-    ],
-    "disposition": "resource",
-    "reason": "Exact ASCII escaped size before dumps or encode; counter stops at the cap.",
-    "probes": [
-      "encoded:'\\x00'",
-      "encoded:'\\U0001f600'",
-      "encoded:'\\\\'",
-      "encoded:'\"'",
-      "encoded:'\\n'",
-      "encoded:'a'",
-      "encoded:'\\ud800'",
-      "encoded:all-bmp",
-      "arguments",
-      "model",
-      "prompt:critique",
-      "prompt:claims"
-    ]
-  },
-  {
-    "source": [
-      "snapshot.py",
-      "_encoded_size.string",
-      "comparison",
-      "len(item) > cap - size"
-    ],
-    "disposition": "resource",
-    "reason": "Exact ASCII escaped size before dumps or encode; counter stops at the cap.",
-    "probes": [
-      "encoded:'\\x00'",
-      "encoded:'\\U0001f600'",
-      "encoded:'\\\\'",
-      "encoded:'\"'",
-      "encoded:'\\n'",
-      "encoded:'a'",
-      "encoded:'\\ud800'",
-      "encoded:all-bmp",
-      "arguments",
-      "model",
-      "prompt:critique",
-      "prompt:claims"
-    ]
-  },
-  {
-    "source": [
-      "snapshot.py",
-      "_encoded_size.string",
-      "comparison",
-      "char in '\"\\\\\\x08\\x0c\\n\\r\\t'"
-    ],
-    "disposition": "resource",
-    "reason": "Exact ASCII escaped size before dumps or encode; counter stops at the cap.",
-    "probes": [
-      "encoded:'\\x00'",
-      "encoded:'\\U0001f600'",
-      "encoded:'\\\\'",
-      "encoded:'\"'",
-      "encoded:'\\n'",
-      "encoded:'a'",
-      "encoded:'\\ud800'",
-      "encoded:all-bmp",
-      "arguments",
-      "model",
-      "prompt:critique",
-      "prompt:claims"
-    ]
-  },
-  {
-    "source": [
-      "snapshot.py",
-      "_encoded_size.string",
-      "comparison",
-      "point < 32"
-    ],
-    "disposition": "resource",
-    "reason": "Exact ASCII escaped size before dumps or encode; counter stops at the cap.",
-    "probes": [
-      "encoded:'\\x00'",
-      "encoded:'\\U0001f600'",
-      "encoded:'\\\\'",
-      "encoded:'\"'",
-      "encoded:'\\n'",
-      "encoded:'a'",
-      "encoded:'\\ud800'",
-      "encoded:all-bmp",
-      "arguments",
-      "model",
-      "prompt:critique",
-      "prompt:claims"
-    ]
-  },
-  {
-    "source": [
-      "snapshot.py",
-      "_encoded_size.string",
-      "comparison",
-      "127 <= point <= 65535"
-    ],
-    "disposition": "resource",
-    "reason": "Exact ASCII escaped size before dumps or encode; counter stops at the cap.",
-    "probes": [
-      "encoded:'\\x00'",
-      "encoded:'\\U0001f600'",
-      "encoded:'\\\\'",
-      "encoded:'\"'",
-      "encoded:'\\n'",
-      "encoded:'a'",
-      "encoded:'\\ud800'",
-      "encoded:all-bmp",
-      "arguments",
-      "model",
-      "prompt:critique",
-      "prompt:claims"
-    ]
-  },
-  {
-    "source": [
-      "snapshot.py",
-      "_encoded_size.string",
-      "comparison",
-      "point > 65535"
     ],
     "disposition": "resource",
     "reason": "Exact ASCII escaped size before dumps or encode; counter stops at the cap.",
@@ -12153,78 +12438,6 @@
       "_encoded_size.visit",
       "comparison",
       "kind is list"
-    ],
-    "disposition": "resource",
-    "reason": "Exact ASCII escaped size before dumps or encode; counter stops at the cap.",
-    "probes": [
-      "encoded:'\\x00'",
-      "encoded:'\\U0001f600'",
-      "encoded:'\\\\'",
-      "encoded:'\"'",
-      "encoded:'\\n'",
-      "encoded:'a'",
-      "encoded:'\\ud800'",
-      "encoded:all-bmp",
-      "arguments",
-      "model",
-      "prompt:critique",
-      "prompt:claims"
-    ]
-  },
-  {
-    "source": [
-      "snapshot.py",
-      "_encoded_size.visit",
-      "comparison",
-      "item is None"
-    ],
-    "disposition": "resource",
-    "reason": "Exact ASCII escaped size before dumps or encode; counter stops at the cap.",
-    "probes": [
-      "encoded:'\\x00'",
-      "encoded:'\\U0001f600'",
-      "encoded:'\\\\'",
-      "encoded:'\"'",
-      "encoded:'\\n'",
-      "encoded:'a'",
-      "encoded:'\\ud800'",
-      "encoded:all-bmp",
-      "arguments",
-      "model",
-      "prompt:critique",
-      "prompt:claims"
-    ]
-  },
-  {
-    "source": [
-      "snapshot.py",
-      "_encoded_size.visit",
-      "comparison",
-      "kind is bool"
-    ],
-    "disposition": "resource",
-    "reason": "Exact ASCII escaped size before dumps or encode; counter stops at the cap.",
-    "probes": [
-      "encoded:'\\x00'",
-      "encoded:'\\U0001f600'",
-      "encoded:'\\\\'",
-      "encoded:'\"'",
-      "encoded:'\\n'",
-      "encoded:'a'",
-      "encoded:'\\ud800'",
-      "encoded:all-bmp",
-      "arguments",
-      "model",
-      "prompt:critique",
-      "prompt:claims"
-    ]
-  },
-  {
-    "source": [
-      "snapshot.py",
-      "_encoded_size.visit",
-      "comparison",
-      "kind is int"
     ],
     "disposition": "resource",
     "reason": "Exact ASCII escaped size before dumps or encode; counter stops at the cap.",
@@ -12573,37 +12786,11 @@
       "snapshot.py",
       "plain",
       "comparison",
-      "cap is not None"
+      "cap is None"
     ],
     "disposition": "semantic",
     "probes": [],
     "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit."
-  },
-  {
-    "source": [
-      "snapshot.py",
-      "plain",
-      "admission",
-      "_admit_json(value, cap=cap, error=error)"
-    ],
-    "disposition": "resource",
-    "reason": "The declared encoded-size cap of what the value fills (an artifact) is admitted exactly before the round trip builds any output.",
-    "probes": [
-      "copier:CognitiveAssuranceOrchestrator.execution_artifact:run_result:an oversized run"
-    ]
-  },
-  {
-    "source": [
-      "snapshot.py",
-      "plain",
-      "declared-bound",
-      "cap=cap"
-    ],
-    "disposition": "resource",
-    "reason": "The artifact's declared byte cap is handed to the round trip and to the encoder, which admit the exact encoded size before any output.",
-    "probes": [
-      "copier:CognitiveAssuranceOrchestrator.execution_artifact:run_result:an oversized run"
-    ]
   },
   {
     "source": [

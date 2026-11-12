@@ -311,7 +311,7 @@ def _admitting_calls():
             continue  # the copiers themselves, handing their own bound on
         for call in [n for n in ast.walk(node) if isinstance(n, ast.Call)]:
             for keyword in call.keywords:
-                if keyword.arg in ("bound", "cap") and call.args and isinstance(call.args[0], ast.Name):
+                if keyword.arg in ("bound", "cap", "shape") and call.args and isinstance(call.args[0], ast.Name):
                     yield name, call.args[0].id, keyword.arg, ast.unparse(keyword.value)
 
 

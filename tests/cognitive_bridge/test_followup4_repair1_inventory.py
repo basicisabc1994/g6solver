@@ -139,6 +139,12 @@ def runtime_cases():
     from tests.cognitive_bridge import test_followup4_repair3_inventory as roots
     cases['tally:detachment'] = lambda mp: [roots.test_one_tally_counts_a_declared_type_across_the_whole_detachment(make) for make in (
         lambda: {f'h{i}': roots.Hypothesis(f'h{i}', 's', .5) for i in range(33)},)]
+    # Follow-up 5: a declared size is measured by the copy pass; a length is read natively before the take.
+    from tests.cognitive_bridge import test_followup5_inventory as single
+    for door in ('record', 'block', 'compile', 'artifact'):
+        cases[f'size:{door}:1'] = lambda mp, door=door: single.test_a_declared_size_is_exact_at_every_door(door, 1, mp)
+    for kind in ('list', 'dict'):
+        cases[f'length:{kind}'] = lambda mp, kind=kind: single.test_a_collection_is_refused_by_its_native_length_before_it_is_taken(kind)
     cases['array:format'] = lambda mp: roots.test_a_buffer_format_that_is_not_one_native_scalar_is_refused('T{<i:x:<d:y:}', mp)
     return cases
 

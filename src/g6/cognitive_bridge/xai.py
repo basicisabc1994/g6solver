@@ -282,8 +282,8 @@ def distill_blackbox(blackbox: Any, X_train: Sequence[Sequence[float]],
     try:
         from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor  # optional g6[ml] dependency
     except ImportError as exc:
-        raise ImportError("scikit-learn is not installed: pip install 'g6[ml] @ "
-                          "git+https://github.com/basicisabc1994/g6solver'") from exc
+        raise ImportError("scikit-learn is not installed: "
+                          "pip install 'g6[ml] @ git+https://github.com/basicisabc1994/g6solver'") from exc
 
     observed_train = returned(blackbox.predict(fresh(train)), _predictions, len(train), task)
     observed_holdout = returned(blackbox.predict(fresh(holdout)), _predictions, len(holdout), task)

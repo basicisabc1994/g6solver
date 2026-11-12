@@ -154,23 +154,17 @@ def _admit_claim(claim: ClaimIR | dict) -> None:
     _admit_length(held.get("id"), 100, "claim ID/statement length invalid", minimum=1)
     _admit_length(held.get("statement"), 3000, "claim ID/statement length invalid", minimum=1)
     _admit_length(held.get("evidence_needs"), 5, "claim requires 1–5 evidence needs", minimum=1)
-    _admit_models(held.get("models"))  # every model it carries, needed or not: one rule, as a compilation's
 
 
-def _admit_model(given: Any) -> None:
-    _admit_json(given, cap=250_000, error="model exceeds 250 kB declarative-data cap")
+#: The one model cap, declared once: a declarative model is at most 250 kB as the canonical encoder writes it. The
+#: copy pass measures it as it copies (``snapshot._walk``); nothing walks a model to admit it. ``MODELS`` is every
+#: model a mapping of them holds (a claim's, a compilation's, needed or not), ``CLAIM_SHAPE`` where they stand in a
+#: claim, as a record or as the block's plain JSON.
+MODEL_CAP = ("size", 250_000, "model exceeds 250 kB declarative-data cap")
+MODELS = ("each", MODEL_CAP)
+CLAIM_SHAPE = ("field", {"models": MODELS})
 
-
-def _admit_models(models: Mapping[str, Mapping[str, Any]]) -> None:
-    """Every declarative model a mapping of them holds, under the one model cap, before the mapping is copied."""
-    if _is_type(type(models), (dict, FrozenMap)):
-        _text_keys(models, "models")
-        for given in dict.values(models):
-            if _is_type(type(given), (dict, FrozenMap)):
-                _admit_model(given)
-
-
-bounded(ClaimIR, most=CLAIM_CAP, admit=_admit_claim)
+bounded(ClaimIR, most=CLAIM_CAP, admit=_admit_claim, shape=CLAIM_SHAPE)
 
 
 class MethodRouter:
@@ -182,6 +176,8 @@ class MethodRouter:
     def plan(self, claims: Sequence[ClaimIR]) -> MethodPlan:
         _admit_claims(claims)
         claims = snapshot(claims, where="claims", bound=_admit_claims)
+        if not _is_type(type(claims), (tuple,)) or any(type(claim) is not ClaimIR for claim in claims):
+            raise TypeError("claims are a list of ClaimIR records")
         seen: set[str] = set()
         steps: list[MethodStep] = []
         missing: list[dict[str, str]] = []

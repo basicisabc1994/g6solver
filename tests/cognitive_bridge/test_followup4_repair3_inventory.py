@@ -237,9 +237,10 @@ ATTRIBUTE_READS = {
     ("block.py", "CognitiveBridgeBlock._held", "getattr(self, '_screened', None)"): "the block's own attribute",
     ("codes.py", "_type_mro", "type.__dict__"): _OWN_TYPE,
     ("codes.py", "_has_member", "type.__dict__"): _OWN_TYPE,
-    ("codes.py", "_named", "type.__dict__"): _OWN_TYPE,
+    ("codes.py", "_named.read", "type.__dict__"): _OWN_TYPE,
     ("snapshot.py", "_admit_array", "type.__dict__"): _OWN_TYPE,
     ("snapshot.py", "_walk", "type.__dict__"): _OWN_TYPE,
+    ("snapshot.py", "_attributes", "type.__dict__"): _OWN_TYPE,
     ("snapshot.py", "_attributes", "object.__getattribute__(value, '__dict__')"): "the one reader of an instance's "
         "attribute mapping: an exact dict, its keys read as text by native iteration, before any lookup",
     ("snapshot.py", "_kinds", "cls.__dict__"): "a record class's own namespace (the bridge's class)",
@@ -380,12 +381,11 @@ def test_a_collection_is_counted_and_copied_from_one_take_of_it(monkeypatch):
     assert len(snapshot.snapshot(beliefs, bound=bridge.engine._admit_hypotheses)) == 32 and state["done"]
 
 
-def test_a_declared_bound_spends_the_copiers_budget(monkeypatch):
-    """What a bound reads is charged to the walk that runs it: one model named by many keys, and one claim's models."""
+def test_a_declared_size_is_measured_by_the_copy_pass_under_its_one_budget(monkeypatch):
+    """Follow-up 5 replaced a bound that read each model again: the copy pass measures a declared size as it copies,
+    so one model named by many keys, or one claim's models many times over, is refused within the one budget."""
     monkeypatch.setattr(snapshot, "MAX_ITEMS", 2000)
     model = {"formula": "A", "premises": ["A"] * 300}
-    with pytest.raises(NotPlainData, match="size exceeds"):
-        snapshot.snapshot({f"v{i}": model for i in range(50)}, bound=bridge.mixed_methods._admit_models)
     claim = ClaimIR("c", "s", ("formal",), {name: model for name in ("formal", "graph", "causal", "predictive")})
     reaches = [0]
     real = snapshot._walk
@@ -395,9 +395,11 @@ def test_a_declared_bound_spends_the_copiers_budget(monkeypatch):
         return real(*args, **kwargs)
 
     monkeypatch.setattr(snapshot, "_walk", counting)
-    with pytest.raises(NotPlainData, match="size exceeds"):
-        snapshot.snapshot([claim] * 20)
-    assert reaches[0] <= 3 * snapshot.MAX_ITEMS
+    for value, shape in (({f"v{i}": model for i in range(50)}, bridge.mixed_methods.MODELS), ([claim] * 20, None)):
+        reaches[0] = 0
+        with pytest.raises(NotPlainData, match="size exceeds"):
+            snapshot.snapshot(value, shape=shape)
+        assert reaches[0] <= snapshot.MAX_ITEMS + 1
 
 
 def test_bytes_are_hashed_only_in_a_field_a_record_declares_as_bytes(monkeypatch):
