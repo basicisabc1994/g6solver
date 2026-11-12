@@ -74,8 +74,17 @@ def runner_tick(loop: ShadowLoop) -> dict:
         return loop.fault(exc)
 
 
+@pytest.fixture(autouse=True)
+def _process_record(monkeypatch):
+    """Whatever record of folders and sends a test's restart sets aside (``restarted``) is this process's again after it."""
+    monkeypatch.setattr(loop_module, "_RECORD", loop_module._RECORD)
+
+
 def restarted(loop: ShadowLoop, domain, proposer=None) -> ShadowLoop:
-    """A new handle on the same folder, as a runner started again makes."""
+    """A new handle on the same folder, as a runner started again makes: a new process, so it has none of this process's
+    record of the folder or of its sends (``loop._RECORD``, which the refusals follow-up made the process's), and only
+    what the folder's files hold. Each test module that restarts restores the record after it (``_process_record``)."""
+    loop_module._RECORD = loop_module._Record()
     return ShadowLoop(domain, loop.root, SETTINGS, proposer=proposer or domains.proposes({"prompt": domains.WORKING}),
                       now=lambda: NOW, clock=domains.Clock())
 

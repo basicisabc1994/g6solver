@@ -4,11 +4,13 @@ network."""
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
 from g6.core.llm import FakeLLM, LLMError
 from g6.metaharness import loop
+from g6.metaharness.runner import Runner
 from g6.self_maintenance import envelope
 from g6.self_maintenance.usage import MODEL_REFUSED
 
@@ -33,6 +35,47 @@ def test_a_lost_cycle_that_stops_the_folder_stops_it_on_the_record_it_found_with
     assert found.cannot_record, "the stop was not kept on the record lost_cycle found"
     assert len(lookups) == 1, f"the stop looked the folder up again: {len(lookups)} lookups"
     assert (tmp_path / envelope.STOP_FILE).exists()
+
+
+def test_a_safety_stop_the_fault_fallback_keeps_stands_in_this_process_and_after_a_restart(tmp_path, monkeypatch):
+    """Review frzfu3, finding 3, on the joined loop: a tick met a classifier's refusal, its settlement failed, and the
+    runner's fault could not reach the log, so ``lost_cycle`` is the last fallback. The stop it decides on holds every
+    handle of the folder in this process (the refusals follow-up made it the process's, ``_Folder``), and a restart, a
+    process with no record of the folder, reads the pause or the STOP file the fallback left on disk."""
+    from tests.metaharness import test_freeze_holds_review2 as rig
+
+    def refuse(system, user):
+        raise LLMError(f"{MODEL_REFUSED}: permission denied")
+
+    shadow, domain = rig.enrolled(tmp_path, proposer=FakeLLM(refuse))
+    refresh = shadow.mh.refresh
+
+    def failed_settlement(*args, **kwargs):
+        raise OSError("the accounting store is temporarily unavailable")
+
+    def unavailable_workspace():
+        if shadow._met is not None:
+            raise PermissionError("the workspace ledger is temporarily unavailable")
+        return refresh()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(shadow.meter, "settle", failed_settlement)
+        patch.setattr(shadow.mh, "refresh", unavailable_workspace)
+        with pytest.raises(OSError):
+            shadow.tick()
+        reply = Runner._fault(SimpleNamespace(loop=shadow), OSError("the accounting store is temporarily unavailable"))
+    assert shadow._met[1] is not None and reply["warning_card"]["code"] == loop.CANNOT_RECORD
+
+    def handle():
+        return loop.ShadowLoop(domain, shadow.root, rig.SETTINGS, now=lambda: rig.NOW, clock=rig.domains.Clock(),
+                               proposer=rig.domains.proposes({"prompt": rig.domains.WORKING}))
+
+    here = handle()._refused()
+    assert here is not None and here["warning_card"]["code"] == loop.CANNOT_RECORD
+    assert "a classifier or a permission stopped a request" in here["message"]
+    monkeypatch.setattr(loop, "_RECORD", loop._Record())     # a restart: this process's record of the folder is gone
+    restarted = handle()._refused()
+    assert restarted is not None and restarted["warning_card"]["code"] in (loop.PAUSED, envelope.STOPPED), restarted
 
 
 def test_a_tick_whose_close_fails_still_keeps_the_refusal_it_latched(tmp_path, monkeypatch):

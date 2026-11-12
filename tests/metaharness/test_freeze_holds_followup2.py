@@ -58,6 +58,7 @@ fu3 = _load("test_freeze_holds_followup_review3.py", "frzfu2a_review3")
 holds = _load("test_freeze_holds.py", "frzfu2a_holds")
 fu2, enrolled, NOW = fu3.fu2, fu3.enrolled, fu3.NOW
 _NeverSeen = fu3._NeverSeen
+_process_record = fu2._process_record      # each restart's new process record is set aside after the test
 WINDOWS = pytest.mark.skipif(os.name != "nt", reason="names the platform rereads, and junctions, are Windows's")
 
 

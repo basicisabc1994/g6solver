@@ -54,6 +54,7 @@ def _load(path: Path, name: str):
 fu2 = _load(Path(__file__).with_name("test_freeze_holds_followup_review2.py"), "frzfu3_review2")
 rig, domains, enrolled, SETTINGS, NOW, restarted = fu2.rig, fu2.domains, fu2.enrolled, fu2.SETTINGS, fu2.NOW, fu2.restarted
 _NeverSeen = fu2._NeverSeen
+_process_record = fu2._process_record      # each restart's new process record is set aside after the test
 WINDOWS = pytest.mark.skipif(os.name != "nt", reason="a junction is Windows's")
 
 
