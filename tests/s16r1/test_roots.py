@@ -94,6 +94,12 @@ SOURCE_SITES = {
     'g6.core.consent_declarations.Declaration.sources',
     'g6.core.consent_declarations.model_sources',
     'g6.harness.completion_loop.ToolSession.run',
+    # the consent merge into the 0.3 line: each owned host launch takes the check (planted in
+    # tests/metaharness/test_consent_watched_hosts.py)
+    'g6.harness.completion_loop.ToolSession._launch',
+    'g6.self_maintenance.usage._complete_host',
+    'g6.self_maintenance.usage.WatchedClaude._launch',
+    'g6.core.consent_callers.host_admission',
     'g6.harness.completion_loop._advance',
     'g6.harness.completion_loop._advance_inner',
     'g6.harness.completion_loop._advance_inner.check',

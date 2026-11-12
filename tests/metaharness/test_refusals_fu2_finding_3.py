@@ -1,4 +1,4 @@
-﻿"""An interruption after settling a call must still release its admitted sends."""
+"""An interruption after settling a call must still release its admitted sends."""
 import pytest
 from g6.core.llm import FakeLLM
 from g6.metaharness.loop import _Counted, _Requests

@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 import urllib.request
 
 from g6.core import host_models, llm
-from g6.core.cloud_consent import REQUIRED, _refusal, admission, current_sources, sha256
+from g6.core.cloud_consent import REQUIRED, _refusal, admission, admitted, current_sources, sha256
 from g6.core.consent_declarations import model_sources
 from g6.core.ledger import digest
 
@@ -47,7 +47,9 @@ CALLER_KINDS = {
     'g6.harness.verification_proposer._Limits': 'wrapper:metered',
     'g6.harness.verification_proposer.StudyCaller': 'wrapper:_caller',
     'g6.harness.completion_loop.ToolSession': 'cloud-tools',
+    'g6.self_maintenance.usage._Watched': 'cloud-host',
     'g6.self_maintenance.usage.WatchedClaude': 'cloud-host',
+    'g6.self_maintenance.usage.WatchedCodex': 'cloud-host',
     'g6.grounding.judges.nli.LocalNLICaller': 'process',
     'g6.metaharness.lora.AdapterCaller': 'process',
     'g6.core.executor_contracts.ModelProvider': 'protocol',
@@ -308,12 +310,52 @@ def wrapper_slot(caller: object) -> str | None:
     return kind.partition(':')[2] if kind.startswith('wrapper:') else None
 
 
+_WATCHED_HOSTS = (('WatchedClaude', 'anthropic:claude_code'), ('WatchedCodex', 'openai:codex'))
+
+
+def watched_host(caller: object) -> str:
+    """The provider of a host the loop watches, or ``''``: ``usage.WatchedClaude`` or ``WatchedCodex``, or an instance the
+    construction hook of ``g6.self_maintenance.usage`` made of a native host, whose class is a subclass of one of them.
+
+    Its send methods are final there (``usage._check_seam``), and each launch of its program takes the sharing check
+    itself: ``usage._complete_host`` (``host_admission``) or a session's launch step (``session_admission``). The classes
+    are looked up in loaded modules only, as ``CALLER_KINDS`` is read.
+    """
+    usage = sys.modules.get('g6.self_maintenance.usage')
+    for name, provider in _WATCHED_HOSTS:
+        kind = getattr(usage, name, None) if usage is not None else None
+        if isinstance(kind, type) and isinstance(caller, kind):
+            return provider
+    return ''
+
+
+def host_admission(caller: object, system: str, user: str) -> dict:
+    """The terms of the sharing check of one owned host launch (``usage._complete_host``), for
+    ``cloud_consent.admission``: its recipient (a host no rule here recognises is ``cloud:unknown``, which no grant
+    covers), the model inputs, and the request's digest."""
+    to = destination(caller)
+    return {'provider': to.provider, 'sources': model_sources(),
+            'payload_sha256': digest({'system': system, 'user': user}), 'local': to.local}
+
+
+def session_admission(caller: object, stdin: str) -> dict:
+    """The terms of the sharing check of a host session's launch step (``ToolSession._launch``, or the owned
+    ``usage.WatchedClaude._launch`` that replaces it): the sources are only those its session's admitted ``run`` declared
+    (``request_sources``), and it sends only inside that run's admitted send: anywhere else its recipient is
+    ``cloud:unknown``, which no grant covers."""
+    to = destination(caller)
+    provider = to.provider if to.local or admitted(to.provider) else 'cloud:unknown'
+    return {'provider': provider, 'sources': (), 'payload_sha256': sha256(stdin), 'local': to.local}
+
+
 def backend_supported(caller: object) -> bool:
     if isinstance(caller, CallerWrapper):
         return True
     methods = ('complete', 'complete_with_images', '_chat', '_create', '_command', '_get_client')
     if any(name in getattr(caller, '__dict__', {}) for name in methods):
         return False
+    if watched_host(caller):
+        return True
     for native in (llm.OllamaCaller, llm.OpenAICompatibleCaller, llm.AnthropicCaller, _CLAUDE, _CODEX):
         if isinstance(caller, native):
             for name in methods:
@@ -330,6 +372,8 @@ def destination(caller: object, _seen: frozenset[int] = frozenset()) -> Destinat
         return Destination('cloud:unknown')
     if not backend_supported(caller):
         return Destination('cloud:unknown')
+    if watched_host(caller):
+        return Destination(watched_host(caller))
     slot = wrapper_slot(caller)
     if slot:
         inner = getattr(caller, slot)
@@ -414,6 +458,8 @@ def guard(caller, _seen: frozenset[int] = frozenset()):
         return caller
     if not backend_supported(caller):
         return _Unknown(caller)
+    if watched_host(caller):
+        return caller          # each launch takes the check itself; its class and send methods are final
     if isinstance(caller, _Consent):
         return caller if type(caller).complete is _Consent.complete else _Unknown(caller)
     slot = wrapper_slot(caller)

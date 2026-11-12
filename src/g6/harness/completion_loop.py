@@ -377,7 +377,7 @@ class ToolSession(consent.ConsentClaude):
         refs = cloud.boundary_sources((cloud.Source.text('model_inputs', 'scout-request', prompt),
                                        cloud.Source.text('agent_environment', 'scout-environment', '')),
                                       directories=(cwd, where))
-        with cloud.admission("anthropic:claude_code", refs, cloud.sha256(prompt)):
+        with cloud.admission("anthropic:claude_code", refs, cloud.sha256(prompt)), cloud.request_sources(refs):
             program = self.locate()
             with host_models._folders() as (_, files):
                 (files / "no_mcp_servers.json").write_text(host_models.NO_SERVERS, encoding="utf-8")
@@ -393,10 +393,12 @@ class ToolSession(consent.ConsentClaude):
 
     def _launch(self, argv: list[str], stdin: str, cwd: Path, files: Path, env: dict[str, str],
                 seconds: float) -> str:
-        """Launch and read the answer in one scope, before the watched launch releases its admitted send."""
-        _start_model_call()
-        code, printed, errors = host_models._run(argv, stdin, cwd, files, env, seconds, self.program.name)
-        return self._reply(code, printed, errors, files, (stdin,))
+        """Launch and read the answer in one scope, before the watched launch releases its admitted send. The sharing
+        check holds across it, with the sources ``run`` declared (``consent.session_admission``)."""
+        with cloud.admission(**consent.session_admission(self, stdin)):
+            _start_model_call()
+            code, printed, errors = host_models._run(argv, stdin, cwd, files, env, seconds, self.program.name)
+            return self._reply(code, printed, errors, files, (stdin,))
 
 
 def scout_host() -> Host | None:

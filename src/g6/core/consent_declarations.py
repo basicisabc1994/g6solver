@@ -77,7 +77,12 @@ TOOLS = {
     **{name: contract('client_request', 'source:missions') for name in (
         'g6_mission_clarify', 'g6_mission_confirm', 'g6_mission_status', 'g6_mission_certificate')},
     **{name: contract('client_request', 'source:improvement') for name in (
-        'g6_improve_start', 'g6_improve_stop', 'g6_improve_status')},
+        'g6_improve_start', 'g6_improve_stop', 'g6_improve_status', 'g6_improve_enrol', 'g6_improve_resume',
+        'g6_improve_demote')},
+    # Both providers' quota windows, read from the person's own sign-ins: account data of this host.
+    'g6_allowances': contract('client_request', 'source:host_configuration'),
+    # Repository evidence, a retained review job's differences and the retained behaviour questions of the task.
+    'g6_confirm_behaviour': contract('client_request', 'client_repository', 'source:jobs', 'source:completion_history'),
     **{name: contract('client_request', 'source:workflows') for name in (
         'metaharness_start', 'metaharness_confirm', 'metaharness_propose_code', 'metaharness_evaluate_start',
         'metaharness_run', 'metaharness_inspect', 'metaharness_propose', 'metaharness_evaluate',
@@ -117,6 +122,11 @@ TOOL_ARGUMENTS = {
     'g6_improve_start': _arguments(pointer='folder'),
     'g6_improve_stop': _arguments('reason', 'folder'),
     'g6_improve_status': _arguments(pointer='folder'),
+    'g6_improve_enrol': _arguments(pointer='folder'),
+    'g6_improve_resume': _arguments(pointer='folder'),
+    'g6_improve_demote': _arguments('generation', 'folder'),
+    'g6_allowances': _arguments('useful_parallel_work'),
+    'g6_confirm_behaviour': _arguments('task candidates template_instances', 'repo review_job'),
     'metaharness_start': _arguments(pointer='specification_json'),
     'metaharness_confirm': _arguments('workflow_digest', 'workflow'),
     'metaharness_propose_code': _arguments('hypothesis files_json', 'workflow'),
@@ -166,6 +176,7 @@ MODELS = {name: MODEL_INPUTS for name in (
     'g6.metaharness.measurement.TraceCaller', 'g6.metaharness.loop._Counted',
     'g6.harness.verification_proposer._Limits', 'g6.harness.verification_proposer.StudyCaller',
     'g6.harness.completion_loop.ToolSession', 'g6.self_maintenance.usage.WatchedClaude',
+    'g6.self_maintenance.usage._Watched', 'g6.self_maintenance.usage.WatchedCodex',
     'g6.grounding.judges.nli.LocalNLICaller', 'g6.metaharness.lora.AdapterCaller',
 )}
 

@@ -95,7 +95,8 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
-from g6.core import component_process, host_models
+from g6.core import cloud_consent, component_process, host_models
+from g6.core.consent_callers import ConsentClaude, ConsentCodex, _Consent, host_admission, session_admission
 from g6.core.llm import RATE_LIMITED, AnthropicCaller, LLMError, OpenAICompatibleCaller
 from g6.core.outside import clean_environment, find_program
 from g6.core.process_tree import ProcessTreeError
@@ -1123,9 +1124,9 @@ class _Watched:
         object.__setattr__(self, name, value)
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
         if cls.__module__ != __name__:
-            _check_seam(cls)
+            _check_seam(cls)                      # first: a replaced send method is refused as this module's own case
+        super().__init_subclass__(**kwargs)
 
     @contextmanager
     def _invocation(self) -> Iterator[None]:
@@ -1166,22 +1167,24 @@ def _complete_host(caller: Any, system: str, user: str, *, max_tokens: int = hos
         argv, stdin, owned = _sending(caller, argv, stdin, files)
         try:
             _check_observation(argv, provider, files)
-            _note_launch(owned)
-            try:
-                code, printed, errors = host_models._run(argv, stdin, work, files, env, seconds, name)
-            except BaseException as failed:
+            # the sharing check of every owned launch: after the loop's own bar, before the program starts
+            with cloud_consent.admission(**host_admission(caller, system, user)):
+                _note_launch(owned)
                 try:
-                    _observe_reply(provider, None, "", owned, (system, user, stdin))
-                finally:
-                    raise failed
-            _observe_reply(provider, code, printed, owned, (system, user, stdin))
-            try:
-                return reply(caller, code, printed, errors, files, (system, user, stdin))
-            except BaseException as failed:
+                    code, printed, errors = host_models._run(argv, stdin, work, files, env, seconds, name)
+                except BaseException as failed:
+                    try:
+                        _observe_reply(provider, None, "", owned, (system, user, stdin))
+                    finally:
+                        raise failed
+                _observe_reply(provider, code, printed, owned, (system, user, stdin))
                 try:
-                    _observe_reply(provider, None, "", owned, (system, user, stdin))
-                finally:
-                    raise failed
+                    return reply(caller, code, printed, errors, files, (system, user, stdin))
+                except BaseException as failed:
+                    try:
+                        _observe_reply(provider, None, "", owned, (system, user, stdin))
+                    finally:
+                        raise failed
         finally:
             _released((owned,))
 
@@ -1302,7 +1305,7 @@ def _observe_reply(provider: str, code: int | None, printed: str, files: Any, hi
         raise LLMError(said)
 
 
-class WatchedClaude(_Watched, host_models.ClaudeCodeCaller):
+class WatchedClaude(_Watched, ConsentClaude):
     """Claude Code as the loop calls it: as the bound caller, checked as it sends, and a stop in its result raises G6's own
     code."""
 
@@ -1319,22 +1322,23 @@ class WatchedClaude(_Watched, host_models.ClaudeCodeCaller):
         argv, stdin, owned = _sending(self, argv, stdin, files)
         try:
             _check_observation(argv, name, files)
-            _note_launch(owned)
-            try:
-                result = host_models._run(argv, stdin, cwd, files, env, seconds, name)
-            except BaseException as failed:
+            with cloud_consent.admission(**session_admission(self, stdin)):   # inside its session's admitted run
+                _note_launch(owned)
                 try:
-                    _observe_reply(name, None, "", owned, (stdin,))
-                finally:
-                    raise failed
-            _observe_reply(name, result[0], result[1], owned, (stdin,))
-            try:
-                return reply(self, *result, files, (stdin,))
-            except BaseException as failed:
+                    result = host_models._run(argv, stdin, cwd, files, env, seconds, name)
+                except BaseException as failed:
+                    try:
+                        _observe_reply(name, None, "", owned, (stdin,))
+                    finally:
+                        raise failed
+                _observe_reply(name, result[0], result[1], owned, (stdin,))
                 try:
-                    _observe_reply(name, None, "", owned, (stdin,))
-                finally:
-                    raise failed
+                    return reply(self, *result, files, (stdin,))
+                except BaseException as failed:
+                    try:
+                        _observe_reply(name, None, "", owned, (stdin,))
+                    finally:
+                        raise failed
         finally:
             _released((owned,))
 
@@ -1344,7 +1348,7 @@ class WatchedClaude(_Watched, host_models.ClaudeCodeCaller):
         return super()._reply(code, printed, errors, files, hide)
 
 
-class WatchedCodex(_Watched, host_models.CodexCaller):
+class WatchedCodex(_Watched, ConsentCodex):
     """Codex as the loop calls it: as the bound caller, checked as it sends, printing its events as JSON, and a stop in them
     raises G6's own code. A turn it reports as failed is a failed request. The reply is still the last message Codex writes."""
 
@@ -1375,7 +1379,8 @@ def _check_seam(kind: type) -> None:
     ToolSession's existing run and launch are admitted explicitly: its launch is replaced at construction by our final
     module-owned launch, which starts the program directly. A further subclass may customize only pre-admission hooks.
     """
-    owned = {_Watched, WatchedClaude, WatchedCodex, host_models._HostCaller,
+    # consent's guarded hosts are bases of the two watched classes: their completion is shadowed by ``_Watched``'s
+    owned = {_Watched, WatchedClaude, WatchedCodex, host_models._HostCaller, _Consent, ConsentClaude, ConsentCodex,
              host_models.ClaudeCodeCaller, host_models.CodexCaller, OpenAICompatibleCaller, AnthropicCaller, object}
     for base in kind.__mro__:
         if base in owned:

@@ -39,6 +39,9 @@ _CAPTURE: contextvars.ContextVar[Capture | None] = contextvars.ContextVar('g6_so
 _POLICY: contextvars.ContextVar[bool] = contextvars.ContextVar('g6_consent_io', default=False)
 _REFUSAL_TELL: contextvars.ContextVar[tuple] = contextvars.ContextVar('g6_consent_refusal_observers', default=())
 _PROMPT_STATE: contextvars.ContextVar[tuple] = contextvars.ContextVar('g6_prompt_state', default=())
+#: What this thread holds: the sharing state it has locked, and the admitted send it is inside. A host session's launch
+#: step is checked again inside its session's admission; a thread never waits on the lock it holds itself.
+_HELD = threading.local()
 
 
 @contextmanager
@@ -353,6 +356,12 @@ def collect_sources() -> Iterator[Capture]:
                 parent.refused_provider = capture.refused_provider
 
 
+def admitted(provider: str) -> bool:
+    """Whether this thread is inside an admitted send to ``provider``: a host session's launch step sends only there."""
+    send = getattr(_HELD, 'send', None)
+    return send is not None and send[0] == provider
+
+
 def ledger_path() -> Path:
     return contained(g6_home(), 'cloud_consent/events.jsonl', refuse_links=True)
 
@@ -390,6 +399,10 @@ def _validate(kind, ident, body, seen):
 
 @contextmanager
 def _locked() -> Iterator[ChainLedger]:
+    held = getattr(_HELD, 'ledger', None)
+    if held is not None:          # this thread holds the lock and the state it read: a nested check uses them
+        yield held
+        return
     token = _POLICY.set(True)
     descriptor = None
     locked = False
@@ -427,7 +440,11 @@ def _locked() -> Iterator[ChainLedger]:
                 plain_file(path)
             ledger = ChainLedger(path, expect_head=expected, validate=_validate)
             yielded = True
-            yield ledger
+            _HELD.ledger = ledger
+            try:
+                yield ledger
+            finally:
+                _HELD.ledger = None
     except (OSError, ValueError) as exc:
         if yielded:
             raise
@@ -544,10 +561,19 @@ def admission(provider: str, sources: Sequence[Source], payload_sha256: str, *, 
             if capture is not None:
                 capture.refused_provider = provider
             raise _refusal(LLMError(f'{REQUIRED}: {withheld_message(provider, refs)}'))
-        if disclose:
+        # A check inside an admitted send of this thread to the same recipient, of no source that send did not
+        # disclose, is that send's own step (a host session's launch): it is checked, and disclosed once.
+        enclosing = getattr(_HELD, 'send', None)
+        repeated = (enclosing is not None and enclosing[0] == provider and enclosing[2]
+                    and set(refs) <= enclosing[1])
+        if disclose and not repeated:
             _append(ledger, 'disclosure', {'provider': provider, 'time': _time(), 'status': 'attempted',
                 'payload_sha256': payload_sha256,
                 'sources': [{'source': s.source_id, 'item_id': s.item_id, 'content_sha256': s.content_sha256,
                              'basis': 'client-supplied' if s.source_id in supplied and
                                  (s.source_id, provider) not in decisions else 'grant'} for s in refs]})
-        yield
+        _HELD.send = (provider, frozenset(refs), disclose or repeated)
+        try:
+            yield
+        finally:
+            _HELD.send = enclosing
