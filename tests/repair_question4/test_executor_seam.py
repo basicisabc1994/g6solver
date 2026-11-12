@@ -41,7 +41,13 @@ def test_recorded_executor_controls_every_owned_run(tmp_path, monkeypatch, at_ba
                           timeout_s=60, artefact=before)
     assert found['said'] == 'recorded executor owns this run'
     assert len(seen) == 1
-    assert seen[0][2]['observation']['function'] == ['module', 'calc', 'add', 'calc.py']
+    expected = ['module', 'calc', 'add', 'calc.py']
+    if not probe:
+        expected.append({'import_roots': ['.', 'src']})
+    assert seen[0][2]['observation']['function'] == expected
+    if not probe:
+        assert seen[0][2]['observation']['function'][4] == {
+            'import_roots': ['.', 'src']}
     assert seen[0][2]['require_isolation'] is True and seen[0][2]['network'] is False
 
 

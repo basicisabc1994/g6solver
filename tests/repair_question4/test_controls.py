@@ -6,7 +6,7 @@ import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 
 import pytest
 
@@ -16,6 +16,7 @@ from g6.harness import confirmed_checks as cc, patch_review, verification_templa
 from g6.harness.confirmed_expectation import Answer
 from g6.mcp import behaviour, review_binding, review_reply
 from tests.repair_question2.helpers import TASK, NODE, REQUIREMENTS, Dialog, ask, candidate, repo, result, stated
+from tests.harness.example_contract import reference_instance_digest
 
 
 @pytest.mark.parametrize("raw,expected", [(None, 1), ("0", 0), ("1", 1), ("10", 10), ("11", 0),
@@ -70,6 +71,7 @@ def test_lossy_foreign_observations_are_not_exact(observed):
 ])
 def test_actual_confirmed_template_comparison_separates_admitted_outcomes(tmp_path, left, right):
     from g6.harness.confirmed_expectation import confirm
+    from tests.harness.test_outcomes_compete import namespace, _stand_in
 
     one = bq.caller_candidates(TASK, [candidate(args=[[]], outcomes={"A": left, "B": right})])[0]
     question = one.question("b" * 64)
@@ -77,24 +79,11 @@ def test_actual_confirmed_template_comparison_separates_admitted_outcomes(tmp_pa
         accepted = []
         for option in ("A", "B"):
             instance = confirm(question, option, answered_by="person:Maintainer").instance
-            definition = vt.instance_definition(instance)
-            tree = vt.Tree(tmp_path, SimpleNamespace(base_commit="fixture"), frozenset({"calc.py"}), frozenset(),
-                           _texts={("calc.py", vt.PATCH): "def add(arg):\n    return None\n"})
-            applied = definition.applies(tree, definition.bindings.model_validate(instance.bindings), vt.PATCH)
-            ns = {}
-            exec(compile(vt.compile_text(definition, applied.data), "<fixed confirmed template>", "exec"), ns)
-            original_load = ns["_load"]
-
-            def function(arg):
-                if "raises" in witness:
-                    raise ValueError("witness")
-                if "effect" in witness:
-                    arg[:] = witness["effect"]["equals"]
-                return witness.get("returns")
-
-            ns["_load"] = lambda spec: original_load(spec) if spec[0] == "builtin" else function
+            ns = namespace(tmp_path, instance, _stand_in(witness))
             try:
-                ns["test_example"]()
+                with pytest.MonkeyPatch.context() as local:
+                    local.chdir(tmp_path)
+                    ns["test_example"]()
                 accepted.append(option)
             except pytest.fail.Exception:
                 pass
@@ -204,11 +193,14 @@ def test_ordinary_registry_identities_and_compiled_bytes_equal_base(tmp_path, mo
     monkeypatch.setitem(sys.modules, old.__name__, old)
     exec(compile(source, "<base producer>", "exec"), old.__dict__)
     for name, data in vt.EXAMPLES.items():
-        assert vt.instance_digest(vt.TemplateInstance(**data)) == old.instance_digest(old.TemplateInstance(**data)), name
+        assert vt.instance_digest(vt.TemplateInstance(**data)) == reference_instance_digest(
+            old, old.TemplateInstance(**data)), name
     bindings = {"function": ["module", "calc", "add", "calc.py"], "cases": [
         {"args": [2, 3], "kwargs": {}, "expect": "returns", "value": 5}]}
-    legacy = {**bindings, "function": bindings["function"][:3]}
-    assert vt.compile_text(vt.TEMPLATES["example.v1"], bindings) == old.compile_text(old.TEMPLATES["example.v1"], legacy)
+    import hashlib
+    from tests.harness.example_contract import EXAMPLE_TEXT_SHA256
+    source = vt.compile_text(vt.TEMPLATES["example.v1"], bindings)
+    assert hashlib.sha256(source.replace(ascii(bindings), vt.SLOT).encode()).hexdigest() == EXAMPLE_TEXT_SHA256
 
 
 def test_saved_reply_custody_and_full_persisted_bytes(tmp_path):

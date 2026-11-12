@@ -65,10 +65,9 @@ class Scenario:
             raise ValueError(f"{UNAVAILABLE}: unsupported repository entry point")
         if len(entry) == 5:
             binding = entry[4]
-            if (not isinstance(binding, dict) or set(binding) != {'sha256', 'import_roots'}
-                    or binding['import_roots'] != ['.', 'src']
-                    or not isinstance(binding['sha256'], str) or len(binding['sha256']) != 64
-                    or any(ch not in '0123456789abcdef' for ch in binding['sha256'])):
+            # Older v2 records retain their canonical bytes; their obsolete file digest has no authority.
+            if (not isinstance(binding, dict) or set(binding) not in ({'import_roots'}, {'import_roots', 'sha256'})
+                    or binding['import_roots'] != ['.', 'src']):
                 raise ValueError(f"{UNAVAILABLE}: unsupported referent binding")
 
     @classmethod
@@ -85,8 +84,7 @@ class Scenario:
             applied = vt.TEMPLATES["example.v1"].applies(tree, bound, vt.PATCH).data
             entry = applied["function"]
             outcomes[label] = {k: v for k, v in applied["cases"][0].items() if k not in ("args", "kwargs")}
-        entry = [*entry, {'import_roots': ['.', 'src'],
-                          'sha256': hashlib.sha256((root / entry[3]).read_bytes()).hexdigest()}]
+        entry = [*entry, {'import_roots': ['.', 'src']}]
         return cls(canonical({"version": "example-scenario.v2", "setup": SETUP, "entrypoint": entry,
                               "input": {"args": question.args, "kwargs": question.kwargs},
                               "outcomes": outcomes}).encode("ascii"))
@@ -221,7 +219,7 @@ def test_example():
     def require_binding(self) -> None:
         """Legacy scenarios remain readable reproductions, but cannot supply confirmation custody."""
         if json.loads(self.record)['version'] != 'example-scenario.v2':
-            raise ValueError(f'{UNAVAILABLE}: confirm the import roots and referent bytes in a new dialog')
+            raise ValueError(f'{UNAVAILABLE}: confirm the import roots and resolved repository path in a new dialog')
 
 
 def save(question, scenario: Scenario) -> None:

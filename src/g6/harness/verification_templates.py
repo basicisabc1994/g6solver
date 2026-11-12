@@ -779,7 +779,8 @@ def _example(tree: Tree, b: ExampleBindings, side: str) -> Applied:
         else:
             entry.update(expect="returns", value=case.returns)
         cases.append(entry)
-    return Applied({"function": _located(target), "cases": cases}, notes)
+    roots = {'import_roots': [*(root.rstrip('/') or '.' for root in tree.roots), '.', 'src']} if tree.roots else {}
+    return Applied({"function": _located(target), "cases": cases, **roots}, notes)
 
 
 def _relation(tree: Tree, b: RelationBindings, side: str) -> Applied:
@@ -1277,12 +1278,6 @@ def _text(ident: str, body: str) -> str:
 def compile_text(definition: TemplateDefinition, data: dict) -> str:
     """The check ``definition``'s fixed text gives for ``data``: the text with the bindings written, once, as one
     literal (``ascii``). A literal that does not read back as ``data`` is refused (``ValueError``)."""
-    if definition.bindings is ExampleBindings and definition is not _CONFIRMED_EXAMPLE:
-        # The ordinary fixed text uses its original three-part module specs. Keep the projection at the compiler,
-        # so its public template, compiled source and identity name exactly the same bytes.
-        data = {**data, "function": data["function"][:3], "cases": [
-            {**case, **({"error": case["error"][:3]} if "error" in case else {})}
-            for case in data["cases"]]}
     if "scenario" in data:
         from g6.harness.executable_scenario import Scenario
 

@@ -179,9 +179,33 @@ def read_probes(path: Path, data: bytes) -> dict[str, str]:
 def probe_sha256() -> str:
     return hashlib.sha256(BOOTSTRAP.encode("utf-8")).hexdigest()
 
+
+def _import_roots(spec, roots=None):
+    """Use held scenario roots, then an ordinary example's resolved ordered roots."""
+    if len(spec) == 5:
+        return spec[4]['import_roots']
+    if roots is not None:
+        if (type(roots) is not list or not roots or any(type(one) is not str or one != '.' and (
+                ':' in one or '\\' in one or any(part in ('', '.', '..') for part in one.split('/')))
+                for one in roots)):
+            raise ValueError('G6_E_OBSERVATION_UNAVAILABLE: invalid resolved import roots')
+        return roots
+    roots = ['.', 'src']
+    if len(spec) == 4 and spec[0] == 'module':
+        path = spec[3]
+        if (not isinstance(path, str) or ':' in path or '\\' in path
+                or any(part in ('', '.', '..') for part in path.split('/'))):
+            raise ValueError('G6_E_OBSERVATION_UNAVAILABLE: invalid resolved repository file')
+        stem = spec[1].replace('.', '/')
+        for suffix in (stem + '/__init__.py', stem + '.py'):
+            if path.endswith('/' + suffix):
+                prefix = path[:-len(suffix) - 1]
+                return roots if prefix in roots else [prefix, *roots]
+    return roots
+
 # Loaded before any repository module. There is no site initialisation, PYTHONPATH, pytest, plugin or ini reader.
 BOOTSTRAP = (inspect.getsource(observable_exception) + '\n' + inspect.getsource(_fingerprint) + '\n'
-             + inspect.getsource(_exception_observation)) + r'''
+             + inspect.getsource(_exception_observation) + '\n' + inspect.getsource(_import_roots)) + r'''
 import builtins, collections.abc, copy, hashlib, importlib, importlib.machinery, json, os, re, struct, sys
 def _name(kind):
     module = getattr(kind, "__module__", None) or ""
@@ -253,8 +277,7 @@ sys.pycache_prefix = os.path.join(os.path.dirname(channel), "pycache")
 def _no_sourceless(self, fullname):
     raise ImportError("G6_E_OBSERVATION_UNAVAILABLE: sourceless bytecode is outside the execution manifest")
 importlib.machinery.SourcelessFileLoader.get_code = _no_sourceless
-binding = data["function"][4] if len(data["function"]) == 5 else {}
-sys.path[:0] = [os.path.join(root, part) for part in binding.get("import_roots", [".", "src"])]
+sys.path[:0] = [os.path.join(root, part) for part in _import_roots(data["function"], data.get("import_roots"))]
 def encode(value):
     try:
         return _fingerprint(dumps(value, sort_keys=True, allow_nan=False))
@@ -268,13 +291,16 @@ def load(spec):
         raise RuntimeError("entry point has no resolved repository file")
     wanted = os.path.realpath(os.path.join(root, *spec[3].split("/")))
     if len(spec) == 5:
-        with open(wanted, "rb") as source:
-            if hashlib.sha256(source.read()).hexdigest() != spec[4]["sha256"]:
-                raise RuntimeError("G6_E_SCENARIO_UNAVAILABLE: the confirmed referent's bytes changed")
+        stem = module.replace(".", "/")
+        choices = [os.path.join(root, prefix, stem + suffix)
+                   for prefix in _import_roots(spec) for suffix in ("/__init__.py", ".py")]
+        resolved = next((os.path.realpath(path) for path in choices if os.path.isfile(path)), None)
+        if resolved is None or os.path.normcase(resolved) != os.path.normcase(wanted):
+            raise RuntimeError("G6_E_OBSERVATION_UNAVAILABLE: the confirmed repository path does not match")
     found = importlib.import_module(module)
     where = os.path.realpath(getattr(found, "__file__", ""))
     if os.path.normcase(where) != os.path.normcase(wanted):
-        raise RuntimeError("entry point resolved outside its copied file")
+        raise RuntimeError("G6_E_OBSERVATION_UNAVAILABLE: entry point resolved outside its copied file")
     return getattr(found, attribute)
 # Evict the resolved module and its parents, including any same-named standard-library cache entry. The encoder,
 # writer and import machinery above are already held by the bootstrap.
@@ -514,15 +540,17 @@ def bindings(source: str) -> tuple[str, dict] | None:
 
 
 def located(copy: Path, data: dict) -> dict:
-    """Resolve every module against the copy, with the runner's fixed top/src path, never caller import roots."""
+    """Resolve against the held scenario roots or the ordinary example's resolved file root."""
     data = json.loads(_encoded(data))
+    roots = _import_roots(data['function'], data.get('import_roots'))
     specs = [data["function"], *data.get("errors", []),
              *(case["error"] for case in data.get("cases", []) if "error" in case)]
     for spec in specs:
         if spec[0] == "builtin":
             continue
         stem = spec[1].replace(".", "/")
-        choices = [prefix + stem + suffix for prefix in ("", "src/") for suffix in ("/__init__.py", ".py")]
+        choices = [('/'.join((prefix, stem)) if prefix != '.' else stem) + suffix
+                   for prefix in roots for suffix in ("/__init__.py", ".py")]
         resolved = next((rel for rel in choices if (copy / rel).is_file()), None)
         if resolved is None or len(spec) >= 4 and resolved != spec[3]:
             raise ValueError("G6_E_OBSERVATION_UNAVAILABLE: the copied entry point does not match")
@@ -535,7 +563,8 @@ def request(data: dict) -> dict:
     calls = data.get("cases", data.get("calls", []))
     return {"function": data["function"], "calls": [{"args": c["args"], "kwargs": c.get("kwargs", {})} for c in calls],
             "errors": data.get("errors", [case["error"] for case in calls if case.get("expect") == "raises"]),
-            "probe": "cases" not in data, "mode": data.get("mode", "outputs")}
+            "probe": "cases" not in data, "mode": data.get("mode", "outputs"),
+            **({'import_roots': data['import_roots']} if 'import_roots' in data else {})}
 
 
 def example_text(slot: str) -> str:
@@ -545,7 +574,8 @@ def example_text(slot: str) -> str:
     host-owned result channel, never from collection, plugins or the wrapper's pytest status.
     """
     helpers = "\n\n".join(inspect.getsource(one) for one in (
-        _unique, _encoded, _fingerprint, _valid_encoding, _matches_encoding, read_frame, finish, located, request))
+        _unique, _encoded, _fingerprint, _valid_encoding, _matches_encoding, read_frame, finish,
+        _import_roots, located, request))
     return ("import hashlib, json, struct, subprocess, tempfile, sys, os\nfrom pathlib import Path\n"
             "TEMPLATE = 'example.v1'\nBINDINGS = " + slot
             + "\nMAGIC = b'G6R1\\n'\nMAX_FRAME = 1048576\nBOOTSTRAP = "
@@ -731,7 +761,8 @@ def run(copy: Path, data: dict, node: str, *, timeout_s: int, deadline: float) -
     return {"verdict": found["result"] if found["result"] in {"passed", "failed"} else "not_run",
             "g6_observation": found, "source_before": digest(before), "isolation": isolation,
             "execution_limit": LIMIT,
-            "python": python, "interpreter_source": "g6", "import_path": [".", "src"], "own_config": True,
+            "python": python, "interpreter_source": "g6",
+            "import_path": _import_roots(data['function'], data.get('import_roots')), "own_config": True,
             "seconds": round(time.monotonic() - started, 3), "said": found["detail"], "output": "",
             "command": "python -I -S -B <G6 bootstrap>",
             "bootstrap_sha256": hashlib.sha256(program.encode("utf-8")).hexdigest()}

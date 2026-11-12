@@ -76,7 +76,7 @@ def test_fresh_import_does_not_reuse_pytest_startup_state(tmp_path, path):
     assert "did not match the observed call" in ran.stdout and "PermissionError" not in ran.stdout
 
 
-def test_confirmed_referent_bytes_and_roots_are_part_of_the_scenario(tmp_path):
+def test_confirmed_path_and_roots_allow_patched_bytes(tmp_path):
     from g6.harness.confirmed_expectation import Question
     from g6.workforce import repo_tests
 
@@ -94,9 +94,9 @@ def test_confirmed_referent_bytes_and_roots_are_part_of_the_scenario(tmp_path):
     assert "1 passed" in honest.stdout, honest.stdout + honest.stderr
     (tmp_path / "calc.py").write_text("def add(a,b):\n    return 5\n# another referent\n", encoding="utf-8")
     changed = portable(tmp_path, source)
-    assert "1 passed" not in changed.stdout, changed.stdout + changed.stderr
+    assert "1 passed" in changed.stdout, changed.stdout + changed.stderr
     assert "import_roots" in json.loads(scenario.record)["entrypoint"][4]
-    assert "sha256" in json.loads(scenario.record)["entrypoint"][4]
+    assert json.loads(scenario.record)["entrypoint"][4] == {"import_roots": [".", "src"]}
 
 
 @pytest.mark.parametrize("custody", ["save", "load"])
@@ -165,3 +165,47 @@ def test_product_observation_has_no_repository_startup_authority(tmp_path, monke
         assert ran["g6_observation"]["result"] == "failed", ran
         assert ran["g6_observation"]["observed"]["outcomes"][0]["returned"] == {
             "sha256": hashlib.sha256(b"-1").hexdigest(), "size": 2, "prefix": "-1"}
+
+
+@pytest.mark.parametrize("legacy_digest", [None, "0" * 64])
+def test_confirmed_path_refuses_moved_or_missing_function_and_ignores_old_digest(tmp_path, monkeypatch, legacy_digest):
+    from g6.core.ledger import canonical
+    from g6.harness.confirmed_expectation import Question
+    from tests.repair_question2.helpers import repo
+
+    monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
+    root = repo(tmp_path)
+    question = Question(requirement_id="R1", function="calc.add", args=[2, 3],
+        outcomes={"A": {"returns": 5}, "B": {"returns": -1}}, scope="this call",
+        cited="calculation", baseline_sha256="b" * 64)
+    scenario = es.Scenario.resolve(root, question)
+    if legacy_digest is not None:
+        record = json.loads(scenario.record)
+        record['entrypoint'][4]['sha256'] = legacy_digest
+        scenario = es.Scenario(canonical(record).encode('ascii'))
+    es.save(question, scenario)
+    loaded = es.load(question)
+    assert loaded.record == scenario.record
+    scenario = loaded
+    source = scenario.source('A')
+    # The existing confirmation runs the patch, including a different return.
+    (root / 'calc.py').write_text('def add(a,b):\n    return -1\n', encoding='utf-8')
+    different = portable(root, source)
+    assert '1 failed' in different.stdout, different.stdout + different.stderr
+    assert 'the confirmed outcome did not match' in different.stdout, different.stdout + different.stderr
+    (root / 'calc.py').write_text('def add(a,b):\n    return 5\n', encoding='utf-8')
+    honest = portable(root, source)
+    assert '1 passed' in honest.stdout, honest.stdout + honest.stderr
+    (root / 'src').mkdir()
+    (root / 'calc.py').rename(root / 'src/calc.py')
+    with pytest.raises(ValueError, match='G6_E_OBSERVATION_UNAVAILABLE'):
+        runner.located(root, scenario.comparison('A'))
+    moved = portable(root, source)
+    assert '1 passed' not in moved.stdout, moved.stdout + moved.stderr
+    assert 'G6_E_OBSERVATION_UNAVAILABLE' in moved.stdout, moved.stdout + moved.stderr
+    (root / 'src/calc.py').unlink()
+    with pytest.raises(ValueError, match='G6_E_OBSERVATION_UNAVAILABLE'):
+        runner.located(root, scenario.comparison('A'))
+    missing = portable(root, source)
+    assert '1 passed' not in missing.stdout, missing.stdout + missing.stderr
+    assert 'G6_E_OBSERVATION_UNAVAILABLE' in missing.stdout, missing.stdout + missing.stderr

@@ -33,6 +33,9 @@ OWN_CALLS = {
     # a built-in outcome type, read before any repository code runs
     'observable_exception', 'dumps', 'type', 'ancestry', 'any', 'isinstance', 'bool', 'all', 'part.isidentifier',
     'kind.split',
+    # The held roots and path, checked before the one import.
+    '_import_roots', 'data.get', 'one.split', 'path.split', 'spec[1].replace', 'path.endswith', 'ValueError',
+    'module.replace', 'next', 'os.path.isfile',
 }
 #: The canonical scenario program derives its request from the scenario it holds, instead of reading it from argv.
 SCENARIO_CALLS = {"scenario['outcomes'].values"}
