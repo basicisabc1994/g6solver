@@ -123,6 +123,7 @@ from g6.self_maintenance.usage import (
     _open_input,
     launch_record,
     limit_ends,
+    loop_tick,
     read_stops,
     plain_text,
     refused_by,
@@ -2226,7 +2227,8 @@ class ShadowLoop:
     @_exclusive
     def _tick(self) -> dict[str, Any]:
         try:
-            reply = self._refused() or self._run()
+            with loop_tick():                     # an owned host launch with no gate while it is open escaped its gate
+                reply = self._refused() or self._run()
         except BaseException:
             self._keep()                          # no tick leaves with what its cycle met held nowhere but here
             raise

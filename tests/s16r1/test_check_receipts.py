@@ -10,6 +10,7 @@ from g6.core import host_models
 from g6.core.llm import LLMError
 from g6.harness import completion_loop as loop, verification_search as vs
 from g6.workforce import repo_tests
+from tests.host_stand_in import stand_in_hosts
 
 
 @pytest.mark.parametrize('origin', ['known', 'unknown', 'revoked'])
@@ -70,8 +71,7 @@ def test_retry_sends_only_diagnostics_with_complete_granted_receipts(
         cloud.revoke(source.source_id, 'openai:codex')
     monkeypatch.setattr(loop, '_pack', lambda *args: 'SYNTHETIC_PATCH')
     monkeypatch.setattr(loop, '_masked_pack', lambda *args: ('SYNTHETIC_PATCH', False))
-    monkeypatch.setattr(host_models.CodexCaller, 'complete',
-                        lambda self, system, user, **kwargs: sent.append(user) or 'VERDICT: none')
+    stand_in_hosts(monkeypatch, lambda system, user: sent.append(user) or 'VERDICT: none')
     reply = loop.run_critic(SimpleNamespace(repo=tmp_path, sources=('code.py',)), 'task',
                             host_models.CodexCaller(), 'system', tmp_path, told=marker,
                             patch=repo_tests.DiffRead('synthetic patch', ()), system_sources=(),
