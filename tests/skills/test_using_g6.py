@@ -196,10 +196,11 @@ def test_the_question_has_no_fallback() -> None:
 
 
 def test_fallback_text_is_not_shared_across_routes() -> None:
-    """No other component's approval fallback is copied: the one route whose section relays a terminal command is the
-    meta-harness's own. The routes are read from the manifest, so a new route that copies the text fails here."""
+    """No route relays a terminal command: a person agrees only in the client's dialog, the meta-harness's route
+    included, since consent on the line took its terminal fallback away. The routes are read from the manifest, so a
+    new route that copies the text fails here."""
     from g6.skills import routing
 
     fallback = re.compile(r"terminal command|relay the", re.IGNORECASE)
     relays = {route for route in routing.load().routes if fallback.search(_route_section(route))}
-    assert relays == {"fit"}, relays
+    assert relays == set(), relays
