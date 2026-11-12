@@ -239,11 +239,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"params is not JSON: {exc}", file=sys.stderr)
         return 2
     from g6.core.door import SENSITIVE_ENV, allowed_sensitive, invoke_checked
+    from g6.core.consent_registry import GuardedRegistry
 
     # The same checked call as g6_invoke and g6.invoke: a verified stands only when G6's own re-check reproduces it, a
     # sensitive op runs only when the person lists it in G6_MCP_SENSITIVE, and a blocked reply exits 1.
     name = f"{args.component}.{args.op}"
-    reply = invoke_checked(args.component, args.op, params, allow=allowed_sensitive(),
+    reply = invoke_checked(args.component, args.op, params, allow=allowed_sensitive(), registry=GuardedRegistry(),
                            how_to_allow=f"Only the person who runs G6 can allow it, by listing {name} (or "
                                         f"{args.component}) in {SENSITIVE_ENV} where they run g6.")
     if "result" not in reply:

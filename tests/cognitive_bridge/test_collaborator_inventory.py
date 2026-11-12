@@ -281,7 +281,7 @@ def test_a_collaborator_is_handed_only_fresh_copies_and_constants():
 
 def test_a_kept_collaborator_is_handed_on_only_to_the_door_or_the_executor():
     # A collaborator kept by reference is called (above), compared with None, or handed whole to G6's door (as the
-    # registry it calls) or to the executor that does that; nowhere else.
+    # consent-wrapped registry it calls) or to the executor that does that; nowhere else.
     kept, bad = _kept_by_reference(), []
     for module, tree in _modules():
         parent = _parents(tree)
@@ -294,9 +294,12 @@ def test_a_kept_collaborator_is_handed_on_only_to_the_door_or_the_executor():
             if isinstance(up, ast.Compare) and all(isinstance(op, (ast.Is, ast.IsNot)) for op in up.ops) and all(
                     isinstance(c, ast.Constant) and c.value is None for c in up.comparators):
                 continue
-            if isinstance(up, ast.keyword) and up.arg == "registry" and ast.unparse(parent[up].func).endswith(
-                    "invoke_checked"):
-                continue
+            if (isinstance(up, ast.Call) and ast.unparse(up.func) == "GuardedRegistry"
+                    and len(up.args) == 1 and up.args[0] is node and not up.keywords):
+                handoff = parent[up]
+                if (isinstance(handoff, ast.keyword) and handoff.arg == "registry"
+                        and ast.unparse(parent[handoff].func).endswith("invoke_checked")):
+                    continue
             if isinstance(up, ast.Call) and ast.unparse(up.func) == "MixedMethodExecutor" and up.args[0] is node:
                 continue
             if isinstance(up, ast.Call) and ast.unparse(up.func) == "issued" and up.args[0] is node:

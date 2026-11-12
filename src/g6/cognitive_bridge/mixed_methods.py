@@ -13,6 +13,7 @@ import uuid
 from typing import Any, Iterable, Mapping, Protocol, Sequence
 
 from g6.core.door import SENSITIVE_ENV, allowed_sensitive, invoke_checked
+from g6.core.consent_registry import GuardedRegistry
 
 from .assurance import canonical_json, sha256
 from .codes import FrozenMap
@@ -262,7 +263,7 @@ class MixedMethodExecutor:
                f"or list {step.component}.{step.op} (or {step.component}) in {SENSITIVE_ENV} where you start G6.")
         return invoke_checked(step.component, step.op, params,
                               allow=allowed_sensitive() | frozenset(snapshot(self.allow, where="allow")),
-                              how_to_allow=how, registry=self.registry)
+                              how_to_allow=how, registry=GuardedRegistry(self.registry))
 
     def _run(self, step: MethodStep, params: bytes, head: dict[str, Any]) -> dict[str, Any]:
         """One validated step through G6's door. A step the door refused, or did not pass, is the bridge's own
