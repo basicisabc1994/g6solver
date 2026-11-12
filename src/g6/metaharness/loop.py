@@ -48,7 +48,7 @@ from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import LedgerError, canonical, digest
 from g6.core.llm import _WAITS, DEFAULT_MAX_TOKENS, LLMError
 from g6.core.model_calls import counting
-from g6.core.reading import Unreadable, asked, files_under, linked, said, sha256_of, walk
+from g6.core.reading import Unreadable, asked, exact, files_under, linked, said, same, sha256_of, walk
 from g6.integrity import build_manifest, in_cache, manifest_sha256
 from g6.metaharness.api import _blocked, _envelope, judging_sha256
 from g6.metaharness.domain import (
@@ -543,7 +543,8 @@ def _in_reach(root: Path, domain: Domain) -> list[str]:
     links, unlisted = _links_under(roots)
     guarded = {"G6's own source": str(_SOURCE),
                **{f"the judge's root {root}": str(root) for root in roots},
-               **{f"a link under the judge's root, to {os.path.realpath(link)}": os.path.realpath(link) for link in links},
+               **{f"a link under the judge's root, to {os.path.realpath(exact(link))}": os.path.realpath(exact(link))
+                  for link in links},
                **{f"sealed root {i}": r for i, r in enumerate(sealed.vault.roots if sealed is not None else ())}}
     return [name for name, path in guarded.items() if _same_place(root, Path(path))] + [
         f"a folder under the judge's root that cannot be listed ({name}), which may hold a link to it" for name in unlisted]
@@ -569,11 +570,15 @@ def _within(inner: Path, outer: Path) -> bool:
     return False
 
 
-def _is_link(path: Path, *, absent: bool = False) -> bool:
+def _is_link(path: Path, *, absent: bool = False, was: os.stat_result | None = None) -> bool:
     """Whether ``path`` is a link or a junction, by the one reader's stat that raises (``asked``): one that cannot be
     asked raises ``Unreadable``, never a "no", and so does one that is gone, unless ``absent`` allows it (a root, which is
-    compared by its absence), when it is none."""
+    compared by its absence), when it is none. ``was``: what the lister's own stat found of this entry (``Listed``); an
+    entry has one answer, so one that is another entry by this ask was changed while its folder was listed, and is
+    ``Unreadable`` too."""
     info = asked(path, absent=absent)
+    if was is not None and info is not None and not same(was, info):
+        raise Unreadable(f"{said(path)} cannot be read (it was changed while its folder was listed)")
     return info is not None and linked(info)
 
 
@@ -585,10 +590,10 @@ def _links_under(roots: Sequence[Path], given: Sequence[Path] = ()) -> tuple[lis
     found: list[Path] = []
     unlisted: list[str] = []
 
-    def link(path: Path, absent: bool = False) -> bool | None:
+    def link(path: Path, absent: bool = False, was: os.stat_result | None = None) -> bool | None:
         """``True`` for a link, ``False`` for none, ``None`` for what could not be asked, which is named."""
         try:
-            return _is_link(path, absent=absent)
+            return _is_link(path, absent=absent, was=was)
         except Exception:  # noqa: BLE001 - what cannot be asked is not known to be no link: named, and refused
             unlisted.append(said(path))
             return None
@@ -603,7 +608,7 @@ def _links_under(roots: Sequence[Path], given: Sequence[Path] = ()) -> tuple[lis
         for here, dirs, files in walk(root, skipped=unlisted):
             kept = []
             for name in (*dirs, *files):
-                held = link(Path(here) / name)
+                held = link(Path(here) / name, was=getattr(name, "info", None))
                 if held:
                     found.append(Path(here) / name)
                 elif held is False and name in dirs:
@@ -812,7 +817,7 @@ def _listing(root: Path) -> dict[str, str]:
     file by its bytes, and no interpreter cache."""
     links, files = [], []
     for here, dirs, names in walk(root):
-        held = {name for name in (*dirs, *names) if _is_link(Path(here) / name)}
+        held = {name for name in (*dirs, *names) if _is_link(Path(here) / name, was=getattr(name, "info", None))}
         links += [Path(here) / name for name in (*dirs, *names) if name in held]
         files += [Path(here) / name for name in names if name not in held]
         dirs[:] = [name for name in dirs if name not in held]
@@ -1304,13 +1309,18 @@ class ShadowLoop:
                 seen |= {*row["held_out"], *row["held_out_inputs"], *row.get("held_out_groups", ())}
         return sorted(c.case_id for c in self.cut.held_out if {c.case_id, c.ref()["input_sha256"], *_groups((c,))} & seen)
 
-    @_exclusive
     def tick(self) -> dict[str, Any]:
         """One cycle. A heartbeat follows every tick, so someone watching can tell a loop that is waiting from one that
-        has died."""
+        has died. What the handle holds of an earlier tick is dropped first, before the lock is asked for: a pass that
+        fails before its tick's body runs (the lock, the reload, the workspace's refresh) reaches ``fault`` holding
+        nothing of a cycle that is not its own."""
         self._frozen_seen = None                  # no tick adopts on a reading an earlier tick made
         self._met = None                          # nor carries what an earlier tick's cycle met,
         self._began, self._written = None, False  # made or wrote
+        return self._tick()
+
+    @_exclusive
+    def _tick(self) -> dict[str, Any]:
         try:
             reply = self._refused() or self._run()
         except BaseException:
@@ -1325,7 +1335,8 @@ class ShadowLoop:
         the same frozen check and the same rule as every cycle that adopts nothing (``_still_frozen``, ``_coded``), held to
         what the tick read before it developed anything, or to what a person enrolled when it read nothing, so a frozen
         change in a failed cycle is kept and ranked, and it carries every safety status the tick's cycle met before it
-        failed (``_carried``), so a restart pauses on them, and every generation its harness made (``_made``), first,
+        failed that no row carries yet (``_owed``), so a restart pauses on them and no status is said by two rows, and
+        every generation its harness made (``_made``), first,
         as it came first, so a rollback ranks as it does on any row. A loop already paused takes no failed cycle, unless
         the pause is the one this tick wrote on its way out for what its own cycle met (``_keep``) and its row is still
         owed (``_owed``)."""
@@ -1333,7 +1344,7 @@ class ShadowLoop:
             return _blocked(PAUSED, f"the loop is paused: {self.log.paused()}", "A person reads why, then lifts it.")
         row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error", "code": CYCLE_FAILED,
                "reason": f"{type(exc).__name__}: {exc}"[:500]}
-        statuses: list[Mapping[str, Any]] = [*self._made(row), row, *self._carried(row)]
+        statuses: list[Mapping[str, Any]] = [*self._made(row), row, *self._owed(row)]
         try:
             held = self._still_frozen() if self._frozen_seen is not None else self._as_enrolled()
         except Exception as second:  # noqa: BLE001 - a failed cycle is recorded whatever else fails
@@ -1517,37 +1528,49 @@ class ShadowLoop:
         ``lost_cycle``), or it raises, through here. So whatever raised, and whoever answers or raises after it (the
         fault's own reading of the records, the fault, the runner's hand-off, or nobody at all), the loop stays paused
         for a person, and the fault's row, when one is written, says why as well. A pause the log will not take, for
-        any reason, stops the folder at once (``_closed``), as a row it will not take does. Nothing the log does to it
-        raises."""
+        any reason, stops the folder at once (``_closed``), as a row it will not take does: an error of the log's is
+        left there, and an interrupt or an exit that landed inside the pause's write goes on up once the stop is
+        written."""
         held = self._owed()
         if not held:
             return
         why = _safety_in({"statuses": held})
         try:
             self.log.pause(why)
-        except Exception as exc:  # noqa: BLE001 - whatever keeps the note from the log, the stop is written in its place
+        except BaseException as exc:  # noqa: BLE001 - whatever keeps the note from the log, an interrupt or an exit that
+            # landed inside its write among them, the stop is written in its place; what is no error then goes on up
             self._closed(f"{why[:200]}, and the log would not take its pause ({type(exc).__name__}: {exc})"[:400])
+            if not isinstance(exc, Exception):
+                raise
 
     def _closed(self, why: str) -> None:
         """This process spends no more, and the folder is stopped: ``STOP`` and ``stops.log`` are other files than the
         log, so a restart stays closed until a person starts it again, and should those fail too, this process still
-        ends on what it holds here."""
+        ends on what it holds here. An interrupt or an exit that lands inside the stop's own write has it asked for
+        once more, since nothing else is left to hold it, and then goes on up."""
         self.cannot_record = why
         try:
             ask_to_stop(self.root, why)
         except Exception:  # noqa: BLE001 - the run still ends on what is held here, whatever kept the file
             pass
+        except BaseException:  # an interrupt or an exit landed inside the stop's own write: nothing else is left to
+            try:               # hold it, so it is asked for once more before that goes on up
+                ask_to_stop(self.root, why)
+            except Exception:  # noqa: BLE001 - as above
+                pass
+            raise
 
     def _limited(self, provider: str, limit: _AtLimit) -> None:
-        """A provider's limit, kept the moment the cycle met it and before anything that can fail: first in the records a
-        restart reads (``CycleLog.limits``), then in this process, so a restart waits it out whatever failed after it, and
-        whatever else the cycle met. A note that cannot be written is left: this process still waits, and after a restart
+        """A provider's limit, kept the moment the cycle met it and before anything that can fail: first in this process,
+        which nothing can keep from being told, then in the records a restart reads (``CycleLog.limits``), so a restart
+        waits it out whatever failed after it, and whatever else the cycle met. A note that cannot be written, for any
+        reason, is left: this process still waits, an interrupt inside the note's write included, and after a restart
         the first request finds the limit again."""
+        self.meter.limit_reached(provider, limit.until)
         try:
             self.log.limit(provider, limit.until.isoformat())
-        except (OSError, LedgerError):
+        except Exception:  # noqa: BLE001 - the note is left, whatever kept it: this process knows the limit already
             pass
-        self.meter.limit_reached(provider, limit.until)
 
     def _cut_off(self, halted: _Halted, charged: float) -> dict[str, Any]:
         """A stop met at a model call: say what it cut off, and note this folder's stop in the records, which this tick

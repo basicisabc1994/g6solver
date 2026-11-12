@@ -602,10 +602,15 @@ cognitive work, with programming as the first toy model. So P2 was built first a
   raises, and on its way out writes the pause a restart reads (`_keep`). So a failure at any step after the stop was
   met, a row or none, then a restart, still pauses: the fault's own reading of the records refusing or raising, the
   runner's hand-off of a fault that never reached its row, and a tick nobody hands to a fault among them. The fault's
-  row, when one is written, carries the stop too. Tests built from the code fail each call after the cycle, and each
-  call on the fault's ways out, in turn. A pause the log will not take from a tick on its way out stops the folder at
+  row, when one is written, carries the stop too, and only what no row carries yet, so no status is said by two rows.
+  What the handle holds of a tick is dropped as the next tick begins, before the lock is asked for, so a pass that fails
+  before its tick's body runs says nothing of an earlier tick. Tests built from the code fail each call after the cycle,
+  and each call on the fault's ways out, in turn. A pause the log will not take from a tick on its way out stops the folder at
   once, as a safety stop in a cycle the log would not take does, as a `STOP` a restarted handle reads, and a lost
-  cycle's hand-off reads what the tick met itself, never what its caller passed. A pause that cannot be written after a
+  cycle's hand-off reads what the tick met itself, never what its caller passed. An interrupt or an exit that lands
+  inside a write on the way out is held the same way: inside the row's write, the pause is written; inside the pause's,
+  the stop; inside the stop's own, the stop is asked for once more; then it goes on up. Three in a row, one in each,
+  leave only this process holding it. A pause that cannot be written after a
   row that was is left, as before: the row pauses as surely. A generation the cycle's harness made, an adoption or the monitor's
   rollback, is read from the chain of adoptions for every row the tick writes (`_made`), never from what the tick held
   when something after it raised, so the row of a cycle that failed after one keeps it, a rollback ranked first as on any
@@ -636,7 +641,17 @@ cognitive work, with programming as the first toy model. So P2 was built first a
   entry whose kind it cannot ask as no folder, and is nowhere on this path). A folder the listing goes into is listed
   whole or raises, and is asked again before it is gone into: one changed meanwhile is unreadable. A junction is a folder
   to that stat, so the sealed split and the manifest list what it holds under its name, as before, and the loop's own
-  listings name it as a link and stay out. The manifest's patterns choose among the files of that one listing, as `Path.glob` reads them
+  listings name it as a link and stay out. Every stat, open and listing of a listed entry is of the very entry its names
+  spell (`exact`, the one rule for a name the platform rereads): Windows opens a last name `nul` as its null device and
+  drops dots and spaces from the end of a name, so a path can answer for another entry. The rule asks the platform how
+  it reads the path, hands the path back as given where it reads it as itself, and otherwise hands back the form it
+  does not reread, so a folder named `nul` under a judge's root is gone into and a file named `nul` is pinned by its own
+  bytes. A root is a caller's name, read as the platform reads it: a root spelled with a name the platform rereads is
+  unreadable. An entry has one answer: the lister hands on what its stat found with each name, and a later ask that finds
+  another entry (a folder where a file was, another file, a junction where a folder was) is unreadable, for the files
+  the listing takes, for the loop's own link check, and before the walk goes into a folder. A test finds every stat,
+  open and listing on this path from the code and holds each to the rule, and crosses every reader with such names as
+  files and as folders. The manifest's patterns choose among the files of that one listing, as `Path.glob` reads them
   on Python 3.12, never by listing again; an error of any kind while listing or asking, one that is no `OSError` among
   them, is unreadable. The freeze's reading has one boundary that makes anything
   else that keeps it from being made, a domain's own code raising included, unreadable too, and a test built from the code
@@ -974,7 +989,8 @@ writes no result and never counts towards the pause, and an evaluation it cut of
 nothing read it. The next tick waits for the reset, spending nothing. The reset is written to the constraint log as a row of
 its own, no cycle, the moment the tick meets it and before it settles, whatever else the cycle met, so a restart waits it out
 too and sends nothing, whatever failed after; only if that row cannot be written does a restart's first request find the
-limit again. The next tick to propose takes up what was left: the candidates proposed since the last
+limit again. This process is told of the limit before that row is written, so whatever the row's write fails with, an
+interrupt among them, the process that met the limit sends nothing more into it. The next tick to propose takes up what was left: the candidates proposed since the last
 tuning run and not beaten in a race race again in its first cycle, and the reservation counts them. They are read from the
 run ledger, so a restart loses none, and they are run again from the start of their race, on the same head only.
 

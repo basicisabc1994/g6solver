@@ -499,9 +499,9 @@ KINDS = {
 #: The kinds an error's own kind makes no difference to: the file system answers them itself.
 OWN_ERROR = ("a folder gone since its folder was listed", "a file gone since its folder was listed",
              "a folder that is a link when the walk comes to go into it")
-#: The walkers that go into no link or junction themselves, so a folder that turned into one is theirs to name, never an
-#: unreadable listing: they pin it by that name alone, or find it as the link it is.
-NAME_LINKS = ("g6.metaharness.loop._links_under", "g6.metaharness.loop._listing")
+#: An entry has one answer (the freeze's second follow-up): a folder that is a link by a later ask than the lister's is
+#: another entry, so the two loop walkers, which once named it as the link it had become, refuse it or name it as what
+#: they could not read, as every walker does.
 
 
 @pytest.mark.parametrize("kind, error", [(kind, error) for kind in KINDS for error in ERRORS
@@ -523,9 +523,7 @@ def test_every_walker_reads_every_kind_of_entry_whole_or_not_at_all(tmp_path, wa
             found = Unreadable
     assert met, f"the walk never met {kind}"
     named = walker == "g6.metaharness.loop._links_under" and found is not Unreadable and bool(found[1])
-    if kind == "a folder that is a link when the walk comes to go into it" and walker in NAME_LINKS:
-        assert found is not Unreadable and found != whole, found     # named as the link it now is
-    elif may_read:
+    if may_read:
         assert found is Unreadable or named or found == whole, found
     else:
         assert found is Unreadable or named, f"{walker} read {kind} as {found!r}"
