@@ -144,7 +144,8 @@ def test_refusals_stops_and_every_tick_step_on_two_handles_end(tmp_path, monkeyp
     assert (tmp_path / STOP_FILE).exists()
     with pytest.raises((LLMError, loop_module._Halted)) as after:     # in a tick the stop leaves as _Halted, outside as LLMError
         handles[1].requests.take(identity="a request after the folder stopped")
-    assert loop_module.STOPPED in f"{getattr(after.value, 'code', '')} {after.value}"
+    # this process's own stop for the folder says so by its own code (``ShadowLoop._stop``), as the freeze and stop follow-ups rule
+    assert loop_module.CANNOT_RECORD in f"{getattr(after.value, 'code', '')} {after.value}"
 
 
 # Claim 1: one interrupt, at any line of the refusal's path, leaves nothing pending and the request held ------------------

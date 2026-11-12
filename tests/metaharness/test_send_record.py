@@ -1087,7 +1087,9 @@ def test_the_cannot_record_stop_is_the_processs_on_every_handle_of_the_folder(tm
     calls = len(domain.llm.calls)
     for handle in (first, open_before, made_after):
         assert handle.stopped_by() == first.cannot_record
-        with pytest.raises(LLMError, match="G6_E_LOOP_STOPPED"):
+        # this process's own stop for the folder, by its own code (``ShadowLoop._stop``), as the freeze and stop
+        # follow-ups rule
+        with pytest.raises(LLMError, match="G6_E_LOOP_CANNOT_RECORD"):
             handle.workflow.models["local"].caller.complete("system", "another request")
     assert len(domain.llm.calls) == calls
     assert elsewhere.stopped_by() == "" and elsewhere.workflow.models["local"].caller.complete("system", "another request")
@@ -1147,7 +1149,7 @@ def test_the_process_knows_a_folder_however_its_path_is_spelled(tmp_path, monkey
         spellings.append(tmp_path / "link")
     for spelled in spellings:
         backend = FakeLLM(default="sent again")
-        with pytest.raises(LLMError, match="G6_E_LOOP_STOPPED"):
+        with pytest.raises(LLMError, match="G6_E_LOOP_CANNOT_RECORD"):     # this process's own stop, by its own code
             _Counted(backend, _review_handle(spelled).requests).complete("system", "another request")
         assert backend.calls == []
 

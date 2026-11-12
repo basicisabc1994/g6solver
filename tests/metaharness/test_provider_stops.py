@@ -514,7 +514,10 @@ def test_a_refusal_no_file_would_keep_stops_this_process_and_asks_a_person(tmp_p
         caller.complete("system", "same request")
     assert REFUSED_FILE in loop.cannot_record and "would not keep it" in stop_reason(loop.root)
     calls = len(domain.llm.calls)
-    assert _code(loop.tick()) == "G6_E_LOOP_STOPPED" and len(domain.llm.calls) == calls
+    # this process's own stop says so by its own code (``ShadowLoop._stop``, the freeze and stop follow-ups' rule); a
+    # restart, a process with none of this one's record of the folder, reads the STOP file a person must lift
+    assert _code(loop.tick()) == "G6_E_LOOP_CANNOT_RECORD" and len(domain.llm.calls) == calls
+    monkeypatch.setattr(loop_module, "_RECORD", loop_module._Record())
     assert _code(_restarted(tmp_path, domain).tick()) == "G6_E_LOOP_STOPPED" and len(domain.llm.calls) == calls
 
 
@@ -653,7 +656,7 @@ def test_ref1_4_a_refusal_no_file_would_keep_stops_the_next_request_between_tick
     with pytest.raises(LLMError, match=MODEL_REFUSED):
         caller.complete("system", "same request")
     before = len(domain.llm.calls)
-    with pytest.raises(LLMError, match="G6_E_LOOP_STOPPED"):
+    with pytest.raises(LLMError, match="G6_E_LOOP_CANNOT_RECORD"):     # this process's own stop, by its own code
         caller.complete("system", "a different request")
     assert len(domain.llm.calls) == before
 
