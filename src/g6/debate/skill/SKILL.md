@@ -5,7 +5,7 @@ description: Use when an agent is about to accept one model's first answer to a 
 
 # G6 debate
 
-`g6.debate` has role-named agents (proposer, critic, devil's advocate, synthesiser, verifier) answer a question in turn
+`g6.debate` has role-named agents (proposer, critic, devil's advocate, synthesiser, `verifier`) answer a question in turn
 through one injected model caller, then reads how far their final turns agree: a lexical floor computed by code, and
 optionally one more model call that judges agreement by meaning. Neither reading checks that an answer is right.
 

@@ -46,7 +46,7 @@ no `task` the op is refused with `G6_E_CODING_AGENT_GATE_TASK_REQUIRED`.
 - `needs_evidence`: collect what `missing_evidence` lists. A proposed action is a plan, never evidence.
 - `proceed_with_caution`: act, with a targeted check of the risk the findings name.
 - `revise`: fix the draft. A claim needs `{"kind": "file", "ref": "<path>"}` for the file you read; a readiness word
-  needs a passing run, and on your own evidence alone the answer must also say it is unverified.
+  needs a passing run, and on your own evidence alone the answer must also say it is not independently checked.
 - `pass`: report it with its uncertainty. `block` and `needs_review` read `blocked-escalated`; every other verdict
   reads `qualified-draft`; nothing here is `verified`.
 
@@ -101,8 +101,8 @@ Composed:
 ## Failure modes it catches
 
 - `hallucinated_success` (an agent reporting work as done that the evidence does not back up): `verify_answer`
-  passes only with at least one counted item, or a verifier result with an exit code, and no finding. A readiness
-  claim without a passing run, claims without any counted file, a failing exit code or a verifier `fail` each forces
+  passes only with at least one counted item, or a `verifier` result with an exit code, and no finding. A readiness
+  claim without a passing run, claims without any counted file, a failing exit code or a `verifier` status of `fail` each forces
   `revise`; a shortcut in the answer or the diff forces `block`.
 
 - `unapproved_protected_change`: supplied path policies require independent host-observed review; missing policy, invalid paths and policy evaluation failure block; expired exemptions do not bypass review.
@@ -129,7 +129,7 @@ your own caller.
 ## Examples
 
 ```g6-example op=verify_answer
-{"task": "Fix the off-by-one in paginate()", "answer": "Changed range(n) to range(n + 1) in paginate(); the result is unverified beyond the run below.", "task_contract": "paginate(10, 3) returns 4 pages; existing tests stay green", "evidence": [{"kind": "file", "ref": "src/page.py"}, {"kind": "test", "ref": "pytest -q tests/test_page.py", "output": "3 passed", "exit_code": 0}], "claims": ["paginate() is in src/page.py"]}
+{"task": "Fix the off-by-one in paginate()", "answer": "Changed range(n) to range(n + 1) in paginate(); the result is not independently checked beyond the run below.", "task_contract": "paginate(10, 3) returns 4 pages; existing tests stay green", "evidence": [{"kind": "file", "ref": "src/page.py"}, {"kind": "test", "ref": "pytest -q tests/test_page.py", "output": "3 passed", "exit_code": 0}], "claims": ["paginate() is in src/page.py"]}
 ```
 
 The reply is `pass`, `qualified-draft`, with `evidence_basis` `caller-declared`: no rule objected, and the evidence

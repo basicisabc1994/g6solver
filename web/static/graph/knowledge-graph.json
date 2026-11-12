@@ -83653,7 +83653,7 @@
     {
       "id": "layer:coding-agents",
       "name": "Coding Agent and Workforce Components",
-      "description": "The coding-agent gate and the workforce component that runs a local coding mission under a frozen standard, with its role templates (doer, prober, puller, verifier, gatekeeper) and test-run parameters.",
+      "description": "The coding-agent gate and the workforce component that runs a local coding mission under a frozen standard, with its role templates (doer, prober, puller, \"verifier\", gatekeeper) and test-run parameters.",
       "nodeIds": [
         "file:src/g6/coding_agent_gate/__init__.py",
         "file:src/g6/coding_agent_gate/coding_agent_gate_block.py",

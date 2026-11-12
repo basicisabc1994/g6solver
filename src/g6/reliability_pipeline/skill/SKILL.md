@@ -99,7 +99,7 @@ says so here.
   `authenticated: false`).
 - `unverified_reliability` (completion claimed with nothing named that would prove it): the plan critique reports
   `missing_evaluation` when no test is named; a criterion marked critical in `success_criteria_structured` with no
-  available verifier becomes an escalation trigger.
+  available checker becomes an escalation trigger.
 - `missing_domain_standard` (work in a specialist field started without that field's evidence standard): the
   tripwire's words `medical` and `legal` make a task `risky`; otherwise the question only.
 - `wrong_risk_tier` (harm or irreversibility underestimated): tripwire signals and stated figures raise the risk band
@@ -112,7 +112,7 @@ says so here.
   assumption with who stated it.
 - `source_gap` (claims that need sources and have none): the question only.
 - `verification_gap` (output that no independent check looks at): the question, and the escalation trigger for a
-  structured critical criterion without a verifier.
+  structured critical criterion without a checker.
 - `handoff_gap` (a result handed over without saying how far to rely on it): every block carries its reason and a
   `safe_next_action`; the escalation triggers say when to stop at `qualified-draft`.
 - `learning_gap` (a failure never recorded, so nothing learns from it): the question; `distill_run` records a run

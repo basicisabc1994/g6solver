@@ -27,7 +27,7 @@ The installed client discovered G6 and created the synthetic workflow. No elicit
 request reached the probe on direct confirmation calls, including when the probe was
 ready to accept. G6 refused every confirmation and provided the terminal fallback.
 
-Result: **fail-closed behavior observed; interactive client consent still unverified**.
+Result: **fail-closed behavior observed; interactive client consent still not checked**.
 Automated response handling would not authenticate a human even if delivered.
 Claude's real elicitation UI remains untested; CLI registration alone establishes none
 of its consent semantics. The protocol mechanism is described in the
