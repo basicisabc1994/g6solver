@@ -897,6 +897,27 @@
     "vetting": null
   },
   {
+    "name": "cognitive_bridge",
+    "summary": "G6 Cognitive Learning Bridge: explicitly swappable learning strategies and XAI.",
+    "maturity": "beta",
+    "maturity_reason": "new typed bridge; its proposals, likelihoods and model fidelity are not checked by anyone outside it",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "rank",
+      "update",
+      "plan_methods",
+      "rank_methods",
+      "assurance_schema"
+    ],
+    "requires": [
+      "epistemic_integrity",
+      "invariants",
+      "reasoning"
+    ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
     "name": "complexity",
     "summary": "g6.complexity \u2014 maps a Python package's modules, state and effects from its source, without running it, and lists what a change can reach.",
     "maturity": "beta",

@@ -7,6 +7,7 @@
     "requires_human_review": false,
     "aliases": [],
     "guarded_by": [
+      "cognitive_bridge",
       "decision_making"
     ],
     "introduced_by": [],
@@ -615,6 +616,7 @@
     "requires_human_review": false,
     "aliases": [],
     "guarded_by": [
+      "cognitive_bridge",
       "epistemic_integrity"
     ],
     "introduced_by": [
@@ -1823,6 +1825,7 @@
     "requires_human_review": false,
     "aliases": [],
     "guarded_by": [
+      "cognitive_bridge",
       "epistemic_integrity"
     ],
     "introduced_by": [],
@@ -2599,7 +2602,8 @@
     "introduced_by": [
       "adapt_automl",
       "adapt_pytorch",
-      "adapt_sklearn"
+      "adapt_sklearn",
+      "cognitive_bridge"
     ],
     "planned": [
       "g6.jobs.job_framework"
