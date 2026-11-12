@@ -9,7 +9,8 @@ records by their fields; it imports nothing from the bridge, so the bridge's own
 
 - ``variant_fields``: the fields of the variant for one artefact: ``MethodVariant(**variant_fields(...))``.
 - ``trial_fields``: the fields of the trial one pair receipt gives a variant: ``EvaluatedTrial(**trial_fields(...))``.
-- ``admit_trial``: the admission hook. Only a receipt in the evaluator's ledger credits a strategy.
+- ``admit_trial``: the admission hook. Only a receipt that reads again from what the evaluator kept credits a
+  strategy (``g6.learning.paired_eval.credited``); a row in the ledger alone supplies nothing.
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from g6.core.ledger import ChainLedger
-from g6.learning.paired_eval import KIND, PairReceipt
+from g6.learning.paired_eval import Evidence, PairReceipt, audit
 from g6.learning.strategy import StrategyArtefact, StrategyStore
 
 #: What the bridge's ``MethodVariant`` asks of a heuristic (``g6.cognitive_bridge.metacognition``; a test keeps the
@@ -56,12 +57,15 @@ def trial_fields(receipt: PairReceipt, variant: Any, context: Any) -> dict[str, 
             "critical_regression": _regressed(receipt), "variant_digest": variant.definition_digest}
 
 
-def admit_trial(ledger: ChainLedger, store: StrategyStore, variants: Sequence[Any]) -> Callable[[Any], bool]:
+def admit_trial(ledger: ChainLedger, store: StrategyStore, variants: Sequence[Any], *,
+                evidence: Evidence | None = None) -> Callable[[Any], bool]:
     """The admission hook for heuristic trials (``MetacognitiveMethodSelector(admit_trial=...)``): a trial is
     admitted only when the evaluator's ledger checks out, as its file stands now, and holds a pair receipt under the
-    trial's evaluator reference; that receipt is evidence; the strategy it measured resolves in the store, its bytes
-    hashed again, and is the variant's own content digest; and the trial's variant, outcome, cost, case, cohort,
-    split and oracle are what the receipt gives. A digest or an outcome a caller asserts supplies nothing."""
+    trial's evaluator reference; that receipt reads again from what the evaluator kept (``paired_eval.audit``: the
+    task, the oracle, each arm's reply and judge verdicts, and the strategy's bytes, each hashed again, give the pair
+    the row states); the strategy it measured is the variant's own content digest; and the trial's variant, outcome,
+    cost, case, cohort, split and oracle are what the receipt gives. A row appended by hand, a digest or an outcome a
+    caller asserts supplies nothing. ``evidence`` is the evaluator's store; by default the one beside the ledger."""
     known = {variant.definition_digest: variant for variant in variants if variant.kind == HEURISTIC}
 
     def admit(trial: Any) -> bool:
@@ -71,13 +75,9 @@ def admit_trial(ledger: ChainLedger, store: StrategyStore, variants: Sequence[An
         try:
             if ledger.path is not None:
                 ledger.reload()            # the file as it stands now: a line edited since it was opened refuses
-            if ledger.verify():
-                return False
-            receipt = PairReceipt.from_body(ledger.get(KIND, trial.evaluator_ref))
-            digest = receipt.candidate.strategy_digest
-            if not receipt.credits or digest != variant.content_digest:
-                return False
-            if hashlib.sha256(store.resolve(digest).to_bytes()).hexdigest() != digest:
+            read = audit(ledger, store, evidence=evidence, pair_id=trial.evaluator_ref)
+            receipt = next((found for found, why in read if found.pair_id == trial.evaluator_ref and not why), None)
+            if receipt is None or receipt.candidate.strategy_digest != variant.content_digest:
                 return False
             given = trial_fields(receipt, variant, trial)
             return all(getattr(trial, name) == value for name, value in given.items())
