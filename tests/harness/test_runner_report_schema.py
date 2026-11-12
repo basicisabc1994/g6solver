@@ -359,7 +359,8 @@ CONSUMERS = {
     "harness/patch_review.py": {"_confined", "_listing", "_failed_ids", "phases_of", "_in_repository", "_verdicts", "_observed", "_on_base", "_not_loaded", "_not_found", "_collection_errors"},
     "harness/verification_search.py": {"reading", "_messages", "_refused_access", "_uncollected", "search"},
     "harness/completion_loop.py": {"_read"},
-    "workforce/repo_tests.py": {"read_report", "_judge", "_progress", "_run", "run_before", "shadowed", "loaded_from"},
+    "workforce/repo_tests.py": {"read_report", "_judge", "_progress", "_run", "run_before", "shadowed", "loaded_from",
+                                "established"},
     "workforce/receipt_store.py": {"_body"},
     "bundles/agent_change.py": {"run", "_as_run"},
     "metaharness/coding.py": {"coding_oracle", "_mutants_killed"},
@@ -367,7 +368,8 @@ CONSUMERS = {
 }
 PHASE_FIELDS = {"test_outcomes", "failed_ids", "setup_errors", "collected_ids", "omitted_ids", "rootdir"}
 VALIDATED_FIELDS = {"phases", "nodes", "failed", "omitted", "full", "wire", "collection_errors",
-                    "collection_errors_for", "outcome", "body_result", "loading_known"}
+                    "collection_errors_for", "outcome", "body_result", "loading_known",
+                    "withheld", "of"}   # the one statement (``established``): its reading's states and its answer
 
 
 def consumers():
@@ -383,7 +385,7 @@ def consumers():
                      or (isinstance(n, ast.Subscript) and isinstance(n.slice, ast.Constant)
                          and n.slice.value in PHASE_FIELDS)
                      or (isinstance(n, ast.Attribute) and n.attr in VALIDATED_FIELDS
-                         and (ast.unparse(n.value) in ("report", "base_report", "patch_report")
+                         and (ast.unparse(n.value) in ("report", "base_report", "patch_report", "said")
                               or (isinstance(n.value, ast.Call) and ast.unparse(n.value.func) in (
                                   "read_report", "repo_tests.read_report", "rt.read_report"))))]
             if reads:
@@ -406,4 +408,6 @@ def test_every_report_consumer_uses_the_producer_validated_form_only():
             if name == "_run":
                 assert "_progress" in calls  # builder consumes the schema-read progress, not a raw report
                 continue
-            assert {"read_report", "repo_tests.read_report", "rt.read_report"} & calls, (rel, name)
+            # through the reader itself, or through the one statement built on it (``repo_tests.established``)
+            assert {"read_report", "repo_tests.read_report", "rt.read_report",
+                    "established", "repo_tests.established", "rt.established"} & calls, (rel, name)

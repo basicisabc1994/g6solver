@@ -535,14 +535,18 @@ def reading(ran: dict, node: str) -> dict:
         return error("a collection of the check failed beside its reported test bodies")
     if any(phases.get("setup") != "passed" or phases.get("teardown") == "failed" for phases in mine.values()):
         return error("a test of the check could not be set up, was skipped, or failed after its call")
-    bodies = {phases.body() for phases in mine.values()}
-    if bodies == {"passed"} and verdict == repo_tests.PASSED:
+    # A pass or a failure is the report's one reading of the check (``RunReport.body_result``), never a second rule over
+    # its phases here: a test of the check pytest left out, or a report in any ``NO_AUTHORITY`` state, is no result.
+    decided = report.body_result(node)
+    if decided == repo_tests.PASSED and verdict == repo_tests.PASSED:
         observed = ran.get("probe_observations")
         if isinstance(observed, str):
             return error(observed)
         return {**found, "result": "passed", "detail": f"{len(mine)} test(s) passed", "observations": observed}
-    if "failed" in bodies and verdict == repo_tests.FAILED:
+    if decided == repo_tests.FAILED and verdict == repo_tests.FAILED:
         return failed(_failure(ran, node))
+    if any(_covers(node, left) for left in report.omitted):
+        return error("pytest left out a test of the check (deselected), so the check did not run whole")
     return error(f"its tests did not run to a pass or a fail ({verdict})")
 
 

@@ -366,7 +366,8 @@ REPORT_FIELDS = {
                                       "bounded exact JSON input/output pairs, or an error or no payload",
                                       predicate=_payload_shape),
     "collection_stopped": ReportField((bool, type(None)), None, "session stopped during collection",
-                                      "true requires a collection failure or missing selection; null when unrecorded"),
+                                      "true requires a collection failure or missing selection, and nothing is "
+                                      "established when true; null when unrecorded"),
     "python_sources": ReportField(([str], type(None)), None, "Python names in the copy's pre-run snapshot",
                                   "unique relative Python paths, or null for a Git source listing",
                                   predicate=lambda names: names is None or len(names) == len(set(names)) and all(
@@ -381,8 +382,12 @@ for _name in ("passed", "failed", "not_passed", "total", "deselected"):
 for _name in ("collected", "started", "finished"):
     REPORT_FIELDS[_name] = ReportField(int, 1, "producer progress tally", "equals the corresponding identity or phase count",
                                       predicate=lambda value: 0 <= value <= sys.maxsize)
-for _name in ("degraded", "completed", "own_config", "loaded_complete"):
+for _name in ("own_config", "loaded_complete"):
     REPORT_FIELDS[_name] = ReportField(bool, False, "execution flag", "exact boolean")
+REPORT_FIELDS["degraded"] = ReportField(bool, False, "the run fell short of a whole run",
+                                        "exact boolean; never true beside a pass, and nothing is established when true")
+REPORT_FIELDS["completed"] = ReportField(bool, True, "pytest's exit was 0 or 5 and every expected test finished",
+                                         "exact boolean; true beside every pass, false beside every failure")
 for _name in ("seconds",):
     REPORT_FIELDS[_name] = ReportField(float, 0.0, "elapsed time", "finite and nonnegative",
                                       predicate=lambda value: math.isfinite(value) and value >= 0)
@@ -391,6 +396,8 @@ for _name in ("python", "interpreter_source", "command", "source_before", "recei
     REPORT_FIELDS[_name] = ReportField(str, "", "execution or receipt annotation", "text only")
 for _name in ("changed", "os_errors", "import_path", "env_set_by_g6", "ignored_loadable"):
     REPORT_FIELDS[_name] = ReportField([str], [], "execution identity listing", "text members; os_errors annotate recorded failures")
+REPORT_FIELDS["changed"] = ReportField([str], [], "files that changed under the run",
+                                       "text members; named only beside the verdict that says files changed")
 for _name in ("failure_messages", "messages", "repo_env", "loaded_outside", "submodules_not_hashed", "links_left_out",
               "links_materialised", "generated_copied", "generated_left_out", "ignored_inputs"):
     REPORT_FIELDS[_name] = ReportField({str: str}, {}, "execution annotation by identity", "text keys and values")
@@ -409,10 +416,36 @@ REPORT_VERDICTS = frozenset({*RAN, CHANGED, RUN_INCONSISTENT, CRASHED, "timed_ou
                              "could_not_start", "not_run"})
 
 
+#: Every state in which a run establishes nothing: no pass, no failure of a test's body, no replay count and no killed
+#: negative control. ``read_report`` decides each from the whole report (``RunReport.withheld``), and ``established``
+#: decides whose code ran from a listing of the tree's own files. A statement of support is made only where none holds.
+NO_AUTHORITY = {
+    "unreadable": "the report does not read as one the runner writes, or one part of it contradicts another",
+    "no_result": "the run's verdict is neither a pass nor a failure",
+    "changed_source": "the report records source files changed under the run",
+    "degraded": "the report marks the run degraded",
+    "incomplete": "the report records that the run did not complete",
+    "loading_unknown": "the report cannot say which code the run loaded",
+    "foreign_code": "the run loaded the tree's own modules from outside the tree",
+}
+
+
 def report_covers(check: str, node: str) -> bool:
-    """The runner's file, folder, test and parameter scopes, shared by its readers."""
+    """Whether the test ``node`` is in the scope ``check`` names, by pytest's own reading of a selection
+    (``_pytest.main.resolve_collection_argument`` and its match while collecting): after the path, everything from the
+    first "[" is one parameter of the last name, and a selection with a parameter matches the test of exactly that
+    name, so ``test_add[a]`` never covers ``test_add[a][b]``, another parameter of the same function. A folder or file
+    covers what lies under it, whatever its name holds (pytest collects a folder named ``pkg[1]`` under its parent,
+    though it refuses to be asked for it alone); a class covers its tests; a function each of its parameters."""
     check = check.rstrip("/")
-    return node == check or node.startswith((check + "::", check + "[", check + "/"))
+    if node == check:
+        return True
+    path, named, names = check.partition("::")
+    if not named:
+        return node.startswith((path + "/", path + "::"))
+    if "[" in names:
+        return False
+    return node.startswith(check + "::") or (node.startswith(check + "[") and node.endswith("]"))
 
 
 @dataclass(frozen=True, eq=False)
@@ -460,7 +493,9 @@ class RunReport:
 
     Hints only select unknown observations; they never authorize a pass or kill.
     Diagnostic verdicts keep the released review meaning, independently of body
-    observations. All evidence consumers use ``valid`` and ``phases``.
+    observations. What the run establishes is stated here alone: ``outcome`` and
+    ``body_result``, both unknown in any ``NO_AUTHORITY`` state (``withheld``);
+    ``established`` adds whose code ran. No consumer states it from the fields.
     """
     valid: bool
     phases: Mapping[str, PhaseRecord]
@@ -476,6 +511,9 @@ class RunReport:
     data: Mapping[str, object]
     outcome: str
     loading_known: bool  # diagnostics survive unrelated errors; outcome still needs whole-report validity
+    #: Each ``NO_AUTHORITY`` state the report itself is in, in that order. Non-empty: ``outcome`` and every
+    #: ``body_result`` are unknown, whatever the phases say.
+    withheld: tuple[str, ...] = ("unreadable",)
 
     @property
     def has_phase_data(self) -> bool:
@@ -491,8 +529,10 @@ class RunReport:
                          if node == "" or report_covers(check, node) or report_covers(node, check))
 
     def body_result(self, check: str) -> str:
-        """A positive body match for this requested scope, or unknown."""
-        if type(check) is not str or not self.valid or not self.loading_known or self.verdict not in RAN:
+        """A positive body match for this requested scope, or unknown. The one statement of what a run shows of a
+        check's tests: a report in any ``NO_AUTHORITY`` state shows nothing, nor does a scope with a test left out or a
+        collection that failed."""
+        if type(check) is not str or self.withheld:
             return "unknown"
         records = [record.body() for node, record in self.phases.items() if report_covers(check, node)]
         if self.collection_errors_for(check) or any(report_covers(check, node) for node in self.omitted):
@@ -639,6 +679,18 @@ def read_report(raw: object) -> RunReport:
         consistent &= all(type(node) is str and node in phase_failures or
                           (type(node) is str and node in messages)
                           for node in value["os_errors"]) if typed else False
+    # The run's own record of what happened to it is one fact with its verdict, read here with the rest of the
+    # report and never left to a consumer. The producer names changed files only under the verdict that says so; it
+    # marks no pass degraded or not completed, and no failure completed (``completed``: pytest's exit was 0 or 5 and
+    # every test it expected finished).
+    changed_source = "changed" in value and value["changed"] != []
+    degraded = "degraded" in value and value["degraded"] is not False
+    if changed_source:
+        consistent &= verdict == CHANGED
+    if verdict == PASSED:
+        consistent &= not degraded and value.get("completed", True) is True
+    if verdict == FAILED:
+        consistent &= value.get("completed", False) is False
     valid = bool(typed and consistent)
     if not valid:
         unknown = {}
@@ -665,8 +717,16 @@ def read_report(raw: object) -> RunReport:
     loading_known = not loading_fields or (
         len(loading_fields) == 2 and value.get("loaded_complete") is True
         and _report_type(value.get("loaded_outside"), {str: str}))
+    # Every state that establishes nothing, decided once for every consumer (``NO_AUTHORITY``). A failure pytest ran to
+    # is recorded as not completed (its exit was 1), so that mark withholds a pass only; a session that stopped while
+    # collecting completed nothing.
+    incomplete = (verdict == PASSED and value.get("completed", True) is not True) or (
+        "collection_stopped" in value and value["collection_stopped"] not in (False, None))
+    states = {"unreadable": not valid, "no_result": verdict not in RAN, "changed_source": changed_source,
+              "degraded": degraded, "incomplete": incomplete, "loading_unknown": not loading_known}
+    withheld = tuple(name for name in NO_AUTHORITY if states.get(name))
     outcome = "unknown"
-    if valid and loading_known:
+    if not withheld:
         if verdict == PASSED and passes:
             outcome = PASSED
         elif verdict == FAILED and any(record.body() == FAILED for record in phases.values()):
@@ -677,7 +737,7 @@ def read_report(raw: object) -> RunReport:
                      frozenset(full(node) for node in failed | setup),
                      frozenset(full(node) for node in omitted), frozenset(full(node) for node in collection_failures),
                      root, text("verdict", "not_run"),
-                     text("said"), text("output"), MappingProxyType(data), outcome, loading_known)
+                     text("said"), text("output"), MappingProxyType(data), outcome, loading_known, withheld)
 
 
 class RepoRefused(ValueError):
@@ -2136,6 +2196,36 @@ def loaded_from(repo: Path | None, ran: dict | RunReport) -> dict[str, dict[str,
     return shadowed(sources, report)
 
 
+@dataclass(frozen=True)
+class Established:
+    """What one run establishes of one tree's code (``established``)."""
+    report: RunReport
+    withheld: str   # the first ``NO_AUTHORITY`` state the run is in, "" when it is in none
+
+    def of(self, check: str | None = None) -> str:
+        """``PASSED``, ``FAILED`` or "unknown": for the tests ``check`` names (``RunReport.body_result``) or, with
+        none, for the run as a whole (``RunReport.outcome``). Unknown in any ``NO_AUTHORITY`` state."""
+        if self.withheld:
+            return "unknown"
+        return self.report.outcome if check is None else self.report.body_result(check)
+
+
+def established(ran: dict | RunReport, *, repo: Path | None = None,
+                sources: tuple[str, ...] | list[str] | None = None) -> Established:
+    """The one statement of what ``ran`` establishes: its report's own reading (``read_report``) and whose code it ran.
+    ``sources``: the files whose modules must have come from the tree it tested (a change's own, the patch review's
+    rule: ``shadowed``); without them, every Python file of the tree (``loaded_from``: the copy's pre-run listing in
+    the report, else ``repo``'s own). A run that loaded one from elsewhere is ``foreign_code``, one that cannot say
+    ``loading_unknown``. Every statement that a run supports something, every count of a replay and every negative
+    control is made through this, or through the reading's own ``body_result`` and ``outcome`` where the caller has
+    settled whose code ran; no consumer puts one together from the report's fields."""
+    report = read_report(ran)
+    if report.withheld:
+        return Established(report, report.withheld[0])
+    found = shadowed(sources, report) if sources is not None else loaded_from(repo, report)
+    return Established(report, "loading_unknown" if found is None else "foreign_code" if found else "")
+
+
 def _root(repo: Path, rootdir: str) -> str:
     """pytest's root folder, which it names each test relative to, as a path inside ``repo`` ("" for its top, and when
     the run did not say or named a folder outside it)."""
@@ -3150,8 +3240,9 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
                                     deadline=started + bound, links=report, require_isolation=require_isolation)
                 base_report = read_report(baseline)
                 baseline = base_report.wire()
-                if (not base_report.valid or baseline["verdict"] != PASSED or baseline.get("degraded") or baseline.get("not_passed")
-                        or baseline.get("deselected") or not base_report.phases):
+                # the baseline counts only as the one statement gives it: a pass of the base commit's own code
+                if (established(base_report, sources=getattr(change, "sources", None)).of() != PASSED
+                        or baseline.get("not_passed") or baseline.get("deselected") or not base_report.phases):
                     reason = baseline.get("said") or "; ".join(baseline.get("setup_errors", {}).values())
                     results[rel] = _not_run_report(reason or OLD_BASELINE_NOT_RUN, baseline=baseline["verdict"])
                     continue

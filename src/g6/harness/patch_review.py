@@ -715,10 +715,11 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
         else:
             verdict, detail = run, said
         found[check] = {"verdict": verdict, "detail": detail}
-        if (not report.valid or (bodies and not report.loading_known)
-                or (verdict == "passed" and run not in repo_tests.RAN)
-                or report.collection_errors_for(check)
-                or (verdict == FAILED and FAILED not in bodies.values())):
+        # The issuer is told a pass or a failure only where the report's one reading states it for this check
+        # (``RunReport.body_result``: nothing from a report in a ``NO_AUTHORITY`` state, a scope with a test left out
+        # or a failed collection); the review's own verdict above keeps its meaning beside it.
+        if (not report.valid or (bodies and not report.loading_known) or report.collection_errors_for(check)
+                or (verdict in repo_tests.RAN and report.body_result(check) != verdict)):
             found[check]["observation"] = ERROR
     return found
 

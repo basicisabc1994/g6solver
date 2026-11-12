@@ -449,7 +449,11 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
             tail.append(vs.LOADED_ELSEWHERE.format(elsewhere) if elsewhere else f"{verdict}: {ran.get('said') or ''}")
             texts.update(ran.get("failure_messages") or {})     # pytest's own words: no case has them, so only ``_unrun`` reads them
             continue
-        code = None if code is None else max(code, int(verdict == repo_tests.FAILED))
+        # any other state in which the report's one reading says the run establishes nothing (``NO_AUTHORITY``: a
+        # degraded run, a session that stopped while collecting) leaves the set unusable too; its cases are still named
+        code = None if code is None or report.withheld else max(code, int(verdict == repo_tests.FAILED))
+        if report.withheld and not report.collection_errors:
+            tail.append(f"{verdict}: {repo_tests.NO_AUTHORITY[report.withheld[0]]}")
         full, refused = report.full, {report.full(n) for n in ran.get("os_errors", ())}
         for named, phases in report.phases.items():
             results[_PLACE.sub("", named)] = "unknown" if named in refused else _outcome(phases)

@@ -63,10 +63,8 @@ def coding_oracle(*, mutation: bool = False, timeout_s: int = 300,
         if repo is None or not tests:
             return False
         result = (run or repo_tests.run)(repo, tests, timeout_s=timeout_s)
-        report = repo_tests.read_report(result)
-        if (report.outcome != repo_tests.PASSED
-                or any(report.body_result(test) != repo_tests.PASSED for test in tests)
-                or repo_tests.loaded_from(repo, report) != {}):
+        said = repo_tests.established(result, repo=repo)   # the one statement of a pass: the run and each hidden test
+        if any(said.of(scope) != repo_tests.PASSED for scope in (None, *tests)):
             return False
         if mutation:
             return _mutants_killed(repo, tests, timeout_s=timeout_s, run=run or repo_tests.run)
@@ -85,12 +83,10 @@ def _mutants_killed(repo: Path, tests: Sequence[str], *, timeout_s: int, run: Ca
     for rel in changed:
         def run_mutant(source: str, seconds: int, rel: str = rel) -> SimpleNamespace:
             got = run(repo, list(tests), timeout_s=seconds, mutant=(rel, source))
-            report = repo_tests.read_report(got)
-            results = [report.body_result(test) for test in tests]
-            failed = report.outcome == repo_tests.FAILED and repo_tests.FAILED in results
-            passed = report.outcome == repo_tests.PASSED and all(value == repo_tests.PASSED for value in results)
-            if repo_tests.loaded_from(repo, report) != {}:
-                failed = passed = False
+            said = repo_tests.established(got, repo=repo)   # the one statement, of the copy's own code
+            report, results = said.report, [said.of(test) for test in tests]
+            failed = said.of() == repo_tests.FAILED and repo_tests.FAILED in results
+            passed = said.of() == repo_tests.PASSED and all(value == repo_tests.PASSED for value in results)
             known = failed or passed
             return SimpleNamespace(execution_id=uuid.uuid4().hex if known else "",
                                    passed=report.data.get("passed", int(passed)) if known else 0,

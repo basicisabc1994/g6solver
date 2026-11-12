@@ -8,16 +8,15 @@ from tests.harness.report_consumer_inventory import RECEIVERS, consumer_fields
 
 READERS = {
     "algorithm_design/autonomous.py": {"_observed"},
-    "bundles/agent_change.py": {"_as_run", "run"},
+    "bundles/agent_change.py": {"run"},
     "harness/completion_loop.py": {"_read"},
     "harness/patch_review.py": {"_confined", "_failed_ids", "_in_repository", "_listing", "_observed",
                                 "_on_base", "_verdicts", "phases_of", "_not_loaded", "_patch_imports_missing",
                                 "_not_found", "_collection_errors"},
     "harness/verification_search.py": {"reading", "_messages", "_refused_access", "_uncollected", "read"},
-    "metaharness/coding.py": {"oracle", "run_mutant"},
     "workforce/bench.py": {"_in_place"},
     "workforce/receipt_store.py": {"_body"},
-    "workforce/repo_tests.py": {"_judge", "_progress", "shadowed", "run_before", "loaded_from"},
+    "workforce/repo_tests.py": {"_judge", "_progress", "shadowed", "run_before", "loaded_from", "established"},
 }
 
 # Entry points which receive a producer's return. Dispatchers pass to the named
@@ -60,12 +59,13 @@ def inventory(root, *, with_ownership=False):
                     assert alias.name != "*", "a wildcard runner import cannot be classified"
                     if alias.name == "read_report":
                         read_names.add(alias.asname or alias.name)
-                    elif alias.name == "loaded_from":
+                    elif alias.name in ("loaded_from", "established"):
                         owner_names.add(alias.asname or alias.name)
                     elif alias.name in ("run", "_run", "run_before", "run_at_base"):
                         entry_names.add(alias.asname or alias.name)
         read_names.update(f"{module}.read_report" for module in modules)
-        owner_names.update(f"{module}.loaded_from" for module in modules)
+        # whose code ran: the shared rule, asked directly or through the one statement built on it
+        owner_names.update(f"{module}.{op}" for module in modules for op in ("loaded_from", "established"))
         entry_names.update(f"{module}.{op}" for module in modules
                            for op in ("run", "_run", "run_before", "run_at_base"))
         def visit(node, scope=""):

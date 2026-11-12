@@ -52,11 +52,12 @@ def _as_run(out: dict, tests: list[str] | tuple[str, ...] = (), repo: Path | Non
     """A ``repo_tests.run`` answer in the shape ``mutation_check`` reads: executed only when the tests ran."""
     from g6.workforce import repo_tests as rt
 
-    report = rt.read_report(out)
-    results = [report.body_result(test) for test in tests] if tests else [report.outcome]
-    failed = report.outcome == rt.FAILED and rt.FAILED in results
-    passed = report.outcome == rt.PASSED and all(value == rt.PASSED for value in results)
-    ran = (failed or passed) and rt.loaded_from(repo, report) == {}
+    said = rt.established(out, repo=repo)   # the one statement of what the run shows, of the tree's own code
+    report = said.report
+    results = [said.of(test) for test in tests] if tests else [said.of()]
+    failed = said.of() == rt.FAILED and rt.FAILED in results
+    passed = said.of() == rt.PASSED and all(value == rt.PASSED for value in results)
+    ran = failed or passed
     return SimpleNamespace(execution_id=uuid.uuid4().hex if ran else "",
                            passed=report.data.get("passed", int(passed)) if ran else 0,
                            failed=report.data.get("failed", int(failed)) if ran else 0,
@@ -138,8 +139,10 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
              + " Network connections were refused inside the tests.",
              "The best label is qualified-draft: the tests are yours or the agent's, not independent of the change, "
              "and passing tests do not establish that the task is done."]
-    verdict, ran = report.verdict, report.outcome in rt.RAN and rt.loaded_from(repo, report) == {}
-    if ran and report.outcome == rt.PASSED and found["total"]:
+    # the one statement of what the run shows, of the tree's own code
+    verdict, whole = report.verdict, rt.established(report, repo=repo).of()
+    ran = whole in rt.RAN
+    if whole == rt.PASSED and found["total"]:
         detail = f"{found['passed']} passed" + (f", {found['not_passed']} skipped (a skip is not a pass)"
                                                  if found["not_passed"] else "")
         rows.append(_row("Your tests on the change", "passed", detail, "qualified-draft"))
@@ -159,10 +162,12 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
             old = rt.run_before(change)
         except rt.RepoRefused as exc:
             old = {rel: {"verdict": "not_run", "said": str(exc)} for rel in change.before}
-        readings = {rel: rt.read_report(out) for rel, out in old.items()}
-        broke = [rel for rel, report in readings.items() if report.outcome == rt.FAILED]
-        skipped = {rel: report.said for rel, report in readings.items() if report.outcome != rt.PASSED
-                   and rel not in broke}
+        # each replay counts only as the one statement gives it: a replay of code from outside its copy, or in any
+        # other state that establishes nothing, is neither an original test's pass nor a break the change caused
+        replays = {rel: rt.established(out, repo=repo) for rel, out in old.items()}
+        broke = [rel for rel, said in replays.items() if said.of() == rt.FAILED]
+        skipped = {rel: said.report.said or rt.NO_AUTHORITY.get(said.withheld, "")
+                   for rel, said in replays.items() if said.of() != rt.PASSED and rel not in broke}
         if broke:
             rows.append(_row("Original tests on the new code", "failed", "the original version of "
                              + ", ".join(broke[:_SHOWN]) + " passed before the change and fails now: the change "
@@ -190,7 +195,7 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
         notes.append("The change edits test-runner configuration (" + ", ".join(change.runner_files[:_SHOWN])
                      + "); read it yourself: G6 says it, and does not judge it.")
 
-    if ran and report.outcome == rt.PASSED and found["total"]:
+    if whole == rt.PASSED and found["total"]:
         row, gaps = _mutations(change, repo, tests, float(found.get("seconds") or 1))
         rows.append(row)
         notes += gaps

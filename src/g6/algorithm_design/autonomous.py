@@ -294,6 +294,8 @@ class RepoTestsRunner:
         if self._checker_digest() != self._checker or self._source_digests() != self._sources:
             raise ValueError("protected repository content drifted during execution")
         report = repo_tests.read_report(raw)
+        # whose code ran is asked only of a report that could establish anything
+        said = None if report.withheld else repo_tests.established(report, repo=self.repo)
         raw = report.wire()
         isolation = raw.get("isolation") if isinstance(raw.get("isolation"), Mapping) else {}
         backend = str(isolation.get("backend") or "")
@@ -301,12 +303,12 @@ class RepoTestsRunner:
         environment_id = digest({"python": raw.get("python"), "backend": backend,
                                  "interpreter_source": raw.get("interpreter_source")})
         return TestObservation(
-            # completed as the run record says it: a verdict that ran, every expected test finished (not degraded)
+            # completed as the run's one reading says it (``repo_tests.established``): a pass or a failure of every
+            # frozen test, of the repository's own code, from a report in no state that establishes nothing; and the
+            # run record says outright that it is not degraded
             verdict=str(raw.get("verdict", "unknown")),
-            completed=report.valid and report.loading_known and report.verdict in repo_tests.RAN
-            and report.data.get("degraded") is False
-            and all(report.body_result(test) in repo_tests.RAN for test in self.mission.tests)
-            and repo_tests.loaded_from(self.repo, report) == {},
+            completed=said is not None and not said.withheld and report.data.get("degraded") is False
+            and all(said.of(test) in repo_tests.RAN for test in self.mission.tests),
             isolated=isolated, backend=backend, environment_id=environment_id,
             checker_digest=self._checker, candidate_digest=_sha(source),
             failed_tests=tuple(str(x) for x in raw.get("failed_ids", ())[:30]),

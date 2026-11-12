@@ -343,8 +343,8 @@ def _in_place(params: dict, venture: str | None) -> dict:
             return _refused(f"{refused} (code {refused.code})")
         report = repo_tests.read_report(found)
         found = report.wire()
-        passed = (report.outcome == repo_tests.PASSED and all(report.selected(test) for test in tests)
-                  and repo_tests.loaded_from(repo, report) == {})
+        passed = (repo_tests.established(report, repo=repo).of() == repo_tests.PASSED   # the one statement of a pass
+                  and all(report.selected(test) for test in tests))
     if report.verdict == repo_tests.CHANGED:
         return _refused(f"{found['said']}: {', '.join(found['changed'])}")
     return {"ok": True, "result": {"passed": passed, "verdict": report.verdict,
