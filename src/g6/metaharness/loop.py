@@ -1440,11 +1440,11 @@ def _judge_digest(judge: Judge | None, roots: Sequence[Path] | None = None) -> s
     package is the envelope's, and the installation's code its own."""
     if judge is None:
         return ""
-    return digest({"verdict": _named(judge.verdict),
+    return digest({"verdict": _callable_named(judge.verdict),
                    "roots": _pinned(roots if roots is not None else _roots_of([_code_file(judge.verdict)]))})
 
 
-def _named(fn: Any) -> list[str]:
+def _callable_named(fn: Any) -> list[str]:
     """A callable as the enrolment names it: its file, its qualified name, and the line its code starts on, so two lambdas
     of one function are two names."""
     unwrapped = _unwrapped(fn)
@@ -1666,9 +1666,10 @@ def _reloaded(loop: ShadowLoop) -> dict[str, Any] | None:
 def must_stop(log: CycleLog) -> str:
     """Why the durable record of cycles says stop, whether or not a pause was written: the cycles themselves are the fact,
     and the pause is only its note. A tick reads it, and so does a person's dialog that lifts it."""
-    for cycle in reversed(log.since_resumed()):
-        if cycle["outcome"] == "sealed_breach" or cycle.get("code") in (UNMETERED_CALLER, CLASSIFIER_STOP, *BARRED):
-            return cycle["reason"]
+    for cycle in reversed(log.since_resumed()):          # every status a cycle kept counts, whatever outranked it
+        for held in (cycle, *cycle.get("statuses", ())):
+            if held.get("outcome") == "sealed_breach" or held.get("code") in SAFETY_STOPS:
+                return held["reason"]
     streak = log.failed_run()
     if len(streak) < MAX_FAILED_CYCLES:
         return ""
@@ -2014,7 +2015,7 @@ class ShadowLoop:
                 "profile_space": _profile_space(str(getattr(self.domain, "name", "")), run),
                 "evaluator": digest({"judging": judging_sha256(), "judge": _judge_digest(judge, roots),
                                      "independence": [judge.answers_by, judge.is_model] if judge is not None else [],
-                                     "task": run.task, "checks": [[c.predicate, c.key, c.kind, *_named(c.run)]
+                                     "task": run.task, "checks": [[c.predicate, c.key, c.kind, *_callable_named(c.run)]
                                                                   for c in (*run.checks, *run.optional_checks.values())],
                                      "loaded": _loaded_outside(roots)}),
                 "cases": cut_pool(self.domain.development(), self.settings.seed).digest(),

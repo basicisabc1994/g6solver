@@ -583,8 +583,8 @@ def test_two_lambdas_of_one_function_are_two_names_so_a_swap_between_them_is_a_c
 
     accept = lambda output: True  # noqa: E731 - two lambdas of one scope share a qualified name
     refuse = lambda output: False  # noqa: E731
-    assert loop_module._named(accept)[:2] == loop_module._named(refuse)[:2]
-    assert loop_module._named(accept) != loop_module._named(refuse)
+    assert loop_module._callable_named(accept)[:2] == loop_module._callable_named(refuse)[:2]
+    assert loop_module._callable_named(accept) != loop_module._callable_named(refuse)
 
 
 # Review 3's classes: the judge is given exactly what was identified, roots are pinned whole with no links, every cycle
