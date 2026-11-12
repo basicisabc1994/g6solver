@@ -39,6 +39,14 @@ _PROJECT = re.compile(r"[0-9a-f]{64}\Z")
 _REGISTRATION = re.compile(r"src-[0-9a-f]{16}\Z")
 
 
+#: The one refusal for every path that is not a folder G6 may index: it says the same whatever is, or is not, at the
+#: path, so a refusal never tells a caller which names exist under a permitted root.
+NOT_INDEXABLE = ("the path is not a folder G6 may index here: it is outside every permitted root, or a link leads "
+                 "out of one, or it is not a folder inside a permitted root, or it is, or lies under, a folder "
+                 f"nothing is read under (a credential folder or a generated one). {ROOTS_ENV} lists the permitted "
+                 "roots")
+
+
 class ScopeDenied(Exception):
     """An operation outside the host binding, with its stable code and a reason that names no source content."""
 
@@ -154,8 +162,7 @@ def inside(binding: Binding, path: Path | str) -> Path:
             continue
         if Path(str(path)).is_absolute() or real.exists():
             return real
-    raise ScopeDenied(f"the path is outside every permitted root, or a link leads out of one ({ROOTS_ENV} lists "
-                      "the permitted roots)")
+    raise ScopeDenied(NOT_INDEXABLE)
 
 
 def consent_scope(registration_id: str) -> str:
@@ -165,5 +172,5 @@ def consent_scope(registration_id: str) -> str:
     return "knowledge:" + registration_id
 
 
-__all__ = ["LOCAL", "ROOTS_ENV", "SCOPE_DENIED", "START_IS_A_ROOT", "UNKNOWN_DESTINATION", "Access", "Binding",
+__all__ = ["LOCAL", "NOT_INDEXABLE", "ROOTS_ENV", "SCOPE_DENIED", "START_IS_A_ROOT", "UNKNOWN_DESTINATION", "Access", "Binding",
            "Operation", "ScopeDenied", "access", "bound", "consent_scope", "host_binding", "inside"]

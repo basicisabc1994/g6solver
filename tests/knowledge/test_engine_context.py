@@ -65,7 +65,13 @@ def test_saved_pack_is_denied_after_revoke(tmp_path, monkeypatch):
     source = rig.add()["source"]
     made, _ = context(rig, DOCS)
     usable, refs = engine.pack(rig.local("context"), made["pack"], clock=lambda: NOW)
-    assert usable["state"] == "usable" and usable["items"] == made["items"] and len(refs) == len(made["items"])
+    # changed on purpose (revs12c 6): a pack's items are read again from their files at every use, so the time of
+    # the check differs; what the items say is the same
+    def said(items):
+        return [{k: v for k, v in i.items() if k != "checked"} for i in items]
+
+    assert usable["state"] == "usable" and said(usable["items"]) == said(made["items"]) and len(refs) == len(made["items"])
+    assert all(i["checked"]["outcome"] == "intact" for i in usable["items"])
     engine.revoke(rig.local("revoke"), source)
     denied, refs = engine.pack(rig.local("context"), made["pack"], clock=lambda: NOW)
     assert denied == {"pack": made["pack"], "state": "denied", "why": ["revoked"], "items": [], "withheld": []} and refs == ()

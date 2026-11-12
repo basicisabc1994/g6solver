@@ -41,6 +41,7 @@ SOURCE_UNKNOWN = "G6_E_KNOWLEDGE_SOURCE"
 PREVIEW_USED = "G6_E_KNOWLEDGE_PREVIEW_USED"
 NOT_PUBLISHED = "G6_E_KNOWLEDGE_NOT_PUBLISHED"
 STATE = "G6_E_KNOWLEDGE_STATE"
+SUPERSEDED = "G6_E_KNOWLEDGE_SUPERSEDED"
 #: Published generations whose members and index file are kept: the current one and the one a reader may still pin.
 KEPT_GENERATIONS = 2
 _SCHEMA = (
@@ -78,6 +79,8 @@ _SCHEMA = (
     "CREATE TABLE IF NOT EXISTS edges (generation INTEGER NOT NULL, id TEXT NOT NULL, subject TEXT NOT NULL, "
     "object TEXT NOT NULL, relation TEXT NOT NULL, body TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS proposed_edges (id TEXT PRIMARY KEY, registration_id TEXT NOT NULL, body TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS accepted_backends (registration_id TEXT NOT NULL, backend TEXT NOT NULL, "
+    "PRIMARY KEY (registration_id, backend))",
 )
 _HEX64 = "0123456789abcdef"
 
@@ -106,6 +109,8 @@ class Registration(_Record):
     authorisation_revision: int = 1
     deny_epoch: int = 0
     state: Literal["active", "revoked", "deleted"] = "active"
+    #: The optional backends the preview the person accepted lists. Nothing else is ever written to for this source.
+    backends: tuple[str, ...] = ()
 
 
 class Member(_Record):
@@ -263,7 +268,12 @@ class ProjectStore:
         with self._reading() as conn:
             if not self._has(conn):
                 return []
-            return [Registration(**dict(row)) for row in conn.execute("SELECT * FROM registrations ORDER BY created_at, id")]
+            accepted: dict[str, list[str]] = {}
+            if self._has(conn, "accepted_backends"):
+                for row in conn.execute("SELECT registration_id, backend FROM accepted_backends ORDER BY backend"):
+                    accepted.setdefault(row["registration_id"], []).append(row["backend"])
+            return [Registration(**dict(row), backends=tuple(accepted.get(row["id"], ())))
+                    for row in conn.execute("SELECT * FROM registrations ORDER BY created_at, id")]
 
     def registration(self, registration_id: str) -> Registration | None:
         return next((r for r in self.registrations() if r.id == registration_id), None)
@@ -273,7 +283,8 @@ class ProjectStore:
         second time, so a revoked registration cannot come back through the preview that made it."""
         made = Registration(id=new_registration_id(), root=preview.root, label=preview.label,
                             preview_sha256=preview.sha256, attribution_sha256=sha256_hex(attribution),
-                            created_at=now(), expires_at=preview.expires_at, retention=preview.retention)
+                            created_at=now(), expires_at=preview.expires_at, retention=preview.retention,
+                            backends=tuple(sorted(b for b in preview.backends if b != "sqlite")))
         with self._writing() as conn:
             if conn.execute("SELECT 1 FROM registrations WHERE preview_sha256 = ?", (made.preview_sha256,)).fetchone():
                 raise Refused(PREVIEW_USED, "this preview was already committed; a new preview and a new dialog are "
@@ -282,6 +293,7 @@ class ProjectStore:
                 made.model_dump()[k] for k in ("id", "root", "label", "preview_sha256", "attribution_sha256",
                                                "created_at", "expires_at", "retention", "authorisation_revision",
                                                "deny_epoch", "state")))
+            conn.executemany("INSERT INTO accepted_backends VALUES (?, ?)", [(made.id, b) for b in made.backends])
         return made
 
     def _tombstone(self, conn: sqlite3.Connection, registration_id: str, reason: str, uri: str,
@@ -375,13 +387,27 @@ class ProjectStore:
                                  [(generation, pid, m.registration_id, m.uri, start, end, n)
                                   for n, (pid, (start, end)) in enumerate(zip(m.passage_ids, m.spans, strict=True))])
 
-    def publish(self, generation: int, receipts: Mapping[str, dict]) -> Generation:
+    def publish(self, generation: int, receipts: Mapping[str, dict], *, after: int | None = None) -> Generation:
         """Make ``generation`` the one readers use, in one transaction; :class:`Refused` (and nothing changed)
-        unless every required backend's receipt says it read back exactly the passages the membership lists."""
+        unless every required backend's receipt says it read back exactly the passages the membership lists.
+        ``after`` is the published generation the new one was prepared from (0: none): when another publication
+        happened since it was read, this one is refused in the same transaction, so nothing is published over a
+        generation its membership was not built from. Members of a registration that is no longer kept are refused
+        too."""
         with self._writing() as conn:
             row = conn.execute("SELECT * FROM generations WHERE number = ?", (generation,)).fetchone()
             if row is None or row["state"] != "staging":
                 raise Refused(NOT_PUBLISHED, "only a staging generation can be published")
+            newest = conn.execute("SELECT COALESCE(MAX(number), 0) FROM generations WHERE state = 'published'").fetchone()[0]
+            if after is not None and newest != after:
+                raise Refused(SUPERSEDED, "another publication happened while this one was prepared; nothing "
+                                          "was published over it. Run the operation again.")
+            gone = conn.execute(
+                "SELECT count(*) FROM members m JOIN registrations r ON r.id = m.registration_id "
+                "WHERE m.generation = ? AND r.state = 'deleted'", (generation,)).fetchone()[0]
+            if gone:
+                raise Refused(NOT_PUBLISHED, "the generation lists files of a source that was deleted while it was "
+                                             "prepared; nothing was published. Run the operation again.")
             listed = conn.execute("SELECT count(*) FROM member_passages WHERE generation = ?", (generation,)).fetchone()[0]
             backends = json.loads(row["backends"])
             for name, entry in backends.items():
@@ -566,6 +592,24 @@ class ProjectStore:
         with self._writing() as conn:
             conn.execute("INSERT OR IGNORE INTO retained VALUES (?, ?)", (digest, registration_id))
         return digest
+
+    def unretain(self, kept: Sequence[tuple[str, str]]) -> None:
+        """Take back audit copies written by a step that did not complete: each ``(digest, registration id)`` row,
+        and through the checked removal each file no row names any more."""
+        files = []
+        with self._writing() as conn:
+            for digest, registration_id in kept:
+                conn.execute("DELETE FROM retained WHERE sha256 = ? AND registration_id = ?", (digest, registration_id))
+                if conn.execute("SELECT 1 FROM retained WHERE sha256 = ?", (digest,)).fetchone() is None:
+                    files.append(self.folder / "retained" / digest)
+            conn.executemany("INSERT OR IGNORE INTO pending_removals VALUES (?)", [(self._pending_key(p),) for p in files])
+        for path in files:
+            self.remove_file(path)
+
+    def has_retained(self, digest: str, registration_id: str) -> bool:
+        with self._reading() as conn:
+            return self._has(conn, "retained") and conn.execute(
+                "SELECT 1 FROM retained WHERE sha256 = ? AND registration_id = ?", (digest, registration_id)).fetchone() is not None
 
     def retained(self, digest: str) -> bytes | None:
         """The audit copy kept under ``digest``, checked against it; ``None`` when none is kept."""
@@ -772,7 +816,23 @@ class ProjectStore:
             # a saved context holds view text of every source in it: each pack that holds this source goes whole
             packs = [self.folder / "packs" / f"{r['ident']}.json" for r in conn.execute(
                 "SELECT DISTINCT ident FROM dependents WHERE kind = 'pack' AND registration_id = ?", (registration_id,))]
+            # every holder is looked in, not only the recorded ones: a saved context whose record was never written,
+            # or was written for another of its sources, still holds this source's text
+            folder = self.folder / "packs"
+            for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+                try:
+                    holds = any(item.get("source") == registration_id
+                                for item in json.loads(path.read_text(encoding="utf-8")).get("items", []))
+                except (OSError, ValueError, AttributeError):
+                    holds = True   # a saved context that cannot be read cannot be shown to hold no text of it
+                if holds and path not in packs:
+                    packs.append(path)
             conn.executemany("INSERT OR IGNORE INTO pending_removals VALUES (?)", [(self._pending_key(p),) for p in packs])
+            if self._has(conn, "jobs"):   # a job's record keeps its counts; the names of files it could not read go
+                for row in conn.execute("SELECT id, body FROM jobs").fetchall():
+                    body = json.loads(row["body"])
+                    if body.get("registration_id") == registration_id and body.get("unread"):
+                        conn.execute("UPDATE jobs SET body = ? WHERE id = ?", (json.dumps({**body, "unread": []}), row["id"]))
             conn.execute("UPDATE dependents SET passage_ids = '[]', uris = '[]' WHERE registration_id = ?",
                          (registration_id,))
             for found in conn.execute("SELECT id FROM snapshot_sources WHERE registration_id = ?",

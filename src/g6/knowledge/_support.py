@@ -131,8 +131,9 @@ def support_for(acc: Access, candidate_record: Mapping[str, Any], *, top_k: int 
     found = []
     for item in items:
         version = item["checked"]["reread_sha256"]
+        # a grant gives authority to the passage it names and to no other passage of the same file version
         grant = next((g for g in grants if g.registration_id == item["source"] and g.source_version == version
-                      and g.scenario_sha256 == scenario), None)
+                      and g.scenario_sha256 == scenario and g.passage_id == item["passage_id"]), None)
         found.append(Support(passage_id=item["passage_id"], registration_id=item["source"], path=item["path"],
                              view=View(**item["view"]), relevance=dict(item["contributions"][0]),
                              byte_match=Checked(**item["checked"]), authority="normative" if grant else "none",

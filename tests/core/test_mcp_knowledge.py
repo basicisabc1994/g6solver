@@ -146,14 +146,19 @@ def test_search_returns_nothing_from_an_ungranted_source_to_a_cloud_client(rig):
                              ("g6_knowledge_passage", {"passage_id": known[0]["passage_id"], "raw": True}),
                              ("g6_knowledge_sources", {})])
     text = json.dumps(replies)
-    for planted in (f"{DOCS} convention", f"docs/{DOCS}", f"{DOCS}.md", *(i["passage_id"] for i in known)):
+    for planted in (f"{DOCS} convention", f"docs/{DOCS}", f"{DOCS}.md", *(i["passage_id"] for i in known[1:])):
         assert planted not in text, planted
+    assert known[0]["passage_id"] not in json.dumps([replies[0], replies[3]]), "only the caller's own argument is echoed"
     search = replies[0]["result"]
     assert search["payload"]["items"] == [] and search["denied"] == []
     assert search["withheld"] == [{"source": added["source"], "provider": CLAUDE}]
-    assert replies[1]["result"] == {"passage": None, "denied": [],
-                                    "withheld": [{"source": added["source"], "provider": CLAUDE}]}
-    assert replies[2]["result"]["passage"] is None
+    # changed on purpose (review revs12b, finding 3): an id of a source that is not shared is answered exactly as an
+    # id that does not exist; the reply no longer names the source, which would confirm a guessed file and its bytes
+    unknown = {"passage": None, "withheld": [], "denied": [
+        {"passage_id": known[0]["passage_id"], "registration_id": "", "why": "unknown"}]}
+    assert replies[1]["result"] == unknown and replies[2]["result"] == unknown
+    guessed = call(server, "g6_knowledge_passage", {"passage_id": "f" * 64}).data["result"]
+    assert guessed == {**unknown, "denied": [{**unknown["denied"][0], "passage_id": "f" * 64}]}
     row, = replies[3]["result"]["sources"]
     assert row["shared_with_this_client"] is False and "label" not in row and "files" not in row
     assert cloud.disclosures() == []
@@ -255,7 +260,9 @@ def test_raw_fetch_needs_the_grant_and_returns_exact_bytes(rig):
     assert raw["result"]["passage"]["text"] == document[granted["start"]:granted["end"]]
     assert "text" not in view["result"]["passage"] and view["result"]["passage"]["view"]["text"]
     assert refused["result"]["passage"] is None and f"{NOTES} convention" not in json.dumps(refused)
-    assert refused["result"]["withheld"] == [{"source": private["result"]["source"], "provider": CLAUDE}]
+    # changed on purpose (revs12b 3): the id of a passage of a source that is not shared is answered as an unknown id
+    assert refused["result"]["withheld"] == [] and [d["why"] for d in refused["result"]["denied"]] == ["unknown"]
+    assert private["result"]["source"] not in json.dumps(refused)
     bad = call(server, "g6_knowledge_passage", {"passage_id": "../" + granted["passage_id"]}).data
     assert bad["ok"] is False and "G6_E_KNOWLEDGE_INPUT" in bad["error"]
 
@@ -435,9 +442,11 @@ def test_backends_job_and_count_over_mcp(rig, monkeypatch):
         assert {c["backend"] for c in fused["payload"]["items"][0]["contributions"]} == {"sqlite", "elastic_managed"}
         unknown = call(server, "g6_knowledge_job", {"job_id": "job-0000000000000000"}).data
         assert unknown["ok"] is False and "G6_E_KNOWLEDGE_JOB" in unknown["error"]
-        refused = call(server, "g6_knowledge_add", {"path": str(rig.folder / "docs"), "backends": ["sqlite"]},
-                       Dialog()).data["result"]
-        assert refused["job"]["state"] == "refused"
+        # changed on purpose (revs12c 1): a backend is part of the preview, so a name that is not an optional backend
+        # is refused before any dialog, where it used to be refused after the folder was indexed
+        asked = Dialog()
+        refused = call(server, "g6_knowledge_add", {"path": str(rig.folder / "docs"), "backends": ["sqlite"]}, asked).data
+        assert refused["ok"] is False and "G6_E_KNOWLEDGE_INPUT" in refused["error"] and asked.questions == []
     finally:
         stop()
 

@@ -17,13 +17,14 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import os
+import re
 import stat
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from g6.knowledge._scope import Binding, ScopeDenied, inside
+from g6.knowledge._scope import NOT_INDEXABLE, Binding, ScopeDenied, inside
 
 MAX_FILES = 5_000
 MAX_FILE_BYTES = 2_000_000
@@ -87,6 +88,19 @@ def folder_rule(name: str) -> str:
     if folded in CREDENTIAL_FOLDERS:
         return "credential"
     return "ignored" if folded in BUILTIN_IGNORED else ""
+
+
+def named_under_refused(binding: Binding, path: Path | str) -> bool:
+    """Whether ``path``, read as text and without touching the file system, names a folder nothing is read under,
+    or something below one: any component under a permitted root (or of a relative path) that the one name rule
+    refuses, with the trailing dots and spaces and the stream suffix Windows ignores taken off first."""
+    parts = [p for p in re.split(r"[\\/]+", str(path)) if p not in ("", ".")]
+    for root in binding.roots:
+        above = [p for p in re.split(r"[\\/]+", str(root)) if p not in ("", ".")]
+        if [p.casefold() for p in parts[:len(above)]] == [p.casefold() for p in above]:
+            parts = parts[len(above):]
+            break
+    return any(folder_rule(part.split(":", 1)[0].rstrip(". ") or part) for part in parts)
 
 
 def is_placeholder(found: os.stat_result) -> bool:
@@ -175,14 +189,15 @@ def walk(binding: Binding, root: Path, *, max_files: int = MAX_FILES,
          max_file_bytes: int = MAX_FILE_BYTES) -> Walked:
     """The files under ``root`` that may be indexed and the ones that may not; see the module docstring.
     :class:`ScopeDenied` when ``root`` is not a folder inside a permitted root."""
+    if named_under_refused(binding, root):   # by name alone, before anything at or under the path is looked at
+        raise ScopeDenied(NOT_INDEXABLE)
     real = inside(binding, root)
-    if not real.is_dir():
-        raise ScopeDenied("the path is not a folder inside a permitted root")
     above = next(r for r in binding.roots if real == r or r in real.parents)
     for part in real.relative_to(above).parts:   # the folder itself and every folder between it and the root
         if folder_rule(part):
-            raise ScopeDenied("the folder is, or lies under, a folder nothing is read under (a credential folder or "
-                              "a generated one)")
+            raise ScopeDenied(NOT_INDEXABLE)
+    if not real.is_dir():
+        raise ScopeDenied(NOT_INDEXABLE)
     listed, note = tracked(binding, real)
     files: list[FileEntry] = []
     excluded: list[Excluded] = []
@@ -256,4 +271,5 @@ def walk(binding: Binding, root: Path, *, max_files: int = MAX_FILES,
 
 __all__ = ["BUILTIN_IGNORED", "CREDENTIAL_FILES", "CREDENTIAL_FOLDERS", "MAX_ENUMERATED", "MAX_FILES",
            "MAX_FILE_BYTES", "MEDIA_TYPES", "Excluded", "FileEntry", "Walked", "folder_rule", "is_credential",
+           "named_under_refused",
            "is_placeholder", "read_file", "shown_name", "tracked", "walk"]

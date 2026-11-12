@@ -81,8 +81,9 @@ def fuse(results: Sequence[tuple[BackendReport, Sequence[Hit], int]], *, top_k: 
                                                f"{MAX_CANDIDATES}; narrow the query or ask for fewer per route")
     if budget_tokens is not None and (type(budget_tokens) is not int or budget_tokens < 0):
         return Fused(backends=reports, refused=f"[{OVER_BUDGET}] the budget is a whole number of tokens, 0 or more")
-    lexical_answered = any(report.backend in LEXICAL and report.state in ("answered", "partial")
-                           for report, _, _ in results)
+    # the passages a lexical backend itself returned: only for these is a BM25 fallback a second count of the same vote
+    lexical_returned = {hit.passage.id for report, hits, _ in results
+                        if report.backend in LEXICAL and report.state in ("answered", "partial") for hit in hits}
     weight: dict[str, float] = {}
     first: dict[str, Hit] = {}
     by_passage: dict[str, list[Contribution]] = {}
@@ -90,13 +91,13 @@ def fuse(results: Sequence[tuple[BackendReport, Sequence[Hit], int]], *, top_k: 
     for report, hits, generation in results:
         fallback = report.rung == "bm25" and report.backend not in LEXICAL
         lead = report.route == LEADS   # a model's proposed relation led here: it is kept, with no evidence weight
-        counted_once = (fallback and lexical_answered) or lead
         seen: set[str] = set()
         for hit in hits:
             pid = hit.passage.id
             if pid in seen:
                 continue
             seen.add(pid)
+            counted_once = lead or (fallback and pid in lexical_returned)
             reason = ("a model-proposed lead: a way to find the passage, no evidence weight" if lead
                       else "bm25 fallback: lexical, counted once with the lexical backend" if counted_once
                       else "bm25 fallback: lexical, not semantic" if fallback else f"{report.route} match")

@@ -18,9 +18,12 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
-sys.path[:0] = [p for p in (str(HERE), str(ROOT / "src"), str(ROOT)) if p not in sys.path]
+sys.path[:0] = [p for p in (str(HERE), str(HERE.parent), str(ROOT / "src"), str(ROOT)) if p not in sys.path]
 
 import candidates  # noqa: E402
+import frozen  # noqa: E402
+
+PROTOCOL = ROOT / "docs" / "measurements" / "context-engine" / "05-scale-and-meaning.protocol.md"
 
 
 def platform_name() -> str:
@@ -89,7 +92,11 @@ def main(argv: list[str] | None = None) -> int:
     candidate = candidates.CANDIDATES[args.candidate]
     result = {"protocol": "05-scale-and-meaning", "candidate": candidate.id, "size": args.size,
               "platform": platform_name(), "python": sys.version.split()[0], "machine": platform.machine(),
-              "state": "unavailable", "reason": "", "measures": {}}
+              "state": "unavailable", "reason": "", "measures": {},
+              # the pins of the model that ran; empty until the run's adapter reads them from the weights it loaded,
+              # and report.py names no winner from a run without them
+              "pins": dict(getattr(candidate, "pins", None) or {}),
+              "thresholds_sha256": frozen.digest(frozen.block(PROTOCOL)["thresholds"])}
     why = candidate.ready()
     if why:
         result["reason"] = why

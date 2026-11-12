@@ -34,14 +34,20 @@ def test_baseline_scores_are_reproducible_on_the_frozen_labels(tmp_path):
     assert gap >= limits["fts5_recall_at_10_minus_substring_recall_at_10_min"]
     assert first["fts5"]["unsupported_citations"] == limits["fts5_unsupported_citations"] == 0
     assert first["substring"]["unsupported_citations"] == 0
-    assert retrieval_baseline.admitted(first) == (True, [])
     assert "not independently written" in first["labelled_by"], "a development-cohort result says what its labels are"
+    met, why = retrieval_baseline.admitted(first)
+    assert met is False and why == ["the labels are not independently written: a development-cohort result admits nothing"]
 
 
 def test_the_admission_rule_fails_a_weaker_engine_and_an_unsupported_citation():
-    good = {"fts5": {"recall_at_10": 0.9, "unsupported_citations": 0, "files_seen": 49},
+    good = {"labelled_by": "written independently of the corpus generator, by a person who has not seen the engine",
+            "fts5": {"recall_at_10": 0.9, "unsupported_citations": 0, "files_seen": 49},
             "substring": {"recall_at_10": 0.9, "unsupported_citations": 0, "files_seen": 49}}
-    assert retrieval_baseline.admitted(good)[0] is True
+    assert retrieval_baseline.admitted(good) == (True, [])
+    for unknown in ({}, {"labelled_by": ""}, {"labelled_by": "the corpus generator; not independently written labels"}):
+        assert retrieval_baseline.admitted({**{k: v for k, v in good.items() if k != "labelled_by"}, **unknown})[0] is False
+    for value in (float("nan"), None, True, "0.9"):
+        assert retrieval_baseline.admitted({**good, "fts5": {**good["fts5"], "recall_at_10": value}})[0] is False, value
     for change in ({"recall_at_10": 0.8}, {"unsupported_citations": 1}, {"files_seen": 48}):
         worse = {**good, "fts5": {**good["fts5"], **change}}
         met, why = retrieval_baseline.admitted(worse)
@@ -60,4 +66,6 @@ def test_the_label_file_is_the_frozen_one():
     assert labels["version"] == "retrieval.v1" and labels["unit"] == "file"
     assert len({q["id"] for q in labels["queries"]}) == 53
     assert sum(1 for q in labels["queries"] if not q["eligible_files"]) == 3
-    assert len(hashlib.sha256(LABELS.read_bytes()).hexdigest()) == 64
+    # the label file is the one the protocol pins by digest, and the protocol's thresholds are the harness's frozen ones
+    assert retrieval_baseline.frozen.problem(PROTOCOL, retrieval_baseline.THRESHOLDS_SHA256, LABELS) == ""
+    assert retrieval_baseline.frozen.block(PROTOCOL)["labels"]["sha256"] == hashlib.sha256(LABELS.read_bytes()).hexdigest()

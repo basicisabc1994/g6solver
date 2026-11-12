@@ -151,8 +151,18 @@ def _bulk(target: Target, batch: Sequence[tuple[str, bytes]], verb: str,
     return states
 
 
+class Stopped(Exception):
+    """A write that ended before every batch was sent because the source may no longer be used: why, and how many
+    records the server had acknowledged by then."""
+
+    def __init__(self, why: str, sent: int) -> None:
+        super().__init__(f"stopped: {why}")
+        self.why, self.sent = why, sent
+
+
 def _run(target: Target, lines: Sequence[tuple[str, bytes]], verb: str, action: str, gate: Gate | None,
-         described: dict[str, Any], caller: elastic.Caller | None) -> list[ItemAck]:
+         described: dict[str, Any], caller: elastic.Caller | None,
+         still: Callable[[], str] | None = None) -> list[ItemAck]:
     decision = {"kind": "action_gate", "decision": "block", "message": "no action gate was given"}
     if gate is not None:
         try:
@@ -167,6 +177,9 @@ def _run(target: Target, lines: Sequence[tuple[str, bytes]], verb: str, action: 
         if not pending:
             break
         for batch in _batches(pending):
+            why = still() if still is not None else ""   # a stop stops: asked again before every batch
+            if why:
+                raise Stopped(why, sum(1 for one in state.values() if one[0] == "acknowledged"))
             _check(target, caller)   # the target is checked again before every batch
             state.update(_bulk(target, batch, verb, caller))
     return [ItemAck(passage_id=ident, action=action, state=state[ident][0], reason=state[ident][1])
@@ -191,8 +204,10 @@ def _describe(target: Target, action: str, count: int) -> dict[str, Any]:
 
 
 def write(target: Target, records: Sequence[Mapping[str, Any]], *, gate: Gate | None, upsert: bool = True,
-          caller: elastic.Caller | None = None) -> list[ItemAck]:
-    """Write canonical records (``managed.encode``), each under its passage id; one :class:`ItemAck` per record."""
+          caller: elastic.Caller | None = None, still: Callable[[], str] | None = None) -> list[ItemAck]:
+    """Write canonical records (``managed.encode``), each under its passage id; one :class:`ItemAck` per record.
+    ``still`` says, before every batch, why the records' source may no longer be used (``""``: it may): the first
+    reason ends the write with :class:`Stopped` and no further batch is sent."""
     lines = []
     for record in records:
         ident = record["passage_id"]
@@ -201,7 +216,7 @@ def write(target: Target, records: Sequence[Mapping[str, Any]], *, gate: Gate | 
         head = {"index" if upsert else "create": {"_id": ident}}
         lines.append((ident, (json.dumps(head) + "\n" + json.dumps(dict(record), sort_keys=True) + "\n").encode("utf-8")))
     verb, action = ("index", "upsert") if upsert else ("create", "create")
-    return _run(target, lines, verb, action, gate, _describe(target, action, len(lines)), caller)
+    return _run(target, lines, verb, action, gate, _describe(target, action, len(lines)), caller, still)
 
 
 def remove(target: Target, passage_ids: Sequence[str], *, consent: DeletionConsent, gate: Gate | None,
@@ -239,4 +254,4 @@ def read_back(target: Target, passage_ids: Sequence[str], *, caller: elastic.Cal
 
 
 __all__ = ["GOES", "HELD", "MAX_ATTEMPTS", "MAX_BATCH_BYTES", "MAX_BATCH_ITEMS", "TARGET_REFUSED", "DeletionConsent",
-           "Held", "ItemAck", "Target", "pin", "read_back", "remove", "write"]
+           "Held", "ItemAck", "Stopped", "Target", "pin", "read_back", "remove", "write"]

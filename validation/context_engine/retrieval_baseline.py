@@ -23,6 +23,13 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path[:0] = [p for p in (str(Path(__file__).resolve().parent),) if p not in sys.path]
+
+import frozen  # noqa: E402
+
+PROTOCOL = ROOT / "docs" / "measurements" / "context-engine" / "03-retrieval.protocol.md"
+#: The digest of row 03's frozen thresholds. A protocol file whose thresholds differ is not scored against.
+THRESHOLDS_SHA256 = "8517f837f79c00aacf962a4677ff4e65b15fa93debaa852aaa9790ad4e70b1f7"
 _WORD = re.compile(r"\w+")
 
 
@@ -112,13 +119,20 @@ def run(labels: dict, workdir: Path) -> dict:
 
 
 def admitted(result: dict) -> tuple[bool, list[str]]:
-    """The protocol's lexical admission rule on a result, and each reason it is not met."""
+    """The protocol's lexical admission rule on a result, and each reason it is not met. A result admits only on
+    independently written labels, with every measure a finite number: a missing or unknown value passes nothing."""
     why = []
-    if result["fts5"]["recall_at_10"] < result["substring"]["recall_at_10"]:
+    if not frozen.independent(result.get("labelled_by")):
+        why.append("the labels are not independently written: a development-cohort result admits nothing")
+    engine_arm, scan = result.get("fts5") or {}, result.get("substring") or {}
+    measures = [arm.get(name) for arm in (engine_arm, scan) for name in ("recall_at_10", "unsupported_citations", "files_seen")]
+    if not all(frozen.finite(value) for value in measures):
+        return False, [*why, "a measure is missing or is not a finite number"]
+    if engine_arm["recall_at_10"] < scan["recall_at_10"]:
         why.append("FTS5 recall@10 is below the substring scan's")
-    if result["fts5"]["unsupported_citations"]:
+    if engine_arm["unsupported_citations"]:
         why.append("FTS5 returned a citation that does not hold the query's words or was not intact")
-    if result["fts5"]["files_seen"] != result["substring"]["files_seen"]:
+    if engine_arm["files_seen"] != scan["files_seen"]:
         why.append("the arms did not see the same files")
     return not why, why
 
@@ -128,9 +142,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--labels", required=True)
     parser.add_argument("--out", default="")
     args = parser.parse_args(argv)
+    pinned = frozen.check(PROTOCOL, THRESHOLDS_SHA256, Path(args.labels))   # refuses a changed bar or label file
     labels = json.loads(Path(args.labels).read_text(encoding="utf-8"))
     with tempfile.TemporaryDirectory() as scratch:
         result = run(labels, Path(scratch))
+    result["frozen"] = {k: pinned[k] for k in ("row", "thresholds_sha256", "labels_sha256")}
     ok, why = admitted(result)
     result["admission"] = {"met": ok, "not_met_because": why}
     text = json.dumps(result, indent=2, sort_keys=True)

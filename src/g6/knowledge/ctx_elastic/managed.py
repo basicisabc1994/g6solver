@@ -24,7 +24,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from g6.core import outside
-from g6.knowledge._index import FAILED, READ_ONLY, Added, Hit, IndexRefused, Removed, Retrieves, Searched
+from g6.knowledge._index import FAILED, READ_ONLY, Added, Hit, IndexRefused, Removed, Retrieves, Searched, bad_k
 from g6.knowledge._types import Passage, Source, sha256_hex
 from g6.knowledge.ctx_elastic import elastic
 
@@ -101,6 +101,9 @@ class ManagedElasticIndex(Retrieves):
 
     def find(self, query: str, top_k: int = 10) -> Searched:
         said = {"backend": self.backend, "query": query, "score_scale": self.score_scale}
+        refused = bad_k(self.backend, query, self.score_scale, top_k)
+        if refused is not None:
+            return refused
         if not str(query).strip():
             return Searched(**said, outcome="failed", reason="the query has no word to search for")
         if self.registrations is not None and not self.registrations:

@@ -60,6 +60,7 @@ Per arm: searches, model calls (zero), tokens returned and wall-clock seconds, e
   "row": "07-planner",
   "frozen": "2026-11-12",
   "unit": "labelled query, paired across arms",
+  "labels": {"file": "tests/knowledge/labels/retrieval.v1.json", "sha256": "bcb779007a7d8855eda291f82055d930fd9b8003d99455c3528aed02c9cbae51", "written": "by the corpus generator, not independently: a development cohort"},
   "thresholds": {
     "arms_with_unequal_information_or_budget": 0,
     "safety_cases_failed_or_errored": 0,

@@ -11,8 +11,66 @@ import g6.knowledge
 import g6.mcp
 
 KNOWLEDGE = Path(g6.knowledge.__file__).parent
-#: Names that build what a model may read of a passage: an item, a view of its text, or the passage itself.
-BUILDERS = frozenset({"PassageItem", "View", "view_of"})
+#: Names that build what a model may read of a source: an item, a view of its text, the passage itself, or the view
+#: of a name taken from it (a path, a heading, a label).
+BUILDERS = frozenset({"PassageItem", "View", "view_of", "label_view"})
+#: The builders of a passage itself, for the inventory of functions that return passages.
+PASSAGE_BUILDERS = BUILDERS - {"label_view"}
+#: The ways a function decides, with the time, what it may read: the store's two checks (each must give ``at=``), or
+#: the scope and the one predicate, which take the time as an argument.
+TIMED = frozenset({"scope_of", "may_use", "usable_registrations"})
+#: Public functions that open a store and build a view without reading any stored passage, each with why. Closed: a
+#: function the derivation finds that asks neither check and is not here fails.
+NO_STORED_PASSAGE = {
+    "_engine.py:commit": "registers and indexes the folder the person accepted in this call; the label it returns is "
+                         "of that folder, and no passage stored before the call is read",
+}
+#: The calls that open a source's file, or list a source's folder.
+OPENERS = frozenset({"_reread", "reread_passage", "read_file", "walk"})
+#: Functions that open files before any registration exists for them, or as the opener itself, each with why. Closed.
+OPENS_WITHOUT_A_REGISTRATION = {
+    "_engine.py:preview": "walks the folder the person named, to show them what would be indexed; nothing is registered",
+    "_engine.py:commit": "walks the accepted folder again and compares it with the accepted preview, in the call that "
+                         "registers it",
+    "_engine.py:_build_generation": "indexes the folder accepted in this call, for the registration just made",
+    "_engine.py:_reread": "the opener itself: it reads one member's file for a caller that has already asked",
+    "_engine.py:reread_passage": "the one re-read: it reads through _reread for a caller that has already asked",
+    "_walk.py:walk": "the walker itself: it lists and hashes the folder a preview, a commit or a refresh gives it; the "
+                     "refresh asks first, and the other two are before a registration exists",
+}
+
+
+def test_every_function_that_opens_a_source_file_asks_with_the_time_or_is_called_only_by_one_that_does():
+    """Derived from every shared module: a function that calls an opener asks the scope, the one predicate or the
+    store's check (with ``at=``) itself, or every function of its module that calls it does, or it is one of the few
+    that open a folder before a registration exists."""
+    def asks(functions, name) -> bool:
+        node = functions[name]
+        reached = _reach(functions, name)
+        checks = [c for c in ast.walk(node) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                  and c.func.attr in ("use", "invalidated")]
+        return bool(reached & (TIMED | {"_still", "_stopped", "still"})) or (
+            bool(checks) and all(any(k.arg == "at" for k in c.keywords) for c in checks))
+
+    found, missing = [], []
+    for module in SHARED_MODULES:
+        functions = _functions(ast.parse((KNOWLEDGE / module).read_text(encoding="utf-8")))
+        for name, node in functions.items():
+            called = {(c.func.id if isinstance(c.func, ast.Name) else c.func.attr) for c in ast.walk(node)
+                      if isinstance(c, ast.Call) and isinstance(c.func, ast.Name | ast.Attribute)
+                      and ast.unparse(c.func) != "ast.walk"}
+            if not called & OPENERS:
+                continue
+            key = f"{module}:{name}"
+            found.append(key)
+            callers = [other for other in functions if other != name and name in _names(functions[other])]
+            if not (asks(functions, name) or key in OPENS_WITHOUT_A_REGISTRATION
+                    or (callers and all(asks(functions, c) or f"{module}:{c}" in OPENS_WITHOUT_A_REGISTRATION for c in callers))):
+                missing.append(key)
+    assert {"_graph.py:build", "_jobs.py:_passages", "_engine.py:fetch", "_engine.py:pack", "_engine.py:_fused",
+            "_refresh.py:_stage_and_publish"} <= set(found), found
+    assert missing == [], f"opens a source's file without asking, with the time, whether the source may be used: {missing}; found {found}"
+    assert set(OPENS_WITHOUT_A_REGISTRATION) <= set(found) | {"_engine.py:_reread"}
 #: Modules of the engine whose public functions are inventoried.
 ENGINE_MODULES = ("_engine.py",)
 #: Every shared module of the family, read from the folder: the inventories below walk all of them.
@@ -44,7 +102,7 @@ def _reach(functions: dict[str, ast.FunctionDef], start: str) -> set[str]:
 
 def _returns_passages(functions: dict[str, ast.FunctionDef], name: str) -> bool:
     """Whether what ``name`` returns can hold passage content: it reaches a builder of model-bound passage output."""
-    return bool(_reach(functions, name) & BUILDERS)
+    return bool(_reach(functions, name) & PASSAGE_BUILDERS)
 
 
 def passage_functions() -> dict[str, tuple[ast.FunctionDef, dict[str, ast.FunctionDef]]]:
@@ -70,7 +128,8 @@ def test_every_engine_function_that_returns_passages_takes_an_access():
             uses = [n for n in ast.walk(inner) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
                     and n.func.attr == "use"]
             builds = [n.lineno for n in ast.walk(inner) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-                      and (n.func.id in BUILDERS or n.func.id in functions and _reach(functions, n.func.id) & BUILDERS)]
+                      and (n.func.id in PASSAGE_BUILDERS or n.func.id in functions
+                           and _reach(functions, n.func.id) & PASSAGE_BUILDERS)]
             if len(uses) >= 2 and builds and min(builds) > max(u.lineno for u in uses):
                 checked.append(inner.name)
         assert checked, (f"{name} must call ProjectStore.use when it starts and again immediately before it returns, "
@@ -104,14 +163,15 @@ def test_every_mcp_tool_that_reaches_the_engine_builds_its_access_from_the_host_
         called |= other & {"_dispatch", "_graph", "_planner"}
         source = ast.unparse(tool)
         assert "host_binding()" in source, tool.name
-        if called - {"preview", "commit", "discard_preview", "excluded_counts", "shared_with"}:   # everything that reads or changes a store
+        if called - {"preview", "commit", "discard_preview", "excluded_counts", "shared_with", "copies_sentence",
+                     "held_sentence"}:   # everything that reads or changes a store (the last two only word a sentence)
             assert "access(" in source and "_destination()" in source, tool.name
         assert "bind_output" in source or "_ok(" in source, tool.name
 
 
 #: Tables of the registry that are the index's own membership and bookkeeping, not a stored consumer of passages.
 MEMBERSHIP_TABLES = frozenset({"registrations", "generations", "members", "member_passages", "tombstones", "receipts",
-                               "dependents", "rereads", "retained", "snapshot_sources", "jobs", "nodes", "edges",
+                               "dependents", "rereads", "retained", "snapshot_sources", "jobs", "nodes", "edges", "accepted_backends",
                                "pending_removals"})
 
 
@@ -199,11 +259,15 @@ def test_every_function_that_reads_a_store_and_builds_a_view_asks_with_the_time(
             seen.append(f"{module}:{name}")
             checks = [c for c in ast.walk(node) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
                       and c.func.attr in ("use", "invalidated")]
-            if not checks or not all(any(k.arg == "at" for k in c.keywords) for c in checks):
+            timed = bool(checks) and all(any(k.arg == "at" for k in c.keywords) for c in checks)
+            scoped = not checks and bool(reached & TIMED)   # the scope or the one predicate, which take the time
+            if not (timed or scoped or f"{module}:{name}" in NO_STORED_PASSAGE):
                 missing.append(f"{module}:{name}")
-    assert {"_engine.py:search", "_engine.py:fetch", "_engine.py:context", "_snapshots.py:reconstruct",
-            "_support.py:support_for"} <= set(seen), seen
-    assert missing == []
+    assert {"_engine.py:search", "_engine.py:fetch", "_engine.py:context", "_engine.py:pack", "_engine.py:sources",
+            "_snapshots.py:reconstruct", "_support.py:support_for", "_graph.py:traverse", "_refresh.py:refresh",
+            "_relations.py:leads", "_planner.py:run"} <= set(seen), seen
+    assert missing == [], "reads a store and builds a view of a source without asking, with the time, whether it may"
+    assert set(NO_STORED_PASSAGE) <= set(seen), "a classified function the derivation no longer finds: remove its row"
 
 
 def test_no_module_reads_a_registrations_state_alone_or_checks_use_without_the_time():

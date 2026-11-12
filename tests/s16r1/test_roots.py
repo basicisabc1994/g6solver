@@ -135,7 +135,6 @@ SOURCE_SITES = {
     # unknown client, a revoked grant, mixed sources) and tests/knowledge/test_engine_scope.py. _scope.access is here
     # for its `sources` argument, which narrows source registrations and builds no consent source.
     'g6.knowledge._engine._source',
-    'g6.knowledge._engine.pack',
     'g6.knowledge._graph.traverse',
     # G6's own model calls over indexed passages run under the sources of what they send. Planted cases:
     # tests/knowledge/test_relations.py (an extraction without a grant sends nothing) and tests/knowledge/test_planner.py

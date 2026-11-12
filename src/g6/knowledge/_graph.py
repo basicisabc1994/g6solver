@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict
 from g6.core import cloud_consent
 from g6.knowledge import _engine as engine
 from g6.knowledge._envelope import BackendReport, SearchRequest, SearchResponse
-from g6.knowledge._registry import Dependent, ProjectStore, Refused, is_kept
+from g6.knowledge._registry import Dependent, ProjectStore, Refused, may_use
 from g6.knowledge._scope import Access, consent_scope
 from g6.knowledge._types import sha256_hex
 from g6.knowledge._view import label_view
@@ -122,16 +122,24 @@ def _imports(text: str) -> tuple[list[tuple[str, int, int]], list[tuple[int, int
     return static, dynamic
 
 
-def build(store: ProjectStore, generation: int) -> dict[str, Any]:
+def build(store: ProjectStore, generation: int, *, clock: Callable[[], datetime] = engine._utc) -> dict[str, Any]:
     """Extract and keep the graph of ``generation``: containment from Markdown headings, imports from Python import
-    statements. Returns counts and what it could not read."""
-    registrations = {r.id: r for r in store.registrations() if is_kept(r)}
+    statements. Returns counts and what it could not read. Only a source that may be used at this time is read (the
+    registry's one predicate, with the time); it is asked again before every file and once more before the graph is
+    kept, and a source that stopped being usable meanwhile leaves no node and no edge."""
+    registrations = {r.id: r for r in store.registrations() if may_use(r, clock()) == ""}
     nodes: dict[str, Node] = {}
     edges: dict[str, Edge] = {}
     unknown = unread = 0
+    stopped: set[str] = set()
     members = [m for m in store.members(generation) if m.registration_id in registrations and m.passage_ids]
     modules = {(m.registration_id, m.relative[:-3].replace("/", ".")): m for m in members if m.relative.endswith(".py")}
     for member in members:
+        if member.registration_id in stopped:
+            continue
+        if may_use(store.registration(member.registration_id), clock()):   # a stop stops: asked before every file
+            stopped.add(member.registration_id)
+            continue
         document, _ = engine._reread(store.binding, registrations[member.registration_id], member)
         if document is None:
             unread += 1
@@ -179,6 +187,9 @@ def build(store: ProjectStore, generation: int) -> dict[str, Any]:
                 made = _edge(here.id, target.id, "imports_unknown", passage, (start, end), text, member.file_sha256,
                              certainty="possible")
                 edges[made.id] = made
+    stopped |= {rid for rid in registrations if may_use(store.registration(rid), clock())}   # and before it is kept
+    nodes = {key: node for key, node in nodes.items() if node.registration_id not in stopped}
+    edges = {key: edge for key, edge in edges.items() if edge.subject in nodes and edge.object in nodes}
     store.put_graph(generation, [n.model_dump_json() for n in nodes.values()],
                     [(e.id, e.subject, e.object, e.relation, e.model_dump_json()) for e in edges.values()])
     for registration_id in sorted({n.registration_id for n in nodes.values()}):

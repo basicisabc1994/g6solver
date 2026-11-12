@@ -66,6 +66,7 @@ wall-clock seconds per arm, zero model calls, builder and reviewer time.
   "row": "03-retrieval",
   "frozen": "2026-11-11",
   "unit": "query of tests/knowledge/labels/retrieval.v1.json",
+  "labels": {"file": "tests/knowledge/labels/retrieval.v1.json", "sha256": "bcb779007a7d8855eda291f82055d930fd9b8003d99455c3528aed02c9cbae51", "written": "by the corpus generator, not independently: a development cohort"},
   "thresholds": {
     "fts5_recall_at_10_minus_substring_recall_at_10_min": 0.0,
     "fts5_unsupported_citations": 0,

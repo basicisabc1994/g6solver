@@ -17,7 +17,7 @@ refused.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -75,6 +75,28 @@ def routes(store: ProjectStore) -> list[tuple[Route, str]]:
     return out
 
 
+OUT_OF_SCOPE = "no source in your scope has a complete copy in this backend"
+
+
+def routes_for(store: ProjectStore, readable: Sequence[str], *, local: bool) -> list[tuple[Route, str]]:
+    """:func:`routes` as one caller may be told it. The person's own (local) access sees the project's routes as
+    they are. Any other caller's routes are worked out from the sources in its scope and nothing else: an optional
+    backend is ready for it only when it holds a complete copy of a source the caller may read, and otherwise the
+    reason is one fixed sentence, whatever any other source's copy is like."""
+    found = routes(store)
+    if local:
+        return found
+    generation = store.published()
+    out = []
+    for one, why in found:
+        entry = generation.backends.get(one.backend) if generation is not None else None
+        optional = entry is None or not entry.get("required")
+        if one.backend != "graph" and optional and (why or not set(answered(generation, one.backend)) & set(readable)):
+            why = OUT_OF_SCOPE
+        out.append((one, why))
+    return out
+
+
 def answered(generation: Any, backend: str) -> list[str]:
     """The registrations whose passages ``backend`` read back in full for ``generation``; for the required local
     backend, every registration (``["*"]``)."""
@@ -98,7 +120,11 @@ def open_route(store: ProjectStore, one: Route, generation: int, *, registration
     if one.backend == "sqlite":
         from g6.knowledge._lexical import ScopedLexical
 
-        return ScopedLexical(store.index_path("sqlite", generation), registrations if registrations is not None else [])
+        from g6.knowledge import _engine as engine
+
+        stale = {uri for _, uri in engine._still_changed(store, generation)}   # denied files take no place in the hits
+        return ScopedLexical(store.index_path("sqlite", generation),
+                             registrations if registrations is not None else [], excluded=sorted(stale))
     if one.backend == "elastic_managed":
         from g6.knowledge.ctx_elastic.managed import ManagedElasticIndex
 
@@ -206,5 +232,5 @@ def aggregate(acc: Access, field: Literal["registration_id", "document_sha256"],
                        sources_counted=registrations)
 
 
-__all__ = ["AGGREGATE_FIELDS", "ROUTES", "UNSUPPORTED", "Route", "aggregate", "answered", "count", "open_route", "route",
-           "routes", "usable_registrations"]
+__all__ = ["AGGREGATE_FIELDS", "OUT_OF_SCOPE", "ROUTES", "UNSUPPORTED", "Route", "aggregate", "answered", "count",
+           "open_route", "route", "routes", "routes_for", "usable_registrations"]

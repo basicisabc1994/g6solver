@@ -194,13 +194,13 @@ def run(acc: Access, query: str, needs: Sequence[str], *, limits: Limits = DEFAU
     features = features_of(query)
     if features.is_relation_question:
         _graph.ensure(store)   # derived on this machine from the indexed files; what a traversal returns is scoped
-    routes = _dispatch.routes(store)
+    generation = store.published()
+    readable = engine.scope_of(store, acc, clock())[0] if generation is not None else []   # scope first
+    routes = _dispatch.routes_for(store, readable, local=acc.local)   # which routes are ready, inside that scope
     chosen, rule = plan(features, routes)
     reasons = {route.name: why for route, why in routes}
     admissible = admissible_routes(features)
     declared = [Need(id=f"need-{n + 1}", text=str(text)[:400]) for n, text in enumerate(needs)]
-    generation = store.published()
-    readable = engine.scope_of(store, acc, clock())[0] if generation is not None else []   # scope first
     grants = {r.id: r.authorisation_revision for r in store.registrations() if r.id in readable}
     alternatives = tuple({"route": name, "why": "unavailable: " + (reasons.get(name) or "not a route of this project")}
                          for name in admissible if name not in chosen)

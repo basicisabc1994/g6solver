@@ -88,6 +88,20 @@ def _summary_source(row: dict[str, Any]) -> cloud.Source:
     return cloud.Source(consent_scope(row["source"]), _SUMMARY, cloud.sha256(json.dumps(row, sort_keys=True)))
 
 
+def _scope_sources(acc: Any, found: dict[str, Any], refs: tuple[cloud.Source, ...]) -> tuple[cloud.Source, ...]:
+    """``refs`` and one summary source for every source in the caller's scope that the reply's other fields are
+    computed from (the counts a backend searched, a denial and its reason), so a reply with no passage is a logged
+    disclosure of the sources it tells something about, like any other."""
+    try:
+        readable = engine.scope_of(ProjectStore(acc.binding), acc, engine._utc())[0]
+    except (ScopeDenied, Refused):
+        return refs
+    covered = {ref.source_id for ref in refs}
+    told = {"backends": found.get("backends"), "denied": found.get("denied"), "withheld": found.get("withheld")}
+    return (*refs, *(_summary_source({"source": rid, **told}) for rid in sorted(readable)
+                     if consent_scope(rid) not in covered))
+
+
 def register(server: Any, context_type: Any) -> None:
     from g6.core.consent_declarations import declares
     from g6.mcp.cloud_consent import client_provider, request_grant
@@ -104,12 +118,14 @@ def register(server: Any, context_type: Any) -> None:
         acceptance there indexes anything, on this machine, and nothing is sent to a model. share=true then asks, in a
         second dialog, whether this source may be shared with your provider; without that grant searches return
         nothing from it to you. expires_days and retention ('none' or 'audit') are shown in the dialog. backends may
-        name elastic_managed: after the local index is published, a job copies the source's passages to the
-        Elasticsearch the person runs on this machine (G6 never starts one); g6_knowledge_job reports it."""
+        name elastic_managed: it is then part of the preview, and the dialog and the listing say that a job will copy
+        the source's passages to the Elasticsearch server G6 is set up to use (G6 never starts one). Only a backend
+        the person accepted there is ever written to; g6_knowledge_job reports the job."""
         try:
             binding = host_binding()
-            shown = await anyio.to_thread.run_sync(partial(engine.preview, binding, path, expires_days=expires_days,
-                                                           retention=retention))
+            shown = await anyio.to_thread.run_sync(partial(
+                engine.preview, binding, path, expires_days=expires_days, retention=retention,
+                backends=tuple(backends) if isinstance(backends, list) else ()))
         except (ScopeDenied, Refused) as exc:
             return _refused(exc.code, exc.reason)
         counts = engine.excluded_counts(shown.excluded)
@@ -118,7 +134,7 @@ def register(server: Any, context_type: Any) -> None:
             f"({sum(f.size for f in shown.files)} bytes). Not indexed: "
             f"{', '.join(f'{n} {why}' for why, n in counts.items()) or 'none'}. Preview digest: {shown.sha256}. "
             f"The full list is in {shown.listing_path}. {shown.note + '. ' if shown.note else ''}"
-            "Indexed on this machine only; nothing is sent to a model. "
+            f"{engine.copies_sentence(shown.backends)} "
             f"Retention of audit copies: {shown.retention}. Expires: {shown.expires_at or 'never'}. "
             "Accept only if this is the folder and the list you want; your supplied name is an attribution, not "
             "authenticated identity.")
@@ -143,11 +159,12 @@ def register(server: Any, context_type: Any) -> None:
             except Exception:  # noqa: BLE001 - an unanswered sharing dialog shares nothing; the index stays local
                 grant = {"status": "unavailable"}
             result["sharing"] = grant.get("status", "unavailable")
-        if backends:
+        accepted = ProjectStore(binding).registration(done["source"]).backends   # what the accepted preview lists
+        if accepted:
             try:
                 from g6.knowledge import _jobs
 
-                job = _jobs.start(binding, done["source"], [str(b) for b in backends], gate=_jobs.elastic_gate())
+                job = _jobs.start(binding, done["source"], accepted, gate=_jobs.elastic_gate())
                 result["job"] = {"id": job.id, "state": job.state, "backends": sorted(job.backends)}
             except Refused as exc:
                 result["job"] = {"state": "refused", "reason": f"[{exc.code}] {exc.reason}"}
@@ -205,7 +222,7 @@ def register(server: Any, context_type: Any) -> None:
             except (ScopeDenied, Refused) as exc:
                 return _refused(exc.code, exc.reason)
             found = {**response.model_dump(), "decision": event.model_dump()}
-            return _ok(found, refs, [{"kind": "knowledge_plan", "trust": "untrusted", "generation": response.generation,
+            return _ok(found, _scope_sources(acc, found, refs), [{"kind": "knowledge_plan", "trust": "untrusted", "generation": response.generation,
                                       "items": len(found["payload"]["items"]), "rule": event.rule,
                                       "chosen": list(event.chosen), "stop_reason": event.stop_reason}])
         try:
@@ -219,7 +236,7 @@ def register(server: Any, context_type: Any) -> None:
         except (ScopeDenied, Refused) as exc:
             return _refused(exc.code, exc.reason)
         found = response.model_dump()
-        return _ok(found, refs, [{"kind": "knowledge_search", "trust": "untrusted", "generation": response.generation,
+        return _ok(found, _scope_sources(acc, found, refs), [{"kind": "knowledge_search", "trust": "untrusted", "generation": response.generation,
                                   "items": len(found["payload"]["items"]),
                                   "backends": {b.backend: b.state for b in response.backends}}])
 
@@ -239,7 +256,7 @@ def register(server: Any, context_type: Any) -> None:
             return _refused(engine.INPUT, "task is text of at most 4000 characters and budget_tokens a whole number")
         except (ScopeDenied, Refused) as exc:
             return _refused(exc.code, exc.reason)
-        return _ok(found, refs, [{"kind": "knowledge_context", "trust": "untrusted", "items": len(found["items"]),
+        return _ok(found, _scope_sources(acc, found, refs), [{"kind": "knowledge_context", "trust": "untrusted", "items": len(found["items"]),
                                   "tokens": found["tokens"], "omitted": found["omitted"]}])
 
     @server.tool()
@@ -247,8 +264,9 @@ def register(server: Any, context_type: Any) -> None:
     @_guarded
     def g6_knowledge_passage(passage_id: str, raw: bool = False) -> dict:
         """One passage by its id, re-read from disk and compared before it is returned, as a redacted view. raw=true
-        also returns the passage's exact text. Either needs the source to be shared with your provider; otherwise the
-        reply names only the source id and the provider."""
+        also returns the passage's exact text. Either needs the source to be shared with your provider: the id is
+        looked up only among the sources shared with you, so an id of any other source is answered exactly as an id
+        that does not exist (unknown), and the reply never confirms a guessed file or its bytes."""
         if not isinstance(passage_id, str) or not _PASSAGE.fullmatch(passage_id):
             return _refused(engine.INPUT, "passage_id is the 64-character id a search returned")
         try:
@@ -277,23 +295,27 @@ def register(server: Any, context_type: Any) -> None:
     def g6_knowledge_job(job_id: str) -> dict:
         """The state of an indexing job for an optional backend: queued, running, published (every passage read back),
         partial (the server was unreachable, or some items were not acknowledged or not read back; the route stays
-        not ready) or failed; with each backend's counts and the number of files that could not be read again."""
+        not ready) or failed (it could not run, or the source was revoked or expired while it ran). Each backend's
+        counts and the files that could not be read again are told only for a source shared with your provider;
+        otherwise the reply is the job's id and state. A job a stopped server left unfinished is started again."""
         try:
             from g6.knowledge import _jobs
 
             binding = host_binding()
             acc = access(binding, "list", _destination())
-            job = _jobs.status(binding, str(job_id))
+            job = _jobs.ensure_running(binding, _jobs.status(binding, str(job_id)), gate=_jobs.elastic_gate())
+            in_scope = job.registration_id in engine.scope_of(ProjectStore(binding), acc, engine._utc())[0]
         except (ScopeDenied, Refused) as exc:
             return _refused(exc.code, exc.reason)
+        if not in_scope:   # scope first: outside it the reply holds states only, and nothing counted from the source
+            return _ok({"job": job.id, "state": job.state, "unread_files": None,
+                        "backends": {name: {"state": entry.get("state", "")} for name, entry in job.backends.items()}}, ())
         shown = {"job": job.id, "source": job.registration_id, "generation": job.generation, "state": job.state,
                  "backends": {name: {k: v for k, v in entry.items() if k != "dry_run"}
                               for name, entry in job.backends.items()},
-                 "unread_files": len(job.unread), "started_at": job.started_at, "finished_at": job.finished_at}
-        if acc.local or engine.shared_with(acc, job.registration_id):
-            shown["unread"] = [{"path": label_view(e.relative), "why": e.why} for e in job.unread]
-            return _ok(shown, (_summary_source({**shown, "source": job.registration_id}),))
-        return _ok(shown, ())
+                 "unread_files": len(job.unread), "started_at": job.started_at, "finished_at": job.finished_at,
+                 "unread": [{"path": label_view(e.relative), "why": e.why} for e in job.unread]}
+        return _ok(shown, (_summary_source({**shown, "source": job.registration_id}),))
 
     @server.tool()
     @declares("client_request")
@@ -330,7 +352,7 @@ def register(server: Any, context_type: Any) -> None:
         except (ScopeDenied, Refused) as exc:
             return _refused(exc.code, exc.reason)
         found = response.model_dump()
-        return _ok(found, refs, [{"kind": "knowledge_paths", "trust": "untrusted", "generation": response.generation,
+        return _ok(found, _scope_sources(acc, found, refs), [{"kind": "knowledge_paths", "trust": "untrusted", "generation": response.generation,
                                   "paths": len(found["payload"]["paths"])}])
 
     @server.tool()
@@ -358,12 +380,17 @@ def register(server: Any, context_type: Any) -> None:
     async def g6_knowledge_delete(source: str, ctx, complete: bool = False) -> dict:
         """Delete one source by its id, after the person accepts a deletion dialog of its own (a sharing grant or
         any other consent does not authorise it). The source is removed from search at once. complete=true also
-        removes the audit copies and snapshots G6 kept for it, leaving only the ids that stop it returning. Text
-        already delivered to a client or a model cannot be recalled."""
+        removes the audit copies and snapshots G6 kept for it on this machine, leaving only the ids that stop it
+        returning. A copy a job wrote to Elasticsearch is not removed by this tool: the dialog and the reply name
+        it as still held. Text already delivered to a client or a model cannot be recalled."""
         try:
+            from g6.knowledge import _jobs
+
             binding = host_binding()
             acc = access(binding, "delete", _destination())
-            registration = ProjectStore(binding).registration(source)
+            store = ProjectStore(binding)
+            registration = store.registration(source)
+            held = _jobs.held(store, source) if registration is not None else []
         except (ScopeDenied, Refused) as exc:
             return _refused(exc.code, exc.reason)
         if registration is None:
@@ -371,10 +398,11 @@ def register(server: Any, context_type: Any) -> None:
         question = (
             f"Delete source {source} from G6's index for this project? Folder: {registration.root or 'already removed'}. "
             f"It is removed from search at once, in every G6 process, and every sharing grant for it is revoked. "
-            + ("The audit copies and snapshots G6 kept for it are removed too; only the ids that stop it returning "
-               "are kept. " if complete else
+            + ("On this machine the audit copies and snapshots G6 kept for it are removed too; only the ids that stop "
+               "it returning are kept. " if complete else
                f"Audit copies G6 kept for it (retention: {registration.retention}) stay on this machine, not "
                "searchable; a complete deletion removes them. ")
+            + engine.held_sentence(held)
             + "Text already delivered to a client or a model cannot be recalled. Accept only if you want this "
               "deletion; your supplied name is an attribution, not authenticated identity.")
         with consent_form():

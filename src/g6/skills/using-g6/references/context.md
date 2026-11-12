@@ -12,13 +12,13 @@ indexing.
 | `g6_knowledge_sources()` | See what is indexed for this project, each source's state and whether it is shared with you. |
 | `g6_knowledge_search(query, top_k=8, sources=None, routes=None, plan=False, needs=None)` | Find passages. With `plan` (or `needs`: what you must find evidence for), G6 chooses the routes by fixed rules from the query's shape, returns its `decision`, and marks each need found, conflicting, missing or unknown; missing means no returned passage holds the need's words, not that the sources hold nothing more. At most 20. By default every ready search route is used (`exact` always; `structure` when the person selected Elasticsearch for a source and its copy is complete) and the results are fused by passage id; each item lists every backend's contribution. |
 | `g6_knowledge_context(task, budget_tokens=4000, sources=None)` | You need a context for a task that fits a token budget: the best cited passages that fit, with what did not fit counted in `omitted`. Passages that read alike are grouped and each keeps its citation; `cautions` names ones that differ in a number or in negation: read both. |
-| `g6_knowledge_passage(passage_id, raw=false)` | Read one passage again by its id; `raw=true` adds its exact text. |
-| `g6_knowledge_count(query="", sources=None)` | How many indexed passages match, as a structured answer. Needs the managed Elasticsearch backend (`g6_knowledge_add(..., backends=["elastic_managed"])`); otherwise `unsupported`. A count is an answer, never passages. |
+| `g6_knowledge_passage(passage_id, raw=false)` | Read one passage again by its id; `raw=true` adds its exact text. An id of a source that is not shared with you is answered as `unknown`, exactly like an id that does not exist. |
+| `g6_knowledge_count(query="", sources=None)` | How many indexed passages match, as a structured answer. Needs the managed Elasticsearch backend (`g6_knowledge_add(..., backends=["elastic_managed"])`: the backend is then part of the preview the person accepts, and only an accepted backend is written to); otherwise `unsupported`. A count is an answer, never passages. |
 | `g6_knowledge_paths(start, relation="imports", max_hops=3)` | Which files a Python file names in import statements (and onward), or which sections a document contains. Each edge cites its passage. An import is a possible dependency, not a statement about behaviour; an import built at run time is unknown and is not a path. |
-| `g6_knowledge_job(job_id)` | The state of an optional backend's indexing job: `published`, or `partial` with why (the route then stays not ready and says `unavailable`, never empty). |
+| `g6_knowledge_job(job_id)` | The state of an optional backend's indexing job: `published`, `partial` (the route then stays not ready and says `unavailable`, never empty) or `failed`. Counts and unread files are told only for a source shared with you. |
 | `g6_knowledge_revoke(source)` | The person no longer wants a source used. It is denied at once, in every G6 process. |
 | `g6_knowledge_refresh(source="")` | Files changed. G6 reads the accepted files again and publishes what changed; a changed file's old passages are denied first, and new ones get new ids. A file that is new to the folder needs a new `g6_knowledge_add`. |
-| `g6_knowledge_delete(source, complete=false)` | The person wants a source gone. They accept a deletion dialog of its own; `complete=true` also removes the audit copies and snapshots G6 kept. |
+| `g6_knowledge_delete(source, complete=false)` | The person wants a source gone. They accept a deletion dialog of its own; `complete=true` also removes the audit copies and snapshots G6 kept on this machine. A copy a job wrote to Elasticsearch is not removed: the dialog and the reply name it as still held. |
 
 ## Reading a reply
 
@@ -36,7 +36,8 @@ indexing.
   what was indexed), `unknown`. An entry with no passage id is about a whole source (its expiry has passed).
 - `g6_knowledge_refresh` re-reads only the sources shared with your provider; the others are named with
   `withheld: true` and are not opened.
-- `g6_knowledge_delete(..., complete=true)` reports the removal only when every file that held the source is gone.
+- `g6_knowledge_delete(..., complete=true)` reports the removal only when every file on this machine that held the
+  source is gone; `held_elsewhere` lists a copy in Elasticsearch, which this tool does not remove.
   If a file could not be removed yet (another program has it open) the reply is `G6_E_KNOWLEDGE_DELETION_PENDING`:
   the source stays denied, and running the deletion again finishes it.
 - `backends` says what each backend did. `unavailable` or `failed` is not "no match". `not_published` means nothing

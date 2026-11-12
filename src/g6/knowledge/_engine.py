@@ -47,7 +47,7 @@ from g6.knowledge._lexical import ScopedLexical
 from g6.knowledge._registry import (Dependent, Member, ProjectStore, Refused, Registration, is_kept, may_use,
                                     source_uri)
 from g6.knowledge._scope import Access, Binding, ScopeDenied, bound, consent_scope, inside
-from g6.knowledge._types import Document, Passage, now, passage_problems, sha256_hex
+from g6.knowledge._types import Document, Passage, now, sha256_hex
 from g6.knowledge._view import label_view, view_of
 from g6.knowledge._walk import (MAX_FILE_BYTES, Excluded, FileEntry, Walked, is_placeholder, read_file, shown_name,
                                 walk)
@@ -62,6 +62,8 @@ CHUNKER = "words:200:20"
 BATCH = 500
 #: A route is asked for this many candidates per wanted result, since the re-read may drop some.
 OVERSAMPLE = 4
+#: How many times one search asks its routes again after it observed changed files among the candidates.
+ROUNDS = 4
 #: Routes a search uses when the request names none: the ones that are ready, in this order.
 DEFAULT_ROUTES = ("exact", "structure", "meaning")
 Clock = Callable[[], datetime]
@@ -85,6 +87,7 @@ class Preview(BaseModel):
     label: str
     files: tuple[FileEntry, ...]
     excluded: tuple[Excluded, ...]
+    #: Every backend the source is written to. The person accepts this list with the files: no later argument adds one.
     backends: tuple[str, ...] = ("sqlite",)
     destinations: tuple[str, ...] = ("local",)
     effects: tuple[str, ...] = ("the listed files are indexed on this machine", "nothing is sent to a model")
@@ -94,6 +97,35 @@ class Preview(BaseModel):
     note: str = ""
     sha256: str = ""
     listing_path: str = ""
+
+
+#: The optional backends a preview may list beside the local index, each with the copy it means, in the words the
+#: listing and the dialog use.
+OPTIONAL_BACKENDS = {
+    "elastic_managed": "after indexing, a job copies every passage of these files to the Elasticsearch server G6 is "
+                       "set up to use (elastic_managed)",
+}
+
+
+def copies_sentence(backends: Sequence[str]) -> str:
+    """Where the accepted files' text is written, in one sentence: the same words in the listing and the dialog."""
+    extra = [OPTIONAL_BACKENDS[b] for b in backends if b in OPTIONAL_BACKENDS]
+    if not extra:
+        return "Indexed on this machine only; nothing is sent to a model."
+    return f"Indexed on this machine; and {'; and '.join(extra)}. Nothing is sent to a model."
+
+
+def held_sentence(held: Sequence[dict[str, Any]]) -> str:
+    """What a deletion leaves in a server G6 wrote to, in the words the dialog and the receipt use; ``""`` when
+    G6's records show no such copy."""
+    if not held:
+        return ""
+    where = "; ".join(
+        f"{'Elasticsearch' if one['backend'] == 'elastic_managed' else one['backend']} "
+        f"(index {one['index'] or 'unknown'}, {one['records_sent']} records sent"
+        f"{', possibly more' if one.get('records_possibly_sent') else ''})" for one in held)
+    return (f"This deletion does not remove the copy of its passages, with their text, that G6 wrote to {where}: G6 "
+            "stops reading it, and the copy stays in that server until it is removed there. ")
 
 
 def _digest(preview: Preview) -> str:
@@ -108,10 +140,15 @@ def _label(binding: Binding, real: Path) -> str:
     return (Path(root.name) / real.relative_to(root)).as_posix()
 
 
-def _preview_of(binding: Binding, walked: Walked, *, nonce: str, expires_at: str, retention: str) -> Preview:
+def _preview_of(binding: Binding, walked: Walked, *, nonce: str, expires_at: str, retention: str,
+                backends: Sequence[str] = ("sqlite",)) -> Preview:
     real = Path(walked.root)
+    listed = ("sqlite", *sorted(b for b in dict.fromkeys(backends) if b != "sqlite"))
+    extra = tuple(OPTIONAL_BACKENDS[b] for b in listed[1:])
     made = Preview(project=binding.project, root=walked.root, label=_label(binding, real), files=walked.files,
-                   excluded=walked.excluded, retention=retention, expires_at=expires_at, nonce=nonce, note=walked.note)
+                   excluded=walked.excluded, retention=retention, expires_at=expires_at, nonce=nonce, note=walked.note,
+                   backends=listed, destinations=("local", *listed[1:]),
+                   effects=("the listed files are indexed on this machine", *extra, "nothing is sent to a model"))
     return made.model_copy(update={"sha256": _digest(made)})
 
 
@@ -123,7 +160,7 @@ def excluded_counts(excluded: Sequence[Excluded]) -> dict[str, int]:
 
 
 def preview(binding: Binding, path: str, *, expires_days: int = 0, retention: str = "none",
-            clock: Clock = _utc) -> Preview:
+            backends: Sequence[str] = (), clock: Clock = _utc) -> Preview:
     """Walk the folder ``path`` names and say exactly what would be indexed. Nothing is registered or indexed; the
     full list is written to a file under ``$G6_HOME/knowledge/previews/`` for the person to open. The listing names
     its project and folder, so a later complete deletion of that folder removes every listing of it."""
@@ -132,25 +169,32 @@ def preview(binding: Binding, path: str, *, expires_days: int = 0, retention: st
         raise Refused(INPUT, "retention is 'none' or 'audit'")
     if not isinstance(expires_days, int) or isinstance(expires_days, bool) or not 0 <= expires_days <= 3650:
         raise Refused(INPUT, "expires_days is a whole number of days from 0 (no expiry) to 3650")
-    walked = walk(binding, inside(binding, path))
+    if isinstance(backends, str) or any(not isinstance(b, str) or b not in OPTIONAL_BACKENDS for b in backends):
+        raise Refused(INPUT, f"backends names optional copies from: {', '.join(OPTIONAL_BACKENDS)}")
+    walked = walk(binding, path)   # the walker applies the name rule first, then resolves the path inside a root
     expires_at = (clock().astimezone(UTC) + timedelta(days=expires_days)).strftime("%Y-%m-%dT%H:%M:%S.%fZ") if expires_days else ""
-    made = _preview_of(binding, walked, nonce=secrets.token_hex(16), expires_at=expires_at, retention=retention)
+    made = _preview_of(binding, walked, nonce=secrets.token_hex(16), expires_at=expires_at, retention=retention,
+                       backends=("sqlite", *backends))
     listing = state_path("knowledge", "previews", f"{made.sha256}.md")
     listing.parent.mkdir(parents=True, exist_ok=True)
     lines = [f"# Preview {made.sha256}", "", f"Project: {made.project}", f"Folder: {shown_name(made.root)}",
              f"Files to index: {len(made.files)} ({sum(f.size for f in made.files)} bytes)",
              f"Not indexed: {len(made.excluded)}",
              f"Ignored files decided by: {walked.ignored_by}" + (f" ({walked.note})" if walked.note else ""),
-             f"Retention: {made.retention}", f"Expires: {made.expires_at or 'never'}", "", "## Files to index", ""]
+             f"Retention: {made.retention}", f"Expires: {made.expires_at or 'never'}",
+             f"Written to: {', '.join(made.backends)}. {copies_sentence(made.backends)}", "", "## Files to index", ""]
     lines += [f"- {f.relative} ({f.size} bytes, sha256 {f.sha256})" for f in made.files]
     lines += ["", "## Not indexed, and why", ""] + [f"- {e.relative}: {e.why}" for e in made.excluded]
     listing.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return made.model_copy(update={"listing_path": str(listing)})
 
 
-def discard_preview(shown: Preview) -> bool:
+def discard_preview(shown: Preview, store: ProjectStore | None = None) -> bool:
     """Remove the listing of a preview whose dialog ended without acceptance or whose commit was refused; whether it
-    is gone."""
+    is gone. With ``store`` it goes through the checked removal: a listing that cannot be removed now is kept on the
+    project's durable list and removed by a later operation."""
+    if store is not None and shown.listing_path:
+        return store.remove_file(Path(shown.listing_path))
     try:
         Path(shown.listing_path).unlink()
     except FileNotFoundError:
@@ -166,7 +210,7 @@ def _listings_of(project: str, root: str) -> list[Path]:
     found = []
     for path in sorted(folder.glob("*.md")) if folder.is_dir() else []:
         try:
-            head = path.read_text(encoding="utf-8", errors="replace").splitlines()[:6]
+            head = path.read_text(encoding="utf-8", errors="replace").split("\n")[:6]   # a folder name may hold a line separator
         except OSError:
             found.append(path)   # a listing that cannot be read cannot be shown to name another folder
             continue
@@ -232,12 +276,13 @@ def _carry(store: ProjectStore, previous: Any, staged: int, index: Any) -> list[
     return members
 
 
-def _publish_staged(store: ProjectStore, staged: int, members: Sequence[Member], index: Any) -> Any:
+def _publish_staged(store: ProjectStore, staged: int, members: Sequence[Member], index: Any, *,
+                    after: int | None = None) -> Any:
     store.record(staged, members)
     checkpoint("commit:recorded")
     written = len({pid for m in members for pid in m.passage_ids})
     held = index.status()["passages"] if store.index_path("sqlite", staged).exists() else 0
-    return store.publish(staged, {"sqlite": {"written": written, "read_back": held}})
+    return store.publish(staged, {"sqlite": {"written": written, "read_back": held}}, after=after)
 
 
 def _purge(path: Path) -> None:
@@ -315,14 +360,14 @@ def commit(binding: Binding, accepted: Preview, attribution: str) -> dict[str, A
         real = inside(binding, accepted.root)
         walked = walk(binding, real)
         again = _preview_of(binding, walked, nonce=accepted.nonce, expires_at=accepted.expires_at,
-                            retention=accepted.retention)
+                            retention=accepted.retention, backends=accepted.backends)
         if again.sha256 != accepted.sha256:
             raise Refused(PREVIEW_CHANGED, "the folder's files differ from the preview that was accepted; nothing "
                                            "was indexed. Preview it again.")
         registration = store.register(accepted, attribution.strip())
     except (Refused, ScopeDenied):
         if not any(r.preview_sha256 == accepted.sha256 for r in store.registrations()):
-            discard_preview(accepted)
+            discard_preview(accepted, store)
         raise
     try:
         built = _build_generation(store, registration, real, accepted.files)
@@ -330,7 +375,7 @@ def commit(binding: Binding, accepted: Preview, attribution: str) -> dict[str, A
         try:
             store.revoke(registration.id)   # a registration that was never indexed does not stay in use
             if isinstance(exc, Exception):
-                discard_preview(accepted)
+                discard_preview(accepted, store)
         except Exception:  # noqa: BLE001 - the first error is the one to report
             pass
         raise
@@ -388,6 +433,25 @@ def _reread(binding: Binding, registration: Registration, member: Member) -> tup
     return document, data
 
 
+def reread_passage(binding: Binding, registration: Registration, member: Member, passage_id: str,
+                   documents: dict[str, Document | None]) -> Passage | None:
+    """The one re-read and compare. The passage ``passage_id`` cut again from its file as the file is now, when the
+    file's bytes are the indexed ones and the passage at the member's recorded offsets has that id; else ``None``.
+    ``documents`` holds the files already read in this call. Every passage G6 returns (search, context, fetch, a
+    saved pack) is built from what this returns and never from a backend's record, so "checked: intact" is said only
+    of text the file holds."""
+    if member.uri not in documents:
+        documents[member.uri] = _reread(binding, registration, member)[0]
+    document = documents[member.uri]
+    if document is None or passage_id not in member.passage_ids:
+        return None
+    start, end = member.spans[member.passage_ids.index(passage_id)]
+    if end > len(document.text):
+        return None
+    passage = document.passage(start, end)
+    return passage if passage.id == passage_id else None
+
+
 def _item(passage: Passage, member: Member, rank: int, contributions: tuple[Contribution, ...]) -> PassageItem:
     from g6.grounding.tripwire import instruction_signals
 
@@ -407,14 +471,14 @@ def _visible_denied(acc: Access, denied: Sequence[Denied]) -> list[Denied]:
     return [d for d in denied if acc.local or (d.registration_id and _granted(acc, d.registration_id))]
 
 
-def _route_hits(store: ProjectStore, request: SearchRequest, generation: Any,
-                readable: Sequence[str]) -> list[tuple[BackendReport, list, int]]:
+def _route_hits(store: ProjectStore, request: SearchRequest, generation: Any, readable: Sequence[str],
+                left_out: list[str] | None = None, *, local: bool = True) -> list[tuple[BackendReport, list, int]]:
     """Each requested route's report and hits on the pinned generation, inside ``readable`` only. A route that is
     not ready is reported ``unavailable`` with why and is not asked; a route name G6 does not know is
     ``unsupported``."""
     from g6.knowledge import _dispatch
 
-    ready = {r.name: (r, why) for r, why in _dispatch.routes(store)}
+    ready = {r.name: (r, why) for r, why in _dispatch.routes_for(store, readable, local=local)}
     wanted = request.routes if request.routes is not None else tuple(
         name for name in DEFAULT_ROUTES if name in ready and not ready[name][1])
     limit = min(request.top_k * OVERSAMPLE, 4 * MAX_TOP_K)
@@ -439,6 +503,8 @@ def _route_hits(store: ProjectStore, request: SearchRequest, generation: Any,
                                   rung=str(found.evidence.get("rung", "")),
                                   reason="" if found.answered else str(found.evidence.get("code") or found.outcome)),
                     list(found.hits), generation.number))
+        if left_out is not None:
+            left_out.extend(str(pid) for pid in found.evidence.get("left_out_changed") or ())
     return out
 
 
@@ -448,6 +514,9 @@ def _fused(acc: Access, request: SearchRequest, *, clock: Clock, budget_tokens: 
     from g6.knowledge._fuse import fuse
 
     store = ProjectStore(acc.binding)
+    if request.routes is not None and not request.routes:
+        raise Refused(INPUT, "routes names at least one search route, or is left out for every ready route: a "
+                             "search that asks no backend is not an answer")
     if request.sources is not None:
         narrowed = frozenset(request.sources)
         acc = Access(binding=acc.binding, operation=acc.operation, destination=acc.destination,
@@ -457,31 +526,47 @@ def _fused(acc: Access, request: SearchRequest, *, clock: Clock, budget_tokens: 
         return store, acc, None, None, {}, {}
     at = clock()
     readable, withheld, denied = scope_of(store, acc, at)   # before anything is retrieved
-    results = _route_hits(store, request, generation, readable)
-    checkpoint("search:found")
-    candidates = {h.passage.id: h for _, hits, _ in results for h in hits}
-    members, refused = store.use(acc, list(candidates), at=at, generation=generation.number)
-    denied.extend(refused)
-    by_passage = {pid: m for m in members for pid in m.passage_ids}
     registrations = {r.id: r for r in store.registrations()}
     documents: dict[str, Document | None] = {}
-    usable: dict[str, Member] = {}
-    for pid, hit in candidates.items():
-        member = by_passage.get(pid)
-        if member is None or member.registration_id not in readable:
-            continue
-        if member.uri not in documents:
-            documents[member.uri], _ = _reread(acc.binding, registrations[member.registration_id], member)
-            if documents[member.uri] is None:
-                store.changed(member.registration_id, member.uri)
-        document = documents[member.uri]
-        if document is None or passage_problems(hit.passage, document):
-            if document is not None:
+    for attempt in range(ROUNDS):
+        left_out: list[str] = []   # matches in files already observed changed: denied, and told as denied
+        results = _route_hits(store, request, generation, readable, left_out, local=acc.local)
+        if attempt == 0:
+            checkpoint("search:found")
+        candidates = {h.passage.id: h for _, hits, _ in results for h in hits}
+        members, refused = store.use(acc, [*candidates, *left_out], at=at, generation=generation.number)
+        denied.extend(refused)
+        by_passage = {pid: m for m in members for pid in m.passage_ids}
+        usable: dict[str, Member] = {}
+        read_again: dict[str, Passage] = {}
+        observed = False
+        for pid in candidates:
+            member = by_passage.get(pid)
+            if member is None or member.registration_id not in readable:
+                continue
+            passage = reread_passage(acc.binding, registrations[member.registration_id], member, pid, documents)
+            if passage is None:
+                observed = True
                 store.changed(member.registration_id, member.uri)
                 documents[member.uri] = None
-            denied.append(Denied(passage_id=pid, registration_id=member.registration_id, why="changed"))
-            continue
-        usable[pid] = member
+                denied.append(Denied(passage_id=pid, registration_id=member.registration_id, why="changed"))
+                continue
+            usable[pid] = member
+            read_again[pid] = passage
+        # a file observed changed is tombstoned, and the lexical query leaves tombstoned files out: asking again
+        # fills the window with usable passages, so denied ones never keep an intact match out of the results
+        if len(usable) >= request.top_k or not observed:
+            break
+    # a backend's record points at a passage and is never the evidence: every route's hit of an id is compared with
+    # the file's text, and a record that differs is not used (the file itself is intact, so it is not denied)
+    compared = []
+    for report, hits, number in results:
+        kept = [h for h in hits if h.passage.id not in read_again or h.passage.text == read_again[h.passage.id].text]
+        if len(kept) != len(hits):
+            report = report.model_copy(update={"state": "partial", "reason": (
+                f"{len(hits) - len(kept)} record(s) of this backend did not match their files and were not used")})
+        compared.append((report, kept, number))
+    results = compared
     checkpoint("search:checked")
     _, late = store.use(acc, list(usable), at=clock(), generation=generation.number)
     denied.extend(late)
@@ -490,11 +575,11 @@ def _fused(acc: Access, request: SearchRequest, *, clock: Clock, budget_tokens: 
     sources: dict[str, cloud_consent.Source] = {}
 
     def render(hit: Any, rank: int, contributions: tuple[Contribution, ...]) -> PassageItem | None:
-        member = usable.get(hit.passage.id)
-        if member is None:
+        member, passage = usable.get(hit.passage.id), read_again.get(hit.passage.id)
+        if member is None or passage is None:
             return None
-        sources[hit.passage.id] = _source(member, hit.passage)
-        return _item(hit.passage, member, rank, contributions)
+        sources[passage.id] = _source(member, passage)
+        return _item(passage, member, rank, contributions)   # from the file as re-read, never from the hit
 
     fused = fuse(results, top_k=request.top_k, budget_tokens=budget_tokens, render=render, query=request.query)
     shown = {i.source for i in fused.items}
@@ -594,40 +679,54 @@ def pack(acc: Access, pack_id: str, *, clock: Clock = _utc) -> tuple[dict[str, A
     members, denied = store.use(acc, ids, at=at)
     by_passage = {pid: m for m in members for pid in m.passage_ids}
     ungranted = sorted({m.registration_id for m in members if not _granted(acc, m.registration_id)})
-    if invalid or denied or ungranted or set(by_passage) != set(ids):
-        reasons = sorted({d.why for d in (*invalid, *denied)} | ({"not_shared"} if ungranted else set()))
-        return {"pack": pack_id, "state": "denied", "why": reasons, "items": [],
+    reasons = {d.why for d in (*invalid, *denied)} | ({"not_shared"} if ungranted else set())
+    if not reasons and not set(ids) <= set(by_passage):   # a pack holds passages of a file, not necessarily all of them
+        reasons.add("unknown")
+    read_again: list[tuple[dict[str, Any], Member, Passage]] = []
+    if not reasons:   # every item is read again from its file at this use: a saved view is never what is returned
+        registrations = {r.id: r for r in store.registrations()}
+        documents: dict[str, Document | None] = {}
+        for kept in saved["items"]:
+            member = by_passage[kept["passage_id"]]
+            passage = reread_passage(acc.binding, registrations[member.registration_id], member, kept["passage_id"],
+                                     documents)
+            if passage is None:
+                store.changed(member.registration_id, member.uri)
+                reasons.add("changed")
+                break
+            read_again.append((kept, member, passage))
+    if not reasons:   # a revoke or an expiry that arrived while the files were read
+        reasons |= {d.why for d in store.use(acc, ids, at=clock())[1]}
+    if reasons:
+        return {"pack": pack_id, "state": "denied", "why": sorted(reasons), "items": [],
                 "withheld": [{"source": r, "provider": acc.destination} for r in ungranted] if not acc.local else []}, ()
-    refs = tuple(cloud_consent.Source(consent_scope(i["source"]), i["passage_id"], sha256_hex(i["view"]["text"]))
-                 for i in saved["items"])
-    return {"pack": pack_id, "state": "usable", "generation": saved["generation"], "items": saved["items"],
-            "tokens": saved["tokens"], "cautions": saved["cautions"], "groups": saved["groups"]}, refs
+    items = [_item(passage, member, kept["rank"], tuple(Contribution(**c) for c in kept["contributions"]))
+             .model_dump(mode="json") for kept, member, passage in read_again]
+    return {"pack": pack_id, "state": "usable", "generation": saved["generation"], "items": items,
+            "tokens": saved["tokens"], "cautions": saved["cautions"], "groups": saved["groups"]}, tuple(
+                _source(member, passage) for _, member, passage in read_again)
 
 
 def fetch(acc: Access, passage_id: str, *, raw: bool = False, clock: Clock = _utc) -> tuple[dict[str, Any],
                                                                                           tuple[cloud_consent.Source, ...]]:
     """One passage by id, re-read and compared before it is returned: its redacted view, and with ``raw`` its exact
-    text. For a destination the source is not granted to, the reply names the source and the provider and nothing
-    else."""
+    text. Scope first: the id is looked up only among the sources the access may read at this time, so an id of a
+    source that is not shared with the destination is answered exactly as an id that does not exist (a passage id
+    can be worked out from a guessed path and guessed bytes, and the reply must not confirm the guess)."""
     store = ProjectStore(acc.binding)
-    members, denied = store.use(acc, [passage_id], at=clock())
+    at = clock()
+    readable = scope_of(store, acc, at)[0]   # before the id is looked up
+    members, denied = store.use(acc, [passage_id], at=at)
+    members = [m for m in members if m.registration_id in readable]
     if not members:
-        shown = _visible_denied(acc, denied)
+        shown = [d for d in _visible_denied(acc, denied) if d.registration_id in readable or acc.local]
         if not shown:   # a destination that may not be told why learns only that the id is not usable here
-            why = "not_published" if denied and denied[0].why == "not_published" else "unknown"
+            why = "not_published" if store.published() is None else "unknown"
             shown = [Denied(passage_id=passage_id, registration_id="", why=why)]
         return {"passage": None, "withheld": [], "denied": [d.model_dump() for d in shown]}, ()
     member = members[0]
-    if not _granted(acc, member.registration_id):
-        return {"passage": None, "denied": [],
-                "withheld": [{"source": member.registration_id, "provider": acc.destination}]}, ()
     registration = next(r for r in store.registrations() if r.id == member.registration_id)
-    start, end = member.spans[member.passage_ids.index(passage_id)]
-    document, _ = _reread(acc.binding, registration, member)
-    passage = None
-    if document is not None and end <= len(document.text):
-        candidate = document.passage(start, end)
-        passage = candidate if candidate.id == passage_id else None
+    passage = reread_passage(acc.binding, registration, member, passage_id, {})
     if passage is None:
         store.changed(member.registration_id, member.uri)
         return {"passage": None, "withheld": [], "denied": [
@@ -694,17 +793,21 @@ def delete(acc: Access, registration_id: str, *, complete: bool = False, attribu
         staged = store.stage({"sqlite": True})
         index = _lexical(store, staged.number)
         try:
-            published = _publish_staged(store, staged.number, _carry(store, previous, staged.number, index), index)
+            published = _publish_staged(store, staged.number, _carry(store, previous, staged.number, index), index,
+                                        after=previous.number)
         except IndexRefused as exc:
             store.abandon(staged.number)
             raise Refused(INDEX, f"the index could not be rebuilt without the source ({exc.code}); it stays denied. "
                                  "Run the deletion again.") from None
+        except Refused:
+            store.abandon(staged.number)   # another publication happened meanwhile: the source stays denied
+            raise
     if complete:
         listings = [state_path("knowledge", "previews", f"{preview_sha256}.md"), *(_listings_of(acc.binding.project, root) if root else [])]
         store.pend(listings)
         store.erase(registration_id)
-        for generation in store.generations():
-            if published is None or generation.number != published.number:
+        for generation in store.generations():   # only generations older than this deletion's own publication
+            if published is None or generation.number < published.number:
                 store._drop_index_files(generation.number)
         if published is not None:
             _purge(store.index_path("sqlite", published.number))
@@ -716,14 +819,21 @@ def delete(acc: Access, registration_id: str, *, complete: bool = False, attribu
                                             "step(s) that hold its bytes could not be removed yet (another program "
                                             "has a file open); run the deletion again")
         receipt["audit_copies"] = "removed"
-    return {**receipt, "note": "The source is removed from search. Text already delivered to a client or a model "
-                               "cannot be recalled."}
+    from g6.knowledge import _jobs
+
+    still_held = _jobs.held(store, registration_id)   # read from the job records, which a deletion keeps
+    if still_held:
+        receipt["held_elsewhere"] = still_held
+    return {**receipt, "note": "The source is removed from G6's search on this machine. " + held_sentence(still_held)
+                               + "Text already delivered to a client or a model cannot be recalled."}
 
 
 def sources(acc: Access, *, clock: Clock = _utc) -> list[dict[str, Any]]:
-    """Each source registration of the project: its id, state, expiry, whether it may be used at this time,
-    generation and backend readiness; and, for the local destination, or for a provider the source is granted to
-    while it may be used, its label and its file, passage and unread counts."""
+    """Each source registration of the project: its id, state, expiry and whether it may be used at this time (the
+    person's own settings); and, for the local destination or a provider the source is granted to, everything that
+    is computed from what the source holds: its generation, its backends' readiness and, while it may be used, its
+    label and its file, passage and unread counts. A row of a source that is not shared with the destination holds
+    nothing that varies with the source's files."""
     store = ProjectStore(acc.binding)
     at = clock()
     generation = store.published()
@@ -736,10 +846,11 @@ def sources(acc: Access, *, clock: Clock = _utc) -> list[dict[str, Any]]:
         why = may_use(registration, at)
         row: dict[str, Any] = {
             "source": registration.id, "state": registration.state, "expires_at": registration.expires_at,
-            "usable": not why, "why_not": why,
-            "retention": registration.retention, "generation": generation.number if generation and own else None,
-            "backends": {name: entry["state"] for name, entry in (generation.backends if generation else {}).items()},
+            "usable": not why, "why_not": why, "retention": registration.retention,
             "shared_with_this_client": (not acc.local) and _granted(acc, registration.id)}
+        if acc.local or row["shared_with_this_client"]:   # computed from the source: only inside the caller's scope
+            row.update(generation=generation.number if generation and own else None,
+                       backends={name: entry["state"] for name, entry in (generation.backends if generation else {}).items()})
         if acc.local or (row["shared_with_this_client"] and not why):
             row.update(label=label_view(registration.label), files=len(own),
                        passages=sum(len(m.passage_ids) for m in own),

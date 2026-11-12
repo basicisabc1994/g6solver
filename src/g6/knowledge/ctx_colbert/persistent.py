@@ -24,11 +24,12 @@ from __future__ import annotations
 import json
 import sqlite3
 import struct
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
-from g6.knowledge._index import FAILED, OVER_BUDGET, UNAVAILABLE, Added, Hit, IndexRefused, Removed, Retrieves, Searched
+from g6.knowledge._index import (FAILED, OVER_BUDGET, UNAVAILABLE, Added, Hit, IndexRefused, Removed, Retrieves, Searched,
+                                 bad_k)
 from g6.knowledge._types import Passage
 from g6.knowledge.ctx_colbert.readiness import ModelPin
 
@@ -111,16 +112,25 @@ class PersistentColbertIndex(Retrieves):
             return "no encoder is configured for this pin"
         return self.encoder.ready()
 
-    def add(self, passages: Sequence[Passage], *, registration_id: str = "", generation: int = 0) -> Added:
+    def add(self, passages: Sequence[Passage], *, registration_id: str = "", generation: int = 0,
+            still: Callable[[], str] | None = None) -> Added:
+        """``still`` says, before every batch, why the passages' source may no longer be used (``""``: it may); the
+        first reason ends the write: whole batches written before it stay, nothing after it is encoded or kept, and
+        the result says ``stopped``."""
         why = self._unready()
         if why:
             raise IndexRefused(UNAVAILABLE, why)
+        stopped = ""
         conn = self._connect(create=True)
         try:
             known = {r["passage_id"] for r in conn.execute("SELECT passage_id FROM vectors")}
             fresh = [p for p in dict((p.id, p) for p in passages).values() if p.id not in known]
             bytes_per = 2 if self.pin.precision == "float16" else 4
+            written = 0
             for start in range(0, len(fresh), self.batch):
+                stopped = still() if still is not None else ""
+                if stopped:
+                    break
                 chunk = fresh[start:start + self.batch]
                 need = sum(min(len(p.text.split()) + 2, self.pin.max_tokens) for p in chunk) * self.pin.dimension * bytes_per * 3
                 if need > self.max_ram_bytes:
@@ -138,6 +148,7 @@ class PersistentColbertIndex(Retrieves):
                                   passage.model_dump_json()))
                 conn.execute("COMMIT")
                 self.encoded += len(chunk)
+                written += len(chunk)
         except sqlite3.Error as exc:
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
@@ -146,7 +157,8 @@ class PersistentColbertIndex(Retrieves):
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
             conn.close()
-        return Added(added=len(fresh), known=len(passages) - len(fresh))
+        return Added(added=written, known=len(passages) - len(fresh),
+                     evidence={"stopped": stopped, "not_written": len(fresh) - written} if stopped else {})
 
     def remove(self, ids: Sequence[str]) -> Removed:
         wanted = list(dict.fromkeys(ids))
@@ -178,6 +190,9 @@ class PersistentColbertIndex(Retrieves):
 
     def find(self, query: str, top_k: int = 10, *, candidates: Sequence[str] | None = None) -> Searched:
         said = {"backend": self.backend, "query": query, "score_scale": self.score_scale}
+        refused = bad_k(self.backend, query, self.score_scale, top_k)
+        if refused is not None:
+            return refused
         why = self._unready()
         if why:
             return Searched(**said, outcome="unavailable", reason=why, evidence={"rung": ""})

@@ -25,7 +25,8 @@ from pydantic import BaseModel, ConfigDict
 from g6.core.storage import PathRefused, contained
 from g6.knowledge import _engine as engine
 from g6.knowledge._index import IndexRefused
-from g6.knowledge._registry import Member, ProjectStore, Receipt, Refused, Registration, is_kept, source_uri
+from g6.knowledge._registry import (SUPERSEDED, Member, ProjectStore, Receipt, Refused, Registration, is_kept,
+                                    may_use, source_uri)
 from g6.knowledge._scope import Access, ScopeDenied, inside
 from g6.knowledge._types import now, sha256_hex
 from g6.knowledge._view import label_view
@@ -99,9 +100,11 @@ def _compare(store: ProjectStore, acc: Access, registration: Registration,
                    failed=failed))
 
 
-def refresh(acc: Access, registration_id: str | None = None, *, clock: engine.Clock = engine._utc) -> dict[str, Any]:
+def refresh(acc: Access, registration_id: str | None = None, *, clock: engine.Clock = engine._utc,
+            _attempt: int = 0) -> dict[str, Any]:
     """Re-read the project's active registrations (or the one named) and publish what changed; see the module
-    docstring. The reply holds counts and views of paths, never text."""
+    docstring. The reply holds counts and views of paths, never text. A refresh whose publication finds that another
+    one happened since it read the published generation publishes nothing over it and starts again from the new one."""
     store = ProjectStore(acc.binding)
     current = store.published()
     if current is None:
@@ -114,6 +117,9 @@ def refresh(acc: Access, registration_id: str | None = None, *, clock: engine.Cl
                      and (registration_id is None or r.id == registration_id)]
     if registration_id is not None and not registrations:
         raise Refused("G6_E_KNOWLEDGE_SOURCE", "no such source registration that this client may refresh now")
+    # every term of the reply is computed from the registrations in scope: with none, nothing is opened, nothing is
+    # published and no generation is named, whatever any other source holds
+    scoped = {r.id for r in registrations}
     members = store.members(current.number)
     found: dict[str, dict[str, Any]] = {}
     receipts: dict[str, Reread] = {}
@@ -132,14 +138,17 @@ def refresh(acc: Access, registration_id: str | None = None, *, clock: engine.Cl
                 "needs_a_new_preview": [label_view(f.relative) for f in found[r.id]["added"]]}
                for r in registrations]
     stale = engine._still_changed(store, current.number)
-    if not touched and not any((m.registration_id, m.uri) in stale for m in members):
+    if not touched and not any(m.registration_id in scoped and (m.registration_id, m.uri) in stale for m in members):
         for receipt in receipts.values():
             store.reread(receipt, current.number)
-        return {"state": "unchanged", "generation": current.number, "sources": summary, "out_of_scope": sorted(withheld)}
+        return {"state": "unchanged", "generation": current.number if scoped else None, "sources": summary,
+                "out_of_scope": sorted(withheld)}
     try:
-        generation = _publish(store, acc, current.number, members, found, registrations)
+        generation = _publish(store, acc, current.number, members, found, registrations, clock)
     except (IndexRefused, Refused, OSError) as exc:
         code = getattr(exc, "code", type(exc).__name__)
+        if code == SUPERSEDED and _attempt < 2:
+            return refresh(acc, registration_id, clock=clock, _attempt=_attempt + 1)
         return {"state": "unavailable", "generation": current.number, "sources": summary, "out_of_scope": sorted(withheld),
                 "reason": f"the refresh did not publish ({code}); the changed files' passages stay denied and the "
                           "rest is served from the previous generation. Run the refresh again."}
@@ -149,17 +158,28 @@ def refresh(acc: Access, registration_id: str | None = None, *, clock: engine.Cl
 
 
 def _publish(store: ProjectStore, acc: Access, previous: int, members: list[Member],
-             found: dict[str, dict[str, Any]], registrations: list[Registration]) -> int:
+             found: dict[str, dict[str, Any]], registrations: list[Registration], clock: engine.Clock) -> int:
     staged = store.stage({"sqlite": True})
+    kept: list[tuple[str, str]] = []   # the audit copies this run wrote
     try:
-        return _stage_and_publish(store, staged, previous, members, found, registrations)
+        return _stage_and_publish(store, staged, previous, members, found, registrations, clock, kept)
     except Exception:
         store.abandon(staged.number)   # nothing of a refresh that did not publish stays on disk
+        store.unretain(kept)
         raise
 
 
+def _stopped(store: ProjectStore, registrations: list[Registration], clock: engine.Clock) -> None:
+    """A stop stops: a source that was revoked, deleted or expired while it was being refreshed ends the refresh
+    before anything more of it is read or published (the changed files stay denied; run the refresh again)."""
+    if any(may_use(store.registration(r.id), clock()) for r in registrations):
+        raise Refused(REFRESH_FAILED, "a source may no longer be used (it was revoked, deleted or expired while it "
+                                      "was refreshed); nothing read after that is published")
+
+
 def _stage_and_publish(store: ProjectStore, staged: Any, previous: int, members: list[Member],
-                       found: dict[str, dict[str, Any]], registrations: list[Registration]) -> int:
+                       found: dict[str, dict[str, Any]], registrations: list[Registration], clock: engine.Clock,
+                       retained: list[tuple[str, str]]) -> int:
     path = store.index_path("sqlite", staged.number)
     before = store.index_path("sqlite", previous)
     if before.exists():
@@ -197,6 +217,7 @@ def _stage_and_publish(store: ProjectStore, staged: Any, previous: int, members:
         index.remove(drop)
     new_members: list[Member] = []
     for registration, member, entry in additions:
+        _stopped(store, [registration], clock)   # asked again before every file that is read
         root = found[registration.id]["root"]
         try:
             data = read_file(contained(root, entry.relative, refuse_links=True), MAX_FILE_BYTES)
@@ -218,7 +239,11 @@ def _stage_and_publish(store: ProjectStore, staged: Any, previous: int, members:
             passage_ids=tuple(p.id for p in passages), spans=tuple((p.start, p.end) for p in passages),
             media_type=entry.media_type, converter=converter, chunker=engine.CHUNKER, unread=(*notes, *more)))
         if registration.retention == "audit":
+            new = not store.has_retained(sha256_hex(data), registration.id)
+            if new:
+                retained.append((sha256_hex(data), registration.id))   # recorded before it is written
             store.retain(data, registration.id)
+    _stopped(store, registrations, clock)   # and once more before what was read is recorded for publication
     store.receipts_to(staged.number, "acknowledged")
     engine.checkpoint("refresh:acknowledged")
     everything = [*kept, *new_members]
@@ -231,7 +256,7 @@ def _stage_and_publish(store: ProjectStore, staged: Any, previous: int, members:
     held = index.status()["passages"] if path.exists() else 0
     store.receipts_to(staged.number, "read_back" if held == written else "failed")
     engine.checkpoint("refresh:read_back")
-    return store.publish(staged.number, {"sqlite": {"written": written, "read_back": held}}).number
+    return store.publish(staged.number, {"sqlite": {"written": written, "read_back": held}}, after=previous).number
 
 
 __all__ = ["REFRESH_FAILED", "Reread", "commit_of", "refresh"]

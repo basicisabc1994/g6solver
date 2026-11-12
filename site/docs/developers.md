@@ -207,22 +207,26 @@ provider contributes only its id and the provider, under `withheld`. Passages ar
 
 - `g6_knowledge_add(path, share, expires_days, retention, backends)` walks the folder and asks the person in the
   client dialog, stating the file list's digest; only acceptance indexes anything. `share` asks, in a second dialog,
-  whether the source may be shared with the client's provider. `backends` may name `elastic_managed`.
+  whether the source may be shared with the client's provider. `backends` may name `elastic_managed`: it is then
+  part of the preview the person accepts, and only an accepted backend is ever written to.
 - `g6_knowledge_sources()` lists the sources of this project, their state and readiness.
 - `g6_knowledge_search(query, top_k, sources, routes, plan, needs)` returns cited passages as redacted views, each
   re-read from disk and compared in the call that returns it, fused by passage id over the ready search routes. With
   `plan` or `needs`, G6 chooses the routes by fixed rules, returns its decision record and marks each declared need
   found, conflicting, missing or unknown; no model is asked.
 - `g6_knowledge_context(task, budget_tokens, sources)` returns the best passages that fit a token budget.
-- `g6_knowledge_passage(passage_id, raw)` returns one passage again by id; `raw` adds its exact text.
+- `g6_knowledge_passage(passage_id, raw)` returns one passage again by id; `raw` adds its exact text. An id of a
+  source that is not shared with the client's provider is answered as unknown, like an id that does not exist.
 - `g6_knowledge_count(query, sources)` answers how many indexed passages match, as a structured answer; it needs the
   managed Elasticsearch backend and says `unsupported` without it.
 - `g6_knowledge_paths(start, relation, max_hops)` returns paths through the passage-linked graph (static imports and
   containment), each edge citing the passage of its witness; an import is a possible dependency, not behaviour.
 - `g6_knowledge_refresh(source)` reads the accepted files again and publishes what changed.
-- `g6_knowledge_job(job_id)` reports an indexing job for an optional backend: per-backend readiness and unread files.
+- `g6_knowledge_job(job_id)` reports an indexing job for an optional backend: per-backend readiness and unread files
+  for a source shared with the client's provider, and otherwise the job's state only.
 - `g6_knowledge_revoke(source)` denies a source at once, in every G6 process, without a dialog.
-- `g6_knowledge_delete(source, complete)` deletes a source after a deletion dialog of its own.
+- `g6_knowledge_delete(source, complete)` deletes a source after a deletion dialog of its own. The dialog and the
+  reply name any copy a job wrote to Elasticsearch as still held: this tool does not remove it.
 
 Secret masking in a view is pattern-based and is not a confidentiality guarantee. Text already delivered to a client
 or a model cannot be recalled. G6 never starts, installs or bundles Elasticsearch.

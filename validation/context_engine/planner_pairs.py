@@ -21,6 +21,13 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path[:0] = [p for p in (str(Path(__file__).resolve().parent),) if p not in sys.path]
+
+import frozen  # noqa: E402
+
+PROTOCOL = ROOT / "docs" / "measurements" / "context-engine" / "07-planner.protocol.md"
+#: The digest of row 07's frozen thresholds. A protocol file whose thresholds differ is not scored against.
+THRESHOLDS_SHA256 = "54bddab076b4286545450542e1e0f53ef01275281e113f52016fc09fc9396a5c"
 TOP_K = 10
 PENDING = {"dense": "evidence_pending: the meaning route is not ready on this corpus",
            "graph": "evidence_pending: the labels hold no relation queries"}
@@ -112,14 +119,23 @@ def run(labels: dict, workdir: Path) -> dict:
 
 def admitted(result: dict) -> tuple[bool, list[str]]:
     """The protocol's rule on a result, and each reason it is not met. A development cohort admits nothing."""
-    planner, fusion = result["arms"]["planner"], result["arms"]["fixed_fusion"]
+    planner, fusion = (result.get("arms") or {}).get("planner") or {}, (result.get("arms") or {}).get("fixed_fusion") or {}
     why = []
-    if "not independently written" in result["labelled_by"]:
+    if not frozen.independent(result.get("labelled_by")):
         why.append("the labels are the development cohort's: a development result admits nothing")
-    if planner["recall_at_10"] < fusion["recall_at_10"]:
-        why.append("the planner's recall@10 is below fixed fusion's")
-    if planner["searches"] > fusion["searches"]:
-        why.append("the planner spent more searches than fixed fusion")
+    if not all(frozen.finite(arm.get(name)) for arm in (planner, fusion) for name in ("recall_at_10", "searches")):
+        return False, [*why, "a measure is missing or is not a finite number"]
+    limits = (result.get("frozen") or {}).get("thresholds") or {}
+    if set(limits) != {"arms_with_unequal_information_or_budget", "safety_cases_failed_or_errored",
+                       "planner_recall_at_10_minus_fixed_fusion_recall_at_10_min",
+                       "planner_searches_minus_fixed_fusion_searches_max"}:
+        return False, [*why, "the result does not record the frozen thresholds it was scored against"]
+    if planner["recall_at_10"] - fusion["recall_at_10"] < limits["planner_recall_at_10_minus_fixed_fusion_recall_at_10_min"]:
+        why.append("the planner's recall@10 is below fixed fusion's by more than the frozen bar")
+    if planner["searches"] - fusion["searches"] > limits["planner_searches_minus_fixed_fusion_searches_max"]:
+        why.append("the planner spent more searches than fixed fusion, over the frozen bar")
+    if result.get("safety_cases_failed_or_errored") != limits["safety_cases_failed_or_errored"]:
+        why.append("the declared safety suites' count of failed or errored cases is not recorded as the frozen bar")
     if not (planner["recall_at_10"] > fusion["recall_at_10"] or planner["searches"] < fusion["searches"]):
         why.append("no named outcome improved and no cost fell at equal recall")
     if any(arm.get("not_intact") for arm in result["arms"].values()):
@@ -132,9 +148,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--labels", required=True)
     parser.add_argument("--out", default="")
     args = parser.parse_args(argv)
+    pinned = frozen.check(PROTOCOL, THRESHOLDS_SHA256, Path(args.labels))   # refuses a changed bar or label file
     labels = json.loads(Path(args.labels).read_text(encoding="utf-8"))
     with tempfile.TemporaryDirectory() as scratch:
         result = run(labels, Path(scratch))
+    result["frozen"] = pinned
+    # the declared safety suites are run by the test runner, not here: until their count is recorded, it is unknown
+    result["safety_cases_failed_or_errored"] = "evidence_pending: the declared suites' result is recorded with the run"
     ok, why = admitted(result)
     result["admission"] = {"met": ok, "not_met_because": why}
     text = json.dumps(result, indent=2, sort_keys=True)

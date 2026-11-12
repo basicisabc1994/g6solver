@@ -18,6 +18,9 @@ SIZES = (2_000, 20_000, 100_000)
 PLATFORMS = ("windows", "wsl", "linux")
 MEASURES = ("cold_p50_s", "cold_p95_s", "warm_p50_s", "warm_p95_s", "peak_rss_bytes", "disk_bytes", "recall_at_10",
             "ingest_per_s", "update_per_s", "delete_per_s", "re_encoded_after_restart", "partial_after_kill")
+#: What every run records and every compared run must share (protocol 05, "Pins").
+REQUIRED_PINS = ("model", "revision", "tokenizer_sha256", "config_sha256", "weights_sha256", "dimension", "max_tokens",
+                 "precision", "chunker", "schema_version")
 WORDS_PER_PASSAGE = 200
 QUERIES = 200
 _COMMON = ("the service keeps a record of each request and its reply so that a later reader can follow what happened "

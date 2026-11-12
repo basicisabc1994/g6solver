@@ -76,8 +76,12 @@ def ready(pin: ModelPin, *, files: Mapping[str, Path] | None = None, platform: s
     if here not in measured:
         return (f"the platform {here} is not one the scale row has measured the store on (protocol 05 is not run): "
                 "unsupported until it is")
-    if max_ram_bytes is not None and free_bytes is not None and free_bytes < max_ram_bytes:
-        return f"{free_bytes} bytes of memory are free, under the declared limit of {max_ram_bytes}"
+    if max_ram_bytes is not None:
+        if type(free_bytes) is not int or free_bytes < 0:   # an unknown input is a reason, never "ready"
+            return (f"a memory limit of {max_ram_bytes} bytes is declared and the free memory is not known; not "
+                    "ready until it is measured")
+        if free_bytes < max_ram_bytes:
+            return f"{free_bytes} bytes of memory are free, under the declared limit of {max_ram_bytes}"
     return ""
 
 

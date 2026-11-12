@@ -30,6 +30,10 @@ class Rig:
         return access(self.binding, operation, destination)
 
     def add(self, path: str | None = None, **settings) -> dict:
+        """The rig's person accepts a preview of ``path``. Unless a test says otherwise (``backends=()``), the
+        preview lists the managed Elasticsearch copy too, so that a test may start that job afterwards: a job for a
+        backend the accepted preview does not list is refused. Nothing is written there unless a test starts a job."""
+        settings.setdefault("backends", ("elastic_managed",))
         shown = engine.preview(self.binding, path or str(self.folder), **settings)
         return engine.commit(self.binding, shown, "Person")
 

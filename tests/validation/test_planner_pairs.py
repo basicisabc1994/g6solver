@@ -47,6 +47,21 @@ def test_every_arm_has_equal_information_and_budget_and_the_scores_repeat(tmp_pa
         assert first["arms"][name]["state"].startswith("evidence_pending")
     met, why = planner_pairs.admitted(first)
     assert met is False and any("development" in reason for reason in why), "a development cohort admits nothing"
+    # the label file and the thresholds are the frozen ones, by digest; a changed bar or label file is refused
+    assert planner_pairs.frozen.problem(PROTOCOL, planner_pairs.THRESHOLDS_SHA256, LABELS) == ""
+    pinned = planner_pairs.frozen.check(PROTOCOL, planner_pairs.THRESHOLDS_SHA256, LABELS)
+    independent = {**first, "labelled_by": "written independently of the corpus generator", "frozen": pinned}
+    met, why = planner_pairs.admitted(independent)
+    assert met is False and any("safety" in reason for reason in why), "the safety suites' count is not yet recorded"
+    recorded = {**independent, "safety_cases_failed_or_errored": 0}
+    assert planner_pairs.admitted(recorded)[1] == ["no named outcome improved and no cost fell at equal recall"]
+    assert planner_pairs.admitted({**recorded, "frozen": {}})[0] is False, "a result that names no frozen thresholds"
+    changed = tmp_path / "labels.json"
+    changed.write_text(json.dumps({**labels, "queries": labels["queries"][:-1]}), encoding="utf-8")
+    assert "not the frozen one" in planner_pairs.frozen.problem(PROTOCOL, planner_pairs.THRESHOLDS_SHA256, changed)
+    assert "not the frozen ones" in planner_pairs.frozen.problem(PROTOCOL, "0" * 64, LABELS)
+    with pytest.raises(SystemExit):
+        planner_pairs.main(["--labels", str(changed)])
 
 
 def test_the_comparison_is_refused_when_an_arm_saw_other_information(tmp_path, monkeypatch):
