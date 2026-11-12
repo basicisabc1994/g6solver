@@ -125,7 +125,8 @@ def test_a_loop_step_that_stops_shows_its_report_then_the_block(repo):
     _grant(repo, "openai:codex")
     folder = completion_hook.folder("mcp:session-1")
     folder.mkdir(parents=True)
-    (folder / "state.json").write_text(json.dumps(loop_state(1, done=True, ending="clean")), encoding="utf-8")
+    # written as the loop writes it, with its completion digest: an unproduced state is withheld on the 0.3 line
+    cloud.write_retained(folder / "state.json", json.dumps(loop_state(1, done=True, ending="clean")).encode("utf-8"))
     stop = {"ok": True, "action": "stop", "report": REPORT, "ending": "clean", "run_id": folder.name}
     carry = {"ok": True, "action": "continue", "text": "repair this"}
     with cloud.collect_sources():
@@ -157,8 +158,9 @@ def test_an_unsent_review_is_shown_as_g6s_own_obstacle(repo):
 def _stop_hook(repo, tmp_path, monkeypatch, step):
     session = completion_hook.folder("hook-session")
     session.mkdir(parents=True, exist_ok=True)
-    (session / "task.json").write_text(json.dumps({"repo": str(repo), "task": TASK_TEXT, "base": "a" * 40}),
-                                       encoding="utf-8")
+    # written as the hook's producer writes it, with its completion digest: an unproduced task is withheld on the 0.3 line
+    cloud.write_retained(session / "task.json",
+                         json.dumps({"repo": str(repo), "task": TASK_TEXT, "base": "a" * 40}).encode("utf-8"))
     monkeypatch.setattr(loop, "advance", lambda *a, **k: step)
     return completion_hook.on_stop({"session_id": "hook-session", "cwd": str(repo), "transcript_path": ""})
 

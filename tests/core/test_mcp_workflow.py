@@ -217,7 +217,8 @@ def test_a_loop_step_wrapper_changes_nothing_and_records_the_step(repo, tmp_path
     result = {"ok": True, "action": "stop", "report": "REPORT", "ending": "clean"}
     folder = completion_hook.folder("mcp:session-9")
     folder.mkdir(parents=True)
-    (folder / "state.json").write_text(json.dumps(loop_state(1, done=True, ending="clean")), encoding="utf-8")
+    # written as the loop writes it, with its completion digest: an unproduced state is withheld on the 0.3 line
+    cloud.write_retained(folder / "state.json", json.dumps(loop_state(1, done=True, ending="clean")).encode("utf-8"))
     assert tools.stepped(lambda *a: dict(result), str(repo), TASK_TEXT, "session-9") == result
     project, task = adapters.identities(repo, TASK_TEXT)
     assert [e.kind for e in rec.ProjectRecord(project).events(task=task)] == [
