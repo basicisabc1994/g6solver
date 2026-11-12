@@ -155,7 +155,7 @@ def test_host_construction_identity_does_not_retain_the_caller():
                                          (usage.WatchedCodex, "exec"),
                                          (usage.WatchedCodex, "--output-last-message")])
 @pytest.mark.parametrize("change", ["remove", "duplicate", "reorder", "joined"])
-def test_final_observation_options_are_checked_after_hooks(launch, base, option, change):
+def test_final_observation_options_are_checked_after_hooks(launch, base, option, change, consented_provider_fakes):
     class Hook(base):
         def _command(self, *args):
             argv, stdin = super()._command(*args)

@@ -9,7 +9,7 @@ from g6.metaharness.loop import _Counted, _Requests
 from g6.self_maintenance import usage
 
 
-def test_command_hook_cannot_disable_json_and_lose_a_codex_refusal(monkeypatch):
+def test_command_hook_cannot_disable_json_and_lose_a_codex_refusal(monkeypatch, consented_provider_fakes):
     tmp_path = Path(__file__).resolve().parents[2] / ".review" / "finding-3" / uuid4().hex
     tmp_path.mkdir(parents=True)
     class TextCodex(usage.WatchedCodex):

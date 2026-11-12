@@ -1492,7 +1492,8 @@ def _stops_at_the_lock(requests, write):
     return AtTheBoundary()
 
 
-def test_ref3_2_a_stop_written_as_admission_takes_its_lock_keeps_the_send_in(tmp_path, monkeypatch):
+def test_ref3_2_a_stop_written_as_admission_takes_its_lock_keeps_the_send_in(tmp_path, monkeypatch,
+                                                                             consented_provider_fakes):
     from g6.self_maintenance.envelope import ask_to_stop
 
     """The stop is written just as the host program's own admission takes the lock, once its input is written."""
@@ -1515,7 +1516,8 @@ def test_ref3_2_a_stop_written_as_admission_takes_its_lock_keeps_the_send_in(tmp
     assert sent == []
 
 
-def test_ref3_2_a_stop_written_while_admission_reads_the_bytes_keeps_the_send_in(tmp_path, monkeypatch):
+def test_ref3_2_a_stop_written_while_admission_reads_the_bytes_keeps_the_send_in(tmp_path, monkeypatch,
+                                                                                  consented_provider_fakes):
     from g6.self_maintenance.envelope import ask_to_stop
 
     requests = _Requests(halted=_stop_file_halt(tmp_path))

@@ -1157,11 +1157,15 @@ class _Watched:
 
 
 def _complete_host(caller: Any, system: str, user: str, *, max_tokens: int = host_models.DEFAULT_MAX_TOKENS) -> str:
-    """The owned completion path. Every caller hook runs before admission; only module functions run after it."""
+    """The owned completion path. Every caller hook runs before admission; only module functions run after it. A send
+    its sources are not shared for is refused before the first caller hook (``refuse_unshared``): the program is not
+    looked for. Only admission, after the hooks, lets a send go."""
     provider = _host_kind(caller)
     if not any(base is _Watched for base in type.__getattribute__(type(caller), "__mro__")):
         raise LLMError("G6_E_LOOP_UNWATCHED_HOST: constructed host no longer has its supported preparation hooks")
     read_stops(caller)                            # convenience argv hooks emit structured mode; final data decides
+    terms = host_admission(caller, system, user)
+    cloud_consent.refuse_unshared(terms["provider"], terms["sources"], local=terms["local"])
     program = caller.locate()
     with host_models._folders() as (work, files):
         argv, stdin = caller._command(program, system, user, work, files)

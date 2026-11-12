@@ -16,6 +16,7 @@ from g6.knowledge import _graph, _relations, _support
 from g6.knowledge._envelope import BackendReport
 from g6.knowledge._fuse import fuse
 from g6.knowledge._registry import Dependent, ProjectStore, Refused
+from tests.host_stand_in import stand_in_hosts
 from tests.knowledge.corpus import INSTRUCTION, INSTRUCTION_SUBJECT, SECRET, SECRET_SUBJECT, SUBJECTS
 from tests.knowledge.corpus.rig import NOW, make
 from tests.knowledge.test_fuse import A, B, C, hits, report
@@ -56,8 +57,7 @@ def test_extraction_without_a_grant_sends_nothing(tmp_path, monkeypatch, accepte
     rig = make(tmp_path, monkeypatch)
     source = rig.add()["source"]
     sent: list[str] = []
-    monkeypatch.setattr(host_models.ClaudeCodeCaller, "complete",
-                        lambda self, system, user, **kw: sent.append(user) or json.dumps([row(1, f"{ONE} convention", SHARED)]))
+    stand_in_hosts(monkeypatch, lambda system, user: sent.append(user) or json.dumps([row(1, f"{ONE} convention", SHARED)]))
     pids = [first_passage(rig, ONE), first_passage(rig, SECRET_SUBJECT)]
     # the provider may be sent G6's own model inputs, and still not this source: the check is per source
     accepted_cloud_dialog("model_inputs", CLAUDE, text="the extraction prompt")

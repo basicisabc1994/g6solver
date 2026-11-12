@@ -533,6 +533,36 @@ def disclosures() -> list[dict]:
         return [row['body'] for row in ledger.entries() if row['kind'] == 'disclosure']
 
 
+def _refuse_unshared(decisions: dict, provider: str, refs: Sequence[Source], supplied: Sequence[str]) -> None:
+    """Admission's one rule: every source of a send is shared with its recipient, or the send is refused."""
+    def allowed(source):
+        row = decisions.get((source.source_id, provider))
+        granted, revision = (row['kind'] == 'grant', row['entry_sha256']) if row is not None else (False, '')
+        # Supplied means these exact argument bytes, never content fetched
+        # through a path, repository or retained-record handle.
+        literal = (source.source_id in supplied and source.source_id.startswith('input:')
+                   and source.source_id == 'input:' + source.content_sha256)
+        return source.recorded and (granted or literal and not revision)
+    if provider == 'cloud:unknown' or not all(allowed(source) for source in refs):
+        capture = _CAPTURE.get()
+        if capture is not None:
+            capture.refused_provider = provider
+        raise _refusal(LLMError(f'{REQUIRED}: {withheld_message(provider, refs)}'))
+
+
+def refuse_unshared(provider: str, sources: Sequence[Source], *, local: bool = False,
+                    supplied: Sequence[str] = ()) -> None:
+    """Admission's decision taken ahead of a send's preparation, so a send its sources are not shared for is refused as
+    admission would refuse it before anything else about the send is looked at (its program, its command). It holds
+    nothing past its return and discloses nothing; passing it admits nothing: the send still takes ``admission``."""
+    refs = boundary_sources(sources, carried=prompt_sources()) or (UNKNOWN,)
+    record_sources(refs)
+    if local:
+        return
+    with _locked() as ledger:
+        _refuse_unshared(_decisions(ledger), provider, refs, supplied)
+
+
 @contextmanager
 def admission(provider: str, sources: Sequence[Source], payload_sha256: str, *, local: bool = False,
               supplied: Sequence[str] = (), disclose: bool = True) -> Iterator[None]:
@@ -548,19 +578,7 @@ def admission(provider: str, sources: Sequence[Source], payload_sha256: str, *, 
         return
     with _locked() as ledger:
         decisions = _decisions(ledger)
-        def allowed(source):
-            row = decisions.get((source.source_id, provider))
-            granted, revision = (row['kind'] == 'grant', row['entry_sha256']) if row is not None else (False, '')
-            # Supplied means these exact argument bytes, never content fetched
-            # through a path, repository or retained-record handle.
-            literal = (source.source_id in supplied and source.source_id.startswith('input:')
-                       and source.source_id == 'input:' + source.content_sha256)
-            return source.recorded and (granted or literal and not revision)
-        if provider == 'cloud:unknown' or not all(allowed(source) for source in refs):
-            capture = _CAPTURE.get()
-            if capture is not None:
-                capture.refused_provider = provider
-            raise _refusal(LLMError(f'{REQUIRED}: {withheld_message(provider, refs)}'))
+        _refuse_unshared(decisions, provider, refs, supplied)
         # A check inside an admitted send of this thread to the same recipient, of no source that send did not
         # disclose, is that send's own step (a host session's launch): it is checked, and disclosed once.
         enclosing = getattr(_HELD, 'send', None)

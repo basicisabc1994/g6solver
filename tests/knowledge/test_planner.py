@@ -16,6 +16,7 @@ from g6.knowledge import _dispatch, _planner
 from g6.knowledge import _engine as engine
 from g6.knowledge._planner import Features, Limits
 from g6.knowledge._registry import ProjectStore
+from tests.host_stand_in import stand_in_hosts
 from tests.knowledge.corpus import MODULES, SECRET, SUBJECTS
 from tests.knowledge.corpus.rig import NOW, make
 
@@ -275,8 +276,7 @@ def test_reformulation_by_a_model_the_sources_are_not_shared_with_is_refused(tmp
     rig = make(tmp_path, monkeypatch)
     source = rig.add()["source"]
     sent: list[str] = []
-    monkeypatch.setattr(host_models.ClaudeCodeCaller, "complete",
-                        lambda self, system, user, **kw: sent.append(user) or json.dumps({"query": TWO}))
+    stand_in_hosts(monkeypatch, lambda system, user: sent.append(user) or json.dumps({"query": TWO}))
     accepted_cloud_dialog("model_inputs", "anthropic:claude_code", text="the planner's question")
     run = {"limits": Limits(model_calls=1), "reformulate": host_models.ClaudeCodeCaller()}
     response, event, _ = planned(rig, ONE, ["zeppelins"], **run)
