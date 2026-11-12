@@ -2303,7 +2303,7 @@ class ShadowLoop:
         self._rca: TickRecord | str | None = None     # what this tick's analysis reads once it has tuned, or why it could not
         self._began = len(self.mh.adoption_rows())    # every generation after these is this cycle's (``_made``)
         self.requests.open(spend.amount, spend.ends)
-        opened = self.requests.generation         # a close that ends this tick moves it on (``_Requests._reset``)
+        tick_generation = self.requests.generation   # a close that ends this tick moves it on (``_Requests._reset``)
         with sealed_closed(self.domain.sealed().vault) as breaches:
             try:                      # a sealed file already held open: no cycle starts over it
                 row = self._row() if breaches else self._cycle(recommended)
@@ -2319,7 +2319,7 @@ class ShadowLoop:
                 try:
                     self.requests.close()
                 finally:         # a close that raised before it ended the tick: what it latched, read in one step
-                    ended = self.requests.closed if self.requests.generation != opened else self.requests.latched()
+                    ended = self.requests.closed if self.requests.generation != tick_generation else self.requests.latched()
                     # what the cycle met, kept before anything else that can fail (``_carried``), and its limits on disk
                     # with it; a tick that leaves by a raise from here on writes what it met on its way out (``tick``,
                     # ``_keep``)

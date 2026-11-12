@@ -561,10 +561,10 @@ def test_every_path_that_ends_a_tick_reads_what_it_latched_as_it_closes():
     assert isinstance(closing, ast.Try) and not closing.handlers and [ast.unparse(s) for s in closing.body] == [
         "self.requests.close()"]
     assert ast.unparse(closing.finalbody[0]) == (
-        "ended = self.requests.closed if self.requests.generation != opened else self.requests.latched()")
+        "ended = self.requests.closed if self.requests.generation != tick_generation else self.requests.latched()")
     body = [ast.unparse(s) for s in run.body]
     opening = body.index("self.requests.open(spend.amount, spend.ends)")
-    assert body[opening + 1] == "opened = self.requests.generation", "the tick's generation is read as it opens"
+    assert body[opening + 1] == "tick_generation = self.requests.generation", "the tick's generation is read as it opens"
     assert any("ended.met" in statement and "_keep_limit" in statement for statement in final)
     assert final.index(next(s for s in final if "_keep_limit" in s)) < final.index(next(s for s in final if "settle" in s))
     assert all(handler.name in (None, "reached", "exc") for handler in tried.handlers)
