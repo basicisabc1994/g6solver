@@ -13,6 +13,7 @@ from g6.core import cloud_consent as cloud, consent_declarations as declarations
 from g6.core.llm import LLMError
 from g6.mcp import build_server
 from g6.mcp.cloud_consent import request_grant
+from g6.workforce import repo_tests
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -340,7 +341,6 @@ def test_carried_source_is_planted_on_every_content_boundary(tmp_path, monkeypat
                     yield tmp_path, files
                 monkeypatch.setattr(host_models, '_folders', folders)
                 monkeypatch.setattr(host_models, '_environment', lambda *args: {})
-                monkeypatch.setattr(loop.ToolSession, '_reply', lambda *args: 'fake reply')
                 monkeypatch.setattr(loop.ToolSession, 'locate', lambda self: 'fake')
                 monkeypatch.setattr(host_models, '_run', lambda argv, text, *args: sent.append(text) or (0, '{}', ''))
                 # No host scratch allocation is needed when admission refuses.
@@ -349,7 +349,8 @@ def test_carried_source_is_planted_on_every_content_boundary(tmp_path, monkeypat
                 monkeypatch.setattr(loop, '_pack', lambda *args: marker)
                 monkeypatch.setattr(loop, '_masked_pack', lambda *args: (marker, False))
                 loop.run_critic(SimpleNamespace(repo=tmp_path, sources=('code.py',)), 'task',
-                                host_models.CodexCaller(), '', tmp_path, patch='patch', system_sources=())
+                                host_models.CodexCaller(), '', tmp_path, patch=repo_tests.DiffRead('patch', ()),
+                                system_sources=())
             elif boundary == 'proposer':
                 obj = object.__new__(proposer.Proposer)
                 obj.ready = obj.stopped = ''
@@ -401,7 +402,6 @@ def test_scout_same_run_without_each_grant_starts_no_process(tmp_path, monkeypat
     monkeypatch.setattr(host_models, '_folders', folders)
     monkeypatch.setattr(host_models, '_environment', lambda *args: {})
     monkeypatch.setattr(ToolSession, 'locate', lambda self: 'fake')
-    monkeypatch.setattr(ToolSession, '_reply', lambda *args: 'fake reply')
     monkeypatch.setattr(host_models, '_run', lambda *args: sent.append('PRIVATE_SCOUT_READ') or (0, '{}', ''))
     with pytest.raises(LLMError, match=cloud.REQUIRED):
         ToolSession().run('synthetic scout request', cwd, where, 1)

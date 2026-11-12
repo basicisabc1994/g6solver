@@ -9,13 +9,13 @@ from g6.core import cloud_consent as cloud
 from g6.core import host_models
 from g6.core.llm import LLMError
 from g6.harness import completion_loop as loop, verification_search as vs
+from g6.workforce import repo_tests
 
 
 @pytest.mark.parametrize('origin', ['known', 'unknown', 'revoked'])
 def test_read_preserves_check_receipts(tmp_path, monkeypatch, accepted_cloud_dialog, origin):
     monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
     monkeypatch.setattr(loop, '_loaded_elsewhere', lambda *args: '')
-    monkeypatch.setattr(loop, '_in_repository', lambda *args: lambda value: value)
     source = cloud.UNKNOWN if origin == 'unknown' else cloud.Source.text(
         'fixture:' + origin, 'diagnostic', 'SYNTHETIC_CHECK_OUTPUT')
     if origin != 'unknown':
@@ -45,7 +45,6 @@ def test_run_set_preserves_receipts_and_leaves_opaque_output_unknown(tmp_path, m
            'test_outcomes': {'test_x': {'call': 'failed'}}, 'failure_messages': {'test_x': 'assert False'}}
     monkeypatch.setattr(loop, '_checks', lambda *args: ([SimpleNamespace(id='x', source='test')], {'x': 'test_x'}, []))
     monkeypatch.setattr(loop, '_loaded_elsewhere', lambda *args: '')
-    monkeypatch.setattr(loop, '_in_repository', lambda *args: lambda value: value)
 
     def check(*args, **kwargs):
         return cloud.bind_output(run, (source,)) if recorded else run
@@ -75,7 +74,7 @@ def test_retry_sends_only_diagnostics_with_complete_granted_receipts(
                         lambda self, system, user, **kwargs: sent.append(user) or 'VERDICT: none')
     reply = loop.run_critic(SimpleNamespace(repo=tmp_path, sources=('code.py',)), 'task',
                             host_models.CodexCaller(), 'system', tmp_path, told=marker,
-                            patch='synthetic patch', system_sources=(),
+                            patch=repo_tests.DiffRead('synthetic patch', ()), system_sources=(),
                             told_sources=(cloud.UNKNOWN if origin == 'unknown' else source,))
     assert bool(sent) is (origin == 'known')
     if origin != 'known':

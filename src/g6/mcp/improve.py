@@ -1215,6 +1215,9 @@ def status(folder: str) -> dict:
                  {"code": RECORDS_UNREADABLE, "reason": unreadable} if unreadable else held)
         named = [c for c in cycles if c.get("constraint")]
         page = digest.latest(root)
+        text = digest.read(page) if page else None
+        if page is not None and text == digest.cloud.WITHHELD and not page.is_file():
+            raise OSError(f"the latest page {page.name} is not a file")   # said as records status cannot read
         return _envelope("qualified-draft", STATUS, f"a runner is {'alive' if running else 'not alive'} on {root}",
                          running=running, folder=str(root), last_heartbeat=beat or None,
                          use=beat.get("use", []), use_as_of=beat.get("at", ""),
@@ -1223,7 +1226,7 @@ def status(folder: str) -> dict:
                          last_cycle=_shown(cycles[-1]) if cycles else None, cycles=len(cycles), pause=pause,
                          stop=halted.reason, stop_code=halted.code, started=started, generation=generations["current"],
                          lineage=generations["recent"],
-                         digest={"path": str(page), "text": digest.read(page)} if page else None,
+                         digest={"path": str(page), "text": text} if page else None,
                          g6_status=STATUS_LINE)
     except Exception as exc:  # noqa: BLE001 - whatever status cannot read or use past the stop is said, never raised
         return _unread_status(root, halted, exc)

@@ -64,4 +64,12 @@ def test_retained_producers_and_handoffs_are_inventoried():
                 if methods:
                     readers[path.name + ':' + node.name] = methods
     assert readers == {'review_loop.py:_asked': {'read_text'}, 'mission.py:submit': {'read_bytes'},
-                       'mission.py:work': {'read_bytes'}}
+                       'mission.py:work': {'read_bytes'},
+                       # Re-derived on the 0.3 integration line, each classified: G6's own saved review reply, read
+                       # only when bound to the task (g6_confirm_behaviour declares source:jobs) and its digest check;
+                       'behaviour.py:_review_candidates': {'read_bytes'}, 'review_binding.py:matches': {'read_bytes'},
+                       # the loop folder's own stop records, which decide a stop and are never returned as text;
+                       'improve.py:_stop_before': {'read_bytes'}, 'improve.py:_stop_entry_on_record': {'read_bytes'},
+                       # G6's installed program text (its servers, skills and guidance), which holds no person's data.
+                       'registrations.py:server_sources': {'read_text'}, 'registrations.py:guidance': {'read_text'},
+                       'registrations.py:inputs': {'read_text'}}

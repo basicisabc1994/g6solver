@@ -68,6 +68,7 @@ from typing import Any
 # The server's own setting, the sensitive components or ops (``component.op``) the person allows: the same setting,
 # read the same way, as ``g6 invoke`` and ``g6.invoke`` (``g6.core.door``).
 from g6.core.door import SENSITIVE_ENV, allowed_sensitive
+from g6.mcp.consent_controls import public_instructions
 from g6.core.door import is_allowed as _allowed
 
 _DENIED = "[G6_E_SENSITIVE_COMPONENT_DENIED]"
@@ -227,7 +228,6 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
     """The meta-harness tools (META_HARNESS_PLAN.md Phase 6): additive, the Python API's envelopes as JSON. Approval
     and rollback ask the person through the client (MCP elicitation); the agent never supplies the approver."""
     from g6.metaharness.surface import Surface
-    from g6.mcp.consent_controls import public_instructions
 
     mh = surface or Surface()
     from g6.metaharness.jobs import Jobs
