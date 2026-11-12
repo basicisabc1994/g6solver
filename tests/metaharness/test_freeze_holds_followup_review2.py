@@ -44,7 +44,6 @@ from g6.metaharness.loop import (
     SEALED_BREACH,
     UNMETERED_CALLER,
     ShadowLoop,
-    _AtLimit,
     _Halted,
     _roots,
 )
@@ -407,8 +406,13 @@ def _steps_after_the_cycle() -> list[str]:
 
 STEPS = _steps_after_the_cycle()
 #: A status's own write: one that fails has its own rule, so a failure there is not a failure after the status is kept.
-OWN_WRITES = {"a provider's limit": {"self._limited": "the limit's own note: one the records will not take leaves this "
-                                                      "process waiting, and a restart's first request finds the limit again"}}
+OWN_WRITES = {"a provider's limit": {"self._keep_limit": "the limit's own note: one the records will not take leaves this "
+                                                         "process waiting, and a restart's first request finds the limit "
+                                                         "again"},
+              # ``_writable`` also spells out what was said as the refusal is kept (``_Requests.at_a_refusal``, from the
+              # refusals follow-up), the first call of it once the refusal is met: a failure there is the refusal's own
+              # write. It cannot fail on text (``envelope.writable``); its use after the cycle is failed for the others.
+              "a classifier's refusal": {"_writable": "the refusal's own record: what was said, spelled out to be kept"}}
 #: What every scenario reaches once its cycle has ended, so no scenario passes for reaching nothing.
 ALWAYS = {"self.meter.settle", "self.requests.close"}
 PROFILE = '{"prompt": "Work through the problem step by step."}'
@@ -427,8 +431,8 @@ def _meets(status: str, loop: ShadowLoop, domain) -> str:
             pass
     elif status == "a barred sender":
         raise _Halted(PAID_MODEL, "a fake caller changed to a paid backend")
-    elif status == "a provider's limit":
-        raise _AtLimit(NOW + timedelta(hours=5), "HTTP 429: the provider's limit was met")
+    elif status == "a provider's limit":   # latched on the meter, as a provider's limit is since the refusals follow-up
+        loop.requests.met_a_limit(NOW + timedelta(hours=5), "HTTP 429: the provider's limit was met")
     elif status == "a stop":
         ask_to_stop(loop.root, "a person stops the loop")
         raise loop._halted()

@@ -1034,6 +1034,12 @@ NARROW = {
                                      "_loaded_outside",
     ("metaharness/loop.py", "_within"): "the loop's own folder is compared by identity and is absent until it is made; a "
                                         "folder under a judge's root that cannot be listed is in reach all the same",
+    # From the refusals follow-up, reached here by name once the two were joined:
+    ("metaharness/loop.py", "_folder_place"): "a folder not made yet is placed by its nearest opened ancestor and the "
+                                              "names below it (a future slot, as in _within); any other error opening a "
+                                              "folder raises G6_E_LOOP_INPUT_CHANGED, so nothing stands for it",
+    ("metaharness/loop.py", "admit"): "a store of refused requests that cannot be read is a stop (RECORDS_UNREADABLE): "
+                                      "nothing is admitted on it, and it stands for no byte the freeze pins",
 }
 
 
