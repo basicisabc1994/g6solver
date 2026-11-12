@@ -34,7 +34,7 @@ import threading
 import time
 import weakref
 from collections import Counter
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -92,7 +92,7 @@ from g6.self_maintenance.envelope import (
     beat,
     file_digest,
     note_refusal,
-    refused_requests,
+    refusal_rows,
     stop_standing,
 )
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
@@ -235,8 +235,9 @@ class _Halted(BaseException):
 
 
 class _Refused(BaseException):
-    """A classifier or a permission stopped a request, on its way out of the tick as ``_AtLimit`` is. Nothing it cut off is
-    written, so an evaluation it cut off is not one of the split's five."""
+    """A classifier or a permission stopped a request, or a reply's outcome is unknown and its inputs are held, on its way
+    out of the tick as ``_AtLimit`` is. Which of the two is in what the tick latched (``refusal``, ``hold``), never in this.
+    Nothing it cut off is written, so an evaluation it cut off is not one of the split's five."""
 
 
 def _request_digest(system: str, user: str) -> str:
@@ -391,6 +392,45 @@ def _meters(calls: Sequence[_Call]) -> tuple[tuple[Any, int | None], ...]:
     return tuple(found)
 
 
+def _unread(said: str) -> bool:
+    """Whether what was said of a send is G6's own hold on a reply of unknown outcome, and no refusal a provider stated: the
+    one rule for which of the two a record, a latch or an error is of."""
+    return said.startswith(f"{HOST_UNKNOWN}:")
+
+
+def _marked(request: str) -> str:
+    """What a store's reader adds beside a request it holds only for an unknown outcome (``ShadowLoop._on_record``). It is
+    no request's digest, so it bars nothing: admission reads from it which words a barred request is turned away with."""
+    return f"{HOST_UNKNOWN}:{request}"
+
+
+def _kinds(rows: Iterable[tuple[str, str]]) -> tuple[set[str], set[str]]:
+    """The requests refused, and those held only because the outcome of a send is unknown, from each record's request and
+    what was said of it. A refusal outranks: a request with one of each was refused."""
+    kept = list(rows)
+    refused = {request for request, said in kept if not _unread(said)}
+    return refused, {request for request, _ in kept} - refused
+
+
+def _stopped_by(said: str) -> str:
+    """What a tick's record says ended it, from what was said of the send: a refusal, or a reply of unknown outcome."""
+    if _unread(said):
+        return f"the outcome of a send is unknown ({said})"
+    return f"a classifier or a permission stopped a request ({said})"
+
+
+def _not_sent(known: str, barred: set[str], meters: Sequence[Any]) -> LLMError:
+    """Why a barred request does not go, as the failed request it leaves as: it was refused once, or the outcome of an
+    earlier send of the same inputs is unknown, which is said as that and not as a refusal. Each begins with one of G6's
+    codes, and neither as a provider's statement does (``refused_by`` reads the hold's code only where a colon follows
+    it), so no reader takes the loop's own bar for a new one. Called under the lock."""
+    if not any(known in meter.refused for meter in meters) and (
+            any(known in meter.unknown for meter in meters) or _marked(known) in barred):
+        return LLMError(f"{HOST_UNKNOWN} held: the outcome of an earlier send of these inputs is unknown, and nothing "
+                        "sends them again")
+    return LLMError(f"{CLASSIFIER_STOP}: this request was refused once, and nothing sends it again")
+
+
 @dataclass(frozen=True)
 class _Ended:
     """What a tick had latched as it closed, read in the same step that closed it: what decides how the tick ends. ``tick``
@@ -403,6 +443,7 @@ class _Ended:
     limited: tuple[datetime, str] | None = None
     met: tuple[tuple[datetime, str], ...] = ()
     tick: str = ""
+    hold: dict[str, Any] | None = None
 
 
 class _Requests:
@@ -422,7 +463,8 @@ class _Requests:
 
     ``halted`` is read first, and read again after any wait, so a stop, or a refusal this process could not keep, refuses
     everything after it. After a refusal nothing more of its tick goes out, and what was refused is never sent again: what
-    ``refused`` holds, every request refused through this meter, ``unknown`` holds requests whose replies could not be read,
+    ``refused`` holds, every request refused through this meter, ``unknown`` holds requests whose replies could not be read
+    (barred the same way, and latched and said as that: ``hold``, never ``refusal``),
     and what ``on_record`` reads at every admission, which for a
     loop's meter is the store and what this process holds for the folder (``_Folder``), so another handle of the same loop, in
     this process or another, refuses it too. ``keeping`` runs outside the admission lock; its synchronous durable refusal
@@ -434,7 +476,7 @@ class _Requests:
     on, or was met once it had ended, and is never lost between."""
 
     #: What a tick latches on its meter: per tick, never per request, and no count.
-    TICK_STATE = ("limit", "ends", "stopped", "unseen", "refusal", "limited", "met", "generation", "closed")
+    TICK_STATE = ("limit", "ends", "stopped", "unseen", "refusal", "hold", "limited", "met", "generation", "closed")
 
     def __init__(self, now: Callable[[], datetime] = lambda: datetime.now(UTC),
                  halted: Callable[[], _Halted | None] = lambda: None,
@@ -476,6 +518,7 @@ class _Requests:
         """A tick's limits, and nothing taken under it yet. ``generation`` moves with each opening and closing, so a request
         that took its look at one tick cannot be admitted under the next, or under none. Called under the lock."""
         self.limit, self.ends, self.stopped, self.unseen, self.refusal = limit, ends, "", False, None
+        self.hold: dict[str, Any] | None = None     # a reply of unknown outcome met in this tick: no classifier's refusal
         self.limited: tuple[datetime, str] | None = None
         self.met: tuple[tuple[datetime, str], ...] = ()
         self.generation += 1
@@ -486,7 +529,8 @@ class _Requests:
         after. So a limit or a refusal is in what the tick ends on, or was met once it had ended."""
         with self._lock:
             self._await_writes()
-            self.closed = _Ended(self.sent, self.unseen, self.stopped, self.refusal, self.limited, self.met, uuid4().hex)
+            self.closed = _Ended(self.sent, self.unseen, self.stopped, self.refusal, self.limited, self.met, uuid4().hex,
+                                 self.hold)
             self._reset(math.inf, None)
 
     def ends_by(self, moment: datetime) -> None:
@@ -575,6 +619,8 @@ class _Requests:
                     for meter in meters:
                         if meter.refusal is not None:
                             raise _Refused(meter.refusal["said"])
+                        if meter.hold is not None:
+                            raise _Refused(meter.hold["said"])
                         if meter.limited is not None:
                             raise _AtLimit(*meter.limited)
                     if (not living or any(call.generation is not None and call.generation != call.meter.generation
@@ -593,7 +639,7 @@ class _Requests:
                                                for charged, generation in record.charged) for meter in meters)):
                             raise LLMError("G6_E_LOOP_UNNAMED_REQUEST: note does not name its admitted launch")
                         if known in barred:
-                            raise LLMError(f"{CLASSIFIER_STOP}: this request was refused once, and nothing sends it again")
+                            raise _not_sent(known, barred, meters)
                         return record
                     if known is not None and self._out_elsewhere(known, owner, here):
                         self._settled.wait(1.0)
@@ -607,7 +653,7 @@ class _Requests:
                     for meter in meters:
                         _RECORD.charge(meter, meter.generation, places)
                     if known is not None and known in barred:
-                        raise LLMError(f"{CLASSIFIER_STOP}: this request was refused once, and nothing sends it again")
+                        raise _not_sent(known, barred, meters)
                     if known is None:
                         return None
                     record = Send(known, watched, owner, self.generation, here, sender, places,
@@ -705,7 +751,7 @@ class _Requests:
             self._await_writes()
             if self.limit == math.inf or generation != self.generation:
                 return
-            refusal, limited = self.refusal, self.limited
+            refusal, limited = self.refusal or self.hold, self.limited
         if refusal is not None:
             raise _Refused(refusal["said"])
         if limited is not None:
@@ -780,7 +826,9 @@ class _Requests:
         never sent again. A pending write is registered under the admission lock, persistence hooks run outside it, and
         note_refusal takes it for the durable write before the outcome latches under it in a finally. Admission and tick
         finalization wait for pending writes. Publications are
-        ordered by their own reentrant lock, which no admission reader holds, so a paused stop reader cannot exclude one."""
+        ordered by their own reentrant lock, which no admission reader holds, so a paused stop reader cannot exclude one.
+        Every target meter's keeper is tried, whatever one of them raised, and the first of those leaves once they have
+        been. A hold for an unknown outcome is latched as ``hold`` and a stated refusal as ``refusal`` (``_unread``)."""
         said = refused_by(str(failed))
         if not said:
             return
@@ -798,12 +846,15 @@ class _Requests:
                     _RECORD.moved += 1
                     for (meter, began), unknown in zip(targets, unknowns):
                         if identity is not None:
-                            if said.startswith(HOST_UNKNOWN + ":"):
+                            if _unread(said):
                                 unknown.add(identity)
                             else:
                                 meter.refused.add(identity)
                         if meter.limit != math.inf and (began is None or began == meter.generation):
-                            meter.refusal = {"said": writable, "request": identity}
+                            if _unread(said):
+                                meter.hold = {"said": writable, "request": identity}
+                            else:
+                                meter.refusal = {"said": writable, "request": identity}
                     return any(meter.limit != math.inf for meter, _ in targets)
                 finally:
                     _RECORD.writing.discard(token)
@@ -815,12 +866,21 @@ class _Requests:
                 unknowns = tuple(meter.unknown for meter, _ in targets)
                 _RECORD.writing.add(token)
             with _PUBLICATIONS:
+                failed: BaseException | None = None
                 try:
                     for meter, _ in targets:
-                        with self._lock:
-                            needed = identity is not None and identity not in meter.refused | meter.unknown
-                        if needed:
-                            meter.keeping(identity, said)
+                        needed = identity is not None     # kept, unless this meter is seen to hold it already
+                        try:          # every meter's keeper is tried: one that raises takes no other's record with it
+                            try:
+                                with self._lock:
+                                    needed = needed and identity not in meter.refused | meter.unknown
+                            finally:
+                                if needed:
+                                    meter.keeping(identity, said)
+                        except BaseException as raised:
+                            failed = failed or raised
+                    if failed is not None:
+                        raise failed
                 finally:
                     ticking = finish()  # latch before the next publication can start
         finally:
@@ -1231,8 +1291,7 @@ class ShadowLoop:
         self.tuned: list[dict[str, Any]] = []     # this tick's tuning cycles as they happen, for a row that a raise cut short
         # ``lost_cycles`` and ``cannot_record`` are the process's for the folder (``_Folder``), so this handle starts with
         # whatever another of the folder's handles met; what was refused here is read with the store at every admission
-        self.requests = _Requests(lambda: self._now(), self._halted, self._barred, self._keep_refusal,
-                                  lambda: refused_requests(self.root) | self._here.refused)
+        self.requests = _Requests(lambda: self._now(), self._halted, self._barred, self._keep_refusal, self._on_record)
         self._proposer = _Counted(proposer, self.requests)
         self.root = Path(root).resolve()
         reach = _in_reach(self.root, domain)
@@ -1242,7 +1301,7 @@ class ShadowLoop:
         self.log = CycleLog(self.root / CYCLE_LOG)
         self.unreadable = ""                      # why what was refused here could not be read, which refuses every request
         try:                                      # before the first request: a restart sends nothing that was refused
-            self.requests.refused |= self._refusals_on_record()
+            self._hold_what_is_on_record()
         except LedgerError as exc:
             self.unreadable = f"what was refused here cannot be read, so nothing could say what must not be sent: {exc}"[:400]
         self.meter = BudgetMeter(settings.windows, store=OperatorStore(self.root / "operator.db"),
@@ -1297,28 +1356,55 @@ class ShadowLoop:
         self.evaluating = True
 
     def _keep_refusal(self, request: str, said: str) -> None:
-        """Keep a refused request's digest while the pending-write barrier excludes admission: first the disk
-        (``note_refusal``), then, whatever became of that write, this process holds it for the folder, whichever handle met it
-        (``_Folder``), so no handle reads it there before it is durable. The folder's record is found before any file is tried.
-        One no file would take is held by this process alone, and a restart could send it again: so this process sends nothing
-        more from the folder, on any of its handles, and asks for a stop a person must lift."""
-        here = self._here
-        kept = False
+        """Keep a refused request's digest, or one held for an unknown outcome, while the pending-write barrier excludes
+        admission. Nothing it must do waits on a step that can fail before it. The disk is tried first, and needs no record
+        of the folder (``note_refusal``); then, whatever became of the write, this process holds the request for the folder,
+        whichever handle met it (``_Folder``), so no handle reads it there before it is durable. The folder's record is
+        looked for only then, and once more if the folder could not be opened (``_found``). Unless the write and the record
+        both held, what is on no file, or in no record of this process, could be sent again: so the folder is stopped on the
+        record that was found, and a stop a person must lift is asked for whether or not one was (``ask_to_stop`` needs
+        none). Each of these is tried whatever ended the one before it. An interrupt that takes the write is no failed
+        write: nothing says what became of the row, a death runs none of this, and the request is held here as far as the
+        folder's record is found, with no stop asked for, before the interrupt goes on its way."""
+        kept: bool | None = None      # ``None``: an interrupt took the write, and nothing here says what became of it
+        here = None
         try:
             kept = note_refusal(self.root, request, said)
         except Exception:  # noqa: BLE001 - any failure to keep it is a refusal only this process holds
-            pass
+            kept = False
         finally:
-            here.refused.add(request)
-        if kept:
-            return
-        why = _writable(f"a request was refused ({' '.join(said.split())[:160]}) and {REFUSED_FILE} would not keep it, so a "
-                        "restart could send it again")[:400]
-        self.cannot_record = why
+            try:
+                here = self._found() or self._found()
+                if here is not None:
+                    here.refused.add(request)
+            finally:
+                if kept is False or (kept and here is None):
+                    self._stop_folder(here, request, said, kept)
+
+    def _found(self) -> _Folder | None:
+        """This folder's record, or ``None`` when the folder cannot be opened for this lookup: what keeps a refusal never
+        waits on it."""
         try:
-            ask_to_stop(self.root, why)
-        except OSError:
-            pass                      # every handle of the folder in this process still sends nothing more
+            return self._here
+        except Exception:  # noqa: BLE001 - a lookup that failed is a write that failed: the folder stops without it
+            return None
+
+    def _stop_folder(self, here: _Folder | None, request: str, said: str, kept: bool) -> None:
+        """A refusal ``refused.log`` would not keep, or one this process could find no record to hold in: every handle of the
+        folder in this process sends nothing more, by the record already found, and the folder is asked to stop."""
+        lost = f"{REFUSED_FILE} would not keep it" if not kept else "this process found no record of the folder to hold it in"
+        why = _writable(f"{_stopped_by(' '.join(said.split())[:160])} and {lost}, so a restart or another handle could "
+                        "send it again")[:400]
+        try:
+            if here is not None:
+                with _LOCK:           # an admission that read the folder's stop before this reads it again
+                    here.cannot_record = why
+                    _RECORD.moved += 1
+        finally:
+            try:
+                ask_to_stop(self.root, why)
+            except OSError:
+                pass                  # every handle of the folder in this process still sends nothing more
 
     @property
     def _here(self) -> _Folder:
@@ -1354,17 +1440,30 @@ class ShadowLoop:
         stop would leave it going, and asking again."""
         return self.cannot_record or stop_standing(self.root, self.log.started())
 
-    def _refusals_on_record(self) -> set[str]:
-        """Every request refused here, from ``refused.log`` and from the cycles that recorded a refusal: what a cycle of an
-        earlier version kept as ``asked`` still counts."""
-        stops = [c["classifier_stop"] for c in self.log.cycles() if c.get("classifier_stop")]
-        return refused_requests(self.root) | {kept[name] for kept in stops for name in ("request", "asked") if kept.get(name)}
+    def _refusals_on_record(self) -> tuple[set[str], set[str]]:
+        """Every request refused here, and every one held only for an unknown outcome, from ``refused.log`` and from the
+        cycles that recorded either: what a cycle of an earlier version kept as ``asked`` still counts."""
+        stops = [kept for c in self.log.cycles() for kept in (c.get("classifier_stop"), c.get("unknown_hold")) if kept]
+        return _kinds([*refusal_rows(self.root), *((kept[name], str(kept.get("said", ""))) for kept in stops
+                                                   for name in ("request", "asked") if kept.get(name))])
+
+    def _hold_what_is_on_record(self) -> None:
+        """This handle's meter holds what the folder's records bar, each as what it is, so a restart sends none of it."""
+        refused, held = self._refusals_on_record()
+        self.requests.refused |= refused
+        self.requests.unknown |= held
+
+    def _on_record(self) -> set[str]:
+        """What admission reads of this folder at every send: each request ``refused.log`` holds and each this process holds
+        for the folder (``_Folder``). One the store holds only for an unknown outcome is marked so (``_marked``)."""
+        refused, held = _kinds(refusal_rows(self.root))
+        return refused | held | self._here.refused | {_marked(request) for request in held}
 
     def _halted(self) -> _Halted | None:
         """What stops any request, in a tick or not: what was refused could not be read, this folder's stop, or G6's own."""
         if self.unreadable:
             try:
-                self.requests.refused |= self._refusals_on_record()
+                self._hold_what_is_on_record()
                 self.unreadable = ""
             except LedgerError:
                 return _Halted(RECORDS_UNREADABLE, self.unreadable)
@@ -1508,7 +1607,8 @@ class ShadowLoop:
         fact, and the pause is only its note."""
         cycles = self.log.since_resumed()
         for cycle in reversed(cycles):
-            if cycle["outcome"] == "sealed_breach" or cycle.get("code") in (UNMETERED_CALLER, CLASSIFIER_STOP, *HOLDS):
+            if cycle["outcome"] == "sealed_breach" or cycle.get("code") in (UNMETERED_CALLER, CLASSIFIER_STOP, HOST_UNKNOWN,
+                                                                            *HOLDS):
                 return cycle["reason"]
         streak = self.log.failed_run()
         if len(streak) < MAX_FAILED_CYCLES:
@@ -1606,7 +1706,7 @@ class ShadowLoop:
                               wait_until=spend.wait_until.isoformat() if spend.wait_until else "")
 
     def _run(self) -> dict[str, Any]:
-        self.requests.refused |= self._refusals_on_record()     # and any other process has kept since
+        self._hold_what_is_on_record()            # and any other process has kept since
         spend, waiting = self._reserve()
         if waiting is not None:
             self.waited += 1
@@ -1636,7 +1736,7 @@ class ShadowLoop:
                     self._keep_limit(spend.provider, until)
                 # use nobody could count stays charged at its worst case
                 charged = self.meter.settle(spend, spend.amount if ended.unseen else ended.sent)
-        unseen, stopped, refusal = ended.unseen, ended.stopped, ended.refusal
+        unseen, stopped, refusal, hold = ended.unseen, ended.stopped, ended.refusal, ended.hold
         limit = _AtLimit(*ended.limited) if ended.limited is not None else None
         if self.tuned and "tuning" not in row:     # a tick cut short keeps what it had made
             row["tuning"] = reflex.funnel(self.tuned)
@@ -1651,8 +1751,12 @@ class ShadowLoop:
                               "nothing is adopted, and a person gives it a caller that notes each request"}
         elif refusal is not None:     # a cycle, so it is on the record, and a pause, so nothing rephrases it on the next tick
             row |= {"outcome": "blocked", "code": CLASSIFIER_STOP, "classifier_stop": refusal,
-                    "reason": f"a classifier or a permission stopped a request ({refusal['said']}): nothing is adopted, it is "
-                              "not sent again, and a person reads this before the loop goes on"}
+                    "reason": f"{_stopped_by(refusal['said'])}: nothing is adopted, it is not sent again, and a person reads "
+                              "this before the loop goes on", **({"unknown_hold": hold} if hold is not None else {})}
+        elif hold is not None:        # no classifier said anything: its own code and field, and the same pause for a person
+            row |= {"outcome": "blocked", "code": HOST_UNKNOWN, "unknown_hold": hold,
+                    "reason": f"{_stopped_by(hold['said'])}: nothing is adopted, its inputs are held and not sent again, "
+                              "and a person reads this before the loop goes on"}
         elif limit is not None:       # a wait and no cycle, like any other: what ran is charged, and none of it counts
             self.waited += 1
             return _blocked(BUDGET_WAIT, f"{spend.provider} met a limit after {charged:g} requests, so this tick scored nothing "
@@ -1707,7 +1811,7 @@ class ShadowLoop:
         try:
             reply = self._reply(self.log.cycle(row))
         except (OSError, LedgerError) as exc:
-            return self.lost_cycle(exc, refusal=row.get("classifier_stop"))
+            return self.lost_cycle(exc, refusal=row.get("classifier_stop") or row.get("unknown_hold"))
         self.lost_cycles = self.waited = 0
         self._pause_if_failing()
         return reply
@@ -1726,8 +1830,8 @@ class ShadowLoop:
         why = (f"{lost} of the {MAX_FAILED_CYCLES} cycles in a row that stop the loop could not be written to "
                f"its log ({type(exc).__name__}: {exc})")[:400]
         if refusal is not None:
-            why = _writable(f"a classifier or a permission stopped a request ({refusal['said']}) and the log would not take "
-                            f"that cycle ({type(exc).__name__}: {exc})")[:400]
+            why = _writable(f"{_stopped_by(refusal['said'])} and the log would not take that cycle "
+                            f"({type(exc).__name__}: {exc})")[:400]
         if refusal is not None or lost >= MAX_FAILED_CYCLES:
             with _LOCK:               # an admission of the folder that read its stop before this reads it again
                 here.cannot_record = why

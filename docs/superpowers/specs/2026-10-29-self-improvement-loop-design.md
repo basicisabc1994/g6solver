@@ -845,6 +845,13 @@ tick would rephrase it: a proposer's next prompt on the same case is a new reque
 never sent again, across restarts, and reads as a failed case. Only the exact request is known: a changed prompt is a new one,
 and only the pause stands between a refusal and that.
 
+**A reply of unknown outcome is no such stop, and is recorded as what it is (2026-11-12).** A host reply G6 could not read whole,
+or whose result states no status it recognises, holds its inputs as a refusal does: the tick ends, the loop pauses for a person,
+and the same inputs are never sent again, across restarts. No classifier said anything, so the cycle is `blocked` with
+`G6_E_LOOP_HOST_UNKNOWN` and an `unknown_hold` field (what was said and a digest of the request), the day's digest has its own
+line for it, and a later send of the held inputs is turned away as held, not as refused. A refusal a provider stated of the same
+request outranks the hold.
+
 **What a refused request is (2026-11-06).** It has one identity, of what was sent, and no alias of what a wrapper was asked. For a
 host caller that is the digest of the exact arguments and input its program is started with, a file G6 wrote for it standing as
 its bytes and a path in the call's own folder as its place there (`usage.request_identity`), taken at the last step the bound file

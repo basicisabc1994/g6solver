@@ -293,6 +293,8 @@ class Runner:
         found = [f"The runner ended: {halted}."] if halted else []
         found += [f"A classifier or a permission stopped a request at tick {c['tick']} ({c['classifier_stop']['said']}). It is "
                   "not sent again." for c in today if c.get("classifier_stop")]
+        found += [f"The outcome of a send at tick {c['tick']} is unknown ({c['unknown_hold']['said']}). Its inputs are held "
+                  "and not sent again." for c in today if c.get("unknown_hold")]
         pause = self._pause()
         if pause is not None:
             found.append(pause["reason"])

@@ -332,20 +332,26 @@ def note_refusal(root: str | Path, request: str, said: str) -> bool:
 
 
 def refused_requests(root: str | Path) -> set[str]:
-    """The digest of each request ``note_refusal`` kept, from every whole row, before and after any row a crash cut short,
-    which is no digest. A file that cannot be read raises as records that do not check out do, since nothing could then say
-    what must not be sent."""
+    """The digest of each request ``note_refusal`` kept (``refusal_rows``)."""
+    return {request for request, _ in refusal_rows(root)}
+
+
+def refusal_rows(root: str | Path) -> list[tuple[str, str]]:
+    """Each request ``note_refusal`` kept with what was said of it, from every whole row, before and after any row a crash
+    cut short, which is no digest. A file that cannot be read raises as records that do not check out do, since nothing
+    could then say what must not be sent."""
     try:
         held = (Path(root) / REFUSED_FILE).read_bytes()
     except FileNotFoundError:
-        return set()
+        return []
     except OSError as exc:
         raise LedgerError(f"{REFUSED_FILE} cannot be read ({type(exc).__name__})") from exc
     try:
         text = held.decode("utf-8", "surrogatepass")
     except UnicodeDecodeError:                  # a line a crash cut short mid-character: the digests before it still read
         text = held.decode("utf-8", "replace")
-    return {found for found in (line.split(" ", 1)[0] for line in text.split("\n")) if len(found) == DIGEST_LENGTH}
+    return [(found, said) for found, _, said in (line.partition(" ") for line in text.split("\n"))
+            if len(found) == DIGEST_LENGTH]
 
 
 def record_stop(root: str | Path, reason: str, *, at: str) -> None:

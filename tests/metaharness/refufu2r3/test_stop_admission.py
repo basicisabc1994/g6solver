@@ -177,6 +177,7 @@ def test_every_call_under_admission_is_an_internal_helper_or_a_named_primitive()
         "self._out_elsewhere": "_Requests._out_elsewhere", "meter._full": "_Requests._full",
         "self._release_locked": "_Requests._release_locked", "self._targets": "_Requests._targets",
         "self._around": "_Requests._around", "_RECORD.charge": "_Record.charge", "_meters": "_meters",
+        "_not_sent": "_not_sent", "_marked": "_marked", "_unread": "_unread",
     }
     expanded = set()
     while True:
@@ -646,20 +647,100 @@ def test_every_change_this_process_makes_to_what_admission_reads_unlocked_moves_
     admit = function("_Requests.admit")
     captured, decision = sorted(locked(admit), key=lambda node: node.lineno)
     assert ast.unparse(captured.body[-1]) == "seen = _RECORD.moved", "the counter is read before any reader runs"
-    assert [ast.unparse(s.test) for s in decision.body[:2]] == ["_RECORD.writing", "_RECORD.moved != seen"]
+    assert [ast.unparse(s.test) if isinstance(s, ast.If) else "" for s in decision.body[:2]] == [
+        "_RECORD.writing", "_RECORD.moved != seen"]
     again = ["seen = _RECORD.moved", "continue"]    # read under the lock, before the readers run once more
     assert [[ast.unparse(s) for s in branch.body[-2:]] for branch in decision.body[:2]] == [again, again]
 
-    # What a handle's readers read of this process: a folder's refused requests and its stop. Each store is listed here.
-    stops = [n for n in ast.walk(tree) if isinstance(n, ast.Attribute) and n.attr == "cannot_record"
-             and isinstance(n.ctx, ast.Store) and ast.unparse(n.value) != "self"]
-    guarded = [block for block in locked(tree) if any(stop in list(ast.walk(block)) for stop in stops)]
-    assert len(stops) == 2 and len(guarded) == 2, "classify every store to a folder's stop"
-    assert all("_RECORD.moved += 1" in ast.unparse(block) for block in guarded)
-    holds = [ast.unparse(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)
-             and ast.unparse(n.func).endswith("refused.add")]
-    assert sorted(holds) == ["here.refused.add", "meter.refused.add"], "classify every refused request this process holds"
-    keep = function("ShadowLoop._keep_refusal")
-    assert "here.refused.add(request)" in ast.unparse(keep), "the folder's hold is made inside a pending refusal write"
     finish = function("_Requests.at_a_refusal.finish")
     assert "_RECORD.moved += 1" in ast.unparse(locked(finish)[0]), "the end of each refusal write moves the counter"
+
+    # What admission reads outside its lock is whatever the readers a handle wires into its meter read. Both are derived:
+    # the callbacks ``admit`` calls outside the lock, and what ``ShadowLoop.__init__`` hands the meter for each.
+    protected = {id(n) for block in locked(admit) for n in ast.walk(block)}
+    wired = function("_Requests.__init__").args.args[1:]
+    outside = {ast.unparse(n.func).rsplit(".", 1)[-1] for n in ast.walk(admit)
+               if isinstance(n, ast.Call) and id(n) not in protected} & {a.arg for a in wired}
+    assert outside == {"halted", "on_record", "now"}, "classify every reader admission calls outside its lock"
+    meter = next(n for n in ast.walk(function("ShadowLoop.__init__"))
+                 if isinstance(n, ast.Call) and ast.unparse(n.func) == "_Requests")
+    handed = {**{a.arg: value for a, value in zip(wired, meter.args)}, **{k.arg: k.value for k in meter.keywords}}
+    assert outside <= set(handed), "a reader the handle does not wire reads nothing of the handle"
+
+    shadow = function("ShadowLoop")
+    members = [n for n in shadow.body if isinstance(n, ast.FunctionDef)]
+    setters = {n.name for n in members if any(ast.unparse(d).endswith(".setter") for d in n.decorator_list)}
+    bodies = {n.name: n for n in members if not any(ast.unparse(d).endswith(".setter") for d in n.decorator_list)}
+    assert setters <= set(bodies)
+
+    # Every member of the handle a reader reaches through ``self``, however deep, and what each reads.
+    reached, pending = [], [handed[name] for name in sorted(outside)]
+    folder, handle, calls, written = set(), set(), set(), set()
+    while pending:
+        node = pending.pop()
+        reached.append(node)
+        for n in ast.walk(node):
+            if isinstance(n, ast.Call) and not ast.unparse(n.func).startswith("self."):
+                calls.add(ast.unparse(n.func))
+            if not isinstance(n, ast.Attribute):
+                continue
+            base = ast.unparse(n.value)
+            if isinstance(n.ctx, ast.Store) and base.startswith("self"):
+                written.add(ast.unparse(n))
+            elif base in {"self._here", "here"}:
+                folder.add(n.attr)
+            elif base == "self" and n.attr in bodies:
+                if bodies[n.attr] not in reached and bodies[n.attr] not in pending:
+                    pending.append(bodies[n.attr])
+            elif base == "self":
+                handle.add(n.attr)
+    fields = {n.target.id for n in function("_Folder").body if isinstance(n, ast.AnnAssign)}
+    assert folder and folder <= fields, f"a reader reads of the folder's record what it does not hold: {folder - fields}"
+
+    # Each fact of the folder's record a reader reads: every store to it is under the lock with the counter moved, or listed.
+    records = {"self._here"} | {target.id for n in ast.walk(tree) if isinstance(n, ast.Assign) for target in n.targets
+                                if isinstance(target, ast.Name)
+                                and any(found in ast.unparse(n.value) for found in ("self._here", "self._found()"))}
+    records |= {a.arg for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) for a in n.args.args
+                if a.annotation is not None and "_Folder" in ast.unparse(a.annotation)}
+    changes = {"add", "update", "discard", "remove", "pop", "clear", "append", "extend", "setdefault", "insert"}
+    counted = {id(n) for block in locked(tree) if "_RECORD.moved += 1" in ast.unparse(block) for n in ast.walk(block)}
+    listed = {
+        # made inside a pending refusal write, which no admission passes, and whose end (``finish``, above) moves the counter
+        "here.refused.add(request)": "ShadowLoop._keep_refusal",
+    }
+    uncounted = set()
+    for n in ast.walk(tree):
+        store = (isinstance(n, ast.Attribute) and isinstance(n.ctx, (ast.Store, ast.Del)) and n.attr in folder
+                 and ast.unparse(n.value) in records)
+        change = (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in changes
+                  and isinstance(n.func.value, ast.Attribute) and n.func.value.attr in folder
+                  and ast.unparse(n.func.value.value) in records)
+        if (store or change) and id(n) not in counted:
+            uncounted.add(ast.unparse(n))
+    assert uncounted == set(listed), f"a store to what the stop or store reader reads moves no counter: {uncounted - set(listed)}"
+    assert all(text in ast.unparse(function(where)) for text, where in listed.items())
+
+    # What a reader reads of the handle itself, each with why no counter is owed, and where it may be stored.
+    given = {
+        "root": "__init__",        # the folder a handle is of: set once
+        "log": "__init__",         # the handle of the folder's cycle log: set once; what it reads is the folder's files
+        "requests": "__init__",    # the handle's meter: set once; its sets are read again under the lock (below)
+        "_now": "__init__",        # the clock a handle was given: set once
+        "unreadable": "__init__ _halted",    # the stop reader's own note of a store it could not read, set as it reads
+    }
+    assert handle == set(given), f"classify what a reader reads of its handle: {handle ^ set(given)}"
+    for name, where in given.items():
+        stores = {m.name for m in members for n in ast.walk(m) if isinstance(n, ast.Attribute) and n.attr == name
+                  and isinstance(n.ctx, ast.Store) and ast.unparse(n.value) == "self"}
+        assert stores <= set(where.split()), f"{name} is stored outside {where}: {stores}"
+    # What a reader writes: its own note, and the meter's two sets, which the protected step reads again itself.
+    assert written == {"self.unreadable", "self.requests.refused", "self.requests.unknown"}, written
+    assert "barred |= meter.refused | meter.unknown" in ast.unparse(decision)
+    # What a reader reads that is no attribute of the handle: files, which another process or a person changes and no
+    # counter of this process can follow; the folder's record, made once under its own lock and never replaced; and
+    # helpers that read nothing.
+    files = {"refusal_rows", "stop_standing", "stop.engaged"}
+    record = {"_RECORD.folder"}
+    helpers = {"_Halted", "_kinds", "_marked", "str", "kept.get", "c.get"}
+    assert calls == files | record | helpers, f"classify what a reader calls: {calls ^ (files | record | helpers)}"

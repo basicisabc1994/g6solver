@@ -1236,7 +1236,9 @@ def test_every_fact_a_handle_holds_is_the_processs_the_folders_files_or_its_own(
     tree = _source_tree(loop_module)
     assigned = {node.attr for node in ast.walk(_function(tree, "ShadowLoop")) if isinstance(node, ast.Attribute)
                 and isinstance(node.ctx, ast.Store) and ast.unparse(node.value) == "self"}
-    assert assigned == set(HANDLE_STATE)
+    # No method stores the folder's stop through the handle: each stores it on the record it has found, so the stop
+    # never waits on a second lookup (``_stop_folder``, ``lost_cycle``); the setter is all that looks the record up.
+    assert assigned == set(HANDLE_STATE) - {"cannot_record"}
     for name in (name for name, kept in HANDLE_STATE.items() if kept == "process"):
         held = inspect.getattr_static(ShadowLoop, name)
         assert isinstance(held, property) and "self._here." in inspect.getsource(held.fget)
@@ -1246,7 +1248,9 @@ def test_every_fact_a_handle_holds_is_the_processs_the_folders_files_or_its_own(
             and ast.unparse(node.value) == "self" and node.attr in HANDLE_STATE}
     assert read and {HANDLE_STATE[name] for name in read} <= {"process", "files", "given"}
     init = ast.unparse(_function(tree, "ShadowLoop.__init__"))
-    assert "refused_requests(self.root) | self._here.refused" in init
+    assert "self._keep_refusal, self._on_record)" in init
+    assert "refusal_rows(self.root)" in ast.unparse(_function(tree, "ShadowLoop._on_record"))
+    assert "| self._here.refused |" in ast.unparse(_function(tree, "ShadowLoop._on_record"))
 
     def statements(qualified):                  # a function's statements, its docstring left out
         return [ast.unparse(s) for s in _function(tree, qualified).body
@@ -1255,12 +1259,20 @@ def test_every_fact_a_handle_holds_is_the_processs_the_folders_files_or_its_own(
     reserve = statements("ShadowLoop._reserve")
     limits = next(i for i, s in enumerate(reserve) if "self.log.limits()" in s)
     assert limits < next(i for i, s in enumerate(reserve) if "self.meter.reserve(" in s)
-    # The folder's record is found before any file is tried, and holds the refusal once the durable write has ended,
-    # whatever became of it: no handle of the folder reads it there before it is on the disk.
-    assert statements("ShadowLoop._keep_refusal")[0] == "here = self._here"
+    # The disk is tried first and waits on no record of the folder. The folder's record holds the refusal once the
+    # durable write has ended, whatever became of it, so no handle reads it there before it is on the disk; a lookup that
+    # fails is no exception here (``_found`` gives ``None``), and the stop below is reached whatever the hold did.
+    keeps = statements("ShadowLoop._keep_refusal")
+    assert keeps[:2] == ["kept: bool | None = None", "here = None"] and len(keeps) == 3
     writes = [node for node in _function(tree, "ShadowLoop._keep_refusal").body
               if isinstance(node, ast.Try) and "note_refusal(self.root, request, said)" in ast.unparse(node.body)]
-    assert len(writes) == 1 and [ast.unparse(held) for held in writes[0].finalbody] == ["here.refused.add(request)"]
+    assert len(writes) == 1 and len(writes[0].finalbody) == 1 and isinstance(writes[0].finalbody[0], ast.Try)
+    assert "self._here" not in ast.unparse(writes[0].body) and "_found" not in ast.unparse(writes[0].body)
+    held, stopped = writes[0].finalbody[0].body, writes[0].finalbody[0].finalbody
+    assert ast.unparse(held[0]) == "here = self._found() or self._found()"
+    assert "here.refused.add(request)" in ast.unparse(held[-1]) and "note_refusal" not in ast.unparse(held)
+    assert [ast.unparse(step.test) for step in stopped] == ["kept is False or (kept and here is None)"]
+    assert ast.unparse(stopped[0].body[0]) == "self._stop_folder(here, request, said, kept)"
 
 
 # Finding 2's class (guard_covers_less_than_it_guards): a send is known by what it sent, whoever sends it -------------------

@@ -218,8 +218,12 @@ def test_the_code_lists_every_reply_classification_site():
 
     unknowns(ast.parse(Path(loop.__file__).read_text(encoding="utf-8")))
     unknowns(tree)
+    # Two more since a hold is told from a refusal wherever it is kept: the words a barred request is turned away with,
+    # read under the lock (``_not_sent``), and a handle taking up the holds its folder's records keep, as it does the
+    # refusals (``_hold_what_is_on_record``): the protected step reads the set again either way.
     assert unknown_sites == {("_Requests.__init__", "Store"), ("_Requests.admit", "Load"),
-                             ("_Requests.at_a_refusal", "Load")}
+                             ("_Requests.at_a_refusal", "Load"), ("_not_sent", "Load"),
+                             ("ShadowLoop._hold_what_is_on_record", "Store")}
     assert "meter.refused | meter.unknown | set(meter.on_record())" in inspect.getsource(loop._Requests.admit)
     assert host_sites == {(scope, name) for scope in ("", "_host_kind", "_remember_host", "_remember_host.forget")
                           for name in ("_HOSTS", "_HOSTS_LOCK")}
