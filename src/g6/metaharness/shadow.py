@@ -38,12 +38,13 @@ from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import ChainLedger
 from g6.metaharness import monitor as drift
 from g6.metaharness import recovery
-from g6.metaharness.api import MetaHarness, _blocked, _envelope, _now, _serialized
+from g6.metaharness.api import MetaHarness, _blocked, _envelope, _now, _serialized, recorded_versions
 from g6.metaharness.evaluate import EvaluationReport
 from g6.metaharness.executor import ExecutorFactory
 from g6.metaharness.gate import GateDecision
 from g6.metaharness.propose import DevBudget, ProposerView, Strategy, build_view, dev_run
 from g6.metaharness.schema import STANDARD_CHANGED, Profile, Proposal, SuiteCase, Workflow
+from g6.metaharness.store import ProfileStore
 from g6.self_maintenance.envelope import FINDINGS
 
 #: The name on every row. An ``auto:`` name is one the store's rules and ``activate`` refuse, so it can never pass for
@@ -69,6 +70,32 @@ def _adopted(rows: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | None:
     while row is not None and row["kind"] == "rollback":
         row = rows[row["target_version"] - 1] if row["target_version"] else None
     return row
+
+
+def _destination(rows: Sequence[Mapping[str, Any]]) -> dict[str, int] | None:
+    """What taking back the head of the chain ``rows`` restores, decided here and nowhere else: the adoption the head
+    stands for (``_adopted``) is undone, and the generation it was made on is restored. ``None`` when nothing adopted
+    stands. A person's demotion and its dialog (``restores``), the monitor's rollback and the chain's own rules read it."""
+    adopted = _adopted(rows)
+    return None if adopted is None else {"generation": adopted["base_version"], "undoes": adopted["version"]}
+
+
+def restores(workspace: str | Path) -> dict[str, Any] | None:
+    """What taking back the head of ``workspace``'s chain would restore, read from its files and written nowhere: the
+    generation and the adoption it undoes (``_destination``), and the profile of that generation by digest, from its own
+    row or, for generation 0, from the version a person confirmed (``recorded_versions``, as a harness reads its head).
+    ``None`` when nothing adopted stands. A chain that does not check out raises, as ``lineage`` does."""
+    workspace = Path(workspace)
+    rows = [entry["body"] for entry in ChainLedger(workspace / ADOPTIONS, validate=_rules).entries()]
+    found = _destination(rows)
+    if found is None:
+        return None
+    if found["generation"]:
+        profile = rows[found["generation"] - 1]["profile_digest"]
+    else:
+        ours = recorded_versions(ProfileStore(workspace / "store.jsonl"), workspace)
+        profile = ours[-1]["profile_digest"] if ours else ""
+    return {**found, "profile_digest": profile}
 
 
 def _change(proposal: Proposal) -> str:
@@ -125,8 +152,8 @@ def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dic
     if kind == "adopt" and not (body.get("decision_digest") and body.get("profile")):
         problems.append("an adoption needs the gate's decision and the profile")
     if kind == "rollback":
-        current = _adopted(rows)
-        if current is None or body.get("target_version") != current["base_version"]:
+        found = _destination(rows)
+        if found is None or body.get("target_version") != found["generation"]:
             problems.append("a rollback goes only to the version before the adopted one")
     return problems
 
@@ -264,11 +291,12 @@ class ShadowHarness(MetaHarness):
         refused = self._refusal()
         if refused:
             return {**refused, **quiet}
-        adopted = _adopted(self.adoption_rows())
-        if adopted is None:
+        chain = self.adoption_rows()
+        adopted, found = _adopted(chain), _destination(chain)
+        if adopted is None or found is None:
             return _envelope("qualified-draft", AUDITED, "nothing is adopted, so there is nothing to audit", **quiet)
-        version = adopted["version"]
-        head, previous = Profile.model_validate(adopted["profile"]), self._profile_at(adopted["base_version"])
+        version, before = adopted["version"], found["generation"]
+        head, previous = Profile.model_validate(adopted["profile"]), self._profile_at(before)
         rows = [r for r in self.ledger.rows("run") if r.get("purpose") == "audit" and r.get("head_version") == version]
         done = {r["case_id"] for r in rows}
         fresh = [c for c in cases if c.case_id not in done][:count]
@@ -279,7 +307,7 @@ class ShadowHarness(MetaHarness):
             differences.append(float(previous_ok) - float(head_ok))
             self.ledger.append("run", f"audit-{version}-{case.case_id}", {
                 "workflow_digest": self.workflow.digest(), "profile_digest": adopted["profile_digest"],
-                "purpose": "audit", "head_version": version, "previous_version": adopted["base_version"],
+                "purpose": "audit", "head_version": version, "previous_version": before,
                 "case_id": case.case_id, "difference": differences[-1],
                 "completion_state": result.get("completion_state", "blocked-escalated")})
         verdict = drift.assess([d for d in differences if d], alpha=self.workflow.policy.demote_alpha)
@@ -290,10 +318,10 @@ class ShadowHarness(MetaHarness):
         number = len(self.adoption_rows()) + 1
         gate = adopted.get("measured", {})
         self.adoptions.append("rollback", str(number), {
-            "kind": "rollback", "version": number, "base_version": number - 1, "target_version": adopted["base_version"],
+            "kind": "rollback", "version": number, "base_version": number - 1, "target_version": before,
             "by": ADOPTER, "scope": SCOPE, "at": _now(), "undoes": version, "audit": said,
             "profile": previous.model_dump(mode="json"), "profile_digest": previous.digest(),
-            "change": f"went back to generation {adopted['base_version']} after generation {version} fell behind it",
+            "change": f"went back to generation {before} after generation {version} fell behind it",
             "measured": {"split": gate.get("split"), "cases": gate.get("cases"), "before": gate.get("after"),
                          "after": gate.get("before"),
                          "monitor": {key: said[key] for key in ("audited", "pairs", "mean_difference")}}})
@@ -303,9 +331,12 @@ class ShadowHarness(MetaHarness):
                         f"disagreements; the head is version {number}", **said, undoes=version, head_version=number)
 
     @_serialized
-    def demote(self, generation: int, by: str) -> dict[str, Any]:
+    def demote(self, generation: int, by: str, *,
+               last_check: Callable[[Mapping[str, Any]], dict[str, Any] | None] = lambda found: None) -> dict[str, Any]:
         """A person takes the head back one version, as the monitor may: the row is theirs, and it measures nothing.
-        ``generation`` is the head they read, so a head that moved on since is theirs to read again."""
+        ``generation`` is the head they read, so a head that moved on since is theirs to read again. What it restores is
+        ``_destination``'s. ``last_check`` is given that, with the digest of the profile it would write, just before the
+        row is written, and a refusal from it stands in place of the demotion (``g6.metaharness.runner.act``)."""
         refused = self._refusal()
         if refused:
             return refused
@@ -313,19 +344,23 @@ class ShadowHarness(MetaHarness):
         if generation != len(rows):
             return _blocked(NOT_DEMOTABLE, f"the head is generation {len(rows)}, not {generation}, and nothing was changed",
                             "Read the lineage again and name the generation that stands.")
-        adopted = _adopted(rows)
-        if adopted is None:
+        found = _destination(rows)
+        if found is None:
             return _blocked(NOT_DEMOTABLE, f"generation {generation} is what a person confirmed: nothing adopted stands to "
                             "take back, and nothing was changed")
-        number, previous = generation + 1, self._profile_at(adopted["base_version"])
+        back, undone = found["generation"], found["undoes"]
+        number, previous = generation + 1, self._profile_at(back)
+        stopped = last_check({**found, "profile_digest": previous.digest()})
+        if stopped:
+            return stopped
         self.adoptions.append("rollback", str(number), {
-            "kind": "rollback", "version": number, "base_version": generation, "target_version": adopted["base_version"],
-            "by": by, "scope": SCOPE, "at": _now(), "undoes": adopted["version"], "measured": {},
+            "kind": "rollback", "version": number, "base_version": generation, "target_version": back,
+            "by": by, "scope": SCOPE, "at": _now(), "undoes": undone, "measured": {},
             "profile": previous.model_dump(mode="json"), "profile_digest": previous.digest(),
-            "change": f"a person went back to generation {adopted['base_version']} from generation {adopted['version']}"})
-        return _envelope("qualified-draft", DEMOTED, f"generation {adopted['version']} is taken back: the head is generation "
-                         f"{number}, the profile of generation {adopted['base_version']}", head_version=number,
-                         undoes=adopted["version"], next_action="Later ticks run on it. The monitor compares it with the "
+            "change": f"a person went back to generation {back} from generation {undone}"})
+        return _envelope("qualified-draft", DEMOTED, f"generation {undone} is taken back: the head is generation "
+                         f"{number}, the profile of generation {back}", head_version=number,
+                         undoes=undone, next_action="Later ticks run on it. The monitor compares it with the "
                          "version before it, as with any head.")
 
     def _on_case(self, profile: Profile, case: SuiteCase) -> tuple[bool, dict[str, Any], int]:
@@ -354,4 +389,4 @@ def adapt_shadow(workflow: Workflow, factory: ExecutorFactory | None = None, *, 
 
 
 __all__ = ["ADOPTED", "ADOPTER", "DEMOTED", "NOT_ADOPTABLE", "NOT_DEMOTABLE", "ROLLED_BACK", "SCOPE", "SHADOW_ONLY",
-           "ShadowHarness", "adapt_shadow", "lineage"]
+           "ShadowHarness", "adapt_shadow", "lineage", "restores"]

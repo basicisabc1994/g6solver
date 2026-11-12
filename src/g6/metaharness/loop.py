@@ -78,6 +78,7 @@ from g6.self_maintenance.constraints import StageMeasurement, identify_constrain
 from g6.self_maintenance.envelope import (
     CYCLE_LOG,
     ENDS_A_STREAK,
+    ENROLMENT_CHANGED,
     FINDINGS,
     MAX_FAILED_CYCLES,
     STOP_UNREADABLE,
@@ -202,6 +203,27 @@ class _AtLimit(BaseException):
     def __init__(self, until: datetime, said: str) -> None:
         super().__init__(said)
         self.until, self.said = until, said
+
+
+class _Stopped(tuple):
+    """This folder's stop as a tick reads it: the code and the reason, both empty with none, and the reading they are
+    from (``stop_in_force``), which every ending on a stop decides on. True when a stop is in force."""
+
+    def __new__(cls, reading: Stop) -> _Stopped:
+        found = super().__new__(cls, (reading.code, reading.reason))
+        found.reading = reading
+        return found
+
+    code = property(lambda self: self[0])
+    reason = property(lambda self: self[1])
+
+    def __bool__(self) -> bool:
+        return bool(self[0])
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "reading":                # not set yet: nothing to ask
+            raise AttributeError(name)
+        return getattr(self.reading, name)   # the rest of the reading, as the reading names it
 
 
 class _Halted(BaseException):
@@ -573,6 +595,38 @@ def _reloaded(loop: ShadowLoop) -> dict[str, Any] | None:
         loop._beat(reply["completion_state"], STOP_UNREADABLE, reason=reply["message"])
         return reply
     return None
+def must_stop(log: CycleLog) -> str:
+    """Why the durable record of cycles says stop, whether or not a pause was written: the cycles themselves are the fact,
+    and the pause is only its note. A tick reads it, and so does a person's dialog that lifts it."""
+    for cycle in reversed(log.since_resumed()):
+        if cycle["outcome"] == "sealed_breach" or cycle.get("code") in (UNMETERED_CALLER, CLASSIFIER_STOP, *BARRED):
+            return cycle["reason"]
+    streak = log.failed_run()
+    if len(streak) < MAX_FAILED_CYCLES:
+        return ""
+    return "three failed cycles in a row: " + "; ".join(
+        f"tick {c['tick']} {c['outcome']} ({str(c.get('reason', ''))[:160]})" for c in streak)
+
+
+_holding = threading.local()
+
+
+@contextmanager
+def folder_lock(root: str | Path) -> Iterator[None]:
+    """The folder's lock (its ``.tick`` mutex), taken once by a thread however often it asks: a person's act holds it from
+    its last check of what the person read, through the domain's code it runs, to its write, and the loop's own
+    operations inside that take it too. ``WorkspaceRefused`` while another holds it."""
+    key = str(Path(root).resolve())
+    held = _holding.__dict__.setdefault("roots", set())
+    if key in held:
+        yield
+        return
+    with Coordination(Path(key) / ".tick").mutex():
+        held.add(key)
+        try:
+            yield
+        finally:
+            held.discard(key)
 
 
 def _exclusive(method: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
@@ -585,7 +639,7 @@ def _exclusive(method: Callable[..., dict[str, Any]]) -> Callable[..., dict[str,
     @wraps(method)
     def invoke(self: ShadowLoop, *args: Any, **kwargs: Any) -> dict[str, Any]:
         try:
-            with Coordination(self.root / ".tick").mutex():
+            with folder_lock(self.root):
                 refused = _reloaded(self)
                 if refused is not None:
                     return refused
@@ -679,17 +733,20 @@ class ShadowLoop:
             self.requests.ends_by(seen.ends)
         self.evaluating = True
 
-    def _stop(self) -> Stop:
-        """This folder's stop, which a tick and the runner read alike: if the runner read less, a tick refused for a stop
-        would leave it going, and asking again. It is ``stop_in_force``'s reading of what is on disk, taken before each
-        request. The start and any stop after it are kept against the digest of the very records' bytes they were parsed
-        from, in that same reading, so a later reading parses again only when its bytes differ; records that cannot be read
-        stop it."""
+    def _stop(self) -> _Stopped:
+        """This folder's stop, as a code and a reason (``("", "")`` with none), which a tick and the runner read alike: if
+        the runner read less, a tick refused for a stop would leave it going, and asking again. It is ``stop_in_force``'s
+        reading of what is on disk, taken before each request, and that reading comes with it (``_Stopped.reading``). The
+        start, any stop after it and the enrolment on record are kept against the digest of the very records' bytes they
+        were parsed from, in that same reading, so a later reading parses again only when its bytes differ; records that
+        cannot be read stop it. An enrolment on record that the start did not show is a stop with a code of its own
+        (``ENROLMENT_CHANGED``), so no request goes out on an enrolment its start did not agree to."""
         if self.cannot_record:
-            return Stop(CANNOT_RECORD, self.cannot_record)  # this process's own stop: the log took no cycle
-        found = stop_in_force(self.root, known=self._on_record)
-        self._on_record = None if found.code == STOP_UNREADABLE else (found.records_sha256, found.start, found.revoked)
-        return found
+            return _Stopped(Stop(CANNOT_RECORD, self.cannot_record))  # this process's own stop: the log took no cycle
+        found = stop_in_force(self.root, known=getattr(self, "_on_record", None))
+        self._on_record = (None if found.code == STOP_UNREADABLE else
+                           (found.records_sha256, found.start, found.revoked, found.seen.enrolled))
+        return _Stopped(found)
 
     def stopped_by(self) -> str:
         """Why this folder is stopped, or ``""``."""
@@ -699,7 +756,7 @@ class ShadowLoop:
         """What stops a tick between two requests: this folder's stop, or G6's own."""
         found = self._stop()
         if found:
-            return _Halted(found.code, found.reason, found)
+            return _Halted(found.code, found.reason, found.reading)
         engaged = stop.engaged()
         return _Halted(stop.STOPPED, f"G6 is stopped: {engaged}") if engaged is not None else None
 
@@ -779,7 +836,8 @@ class ShadowLoop:
             return _blocked(self.problems[0][0], "; ".join(why for _, why in self.problems),
                             "Give this domain what it lacks; the loop will not run without it.")
         if self.log.enrolled() is None:
-            return _blocked(NOT_ENROLLED, "no person has enrolled this domain", "loop.enrol('<your name>')")
+            return _blocked(NOT_ENROLLED, "no person has enrolled this domain",
+                            "A person enrols it with g6_improve_enrol, in the client's dialog.")
         return None
 
     def _refused(self) -> dict[str, Any] | None:
@@ -793,7 +851,9 @@ class ShadowLoop:
             return _blocked(halted.code, halted.said, "Remove the STOP file to resume." if halted.code == STOPPED else
                             "A person makes the stop's files readable; a new g6_improve_start lets it run again."
                             if halted.code == STOP_UNREADABLE else "A person frees the log, then starts the loop again with "
-                            "g6_improve_start." if halted.code == CANNOT_RECORD else "Whoever engaged the stop releases it.")
+                            "g6_improve_start." if halted.code == CANNOT_RECORD else
+                            "A person starts it again with g6_improve_start, which shows them the enrolment that stands."
+                            if halted.code == ENROLMENT_CHANGED else "Whoever engaged the stop releases it.")
         invalid = self._invalid()
         if invalid is not None:
             return invalid
@@ -803,7 +863,8 @@ class ShadowLoop:
                             "check out.")
         paused = self.log.paused() or self._must_stop()
         if paused:
-            return _blocked(PAUSED, f"the loop is paused: {paused}", "A person reads why, then loop.resume('<name>').")
+            return _blocked(PAUSED, f"the loop is paused: {paused}",
+                            "A person reads why, then lifts it with g6_improve_resume, in the client's dialog.")
         changed = self._changed()
         if changed:
             return _blocked(FROZEN_CHANGED, f"changed since a person enrolled this domain: {', '.join(changed)}. Nothing "
@@ -838,21 +899,15 @@ class ShadowLoop:
                         "Give this domain what it lacks; the loop will not run without it.")
 
     def _must_stop(self) -> str:
-        """Why the durable record of cycles says stop, whether or not a pause was written: the cycles themselves are the
-        fact, and the pause is only its note."""
-        cycles = self.log.since_resumed()
-        for cycle in reversed(cycles):
-            if cycle["outcome"] == "sealed_breach" or cycle.get("code") in (UNMETERED_CALLER, CLASSIFIER_STOP, *BARRED):
-                return cycle["reason"]
-        streak = self.log.failed_run()
-        if len(streak) < MAX_FAILED_CYCLES:
-            return ""
-        return "three failed cycles in a row: " + "; ".join(
-            f"tick {c['tick']} {c['outcome']} ({str(c.get('reason', ''))[:160]})" for c in streak)
+        return must_stop(self.log)
 
     @_exclusive
-    def enrol(self, confirmed_by: str) -> dict[str, Any]:
-        """A person confirms what judges this domain, as it stands now. It is the one step the loop cannot do."""
+    def enrol(self, confirmed_by: str, *, last_check: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
+              record_id: str | None = None
+              ) -> dict[str, Any]:
+        """A person confirms what judges this domain, as it stands now. It is the one step the loop cannot do.
+        ``last_check``: given what would be frozen, under the folder's lock and before anything is written, the refusal
+        when that is no longer what the person read (``g6.mcp.improve``), or ``None``."""
         if self.problems:
             return self._invalid()
         who = confirmed_by.strip()
@@ -869,12 +924,15 @@ class ShadowLoop:
             return _blocked(SPLIT_REUSED, f"{len(reused)} held-out cases were already seen by proposers or spent by an "
                             f"earlier split, for example {reused[:3]}: a gain measured on them proves nothing",
                             "Give the gate cases the loop has not used: a split changed by a few cases is not fresh.")
+        frozen = self._frozen()
+        refused = last_check(frozen) if last_check is not None else None
+        if refused is not None:
+            return refused
         confirmed = self.mh.confirm(who, initial=self.domain.execution().initial)
         if confirmed["completion_state"] == "blocked-escalated":
             return confirmed
-        frozen = self._frozen()
         exposed = (*self.cut.tune, *self.cut.selection)
-        self.log.enrol(who, frozen, domain=self.domain.name, at=self._now().isoformat(),
+        self.log.enrol(who, frozen, record_id=record_id, domain=self.domain.name, at=self._now().isoformat(),
                        seen=sorted(c.case_id for c in exposed),
                        seen_inputs=sorted(c.ref()["input_sha256"] for c in exposed),
                        seen_groups=_groups(exposed),
@@ -1083,18 +1141,23 @@ class ShadowLoop:
                 pass                  # the cycles are already written, so the next tick is refused all the same
 
     @_exclusive
-    def resume(self, accepted_by: str) -> dict[str, Any]:
-        """A person lifts a pause, having read why. The loop cannot lift its own."""
+    def resume(self, accepted_by: str, *, last_check: Callable[[], dict[str, Any] | None] | None = None) -> dict[str, Any]:
+        """A person lifts a pause, having read why. The loop cannot lift its own. ``last_check`` as for ``enrol``."""
         who = accepted_by.strip()
         if not who or is_automated(who):
             return _blocked(APPROVAL_REQUIRED, "a person lifts a pause (no empty or auto: name)")
+        refused = last_check() if last_check is not None else None
+        if refused is not None:
+            return refused
         if self.log.paused() or self._must_stop():
             self.log.resume(who)
         return _envelope("qualified-draft", RESUMED, "the loop is not paused", next_action="loop.tick()")
 
     @_exclusive
-    def demote(self, generation: int, asked_by: str) -> dict[str, Any]:
-        """A person takes back the generation at the head, having read the digest. The loop goes on from what stood before."""
+    def demote(self, generation: int, asked_by: str, *,
+               last_check: Callable[[Mapping[str, Any]], dict[str, Any] | None] | None = None) -> dict[str, Any]:
+        """A person takes back the generation at the head, having read the digest. The loop goes on from what stood before.
+        ``last_check`` as for ``enrol``, given what the demotion would restore (``ShadowHarness.demote``)."""
         who = asked_by.strip()
         if not who or is_automated(who):
             return _blocked(APPROVAL_REQUIRED, "a person takes a generation back (no empty or auto: name)")
@@ -1104,7 +1167,7 @@ class ShadowLoop:
         lost = self._lost_generations()
         if lost:
             return _blocked(RECORDS_UNREADABLE, lost, "A person inspects the folder. Nothing runs on records that do not check out.")
-        taken = self.mh.demote(generation, who)
+        taken = self.mh.demote(generation, who, last_check=last_check or (lambda found: None))
         if taken["completion_state"] != "blocked-escalated":
             self.log.demote(who, at=self._now().isoformat(), undoes=taken["undoes"], head_version=taken["head_version"])
         return taken

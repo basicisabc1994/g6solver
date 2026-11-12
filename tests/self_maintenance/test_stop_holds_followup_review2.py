@@ -428,7 +428,8 @@ def test_every_page_and_heartbeat_write_is_the_runner_lock_holders():
             assert lock in ("NOT_HELD", "NOT_HELD if taken else UNTAKEN"), lock
     assert "lock=HOLDS" in inspect.getsource(runner.Runner._end)
     beat_source = textwrap.dedent(inspect.getsource(loop_module.ShadowLoop._beat))
-    assert "if not self.beats:" in beat_source and "loop.beats = False" in inspect.getsource(runner._person)
+    # The merge with the consent follow-up: a person's act runs in ``runner.act`` (the terminal path is gone).
+    assert "if not self.beats:" in beat_source and "loop.beats = False" in inspect.getsource(runner.act)
 
 
 # Finding 2's class: a start binds the journal file it flushed and holds ----------------------------------------------------

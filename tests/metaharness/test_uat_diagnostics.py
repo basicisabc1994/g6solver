@@ -83,10 +83,14 @@ def test_a_no_in_the_form_is_never_followed_by_another_way_to_confirm(tmp_path, 
     assert "ask the person" in text.lower(), text
 
 
-def test_a_client_without_a_form_is_told_the_person_can_confirm_in_a_terminal(tmp_path, monkeypatch):
+def test_a_client_without_a_form_is_offered_no_terminal_and_told_what_the_person_can_do(tmp_path, monkeypatch):
+    """Changed on purpose (owner's standing rule: consent through the client's dialog, no terminal fallback): this
+    pinned the ``g6 workflow confirm`` fallback."""
     result = _confirm_with(tmp_path, monkeypatch)
     assert result["consent_status"] == "unavailable", result
-    assert "g6 workflow confirm consent" in json.dumps(result)
+    assert result["warning_card"]["code"] == "G6_E_CONSENT_NO_DIALOG"
+    assert "workflow confirm" not in json.dumps(result) and "--as" not in json.dumps(result)
+    assert "client session" in result["next_action"]
 
 
 def test_unverified_envelope_always_explains_degradation_without_promoting():

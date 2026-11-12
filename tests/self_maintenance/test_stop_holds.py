@@ -285,7 +285,8 @@ def test_a_stop_is_on_disk_before_its_stop_file_is_opened(tmp_path, monkeypatch)
     monkeypatch.setattr(builtins, "open", opened)
     monkeypatch.setattr(os, "fsync", synced)
     ask_to_stop(tmp_path, "why")
-    assert order[:4] == [STOPS_FILE, "on disk", STOP_FILE, "on disk"]
+    # The merge with the consent follow-up: the stop's canonical record is on disk first, before either legacy write.
+    assert order[:5] == ["on disk", STOPS_FILE, "on disk", STOP_FILE, "on disk"]
 
 
 # A stop between any two steps of a start ------------------------------------------------------------------------------
@@ -497,7 +498,16 @@ def test_a_record_changed_mid_tick_with_its_size_and_tail_kept_cuts_the_tick_off
 #: The reading is the only reader; the rest write, or keep a writer's own handle, or only ask whether a folder is a loop.
 OPENS = {
     ("g6/self_maintenance/envelope.py", "stop_in_force"): "the one reading: STOP, the journal and the records, once each",
-    ("g6/self_maintenance/envelope.py", "ask_to_stop"): "writes a stop: the journal line, then the STOP file",
+    ("g6/self_maintenance/envelope.py", "_ask_to_stop"): "writes a stop: the journal line, then the STOP file",
+    ("g6/self_maintenance/envelope.py", "_establish_stop"): "a stop's canonical record, and, when that cannot be made, a "
+                                                            "line of G6's own in the journal",
+    ("g6/mcp/improve.py", "_log"): "the records for a person's act and a stop's receipt, read by a row's identity; no "
+                                   "stop decision is made from it",
+    ("g6/mcp/improve.py", "_stop_before"): "what a stop's receipt compares with: the start it ends and whether a STOP "
+                                           "file was there; no stop decision is made from it",
+    ("g6/metaharness/runner.py", "person_terms"): "the binding of a person's act (enrol, resume, demote), which lifts no "
+                                                  "stop",
+    ("g6/metaharness/runner.py", "on_record"): "what the folder holds of a person's act, read back by its identity",
     ("g6/self_maintenance/envelope.py", "record_stop"): "writes a stopped row through the records' writer",
     ("g6/self_maintenance/envelope.py", "flush_journal"): "flushes the journal to disk, writing no byte, before a start's row "
                                                           "binds it",
@@ -912,6 +922,8 @@ def test_a_crash_right_after_the_append_leaves_a_start_only_on_the_approved_byte
 
 #: Every stop path: no handler in these may name a list narrower than ``Exception``, unless a try around it does.
 STOP_PATHS = {"g6/self_maintenance/envelope.py": ["_absent", "_read_file", "_parsed", "_start_of", "stop_in_force",
+                                                  "_ask_to_stop", "_establish_stop", "canonical_stops",
+                                                  "_canonical_stops_on_disk", "canonical_stop_record", "what_stops",
                                                   "record_stop", "ask_to_stop", "stop_seen", "stop_reason", "stop_standing",
                                                   "stop_to_lift", "stops_asked", "end_start"],
               "g6/metaharness/loop.py": ["_reloaded", "_stop", "_halted", "_cut_off", "lost_cycle", "_refused"],
@@ -1073,6 +1085,8 @@ def _kind(value) -> str:
     import ast
 
     call = value.elts[0] if isinstance(value, ast.Tuple) else value
+    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "_start_as_recorded":
+        return _kind(call.args[-1])                 # a reply read back keeps its kind: the maker's, or the watch's
     if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id in ("_refusal", "_failed"):
         return "refusal"
     if (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "_envelope"
@@ -1103,11 +1117,12 @@ def test_every_refusal_of_the_dialog_and_the_start_is_made_by_the_one_maker():
     assert {"_cannot_start", "_dialog", "_watch", "_failed", "_refusal", "_settings"} <= reached
     builders = sorted(name for name in reached if _calls(functions[name]) & {"_blocked", "blocked_reply", "_envelope"}
                       and name != "_watch")
-    assert builders == ["_refusal"], builders           # no refusal is built anywhere else
+    # ``_restated`` says a reply the maker made again, its state and code kept, once the start's row is read back.
+    assert builders == ["_refusal", "_restated"], builders           # no refusal is built anywhere else
     listed = {name: _returns_in_order(functions[name]) for name in ("asked", "start", "_cannot_start", "_watch", "_failed")}
     assert listed == {
         "asked": ["cannot", "cannot", "made", "refusal", "refusal"],
-        "start": ["cannot", "cannot", "refusal", "refusal", "refusal", "refusal", "watched", "refusal"],
+        "start": ["refusal", "cannot", "cannot", "refusal", "refusal", "refusal", "refusal", "watched", "refusal"],
         "_cannot_start": ["refusal", "refusal", "refusal", "refusal", "refusal", "(None, settings)"],
         "_watch": ["refusal", "started", "started"],
         "_failed": ["refusal", "refusal"],

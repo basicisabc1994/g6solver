@@ -644,14 +644,12 @@ checked against that statement, so a folder that names one provider and signs in
 either file, so neither
 can reach `person_free_adoption_outside_shadow`. Enrolling pins the domain file's digest, so an edit is a changed frozen
 item: `g6_improve_start`, a restart and lifting a pause each refuse it before it can run, and what runs is the bytes that
-were checked. The pin holds that file, not what it imports. Then, at a terminal, a person enrols it and types the domain's
-name back:
-
-```
-python -P -m g6.metaharness.loop enrol <folder> --as "Your name"
-```
-
-`g6_improve_start` then starts the runner; lifting a pause is `resume`, with the same arguments, also at a terminal.
+were checked. The pin holds that file, not what it imports. Then a person enrols it with `g6_improve_enrol`, in the client's
+dialog, which names the folder and the file by digest. The enrolment runs on the interpreter the runner uses. Like a resume
+or a demotion, it runs only the bytes its dialog named, and reads all its dialog showed again holding the folder's lock,
+before it runs or records anything: if any of it moved meanwhile, nothing runs and nothing is recorded. `g6_improve_start` then starts the runner; lifting a pause is
+`g6_improve_resume`, asked the same way. There is no terminal fallback (the owner's standing rule): the command line's `enrol`,
+`resume` and `demote` record nothing and say where each is done.
 
 **Run it from a pinned install.** The envelope's digest covers the code a run imports, so with G6 installed in editable mode, a
 builder's edit, or a branch switched in that checkout, stopped every tick with `G6_E_LOOP_FROZEN_CHANGED` until a person enrolled
@@ -688,13 +686,15 @@ stands, and a person sets it from what `/usage` shows.
 
 **A daily reviewer can take a generation back.** Until this, the only lever on an adoption that looked wrong was the stop:
 
-```
-python -P -m g6.metaharness.loop demote <folder> <generation> --as "Your name"
-```
+`g6_improve_demote` with the generation, which asks the person in the client's dialog.
 
 `<generation>` is the one the digest shows as the head, so a head that moved on since is refused rather than taken back unread.
-It goes back one version, as the monitor may, and the loop runs on from there. The domain's name is typed back, as for `enrol`,
-and a changed domain file refuses it before it runs. The row is a rollback in the same chain with the person's name on it, which
+It goes back one version, as the monitor may, and the loop runs on from there. The dialog names the generation and what it changed, as for `enrol`,
+and the generation it goes back to with that generation's profile by digest. One rule decides that destination, for the
+dialog and the act alike (`g6.metaharness.shadow.restores`), so after a rollback or an earlier demotion the dialog names what
+is restored and not the head row's parent. Just before its row is written, holding the folder's lock, the act checks what it
+would restore against what the dialog named, and refuses on any difference (`G6_E_LOOP_TERMS_CHANGED`). With nothing adopted
+left to take back, nothing is asked. A changed domain file refuses it before it runs. The row is a rollback in the same chain with the person's name on it, which
 the lineage and the digest show as theirs, and it carries no figures, since nothing was measured. A rollback is now the one row
 in that chain that can name a person. An adoption still cannot. The candidate can be proposed again: nothing yet keeps a generation
 a person took back from coming back through the gate.
@@ -821,7 +821,11 @@ the file, so it never repeats bytes already lifted, and it stands with no record
 seen: the same bytes on a file system whose time is coarse enough for a rewrite to land on the same tick, and a writer that
 restores the old time on purpose. The start records the settings it agreed to, and a restart refuses others with `G6_E_LOOP_SETTINGS_CHANGED`, so changing `settings.json`, a
 real allowance included, needs a new `g6_improve_start` even with no stop in between. A runner already alive keeps what it
-read.
+read. The start records the enrolment it showed as well, by digest, and the runner runs only that one: a run opens that
+enrolment's bytes. An enrolment made later, or a changed one, is refused when the run starts and, holding the folder's lock,
+before each tick, and a start that names none (one recorded before starts named their enrolment) is refused when the run
+starts, each with `G6_E_LOOP_ENROLMENT_CHANGED`. A later or changed enrolment ends the start as a stop does, and the status
+shows that stop, so a new enrolment runs only after a person agrees to a new start that shows it.
 
 All of this is a check and not a boundary. A process with the owner's rights can reach this code or write the records, which
 are hash-chained and not signed.

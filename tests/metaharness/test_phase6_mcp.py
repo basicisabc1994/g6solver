@@ -149,8 +149,9 @@ def test_over_mcp_declined_or_missing_client_consent_never_approves(tmp_path) ->
 
     out = asyncio.run(flow())
     assert out["decided"]["warning_card"]["code"] == S.RECOMMENDED
-    assert out["self"]["warning_card"]["code"] == S.APPROVAL_REQUIRED
-    assert out["declined"]["warning_card"]["code"] == S.APPROVAL_REQUIRED
+    # changed on purpose: each way the dialog ended has its own code (both were S.APPROVAL_REQUIRED)
+    assert out["self"]["warning_card"]["code"] == S.CONSENT_NO_DIALOG
+    assert out["declined"]["warning_card"]["code"] == S.CONSENT_DECLINED
     assert out["approved"]["head_version"] == 1 and out["approved"]["completion_state"] == "qualified-draft"
     assert surface.harness("arith").store.versions()[-1]["accepted_by"] == "Ada"
     for reply in out.values():

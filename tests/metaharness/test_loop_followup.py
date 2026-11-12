@@ -28,7 +28,7 @@ from g6.metaharness.reflex import diagnose, funnel, stages
 from g6.metaharness.schema import SuiteCase
 from g6.metaharness.select import race, race_calls
 from g6.operator.store import OperatorStore
-from g6.self_maintenance.envelope import CYCLE_LOG, CycleLog, ask_to_stop, heartbeat
+from g6.self_maintenance.envelope import CYCLE_LOG, CycleLog, ask_to_stop, enrolment_digest, heartbeat
 from g6.self_maintenance.pacing import AccountReading, BudgetMeter, ProviderWindow
 from g6.self_maintenance.usage import WEEK_MINUTES, AccountReader
 
@@ -149,7 +149,8 @@ def test_a_runner_that_cannot_open_says_which_process_it_was(tmp_path):
     settings = {"domain_file": str(tmp_path / "missing_domain.py"), "read_account": False,
                 "windows": [{"provider": "claude", "allowance": 5000, "week_start": MONDAY.isoformat()}]}
     (root / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
-    CycleLog(root / CYCLE_LOG).start("Ada", settings=digest(settings), stops=0)
+    log = CycleLog(root / CYCLE_LOG)       # a start names the enrolment it showed (consent repair 2): here, none on record
+    log.start("Ada", settings=digest(settings), stops=0, enrolment=enrolment_digest(log))
     ended = subprocess.run([sys.executable, "-P", "-m", "g6.metaharness.loop", "run", str(root)], cwd=root, stdin=subprocess.DEVNULL,
                            capture_output=True, text=True, timeout=60, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
     record = heartbeat(root)
