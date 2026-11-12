@@ -1,0 +1,957 @@
+{
+ "manifest": {
+  "adapter_versions": {
+   "smt.relation.int_bool.v1": "smt.return.int_bool.v1"
+  },
+  "candidate_authors": [
+   "g6:mutation"
+  ],
+  "cases": [
+   {
+    "case_id": "f_double",
+    "code": "def f_double(x):\n    return 2 * x\n",
+    "cohort": "final",
+    "domain": [
+     "(>= x 0)",
+     "(<= x 10)"
+    ],
+    "fragment": "smt.relation.int_bool.v1",
+    "inputs": [
+     [
+      "x",
+      "Int"
+     ]
+    ],
+    "label_author": "model:anthropic:claude-fable-5-2 (the section builder; each table computed by a Python expression written apart from the formula)",
+    "oracle": "",
+    "reference": "(= result (* 2 x))",
+    "requirement": "f_double(x) returns twice x, for x from 0 to 10.",
+    "result_sort": "Int",
+    "table": [
+     [
+      {
+       "x": 0
+      },
+      0
+     ],
+     [
+      {
+       "x": 1
+      },
+      2
+     ],
+     [
+      {
+       "x": 2
+      },
+      4
+     ],
+     [
+      {
+       "x": 3
+      },
+      6
+     ],
+     [
+      {
+       "x": 4
+      },
+      8
+     ],
+     [
+      {
+       "x": 5
+      },
+      10
+     ],
+     [
+      {
+       "x": 6
+      },
+      12
+     ],
+     [
+      {
+       "x": 7
+      },
+      14
+     ],
+     [
+      {
+       "x": 8
+      },
+      16
+     ],
+     [
+      {
+       "x": 9
+      },
+      18
+     ],
+     [
+      {
+       "x": 10
+      },
+      20
+     ]
+    ],
+    "wrong_code": [
+     "def f_double(x):\n    return x + x + 1\n",
+     "def f_double(x):\n    return x * x\n"
+    ]
+   },
+   {
+    "case_id": "f_prev",
+    "code": "",
+    "cohort": "final",
+    "domain": [
+     "(>= x 0)",
+     "(<= x 10)"
+    ],
+    "fragment": "smt.relation.int_bool.v1",
+    "inputs": [
+     [
+      "x",
+      "Int"
+     ]
+    ],
+    "label_author": "model:anthropic:claude-fable-5-2 (the section builder; each table computed by a Python expression written apart from the formula)",
+    "oracle": "",
+    "reference": "(= result (ite (> x 0) (- x 1) 0))",
+    "requirement": "f_prev(x) returns x minus one, but never below zero, for x from 0 to 10.",
+    "result_sort": "Int",
+    "table": [
+     [
+      {
+       "x": 0
+      },
+      0
+     ],
+     [
+      {
+       "x": 1
+      },
+      0
+     ],
+     [
+      {
+       "x": 2
+      },
+      1
+     ],
+     [
+      {
+       "x": 3
+      },
+      2
+     ],
+     [
+      {
+       "x": 4
+      },
+      3
+     ],
+     [
+      {
+       "x": 5
+      },
+      4
+     ],
+     [
+      {
+       "x": 6
+      },
+      5
+     ],
+     [
+      {
+       "x": 7
+      },
+      6
+     ],
+     [
+      {
+       "x": 8
+      },
+      7
+     ],
+     [
+      {
+       "x": 9
+      },
+      8
+     ],
+     [
+      {
+       "x": 10
+      },
+      9
+     ]
+    ],
+    "wrong_code": []
+   },
+   {
+    "case_id": "f_between",
+    "code": "def f_between(x):\n    return x >= 2 and x <= 7\n",
+    "cohort": "final",
+    "domain": [
+     "(>= x 0)",
+     "(<= x 10)"
+    ],
+    "fragment": "smt.relation.int_bool.v1",
+    "inputs": [
+     [
+      "x",
+      "Int"
+     ]
+    ],
+    "label_author": "model:anthropic:claude-fable-5-2 (the section builder; each table computed by a Python expression written apart from the formula)",
+    "oracle": "",
+    "reference": "(= result (and (>= x 2) (<= x 7)))",
+    "requirement": "f_between(x) is true exactly when x is at least 2 and at most 7, for x from 0 to 10.",
+    "result_sort": "Bool",
+    "table": [
+     [
+      {
+       "x": 0
+      },
+      false
+     ],
+     [
+      {
+       "x": 1
+      },
+      false
+     ],
+     [
+      {
+       "x": 2
+      },
+      true
+     ],
+     [
+      {
+       "x": 3
+      },
+      true
+     ],
+     [
+      {
+       "x": 4
+      },
+      true
+     ],
+     [
+      {
+       "x": 5
+      },
+      true
+     ],
+     [
+      {
+       "x": 6
+      },
+      true
+     ],
+     [
+      {
+       "x": 7
+      },
+      true
+     ],
+     [
+      {
+       "x": 8
+      },
+      false
+     ],
+     [
+      {
+       "x": 9
+      },
+      false
+     ],
+     [
+      {
+       "x": 10
+      },
+      false
+     ]
+    ],
+    "wrong_code": [
+     "def f_between(x):\n    return x > 2 and x <= 7\n",
+     "def f_between(x):\n    return x >= 2 and x < 7\n"
+    ]
+   },
+   {
+    "case_id": "f_half",
+    "code": "def f_half(x):\n    return x // 2\n",
+    "cohort": "final",
+    "domain": [
+     "(>= x 0)",
+     "(<= x 10)"
+    ],
+    "fragment": "smt.relation.int_bool.v1",
+    "inputs": [
+     [
+      "x",
+      "Int"
+     ]
+    ],
+    "label_author": "model:anthropic:claude-fable-5-2 (the section builder; each table computed by a Python expression written apart from the formula)",
+    "oracle": "",
+    "reference": "(= result (div x 2))",
+    "requirement": "f_half(x) returns half of x, rounded down, for x from 0 to 10.",
+    "result_sort": "Int",
+    "table": [
+     [
+      {
+       "x": 0
+      },
+      0
+     ],
+     [
+      {
+       "x": 1
+      },
+      0
+     ],
+     [
+      {
+       "x": 2
+      },
+      1
+     ],
+     [
+      {
+       "x": 3
+      },
+      1
+     ],
+     [
+      {
+       "x": 4
+      },
+      2
+     ],
+     [
+      {
+       "x": 5
+      },
+      2
+     ],
+     [
+      {
+       "x": 6
+      },
+      3
+     ],
+     [
+      {
+       "x": 7
+      },
+      3
+     ],
+     [
+      {
+       "x": 8
+      },
+      4
+     ],
+     [
+      {
+       "x": 9
+      },
+      4
+     ],
+     [
+      {
+       "x": 10
+      },
+      5
+     ]
+    ],
+    "wrong_code": [
+     "def f_half(x):\n    return (x + 1) // 2\n"
+    ]
+   },
+   {
+    "case_id": "f_sum",
+    "code": "def f_sum(x, y):\n    return x + y\n",
+    "cohort": "final",
+    "domain": [
+     "(>= x 0)",
+     "(<= x 4)",
+     "(>= y 0)",
+     "(<= y 4)"
+    ],
+    "fragment": "smt.relation.int_bool.v1",
+    "inputs": [
+     [
+      "x",
+      "Int"
+     ],
+     [
+      "y",
+      "Int"
+     ]
+    ],
+    "label_author": "model:anthropic:claude-fable-5-2 (the section builder; each table computed by a Python expression written apart from the formula)",
+    "oracle": "",
+    "reference": "(= result (+ x y))",
+    "requirement": "f_sum(x, y) returns x plus y, for x and y from 0 to 4.",
+    "result_sort": "Int",
+    "table": [
+     [
+      {
+       "x": 0,
+       "y": 0
+      },
+      0
+     ],
+     [
+      {
+       "x": 0,
+       "y": 1
+      },
+      1
+     ],
+     [
+      {
+       "x": 0,
+       "y": 2
+      },
+      2
+     ],
+     [
+      {
+       "x": 0,
+       "y": 3
+      },
+      3
+     ],
+     [
+      {
+       "x": 0,
+       "y": 4
+      },
+      4
+     ],
+     [
+      {
+       "x": 1,
+       "y": 0
+      },
+      1
+     ],
+     [
+      {
+       "x": 1,
+       "y": 1
+      },
+      2
+     ],
+     [
+      {
+       "x": 1,
+       "y": 2
+      },
+      3
+     ],
+     [
+      {
+       "x": 1,
+       "y": 3
+      },
+      4
+     ],
+     [
+      {
+       "x": 1,
+       "y": 4
+      },
+      5
+     ],
+     [
+      {
+       "x": 2,
+       "y": 0
+      },
+      2
+     ],
+     [
+      {
+       "x": 2,
+       "y": 1
+      },
+      3
+     ],
+     [
+      {
+       "x": 2,
+       "y": 2
+      },
+      4
+     ],
+     [
+      {
+       "x": 2,
+       "y": 3
+      },
+      5
+     ],
+     [
+      {
+       "x": 2,
+       "y": 4
+      },
+      6
+     ],
+     [
+      {
+       "x": 3,
+       "y": 0
+      },
+      3
+     ],
+     [
+      {
+       "x": 3,
+       "y": 1
+      },
+      4
+     ],
+     [
+      {
+       "x": 3,
+       "y": 2
+      },
+      5
+     ],
+     [
+      {
+       "x": 3,
+       "y": 3
+      },
+      6
+     ],
+     [
+      {
+       "x": 3,
+       "y": 4
+      },
+      7
+     ],
+     [
+      {
+       "x": 4,
+       "y": 0
+      },
+      4
+     ],
+     [
+      {
+       "x": 4,
+       "y": 1
+      },
+      5
+     ],
+     [
+      {
+       "x": 4,
+       "y": 2
+      },
+      6
+     ],
+     [
+      {
+       "x": 4,
+       "y": 3
+      },
+      7
+     ],
+     [
+      {
+       "x": 4,
+       "y": 4
+      },
+      8
+     ]
+    ],
+    "wrong_code": [
+     "def f_sum(x, y):\n    return x - y\n",
+     "def f_sum(x, y):\n    return x + x\n"
+    ]
+   },
+   {
+    "case_id": "f_larger",
+    "code": "",
+    "cohort": "final",
+    "domain": [
+     "(>= x 0)",
+     "(<= x 4)",
+     "(>= y 0)",
+     "(<= y 4)"
+    ],
+    "fragment": "smt.relation.int_bool.v1",
+    "inputs": [
+     [
+      "x",
+      "Int"
+     ],
+     [
+      "y",
+      "Int"
+     ]
+    ],
+    "label_author": "model:anthropic:claude-fable-5-2 (the section builder; each table computed by a Python expression written apart from the formula)",
+    "oracle": "",
+    "reference": "(and (>= result x) (>= result y) (or (= result x) (= result y)))",
+    "requirement": "f_larger(x, y) returns the larger of x and y, for x and y from 0 to 4.",
+    "result_sort": "Int",
+    "table": [
+     [
+      {
+       "x": 0,
+       "y": 0
+      },
+      0
+     ],
+     [
+      {
+       "x": 0,
+       "y": 1
+      },
+      1
+     ],
+     [
+      {
+       "x": 0,
+       "y": 2
+      },
+      2
+     ],
+     [
+      {
+       "x": 0,
+       "y": 3
+      },
+      3
+     ],
+     [
+      {
+       "x": 0,
+       "y": 4
+      },
+      4
+     ],
+     [
+      {
+       "x": 1,
+       "y": 0
+      },
+      1
+     ],
+     [
+      {
+       "x": 1,
+       "y": 1
+      },
+      1
+     ],
+     [
+      {
+       "x": 1,
+       "y": 2
+      },
+      2
+     ],
+     [
+      {
+       "x": 1,
+       "y": 3
+      },
+      3
+     ],
+     [
+      {
+       "x": 1,
+       "y": 4
+      },
+      4
+     ],
+     [
+      {
+       "x": 2,
+       "y": 0
+      },
+      2
+     ],
+     [
+      {
+       "x": 2,
+       "y": 1
+      },
+      2
+     ],
+     [
+      {
+       "x": 2,
+       "y": 2
+      },
+      2
+     ],
+     [
+      {
+       "x": 2,
+       "y": 3
+      },
+      3
+     ],
+     [
+      {
+       "x": 2,
+       "y": 4
+      },
+      4
+     ],
+     [
+      {
+       "x": 3,
+       "y": 0
+      },
+      3
+     ],
+     [
+      {
+       "x": 3,
+       "y": 1
+      },
+      3
+     ],
+     [
+      {
+       "x": 3,
+       "y": 2
+      },
+      3
+     ],
+     [
+      {
+       "x": 3,
+       "y": 3
+      },
+      3
+     ],
+     [
+      {
+       "x": 3,
+       "y": 4
+      },
+      4
+     ],
+     [
+      {
+       "x": 4,
+       "y": 0
+      },
+      4
+     ],
+     [
+      {
+       "x": 4,
+       "y": 1
+      },
+      4
+     ],
+     [
+      {
+       "x": 4,
+       "y": 2
+      },
+      4
+     ],
+     [
+      {
+       "x": 4,
+       "y": 3
+      },
+      4
+     ],
+     [
+      {
+       "x": 4,
+       "y": 4
+      },
+      4
+     ]
+    ],
+    "wrong_code": []
+   },
+   {
+    "case_id": "f_band",
+    "code": "",
+    "cohort": "final",
+    "domain": [
+     "(>= x 0)",
+     "(<= x 10)"
+    ],
+    "fragment": "smt.relation.int_bool.v1",
+    "inputs": [
+     [
+      "x",
+      "Int"
+     ]
+    ],
+    "label_author": "model:anthropic:claude-fable-5-2 (the section builder; each table computed by a Python expression written apart from the formula)",
+    "oracle": "",
+    "reference": "(and (=> (< x 4) (= result 0)) (=> (and (>= x 4) (<= x 7)) (= result 1)) (=> (> x 7) (= result 2)))",
+    "requirement": "f_band(x) is 0 below 4, 1 from 4 to 7 and 2 above 7, for x from 0 to 10.",
+    "result_sort": "Int",
+    "table": [
+     [
+      {
+       "x": 0
+      },
+      0
+     ],
+     [
+      {
+       "x": 1
+      },
+      0
+     ],
+     [
+      {
+       "x": 2
+      },
+      0
+     ],
+     [
+      {
+       "x": 3
+      },
+      0
+     ],
+     [
+      {
+       "x": 4
+      },
+      1
+     ],
+     [
+      {
+       "x": 5
+      },
+      1
+     ],
+     [
+      {
+       "x": 6
+      },
+      1
+     ],
+     [
+      {
+       "x": 7
+      },
+      1
+     ],
+     [
+      {
+       "x": 8
+      },
+      2
+     ],
+     [
+      {
+       "x": 9
+      },
+      2
+     ],
+     [
+      {
+       "x": 10
+      },
+      2
+     ]
+    ],
+    "wrong_code": []
+   },
+   {
+    "case_id": "f_differ",
+    "code": "def f_differ(p, q):\n    return p != q\n",
+    "cohort": "final",
+    "domain": [],
+    "fragment": "smt.relation.int_bool.v1",
+    "inputs": [
+     [
+      "p",
+      "Bool"
+     ],
+     [
+      "q",
+      "Bool"
+     ]
+    ],
+    "label_author": "model:anthropic:claude-fable-5-2 (the section builder; each table computed by a Python expression written apart from the formula)",
+    "oracle": "",
+    "reference": "(= result (distinct p q))",
+    "requirement": "f_differ(p, q) is true exactly when p and q are different.",
+    "result_sort": "Bool",
+    "table": [
+     [
+      {
+       "p": false,
+       "q": false
+      },
+      false
+     ],
+     [
+      {
+       "p": false,
+       "q": true
+      },
+      true
+     ],
+     [
+      {
+       "p": true,
+       "q": false
+      },
+      true
+     ],
+     [
+      {
+       "p": true,
+       "q": true
+      },
+      false
+     ]
+    ],
+    "wrong_code": [
+     "def f_differ(p, q):\n    return p == q\n"
+    ]
+   }
+  ],
+  "environment": {
+   "lean": "not needed for this fragment",
+   "tla": "not needed for this fragment",
+   "z3": "5.3.2"
+  },
+  "fragments": [
+   "smt.relation.int_bool.v1"
+  ],
+  "renderer_versions": {
+   "smt.relation.int_bool.v1": "smt.words.v1"
+  },
+  "row": "correspondence",
+  "stop_rule": "Pass when at least 0.80 of right code inside the restricted return fragment passes, no wrong code and no model result whose code ran otherwise passes, and at least 0.50 of cases with reference code are supported.",
+  "thresholds": {
+   "max_wrong_acceptance": 0.0,
+   "min_right_acceptance": 0.8,
+   "min_supported_coverage": 0.5
+  }
+ },
+ "sha256": "74eb47b27f2860802266542007612f366c625c37dbc00f0cff20e1a09de473ba"
+}

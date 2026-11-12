@@ -1,0 +1,395 @@
+{
+ "manifest": {
+  "adapter_versions": {
+   "smt.relation.int_bool.v1": "smt.return.int_bool.v1"
+  },
+  "candidate_authors": [
+   "g6:mutation"
+  ],
+  "cases": [
+   {
+    "case_id": "d_inc",
+    "code": "def d_inc(x):\n    return x + 1\n",
+    "cohort": "development",
+    "domain": [
+     "(>= x 0)",
+     "(<= x 10)"
+    ],
+    "fragment": "smt.relation.int_bool.v1",
+    "inputs": [
+     [
+      "x",
+      "Int"
+     ]
+    ],
+    "label_author": "model:anthropic:claude-fable-5-2 (the section builder; each table computed by a Python expression written apart from the formula)",
+    "oracle": "",
+    "reference": "(= result (+ x 1))",
+    "requirement": "d_inc(x) returns x plus one, for x from 0 to 10.",
+    "result_sort": "Int",
+    "table": [
+     [
+      {
+       "x": 0
+      },
+      1
+     ],
+     [
+      {
+       "x": 1
+      },
+      2
+     ],
+     [
+      {
+       "x": 2
+      },
+      3
+     ],
+     [
+      {
+       "x": 3
+      },
+      4
+     ],
+     [
+      {
+       "x": 4
+      },
+      5
+     ],
+     [
+      {
+       "x": 5
+      },
+      6
+     ],
+     [
+      {
+       "x": 6
+      },
+      7
+     ],
+     [
+      {
+       "x": 7
+      },
+      8
+     ],
+     [
+      {
+       "x": 8
+      },
+      9
+     ],
+     [
+      {
+       "x": 9
+      },
+      10
+     ],
+     [
+      {
+       "x": 10
+      },
+      11
+     ]
+    ],
+    "wrong_code": [
+     "def d_inc(x):\n    return x + 2\n"
+    ]
+   },
+   {
+    "case_id": "d_floor3",
+    "code": "",
+    "cohort": "development",
+    "domain": [
+     "(>= x 0)",
+     "(<= x 10)"
+    ],
+    "fragment": "smt.relation.int_bool.v1",
+    "inputs": [
+     [
+      "x",
+      "Int"
+     ]
+    ],
+    "label_author": "model:anthropic:claude-fable-5-2 (the section builder; each table computed by a Python expression written apart from the formula)",
+    "oracle": "",
+    "reference": "(= result (ite (< x 3) 3 x))",
+    "requirement": "d_floor3(x) returns x, but never less than 3, for x from 0 to 10.",
+    "result_sort": "Int",
+    "table": [
+     [
+      {
+       "x": 0
+      },
+      3
+     ],
+     [
+      {
+       "x": 1
+      },
+      3
+     ],
+     [
+      {
+       "x": 2
+      },
+      3
+     ],
+     [
+      {
+       "x": 3
+      },
+      3
+     ],
+     [
+      {
+       "x": 4
+      },
+      4
+     ],
+     [
+      {
+       "x": 5
+      },
+      5
+     ],
+     [
+      {
+       "x": 6
+      },
+      6
+     ],
+     [
+      {
+       "x": 7
+      },
+      7
+     ],
+     [
+      {
+       "x": 8
+      },
+      8
+     ],
+     [
+      {
+       "x": 9
+      },
+      9
+     ],
+     [
+      {
+       "x": 10
+      },
+      10
+     ]
+    ],
+    "wrong_code": []
+   },
+   {
+    "case_id": "d_even",
+    "code": "def d_even(x):\n    return x % 2 == 0\n",
+    "cohort": "development",
+    "domain": [
+     "(>= x 0)",
+     "(<= x 10)"
+    ],
+    "fragment": "smt.relation.int_bool.v1",
+    "inputs": [
+     [
+      "x",
+      "Int"
+     ]
+    ],
+    "label_author": "model:anthropic:claude-fable-5-2 (the section builder; each table computed by a Python expression written apart from the formula)",
+    "oracle": "",
+    "reference": "(= result (= (mod x 2) 0))",
+    "requirement": "d_even(x) is true exactly when x is divisible by 2, for x from 0 to 10.",
+    "result_sort": "Bool",
+    "table": [
+     [
+      {
+       "x": 0
+      },
+      true
+     ],
+     [
+      {
+       "x": 1
+      },
+      false
+     ],
+     [
+      {
+       "x": 2
+      },
+      true
+     ],
+     [
+      {
+       "x": 3
+      },
+      false
+     ],
+     [
+      {
+       "x": 4
+      },
+      true
+     ],
+     [
+      {
+       "x": 5
+      },
+      false
+     ],
+     [
+      {
+       "x": 6
+      },
+      true
+     ],
+     [
+      {
+       "x": 7
+      },
+      false
+     ],
+     [
+      {
+       "x": 8
+      },
+      true
+     ],
+     [
+      {
+       "x": 9
+      },
+      false
+     ],
+     [
+      {
+       "x": 10
+      },
+      true
+     ]
+    ],
+    "wrong_code": [
+     "def d_even(x):\n    return x % 2 == 1\n"
+    ]
+   },
+   {
+    "case_id": "d_fee",
+    "code": "",
+    "cohort": "development",
+    "domain": [
+     "(>= x 0)",
+     "(<= x 10)"
+    ],
+    "fragment": "smt.relation.int_bool.v1",
+    "inputs": [
+     [
+      "x",
+      "Int"
+     ]
+    ],
+    "label_author": "model:anthropic:claude-fable-5-2 (the section builder; each table computed by a Python expression written apart from the formula)",
+    "oracle": "",
+    "reference": "(and (=> (<= x 5) (= result 0)) (=> (> x 5) (= result (- x 5))))",
+    "requirement": "d_fee(x) is 0 for x up to 5 and x minus 5 above that, for x from 0 to 10.",
+    "result_sort": "Int",
+    "table": [
+     [
+      {
+       "x": 0
+      },
+      0
+     ],
+     [
+      {
+       "x": 1
+      },
+      0
+     ],
+     [
+      {
+       "x": 2
+      },
+      0
+     ],
+     [
+      {
+       "x": 3
+      },
+      0
+     ],
+     [
+      {
+       "x": 4
+      },
+      0
+     ],
+     [
+      {
+       "x": 5
+      },
+      0
+     ],
+     [
+      {
+       "x": 6
+      },
+      1
+     ],
+     [
+      {
+       "x": 7
+      },
+      2
+     ],
+     [
+      {
+       "x": 8
+      },
+      3
+     ],
+     [
+      {
+       "x": 9
+      },
+      4
+     ],
+     [
+      {
+       "x": 10
+      },
+      5
+     ]
+    ],
+    "wrong_code": []
+   }
+  ],
+  "environment": {
+   "lean": "not needed for this fragment",
+   "tla": "not needed for this fragment",
+   "z3": "5.3.2"
+  },
+  "fragments": [
+   "smt.relation.int_bool.v1"
+  ],
+  "renderer_versions": {
+   "smt.relation.int_bool.v1": "smt.words.v1"
+  },
+  "row": "proposal",
+  "stop_rule": "Pass when at least 0.90 of right statements are accepted by checks 1 and 2 and at most 0.05 of wrong statements that differ on the confirmed example are accepted. Wrong statements that agree on the example are reported in their own stratum and scored in the rendering row. A failed bar means repair and a fresh final cohort.",
+  "thresholds": {
+   "max_wrong_acceptance": 0.05,
+   "min_right_acceptance": 0.9,
+   "scored_stratum_only": 1.0
+  }
+ },
+ "sha256": "0fedf22bc008e0d75c14f41e8c20678baffcf0ef86677611b6d1e84944bb5045"
+}
