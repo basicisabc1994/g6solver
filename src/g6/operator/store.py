@@ -28,7 +28,6 @@ times in one zone compare by their wall clocks, which repeat in the hour a clock
 from __future__ import annotations
 
 import json
-import math
 import os
 import sqlite3
 import threading
@@ -413,12 +412,16 @@ class OwnerScope:
         if pending is not False:
             self.store.poisoned = "a failed transaction was rolled back and the connection still holds one"
 
-    def keep_grid(self, provider: str, reset: datetime, read_at: datetime | None = None) -> tuple[datetime, datetime | None]:
+    def keep_grid(self, provider: str, reset: datetime, read_at: datetime | None = None, *,
+                  past: bool = False) -> tuple[datetime, datetime | None]:
         """Where the provider's weeks fall, as a reading taken at ``read_at`` says: a moment one of them ends. A grid moves
         only forward: it is replaced only by a reading newer than the one it came from (or when it came from one with no
         time), decided inside the transaction that writes it, so an older reading leaves a newer grid as it is. It moves the
         weeks a reading looks at, and no reservation. It gives the grid that stands after it, and its reading's time. A kept
-        row that does not read says nothing of where the weeks fall, so the reading's word replaces it."""
+        row that does not read says nothing of where the weeks fall, so the reading's word replaces it. ``past``: the
+        moment is the end of a week already over, which is the provider's word on the week before and not on this one: it
+        says where the weeks fall only while the store keeps no grid, and never moves one it keeps. Anything but ``False``
+        itself is taken as past."""
         reset, read_at = utc(reset), utc(read_at)
         provider = _name(provider, "a provider")          # converted once: the grid it is checked against is the one written
         with self.immediate():
@@ -426,6 +429,8 @@ class OwnerScope:
                 kept, kept_at = self.kept_grid(provider)
             except ValueError:
                 kept, kept_at = None, None
+            if kept is not None and past is not False:
+                return kept, kept_at
             if kept is not None and kept_at is not None and (read_at is None or read_at <= kept_at):
                 return kept, kept_at
             self.conn.execute("INSERT OR REPLACE INTO week_grids VALUES (?, ?, ?, ?)", _plain(
@@ -447,7 +452,8 @@ class OwnerScope:
         sent may still come back and be charged, so it counts in every week until it is settled, whatever its start: a
         clock set back over a week's end must not read the week before as empty of it. So does a charge the book code made
         with no time of its own. Every amount is read as one (``stored_amount``): one that does not read is a
-        ``ValueError``, never zero. Amounts are summed exactly (``math.fsum``)."""
+        ``ValueError``, never zero, and so is a settlement's stamp that is no moment a clock can show. Amounts are summed
+        by the one sum (``gates.total``)."""
         start, end = utc(start), utc(end)
         provider, account = _name(provider, "a provider"), _name(account, "an account")
         rows = self.conn.execute(
@@ -462,9 +468,12 @@ class OwnerScope:
             held = found.setdefault(row["ref"], {"settled": row["settled"], "reserve": [], "charge": []})
             if row["kind"] in ("reserve", "charge"):
                 held[row["kind"]].append(stored_amount(row["amount"]))
-        return [Held(math.fsum(held["reserve"]), math.fsum(held["charge"]) if held["charge"] else None,
-                     None if held["settled"] is None else _moment(held["settled"]))
-                for held in found.values() if held["reserve"]]
+        try:
+            return [Held(gates.total(held["reserve"]), gates.total(held["charge"]) if held["charge"] else None,
+                         None if held["settled"] is None else _moment(held["settled"]))
+                    for held in found.values() if held["reserve"]]
+        except OverflowError:
+            raise ValueError("a settlement's time in the store is past what a clock can show") from None
 
     def reserve_span(self, provider: str, *, account: str, amount: float, caps: dict[str, float],
                      decide: Callable[[], tuple[str, datetime, datetime, datetime]], tick: str = "") -> tuple[str, str]:
@@ -482,7 +491,8 @@ class OwnerScope:
         clock has then been set back, and the week the reservation names may be one the store has left. One microsecond
         before is not before: the store itself stamps a settlement that far after a reading of the same instant. The
         store's clock is read only when the start is behind; when it is not behind too, the store and its caller are on
-        two clocks, and the caller's time is taken as it always was."""
+        two clocks, and the caller's time is taken as it always was. Nobody is asked for a reading here: the recorded
+        times are read as ``decide`` left them, so the reading a decision used is the one the store was told of."""
         value = gates.amount_of(amount)
         if value is None:
             raise BudgetRefused(f"a reservation must be a finite, positive amount, not a {gates.kind_of(amount)}")
@@ -499,7 +509,7 @@ class OwnerScope:
                 span = _us(week), _us(start), _us(end)
                 if not span[0] <= span[1] < span[2]:
                     raise ValueError("a reservation starts in the week it is made under and ends after it starts")
-                stamps, readings = self._kept_times(self.owner, provider, span[1])
+                stamps, readings = self._kept_times(self.owner, provider, span[1], ask=False)   # as ``decide`` left them
                 recorded = max((*stamps, *readings), default=None)
                 if recorded is not None and span[1] + 1 < recorded and _us(self.store.clock()) + 1 < recorded:
                     why = (f"the clock reads earlier than a time already recorded for {provider} (a settlement or a reading "
@@ -538,7 +548,7 @@ class OwnerScope:
                 _plain(self.owner, provider, account, 0 if made_by_a_tick is False else 1)).fetchall()
             for row in rows:
                 stored_amount(row["amount"])
-            return math.fsum([self._settle(row["venture_id"], row["ref"], None, None) for row in rows])
+            return gates.total([self._settle(row["venture_id"], row["ref"], None, None) for row in rows])
 
     def adopt_books(self, providers: Sequence[str]) -> dict[str, str]:
         """Read into spans, once, every reservation of ``providers`` that the book code before spans kept: under a week's
@@ -677,13 +687,14 @@ class OwnerScope:
 
     def _month(self, vid: str, month: str, signs: dict[str, int]) -> dict[str, float]:
         """A month's rows summed per account by ``signs``, each amount read as one (``stored_amount``): a row that does not
-        read is a ``ValueError``, never zero. The sum is exact (``math.fsum``): a running sum of floats stops moving once it
-        is large, and every small amount after that would be admitted against a cap already met."""
+        read is a ``ValueError``, never zero. The sum is the one sum of amounts (``gates.total``): exact, as a running sum
+        of floats stops moving once it is large and every small amount after that would be admitted against a cap already
+        met; and an infinity where it overflows, which is over every cap."""
         terms: dict[str, list[float]] = {}
         for row in self.conn.execute("SELECT account, kind, amount FROM ledger WHERE venture_id=? AND month=? ORDER BY seq",
                                      _plain(vid, month)):
             terms.setdefault(row["account"], []).append(signs[row["kind"]] * stored_amount(row["amount"]))
-        return {account: math.fsum(amounts) for account, amounts in terms.items()}
+        return {account: gates.total(amounts) for account, amounts in terms.items()}
 
     def _refusal(self, vid: str, month: str, account: str, value: float) -> str:
         """Inside the caller's transaction: why the operator's stop check refuses ``value`` this month, or ``""``. A month
@@ -782,21 +793,31 @@ class OwnerScope:
         reservation's start or anything the store has already recorded for the provider (``_kept_times``): no earlier than
         the newest stamp already written, and a microsecond after the newest reading, as a settlement written after a
         reading was given cannot be in that reading's figure. One rule, so no charge written after a reading reached the
-        meter is dated inside that reading, whichever way it is settled."""
+        meter is dated inside that reading, whichever way it is settled. A stamp that would be no moment a clock can show
+        is a ``ValueError`` and is not written: the table only grows, and it could never be read back."""
         stamps, readings = self._kept_times(owner, provider, at)
-        self.conn.execute("INSERT INTO week_settled VALUES (?, ?)",
-                          _plain(ref, max(at, start, *stamps, *(read + 1 for read in readings))))
+        stamp = max(at, start, *stamps, *(read + 1 for read in readings))
+        try:
+            _moment(stamp)
+        except OverflowError:
+            raise ValueError("a settlement cannot be stamped: its time would be past what a clock can show") from None
+        self.conn.execute("INSERT INTO week_settled VALUES (?, ?)", _plain(ref, stamp))
 
     def keep_reading(self, provider: str, read_at: datetime | None) -> None:
-        """Record that a reading of the provider's account taken at ``read_at`` has been given to the meter: the newest such
-        time, which only moves forward. Every reading is recorded, whether or not it says when the provider's week ends, and
-        before any stamp is written after it (``_kept_times``), so no charge settled after a reading was taken is dated
-        inside it. ``None`` is no time, and records nothing."""
+        """Record that a reading of the provider's account was taken at ``read_at``: the newest such time, which only moves
+        forward. Every reading is recorded, whether or not it says when the provider's week ends, as it is taken or, at
+        the latest, as it is given to a meter (``BudgetMeter.tell``), and so before any stamp is written after it
+        (``_kept_times``): no charge settled after a reading was taken is dated inside it. ``None`` is no time, and records
+        nothing. A time with no moment after it for a stamp to carry is a ``ValueError``, and is not recorded."""
         read_at = utc(read_at)
         provider = _name(provider, "a provider")
         if read_at is None:
             return
         at = _us(read_at)
+        try:
+            _moment(at + 1)
+        except OverflowError:
+            raise ValueError("a reading's time leaves no moment after it for a settlement's stamp") from None
         kept = self._read_time(self.owner, provider)
         if kept is not None and kept >= at:
             return
@@ -811,15 +832,16 @@ class OwnerScope:
                                 _plain(owner, provider)).fetchone()
         return row["read_us"] if row is not None and type(row["read_us"]) is int else None
 
-    def _kept_times(self, owner: str, provider: str, at: int) -> tuple[list[int], list[int]]:
+    def _kept_times(self, owner: str, provider: str, at: int, *, ask: bool = True) -> tuple[list[int], list[int]]:
         """Inside the caller's transaction: the times the store has already recorded for the provider, which are the
         floors of a settlement's stamp (``_stamp``) and of a reservation's start (``reserve_span``) alike, so its times
         never go backwards whatever its clock does: the newest settlement stamp, and the times of the readings it was
-        given (the newest recorded, with or without a reset, and the one the kept grid came from). Whoever reads the
-        account is asked first (``ask_reader``, at the moment ``at``), so a reading the meter can be given now is recorded
-        before these are read. A kept time that does not read sets no floor: such a grid is refused and replaced by the
-        next reading (``keep_grid``)."""
-        if self.ask_reader is not None and owner == self.owner:
+        given (the newest recorded, with or without a reset, and the one the kept grid came from). For a stamp, whoever
+        reads the account is asked first (``ask_reader``, at the moment ``at``), so a reading a meter would be given now is
+        recorded before these are read. For a reservation nobody is asked (``ask`` is false): its decision has just been
+        given the reading it used, and a second one would be recorded and not decided on. A kept time that does not read
+        sets no floor: such a grid is refused and replaced by the next reading (``keep_grid``)."""
+        if ask is not False and self.ask_reader is not None and owner == self.owner:
             self.ask_reader(provider, _moment(at))
         stamps, readings = [], []
         read = self._read_time(owner, provider)

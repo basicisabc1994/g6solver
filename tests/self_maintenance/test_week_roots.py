@@ -19,6 +19,15 @@ And to four more that review wksfu3 found the store's own times and the settings
 5. The week. Only a reset the provider gave moves the kept week, which the store alone keeps (one_fact_two_rules).
 6. Windows. A list of windows becomes a mapping in one place, which refuses a provider named twice (boundary_case).
 7. A reader starts unread for every provider it asks (failure_read_as_success).
+
+And to what review wksfu4, the last, found (sections 8 to 11; the lists of sections 1 to 4 follow the code as it now is):
+
+8. A reset is believed by one rule in both directions, and a week's end already past never moves a kept week.
+9. A reading flows one way: taken, told to the store, given once to a decision; a charge is on top of it unless settled
+   strictly before it.
+10. Whether a figure still stands is one rule for the meter, its schedule and its reader.
+11. A sum that overflows and a time with nothing after it are refusals, and never errors that a store which only grows
+    could not clear.
 """
 from __future__ import annotations
 
@@ -173,6 +182,9 @@ def _calls(store, meter, ids) -> dict:
                                 {"provider": "codex", "tick": "t3"}),
         "BudgetMeter.recover": (lambda provider: meter.recover(provider), {"provider": "codex"}),
         "BudgetMeter.settle_open": (lambda provider: meter.settle_open(provider), {"provider": "codex"}),
+        "BudgetMeter.tell": (lambda provider: meter.tell(provider, NOW + hour), {"provider": "codex"}),
+        "BudgetMeter.stands": (lambda provider: meter.stands(provider, AccountReading(used=1, estimated=False, read_at=NOW), NOW),
+                               {"provider": "codex"}),
     }
 
 
@@ -223,6 +235,8 @@ def _nothing(result) -> bool:
     admission refused with its reason."""
     if isinstance(result, Admission):
         return not result.admitted and bool(result.reason)
+    if isinstance(result, AccountReading):
+        return bool(result.unread)                         # a reading that says nothing of the account
     return isinstance(result, _REFUSALS) or result in ("", {}, 0.0)
 
 
@@ -782,7 +796,7 @@ _OF_PLAIN_NUMBERS = {
     ("g6.self_maintenance.pacing", "__post_init__", "0 <= share < 1"),
     ("g6.self_maintenance.usage", "limits_reading", "w['usedPercent'] >= FULL"),
     ("g6.self_maintenance.usage", "limit_ends", "seconds > 0"),
-    ("g6.self_maintenance.usage", "_reset", "0 < (at - now).total_seconds() <= longest"),
+    ("g6.self_maintenance.usage", "_reset", "abs((at - now).total_seconds()) <= longest"),
 }
 _OF_INSTANTS_AND_COUNTS = {
     ("g6.operator.store", "in_transaction", "getattr(self._held, 'depth', 0) > 0"),
@@ -793,10 +807,11 @@ _OF_INSTANTS_AND_COUNTS = {
     ("g6.operator.store", "keep_reading", "kept >= at"),
     ("g6.operator.store", "keep_reading", "kept < at"),
     ("g6.self_maintenance.pacing", "ceiling", "day >= 7"),
-    ("g6.self_maintenance.pacing", "standing", "reading.resets_at > now"),
+    ("g6.self_maintenance.pacing", "standing", "ends > now"),
     ("g6.self_maintenance.pacing", "standing", "reading.limited_until > now"),
-    ("g6.self_maintenance.pacing", "_look", "now < wait"), ("g6.self_maintenance.pacing", "_used", "h.settled > read_at"),
-    ("g6.self_maintenance.usage", "limits_reading", "(week['resetsAt'] or now + WEEK) <= now"),
+    ("g6.self_maintenance.pacing", "_look", "now < wait"), ("g6.self_maintenance.pacing", "_used", "h.settled >= read_at"),
+    ("g6.self_maintenance.usage", "limits_reading", "at > now"),
+    ("g6.self_maintenance.usage", "limits_reading", "reset <= now"),
     ("g6.self_maintenance.usage", "refresh", "now - self._asked < REFRESH"),
     ("g6.self_maintenance.usage", "_no_reading", "kept.limited_until > now"),
 }
@@ -985,18 +1000,40 @@ def test_a_charge_adopted_with_nothing_kept_is_dated_from_the_ledger(monkeypatch
         store.close()
 
 
-def test_every_sum_of_amounts_is_exact():
+def _called_name(node) -> str:
+    return node.func.id if isinstance(node.func, ast.Name) else node.func.attr if isinstance(node.func, ast.Attribute) else ""
+
+
+def test_every_sum_of_amounts_is_the_one_sum():
     """Review wksfu3's suspected item: the month's sum was a running sum of floats, which stops moving once it is large, so
-    at a met cap of 2**60 every further 1.0 was admitted and the sum never showed it. Listed from the code: no ``sum()`` is
-    left in the four modules; amounts are summed by ``math.fsum``, whose result is the nearest float to the true sum. What
-    is then admitted past a met cap is bounded by the slack, as ``gates.over`` says, however small the amounts."""
-    sums = {(name, _inside(tree, node)) for name, tree in _TREES.items() for node in ast.walk(tree)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "sum"}
-    assert not sums, sums
-    exact = {(name, _inside(tree, node)) for name, tree in _TREES.items() for node in ast.walk(tree)
-             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "fsum"}
-    assert exact == {("g6.operator.store", "week_held"), ("g6.operator.store", "settle_open"), ("g6.operator.store", "_month"),
-                     ("g6.self_maintenance.pacing", "_used")}, exact
+    at a met cap of 2**60 every further 1.0 was admitted and the sum never showed it. Review wksfu4's finding 4: summed by
+    ``math.fsum`` where each sum is made, a sum past the largest float was an ``OverflowError`` out of every later look,
+    where it had been an infinity and a refusal. ``gates.total`` is the one sum: exact, and an infinity on overflow.
+
+    Listed from the code, in the four modules, every way amounts could be added up: a call of ``sum``, ``fsum``,
+    ``reduce``, ``accumulate`` or ``prod`` by any spelling; an augmented assignment; an assignment that adds to what it
+    assigns. The only ``fsum`` is inside ``total``; ``total`` is called where amounts are summed and nowhere is one summed
+    another way; the two augmented assignments left join text."""
+    adders, running = set(), set()
+    for name, tree in _TREES.items():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and _called_name(node) in ("sum", "fsum", "reduce", "accumulate", "prod", "total"):
+                adders.add((name, _inside(tree, node), _called_name(node)))
+            if isinstance(node, ast.AugAssign):
+                running.add((name, _inside(tree, node), ast.unparse(node.target)))
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.BinOp) and isinstance(node.value.op, ast.Add | ast.Sub):
+                target = ast.unparse(node.targets[0])
+                if any(ast.unparse(part) == target for part in ast.walk(node.value)):
+                    running.add((name, _inside(tree, node), target))
+    assert adders == {("g6.operator.gates", "total", "fsum"), ("g6.operator.store", "week_held", "total"),
+                      ("g6.operator.store", "settle_open", "total"), ("g6.operator.store", "_month", "total"),
+                      ("g6.self_maintenance.pacing", "_used", "total")}, adders
+    assert running == {("g6.operator.store", "evidence", "sql"), ("g6.self_maintenance.usage", "refresh", "self.said[provider]")}, \
+        running
+    assert gates.total([0.1, 0.2, 0.3]) == 0.6 and gates.total([]) == 0.0 and gates.total(iter([2.0 ** 60, 1.0] + [1.0] * 299)) \
+        == 2.0 ** 60 + 256
+    assert gates.total([1e308, 1e308]) == math.inf and gates.total([1e308, 1e308, -1e308]) == math.inf
+    assert math.isnan(gates.total([math.nan, 1.0])) and gates.over(gates.total([1e308, 1e308]), 1.7e308)
     store = OperatorStore(":memory:")
     try:
         scope = store.for_owner("ada")
@@ -1012,16 +1049,28 @@ def test_every_sum_of_amounts_is_exact():
 
 # 4. Readings: the store is told of every reading before it stamps, and admits nothing behind what it has recorded ------------
 
-def test_a_reading_reaches_the_store_in_one_place_and_every_stamp_and_admission_asks_first():
-    """Listed from the code. ``BudgetMeter._account`` is the one reader of ``read_account`` (an inventory of
-    ``test_week_boundaries``) and the one caller of ``keep_reading``, which alone writes ``week_readings``. The meter gives
-    the store that same step to ask (``ask_reader``), and ``_kept_times`` asks it before it reads what is recorded; the two
-    places the store's own times are written from a clock, a settlement's stamp and a reservation's start, both read
-    ``_kept_times``. Review wksfu3's finding 1 was the floor reading the kept grid alone, which holds a reading's time only
-    for a reading that names a reset and that a look has kept."""
+def test_a_reading_reaches_the_store_in_one_place_and_a_decision_is_given_one_reading():
+    """Listed from the code, the one way a reading flows. ``BudgetMeter._account`` is the one reader of ``read_account``
+    (an inventory of ``test_week_boundaries``). ``BudgetMeter.tell`` is the one caller of ``keep_reading``, which alone
+    writes ``week_readings``; ``tell`` is called where a reading is given (``_account``) and where the loop's reader takes
+    one (``AccountReader._told``, before the reading is anyone's to use). The store asks before a stamp (``_hear``, which
+    asks nobody inside a look) and asks nobody for a reservation (``ask=False``); the two places its own times are written
+    from a clock, a settlement's stamp and a reservation's start, both read ``_kept_times``. Review wksfu3's finding 1 was
+    the floor reading the kept grid alone; review wksfu4's findings 2 and 5 were a reading told to the store only when its
+    holder was next asked, and a reservation asking a second time after it had decided."""
     callers = {(name, _inside(tree, node)) for name, tree in _TREES.items() for node in ast.walk(tree)
                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "keep_reading"}
-    assert callers == {("g6.self_maintenance.pacing", "_account")}, callers
+    assert callers == {("g6.self_maintenance.pacing", "tell")}, callers
+    tellers = {(name, _inside(tree, node)) for name, tree in _TREES.items() for node in ast.walk(tree)
+               if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "tell"}
+    assert tellers == {("g6.self_maintenance.pacing", "_account"), ("g6.self_maintenance.usage", "_told")}, tellers
+    usage_functions = {f.name: ast.unparse(f) for f in _functions(_TREES[usage.__name__])}
+    refresh = usage_functions["refresh"]
+    assert refresh.index("self._told(provider, taken)") < refresh.index("self.readings[provider] = taken")
+    givers = {(name, _inside(tree, node)) for name, tree in _TREES.items() for node in ast.walk(tree)
+              if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "_account"}
+    assert givers == {("g6.self_maintenance.pacing", "_look"), ("g6.self_maintenance.pacing", "next_room"),
+                      ("g6.self_maintenance.pacing", "_hear")}, givers
     store_tree = _TREES[store_module.__name__]
     writes = {_inside(store_tree, node) for node in ast.walk(store_tree) if isinstance(node, ast.Constant)
               and isinstance(node.value, str) and "INTO week_readings" in node.value}
@@ -1031,11 +1080,13 @@ def test_a_reading_reaches_the_store_in_one_place_and_every_stamp_and_admission_
     assert asks < reads
     floored = sorted(name for name, text in functions.items() if "self._kept_times(" in text)
     assert floored == ["_stamp", "reserve_span"], floored
+    assert "ask=False" in functions["reserve_span"] and "ask=False" not in functions["_stamp"]
     meter = next(f for f in _functions(_TREES[pacing.__name__]) if f.name == "__init__"
                  and "ask_reader" in ast.unparse(f))
-    assert "self.scope.ask_reader = self._account" in ast.unparse(meter)
+    assert "self.scope.ask_reader = self._hear" in ast.unparse(meter)
     look = ast.unparse(next(f for f in _functions(_TREES[pacing.__name__]) if f.name == "_look"))
-    assert look.index("self._account(") < look.index("adopt_books(")       # the reading is given before a found charge is dated
+    assert look.count("self._account(") == 1
+    assert look.index("self._account(") < look.index("self._looking.add(") < look.index("adopt_books(")
 
 
 class _Holder:
@@ -1363,5 +1414,429 @@ def test_every_provider_a_reader_asks_is_unread_until_it_is_read():
         reader.ask["codex"] = lambda: _reply(10, START + WEEK)
         reader.read_now(later)
         assert meter.reserve("codex", later, 50).admitted
+    finally:
+        store.close()
+
+
+# 8. A reset is believed by one rule in both directions, and a week's end already past never moves a kept week ----------------
+
+GRID_END = datetime(2026, 11, 10, tzinfo=UTC)                 # the provider's own week ends on a Tuesday
+DAY_TWO = datetime(2026, 11, 4, 12, tzinfo=UTC)               # day 2 of it: a ceiling of 40 of 100
+_HOUR = timedelta(hours=1)
+_SECOND = timedelta(seconds=1)
+#: A reset across the whole line, as what the tool's reply holds for it (``now`` is the moment of the read), and what the
+#: one rule makes of it: ``lost`` (the reply is no reading), ``none`` (the figure, with no week's end named), ``ended`` (a
+#: week's end already past: last week's figure is left out) or ``ahead`` (the reset of the week the figure is of).
+_LINE = {
+    "zero": (lambda now: 0, "none"),
+    "five weeks back": (lambda now: (now - 5 * WEEK).timestamp(), "none"),
+    "a second past one window back": (lambda now: (now - WEEK - _SECOND).timestamp(), "none"),
+    "one window back": (lambda now: (now - WEEK).timestamp(), "ended"),
+    "a second inside one window back": (lambda now: (now - WEEK + _SECOND).timestamp(), "ended"),
+    "an hour back": (lambda now: (now - _HOUR).timestamp(), "ended"),
+    "now": (lambda now: now.timestamp(), "ended"),
+    "a second ahead": (lambda now: (now + _SECOND).timestamp(), "ahead"),
+    "seven days ahead": (lambda now: (now + WEEK).timestamp(), "ahead"),
+    "a second past seven days ahead": (lambda now: (now + WEEK + _SECOND).timestamp(), "none"),
+    "far ahead": (lambda now: datetime(2050, 1, 1, tzinfo=UTC).timestamp(), "none"),
+    "negative": (lambda now: -1, "lost or none"),
+    "past any clock": (lambda now: 1e300, "lost"),
+    "not a number": (lambda now: math.nan, "lost"),
+    "an infinity": (lambda now: math.inf, "lost"),
+    "a negative infinity": (lambda now: -math.inf, "lost"),
+    "text": (lambda now: "2026-11-10T00:00:00+00:00", "lost"),
+    "a flag": (lambda now: True, "lost"),
+    "a list": (lambda now: [1], "lost"),
+}
+
+
+def _week_reply(percent, resets=None):
+    week = {"usedPercent": percent, "windowDurationMins": WEEK_MINUTES}
+    if resets is not None:
+        week["resetsAt"] = resets
+    return {"rateLimits": {"primary": week}, "ordinaryUsageAllowed": True}
+
+
+def _kind(reading) -> str:
+    if reading is None:
+        return "lost"
+    if reading.resets_at is not None:
+        return "ahead"
+    return "ended" if reading.ended_at is not None else "none"
+
+
+def test_a_reply_reaches_the_kept_week_through_the_one_rule_for_a_reset():
+    """Listed from the code: every place a value of the provider's reply can reach the kept grid, the ceiling's day or a
+    figure's lapse. A window's reset is read from the reply in ``_window`` (converted once) and from the converted window
+    in ``_reset`` alone, the one rule; ``limits_reading`` takes a reading's ``resets_at`` and ``ended_at`` from that rule's
+    answer and nothing else; the store's grid is written in one statement (``keep_grid``), which the meter calls in one
+    place (``_look``) and tells whether the moment is a week's end already past. Review wksfu4's finding 1 was a second
+    rule for a reset behind now, under which any past value at all was a week's end and moved the kept grid."""
+    tree = _TREES[usage.__name__]
+    raw = {_inside(tree, node) for node in ast.walk(tree) if isinstance(node, ast.Constant) and node.value == "resetsAt"}
+    assert raw == {"_window", "_reset"}, raw
+    assert {_inside(tree, node) for node in ast.walk(tree)
+            if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and node.slice.value == "resetsAt"
+            and isinstance(node.ctx, ast.Load)} == {"_reset"}
+    reading = next(f for f in _functions(tree) if f.name == "limits_reading")
+    given = {(keyword.arg, ast.unparse(keyword.value)) for node in ast.walk(reading) if isinstance(node, ast.Call)
+             and _called_name(node) == "AccountReading" for keyword in node.keywords if keyword.arg in ("resets_at", "ended_at")}
+    assert given == {("resets_at", "reset"), ("ended_at", "reset")}, given
+    assert [ast.unparse(node.value) for node in ast.walk(reading) if isinstance(node, ast.Assign)
+            and ast.unparse(node.targets[0]) == "reset"] == ["_reset(week, now)"]
+    writes = {(name, _inside(tree_, node)) for name, tree_ in _TREES.items() for node in ast.walk(tree_)
+              if isinstance(node, ast.Constant) and isinstance(node.value, str) and "INTO week_grids" in node.value}
+    assert writes == {("g6.operator.store", "keep_grid")}, writes
+    keepers = {(name, _inside(tree_, node)): ast.unparse(node) for name, tree_ in _TREES.items() for node in ast.walk(tree_)
+               if isinstance(node, ast.Call) and _called_name(node) == "keep_grid"}
+    assert list(keepers) == [("g6.self_maintenance.pacing", "_look")] and "past=not named" in next(iter(keepers.values()))
+
+
+@pytest.mark.parametrize("where", _LINE)
+def test_the_one_rule_for_a_reset_across_the_whole_line(where):
+    now = DAY_TWO
+    value, kind = _LINE[where]
+    at = value(now)
+    reading = usage.limits_reading(_week_reply(60, at), ProviderWindow("codex", 100, START, reserve_share=0), now)
+    assert _kind(reading) in kind.split(" or "), (where, reading)
+    if reading is None:
+        return
+    moment = datetime.fromtimestamp(at, UTC) if _kind(reading) in ("ended", "ahead") else None
+    assert (reading.resets_at, reading.ended_at) == ((moment, None) if _kind(reading) == "ahead" else (None, moment))
+    assert (reading.used, reading.estimated) == ((0.0, True) if _kind(reading) == "ended" else (60.0, False))
+
+
+def _first_run(path) -> None:
+    """The provider says when its week ends, and the store keeps it: day 2, a ceiling of 40, 10 used."""
+    store = OperatorStore(path, clock=lambda: DAY_TWO)
+    try:
+        reader = AccountReader((ProviderWindow("codex", 100, START, reserve_share=0),),
+                               ask={"codex": lambda: _week_reply(10, GRID_END.timestamp())})
+        meter = _meter(store, read_account=reader)
+        reader.refresh(DAY_TWO)
+        seen = meter.reading("codex", DAY_TWO)
+        assert (seen.day, seen.ceiling, seen.used, meter.scope.week_grid("codex")) == (2, 40.0, 10.0, GRID_END)
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("where", _LINE)
+@pytest.mark.parametrize("when", ["after a restart", "at the first reply of a new week"])
+def test_only_a_reset_ahead_and_within_a_week_moves_a_kept_week(tmp_path, when, where):
+    """Review wksfu4, finding 1, across the whole line, through the loop's own reader. The store keeps the provider's week.
+    Whatever the next reply holds for its reset, the kept week stays where the provider put it unless the reply names a
+    reset still ahead and no further than a week, and with the week unmoved nothing is admitted past the provider's day:
+    80 on day 2 (ceiling 40) after a restart, 30 on day 1 (ceiling 20) at a new week's first reply."""
+    path = tmp_path / "operator.db"
+    _first_run(path)
+    now, amount, day = (DAY_TWO + _HOUR, 80, 2) if when == "after a restart" else (GRID_END + timedelta(minutes=1), 30, 1)
+    at = _LINE[where][0](now)
+    store = OperatorStore(path, clock=lambda: now)
+    try:
+        reader = AccountReader((ProviderWindow("codex", 100, START, reserve_share=0),), ask={"codex": lambda: _week_reply(60, at)})
+        meter = _meter(store, read_account=reader)
+        reader.refresh(now)
+        ahead = _kind(usage.limits_reading(_week_reply(60, at), meter.windows["codex"], now)) == "ahead"
+        spend = meter.reserve("codex", now, amount)
+        grid = meter.scope.week_grid("codex")
+        if ahead:
+            assert grid == datetime.fromtimestamp(at, UTC)
+            return
+        assert grid == GRID_END and spend.day == day and not spend.admitted, (
+            f"the kept week ends at {grid}; day {spend.day}, ceiling {spend.ceiling:g}, {spend.used:g} used, "
+            f"{spend.amount:g} admitted")
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("where", _LINE)
+def test_a_weeks_end_already_past_says_where_the_weeks_fall_only_while_the_store_keeps_none(tmp_path, where):
+    """With no week kept, as in a folder no reply has reached, a week's end already past that can be believed is the only
+    word there is of where the provider's weeks fall, and is kept; a reset that cannot be believed is still none."""
+    now = DAY_TWO
+    at = _LINE[where][0](now)
+    store = OperatorStore(tmp_path / "operator.db", clock=lambda: now)
+    try:
+        reader = AccountReader((ProviderWindow("codex", 100, START, reserve_share=0),), ask={"codex": lambda: _week_reply(60, at)})
+        meter = _meter(store, read_account=reader)
+        reader.refresh(now)
+        kind = _kind(usage.limits_reading(_week_reply(60, at), meter.windows["codex"], now))
+        meter.reading("codex", now)
+        kept = meter.scope.week_grid("codex")
+        assert kept == (datetime.fromtimestamp(at, UTC) if kind in ("ended", "ahead") else None), (where, kind, kept)
+        if kind == "ended":                     # and once a week is kept, a later week's end already past does not move it
+            later = now + _HOUR
+            assert meter.scope.keep_grid("codex", later - timedelta(days=3), later, past=True)[0] == kept
+            assert meter.scope.keep_grid("codex", later + timedelta(days=3), later)[0] == later + timedelta(days=3)
+    finally:
+        store.close()
+
+
+# 9. A reading flows one way: taken, told to the store, given once to a decision ---------------------------------------------
+
+class _Live:
+    """A reader that reads the account as it is asked, and counts how often: each answer is a new reading."""
+
+    def __init__(self, clock, figures=()) -> None:
+        self.clock, self.figures, self.said = clock, list(figures), []
+
+    def __call__(self, provider, now):
+        self.said.append(self.figures.pop(0) if self.figures else (self.said[-1] if self.said else 0))
+        return AccountReading(used=self.said[-1], estimated=False, read_at=self.clock[0], resets_at=START + WEEK)
+
+
+def test_one_decision_is_given_one_reading_and_the_store_is_told_of_that_one(monkeypatch):
+    """Review wksfu4, finding 5: a reserve read the account twice, decided on the first reading and recorded the second.
+    Each call that decides or stamps reads the account once: a reserve, a look, a look that finds a charge with no span
+    and dates it, a settlement, a schedule."""
+    clock = [LAST_DAY]
+    store = OperatorStore(":memory:", clock=lambda: clock[0])
+    try:
+        live = _Live(clock, figures=[0, 90])
+        meter = _meter(store, read_account=live)
+        spend = meter.reserve("codex", clock[0], 50)
+        assert spend.admitted and live.said == [0]                 # decided on the one reading it was given
+        assert meter.reserve("codex", clock[0], 50).used == 140 and live.said == [0, 90]      # the next one sees the 90
+        counted = len(live.said)
+        meter.reading("codex", clock[0])
+        assert len(live.said) == counted + 1
+        monkeypatch.setattr(store_module, "_now", lambda: clock[0].isoformat(timespec="seconds"))
+        found = meter.scope.reserve(spend.venture, month=START.isoformat(), account="model", amount=1)
+        meter.scope.settle(spend.venture, found)                   # a charge with no span: the next look dates it
+        counted = len(live.said)
+        meter.reading("codex", clock[0])
+        assert len(live.said) == counted + 1 and store.conn.execute("SELECT COUNT(*) FROM week_settled").fetchone()[0] == 1
+        counted = len(live.said)
+        assert meter.settle(spend, 5) == 5
+        assert len(live.said) == counted + 1
+        counted = len(live.said)
+        meter.next_room(clock[0])
+        assert len(live.said) == counted + 1
+    finally:
+        store.close()
+
+
+def _both(tmp_path, clock):
+    path = tmp_path / "operator.db"
+    return OperatorStore(path, clock=lambda: clock[0]), OperatorStore(path, clock=lambda: clock[0])
+
+
+@pytest.mark.parametrize("reset", _RESETS)
+@pytest.mark.parametrize("order", ["in the reading's own instant", "with the clock set back"])
+def test_the_loops_reader_tells_the_store_as_it_reads_so_another_meter_stamps_after_it(tmp_path, order, reset):
+    """Review wksfu4, finding 2, for the loop's own reader: a reading's time reached the store only when the meter holding it
+    was next asked, so a second meter on the same store stamped a charge without knowing of it. The reader now tells the
+    store in the step that makes the reading anyone's to use, so the other meter's stamp is after it, in the reading's
+    own instant and with the clock set back. 60 was read with 30 open; the other meter settles the 30; 20 more is refused."""
+    clock = [LAST_DAY]
+    one, two = _both(tmp_path, clock)
+    try:
+        window = ProviderWindow("codex", 100, START, reserve_share=0)
+        replies = [_week_reply(0, None if _RESETS[reset] is None else _RESETS[reset].timestamp())]
+        reader = AccountReader((window,), ask={"codex": lambda: replies[-1]})
+        first, second = _meter(one), _meter(two, read_account=reader)
+        reader.refresh(clock[0])
+        spend = first.reserve("codex", clock[0], 30)
+        assert spend.admitted
+        clock[0] += timedelta(minutes=2)
+        taken = clock[0]
+        replies.append(_week_reply(60, None if _RESETS[reset] is None else _RESETS[reset].timestamp()))
+        reader.read_now(taken)                                      # the 30 is still open; nobody asks the second meter
+        assert store_module._moment(two.for_owner(OWNER)._read_time(OWNER, "codex")) == taken
+        if order == "with the clock set back":
+            clock[0] -= timedelta(minutes=1)
+        assert first.settle(spend, 30) == 30
+        assert all(store_module._moment(at) > taken for (at,) in one.conn.execute("SELECT at_us FROM week_settled"))
+        clock[0] = taken + _SECOND
+        extra = second.reserve("codex", clock[0], 20)
+        assert not extra.admitted and extra.used == 90, (extra.used, extra.reason)
+    finally:
+        one.close()
+        two.close()
+
+
+@pytest.mark.parametrize("reset", _RESETS)
+def test_a_charge_another_meter_settles_in_a_readings_own_instant_goes_on_top_of_it(tmp_path, reset):
+    """Review wksfu4, finding 2, for a reader the store cannot hear until it is asked (a caller's own callback): a stamp
+    and a reading's time in one microsecond do not say which came first, so the charge is counted: on top unless settled
+    strictly before the reading. With the clock set back between such a reading and another meter's settlement, the store
+    has nothing that says the reading was taken first: that case stays a race, as the report says."""
+    clock = [LAST_DAY]
+    one, two = _both(tmp_path, clock)
+    try:
+        held = [None]
+        first, second = _meter(one), _meter(two, read_account=lambda *_: held[0])
+        spend = first.reserve("codex", clock[0], 30)
+        clock[0] += timedelta(minutes=2)
+        held[0] = AccountReading(used=60, estimated=False, read_at=clock[0], resets_at=_RESETS[reset])
+        assert first.settle(spend, 30) == 30                       # in the reading's own instant, by the other meter
+        clock[0] += _SECOND
+        extra = second.reserve("codex", clock[0], 20)
+        assert not extra.admitted and extra.used == 90
+    finally:
+        one.close()
+        two.close()
+
+
+def test_a_charge_is_on_top_of_a_reading_unless_it_was_settled_strictly_before_it():
+    read_at = LAST_DAY
+    micro = timedelta(microseconds=1)
+    reading = AccountReading(used=60, estimated=False, read_at=read_at)
+    for settled, used in ((read_at - micro, 60.0), (read_at, 90.0), (read_at + micro, 90.0), (None, 90.0)):
+        assert pacing._used([store_module.Held(30.0, 30.0, settled)], reading) == (used, True), settled
+    assert pacing._used([store_module.Held(30.0, 30.0, read_at - micro)], AccountReading(used=60, estimated=False)) == (90.0, True)
+    assert pacing._used([store_module.Held(30.0, None, None)], reading) == (90.0, True)           # still open
+
+
+def test_a_reader_tells_the_store_of_what_it_holds_when_a_meter_binds_it_and_holds_nothing_the_store_refused():
+    window = ProviderWindow("codex", 100, START, reserve_share=0)
+    store = OperatorStore(":memory:", clock=lambda: LAST_DAY)
+    try:
+        reader = AccountReader((window,), ask={"codex": lambda: _week_reply(10)})
+        reader.refresh(LAST_DAY)                                    # read before any meter is there
+        scope = store.for_owner(OWNER)
+        assert scope._read_time(OWNER, "codex") is None
+        meter = _meter(store, read_account=reader)
+        assert store_module._moment(scope._read_time(OWNER, "codex")) == LAST_DAY
+
+        def refuses(provider, read_at):
+            raise sqlite3.OperationalError("the store is not to be written")
+
+        meter.tell = refuses
+        later = LAST_DAY + _HOUR
+        reader.read_now(later)
+        assert reader.readings["codex"].read_at == LAST_DAY        # the reading the store was not told of is nobody's to use
+        assert "could not be recorded" in reader.said["codex"]
+        del meter.tell
+        reader.read_now(later)
+        assert reader.readings["codex"].read_at == later and store_module._moment(scope._read_time(OWNER, "codex")) == later
+    finally:
+        store.close()
+
+
+# 10. Whether a figure still stands is one rule for the meter, its schedule and its reader -----------------------------------
+
+def test_whether_a_figure_stands_is_decided_in_one_place():
+    """Listed from the code: ``standing`` is the one rule, and it is called with the week's end the store gives in one
+    place (``BudgetMeter.stands``), which the meter's look, its ``next_room`` and a bound reader all ask. The two other
+    calls are by a reading's own word alone, and say so: what may move the kept week (``_look``) and what makes the reader
+    ask its tool early (``_lapsed``). Review wksfu4's finding 3 was the meter lapsing a figure with no reset by a rule the
+    reader and ``next_room`` did not have."""
+    calls = {(name, _inside(tree, node)): len(node.args) for name, tree in _TREES.items() for node in ast.walk(tree)
+             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "standing"}
+    assert calls == {("g6.self_maintenance.pacing", "stands"): 3, ("g6.self_maintenance.pacing", "_look"): 2,
+                     ("g6.self_maintenance.usage", "_stands"): 2, ("g6.self_maintenance.usage", "_lapsed"): 2}, calls
+    askers = {(name, _inside(tree, node)) for name, tree in _TREES.items() for node in ast.walk(tree)
+              if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("stands", "_stands")}
+    assert askers == {("g6.self_maintenance.pacing", "_look"), ("g6.self_maintenance.pacing", "next_room"),
+                      ("g6.self_maintenance.usage", "_stands"), ("g6.self_maintenance.usage", "refresh"),
+                      ("g6.self_maintenance.usage", "_no_reading"), ("g6.self_maintenance.usage", "__call__")}, askers
+
+
+def test_the_meter_its_schedule_and_its_reader_agree_on_a_figure_with_no_reset():
+    window = ProviderWindow("codex", 100, START, reserve_share=0)
+    week_end = START + WEEK
+    replies = [_week_reply(10)]
+    reader = AccountReader((window,), ask={"codex": lambda: replies[-1]})
+    clock = [week_end - timedelta(minutes=5)]
+    store = OperatorStore(":memory:", clock=lambda: clock[0])
+    try:
+        meter = _meter(store, read_account=reader)
+        reader.refresh(clock[0])
+        micro = timedelta(microseconds=1)
+        for now, stands in ((week_end - micro, True), (week_end, False), (week_end + timedelta(minutes=1), False)):
+            clock[0] = now
+            held = reader("codex", now)
+            seen = meter.reading("codex", now)
+            assert (not held.unread, not seen.reason) == (stands, stands), (now, held, seen.reason)
+            if not stands:                                         # an account to read again is looked at a refresh later
+                assert meter.next_room(now) <= now + pacing.REFRESH
+        replies.append({"rateLimits": {"primary": {"usedPercent": 10, "windowDurationMins": 300}}, "ordinaryUsageAllowed": True})
+        reader.read_now(clock[0])                                  # a reply with no week in it replaces what no longer stands
+        assert "stands until" not in reader.said["codex"] and not reader("codex", clock[0]).unread
+        assert not meter.reading("codex", clock[0]).reason
+    finally:
+        store.close()
+
+
+# 11. A sum that overflows and a time with nothing after it are refusals ------------------------------------------------------
+
+_HUGE = 1e308                                  # finite; two of them are past the largest float
+END_OF_TIME = datetime.max.replace(tzinfo=UTC)
+
+
+def test_a_ledger_that_already_holds_a_sum_past_every_float_refuses_and_is_read():
+    """Review wksfu4, finding 4: the ledger only grows, so a month or a week whose sum overflowed raised out of every later
+    look. It is an infinity now, and over every cap."""
+    store = OperatorStore(":memory:", clock=lambda: LAST_DAY)
+    try:
+        scope = store.for_owner("ada")
+        venture = scope.create_venture("v", caps={"model": 1.7e308, "cash": 0})["venture_id"]
+        for _ in range(2):
+            assert scope.settle(venture, scope.reserve(venture, month="m", account="model", amount=1), reported=_HUGE) == _HUGE
+        assert scope.committed(venture, "m") == {"model": math.inf} and scope.outstanding(venture, "m") == {"model": 0.0}
+        with pytest.raises(BudgetRefused, match="budget_exhausted"):
+            scope.reserve(venture, month="m", account="model", amount=1)
+        meter = _meter(store, allowance=1.7e308)
+        for tick in ("one", "two"):
+            spend = meter.reserve("codex", LAST_DAY, 1, tick=tick)
+            assert spend.admitted and meter.settle(spend, _HUGE) == _HUGE
+        seen, more = meter.reading("codex", LAST_DAY), meter.reserve("codex", LAST_DAY, 1, tick="three")
+        assert seen.used == math.inf and not more.admitted and "over" in more.reason
+        assert meter.recover("codex") == 0 and meter.settle_open("codex") == 0
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("reset", _RESETS)
+@pytest.mark.parametrize("back", [timedelta(0), timedelta(microseconds=1)], ids=["the last moment", "the one before it"])
+def test_a_reading_dated_at_the_end_of_time_is_unread_or_stamped_after_and_never_raises(back, reset):
+    """Review wksfu4, finding 6. A reading taken at the last moment a clock can show leaves no moment for a stamp after it:
+    the store refuses its time, and the reading is unread. One taken a microsecond earlier can be stamped after; with no
+    reset of its own, the week it would be put in ends past what a clock can show, and it is unread too."""
+    read_at = END_OF_TIME - back
+    held = [None]
+    store = OperatorStore(":memory:", clock=lambda: LAST_DAY)
+    try:
+        meter = _meter(store, read_account=lambda *_: held[0])
+        spend = meter.reserve("codex", LAST_DAY, 30)
+        assert spend.admitted
+        held[0] = AccountReading(used=10, estimated=False, read_at=read_at, resets_at=_RESETS[reset])
+        refused = meter.reserve("codex", LAST_DAY, 1)
+        assert not refused.admitted
+        assert meter.reading("codex", LAST_DAY) is not None and meter.next_room(LAST_DAY) is not None      # neither raises
+        if not back:
+            with pytest.raises(ValueError, match="no moment after it"):
+                meter.scope.keep_reading("codex", read_at)
+            assert meter.scope._read_time(OWNER, "codex") is None
+        assert meter.settle(spend, 30) == 30                       # a stamp that can be read back
+        held[0] = None
+        assert meter.reading("codex", LAST_DAY).used >= 30
+        stamp = store.conn.execute("SELECT MAX(at_us) FROM week_settled").fetchone()[0]
+        assert store_module._moment(stamp) <= END_OF_TIME
+    finally:
+        store.close()
+
+
+def test_a_store_that_already_holds_a_stamp_past_the_end_of_time_refuses_and_does_not_raise():
+    """What 358e286 could write, and a table that only grows cannot lose: a reading's time at the last moment, and a
+    settlement stamped a microsecond after it. Every look at the provider then raised. Now the look says why nothing is
+    reserved, a reservation is refused, a settlement is refused with a ``ValueError``, and a recovery settles none."""
+    store = OperatorStore(":memory:", clock=lambda: LAST_DAY)
+    try:
+        meter = _meter(store)
+        first, second = meter.reserve("codex", LAST_DAY, 10, tick="one"), meter.reserve("codex", LAST_DAY, 10, tick="two")
+        last = store_module._us(END_OF_TIME)
+        with store.conn:
+            store.conn.execute("INSERT INTO week_readings VALUES (?, ?, ?)", (OWNER, "codex", last))
+            store.conn.execute("INSERT INTO week_settled VALUES (?, ?)", (first.reservation, last + 1))
+        seen = meter.reading("codex", LAST_DAY)
+        assert "cannot be read" in seen.reason and "person looks" in seen.reason
+        more = meter.reserve("codex", LAST_DAY, 1)
+        assert not more.admitted and more.reason
+        with pytest.raises(ValueError, match="past what a clock can show"):
+            meter.settle(second, 1)
+        assert meter.recover("codex") == 0.0
+        assert store.conn.execute("SELECT COUNT(*) FROM week_settled").fetchone()[0] == 1 and not store.poisoned
     finally:
         store.close()

@@ -409,12 +409,17 @@ def test_another_connections_charge_after_a_snapshot_is_not_absorbed_into_its_ba
         second_store.close()
 
 
-def test_a_charge_settled_when_a_reading_was_taken_may_be_in_it():
-    readings = [None]                         # settled first, and the reading is taken in that same instant: it may hold it
+def test_a_charge_settled_in_the_instant_a_reading_was_taken_goes_on_top_of_it():
+    """This said such a charge may be in the reading (300). A stamp and a reading's time in one microsecond do not say
+    which came first, and another meter on the same store may have written the stamp without knowing of the reading
+    (review wksfu4, finding 2), so it is counted: 500. A charge settled strictly before the reading may be in it."""
+    readings = [None]
     meter = _meter(read_account=lambda *_: readings[0])
     _settle_at(meter, meter.reserve("claude", _day(3) - timedelta(minutes=5), 200), 200, _day(3))
     readings[0] = AccountReading(used=300, read_at=_day(3))
-    assert meter.reading("claude", _day(3)).used == 300
+    assert meter.reading("claude", _day(3)).used == 500
+    readings[0] = AccountReading(used=300, read_at=_day(3) + timedelta(microseconds=1))
+    assert meter.reading("claude", _day(3) + timedelta(microseconds=1)).used == 300
 
 
 def test_a_charge_with_no_time_goes_on_top_of_every_reading():
@@ -753,8 +758,10 @@ def test_a_reading_dated_in_any_zone_is_compared_as_an_instant():
     _settle_at(meter, meter.reserve("claude", _day(3) - timedelta(minutes=5), 200), 200, _day(3))
     readings[0] = AccountReading(used=300, read_at=(_day(3) - timedelta(microseconds=1)).astimezone(BRISBANE))
     assert meter.reading("claude", _day(3)).used == 500
-    readings[0] = AccountReading(used=300, read_at=_day(3).astimezone(BRISBANE))
-    assert meter.reading("claude", _day(3)).used == 300
+    readings[0] = AccountReading(used=300, read_at=_day(3).astimezone(BRISBANE))          # the charge's own instant: on top
+    assert meter.reading("claude", _day(3)).used == 500
+    readings[0] = AccountReading(used=300, read_at=(_day(3) + timedelta(microseconds=1)).astimezone(BRISBANE))
+    assert meter.reading("claude", _day(3) + timedelta(microseconds=1)).used == 300      # settled strictly before it
 
 
 def test_an_expired_figure_is_left_out_and_its_reset_and_limit_stand():

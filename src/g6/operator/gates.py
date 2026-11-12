@@ -9,7 +9,7 @@ never wrote cash or local spend, so its stop could not fire (audit 011, VEN-004)
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 ACCOUNTS = ("model", "cash")
@@ -85,14 +85,26 @@ def over(total: float, cap: float) -> bool:
     return not total - cap <= _SLACK * cap
 
 
+def total(amounts: Iterable[float]) -> float:
+    """The one sum of amounts, wherever amounts are added up: exact (``math.fsum``, the nearest float to the true sum, so a
+    sum that is large still moves when a small amount is added), and an infinity where the sum is past what a float holds.
+    ``over`` reads an infinity as over every cap, so a sum that overflowed is a refusal, and never an error that a ledger
+    which only grows could not clear."""
+    try:
+        return math.fsum(amounts)
+    except OverflowError:
+        return math.inf
+
+
 def _committed(committed: Mapping[str, Any], account: str) -> float | None:
     """What ``committed`` holds for ``account`` as a plain number (``exact_number``), 0 when it names none; ``None`` when
-    it cannot be read, or is no number."""
+    it cannot be read, or is no number. A sum that overflowed (``total``) is the one infinity read as itself: it is over."""
     try:
         raw = committed.get(account, 0.0)
     except Exception:  # noqa: BLE001 - a sum that cannot be read is not zero
         return None
-    return exact_number(raw)
+    number = exact_number(raw)
+    return math.inf if number is None and type(raw) is float and raw == math.inf else number
 
 
 def stop_reason(venture: Mapping[str, Any], committed: Mapping[str, float]) -> str | None:

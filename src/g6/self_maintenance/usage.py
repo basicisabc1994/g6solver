@@ -277,12 +277,15 @@ def _window(raw: Any) -> dict[str, Any] | None:
 
 
 def _reset(window: Mapping[str, Any], now: datetime) -> datetime | None:
-    """When a converted window (``_window``) resets: ahead of ``now`` and no further than the window is long, or a week
-    where it does not say. Any other figure is no reset: a limit that outlasts its own window cannot be believed."""
+    """When a converted window (``_window``) resets, or reset, where that can be believed: no further from ``now`` than
+    the window is long (a week where it does not say), ahead or behind. The one rule for a reset in both directions, and
+    the one reader of a window's reset: a limit that outlasts its own window cannot be believed, and neither can a week
+    said to have ended longer ago than a week lasts. Any other value is no reset: it ends no limit, names no week's end
+    and moves no kept week."""
     now = utc(now)
     at = window["resetsAt"]
     longest = (window["windowDurationMins"] or WEEK_MINUTES) * 60
-    return at if at is not None and 0 < (at - now).total_seconds() <= longest else None
+    return at if at is not None and abs((at - now).total_seconds()) <= longest else None
 
 
 def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datetime) -> AccountReading | None:
@@ -291,10 +294,13 @@ def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datet
     makes no sense loses the whole reply, since a reply that wrong says nothing about the rest. A limit whose reset has
     passed is still a limit, so it is looked at again as one with no reset is. A week whose own reset has passed is another
     matter: a tool that has not caught up is saying last week's use, so that figure is left out and nothing stands for it.
-    That reset is kept apart as ``ended_at``: it says where the provider's weeks fall, and it ends no tick. A reading's
-    ``resets_at`` is the provider's own word or nothing: when the reply names no reset that can be believed the reading
-    names none, and the meter puts its figure in the week the store's own grid says (``BudgetMeter._look``). No reset is
-    made up here: one that was would move the kept week as if the provider had said it."""
+    That reset is kept apart as ``ended_at``: it says where the provider's weeks fall while the store keeps no word of it,
+    and it ends no tick. A reading's ``resets_at`` and ``ended_at`` are the provider's own word or nothing, and what can
+    be believed of it is one rule in both directions (``_reset``): a reset further from now than a week is long, ahead or
+    behind, names no week's end. Its figure is then kept as one with no reset, as the percentage is the provider's own
+    whatever its reset says and counting it can only refuse more; the meter puts it in the week the store's own grid says
+    (``BudgetMeter.stands``). No reset is made up here: one that was would move the kept week as if the provider had said
+    it."""
     now = utc(now)
     try:
         snapshot, allowed = limits.get("rateLimits"), limits.get("ordinaryUsageAllowed")
@@ -308,15 +314,15 @@ def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datet
         return None
     week = next((w for w in seen if w["windowDurationMins"] == WEEK_MINUTES), None)
     full = [w for w in seen if w["usedPercent"] >= FULL]
-    resets = [at for w in (full or seen) if (at := _reset(w, now)) is not None]
+    resets = [at for w in (full or seen) if (at := _reset(w, now)) is not None and at > now]
     until = (max(resets) if resets else now + REFRESH) if full or allowed is False else None
-    ended = week is not None and (week["resetsAt"] or now + WEEK) <= now
-    if ended:
-        return AccountReading(limited_until=until, ended_at=week["resetsAt"])
     if week is None:
         return AccountReading(limited_until=until)
+    reset = _reset(week, now)
+    if reset is not None and reset <= now:           # its week has ended: last week's figure says nothing of this one
+        return AccountReading(limited_until=until, ended_at=reset)
     return AccountReading(used=window.allowance * week["usedPercent"] / FULL, estimated=False, limited_until=until,
-                          resets_at=_reset(week, now))
+                          resets_at=reset)
 
 
 def _holds(reading: AccountReading | None) -> bool:
@@ -334,7 +340,11 @@ class AccountReader:
     top. Past that the account is not known, and nothing is admitted on it until a read succeeds: the owner uses this
     account too, so a broken tool must not make the meter read low. This is held in memory, and every provider whose tool
     is asked starts unread: before its first read, and after a restart or a read that ends in any way without a reading,
-    it is not known, and admits nothing. Where a provider's weeks fall is the store's to keep, and is not kept here."""
+    it is not known, and admits nothing. Where a provider's weeks fall is the store's to keep, and is not kept here. The
+    meter it reads for binds it (``bind_meter``): from then the store is told when a reading is taken in the step that
+    makes it anyone's to use, so another meter or process on that store stamps after it at once; and whether a figure
+    still stands is the meter's one rule (``BudgetMeter.stands``), which gives a figure with no reset the week's end the
+    store's grid says."""
 
     def __init__(self, windows: Sequence[ProviderWindow],
                  ask: Mapping[str, Callable[[], Mapping[str, Any] | None]] | None = None) -> None:
@@ -345,10 +355,37 @@ class AccountReader:
         self.said = {provider: f"{NOT_READ}, so nothing is reserved on it until it is read" if provider in asked
                      else NOT_REPORTED for provider in self.windows}
         self._asked: datetime | None = None
+        self._meter: Any = None
+
+    def bind_meter(self, meter: Any) -> None:
+        """Read for ``meter`` (a ``BudgetMeter``, which calls this as it is made; the one made last holds). What is already
+        held is told to its store now; a reading whose time the store will not take is no reading."""
+        self._meter = meter
+        for provider, held in list(self.readings.items()):
+            if not self._told(provider, held):
+                self.readings[provider] = AccountReading(unread="its reading could not be recorded in the store")
+
+    def _told(self, provider: str, reading: AccountReading) -> bool:
+        """Tell the store of the meter this reads for when ``reading`` was taken (``BudgetMeter.tell``), and say whether it
+        took it. With no meter there is no store to tell, and no admission to guard."""
+        if self._meter is None:
+            return True
+        try:
+            self._meter.tell(provider, reading.read_at)
+        except Exception:  # noqa: BLE001 - whatever stopped it, the store does not know of this reading
+            return False
+        return True
+
+    def _stands(self, provider: str, reading: AccountReading | None, now: datetime) -> AccountReading | None:
+        """What ``reading`` still says at ``now``, by the one rule: the meter's (``BudgetMeter.stands``), and ``standing``
+        alone before a meter binds this reader."""
+        now = utc(now)
+        return standing(reading, now) if self._meter is None else self._meter.stands(provider, reading, now)
 
     def _lapsed(self, now: datetime) -> bool:
-        """Whether a reading that held when the tool was last asked no longer does, by the same rule that hands it back:
-        then what it said then says nothing now, and the tool is asked again at once."""
+        """Whether a reading that held when the tool was last asked no longer does because the reset it named has passed:
+        then what it said then says nothing now, and the tool is asked again at once. A figure that names no reset is not
+        asked for early: the meter refuses on it once the store's week ends, and the tool is asked at its next refresh."""
         now = utc(now)
         return self._asked is not None and any(_holds(standing(r, self._asked)) and not _holds(standing(r, now))
                                                for r in self.readings.values())
@@ -372,12 +409,16 @@ class AccountReader:
                 self._no_reading(provider, now, "its reply could not be read")
                 continue
             known = self.readings.get(provider)
-            if found.estimated and known is not None and not known.estimated and standing(known, now) is known:
+            if found.estimated and known is not None and not known.estimated and self._stands(provider, known, now) is known:
                 limits = (at for at in (known.limited_until, found.limited_until) if at is not None)   # no week in it
                 self.readings[provider] = replace(known, limited_until=max(limits, default=None))
                 self._no_reading(provider, now, "its reply gave no week")
                 continue
-            self.readings[provider] = replace(found, read_at=now)
+            taken = replace(found, read_at=now)
+            if not self._told(provider, taken):          # the store first: nobody holds a reading it does not know of
+                self._no_reading(provider, now, "its reading could not be recorded in the store")
+                continue
+            self.readings[provider] = taken
             self.said[provider] = f"reported by its own tool at {now.isoformat(timespec='minutes')}"
             if found.resets_at is not None:
                 self.said[provider] += f"; its week ends at {found.resets_at.isoformat(timespec='minutes')}"
@@ -395,7 +436,7 @@ class AccountReader:
         alone holds only G6's own use and would read low."""
         now = utc(now)
         known = self.readings.get(provider)
-        kept = standing(known, now)
+        kept = self._stands(provider, known, now)
         if not _holds(kept):
             self.readings[provider] = AccountReading(unread=why)
             self.said[provider] = (f"{why}, and nothing it reported still stands, so nothing is reserved on it until it "
@@ -406,12 +447,12 @@ class AccountReader:
             self.said[provider] = (f"{why}; the last figure stands until {kept.resets_at.isoformat()}, with the model calls "
                                    "charged since on top")
         else:
-            self.said[provider] = f"{why}; what it last reported stands until a read replaces it"
+            self.said[provider] = f"{why}; what it last reported stands until its week ends or a read replaces it"
 
     def __call__(self, provider: str, now: datetime) -> AccountReading | None:
-        """What was last read of ``provider``, as it stands at ``now`` (``standing``)."""
+        """What was last read of ``provider``, as it stands at ``now`` (``_stands``, the one rule)."""
         now = utc(now)
-        return standing(self.readings.get(provider), now)
+        return self._stands(provider, self.readings.get(provider), now)
 
 __all__ = ["AccountReader", "MODEL_REFUSED", "NOT_REPORTED", "REFRESH", "UsageUnavailable", "WatchedClaude", "codex_limits",
            "limit_ends", "limits_reading", "read_limits", "read_stops", "refused_by", "telling_stops"]

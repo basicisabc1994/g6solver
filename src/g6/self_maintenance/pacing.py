@@ -27,7 +27,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from g6.operator.gates import amount_of, exact_number, exact_text, kind_of, over
+from g6.operator.gates import amount_of, exact_number, exact_text, kind_of, over, total
 from g6.operator.store import BudgetRefused, Held, OperatorStore, utc
 
 OWNER = "g6-loop"
@@ -185,18 +185,24 @@ class AccountReading:
             object.__setattr__(self, name, value)
 
 
-def standing(reading: AccountReading | None, now: datetime) -> AccountReading | None:
+def standing(reading: AccountReading | None, now: datetime, week_end: datetime | None = None) -> AccountReading | None:
     """What ``reading`` still says at ``now``: the one rule for whether a reading holds, which the reader hands back, its
-    refresh decides by, a failed read keeps by, and the meter admits by. A figure stands until its reset (one with no
-    reset, until a read replaces it). Past that reset, a limit still ahead stands alone, without the figure. Past both,
-    nothing stands, and the reading says so: it is unread, and nothing is admitted on it until a read succeeds. The reset
-    stays on it, as it says where the provider's weeks fall and when the week a tick reserved in ended."""
-    now = utc(now)
-    if reading is None or reading.unread or reading.resets_at is None or reading.resets_at > now:
+    refresh decides by, a failed read keeps by, and the meter admits and schedules by. A figure stands until the week it
+    is of ends: at the reading's own reset where it names one, and otherwise at ``week_end``, the end of the week the
+    store's grid puts the reading in, which a meter gives for any reading (``BudgetMeter.stands``); with neither, until a
+    read replaces it. Past that end, a limit still ahead stands alone, without the figure. Past both, nothing stands, and
+    the reading says so: it is unread, and nothing is admitted on it until a read succeeds. The reading's own reset
+    stays on it, as it says where the provider's weeks fall and when the week a tick reserved in ended; a week's end the
+    store gave is never put on a reading, as only a reset the provider gave may move the kept week."""
+    now, week_end = utc(now), utc(week_end)
+    if reading is None or reading.unread:
+        return reading
+    ends = reading.resets_at or week_end
+    if ends is None or ends > now:
         return reading
     if reading.limited_until is not None and reading.limited_until > now:
         return replace(reading, used=0.0, estimated=True, read_at=None)
-    return AccountReading(unread=f"what was last read is of a week that ended at {reading.resets_at.isoformat()}, and "
+    return AccountReading(unread=f"what was last read is of a week that ended at {ends.isoformat()}, and "
                                  "nothing read since has replaced it", resets_at=reading.resets_at)
 
 
@@ -223,19 +229,19 @@ class Admission:
 
 def _used(held: Sequence[Held], account: AccountReading | None) -> tuple[float, bool]:
     """What a week has used, from the reservations that overlap it, and whether the account's figure is what set it. A
-    charge settled by the time the figure was read may already be in it, so the larger of the two stands. A charge settled
-    after it cannot be, nor can one with no time, nor a reservation still open, so each goes on top. The store stamps every
-    settlement it writes after a reading was given to the meter later than that reading (``OwnerScope.keep_reading``), so
-    a charge whose stamp is not after a reading's time was written before that reading reached the meter. A reading with
-    no time of its own cannot say which charges it holds, so every charge goes on top of it: high, never low. The sums
-    are exact (``math.fsum``)."""
-    pending = math.fsum(h.amount for h in held if h.charged is None)
-    charged = math.fsum(h.charged for h in held if h.charged is not None)
+    charge settled strictly before the figure was read may already be in it, so the larger of the two stands. Any other
+    cannot be shown to be in it: one settled at the reading's own instant or after it, one with no time, a reservation
+    still open; so each goes on top. A stamp and a reading's time in one microsecond do not say which came first, and
+    another meter on the same store may have written the stamp without knowing of the reading, so that case is counted:
+    high, never low. A reading with no time of its own cannot say which charges it holds, so every charge goes on top of
+    it. The sums are the one sum of amounts (``gates.total``)."""
+    pending = total(h.amount for h in held if h.charged is None)
+    charged = total(h.charged for h in held if h.charged is not None)
     if account is None:
         return charged + pending, False
     read_at = account.read_at
-    since = math.fsum(h.charged for h in held
-                      if h.charged is not None and (read_at is None or h.settled is None or h.settled > read_at))
+    since = total(h.charged for h in held
+                  if h.charged is not None and (read_at is None or h.settled is None or h.settled >= read_at))
     figure = account.used + since
     above = figure > charged
     return (figure if above else charged) + pending, above
@@ -244,12 +250,29 @@ def _used(held: Sequence[Held], account: AccountReading | None) -> tuple[float, 
 class BudgetMeter:
     def __init__(self, windows: Sequence[ProviderWindow], *, store: OperatorStore,
                  read_account: Callable[[str, datetime], AccountReading | None] | None = None) -> None:
-        """``read_account(provider, now)``: what the account says at ``now``, or ``None``."""
+        """``read_account(provider, now)``: what the account says at ``now``, or ``None``.
+
+        How a reading flows, once. It is *taken* by whoever reads the account: the loop's reader in its refresh, which tells
+        the store when (``tell``) before the reading is anyone's to use, or a caller's own callback at the moment it is
+        asked. It is *given* to the meter in one place, ``_account``, which tells the store too, so a reading from a
+        callback is recorded as it arrives. A *decision* (``_look``) is given one reading, and nothing in that look or in
+        the reservation that follows asks for another: the store's recorded times are read after the decision, so they
+        hold the time of the very reading it used. A *stamp* written outside a look asks once first (``_hear``). And a
+        charge counts on top of a reading unless it was settled strictly before the reading's time (``_used``). A reader
+        that can be bound (``bind_meter``) is bound here, so it tells this meter's store and goes by this meter's rule for
+        whether a figure still stands (``stands``)."""
         self.windows = windows_by_provider(windows)
         self.scope = store.for_owner(OWNER)
-        self.scope.ask_reader = self._account        # before the store stamps or admits, it hears the reading held now
+        self.scope.ask_reader = self._hear           # before the store stamps, it hears the reading that would be given now
         self._read_account = read_account
         self._limits: dict[str, datetime] = {}
+        self._looking: set[str] = set()              # the providers a look of this meter's is in the middle of
+        try:
+            bind = getattr(read_account, "bind_meter", None)
+        except Exception:  # noqa: BLE001 - a reader that cannot say whether it binds is one that does not
+            bind = None
+        if callable(bind):
+            bind(self)
 
     def reading(self, provider: str, now: datetime) -> Admission:
         """Where this provider's week stands; ``admitted`` is left false, since nothing was asked for."""
@@ -262,9 +285,9 @@ class BudgetMeter:
     def _account(self, provider: str, now: datetime) -> AccountReading | None:
         """The one reader of what ``read_account`` hands back, for every use of it: an ``AccountReading`` of that very class,
         or ``None`` for no reading. Anything else it gives, and any failure of its own, is an unread reading. This is where
-        a reading reaches the meter, whoever made it and whether or not it names a reset, so this is where the store is
-        told when it was taken (``OwnerScope.keep_reading``): before the meter looks, and, as the store asks here before
-        it stamps or admits (``ask_reader``), before any settlement or adoption written after the reading was taken."""
+        a reading reaches the meter, whoever made it and whether or not it names a reset, so the store is told here when it
+        was taken (``tell``), if its reader has not told it already. A reading dated where no stamp could follow it is
+        unread: the store refuses the time, and nothing is reserved on it."""
         now = utc(now)
         if self._read_account is None:
             return None
@@ -276,8 +299,54 @@ class BudgetMeter:
             return None
         if type(given) is not AccountReading:
             return AccountReading(unread=f"what reads the account gave a {kind_of(given)}, not a reading")
-        self.scope.keep_reading(provider, given.read_at)
+        try:
+            self.tell(provider, given.read_at)
+        except ValueError:                 # no moment is left after it (``OwnerScope.keep_reading``)
+            return AccountReading(unread="its reading is dated at a time no settlement could be stamped after")
         return given
+
+    def tell(self, provider: str, read_at: datetime | None) -> None:
+        """Tell the store when a reading of the provider's account was taken: the one way a reading's time reaches it
+        (``OwnerScope.keep_reading``). A reader bound to this meter calls it as it takes a reading, before the reading is
+        anyone's to use, so another meter or process on the same store stamps after it from that moment; ``_account`` calls
+        it for every reading the meter is given, which is when a reading from a caller's own callback is taken."""
+        read_at = utc(read_at)
+        self.scope.keep_reading(provider, read_at)
+
+    def _hear(self, provider: str, now: datetime) -> None:
+        """What the store asks before it stamps a settlement (``OwnerScope.ask_reader``): the reading the account's reader
+        would give now is given, and so recorded, first. Inside a look of this meter's nobody is asked: the look has been
+        given its one reading, and a second would be recorded without being decided on."""
+        now = utc(now)
+        if provider not in self._looking:
+            self._account(provider, now)
+
+    def _week_end(self, provider: str, reading: AccountReading | None) -> datetime | None:
+        """When the week a reading's figure is of ends, where the reading does not say: the end of the week that the store's
+        own grid (the settings' week, before any is kept) puts the time it was read at. ``None`` for a reading that names
+        its reset, has no time, is unread or is none: its own word, or nothing, decides."""
+        window = self.windows.get(provider)
+        if window is None or reading is None or reading.unread or reading.resets_at is not None or reading.read_at is None:
+            return None
+        try:
+            grid = self.scope.kept_grid(provider)[0]
+        except ValueError:                 # a grid that does not read is refused where admission looks (``_look``)
+            grid = None
+        return (window if grid is None else window.aligned(grid)).week_end(reading.read_at)
+
+    def stands(self, provider: str, reading: AccountReading | None, now: datetime) -> AccountReading | None:
+        """What ``reading`` still says of ``provider`` at ``now``: ``standing``, with the week's end this meter's store gives
+        a figure whose reading names none (``_week_end``). The one rule for whether a figure holds, for this meter's looks,
+        for ``next_room`` and for a reader bound to this meter. A reading whose time is past what a week can be counted
+        from is unread."""
+        now = utc(now)
+        name = exact_text(provider)
+        if name is None:
+            return AccountReading(unread=f"a provider is named by text, not a {kind_of(provider)}")
+        try:
+            return standing(reading, now, self._week_end(name, reading))
+        except OverflowError:
+            return AccountReading(unread="its reading is dated past what a week can be counted from")
 
     def limit_reached(self, provider: str, until: datetime) -> None:
         """A limit a request ran into, which the account's figure may not show yet: it stands as a reported one does. It
@@ -293,7 +362,7 @@ class BudgetMeter:
         could not be read is looked at again a refresh later."""
         now = utc(now)
         soonest = min(window.next_day(now) for window in self.windows.values())
-        unread = any((seen := standing(self._account(provider, now), now)) is not None and seen.unread
+        unread = any((seen := self.stands(provider, self._account(provider, now), now)) is not None and seen.unread
                      for provider in self.windows)
         return min(soonest, now + REFRESH) if unread else soonest
 
@@ -304,30 +373,34 @@ class BudgetMeter:
         Any reservation of this provider written with no span, as the book code wrote them and the operator's own
         ``reserve`` still can, is read into its span first (``OwnerScope.adopt_books``), inside the same transaction when
         this decides an admission; one that cannot be read refuses every reservation, with why, until a person looks. The
-        account is read before that, so the store knows of the reading before it stamps any charge it finds. Only a reset
-        the reading itself names moves the kept week. A figure whose reading names none is of the week the store's own
-        grid puts that reading in, and stands no longer than that week."""
+        account is read before that, once, so the store knows of the reading before it stamps any charge it finds, and
+        that stamp asks for no other. Only a reset the reading itself names, still ahead, moves a kept week; a week's end
+        already past says where the weeks fall only while the store keeps none. Whether the figure still stands is the
+        one rule (``stands``): a figure whose reading names no reset is of the week the store's own grid puts it in."""
         now = utc(now)
         window = self.windows.get(provider)
         if window is None:
             return Admission(provider, 0, 0.0, 0.0, 0.0, False, reason=f"no budget window for {provider!r}"), None, now
         given = self._account(provider, now)
-        refused = self.scope.adopt_books((provider,)).get(provider, "")
+        self._looking.add(provider)
+        try:
+            refused = self.scope.adopt_books((provider,)).get(provider, "")
+        finally:
+            self._looking.discard(provider)
         try:
             grid, grid_at = self.scope.kept_grid(provider)
         except ValueError as exc:
             grid, grid_at, refused = None, None, refused or f"where {provider}'s weeks fall cannot be read from operator.db ({exc})"
-        account = standing(given, now)
-        reset = (account.resets_at or account.ended_at) if account is not None else None
-        named = account is not None and account.resets_at is not None      # the reading itself says when its week ends
+        own = standing(given, now)         # by the reading's own word alone, which is all that may move the kept week
+        reset = (own.resets_at or own.ended_at) if own is not None else None
+        named = own is not None and own.resets_at is not None              # the reading itself says when its week ends
         if reset is not None:              # a grid moves only forward: the store keeps the newer reading's (``keep_grid``)
             read_at = given.read_at if given is not None else None
             if (grid, grid_at) != (reset, read_at):
-                grid, grid_at = self.scope.keep_grid(provider, reset, read_at)
+                grid, grid_at = self.scope.keep_grid(provider, reset, read_at, past=not named)
         if grid is not None:
             window = self.windows[provider] = window.aligned(grid)
-        if account is not None and not account.unread and account.resets_at is None and account.read_at is not None:
-            account = standing(replace(account, resets_at=window.week_end(account.read_at)), now)
+        account = self.stands(provider, given, now)
         if account is not None and account.unread:
             refused = refused or (f"{provider}'s account is not known ({account.unread}), so nothing is reserved on it until "
                                   "it is read again")
