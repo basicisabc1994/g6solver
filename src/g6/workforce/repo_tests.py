@@ -2323,11 +2323,20 @@ def _test_id(repo: Path, test: str, what: str = "test") -> str:
 def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int, network: bool,
          mutant: tuple[str, str] | None = None, copied: bool = False, python: str = "",
          scratch_dir: Path | None = None, deadline: float | None = None, receipt: bool = False,
-         require_isolation: bool = False, links: dict | None = None) -> dict:
+         require_isolation: bool = False, links: dict | None = None, observation: dict | None = None) -> dict:
     """The shared execution path; only old-test replay uses a copy without git metadata. ``require_isolation``: a run
     no backend confines is refused (``G6_E_ISOLATION_UNAVAILABLE``) before it starts, even where the person allowed
     unconfined runs (verification search's proposed checks). ``links``: what the copy (``repository_copy``'s
-    ``report``) left out or copied in a link's place, added to the result as it is."""
+    ``report``) left out or copied in a link's place, added to the result as it is. ``observation`` selects G6's
+    isolated scenario runner before any pytest configuration or repository interpreter is consulted; recorded
+    executors at this seam therefore control confirmed checks and behaviour probes too."""
+    if observation is not None:
+        from g6.harness import behaviour_runner
+
+        if len(tests) != 1 or not copied or network or not require_isolation:
+            raise RepoRefused("G6_E_INPUT_VALIDATION", "an observation needs one copied, isolated, offline run")
+        return behaviour_runner.run(repo, observation, tests[0], timeout_s=timeout_s,
+                                    deadline=deadline if deadline is not None else time.monotonic() + timeout_s)
     if not tests:
         raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["no_tests"])
     ids = [_test_id(repo, test) for test in tests]
@@ -3150,15 +3159,29 @@ def repository_copy(repo: Path, *, deadline: float, before: dict[str, str] | Non
 def _copy_snapshot(repo: Path, *, deadline: float | None = None) -> dict[str, str]:
     """A copy's own record of its files, read before and after a run in it: each file's SHA-256, and each link the copy
     holds (``_copy_links``) as its own text, never followed."""
+    from g6.integrity import in_cache
+
     found, size = {}, 0
     for folder, dirs, files in os.walk(repo):
         _copy_caps(len(found), size, deadline)
+        for name in dirs:
+            rel = (Path(folder) / name / '_').relative_to(repo)
+            if in_cache(rel):
+                raise CopyNotRun("G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: a cache directory is present in the copy: "
+                                 + rel.parent.as_posix())
         ignored = _copy_ignored(folder, dirs + files)
         for name in sorted(ignored):
             if _linked(Path(folder) / name):
                 _copy_caps(len(found) + 1, size, deadline)
                 found[(Path(folder) / name).relative_to(repo).as_posix()] = "link:" + os.readlink(Path(folder) / name)
-        dirs[:] = [name for name in dirs if name not in ignored]
+            elif not (Path(folder) / name).is_dir():
+                rel = (Path(folder) / name).relative_to(repo)
+                kind = 'cache' if in_cache(rel) else 'excluded'
+                raise CopyNotRun(f"G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: an {kind} input is present in the copy: "
+                                 + rel.as_posix())
+        # Copy exclusions cannot prune an execution manifest: every ordinary directory can hold importable source.
+        # Links retain their own text above and are checked by the existing complete-copy binding.
+        dirs[:] = [name for name in dirs if not _linked(Path(folder) / name)]
         for name in files:
             if name not in ignored:
                 path = Path(folder) / name

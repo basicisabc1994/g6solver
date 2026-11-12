@@ -111,6 +111,7 @@ from typing import Callable, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from g6.core import component_process
+from g6.core.ledger import digest
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.git_name import shown
 from g6.harness import verification_controller
@@ -353,6 +354,8 @@ def proposed_checks(value, requirement_ids) -> list[ProposedCheck]:
         except ValidationError as exc:
             first = exc.errors()[0]
             raise ValueError(f"{where}: {'.'.join(str(p) for p in first['loc']) or 'check'}: {first['msg']}") from exc
+        # A proposal is always its Python text, including when a Python caller supplies a compiler-owned str subclass.
+        one = one.model_copy(update={"source": str.__str__(one.source)})
         problem = _file_problem(one.file) or _source_problem(one.source) or (
             "test must name a test inside the file as pytest does: test_x, TestX::test_x or test_x[case]"
             if one.test and not _NODE.fullmatch(one.test) else "")
@@ -430,32 +433,126 @@ def reproduce(node: str, ran: dict) -> dict:
             **{key: ran[key] for key in ("python", "interpreter_source") if key in ran}}
 
 
+#: A run on the patch that was not made on the artefact's bytes (``_run_check``'s ``artefact``): what it says, and the
+#: key its record holds, so the review reads it as the tree changing while it ran.
+NOT_THE_ARTEFACT = ("the working tree changed while G6 copied it to run the check, so the copy is not the tree under "
+                    "review (its digest is not the artifact digest): nothing was run on it")
+NOT_THE_ARTEFACT_KEY = "not_the_artefact"
+
+
+class ExecutionSnapshot(dict):
+    """The unchanged sparse snapshot plus a separately versioned full executable-byte record."""
+
+    def __init__(self, sparse: dict, files: dict[str, str]):
+        super().__init__(sparse)
+        self._execution = _canonical({"version": "execution-artifact.v1", "artifact_digest": digest(sparse),
+                                      "files": files})
+
+    @property
+    def execution(self) -> dict:
+        return json.loads(self._execution)
+
+def bind_execution(change: repo_tests.Change, sparse: dict[str, str], *, deadline: float) -> ExecutionSnapshot:
+    """Capture raw bytes before any review execution. Git-normalised blob bytes are never substituted for them."""
+    return ExecutionSnapshot(sparse, _copy_manifest(change, deadline=deadline))
+
+def _copy_manifest(change: repo_tests.Change, *, deadline: float,
+                   artefact: dict[str, str] | None = None) -> dict[str, str]:
+    if artefact is not None:
+        if not isinstance(artefact, ExecutionSnapshot) or artefact.execution["artifact_digest"] != digest(artefact):
+            raise OSError("G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: no execution-artifact.v1 captured before execution")
+        return artefact.execution["files"]
+    root = change.repo
+    stage = repo_tests._git(root, "ls-files", "--stage", "-z")
+    if repo_tests._gitlinks(root, stage) or any(one.startswith("120000 ") for one in repo_tests._paths(stage)):
+        raise OSError("G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: links need a materialised-byte adapter")
+    known = repo_tests._paths(repo_tests._git(root, "ls-files", "-co", "--exclude-standard", "-z"))
+    generated, _ = repo_tests._generated_files(root, base=change.base_commit, deadline=deadline)
+    found = {}
+    size = 0
+    for rel in sorted(set(known) | set(generated)):
+        parts = Path(rel).parts
+        if any(part in repo_tests._copy_ignored(str(root.joinpath(*parts[:i])), [part])
+               for i, part in enumerate(parts)):
+            continue
+        path = root / repo_tests.inside(root, rel, "file")
+        if not path.is_file():
+            continue
+        size += path.stat().st_size
+        repo_tests._copy_caps(len(found) + 1, size, deadline)
+        value = hashlib.sha256(generated[rel]).hexdigest() if rel in generated else repo_tests._digest(path)
+        if not re.fullmatch("[0-9a-f]{64}", value):
+            raise OSError("G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: unreadable executable bytes")
+        found[rel] = value
+    return found
+
+def _same_copy(copied: dict[str, str], expected: dict[str, str], placed: str) -> bool:
+    """Every copied file, including unchanged dependencies; the fixed generated overlay is bound separately."""
+    return (all(re.fullmatch("[0-9a-f]{64}", value) for value in expected.values())
+            and {k: v for k, v in copied.items() if k != placed} == expected)
+
+
+def _copy_differs(copy: Path, artefact: dict[str, str], placed: str) -> bool:
+    """The historical sparse comparison, only for ordinary, unconfirmed proposed tests."""
+    return any(repo_tests._digest(copy / rel) != value for rel, value in artefact.items()
+               if not rel.startswith("\0") and rel != placed)
+
+
 def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *, at_base: bool,
-               timeout_s: int, roots: tuple[str, ...] = ()) -> dict:
-    """One run of a proposed check, confined, with no network, in a fresh scratch copy with no git metadata and only
-    that check overlaid at ``placed``: of the patched tree, or at the base commit's code (``repo_tests.run_at_base``).
-    It runs as the stated checks do: ``roots`` (the review's import roots) first on the import path, the Python
-    ``repo_tests.interpreter`` chooses (``G6_REPO_PYTHON``, else the repository's own), and the variables
-    ``G6_REPO_ENV`` gives. A run no backend confines is refused (raised), never run unconfined."""
-    overlay = {placed: source}
-    if at_base:
+               timeout_s: int, roots: tuple[str, ...] = (), artefact: dict[str, str] | None = None) -> dict:
+    """Ordinary proposed tests retain their executor; confirmed checks and probes use G6's observation runner."""
+    from contextlib import nullcontext
+    from g6.harness import behaviour_runner
+
+    generated = source.observation if type(source) is behaviour_runner.ExecutableSource else None
+    owned = generated is not None
+    overlay = {} if owned else {placed: source}
+    if at_base and not owned:
         return repo_tests.run_at_base(change, [node], roots=roots, timeout_s=timeout_s, overlay=overlay,
-                                      require_isolation=True)
+                                     require_isolation=True)
     deadline = time.monotonic() + timeout_s
+    refused = {"verdict": "not_run", "said": NOT_THE_ARTEFACT, NOT_THE_ARTEFACT_KEY: True}
     try:
         report: dict = {}
+        expected = (_copy_manifest(change, deadline=deadline, artefact=artefact)
+                    if artefact is not None and (owned or isinstance(artefact, ExecutionSnapshot)) else None)
+        if artefact is not None and repo_tests._moved(artefact, repo_tests.snapshot(change.repo)):
+            return refused
         with repo_tests.repository_copy(change.repo, deadline=deadline, before=overlay, report=report,
                                         base=change.base_commit) as copy:
-            return repo_tests._run(copy, [node], roots=roots, timeout_s=timeout_s, network=False, copied=True,
-                                   python=repo_tests.interpreter(change.repo), scratch_dir=copy.parent,
-                                   deadline=deadline, require_isolation=True, links=report)
+            copied = repo_tests._copy_snapshot(copy, deadline=deadline) if expected is not None else {}
+            if artefact is not None and (repo_tests._moved(artefact, repo_tests.snapshot(change.repo))
+                                         or (not _same_copy(copied, expected, "" if owned else placed)
+                                             if expected is not None else _copy_differs(copy, artefact, placed))):
+                return refused
+            revision = (repo_tests._base_revision(change, copy, deadline, keep=frozenset({placed}),
+                        materialised=report.get("links_materialised")) if at_base else nullcontext())
+            with revision:
+                if at_base and expected is not None:
+                    copied = repo_tests._copy_snapshot(copy, deadline=deadline)
+                if owned:
+                    ran = repo_tests._run(copy, [node], roots=(), timeout_s=timeout_s, network=False, copied=True,
+                                          deadline=deadline, require_isolation=True, observation=generated)
+                else:
+                    ran = repo_tests._run(copy, [node], roots=roots, timeout_s=timeout_s, network=False, copied=True,
+                                          python=repo_tests.interpreter(change.repo), scratch_dir=copy.parent,
+                                          deadline=deadline, require_isolation=True, links=report)
+            if expected is not None and ran.get("source_before") and ran["source_before"] != digest(copied):
+                return refused
+            if expected is not None and not ran.get('source_before') and ran.get('verdict') in {'passed', 'failed'}:
+                return {'verdict': 'not_run', 'said': 'G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: '
+                        'the run did not record its starting bytes'}
+            if expected is not None:
+                ran['execution_artifact'] = {'version': 'execution-run.v1', 'artifact_digest': digest(artefact),
+                    'base_commit': change.base_commit if at_base else '', 'files': copied}
+            return ran
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
     except repo_tests.RepoRefused as exc:
         if exc.code == ISOLATION_UNAVAILABLE:
             raise
         return {"verdict": "not_run", "said": str(exc)}
-    except (OSError, repo_tests.CopyNotRun) as exc:
+    except (OSError, ValueError, repo_tests.CopyNotRun) as exc:
         return {"verdict": "not_run", "said": str(exc)}
 
 
@@ -544,6 +641,14 @@ def reading(ran: dict, node: str) -> dict:
     operating-system error, a failure that does not say how); with the run's ``verdict``, ``detail``, ``seconds``,
     ``tree_digest`` (its copy as the run began), what it ran with (``RAN_WITH``) and, for a pass, its ``observations``
     (None when it recorded none)."""
+    if "g6_observation" in ran:
+        reading = ran["g6_observation"]
+        return {"result": reading["result"], "detail": reading["detail"], "verdict": ran["verdict"],
+                "seconds": ran["seconds"], "tree_digest": ran["source_before"],
+                **{key: ran[key] for key in RAN_WITH if key in ran},
+                'execution_artifact': ran.get('execution_artifact'),
+                'bootstrap_sha256': ran.get('bootstrap_sha256', ''),
+                "observations": reading.get("observations"), "owned_probe": reading.get("owned_probe", False)}
     verdict, output = ran.get("verdict"), ran.get("output") or ""
     found = {"verdict": verdict, "seconds": float(ran.get("seconds") or 0.0),
              "tree_digest": ran.get("source_before") or "", **{key: ran[key] for key in RAN_WITH if key in ran}}
@@ -717,10 +822,12 @@ PATCH_ONLY = "an instance whose intent is change is replayed on the patch only"
 
 
 def _activity(one: ProposedCheck, placed: str, origin: Origin = FREE_FORM) -> dict:
+    from g6.harness import behaviour_runner
+
     node = _node(one, placed)
-    return {"activity": origin.activity, "check": one.id, "requirement": one.requirement_id, "intent": one.intent,
+    return behaviour_runner.Activity({"activity": origin.activity, "check": one.id, "requirement": one.requirement_id, "intent": one.intent,
             "provenance": PROPOSED, "proposed_by": origin.proposed_by, "file": one.file, "placed": placed, "node": node,
-            "sha256": _sha(one.source), "runs": [], "seconds": 0.0, "model_calls": 0, **origin.about}
+            "sha256": _sha(one.source), "runs": [], "seconds": 0.0, "model_calls": 0, **origin.about})
 
 
 def not_run(checks: list[ProposedCheck], placed: dict[str, str], why: str,
@@ -742,7 +849,7 @@ def _bound(left: float) -> int:
 
 def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[str, str], *, deadline: float,
            artifact: str, origins: dict[str, Origin] | None = None, roots: tuple[str, ...] = (),
-           select: bool = False) -> Search:
+           select: bool = False, before: dict[str, str] | None = None) -> Search:
     """Run each proposed check on the patch and at the base commit (``_run_check``, with the review's import
     ``roots``), classify it, and say what it found; the stage stops when the review's deadline would be passed.
     ``origins``: the checks G6 compiled from template instances, by id (the others are free-form proposals).
@@ -759,8 +866,13 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
 
     def read(at_base: bool) -> dict:
         ran = _run_check(change, activity["placed"], one.source, node, at_base=at_base,
-                         timeout_s=_bound(deadline - _clock()), **rooted)
+                         timeout_s=_bound(deadline - _clock()), **rooted,
+                         **({'artefact': before} if before is not None and origin.template == 'differential.v1' else {}))
         found = _guarded(change, ran, reading(ran, node))
+        if origin.template == "differential.v1":
+            activity.owned_runs.append(found.get("owned_probe") is True and bool(ran.get('execution_artifact')))
+            if ran.get('execution_artifact'):
+                activity.execution_artifacts.append(ran['execution_artifact'])
         if origin.keep_observations and found["result"] == "failed":   # a replay says which traces broke
             found = {**found, "observations": _observations(ran.get("output") or "")}
         return found
@@ -821,6 +933,8 @@ LOADED_ELSEWHERE = ("the run loaded changed code from outside the tree it tested
 def _guarded(change: repo_tests.Change, ran: dict, found: dict) -> dict:
     """A run's reading (``reading``), or an error when the run loaded a module the change touches from outside the
     tree it tested (an installed copy), or cannot say what it loaded: it tested code the patch did not change."""
+    if "g6_observation" in ran:
+        return found  # the G6 runner resolves the entry point in the copy, without installed repository code
     elsewhere = _loaded_elsewhere(change, ran)
     if not elsewhere:
         return found

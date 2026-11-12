@@ -19,7 +19,6 @@ from pathlib import Path
 import pytest
 
 from g6.research.echa import (
-    FLAG,
     AccessDenied,
     ClaimRecord,
     Episode,
@@ -27,7 +26,6 @@ from g6.research.echa import (
     Ledger,
     LedgerCorrupt,
     LedgerError,
-    ResearchDisabled,
     StandardRef,
     Vault,
     digest,
@@ -68,7 +66,7 @@ def claim(evidence_ids, claim_id: str = "c1", **over) -> ClaimRecord:
 
 @pytest.fixture
 def on(monkeypatch):
-    monkeypatch.setenv(FLAG, "1")
+    monkeypatch.delenv("G6_ECHA_RESEARCH", raising=False)   # nothing set: the kernel has no flag (G6 0.3)
 
 
 @pytest.fixture
@@ -349,10 +347,11 @@ def test_k10_the_trace_reports_whether_the_ledger_was_anchored_to_a_kept_head(le
 # --- the small ones ---------------------------------------------------------------------------------------------------
 
 
-def test_every_write_checks_the_flag_even_on_a_ledger_built_while_it_was_on(led, monkeypatch) -> None:
-    monkeypatch.delenv(FLAG)
-    with pytest.raises(ResearchDisabled):
-        led.add_standard(StandardRef.from_text("s2", "another", "p", ()))
+def test_a_write_needs_no_flag_and_the_old_variable_changes_nothing(led, monkeypatch) -> None:
+    # G6 0.3 removed the flag that every write checked; a write now depends on nothing in the environment
+    monkeypatch.setenv("G6_ECHA_RESEARCH", "0")
+    led.add_standard(StandardRef.from_text("s2", "another", "p", ()))
+    assert led.get("standard", "s2")["text"] == "another"
 
 
 def test_an_incident_cannot_be_given_another_type_by_a_field(led) -> None:

@@ -496,14 +496,15 @@ def multi_step(one) -> bool:
 
 class TemplateInstance(BaseModel):
     """A template instance: ``{id, template, requirement_id, intent, bindings}``, and where the bindings came from
-    (``provenance``: a request's are ``stated``; only G6's own code sets ``model_hypothesis``)."""
+    (``provenance``: a request's are ``stated``; only G6's own code sets ``model_hypothesis``, or ``person_confirmed``
+    for the one example.v1 check a person's confirmed answer compiles into, ``g6.harness.confirmed_expectation``)."""
     model_config = ConfigDict(extra="forbid")
     id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$")
     template: str = Field(min_length=1, max_length=100)
     requirement_id: str = Field(min_length=1, max_length=200)
     intent: Literal["preserve", "change"]
     bindings: dict[str, Any]
-    provenance: Literal["stated", "model_hypothesis"] = "stated"
+    provenance: Literal["stated", "model_hypothesis", "person_confirmed"] = "stated"
 
 
 # --- the tree under review, read from files only ------------------------------------------------------------------------
@@ -757,6 +758,12 @@ def _side(one: TemplateInstance) -> str:
     return PATCH if one.intent == "change" and one.template != "differential.v1" else BASE
 
 
+def _located(target: Target) -> list[str]:
+    """A name as example.v1's check loads it: its spec, and for a module's name the file of the tree it resolved to,
+    which the module the check's import returns must be (``_load``'s origin rule)."""
+    return [*target.spec(), target.file] if target.kind == "module" else target.spec()
+
+
 def _example(tree: Tree, b: ExampleBindings, side: str) -> Applied:
     target = resolve(tree, b.function, side)
     notes = _checked(b.function, target, [(case.args, case.kwargs, f"case {index}")
@@ -765,13 +772,13 @@ def _example(tree: Tree, b: ExampleBindings, side: str) -> Applied:
     for case in b.cases:
         entry = {"args": case.args, "kwargs": case.kwargs}
         if "raises" in case.model_fields_set:
-            entry.update(expect="raises", error=_error_target(tree, case.raises, side).spec())
+            entry.update(expect="raises", error=_located(_error_target(tree, case.raises, side)))
         elif "effect" in case.model_fields_set:
             entry.update(expect="effect", argument=case.effect.argument, value=case.effect.equals)
         else:
             entry.update(expect="returns", value=case.returns)
         cases.append(entry)
-    return Applied({"function": target.spec(), "cases": cases}, notes)
+    return Applied({"function": _located(target), "cases": cases}, notes)
 
 
 def _relation(tree: Tree, b: RelationBindings, side: str) -> Applied:
@@ -893,6 +900,7 @@ import copy
 import hashlib
 import importlib
 import json
+import os
 import re
 
 import pytest
@@ -900,12 +908,29 @@ import pytest
 
 _COMMON = """
 
+_TOP = os.getcwd()
+
+
+class _Elsewhere(Exception):
+    # the module a name names came from somewhere other than the file of the tree G6 resolved it to (the standard
+    # library, a module loaded before, an installed copy): what the check would run is not the repository's code
+    pass
+
+
 def _load(spec):
-    # spec is [kind, module, attribute]: ["builtin", "", "ValueError"], or ["module", "package.module", "name"]
-    kind, module, attribute = spec
+    # spec is [kind, module, attribute]: ["builtin", "", "ValueError"], or ["module", "package.module", "name"]; with a
+    # fourth part, the file of the tree G6 resolved the module to, from the top folder: the module the import returns
+    # must be that file, or nothing of it is used (_Elsewhere)
+    kind, module, attribute = spec[:3]
     if kind == "builtin":
         return getattr(builtins, attribute)
-    return getattr(importlib.import_module(module), attribute)
+    found = importlib.import_module(module)
+    if len(spec) > 3:
+        where = getattr(found, "__file__", None) or ""
+        wanted = os.path.join(_TOP, *spec[3].split("/"))
+        if not where or os.path.normcase(os.path.realpath(where)) != os.path.normcase(os.path.realpath(wanted)):
+            raise _Elsewhere(module + " is not " + spec[3] + " of the tree under review")
+    return getattr(found, attribute)
 
 
 def _error(spec):
@@ -965,9 +990,12 @@ def _fail(failures, raised):
 _EXAMPLE = """
 
 def test_example():
-    function = _load(BINDINGS["function"])
-    errors = {index: _error(case["error"]) for index, case in enumerate(BINDINGS["cases"])
-              if case["expect"] == "raises"}
+    try:
+        function = _load(BINDINGS["function"])
+        errors = {index: _error(case["error"]) for index, case in enumerate(BINDINGS["cases"])
+                  if case["expect"] == "raises"}
+    except _Elsewhere as exc:   # not the repository's code: no result, never a pass or a failure of it
+        pytest.skip("G6: " + str(exc))
     failures, raised = [], []
     for index, case in enumerate(BINDINGS["cases"]):
         args, kwargs = copy.deepcopy(case["args"]), copy.deepcopy(case["kwargs"])
@@ -1288,9 +1316,119 @@ def test_replay(capsys):
 """
 
 
+_LEGACY_HEADER = """\
+# Generated by G6 from the fixed text of a reviewed template. Everything the caller stated is in BINDINGS, one
+# Python literal; nothing else here comes from the caller. Run it with pytest from the top folder of a copy of the
+# repository: it imports the repository's code by the names BINDINGS holds.
+import builtins
+import collections.abc
+import copy
+import hashlib
+import importlib
+import json
+import re
+
+import pytest
+"""
+
+_LEGACY_COMMON = """
+
+def _load(spec):
+    # spec is [kind, module, attribute]: ["builtin", "", "ValueError"], or ["module", "package.module", "name"]
+    kind, module, attribute = spec
+    if kind == "builtin":
+        return getattr(builtins, attribute)
+    return getattr(importlib.import_module(module), attribute)
+
+
+def _error(spec):
+    found = _load(spec)
+    if not (isinstance(found, type) and issubclass(found, BaseException)):
+        raise TypeError(spec[2] + " is not an exception type")
+    return found
+
+
+def _name(kind):
+    module = getattr(kind, "__module__", None) or ""
+    name = getattr(kind, "__qualname__", None) or getattr(kind, "__name__", None) or "?"
+    return name if module == "builtins" else module + "." + name
+
+
+def _shown(value, limit=200):
+    try:
+        text = repr(value)
+    except Exception as exc:
+        text = "<a value whose repr raised " + _name(type(exc)) + ">"
+    return text if len(text) <= limit else text[:limit - 3] + "..."
+
+
+def _raised(exc):
+    # an exception, its type at the start of a line, so a refusal by the run's boundary reads as one
+    try:
+        said = str(exc)
+    except Exception:
+        said = ""
+    return _name(type(exc)) + ": " + _shown(said)
+
+
+def _json(value):
+    # the value as JSON writes it, keys sorted, or None when it is not JSON data
+    try:
+        return json.dumps(value, sort_keys=True, allow_nan=False)
+    except (TypeError, ValueError, RecursionError):
+        return None
+
+
+def _same(left, right):
+    # equal as JSON writes both, or, where one is not JSON data, by ==
+    one, other = _json(left), _json(right)
+    if one is not None and other is not None:
+        return one == other
+    return bool(left == right)
+
+
+def _fail(failures, raised):
+    # one line that says what failed, then each exception raised, its type first
+    if failures:
+        more = len(failures) - 5
+        summary = "; ".join(failures[:5]) + ("; and %d more" % more if more > 0 else "")
+        pytest.fail("\\n".join([summary] + raised[:5]))
+"""
+
+_LEGACY_EXAMPLE = """
+
+def test_example():
+    function = _load(BINDINGS["function"])
+    errors = {index: _error(case["error"]) for index, case in enumerate(BINDINGS["cases"])
+              if case["expect"] == "raises"}
+    failures, raised = [], []
+    for index, case in enumerate(BINDINGS["cases"]):
+        args, kwargs = copy.deepcopy(case["args"]), copy.deepcopy(case["kwargs"])
+        try:
+            result = function(*args, **kwargs)
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            if index in errors and isinstance(exc, errors[index]):
+                continue
+            failures.append("case %d raised %s" % (index, _name(type(exc))))
+            raised.append(_raised(exc))
+            continue
+        if index in errors:
+            failures.append("case %d returned %s where %s was expected" % (index, _shown(result),
+                                                                           _name(errors[index])))
+        elif case["expect"] == "returns" and _json(result) != _json(case["value"]):
+            failures.append("case %d returned %s, expected %s" % (index, _shown(result), _shown(case["value"])))
+        elif case["expect"] == "effect" and _json(args[case["argument"]]) != _json(case["value"]):
+            failures.append("case %d left argument %d as %s, expected %s" % (
+                index, case["argument"], _shown(args[case["argument"]]), _shown(case["value"])))
+    _fail(failures, raised)
+"""
+
 def _text(ident: str, body: str) -> str:
     """A template's fixed text: the header, its id, the shared helpers, the slot for the bindings, and its body."""
-    text = f"{_HEADER}\nTEMPLATE = {ident!r}\n{_COMMON}\n\nBINDINGS = {SLOT}\n{body}"
+    header, common = (_HEADER, _COMMON) if ident == "example.v1" else (_LEGACY_HEADER, _LEGACY_COMMON)
+    text = f"{header}\nTEMPLATE = {ident!r}\n{common}\n\nBINDINGS = {SLOT}\n{body}"
     assert text.count(SLOT) == 1 and text.isascii()
     return text
 
@@ -1298,6 +1436,17 @@ def _text(ident: str, body: str) -> str:
 def compile_text(definition: TemplateDefinition, data: dict) -> str:
     """The check ``definition``'s fixed text gives for ``data``: the text with the bindings written, once, as one
     literal (``ascii``). A literal that does not read back as ``data`` is refused (``ValueError``)."""
+    if definition.bindings is ExampleBindings and definition is not _CONFIRMED_EXAMPLE:
+        # The ordinary fixed text uses its original three-part module specs. Keep the projection at the compiler,
+        # so its public template, compiled source and identity name exactly the same bytes.
+        data = {**data, "function": data["function"][:3], "cases": [
+            {**case, **({"error": case["error"][:3]} if "error" in case else {})}
+            for case in data["cases"]]}
+    if "scenario" in data:
+        from g6.harness.executable_scenario import Scenario
+
+        scenario = Scenario(data["scenario"].encode("ascii"))
+        return scenario.source(data["option"]) if "option" in data else scenario.program
     literal = ascii(data)
     if ast.literal_eval(literal) != data:
         raise ValueError("the bindings do not read back as the same literal")
@@ -1549,7 +1698,7 @@ def instance_digest(one: TemplateInstance) -> str:
     """The SHA-256 that cites an instance: its template's id and version, the digest of the template's fixed text, and
     the instance's requirement, intent, bindings and their provenance, as canonical JSON; for access_rule.v1's
     multi-step form, the template it goes through and the digest of that template's fixed text too."""
-    definition = REGISTRY[one.template]
+    definition = instance_definition(one)
     body = {"template": one.template, "template_text_sha256": definition.text_sha256, "id": one.id,
             "requirement_id": one.requirement_id, "intent": one.intent, "bindings": one.bindings,
             "provenance": one.provenance}
@@ -1557,6 +1706,20 @@ def instance_digest(one: TemplateInstance) -> str:
         through = FORMAL_TEMPLATES["state_invariant.v1"]
         body["through"] = {"template": through.id, "template_text_sha256": through.text_sha256}
     return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=True).encode("utf-8")).hexdigest()
+
+
+_ORDINARY_EXAMPLE = dataclasses.replace(TEMPLATES["example.v1"], text=(
+    _LEGACY_HEADER + "\nTEMPLATE = 'example.v1'\n" + _LEGACY_COMMON + "\n\nBINDINGS = " + SLOT + "\n" + _LEGACY_EXAMPLE))
+
+
+_CONFIRMED_EXAMPLE = TEMPLATES["example.v1"]
+TEMPLATES["example.v1"] = _ORDINARY_EXAMPLE
+
+
+def instance_definition(one: TemplateInstance) -> TemplateDefinition:
+    """The base producer off the confirmed path; historical confirmed check digests retain their fixed text."""
+    return (_CONFIRMED_EXAMPLE if one.template == "example.v1" and one.provenance == "person_confirmed"
+            else REGISTRY[one.template])
 
 
 # --- preparing the instances of a review, before anything runs ------------------------------------------------------------
@@ -1595,12 +1758,19 @@ def compiled_check(root: Path, one: TemplateInstance, data: dict, notes: list[st
     (``compile_text``), as a check placed in the copies, and the origin its activity, reasons and reproduction name.
     ``ident``: the check's id when it is not the instance's (a further check of one instance); ``origin``: further
     fields of its ``Origin``."""
-    definition = definition or REGISTRY[one.template]
+    definition = definition or instance_definition(one)
     source = compile_text(definition, data)
     if len(source.encode("utf-8")) > vs.MAX_SOURCE_BYTES:
         raise Inapplicable("its compiled check would hold more than 64 kilobytes")
     check = vs.ProposedCheck(id=ident or one.id, requirement_id=one.requirement_id, intent=one.intent,
                              file=f"test_g6_{definition.id.split('.')[0]}.py", source=source)
+    from g6.harness.behaviour_runner import ExecutableSource
+
+    if type(source) is ExecutableSource:
+        check = check.model_copy(update={"source": source})
+    elif (one.template == "differential.v1" or
+          one.template == "example.v1" and one.provenance == "person_confirmed"):
+        check = check.model_copy(update={"source": ExecutableSource(source, data)})
     try:
         placed = vs.placements(root, [check])[check.id]
     except ValueError as exc:

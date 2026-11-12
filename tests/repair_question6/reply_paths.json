@@ -1,0 +1,834 @@
+{
+  "src/g6/harness/patch_review.py": {
+    "_each_once": [
+      "[rel for rel in unique if not any((other.startswith(rel.rstrip('/') + '/') for other in unique))]"
+    ],
+    "_ignored_asks/branches": [
+      "if files",
+      "if len(files) > IGNORED_SHOWN"
+    ],
+    "_ignored_asks": [
+      "asks"
+    ],
+    "infer/branches": [
+      "if ran.get('verdict') == 'passed' and ran.get('passed', 0) > 0 and (not ran.get('not_passed')) and (not ran.get('degraded'))"
+    ],
+    "infer": [
+      "Result.ok({'task': data.task, 'answer': data.claim, 'task_contract': data.task, 'evidence': evidence, 'verifier': {'status': 'not_run'}, 'completion_state': 'qualified-draft'})"
+    ],
+    "_execute/branches": [
+      "if change is not None"
+    ],
+    "_execute": [
+      "repo_tests.run_before(replace(change, before=texts), roots=roots, timeout_s=timeout_s, require_isolation=True)",
+      "repo_tests.run(root, ids, roots=roots, timeout_s=timeout_s, receipt=True, require_isolation=True)"
+    ],
+    "_execute_at_base": [
+      "repo_tests.run_at_base(change, ids, roots=roots, timeout_s=timeout_s, require_isolation=True)"
+    ],
+    "_rooted": [
+      "{'roots': roots} if roots else {}"
+    ],
+    "_rooted/branches": [
+      "if roots"
+    ],
+    "_import_roots/branches": [
+      "if not isinstance(values, (list, tuple)) or len(values) > MAX_IMPORT_ROOTS or (not all((isinstance(value, str) for value in values)))",
+      "raise _Refused('G6_E_INPUT_VALIDATION', f'import_roots must be a list of at most {MAX_IMPORT_ROOTS} folders inside the repository')",
+      "if '::' in value or not parts or (not (root / rel).is_dir()) or any((repo_tests._linked(root.joinpath(*parts[:end])) for end in range(1, len(parts) + 1)))",
+      "raise _Refused('G6_E_INPUT_VALIDATION', f'import root {value!r} must name a folder inside the repository, with no link on the way')"
+    ],
+    "_import_roots": [
+      "tuple(dict.fromkeys(found))"
+    ],
+    "_confined/branches": [
+      "if 'isolation' in ran and (not isolation.get('backend'))",
+      "raise _Refused(ISOLATION_UNAVAILABLE, f\"G6 assesses a patch only from test runs inside an operating-system boundary, and none confined this one ({isolation.get('why') or 'no backend'}), so its results are not used. {BOUNDARY_HELP} Run g6 doctor: it says what this computer needs.\")"
+    ],
+    "_confined": [
+      "ran"
+    ],
+    "_runner_changes/branches": [
+      "if name not in PYTEST_SECTIONS or rel in change.outside_links",
+      "if name == 'tox.ini'",
+      "if path.is_file()",
+      "except ValueError",
+      "if old != new",
+      "if old is None",
+      "if new is None"
+    ],
+    "_runner_changes.settings/branches": [
+      "if text is None",
+      "if found == {} and name == 'tox.ini'",
+      "if parser.has_section('pytest')",
+      "if name == 'pyproject.toml' and found == {}"
+    ],
+    "_runner_changes.settings": [
+      "None if name == 'pyproject.toml' and found == {} else found"
+    ],
+    "_runner_changes": [
+      "found"
+    ],
+    "_test_data": [
+      "[rel for rel in change.files if not rel.lower().endswith('.py') and any((part.lower() in TEST_DATA_FOLDERS for part in PurePosixPath(rel).parts[:-1]))]"
+    ],
+    "_patch_imports_missing/branches": [
+      "if not missing",
+      "if any((name.endswith('.py') for name in names))",
+      "if found[1]"
+    ],
+    "_patch_imports_missing": [
+      "[]",
+      "sorted((name for name in missing if any((name == mine or mine.startswith(name + '.') or name.startswith(mine + '.') for mine in added if not mine.startswith('.')))))"
+    ],
+    "_collection_errors": [
+      "set(_COLLECTING.findall(output.replace('\\\\', '/')))"
+    ],
+    "_names": [
+      "any((path == head or path.startswith(head + '/') for path in files))"
+    ],
+    "_inputs.bad": [
+      "_Refused('G6_E_INPUT_VALIDATION', message)"
+    ],
+    "_inputs/branches": [
+      "if not isinstance(task, str) or not task.strip()",
+      "raise bad('task must say what the patch is for')",
+      "if not isinstance(claim, str)",
+      "raise bad('claim must be text')",
+      "if not isinstance(tests, (list, tuple)) or not all((isinstance(t, str) for t in tests))",
+      "raise bad('tests must be a list of pytest node ids')",
+      "if sources is not None and (not (isinstance(sources, dict) and all((isinstance(k, str) and isinstance(v, str) for k, v in sources.items()))))",
+      "raise bad('sources must map source names to text')",
+      "if isinstance(timeout_s, bool) or not isinstance(timeout_s, int) or (not 1 <= timeout_s <= repo_tests.MAX_TIMEOUT_S)",
+      "raise bad(f'timeout_s must be a whole number of seconds from 1 to {repo_tests.MAX_TIMEOUT_S}')",
+      "if not isinstance(requirements, (list, tuple))",
+      "raise bad('requirements must be a list of {id, text, checks}')",
+      "if any((isinstance(item, dict) and set(SET_BY_G6) & set(item) for item in requirements))",
+      "raise bad('each requirement is {id, text, checks}: ' + ', '.join(SET_BY_G6) + ' are set by G6, never by a request')",
+      "except ValidationError",
+      "raise bad(f\"each requirement is {{id, text, checks}}: {exc.errors()[0]['msg']}\")",
+      "if intent is not None",
+      "except ValueError",
+      "raise bad(f'intent must be an intent contract: {exc}')",
+      "if len({r.id for r in stated}) != len(stated)",
+      "raise bad('requirement ids must be unique')",
+      "if proposed_checks is not None and proposed_checks != []",
+      "except ValueError",
+      "raise bad(str(exc))",
+      "if search is not None",
+      "except ValueError",
+      "raise bad(str(exc))",
+      "if template_instances is not None and template_instances != []",
+      "except ValueError",
+      "raise refused",
+      "if len(instances) + len(proposed) > verification_search.MAX_CHECKS",
+      "raise bad(f'at most {verification_search.MAX_CHECKS} checks in all, proposed checks and template instances together; {len(proposed) + len(instances)} were given')",
+      "if {one.id for one in instances} & {one.id for one in proposed}",
+      "raise bad('check ids must be unique across proposed checks and template instances')"
+    ],
+    "_inputs": [
+      "(stated, assumed, unmapped, proposed, instances, config)"
+    ],
+    "_covers": [
+      "node == check or node.startswith((check + '::', check + '[', check + '/'))"
+    ],
+    "_node/branches": [
+      "if failed or 'failed' in states",
+      "if 'skipped' in states",
+      "if phases.get('call') == 'passed'"
+    ],
+    "_node": [
+      "'failed'",
+      "'skipped'",
+      "'passed' if phases.get('call') == 'passed' else 'not_run'"
+    ],
+    "_not_found/branches": [
+      "if sep and (rest.strip() == check or rest.strip().endswith('/' + check))"
+    ],
+    "_not_found": [
+      "True",
+      "False"
+    ],
+    "_in_repository": [
+      "(lambda node: f'{prefix}/{node}') if prefix else lambda node: node"
+    ],
+    "_in_repository/branches": [
+      "if prefix"
+    ],
+    "_observed": [
+      "{check: found['verdict'] for check, found in _verdicts(collected, ran).items()}"
+    ],
+    "_verdicts/branches": [
+      "if run in UNTRUSTED",
+      "if run == repo_tests.RUN_INCONSISTENT",
+      "if 'failed' in states",
+      "if run == repo_tests.CRASHED",
+      "if 'skipped' in states",
+      "if dropped",
+      "if states == {'passed'}",
+      "if nodes",
+      "if run == 'timed_out'",
+      "if check in missing",
+      "if missing",
+      "if broken and (not _names(check, broken)) and (run in ('collection_error', repo_tests.FAILED))",
+      "if run == repo_tests.FAILED",
+      "if run == 'collection_error'",
+      "if said",
+      "if run == 'timed_out'",
+      "if said",
+      "if run in repo_tests.RAN or run == 'no_tests_collected'"
+    ],
+    "_verdicts": [
+      "found"
+    ],
+    "_record/branches": [
+      "if ran.get('loaded_complete') is False"
+    ],
+    "_record": [
+      "found"
+    ],
+    "_requirement/branches": [
+      "if req.merged_from",
+      "if c['verdict'] == 'collection_error'",
+      "if req.kind == 'preserve'",
+      "if not checks",
+      "if failing",
+      "if unrun and missing and any((c['verdict'] == 'collection_error' for c in checks))",
+      "if unrun"
+    ],
+    "_requirement": [
+      "{**out, 'status': NOT_ESTABLISHED, 'reason': 'no check was stated for this requirement', 'suggested_test': f'{test}: {req.text}'}",
+      "{**out, 'status': FAILED, 'reason': 'failed on its stated checks: ' + ', '.join(failing)}",
+      "{**out, 'status': NOT_ESTABLISHED, 'reason': 'stated checks did not run to a pass: ' + ', '.join(unrun), 'suggested_test': f\"check that {', '.join(missing)}, which the patch imports, is the package you intend and exists under that name, before installing anything; or add {test}: {req.text}\"}",
+      "{**out, 'status': NOT_ESTABLISHED, 'reason': 'stated checks did not run to a pass: ' + ', '.join(unrun), 'suggested_test': f'make those checks run here, or add {test}: {req.text}'}",
+      "{**out, 'status': PASSED_ON_CHECKS, 'reason': 'passed on its stated checks: ' + ', '.join((c['id'] for c in checks))}"
+    ],
+    "_unquoted/branches": [
+      "if len(name) >= 2 and name[0] == name[-1] == '\"'",
+      "if len(m[1]) == 3"
+    ],
+    "_unquoted": [
+      "name"
+    ],
+    "_diff_name": [
+      "'' if name == '/dev/null' else name[2:] if name[:2] in ('a/', 'b/') else name"
+    ],
+    "_diff_name/branches": [
+      "if name == '/dev/null'",
+      "if name[:2] in ('a/', 'b/')"
+    ],
+    "_diff_files/branches": [
+      "if old > 0 or new > 0",
+      "if parts",
+      "if not parts or line.startswith('diff --git ') or (line.startswith('--- ') and any((seen.startswith(('--- ', '@@')) for seen in lines)))",
+      "if line.startswith(('--- ', '+++ '))",
+      "if line.startswith(('rename from ', 'rename to ', 'copy from ', 'copy to '))",
+      "if (found := _HUNK_HEADER.match(line)) is not None",
+      "if found[1] is not None",
+      "if found[2] is not None"
+    ],
+    "_diff_files": [
+      "[(names - {''}, ''.join(lines)) for names, lines in parts]"
+    ],
+    "_scanned": [
+      "repo_tests.is_test_related(rel) or rel in related or name in RUNNER_FILES or (name in _CI_FILES) or (_weakening_kind(rel) == 'runner')"
+    ],
+    "_test_diff": [
+      "''.join((text for names, text in _diff_files(diff) if not names or any((_scanned(rel, related) for rel in names))))"
+    ],
+    "_gate": [
+      "{'verdict': found.get('verdict'), 'completion_state': composition['completion_state'], 'findings': list(found.get('findings') or []), 'evidence_basis': found.get('evidence_basis'), 'receipts': list(found.get('receipts') or []), 'warning_card': composition.get('warning_card'), 'assurance': composition['assurance']}"
+    ],
+    "_grounding/branches": [
+      "if not sources",
+      "if not claim.strip()",
+      "if got.get('result')"
+    ],
+    "_grounding": [
+      "{'status': 'not run', 'reason': 'no sources were given', 'decides_outcome': False}",
+      "{'status': 'not run', 'reason': 'no claim was given', 'sources': named, 'decides_outcome': False}",
+      "{'status': 'run' if got.get('result') else 'not run', 'completion_state': got['completion_state'], 'checks': (got.get('result') or {}).get('checks', []), 'warning_card': got.get('warning_card'), 'sources': named, 'decides_outcome': False, 'note': 'lexical support against caller-supplied text, not entailment; it does not decide the outcome'}"
+    ],
+    "review_patch/branches": [
+      "if confirmed is not None",
+      "if type(confirmed) is not ExpectationStandard",
+      "raise _Refused('G6_E_INPUT_VALIDATION', 'confirmed is the standard of the expectations the person confirmed (an ExpectationStandard)')",
+      "if expected_artifact_digest and artifact != expected_artifact_digest",
+      "if confirmed is not None and confirmed.expectations or any((one.template == 'differential.v1' for one in instances))",
+      "if proposed",
+      "except ValueError",
+      "raise _Refused('G6_E_INPUT_VALIDATION', str(exc))",
+      "if confirmed is not None and confirmed.expectations",
+      "except LETS_THROUGH",
+      "raise *",
+      "except repo_tests.RepoRefused",
+      "if exc.code == ISOLATION_UNAVAILABLE and (not isinstance(exc, _Refused))",
+      "if getattr(exc, 'help', '')",
+      "except (OSError, ValueError, TypeError)"
+    ],
+    "review_patch": [
+      "blocked_reply('[G6_E_PATCH_STALE] working tree differs from the supplied artifact digest')",
+      "_assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources, deadline=started + timeout_s, started=started, listed=listed, assumed=assumed, unmapped=unmapped, proposed=proposed, placed=placed, instances=instances, config=config, roots=roots, llm=llm, confirmed=confirmed if confirmed is not None and confirmed.expectations else None)",
+      "refused",
+      "blocked_reply(f'[{CODE}] {exc}')"
+    ],
+    "_left": [
+      "int(deadline - time.monotonic())"
+    ],
+    "_untrusted": [
+      "f\"tier {tier} run: {ran['verdict']}\" + (f': {said}' if said else '') + (f' ({changed})' if changed else '')"
+    ],
+    "_untrusted/branches": [
+      "if said",
+      "if changed"
+    ],
+    "_stage": [
+      "run(*args, **kwargs)",
+      "None"
+    ],
+    "_stage/branches": [
+      "except (*LETS_THROUGH, repo_tests.RepoRefused)",
+      "raise *",
+      "except Exception"
+    ],
+    "_assess.reason/branches": [
+      "if node"
+    ],
+    "_assess.unusable/branches": [
+      "if ran.get('verdict') not in repo_tests.RAN",
+      "if found is None"
+    ],
+    "_assess.unusable": [
+      "False",
+      "True",
+      "bool(found)"
+    ],
+    "_assess/branches": [
+      "if runner",
+      "if loadable",
+      "if len(loadable) > 10",
+      "if scan.loadable",
+      "if len(hidden) > 10",
+      "if not scan.complete",
+      "if not change.files",
+      "if change.unseen",
+      "if len(change.unseen) > 10",
+      "if data",
+      "if len(data) > 10",
+      "if present",
+      "if first['verdict'] in UNTRUSTED",
+      "if first['verdict'] == repo_tests.RUN_INCONSISTENT",
+      "if first['verdict'] == repo_tests.CRASHED",
+      "if first['verdict'] == 'timed_out'",
+      "if unusable(1, first)",
+      "if not ids",
+      "if verdicts[check]['verdict'] in DEFECTS",
+      "if verdicts[check]['verdict'] != 'passed' and check not in stated_ids",
+      "if config is not None and config['propose']",
+      "if any((r['stage'] == 'integrity' for r in reasons))",
+      "if proposer is not None",
+      "if instances",
+      "if proposer is not None",
+      "if prepared is not None",
+      "if prepared is not None",
+      "if prepared is not None",
+      "if _stage(stopped, \"the proposer's free-form checks\", proposer.rest, applied) is not None",
+      "if prepared is not None",
+      "if found['verdict'] == FAILED",
+      "if found['verdict'] == 'counterexample'",
+      "if any((r['stage'] in ('integrity', 'tier_1') for r in reasons))",
+      "if any((r['stage'] == 'integrity' for r in reasons))",
+      "if _left(deadline) < 1",
+      "if more",
+      "if not derived",
+      "if second['verdict'] in UNTRUSTED",
+      "if second['verdict'] == repo_tests.RUN_INCONSISTENT",
+      "if second['verdict'] == repo_tests.CRASHED",
+      "if unusable(2, second)",
+      "if second['verdict'] in (repo_tests.FAILED, 'collection_error')",
+      "if second['verdict'] not in repo_tests.RAN",
+      "if missing",
+      "if prepared is not None and (prepared.formal or prepared.symbolic)",
+      "if any((r['stage'] == 'integrity' for r in reasons))",
+      "if prepared is not None",
+      "if proposed or compiled",
+      "if prepared",
+      "if prepared is not None",
+      "if proposals",
+      "if any((r['stage'] == 'integrity' for r in reasons))",
+      "if isinstance(before, verification_search.ExecutionSnapshot)",
+      "if search is not None",
+      "if search is not None",
+      "if formal is not None",
+      "if config is not None and config['test_adequacy']",
+      "if integrity",
+      "if config is not None and config['test_adequacy']",
+      "if instances or proposed or adequacy is not None or stopped",
+      "if prepared is not None",
+      "if search",
+      "if adequacy is not None",
+      "if proposals",
+      "if found.get('activity') == 'proposer stage' and found.get('result') == 'failed'",
+      "if confirmed is not None",
+      "if any((r['stage'] == 'integrity' for r in reasons))",
+      "if enforced is not None",
+      "if found.get('tree_changed')",
+      "if found['result'] == confirmed_checks.FAILED",
+      "if found['result'] != confirmed_checks.PASSED or found.get('scenario_unavailable')",
+      "if repo_tests._moved(before, final)",
+      "if rel not in repo_tests.submodules_not_hashed(before)",
+      "if ran.get('source_before') and ran['source_before'] != artifact",
+      "if index < len(statuses)",
+      "if found['receipt_status'] != 'matched'",
+      "if why",
+      "if finding.get('code') == 'shortcut_in_answer' and (not in_diff)",
+      "if finding.get('code') == 'marker_on_new_test'",
+      "if finding.get('code') in INTEGRITY_FINDINGS",
+      "if search is not None",
+      "if formal is not None",
+      "if not stated",
+      "if not req['checks']",
+      "if verdicts[check]['verdict'] not in DEFECTS and verdicts[check]['verdict'] != 'passed'",
+      "if found['verdict'] == 'not_run'",
+      "if not any((run.get('passed', 0) + run.get('failed', 0) for run in runs))",
+      "if self_checked",
+      "if missing",
+      "if self_checked",
+      "if proposals",
+      "if confirmed is not None"
+    ],
+    "_assess": [
+      "_reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons, artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects, first_action=MISSING_IMPORT_ASK.format(name=missing[0]) if missing else SELF_CHECKED_ASK.format(ids=self_checked) if self_checked else '', prepared=prepared, adequacy=adequacy, config=config, counts={'template_instances': len(instances), 'proposed_checks': len(proposed), 'model_calls': proposals.calls if proposals else 0}, roots=roots, stopped=stopped, proposer=proposals, issuer_inputs={'check_sha': check_sha, 'written': lambda check: written.get(check, True), 'again': again, 'observed': observed}, confirmed=(confirmed, enforced) if confirmed is not None else None)"
+    ],
+    "_authored": [
+      "_written(check, change, root)",
+      "True"
+    ],
+    "_authored/branches": [
+      "except LETS_THROUGH",
+      "raise *",
+      "except (repo_tests.RepoRefused, OSError)"
+    ],
+    "_run_again/branches": [
+      "if not ids",
+      "if _left(deadline) < 1",
+      "except LETS_THROUGH",
+      "raise *",
+      "except Exception",
+      "if _loaded_elsewhere(change, ran) or (ran.get('source_before') and ran['source_before'] != artifact)",
+      "if ran.get('verdict') not in repo_tests.RAN"
+    ],
+    "_run_again": [
+      "{}",
+      "{'checks': ids, 'why': 'the time budget was spent before they could run again'}",
+      "{'checks': ids, 'why': f'G6 could not run them again ({type(exc).__name__})'}",
+      "{'checks': ids, 'why': 'the run again is not read: it loaded code from outside the tree, or began on another working tree'}",
+      "{'checks': ids, 'why': f\"the run again gave no result ({ran.get('verdict')})\"}",
+      "{'checks': ids, 'verdicts': {check: found['verdict'] for check, found in _verdicts(ids, ran).items()}, 'receipt': ran.get('receipt', ''), 'seconds': ran.get('seconds', 0.0)}"
+    ],
+    "_check_shas/branches": [
+      "if check in found or path.is_symlink() or (not path.is_file()) or (not path.resolve().is_relative_to(top))",
+      "except LETS_THROUGH",
+      "raise *",
+      "except OSError"
+    ],
+    "_check_shas": [
+      "found"
+    ],
+    "_structural_check": [
+      "{'id': found['id'], 'provenance': STRUCTURAL, 'verdict': found['verdict'], 'detail': found['activity'].get('reason') or found.get('detail', ''), 'template': 'forbidden_dependency.v1', 'contract_provenance': found['contract_provenance']}"
+    ],
+    "_loaded_elsewhere/branches": [
+      "if ran.get('verdict') not in repo_tests.RAN",
+      "if found is None"
+    ],
+    "_loaded_elsewhere": [
+      "''",
+      "'G6 cannot say which code it loaded'",
+      "'; '.join((f\"{rel} is changed, but it loaded {where['module']} from {where['file']}\" for rel, where in found.items()))"
+    ],
+    "_not_loaded/branches": [
+      "if verdict['verdict'] != 'passed' and mine"
+    ],
+    "_not_loaded": [
+      "list(dict.fromkeys(files))"
+    ],
+    "_at_base/branches": [
+      "if not passing or not change.files",
+      "if any((r['stage'] in ('integrity', 'tier_1', 'tier_2') for r in reasons))",
+      "if _left(deadline) < 1",
+      "if 'isolation' in ran",
+      "if elsewhere",
+      "if ran.get('verdict') not in _READABLE_AT_BASE",
+      "if 'isolation' in ran",
+      "if found['verdict'] != 'passed'"
+    ],
+    "_at_base": [
+      "[]",
+      "[]",
+      "[]",
+      "[]",
+      "[]",
+      "actions"
+    ],
+    "_on_base/branches": [
+      "if not failing",
+      "if _left(deadline) < 1",
+      "if out.get('test_outcomes')",
+      "if unkept",
+      "if seen",
+      "if elsewhere",
+      "if elsewhere",
+      "if out.get('verdict') == repo_tests.FAILED",
+      "if out.get('baseline') == 'passed' and out.get('patched') in (repo_tests.FAILED, 'collection_error')",
+      "if out.get('verdict') == 'passed'",
+      "if out.get('baseline') == 'passed'",
+      "if out.get('baseline')",
+      "if out.get('said')"
+    ],
+    "_on_base": [
+      "None",
+      "None"
+    ],
+    "_written/branches": [
+      "except ValueError",
+      "if rel == '.'",
+      "if rel in change.files or any((repo_tests.is_test_related(path) for path in inside))"
+    ],
+    "_written": [
+      "False",
+      "True",
+      "bool(rel) and (not repo_tests._git(change.repo, 'ls-tree', '--name-only', change.base_commit, '--', rel))"
+    ],
+    "_self_checked.independent": [
+      "check['provenance'] == STATED and (not _written(check['id'], change, root)) and (req['kind'] == 'preserve' or at_base.get(check['id']) != 'passed')"
+    ],
+    "_self_checked": [
+      "[req['id'] for req in evaluated if req['status'] == PASSED_ON_CHECKS and (not any((independent(req, check) for check in req['checks'])))]"
+    ],
+    "_listed": [
+      "(proposals, assumptions)"
+    ],
+    "_one_line": [
+      "''.join((' ' if ord(ch) < 32 or ord(ch) == 127 else ch for ch in str(text)))"
+    ],
+    "_one_line/branches": [
+      "if ord(ch) < 32 or ord(ch) == 127"
+    ],
+    "_reply/branches": [
+      "if r['code'] in {CONFIRMED_FAILED, CONFIRMED_NOT_RUN}",
+      "if 'integrity' in stages",
+      "if codes & DEFECT_CODES",
+      "if 'evidence' in stages",
+      "if first_action and outcome == INSUFFICIENT",
+      "if unknowns",
+      "if issuer_inputs is not None",
+      "if confirmed is not None"
+    ],
+    "_reply": [
+      "{**envelope_fields(reliability_label='qualified-draft', warning_card=card, evidence=evidence, request_id=uuid.uuid4().hex[:12], degradation_reason=summary[:300]), 'ok': True, 'assessment': assessment, 'merge': {'status': 'requires_separate_approval', 'reason': MERGE_REASON, 'reasons': merge_reasons}, 'gate': gate, 'grounding': _grounding(claim, sources), 'artifact_digest': artifact}"
+    ]
+  },
+  "src/g6/harness/patch_report.py": {
+    "_issuer/branches": [
+      "if evidence.get('refused_by_issuer')",
+      "if found is None",
+      "if found.get('checked')",
+      "if found.get('support') and found.get('refute')",
+      "if found.get('refute')",
+      "if found.get('not_counted')",
+      "if not kinds and (found.get('kinds') or {})",
+      "if isinstance(given, list)"
+    ],
+    "_issuer": [
+      "form.format(f\"the evidence issuer refused the review's inputs, so it counts nothing ({code('assessment.requirement_evidence')})\")",
+      "''",
+      "form.format(f'evidence {shown}, and the evidence issuer: {said}')"
+    ],
+    "_plain": [
+      "code(f'python -m pytest {shlex.quote(str(node))}', 200)"
+    ],
+    "_words": [
+      "text"
+    ],
+    "_at_base": [
+      "dict((found or {}).get('outcomes') or {})"
+    ],
+    "code/branches": [
+      "if literal or confirmed",
+      "if ch.isprintable()",
+      "if limit is not None and len(text) > limit",
+      "if text[0] == '`' or text[-1] == '`'"
+    ],
+    "code": [
+      "f'{fence}{pad}{text}{pad}{fence}'"
+    ],
+    "_cut/branches": [
+      "if len(lines) + len(item) > room - (1 if left > 1 else 0)",
+      "if left > 1"
+    ],
+    "_cut": [
+      "lines"
+    ],
+    "_headline/branches": [
+      "if outcome == 'test_integrity_compromised'",
+      "if first in ('test_weakened', 'runner_configuration_changed', 'gate_shortcut')"
+    ],
+    "_headline": [
+      "f'**{plain}** ({outcome}). Qualified draft: merging needs your separate approval.'"
+    ],
+    "_findings/branches": [
+      "if r['code'] in TO_DO",
+      "if reproduction.get('kind') == 'static'",
+      "if reproduction.get('command')",
+      "if found.get('code') == 'confirmed_expectation_failed'",
+      "if found.get('code') == 'derived_test_regressed'",
+      "if found.get('result') == 'counterexample'",
+      "if str(reproduction.get('at_base', 'not run')).startswith('not run')"
+    ],
+    "_findings": [
+      "items"
+    ],
+    "_missing": [
+      "[[f\"- {code(item.get('requirement', ''), 40)} {code(item.get('text', ''), 80)}: {code(_words(str(item.get('reason', ''))), 120)}; to settle it: {code(item.get('settle_by', ''), 140)}\" + _issuer(assessment, item.get('requirement'))] for item in (assessment.get('completion') or {}).get('not_established', [])]"
+    ],
+    "_shown/branches": [
+      "if item.get('kind') != 'preserve' and checks and all((base.get(c) in ('failed', 'timed_out') for c in checks))"
+    ],
+    "_shown": [
+      "items"
+    ],
+    "_decide/branches": [
+      "if unknowns and room >= 2",
+      "if line.startswith('- and ')",
+      "if unknowns"
+    ],
+    "_decide": [
+      "lines"
+    ],
+    "_base_words/branches": [
+      "if fail == total",
+      "if passing == total",
+      "if unrun == total",
+      "if fail",
+      "if one['fail']",
+      "if one['fail']",
+      "if passing",
+      "if one['pass']",
+      "if one['pass']",
+      "if fail",
+      "if unrun"
+    ],
+    "_base_words": [
+      "'the stated checks fail at the base commit, so they exercise the change'",
+      "'the stated checks pass at the base commit too, so they may not exercise the change'",
+      "'the stated checks could not run at the base commit, so G6 cannot say whether they exercise the change'",
+      "', '.join(parts)"
+    ],
+    "_proposed/branches": [
+      "if not own",
+      "if a.get('requirement')",
+      "if len(own) > 3"
+    ],
+    "_proposed": [
+      "''",
+      "'the proposed checks and template instances, which never pass a requirement: ' + ', '.join(shown) + more"
+    ],
+    "_steps/branches": [
+      "if search.get('template_instances') or search.get('proposed_checks')",
+      "if search.get('model_calls')",
+      "if run.get('check') == 'stated checks at the base commit' and outcomes",
+      "if run.get('verdict') == 'run_inconsistent'",
+      "if run.get('verdict') == 'crashed'",
+      "if _proposed(assessment)",
+      "if s.get('tier') == 3 and 'not run' in str(s.get('reason', ''))",
+      "if codes",
+      "if len(codes) > 4",
+      "if skipped",
+      "if len(skipped) > 2"
+    ],
+    "_steps": [
+      "[f\"- **Proposed:** the patch {code(str(scope.get('artifact_digest', ''))[:12])} on base {code(str(scope.get('base_commit', ''))[:12])}, {len(requirements)} requirement(s); checks from {', '.join(who)}.\", f\"- **Tested:** {ran}; isolation {code(backend or 'none')}; {float(scope.get('seconds') or 0):.1f} seconds\" + (f'; {passed_over}' + (f' and {len(skipped) - 2} more not run' if len(skipped) > 2 else '') if skipped else '') + '.', f\"- **Gate:** {OUTCOMES.get(outcome, outcome.replace('_', ' '))} ({outcome}): {rule}{_gate_note(assessment)}.\", '- **Approve:** waiting for you: merging needs your separate approval.']"
+    ],
+    "_gate_note": [
+      "f\"; {count} proposed check{('s' if count != 1 else '')} could not be judged\" if count else ''"
+    ],
+    "_gate_note/branches": [
+      "if count",
+      "if count != 1"
+    ],
+    "_question_sha256": [
+      "digest(question)",
+      "'(a question G6 cannot write)'"
+    ],
+    "_question_sha256/branches": [
+      "except (TypeError, ValueError, RecursionError)"
+    ],
+    "_confirmed/branches": [
+      "if statement.get('checked')",
+      "if statement.get('refute')",
+      "if isinstance(question.get('outcomes'), dict)"
+    ],
+    "_confirmed": [
+      "items"
+    ],
+    "_execution_limit": [
+      "LIMIT"
+    ],
+    "render/branches": [
+      "if assessment.get('confirmed_expectations')",
+      "if assessment.get('not_checked')"
+    ],
+    "render": [
+      "'\\n'.join(lines)"
+    ],
+    "_loop_lines/branches": [
+      "if failing",
+      "if ran",
+      "if ran and loop.get('boundary')",
+      "if late",
+      "if one.get('hidden')",
+      "if one.get('left_out')",
+      "if critic is None",
+      "if critic.get('error')",
+      "if failing"
+    ],
+    "_loop_lines": [
+      "[*lines, '', 'A model wrote these probes, so none of them passes a requirement.']"
+    ],
+    "_times": [
+      "{1: 'once', 2: 'twice'}.get(count, f'{count} times')"
+    ],
+    "findings/branches": [
+      "if reviews"
+    ],
+    "findings": [
+      "([one for one in found if last.get(one['file']) == 'passed'], [one for one in found if last.get(one['file']) != 'passed'])"
+    ],
+    "_latest": [
+      "next((run['results'][file] for run in reversed(reviews) if file in run['results']), None)"
+    ],
+    "_review_lines/branches": [
+      "if reviews",
+      "if loop.get('ending')",
+      "if count",
+      "if loop.get('left')",
+      "if loop.get('no_clean')",
+      "if reviews",
+      "if error",
+      "if len(reviews) != 1",
+      "if reviews",
+      "if one.get('told')",
+      "if one.get('verdict') == 'defect' and one not in (*fixed, *still)",
+      "if said == NOT_JUDGED",
+      "if said == 'did not run' and one.get('unrun')",
+      "if said == 'passed'",
+      "if said is None",
+      "if masked",
+      "if masked != 1",
+      "if loop.get('boundary')"
+    ],
+    "_review_lines": [
+      "[*lines, '', '## What this loop does not show', *LOOP_LIMITS]"
+    ],
+    "completion_report": [
+      "'\\n'.join([*(_loop_lines(loop) if loop.get('reviews') is None else _review_lines(loop)), '', review])"
+    ],
+    "completion_report/branches": [
+      "if loop.get('reviews') is None"
+    ],
+    "safe_render": [
+      "render(assessment)",
+      "f\"G6 could not render this review's report ({type(exc).__name__}); every finding is in the assessment's fields. Qualified draft: merging needs your separate approval.\""
+    ],
+    "safe_render/branches": [
+      "except Exception"
+    ]
+  },
+  "src/g6/mcp/review_reply.py": {
+    "review": [
+      "review_patch(repo, **kwargs)",
+      "blocked_reply(f'[{STOPPED}] the patch review was stopped before it finished: {exc}')",
+      "blocked_reply(f\"[G6_E_PATCH_REVIEW_INTERRUPTED] the patch review's time allowance ended before it finished, so it has no outcome: {exc}\")",
+      "blocked_reply(f\"[G6_E_PATCH_REVIEW_INTERRUPTED] G6 could not confirm that the review's test processes ended, so nothing from it is used: {exc}\")"
+    ],
+    "review/branches": [
+      "except component_process.ExecutionInterrupted",
+      "if exc.stopped",
+      "except component_process.ContainmentFailure"
+    ],
+    "save/branches": [
+      "except (OSError, ValueError, TypeError)"
+    ],
+    "save": [
+      "None",
+      "str(path)"
+    ],
+    "_shorten/branches": [
+      "if isinstance(value, str)",
+      "if len(value) <= chars",
+      "if isinstance(value, list | tuple)",
+      "if len(value) > items",
+      "if isinstance(value, dict)"
+    ],
+    "_shorten": [
+      "value",
+      "value[:chars - 3] + '...'",
+      "[_shorten(one, items, chars, where, cut) for one in value[:items]]",
+      "{key: _shorten(one, items, chars, where, cut) for key, one in value.items()}",
+      "value"
+    ],
+    "compact/branches": [
+      "if not isinstance(assessment, dict)",
+      "if saved",
+      "if len(json.dumps(shown, ensure_ascii=False)) - kept <= BUDGET"
+    ],
+    "compact": [
+      "reply",
+      "shown"
+    ],
+    "compact.short": [
+      "_shorten(value, items, chars, where, cut)"
+    ],
+    "finish/branches": [
+      "if not isinstance(reply, dict) or not isinstance(reply.get('assessment'), dict)"
+    ],
+    "finish": [
+      "reply",
+      "compact(reply, job_id, save(reply, job_id))"
+    ]
+  },
+  "src/g6/mcp/behaviour.py": {
+    "bound/branches": [
+      "if identity is None or not isinstance(reply, dict) or (not isinstance(reply.get('assessment'), dict))"
+    ],
+    "bound": [
+      "reply",
+      "BoundReply(reply, identity)"
+    ],
+    "reviewed/branches": [
+      "if identity is not None",
+      "if confirmed is not None",
+      "if store is not None",
+      "if confirmed is not None",
+      "except qs.StoreUnreadable",
+      "except standard_publication.StandardSuperseded"
+    ],
+    "reviewed": [
+      "bound(reply, identity)",
+      "blocked_reply(str(exc))",
+      "blocked_reply(str(exc))"
+    ]
+  },
+  "src/g6/mcp/__init__.py": {
+    "_metaharness_tools.g6_review_patch/branches": [
+      "if not _allowed('patch_review', 'review', allowed_sensitive())",
+      "except StoreUnreadable"
+    ],
+    "_metaharness_tools.g6_review_patch": [
+      "blocked_reply(f'{_DENIED} patch_review.review runs repository code; the host must allow it')",
+      "blocked_reply(str(exc))",
+      "jobs.start(lambda: behaviour.reviewed(review, repo, task, requirements=requirements or [], tests=tests or [], claim=claim, sources=sources, base=base, expected_artifact_digest=expected_artifact_digest, timeout_s=timeout_s, intent=intent, proposed_checks=proposed_checks, template_instances=template_instances, search=search, import_roots=import_roots or []), compact=finish)"
+    ]
+  }
+}
