@@ -99,6 +99,8 @@ BUDGET_ONLY: set[tuple[str, str]] = {
     ('CognitiveAssuranceOrchestrator.execute', 'allow'),
     ('CognitiveAssuranceOrchestrator.execution_artifact', 'actor'),
     ('CognitiveAssuranceOrchestrator.execution_artifact', 'claim_id'),
+    ('CognitiveBridgeBlock.__init__', 'name'),     # text, under the walker's budget (review pr8fu3r1, finding 1)
+    ('CognitiveBridgeBlock.__init__', 'state'),    # plain data that claims nothing, under the walker's budget
     ('CompositionalFailureModel.map', 'findings'),
     ('CompositionalFailureModel.map', 'proposals'),
     ('CrossMethodConflictGate.reconcile', 'assertions'),
