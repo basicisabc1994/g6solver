@@ -8,7 +8,8 @@ listed by git, and a plain open of the listed name reaches another file, or a de
 * the one disk rule (``repo_tests._on_disk``) asks Windows itself how it reads the name, and a name it reads as another's
   is never exact, so no reader in ``repo_tests`` opens it;
 * the read of a patch (``diff_read``) refuses a listing that holds such a name as there (untracked, added or changed),
-  before it looks at anything, naming it. One git lists as removed is read as removed, as any removed file is.
+  before it looks at anything, naming it. One git lists as removed is read as removed where nothing is stored under the
+  name itself (review revmaskfu2a, finding 2: tests/harness/test_listed_things_are_named.py).
 
 The rule is the system's own (``GetFullPathNameW``), not a list kept here, so the inventory test below checks it against
 what a plain open reaches for a family of names, on the system the tests run on. A name Windows cannot store at all (a
@@ -141,13 +142,16 @@ def test_a_name_windows_reads_as_itself_stays_exact(name):
 
 
 #: The family the inventory walks: each stem under each ending, as a file at the top and in a folder, and as a folder, in
-#: both cases (the lower case in a folder of its own, as one folder holds one of them). The stems are a plain name and the
-#: device names Windows documents; the endings are the ones it documents as dropped, and some it keeps.
+#: both cases (the lower case in a folder of its own, as one folder holds one of them). The stems are a plain name, a name
+#: of characters outside the BMP and the device names Windows documents; the endings are the ones it documents as dropped, and some it keeps.
 _DEVICES = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
             *[f"{port}{digit}" for port in ("COM", "LPT") for digit in "019¹"]]
+#: A stem of two characters outside the Basic Multilingual Plane, each two UTF-16 units to Windows (review revmaskfu2a,
+#: finding 3: the rule counted them as one each, and called every such name rewritten).
+_BEYOND = "\U0001F642\U00020000"
 _ENDINGS = ["", ".", " ", "..", " .", ". ", ".py", ".py.", ".py ", " .py", ".tar.gz", ":s", " "]
 FAMILY = sorted({case + shape.format(stem=stem.lower() if case else stem, end=end)
-                 for stem in ["PLAIN", *_DEVICES] for end in _ENDINGS for case in ("", "lower/")
+                 for stem in ["PLAIN", _BEYOND, *_DEVICES] for end in _ENDINGS for case in ("", "lower/")
                  for shape in ("{stem}{end}", "dir/{stem}{end}", "as-folder/{stem}{end}/inner.py")})
 
 
@@ -175,7 +179,8 @@ def test_wherever_the_disk_rule_says_exact_a_plain_open_reaches_the_file_stored_
         if read is not None and not (stored[name] and read == b"stored under " + name.encode()):
             wrong.append((name, read))
     assert not wrong, wrong
-    assert {"PLAIN.py", "dir/PLAIN.py", "lower/plain", "as-folder/PLAIN/inner.py"} <= set(exact)
+    assert {"PLAIN.py", "dir/PLAIN.py", "lower/plain", "as-folder/PLAIN/inner.py", _BEYOND + ".py",
+            f"as-folder/{_BEYOND}/inner.py"} <= set(exact)
 
 
 #: Each function of ``repo_tests`` that takes a listed name's path without asking whether the name is exact (``_in``, or

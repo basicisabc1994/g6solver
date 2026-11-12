@@ -408,7 +408,11 @@ def _runner_changes(change: repo_tests.Change) -> list[str]:
             found.append(shown(rel))
             continue
         reader = "pytest.ini" if name == "tox.ini" else name   # tox.ini's [pytest] section reads as pytest.ini's does
-        path = change.repo / rel
+        path = repo_tests._disk(change.repo, rel)      # the one disk rule; None: a name G6 does not open
+        if path is None:
+            found.append(f"{shown(rel)}: G6 does not open a file by this name (the system reads it as another's), so its "
+                         f"{PYTEST_SECTIONS[name]} settings may have changed")
+            continue
 
         def settings(text: str | None):
             # An empty section is still the configuration pytest reads (review I7). Read as pytest.ini, a tox.ini with

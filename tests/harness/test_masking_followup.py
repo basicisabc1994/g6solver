@@ -204,6 +204,7 @@ def _own_calls(function: ast.FunctionDef):
 READS = {"readlink", "open", "fdopen", "read", "read_bytes", "read_text", "is_symlink", "is_file", "is_dir", "is_junction",
          "exists", "lexists", "stat", "lstat", "resolve", "realpath", "samefile", "iterdir", "listdir", "scandir", "create",
          "_linked", "_leads_out", "_read_inside", "_link_inside", "_where", "_git", "_private", "_tracked_new", "blob_bytes",
+         "_stored",
          "read_at", "texts_at", "diff_read", "diff_text", "change"}
 
 
@@ -212,13 +213,15 @@ def test_each_place_the_read_looks_at_or_reads_the_working_tree_is_one_that_deci
     (``_leads_out``, ``is_symlink``, ``is_file``) only chooses a reader or names a file unread; each reader decides where
     what it reads lies on what it holds open (``_read_inside``: the file; ``_link_inside``: the link's folder), and reads
     nothing else by path but what that open decided, on Windows by the held folder's own final path. git is asked by commit
-    and object name (``_private``, ``_tracked_new``, ``blob_bytes``). ``lexists`` (review-maskfu2, finding 3) only tells
-    an untracked folder git lists, which shows nothing, from a name with nothing there, which refuses the read."""
+    and object name (``_private``, ``_tracked_new``, ``blob_bytes``). ``lexists`` (review-maskfu2, finding 3) only tells a
+    thing that is there and is no file from a name with nothing there: each is named, with its own reason, and refuses the
+    copy (review revmaskfu2a, finding 1). ``_stored`` only looks up, by its literal path, a name Windows reads as another's
+    that git lists as removed, and refuses the read where something is there (the same review, finding 2)."""
     functions = _functions(repo_tests)
     found = {(owner, _callee(call)) for owner, call in _own_calls(functions["diff_read"]) if _callee(call) in READS}
     assert found == {("diff_read", "_private"), ("diff_read", "_tracked_new"), ("diff_read", "resolve"),
                      ("diff_read", "blob_bytes"), ("found", "_leads_out"), ("found", "is_symlink"), ("found", "is_file"),
-                     ("found", "lexists"), ("found", "_link_inside"), ("found", "_read_inside")}, found
+                     ("found", "lexists"), ("found", "_link_inside"), ("found", "_read_inside"), ("found", "_stored")}, found
     readers = {name: [(_callee(call), ast.unparse(call)) for _, call in _own_calls(functions[name]) if _callee(call) in READS]
                for name in ("_read_inside", "_link_inside")}
     assert [callee for callee, _ in readers["_read_inside"]] == ["open", "_where", "fdopen", "read"], readers

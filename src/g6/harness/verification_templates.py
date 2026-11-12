@@ -559,10 +559,12 @@ class Tree:
             raise ValueError(f"{shown(rel)} is not a file of at most {MAX_MODULE_BYTES} bytes at the base commit")
         if key not in self._texts:
             if side == PATCH:
-                parts = Path(rel).parts
+                path = repo_tests._disk(self.root, rel)      # the one disk rule; None: a name G6 does not open
+                if path is None:      # said as for any name with no readable file there
+                    raise ValueError(f"{shown(rel)} is not a file of at most {MAX_MODULE_BYTES} bytes")
+                parts = path.relative_to(self.root).parts
                 if any(repo_tests._linked(self.root.joinpath(*parts[:end])) for end in range(1, len(parts) + 1)):
                     raise ValueError(f"{shown(rel)} is a link")
-                path = self.root / rel
                 if not path.is_file() or path.stat().st_size > MAX_MODULE_BYTES:
                     raise ValueError(f"{shown(rel)} is not a file of at most {MAX_MODULE_BYTES} bytes")
                 text = path.read_text(encoding="utf-8", errors="replace")

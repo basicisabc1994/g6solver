@@ -876,8 +876,15 @@ def _bytes_line(raw: bytes, shown: str, what: str) -> str:
 #: file, by git's own fallback for bytes that are not UTF-8, which G6 does not copy; or nothing is at its name.
 CANNOT_OPEN = "is listed by git under bytes git reads here as another file's name, which G6 cannot open"
 NOT_THERE = "is listed by git as there, and G6 finds no file at that name to read"
-#: Why a patch whose listing holds such a name as there (untracked, added or changed) is not read at all (``diff_read``, by
-#: ``_as_named``): an open of the name reaches another file or a device, and never what is stored under it.
+#: Why a thing git lists as there that is no file is not read: a folder git lists whole and never looks into (it holds a
+#: repository of its own, or a ``.git`` file), a submodule's folder, a pipe. What it holds is in no patch, so it is named
+#: and the copy refuses, as for ``NOT_THERE``: it is never shown as nothing (review revmaskfu2a, finding 1).
+NOT_A_FILE = ("is listed by git as there and is not a file (a folder git lists whole and does not look into, or a thing of "
+              "another kind), so what it holds is not in this patch")
+#: Why a patch whose listing holds such a name is not read at all (``diff_read``, by ``_as_named``): as there (untracked,
+#: added or changed), an open of the name reaches another file or a device, and never what is stored under it; as
+#: removed, something is stored under the name itself (``_stored``), which git, looking through the same rewriting, did
+#: not see (review revmaskfu2a, finding 2).
 READ_AS_ANOTHER = "is listed by git under a name Windows reads as another's, which G6 does not open, so the patch is not read"
 
 
@@ -1099,7 +1106,8 @@ def _as_named(name: str) -> bool:
     1 and 2). The question is put to Windows itself (``GetFullPathNameW``, the rewriting every such open makes; Microsoft's
     "File path formats on Windows systems", under path normalization), never to a list kept here, as what it rewrites
     differs between its versions: the name stands below a made-up folder, each part as it is, and is read as itself where
-    the rewriting gives that path back. Where Windows cannot say, it is not. A name Windows cannot store at all (a control
+    the rewriting gives that path back (its length counted as Windows counts it, in UTF-16 units, and a buffer it calls
+    too small given again at the size it asks for). Where Windows cannot say, it is not. A name Windows cannot store at all (a control
     character, ``< > " | ? *``) is not rewritten: opening it fails, and the caller's own refusal covers it. Elsewhere a
     name is its bytes (True). A limit: a short (8.3) name the volume made for another file is not rewritten either, so a
     listed name that is another file's short name is read as that file."""
@@ -1108,9 +1116,29 @@ def _as_named(name: str) -> bool:
     import ctypes
 
     given = _BELOW + name.replace("/", "\\")
-    buffer = ctypes.create_unicode_buffer(len(given) + 2)      # the rewriting never makes a path longer
-    size = ctypes.windll.kernel32.GetFullPathNameW(given, len(given) + 2, buffer, None)
-    return 0 < size < len(given) + 2 and buffer.value == given
+    size = len(given) + sum(ord(char) > 0xFFFF for char in given) + 2      # in UTF-16 units, as Windows counts them
+    for _ in range(3):
+        buffer = ctypes.create_unicode_buffer(size)
+        wrote = ctypes.windll.kernel32.GetFullPathNameW(given, size, buffer, None)
+        if wrote < size:      # it fitted (0: Windows could not say)
+            return wrote > 0 and buffer.value == given
+        size = wrote + 1      # too small: Windows gave the size it needs, which is a question to ask again, never an answer
+    return False
+
+
+def _stored(root: Path, name: str) -> bool:
+    """Whether anything is stored in ``root`` under ``name`` itself, a name Windows reads as another's (``_as_named``): looked
+    up, never opened, by the literal (extended) form of the path, in which Win32 rewrites nothing, each part as it is.
+    False only where Windows says nothing is there; where it cannot say, something may be (True). It is asked of a name
+    git lists as removed: git looked for it through the rewriting, so its word says nothing of what is stored under the
+    name (review revmaskfu2a, finding 2)."""
+    try:
+        os.lstat(str(_extended(root)) + "\\" + name.replace("/", "\\"))
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return True
+    return True
 
 
 def _on_disk(rel: str) -> tuple[str, bool]:
@@ -1278,11 +1306,15 @@ def diff_read(change: Change) -> DiffRead:
         """The file at ``rel`` as it stands, its bytes where G6 read them, and whether it is a link, whose bytes are the
         path it names. A file git lists as removed is never opened. One git lists as there that G6 cannot open by the name
         git gives it is named so in what the patch is known by, and a copy made of it refuses (``refusal``): it is never
-        read as removed (review-maskfu2, finding 3). One git lists as there under a name Windows reads as another's
-        (``_as_named``) refuses the read itself, before anything is looked at (review-maskfu4, findings 1 and 2)."""
+        read as removed (review-maskfu2, finding 3); so is whatever git lists as there that is no file, a folder it lists
+        whole among them (``NOT_A_FILE``), and a file gone between this read's look and its open: no listed name ends with
+        no bytes and nothing said (review revmaskfu2a, finding 1). One listed under a name Windows reads as another's
+        (``_as_named``) refuses the read itself, before anything is looked at, where git lists it as there
+        (review-maskfu4, findings 1 and 2), and where git lists it as removed and something is stored under the name
+        itself (``_stored``)."""
         on_disk, exact = _on_disk(rel)
         gone = not added and modes[1] == NO_MODE     # git's own word that nothing is there now
-        if not exact and not gone and not _as_named(on_disk):     # there, by git's listing: nothing is looked at
+        if not exact and not _as_named(on_disk) and (not gone or _stored(root, on_disk)):
             raise RepoRefused("G6_E_GIT_COMMAND_FAILED", f"{shown_name(rel)} {READ_AS_ANOTHER}")
         path = change.repo / on_disk     # where a file is comes from this read alone, never an earlier ``Change.outside_links``
         if _leads_out(change.repo, on_disk):
@@ -1294,13 +1326,15 @@ def diff_read(change: Change) -> DiffRead:
             if named is None:
                 return FileRead(rel, None, added=added, unread=True, modes=modes), None, False
             return FileRead(rel, _decoded(named), added=added, modes=modes), named, True
-        if exact and not path.is_file() and added and os.path.lexists(path):   # an untracked folder git lists: nothing to show
-            return FileRead(rel, None, added=added, modes=modes), None, False
         if not exact or not path.is_file():      # the name whole, so the line the identity holds for it names it whole
-            why = CANNOT_OPEN if not exact else NOT_THERE
+            why = CANNOT_OPEN if not exact else NOT_A_FILE if os.path.lexists(path) else NOT_THERE
             return FileRead(rel, None, added=added, modes=modes, refusal=RepoRefused(
                 "G6_E_GIT_COMMAND_FAILED", f"{shown_name(rel)} {why}")), None, False
-        raw = _read_inside(root, path)
+        try:
+            raw = _read_inside(root, path)
+        except FileNotFoundError:      # gone between the look and the open: named, never shown as nothing
+            return FileRead(rel, None, added=added, modes=modes, refusal=RepoRefused(
+                "G6_E_GIT_COMMAND_FAILED", f"{shown_name(rel)} {NOT_THERE}")), None, False
         if raw is None:
             return FileRead(rel, None, added=added, unread=True, modes=modes), None, False
         return FileRead(rel, _decoded(raw), added=added, modes=modes), raw, False
@@ -1333,7 +1367,7 @@ def diff_read(change: Change) -> DiffRead:
         one, raw, link = found(rel, True, ("", LINK_MODE))
         name = shown_name(rel)
         if raw is None:
-            text += unread(name) if one.unread else f"\\ G6: {one.refusal}\n" if one.refusal is not None else ""
+            text += unread(name) if one.unread else f"\\ G6: {one.refusal}\n"      # one or the other: ``found`` has no third
             files.append(replace(one, modes=("", "")))
             continue
         shown = _cut_lines(_normal(one.new), DIFF_FILE_CHARS)
@@ -1558,17 +1592,18 @@ def _untracked(repo: Path) -> list[str]:
 
 
 def _digest(path: Path) -> str:
-    """The bytes of a file, read in blocks; a nested repository's own ``snapshot`` (without its untracked files); ""
-    when nothing is there. A file or repository that cannot be read reads "unreadable" before and
-    after alike, so a change to it is not seen."""
+    """The bytes of a file, read in blocks; a nested repository's own ``snapshot`` (without its untracked files; a folder
+    git lists whole never comes here: ``snapshot`` hashes every file in it); "" when nothing is there, or for a plain
+    folder, whose files git lists on their own. A file or repository that cannot be read, or a thing that is there and is
+    no file, reads "unreadable" before and after alike, so a change to it is not seen."""
     try:
         component_process.checkpoint()
         if path.is_dir():
             if not (path / ".git").exists():  # never ask git from a plain folder: it would answer for the parent
                 return ""
             return hashlib.sha256(json.dumps(sorted(snapshot(path, ()).items())).encode("utf-8")).hexdigest()
-        if not path.is_file():
-            return ""
+        if not path.is_file():      # a thing that is there and is no file (a pipe) is not read, and never reads as nothing
+            return "unreadable" if os.path.lexists(path) else ""
         digest = hashlib.sha256()
         with open(path, "rb") as handle:
             for block in iter(lambda: handle.read(1 << 20), b""):
@@ -1588,7 +1623,8 @@ def snapshot(repo: Path, untracked: list[str] | tuple[str, ...] | None = None) -
     reads "") or from HEAD's tree by content (``_private``: whatever an entry written into the index says; the review
     of VS-4), of every file so marked (git's own diff skips them; review M4), and of each of ``untracked`` (default:
     the untracked files that are not ignored now; ``run`` passes the ones that existed before it, review I7). Also,
-    as git cannot see them, each submodule folder git does not look into (``_gitlinks``), as G6 hashes it
+    as git cannot see them, each submodule folder git does not look into (``_gitlinks``), and each folder git lists
+    whole as untracked (one holding a repository of its own, or a ``.git`` file), as G6 hashes it
     (``_submodule``: every file in it, untracked and ignored ones included). A repository holding a submodule that was
     set up is refused (``G6_E_GIT_SUBMODULE_REFUSED``: git would run inside it under its own config, review B2-C1),
     before a run and after one alike. Ignored files elsewhere, and files created after ``untracked`` was read, are not
@@ -1609,11 +1645,16 @@ def snapshot(repo: Path, untracked: list[str] | tuple[str, ...] | None = None) -
                               ("ls-files", "--others", "--exclude-standard", "-z"))
     staged = (set(_paths(others)) & {rel for _, rel in _entries(index)}) | _tracked_new(
         repo, head.decode().strip())   # a file force-added under an ignored path too (F4)
+    budget = {"files": 0, "bytes": 0, "until": time.monotonic() + SUBMODULE_HASH_S}
     for rel in (*_paths(_git(repo, "diff", "--name-only", "-z")), *_paths(diffed), *sorted(staged), *held,
                 *(_untracked(repo) if untracked is None else untracked)):
         path = _disk(repo, rel)    # read where git looks (``_on_disk``); one G6 cannot open by its name reads as unread
+        if path is not None and rel.endswith("/"):
+            # a folder git lists whole and never looks into (a repository of its own, a ``.git`` file): hashed as a
+            # submodule's folder is, every file in it, or said to be not hashed (review revmaskfu2a, finding 1)
+            found[_SUBMODULE + rel] = _submodule(repo, rel, budget)
+            continue
         found[rel] = _digest(path) if path is not None else "unreadable"
-    budget = {"files": 0, "bytes": 0, "until": time.monotonic() + SUBMODULE_HASH_S}
     for rel in gitlinks:
         found[_SUBMODULE + rel] = _submodule(repo, rel, budget)
     return found
@@ -2532,7 +2573,7 @@ def loadable_changes(change: Change, roots: tuple[str, ...] = ()) -> dict[str, s
     """The files the change adds or changes, visible to git, that could change what a test run loads, by
     ``ignored_inputs``' judge (the launch review's I2), each with why: an ``.egg-info`` or ``.dist-info`` folder's
     ``entry_points.txt`` declaring a pytest plugin; a compiled extension module; bytecode (``.pyc``), anywhere; a link
-    whose name Python could import; and a new Python file, not a test file, whose dotted name, with any import root a
+    whose name Python could import; a folder git lists whole and never looks into; and a new Python file, not a test file, whose dotted name, with any import root a
     run uses (the review's ``roots``, the top, ``src``, and each folder pytest puts first for its tests), is that of a
     module the base commit has, and the patch kept, at another path, which it could shadow. Runner, start-up and test
     files are judged elsewhere (the runner check and the weakening detector)."""
@@ -2566,6 +2607,9 @@ def loadable_changes(change: Change, roots: tuple[str, ...] = ()) -> dict[str, s
         elif _linked(full):
             if not path.suffix or name.endswith((".py", ".pyc", ".pth", *_EXTENSIONS)):
                 found[rel] = "a link, which can put any code under a name Python imports"
+        elif rel.endswith("/"):      # review revmaskfu2a, finding 1: its files are in no listing and in no patch
+            found[rel] = ("a folder git lists whole and does not look into (it holds a repository of its own, or a .git "
+                          "file), so the files in it, which Python can import, are in no patch")
         elif name.endswith(_EXTENSIONS):
             found[rel] = "a compiled extension module, which Python imports in place of a .py file of the same name"
         elif name.endswith(".pyc"):

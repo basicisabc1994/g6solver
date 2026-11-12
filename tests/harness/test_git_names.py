@@ -411,10 +411,12 @@ class _Flow:
         return params
 
     def _holder(self, node: ast.AST, scope: ast.AST) -> bool:
-        """Whether ``node`` is a change, a read or a scan: by what it is called, or, for a name, by its annotation or the
-        call it was bound to (``found = repo_tests.change(...)``)."""
+        """Whether ``node`` is a change, a read or a scan: by what it is called, by the call that makes it, or, for a name,
+        by its annotation or the call it was bound to (``found = repo_tests.change(...)``)."""
         if isinstance(node, ast.Attribute):
             return node.attr in HOLDERS
+        if isinstance(node, ast.Call):      # ``repo_tests.change(repo).files``: a holder read where it is made
+            return _called(node) in HOLDER_CALLS
         return isinstance(node, ast.Name) and (node.id in HOLDERS or any(
             node.id in self.holders.get(outer, ()) for outer in self.chain(scope)))
 
@@ -850,7 +852,7 @@ ALLOWED = {
     "g6.core.git_name: ''.join((_ESCAPED.get(ch) or _octal(ch) for ch in path))": "the rule itself: the text it quotes",
     "g6.workforce.repo_tests: str.__str__(rel)": ("_on_disk: the name given to the system as given, where its bytes name "
                                                    "another file for git there: looked at, never opened; " + _NEVER_SHOWN),
-    "g6.workforce.repo_tests: ctypes.windll.kernel32.GetFullPathNameW(given, len(given) + 2, buffer, None)":
+    "g6.workforce.repo_tests: ctypes.windll.kernel32.GetFullPathNameW(given, size, buffer, None)":
         ("_as_named: the name, below a made-up folder, given to Windows' own rewriting of a path, which says how an open "
          "would read it (review-maskfu4): no disk is looked at; " + _NEVER_SHOWN),
     "g6.context.redact: ''.join(parts)": ("the scrubber reading a name as git gave it for a value in it (review-maskfu2, "

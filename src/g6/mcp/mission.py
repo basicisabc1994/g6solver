@@ -75,6 +75,9 @@ OUT_OF_SCOPE = ("[G6_E_MISSION_OUT_OF_SCOPE] The working tree changes files the 
                 "Only {allowed} may change. A frozen test stays as it is: nothing ran and no attempt was used.")
 NO_CHANGE = ("[G6_E_MISSION_NO_CHANGE] The working tree changes nothing against the frozen commit, so nothing ran and "
              "no attempt was used.")
+#: A changed file git lists under a name G6 does not open (``repo_tests._disk``: the system reads it as another file's).
+UNOPENED = ("git lists changed files under names G6 does not open, as the system reads each as another file's name: "
+            "{files}. Nothing ran and no attempt was used.")
 DRAFT =f"{WHO}: usable with caution; g6_mission_certificate says what the evidence supports"
 # COPY: A brief's instructions on this surface, in place of ``coding.OBJECTIVE_INSTRUCTIONS``: the patch is the tree.
 SUBMIT_HERE = ("Change only the source files in scope in the working tree, do not change the tests, and call "
@@ -287,7 +290,12 @@ def submit(mission_id: str, repo: str, *, claim: str = "", timeout_s: int = 300)
                                                       allowed=", ".join(allowed)))
         if not changed:
             return blocked_reply(NO_CHANGE)
-        files = {rel: (root / rel).read_bytes().decode("utf-8") for rel in changed}
+        paths = {rel: repo_tests._disk(root, rel) for rel in changed}      # the one disk rule, never a join made here
+        unopened = [rel for rel in changed if paths[rel] is None]
+        if unopened:
+            raise repo_tests.RepoRefused("G6_E_GIT_COMMAND_FAILED", UNOPENED.format(
+                files=", ".join(shown(rel) for rel in unopened[:10])))
+        files = {rel: paths[rel].read_bytes().decode("utf-8") for rel in changed}
         requirements, tests = _stated(wf, mission_id, standard)
         reviewed = review_reply.review(root, task=wf.missions.get(mission_id)["objective"], requirements=requirements,
                                        tests=tests, claim=claim, base=base, timeout_s=timeout_s,
