@@ -598,11 +598,19 @@ class _Requests:
 
     def ends_by(self, moment: datetime) -> None:
         """A provider has said the tick's week ends at ``moment``, which can come to light only once it is under way. What it
-        reserved covers nothing after that. A later end buys it nothing, and outside a tick there is no week to end."""
+        reserved covers nothing after that. A later end buys it nothing, and outside a tick there is no week to end. The
+        two ends are compared outside the lock, which calls nothing; the lock finds the very end compared still held, or
+        compares again."""
         moment = utc(moment)
-        with self._lock:
-            if self.ends is not None and moment < utc(self.ends):
-                self.ends = moment
+        while True:
+            held = self.ends
+            earlier = held is not None and moment < utc(held)
+            with self._lock:
+                if self.ends is not held:
+                    continue
+                if earlier:
+                    self.ends = moment
+                return
 
     def _around(self, generation: int | None) -> tuple[tuple[Any, int | None], ...]:
         """The meters around a request made here: those of the metered calls open in this context, and this one, with the
@@ -618,13 +626,14 @@ class _Requests:
         return any(held.thread != thread and not any(held is mine for mine in around)
                    and (held.watched or held.owner is not owner) for held in _RECORD.out.get(identity, ()))
 
-    def _full(self, places: int, wait: float, moment: datetime | None) -> bool:
-        """Whether this tick has no room for ``places`` more, or its week ends before a send that waits ``wait`` seconds could
-        leave; ``stopped`` then says which. Called under the lock."""
+    def _full(self, places: int, ended: bool) -> bool:
+        """Whether this tick has no room for ``places`` more, or its week ends before the send could leave (``ended``, as
+        admission compared it outside the lock with the end still held); ``stopped`` then says which. Called under the
+        lock."""
         if self.unseen or self.sent + places > self.limit or (places == 0 and self.sent >= self.limit):
             self.stopped = f"this tick has sent {self.sent} of the {self.limit:g} it reserved"
             return True
-        if self.ends is not None and utc(moment) + timedelta(seconds=wait) >= utc(self.ends):
+        if ended:
             self.stopped = f"this tick's week ended at {self.ends.isoformat()} and nothing is reserved in the new one"
             return True
         return False
@@ -664,7 +673,10 @@ class _Requests:
             if identify is not None and not any(stop for _, stop in stops):
                 stops += tuple((meter, meter.halted()) for meter in meters)
             living = all(call.live() for call in calls)
-            moments = [meter.now() if meter.ends is not None else None for meter in meters]
+            # each meter's week end, and whether a send that waits ``wait`` seconds leaves at or after it, by the clock read
+            # here and both instants through ``utc``; the protected step finds each end compared still held, or reads again
+            ends = [(meter, meter.ends) for meter in meters]
+            ended = [end is not None and utc(meter.now()) + timedelta(seconds=wait) >= utc(end) for meter, end in ends]
             registering = None
             try:
                 with self._lock:
@@ -708,10 +720,9 @@ class _Requests:
                     if known is not None and self._out_elsewhere(known, owner, here):
                         self._settled.wait(1.0)
                         continue
-                    if any(meter.ends is not None and moment is None for meter, moment in zip(meters, moments)):
-                        continue
-                    full = next((meter for meter, moment in zip(meters, moments)
-                                 if meter._full(places, wait, moment)), None)
+                    if any(meter.ends is not end for meter, end in ends):
+                        continue                  # a week's end moved since it was compared: compare it again
+                    full = next((meter for meter, over in zip(meters, ended) if meter._full(places, over)), None)
                     if full is not None:
                         break
                     for meter in meters:

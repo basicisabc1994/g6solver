@@ -163,7 +163,9 @@ def test_every_call_under_admission_is_an_internal_helper_or_a_named_primitive()
     # Constructors below hold plain module-owned data; the other external names are standard-library primitives.
     primitives = {
         "_ACTIVE.get", "_AROUND.get", "_AROUND.set", "any", "tuple", "zip", "next", "list", "max", "isinstance",
-        "_Call", "_Ended", "_Book", "Send", "LLMError", "_Refused", "_AtLimit", "uuid4", "timedelta",
+        # No instant is converted or added to under the lock (``utc`` asks a zone its offset): a week's end is compared
+        # outside it, and the protected step only finds that very end still held (``admit``, ``ends_by``).
+        "_Call", "_Ended", "_Book", "Send", "LLMError", "_Refused", "_AtLimit", "uuid4",
         "_RECORD.books.get", "_RECORD.books.pop", "_RECORD.out.get", "_RECORD.out.items",
         "_RECORD.out.setdefault", "_RECORD.out.setdefault(known, []).append", "_RECORD.taken.get",
         "_RECORD.taken.get(self, {}).get", "_RECORD.writing.add", "_RECORD.writing.discard",

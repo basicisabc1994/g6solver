@@ -3,6 +3,8 @@ test here is a rule one follow-up kept that the joined code must still keep. Fak
 network."""
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from g6.core.llm import FakeLLM, LLMError
@@ -56,3 +58,32 @@ def test_a_tick_whose_close_fails_still_keeps_the_refusal_it_latched(tmp_path, m
     restarted = loop.ShadowLoop(domain, shadow.root, rig.SETTINGS, now=lambda: rig.NOW, clock=rig.domains.Clock(),
                                 proposer=rig.domains.proposes({"prompt": rig.domains.WORKING}))._refused()
     assert restarted is not None and restarted["warning_card"]["code"] in (loop.PAUSED, envelope.STOPPED), restarted
+
+
+def test_a_week_end_moved_while_admission_compares_it_is_compared_again_before_the_send():
+    """Admission compares the week's end with the clock outside its lock (no instant is converted under it); a provider
+    that moves the end earlier in between is read again in the protected step, and the send is refused."""
+    now = datetime(2026, 11, 12, tzinfo=UTC)
+    moved = []
+
+    def clock():
+        if not moved:                                  # the end moves after it was read and before the lock is taken
+            moved.append(True)
+            meter.ends_by(now - timedelta(seconds=1))
+        return now
+
+    meter = loop._Requests(now=clock)
+    meter.open(10, now + timedelta(days=1))
+    with pytest.raises(LLMError, match="week ended"):
+        meter.take(identity="a request")
+    assert moved and meter.sent == 0
+
+
+def test_a_later_week_end_moves_nothing_and_an_earlier_one_is_kept():
+    now = datetime(2026, 11, 12, tzinfo=UTC)
+    meter = loop._Requests(now=lambda: now)
+    meter.open(10, now + timedelta(days=1))
+    meter.ends_by(now + timedelta(days=2))
+    assert meter.ends == now + timedelta(days=1)
+    meter.ends_by(now + timedelta(hours=1))
+    assert meter.ends == now + timedelta(hours=1)
