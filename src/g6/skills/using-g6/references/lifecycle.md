@@ -17,6 +17,35 @@ point, independently of the agent doing it.
 | 9. Finish | `finishing-a-development-branch` | Report the label G6 gave (`qualified-draft` unless an independent check passed), every gap named, nothing upgraded | Honest measurement (*Why Benchmarks Lie*) |
 | 10. Learn | `writing-skills` (for lessons worth a skill) | When a task repeats:<br>• declare it as a `g6.metaharness` workflow (dev and held-out cases), and let the meta-gate judge changes; a person activates them;<br>• hints learned from failures go through `g6.learning` (paired runs, held-out evidence, a person accepts);<br>• repeated model calls that a small tested function can replace go through `g6.distillation` | Additive, inspectable learning a person approves (*Learning Without Forgetting*; *Self-Improvement Without Self-Destruction*; *Economics of Intelligence*) |
 
+## Delivering a Python task, each step in full
+
+1. **Intent.** Read the task, docs and code before writing the numbered requirements.
+2. **This project's risks**: edge cases, behaviour that must stay the same, who may do what, data or money that must
+   never be lost, state that must never go wrong, tests too weak to catch a defect, a misleading environment, and G6
+   misreading the intent. The templates: `example.v1` (a stated input gives a stated result), `relation.v1` (round
+   trip, idempotence, invariance or monotonicity), `access_rule.v1` (who may do what; with `steps`, grant, share and
+   revoke), `differential.v1` (nothing changes outside the change's scope), `forbidden_dependency.v1` (layer rules)
+   and `state_invariant.v1` (critical state).
+3. **Hidden constraints.** State the question as "for this input the original does A and the change would do B".
+   Probe the code for the rest.
+4. **Acceptance first.** Test usability and fitness for purpose wherever a test can show it. The acceptance tests
+   become the numbered requirements, each with its stated check.
+5. **Critical parts, formally.** Model them with `state_invariant.v1`: its `model` states the variables, actions and
+   invariants; its `actions` bind them to the code's operations; its `observe` reads each variable from the real
+   state. G6 searches the model and replays traces on real code. Only a reproduced trace is a code finding.
+6. **Repair.** A proposed check's reproduction is a test file: add it to the repository's tests and list its node
+   id, so the person sees the fix pass the original counterexample.
+7. **Honesty.** G6 cannot judge usability by itself; acceptance tests and the person's confirmation do. The outcome
+   is one of: test integrity compromised, defect detected, insufficient evidence, or supported within scope (every
+   stated requirement passed a stated check the patch did not write; completeness is not established). If no check
+   the patch did not write fails at the base commit, the outcome is insufficient evidence. Tell the person the result
+   rests on your own tests.
+
+Composition and fitting, more: a code transformation in a composition needs a reviewed Python adapter, and its
+assurance gaps are read with the report. Fitting is Propose, Test, Gate, Approve. A split of answers the proposer
+already saw is not independent evidence, a dialog that cannot be shown confirms nothing, and a restart loses the
+process-local job handles. Python-only components need their library APIs.
+
 ## A coding mission, over MCP
 
 Use one when what counts as done must be fixed before the work and a person must confirm it. `g6_premortem` proposes the

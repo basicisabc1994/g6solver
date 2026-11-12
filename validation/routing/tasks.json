@@ -2,16 +2,18 @@
   "format": "g6.routing_tasks/1",
   "routes": {
     "abstraction": "affad7399c118a2a02c0509d37e4d1018b9d6e03df8121842afe5e7ecabaf329",
-    "compose": "6df2bb1266914500b039c7a1f26bc4264a6dd311f24be6a52328ae0ae1ba1241",
-    "consent": "c327b455c1e5d4fc9b74f88fc3c0691dcc48e1be5c4ae4976d03671f61e3a673",
-    "discover": "066dde80703ca79f909f67bc9a8fe1ae9256ece07be21af3635f8f2e458cfba2",
-    "every-route": "d049025619c36c5a15164db370b2aa903cbb1ecec4674478867afd98ca511028",
-    "fit": "95ebdc11299d3d926bd158593e29343d6336fc7e28b51c52f0246d916fa9ce7e",
-    "improve": "475546db56ecaa0723bbea4cc181429711b05de31a4e741a29f09ff02ee8d352",
-    "mission": "ee9bfc68340f9cb01af0c92f5b179ba183795c446dd64a9f2c8503053012654a",
-    "question": "b70c05c77223d17f17370f8b1804431fa0eaf7196262daf00409529f188dd077",
-    "review": "d219af7284cc07618ea1c732507a12a93847a8f09d5c708b2e7bf9b00bf5beb8",
-    "rules": "9fe7060163867a43058c643bc66e107e89c81a0a5c56e67aed34b37442b3c431"
+    "compose": "d90d091640a37bb559235e731181a79fae90f1b994f1b83022aa805c1c699609",
+    "consent": "3360654006772c5e2626c414ffa2778657227e26951628276a59360707c4a788",
+    "context": "66003f951cf38da41b1c95b2fe8b0d7732dff33e17e87117813f394149a38316",
+    "discover": "55eea337b12dafb332b57d7ab55d2b69d4816a655a882e9d4c59238a50877216",
+    "every-route": "a105d1f2011c76b9a71e24a316f636afabeac48c220ba86e464344660d4043fb",
+    "fit": "c3d3cb9291adaa9d9ad233005b4acc736dda151bd1cb3b47f6ff8d0121a18e1e",
+    "improve": "e46df0b0267ca882d45ad425c355577f18098432c85a0f4698bc18c6c4fff0cd",
+    "mission": "fce2993cda07d4bf78389e78be9990176611427f7ebd8e5764c3ac8348a4d1ce",
+    "question": "133db5f589550897612fe06c903e7313625f2301a7b5f396bc42ed523a40b020",
+    "review": "b5dc78389fe3561d0a93ca828b877f1c488bd8c9fdbaebfb35c471508284a218",
+    "rules": "9fe7060163867a43058c643bc66e107e89c81a0a5c56e67aed34b37442b3c431",
+    "workflow": "9274f49f91d2e127d767cddd31d30c05328c55ac282487a8852de5e0eb88a492"
   },
   "tasks": [
     {
@@ -194,6 +196,67 @@
       }
     },
     {
+      "id": "dev.context.missing_tool.1",
+      "route": "context",
+      "polarity": "missing_tool",
+      "cohort": "development",
+      "prompt": "Search the notes I indexed with G6 for what we decided about how customers are told that an order is confirmed, and cite the passage you rely on.",
+      "fixture": "notes",
+      "withhold": [
+        "g6_knowledge_search"
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.context.negative.1",
+      "route": "context",
+      "polarity": "negative",
+      "cohort": "development",
+      "prompt": "README.md says how customers are told that an order is confirmed. Quote that sentence to me exactly, from the file.",
+      "fixture": "notes",
+      "forbidden": [
+        {
+          "tool": "g6_knowledge_search"
+        },
+        {
+          "tool": "g6_knowledge_context"
+        },
+        {
+          "tool": "g6_knowledge_add"
+        }
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.context.positive.1",
+      "route": "context",
+      "polarity": "positive",
+      "cohort": "development",
+      "prompt": "Search the notes I indexed with G6 for what we decided about how customers are told that an order is confirmed, and cite the passage you rely on.",
+      "fixture": "notes",
+      "expected_calls": [
+        {
+          "tool": "g6_knowledge_search"
+        }
+      ],
+      "completion": {
+        "kind": "calls_in_order"
+      },
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
       "id": "dev.discover.missing_tool.1",
       "route": "discover",
       "polarity": "missing_tool",
@@ -333,6 +396,15 @@
         },
         {
           "tool": "g6_improve_stop"
+        },
+        {
+          "tool": "g6_improve_enrol"
+        },
+        {
+          "tool": "g6_improve_resume"
+        },
+        {
+          "tool": "g6_improve_demote"
         }
       ],
       "budget": {
@@ -596,6 +668,73 @@
           "tool": "g6_invoke",
           "args_include": {
             "component": "datalog"
+          }
+        }
+      ],
+      "completion": {
+        "kind": "calls_in_order"
+      },
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.workflow.missing_tool.1",
+      "route": "workflow",
+      "polarity": "missing_tool",
+      "cohort": "development",
+      "prompt": "I want to look at what G6 has recorded about its own review work in this repository. Write it out as a file I can open myself, and tell me where the file is.",
+      "fixture": "notes",
+      "withhold": [
+        "g6_workflow_export"
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.workflow.negative.1",
+      "route": "workflow",
+      "polarity": "negative",
+      "cohort": "development",
+      "prompt": "Add a line to CHANGES.md saying that README.md was reviewed today, creating the file if it is not there. Nothing else needs doing.",
+      "fixture": "notes",
+      "forbidden": [
+        {
+          "tool": "g6_workflow_export"
+        },
+        {
+          "tool": "g6_workflow_correct"
+        },
+        {
+          "tool": "g6_workflow_delete"
+        },
+        {
+          "tool": "g6_feedback"
+        }
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.workflow.positive.1",
+      "route": "workflow",
+      "polarity": "positive",
+      "cohort": "development",
+      "prompt": "I want to look at what G6 has recorded about its own review work in this repository. Write it out as a file I can open myself, and tell me where the file is.",
+      "fixture": "notes",
+      "expected_calls": [
+        {
+          "tool": "g6_workflow_export",
+          "args_include": {
+            "repo": "notes"
           }
         }
       ],

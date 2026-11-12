@@ -48,7 +48,11 @@ DIALOG_EXEMPT: dict[str, dict[str, str]] = {
 DIALOG_SCHEMAS: dict[str, str] = {
     "g6.mcp.consent": "request_consent: the schema it hands the client, read from what it sends",
     "g6.mcp.behaviour": "the behaviour form: the schema behaviour_question.form returns",
+    "g6.mcp.workflow": "the workflow record's forms: DELETE_FORM, DECIDE_FORM and FEEDBACK_FORM, the schemas it hands "
+                       "elicit",
 }
+#: The workflow record's forms, by their names in ``g6.mcp.workflow`` (each is the schema object it sends).
+_WORKFLOW_FORMS = ("DELETE_FORM", "DECIDE_FORM", "FEEDBACK_FORM")
 #: Components whose typed input does not say which ops it accepts (``op`` is a plain string, checked in the block's
 #: own code), with the reason each is let through. For these the op inventory rests on the block's ``ops`` reply and
 #: on the block refusing an op the reply does not list, which ``component_ops`` probes; an op the block accepts and
@@ -108,13 +112,14 @@ def _properties(schema: Any) -> set[str]:
 
 def dialog_fields() -> frozenset[str]:
     """The fields a person answers in G6's dialogs, read from the schemas the dialogs' own code produces: the one
-    ``request_consent`` hands the client, and the ones ``behaviour_question.form`` returns for a question with and
-    without a rule. Neither is read from source text: a form that sends another field, however it is written, adds
-    that field here, and a form that cannot be built or returns no field is an error, never a shorter list."""
+    ``request_consent`` hands the client, the ones ``behaviour_question.form`` returns for a question with and
+    without a rule, and the workflow record's forms (``_WORKFLOW_FORMS``). None is read from source text: a form that
+    sends another field, however it is written, adds that field here, and a form that cannot be built or returns no
+    field is an error, never a shorter list."""
     from types import SimpleNamespace
 
     from g6.harness import behaviour_question
-    from g6.mcp import consent
+    from g6.mcp import consent, workflow
 
     sent: list[Any] = []
 
@@ -133,6 +138,7 @@ def dialog_fields() -> frozenset[str]:
     except Exception as exc:  # noqa: BLE001 - whatever stops the form being built stops the inventory
         raise RegistrationError(f"the behaviour form could not be built to read its fields. {type(exc).__name__}: "
                                 f"{exc}") from exc
+    forms += [getattr(workflow, name, None) for name in _WORKFLOW_FORMS]
     if not sent or any(not _properties(schema) for schema in (*sent, *forms)):
         raise RegistrationError("a dialog's schema asks for no field: the dialogs' fields could not be read")
     return frozenset(name for schema in (*sent, *forms) for name in _properties(schema))
