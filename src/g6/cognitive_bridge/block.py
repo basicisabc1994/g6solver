@@ -30,7 +30,7 @@ from .engine import BayesianUpdater, Hypothesis, InformationGainSelector, Probe,
 from .mixed_methods import CLAIM_SHAPE, ClaimIR, MethodRouter
 from .metacognition import MetacognitiveMethodSelector, ProblemSignature, MethodVariant
 from .assurance import DOCUMENT_FIELDS
-from .snapshot import publish, canonical_json, plain, _attributes, _text_keys, _walk
+from .snapshot import publish, canonical_json, plain, text, _attributes, _text_keys, _walk
 
 #: Every model here reads a caller's data, after the boundary has read it raw: strict (no field converted from another
 #: kind) and closed (no field it does not declare).
@@ -272,7 +272,14 @@ def _unchanged(given: CognitiveInput, held: CognitiveInput) -> CognitiveInput:
 )
 class CognitiveBridgeBlock(AIBlock[CognitiveInput, dict, dict]):
     def __init__(self, name: str = "cognitive_bridge", state: dict | None = None) -> None:
-        super().__init__(name=name, state=state or {})
+        # The constructor is where a caller's values reach the outputs the block inherits from AIBlock (name, state,
+        # bias, contract, then), which publish nothing themselves: the name is taken as text, the state as plain
+        # data, a new value, that is an object and claims no state (review pr8fu3r1, finding 1).
+        name = text(name, where="the block's name")
+        state = unclaimed(plain({} if state is None else state, where="the block's state"), where="the block's state")
+        if type(state) is not dict:
+            raise NotPlainData("the block's state", "it is not an object")
+        super().__init__(name=name, state=state)
         #: What :meth:`screen_raw` read at G6's door, for the call :meth:`infer` answers next (:meth:`_held`), or None.
         self._screened: Any = None
 

@@ -5135,6 +5135,28 @@
   {
     "source": [
       "block.py",
+      "CognitiveBridgeBlock.__init__",
+      "comparison",
+      "state is None"
+    ],
+    "disposition": "semantic",
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
+    "probes": []
+  },
+  {
+    "source": [
+      "block.py",
+      "CognitiveBridgeBlock.__init__",
+      "comparison",
+      "type(state) is not dict"
+    ],
+    "disposition": "semantic",
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
+    "probes": []
+  },
+  {
+    "source": [
+      "block.py",
       "CognitiveBridgeBlock.infer",
       "comparison",
       "screened is not None"
