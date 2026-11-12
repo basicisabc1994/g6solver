@@ -39,7 +39,8 @@ Every result carries one of three labels, and G6 never upgrades a label it did n
   check afterwards is caught. The hash covers the source only, not values the check reads from outside it, and the
   check runs in the same process as the work: it catches mistakes, not code written to defeat it.
 - **Results are published, misses included,** on the [Research](site/docs/research.md) page, as a worked example.
-- **Local-first and open.** No telemetry and no server of ours. Data goes only to the model you choose.
+- **Local-first and open.** No telemetry and no server of ours. Data goes only to the model you choose, and to a
+  cloud model only with your grant ([consent](#use-it)).
 - **Small parts.** 38 components in the core harness, each usable on its own, extensions that join the library one at
   a time, and 11 bundles that package them for one problem each.
 
@@ -109,9 +110,30 @@ Not a programmer? Ready-made **bundles** (double-click apps) are described in th
 
 ## Use it
 
-**From a coding agent (MCP), the main surface:** after `g6 setup`, the agent gets discovery, `g6_compose`,
-`g6_review_patch`, `g6_review_until_clean`, and `metaharness_*` tools for constructing, measuring and revising applications. Long runs return
-job IDs; poll `metaharness_job`. [AGENT_GUIDE.md](AGENT_GUIDE.md) is written for the agent itself.
+**From a coding agent (MCP), the main surface:** after `g6 setup`, the agent gets 56 tools.
+
+- Discovery and composition: `g6_help`, `g6_find`, `g6_components`, `g6_describe`, `g6_invoke`, `g6_compose`.
+- Patch review and missions: `g6_review_patch`, `g6_review_until_clean`, `g6_premortem`, `g6_mission_*` (six).
+- Consent: `g6_cloud_grant`, `g6_cloud_grants`, `g6_cloud_revoke`, `g6_disclosures`.
+- The self-improvement loop: `g6_improve_*` (six). A person agrees in the client's dialog to each start, enrolment,
+  resume and demotion; the stop needs none.
+- Allowances: `g6_allowances`, both providers' quota windows and advisory pacing.
+- Behaviour questions: `g6_confirm_behaviour` asks the person one question about a task; a confirmed answer is
+  checked in every later review of that task.
+- The Context Engine: `g6_knowledge_*` (11), a local index of folders under the roots listed in
+  `G6_KNOWLEDGE_ROOTS` where the server is registered. Adding a folder asks the person to accept a preview.
+- The workflow record: `g6_workflow_*`, `g6_suggestion_decide`, `g6_feedback`; off unless `G6_WORKFLOW_RECORD=on`
+  is set where the server is registered.
+- The meta-harness: `metaharness_*` (13), for constructing, measuring and revising applications.
+
+Long runs return job IDs; poll `metaharness_job`. A tool that runs code or starts the loop needs a permission given
+with `g6 setup --allow` (the loop's: `metaharness.improve`). [AGENT_GUIDE.md](AGENT_GUIDE.md) is written for the agent.
+
+**Consent.** No user data reaches a cloud model unless the person granted it, per source and per provider, in the
+client's own dialog (`g6_cloud_grant`); without a grant the work stays local or the result is withheld. One check
+covers G6's own model calls, `g6_invoke` and `g6 invoke`, the cognitive bridge and the loop's Claude Code and Codex
+sessions. One path, the Python API `g6.invoke`, lives in a certificate-bound file and is put through the check at the
+certificate issuance window, before the tag.
 
 Most checks need no model. The few steps that do use the model you set in your key file, `~/.g6/.env`, whose values
 are local preferences under a trusted host: for example the line `G6_LLM_PROVIDER=claude_code` (your own Claude Code
@@ -142,20 +164,18 @@ Start with [the AI-for-AI workflow](docs/AI_FOR_AI_WORKFLOW.md). The loop is:
 `metaharness_start` -> confirm -> diagnose -> propose code with a hypothesis -> evaluate -> decide -> client consent -> run.
 A workflow's files live in the `.g6/` folder of the project G6 was started in, so start the meta-harness from a folder
 outside any repository you review with patch review: a review there counts those files as part of the change.
-Use `g6_compose` for explicit component connections. `g6_review_patch` is the first reference application: give
-it the patched repository, the task, and the requirements the patch must meet, each with the tests that check it.
+Use `g6_compose` for explicit component connections. `g6_review_patch` is the first reference application
+([the first review](#the-first-review)).
 
 You can also give it the task's intent: its success criteria become requirements and its non-goals and failure
 criteria behaviour the patch must keep, each not established until a requirement with the same text names the
 tests that check it.
 
-It runs those tests inside an operating-system boundary, compares the changed tests, test helpers and test-runner
+It runs the stated tests inside an operating-system boundary, compares the changed tests, test helpers and test-runner
 files with the base commit for the signs of weakening G6 knows how to find (a static comparison: it cannot show
 that the tests are as strong as before), then runs the other tests that touch the changed modules, and returns one
-outcome: test integrity compromised, defect detected, insufficient evidence, or supported within scope. 
+of the four outcomes above, each requirement with its own evidence.
 
-Supported within scope means every stated requirement passed its stated checks; it does not show that the patch does
-everything the task needs. Each requirement gets its own evidence, and merging always needs a separate approval.
 You can also propose checks of your own (`proposed_checks`, at most 20 test files): G6 runs each inside the same
 boundary on a copy of the patch and on one of the base commit's code, and says whether it found a counterexample,
 or, for a check of what the change should bring, whether it fails on the patch, whatever the base gives. A
@@ -165,7 +185,6 @@ reproduction you can run with plain pytest: the repository's own command, withou
 
 G6 keeps its record of its own test runs (test receipts) in a file your user account owns: it stops a caller's
 claimed results from counting as G6's, not a program running as you.
-Enable it explicitly with `g6 setup --client claude --allow patch_review.review` (or `--client codex`).
 
 Fewer than 30 held-out cases means exploration only. Generated-code activation still requires independently
 configured safety checks; source support and passing tests cannot replace them. A local file is not a human-only
@@ -174,7 +193,8 @@ separate account to enforce that separation.
 
 The public `v0.1.0` tag is immutable. [The launch release notes](docs/releases/launch.md) say what ships, what does
 not, and its limits; [the v0.1.1 release gates](docs/releases/v0.1.1.md) list the checks required before
-recommending a new release.
+recommending a new release. 0.3.0 is in preparation, not published (no tag, nothing on PyPI):
+[its note](docs/releases/v0.3.0.md) and [known limits](docs/releases/v0.3.0-known-limits.md).
 
 ## What is in it
 
@@ -199,6 +219,10 @@ recommending a new release.
   each on held-out examples you trust at equal compute, and activates nothing until a person approves. When a change
   fails, it says why and what to try next: root causes, and the G6 components that address them
   ([Tune it to your work](site/docs/metaharness.md)).
+- **New on the 0.3 line**: the self-improvement loop (`g6_improve_*`), which runs on a folder a person enrolled until
+  a stop, adopts changes in its own workspace only and pushes nothing; consent (`g6.core.cloud_consent`), with a
+  record of what was sent; the Context Engine (`g6.knowledge`), search by words with each passage cited, its meaning
+  route not ready in this build; and missions, allowances, behaviour questions and the workflow record (above).
 - **A stop switch** (`g6.core.stop`): `G6_STOP`, or a `STOP` file in `$G6_HOME`.
 - **Research** (`g6.research`): the evidence kernel, now an audit view over the evidence issuer's records with no
   flag; governed adaptation, off unless `G6_ECHA_RESEARCH=1`; and a bridge from missions to evidence certificates
@@ -219,7 +243,14 @@ recommending a new release.
 | Research kernel (the evidence kernel's audit view, governed adaptation, the mission bridge) | `wired-but-inert`: the evidence kernel has no flag and no product code calls it; the other two are off unless `G6_ECHA_RESEARCH=1` and `G6_MISSION_BRIDGE=1` |
 | G6 helps independent coding agents on held-out tasks | `aspirational`: protocol published, not run |
 | Meta-harness: tune G6 to your own recurring work (`g6.metaharness`) | `implemented`. The studies run with it are on the [Research](site/docs/research.md) page, as a worked example |
-| G6 maintains its own repository through its self-improvement loop | `aspirational`: designed, and being built in the open |
+| Completion loop (`g6_review_until_clean`) | `implemented`. Measured on seven training bugs only |
+| Consent before any cloud model (`g6_cloud_*`) | `implemented`; `g6.invoke` joins before the tag. Not yet measured in a real client's dialog |
+| Self-improvement loop (`g6_improve_*`) | `implemented`. Not yet measured: an unattended week, adoption |
+| Allowances; behaviour questions | `implemented`. Not yet measured against real provider windows, or with real people |
+| Context Engine (`g6_knowledge_*`) | `implemented`, search by words. Retrieval quality not yet measured |
+| Workflow record | `implemented`, off by default. Its suggestions not yet measured |
+| `using-g6` routing to every tool | `implemented`. No routing session run yet |
+| G6 maintains its own repository through its self-improvement loop | `aspirational`: the loop runs but pushes nothing; pull requests are designed, and being built in the open |
 
 Until a pre-registered study says otherwise, treat G6 as careful engineering, not as a proven uplift. The studies run
 so far, including how G6 with its default settings compares with one direct model call, are on the
