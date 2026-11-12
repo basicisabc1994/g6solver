@@ -6,7 +6,8 @@ import pytest
 from g6.harness import behaviour_question as bq
 from g6.harness.confirmed_expectation import OUTCOME_FIELDS, confirm
 
-from .helpers import TASK, candidate, namespace
+from .helpers import TASK, candidate
+from tests.harness.test_outcomes_compete import namespace
 
 
 OUTCOMES = ({"returns": 5}, {"returns": -1}, {"raises": "ValueError"}, {"raises": "TypeError"},
@@ -33,18 +34,15 @@ def test_admitted_pairs_have_no_shared_witness(tmp_path, left, right):
             for effect in (5, -1, []):
                 accepted = []
                 for label in ("A", "B"):
-                    ns = namespace(tmp_path, confirm(question, label, answered_by="person:Maintainer").instance)
-                    original = ns["_load"]
-
-                    def witness(arg):
-                        if error:
-                            raise error()
-                        arg[:] = effect if isinstance(effect, list) else [effect]
-                        return returned
-
-                    ns["_load"] = lambda spec: original(spec) if spec[0] == "builtin" else witness
+                    body = ('    raise ' + error.__name__ + '()\n' if error else
+                            f'    arg[:] = {effect if isinstance(effect, list) else [effect]!r}\n'
+                            f'    return {returned!r}\n')
+                    program = 'class Both(ValueError, TypeError):\n    pass\ndef add(arg):\n' + body
+                    ns = namespace(tmp_path, confirm(question, label, answered_by="person:Maintainer").instance, program)
                     try:
-                        ns["test_example"]()
+                        with pytest.MonkeyPatch.context() as local:
+                            local.chdir(tmp_path)
+                            ns["test_example"]()
                         accepted.append(label)
                     except pytest.fail.Exception:
                         pass

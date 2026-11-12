@@ -51,16 +51,24 @@ class Scenario:
     def __post_init__(self):
         value = json.loads(self.record)
         if (set(value) != FIELDS or canonical(value).encode("ascii") != self.record
-                or value["version"] != "example-scenario.v1" or value["setup"] != SETUP):
+                or value["version"] not in {"example-scenario.v1", "example-scenario.v2"}
+                or value["setup"] != SETUP):
             raise ValueError(f"{UNAVAILABLE}: unsupported executable scenario")
         entry = value["entrypoint"]
         if any('error' in one and not observable_exception('.'.join(part for part in one['error'][1:3] if part))
                for one in value['outcomes'].values()):
             raise ValueError(f"{UNAVAILABLE}: a raised outcome must name an observable exception")
-        if (not isinstance(entry, list) or len(entry) != 4 or entry[0] != "module"
+        if (not isinstance(entry, list) or len(entry) != (5 if value['version'] == 'example-scenario.v2' else 4)
+                or entry[0] != "module"
                 or PurePosixPath(entry[3]).is_absolute() or ":" in entry[3]
                 or ".." in PurePosixPath(entry[3]).parts):
             raise ValueError(f"{UNAVAILABLE}: unsupported repository entry point")
+        if len(entry) == 5:
+            binding = entry[4]
+            # Older v2 records retain their canonical bytes; their obsolete file digest has no authority.
+            if (not isinstance(binding, dict) or set(binding) not in ({'import_roots'}, {'import_roots', 'sha256'})
+                    or binding['import_roots'] != ['.', 'src']):
+                raise ValueError(f"{UNAVAILABLE}: unsupported referent binding")
 
     @classmethod
     def resolve(cls, root, question):
@@ -76,7 +84,8 @@ class Scenario:
             applied = vt.TEMPLATES["example.v1"].applies(tree, bound, vt.PATCH).data
             entry = applied["function"]
             outcomes[label] = {k: v for k, v in applied["cases"][0].items() if k not in ("args", "kwargs")}
-        return cls(canonical({"version": "example-scenario.v1", "setup": SETUP, "entrypoint": entry,
+        entry = [*entry, {'import_roots': ['.', 'src']}]
+        return cls(canonical({"version": "example-scenario.v2", "setup": SETUP, "entrypoint": entry,
                               "input": {"args": question.args, "kwargs": question.kwargs},
                               "outcomes": outcomes}).encode("ascii"))
 
@@ -207,11 +216,17 @@ def test_example():
                 return False
         return True
 
+    def require_binding(self) -> None:
+        """Legacy scenarios remain readable reproductions, but cannot supply confirmation custody."""
+        if json.loads(self.record)['version'] != 'example-scenario.v2':
+            raise ValueError(f'{UNAVAILABLE}: confirm the import roots and resolved repository path in a new dialog')
+
 
 def save(question, scenario: Scenario) -> None:
     from g6.cogarch._store import atomic_write
     from g6.core.storage import state_path
 
+    scenario.require_binding()
     if not scenario.matches(question):
         raise ValueError(f"{UNAVAILABLE}: the scenario is not this question")
     path = state_path("scenarios", question.sha256 + ".json")
@@ -238,6 +253,7 @@ def load(question) -> Scenario:
             raise ValueError("linked record")
         record = json.loads(path.read_bytes())
         scenario = Scenario(record["scenario"].encode("ascii"))
+        scenario.require_binding()
         expected = {"version": "scenario-binding.v1", "question_sha256": question.sha256,
                     "scenario_sha256": scenario.sha256, "scenario": scenario.record.decode("ascii")}
         if record != expected or not scenario.matches(question):

@@ -12,6 +12,7 @@ import pytest
 from g6.harness import behaviour_question as bq, verification_templates as vt
 from g6.mcp import behaviour
 from tests.repair_question2.helpers import TASK, candidate
+from tests.harness.example_contract import EXAMPLE_TEXT_SHA256, reference_instance_digest
 
 
 @pytest.mark.parametrize("rule", ['prefix `a  b`', 'first\n  second\tthird', 'spaces  at  end  '])
@@ -49,7 +50,7 @@ def test_every_unconfirmed_template_identity_equals_the_base_producer(monkeypatc
     for ident, instance in vt.EXAMPLES.items():
         one = vt.TemplateInstance(**instance)
         old = base.TemplateInstance(**instance)
-        assert vt.instance_digest(one) == base.instance_digest(old), ident
+        assert vt.instance_digest(one) == reference_instance_digest(base, old), ident
     # The inventory above comes from the actual registry, including the static and formal templates.
     assert set(vt.EXAMPLES) == set(vt.REGISTRY)
 
@@ -65,7 +66,7 @@ def test_the_public_ordinary_template_is_the_text_that_is_compiled(tmp_path):
     assert check.source.replace(literal, "") == vt.TEMPLATES["example.v1"].text.replace(vt.SLOT, "")
 
 
-def test_confirmed_fixed_text_keeps_its_previous_digest():
+def test_confirmed_fixed_text_keeps_the_fresh_interpreter_digest():
     from g6.harness.confirmed_expectation import confirm
     import hashlib
 
@@ -78,7 +79,8 @@ def test_confirmed_fixed_text_keeps_its_previous_digest():
                 + "\n\nBINDINGS = " + vt.SLOT + "\n" + fixed["_EXAMPLE"])
     one = bq.caller_candidates(TASK, [candidate()])[0]
     held = confirm(one.question("b" * 64), "A", answered_by="person:Maintainer")
-    assert vt.instance_definition(held.instance).text_sha256 == hashlib.sha256(previous.encode()).hexdigest()
+    assert vt.instance_definition(held.instance).text_sha256 == EXAMPLE_TEXT_SHA256
+    assert hashlib.sha256(previous.encode()).hexdigest() != EXAMPLE_TEXT_SHA256
 
 
 def test_every_review_branch_passes_one_publication_boundary():

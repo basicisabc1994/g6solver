@@ -11,13 +11,13 @@ findings 1, 6 and 12, one root: outcomes that do not truly compete).
 - A candidate is offered only when each outcome's compiled check rejects what the other outcome shows, judged by
   example.v1's own compiled text; identical, overlapping and independent outcomes are refused, each with its code.
 
-Development fixtures only: the compiled checks run in this process against stand-in functions; nothing is confined.
+Development fixtures only: example checks import on-disk witnesses in fresh children; differential helpers use stand-ins.
 """
 from __future__ import annotations
 
 import ast
 import builtins
-import copy
+import hashlib
 import types
 from pathlib import Path
 from types import SimpleNamespace
@@ -45,11 +45,12 @@ def candidate(**extra) -> dict:
             **extra}
 
 
-def namespace(tmp_path: Path, instance: TemplateInstance) -> dict:
+def namespace(tmp_path: Path, instance: TemplateInstance, program="def add(*args, **kwargs):\n    return None\n") -> dict:
     """The real fixed text of the instance's template, compiled for a stand-in ``calc.py`` (trusted fixture code)."""
+    (tmp_path / 'calc.py').write_text(program, encoding='utf-8')
     tree = vt.Tree(tmp_path, SimpleNamespace(base_commit="fixture"), frozenset({"calc.py"}), frozenset(),
-                   _texts={("calc.py", vt.PATCH): "def add(*args, **kwargs):\n    return None\n"})
-    definition = vt.TEMPLATES[instance.template]
+                   _texts={("calc.py", vt.PATCH): program})
+    definition = vt.instance_definition(instance)
     applied = definition.applies(tree, definition.bindings.model_validate(instance.bindings), vt.PATCH)
     found: dict = {}
     exec(compile(vt.compile_text(definition, applied.data), "<G6 fixed template>", "exec"), found)  # noqa: S102
@@ -96,17 +97,13 @@ def test_finding_1_competing_outcomes_never_both_accept_one_implementation(tmp_p
     question = one.question("b" * 64)
     passing = []
     for option in ("A", "B"):
-        check = namespace(tmp_path, confirm(question, option, answered_by="person:Ada").instance)
-
-        def both(*args):
-            if kind == "exception_subclass":
-                raise ValueError("the B outcome")
-            return 5
-
-        load = check["_load"]
-        check["_load"] = lambda spec, load=load: load(spec) if spec[0] == "builtin" else both
+        program = ('def add(*args):\n    raise ValueError("the B outcome")\n' if kind == 'exception_subclass'
+                   else 'def add(*args):\n    return 5\n')
+        check = namespace(tmp_path, confirm(question, option, answered_by="person:Ada").instance, program)
         try:
-            check["test_example"]()
+            with pytest.MonkeyPatch.context() as local:
+                local.chdir(tmp_path)
+                check["test_example"]()
         except pytest.fail.Exception:
             continue
         passing.append(option)
@@ -164,23 +161,25 @@ PAIRS = [
 
 
 def _stand_in(*outcomes: dict):
-    """A function that shows every outcome given at once, where it can: their returned value, each argument's value
+    """Source that shows every outcome given at once, where it can: their returned value, each argument's value
     after the call, and the narrowest error named (raised, so nothing else is shown)."""
     errors = [getattr(builtins, one["raises"]) for one in outcomes if "raises" in one]
     witness_error = max(errors, key=lambda kind: len(kind.__mro__)) if errors else None
     if len(errors) == 2 and not issubclass(errors[0], errors[1]) and not issubclass(errors[1], errors[0]):
         witness_error = type("Both", tuple(errors), {})
 
-    def function(*args, **kwargs):
-        if errors:
-            raise witness_error()
-        for one in outcomes:
-            if "effect" in one:
-                args[one["effect"]["argument"]][:] = copy.deepcopy(one["effect"]["equals"])
-        found = [one["returns"] for one in outcomes if "returns" in one]
-        return copy.deepcopy(found[0]) if found else None
-
-    return function
+    lines = []
+    if witness_error and witness_error.__name__ == 'Both':
+        lines.append('class Both(' + ', '.join(error.__name__ for error in errors) + '):\n    pass')
+    lines.append('def add(*args, **kwargs):')
+    if errors:
+        lines.append('    raise ' + witness_error.__name__ + '()')
+    for one in outcomes:
+        if 'effect' in one:
+            lines.append(f'    args[{one["effect"]["argument"]}][:] = {one["effect"]["equals"]!r}')
+    found = [one['returns'] for one in outcomes if 'returns' in one]
+    lines.append('    return ' + repr(found[0] if found else None))
+    return '\n'.join(lines) + '\n'
 
 
 def _accepts(tmp_path: Path, outcome: dict, function) -> bool:
@@ -190,11 +189,11 @@ def _accepts(tmp_path: Path, outcome: dict, function) -> bool:
 
     shown = Question(requirement_id="R1", function="calc.add", args=[[0], [0]], outcomes=question,
                      scope=bq.CASE_SCOPE, cited=TASK, baseline_sha256="b" * 64)
-    check = namespace(tmp_path, confirm(shown, "A", answered_by="person:Ada").instance)
-    load = check["_load"]
-    check["_load"] = lambda spec: load(spec) if spec[0] == "builtin" else function
+    check = namespace(tmp_path, confirm(shown, "A", answered_by="person:Ada").instance, function)
     try:
-        check["test_example"]()
+        with pytest.MonkeyPatch.context() as local:
+            local.chdir(tmp_path)
+            check["test_example"]()
     except pytest.fail.Exception:
         return False
     return True
@@ -238,7 +237,25 @@ def test_the_one_encoding_is_the_probe_s_and_example_v1_s_and_tells_types_apart(
     compiled = namespace(tmp_path, confirm(bq.caller_candidates(TASK, [candidate()])[0].question("b" * 64), "A",
                                            answered_by="person:Ada").instance)
     for value in VALUES:
-        assert bq.encoded(value) == vs._canonical(value) == compiled["_json"](value), value
+        # Read the real child's encoder through the same host comparison used by the portable check.
+        (tmp_path / 'calc.py').write_text(f'def add(*args):\n    return {value!r}\n', encoding='utf-8')
+        compiled['BINDINGS']['cases'][0]['value'] = value
+        observed = []
+        finish = compiled['finish']
+        def capture(code, raw, data):
+            reading = finish(code, raw, data)
+            observed.append(reading['observed']['outcomes'][0]['returned'])
+            return reading
+        compiled['finish'] = capture
+        with pytest.MonkeyPatch.context() as local:
+            local.chdir(tmp_path)
+            compiled['test_example']()
+        compiled['finish'] = finish
+        assert bq.encoded(value) == vs._canonical(value), value
+        text = bq.encoded(value)
+        raw = text.encode('utf-8')
+        assert observed == [{'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw), 'prefix': text[:200]}], value
+        assert observed[0]['prefix'] == text, value
         assert bq.decoded(bq.encoded(value)) == value and bq.encoded(bq.decoded(bq.encoded(value))) == bq.encoded(value)
     texts = {bq.encoded(value) for value in VALUES}
     assert len(texts) == len(VALUES)   # 1, true, 1.0, -0.0, 0.0, "5" and 5 all differ

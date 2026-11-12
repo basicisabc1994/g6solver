@@ -411,7 +411,9 @@ def test_the_loader_takes_a_module_only_from_the_tree_s_file(tmp_path, monkeypat
     monkeypatch.chdir(top)
     name = {"standard_library": "json", "loaded_before": "g6_fixture_cached", "installed_elsewhere": "g6_fixture_far",
             "the_tree": "g6_fixture_here"}[where]
-    (top / f"{name}.py").write_text("def dumps(value):\n    return '{}'\n", encoding="utf-8")
+    (top / f"{name}.py").write_text(
+        "def dumps(value):\n    from pathlib import Path\n"
+        "    Path('repository-ran').write_text('yes')\n    return '{}'\n", encoding="utf-8")
     if where == "loaded_before":
         cached = SimpleNamespace(__file__=str(tmp_path / "elsewhere" / f"{name}.py"), dumps=lambda value: "{}")
         monkeypatch.setitem(sys.modules, name, cached)
@@ -428,9 +430,16 @@ def test_the_loader_takes_a_module_only_from_the_tree_s_file(tmp_path, monkeypat
         if where == "the_tree":
             check["test_example"]()   # the tree's own file: it runs, and passes
             return
-        with pytest.raises(check["_Elsewhere"]):
-            check["_load"](check["BINDINGS"]["function"])
-        with pytest.raises(pytest.skip.Exception):   # the check: no result, never a pass or a failure
+        # Parent caches and installed paths no longer choose a fresh child's
+        # import. Show that it ran the repository file, then give the loader a
+        # different resolved file: neither the direct check nor its wrapper may
+        # use the same-named module as a substitute for that file.
+        check['test_example']()
+        assert (top / 'repository-ran').read_text() == 'yes'
+        check['BINDINGS']['function'][3] = f'other/{name}.py'
+        with pytest.raises(ValueError, match='the copied entry point does not match'):
+            check['_check_example']()
+        with pytest.raises(pytest.fail.Exception, match='the copied entry point does not match'):
             check["test_example"]()
     finally:
         if where in ("installed_elsewhere", "the_tree"):   # the fixture's own module, imported here
