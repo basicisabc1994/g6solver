@@ -92,6 +92,11 @@ TOOLS = {
     **{name: contract('g6_operational') for name in (
         'g6_cloud_grant', 'g6_cloud_revoke')},
     **{name: contract('source:consent_metadata') for name in ('g6_cloud_grants', 'g6_disclosures')},
+    # The Context Engine binds each reply to the source registrations whose content it carries (knowledge:<id>).
+    **{name: contract('client_request') for name in (
+        'g6_knowledge_add', 'g6_knowledge_context', 'g6_knowledge_count', 'g6_knowledge_delete', 'g6_knowledge_job',
+        'g6_knowledge_passage', 'g6_knowledge_paths', 'g6_knowledge_refresh',
+        'g6_knowledge_revoke', 'g6_knowledge_search', 'g6_knowledge_sources')},
 }
 
 def _arguments(content='', pointer=''):
@@ -140,6 +145,17 @@ TOOL_ARGUMENTS = {
     'metaharness_diagnose': _arguments(pointer='workflow'),
     'metaharness_approve': _arguments('decision_digest', 'workflow'),
     'metaharness_rollback': _arguments('version', 'workflow'),
+    'g6_knowledge_add': _arguments('share expires_days retention backends', 'path'),
+    'g6_knowledge_context': _arguments('task budget_tokens', 'sources'),
+    'g6_knowledge_count': _arguments('query', 'sources'),
+    'g6_knowledge_delete': _arguments('complete', 'source'),
+    'g6_knowledge_job': _arguments(pointer='job_id'),
+    'g6_knowledge_passage': _arguments('raw', 'passage_id'),
+    'g6_knowledge_paths': _arguments('relation max_hops', 'start'),
+    'g6_knowledge_refresh': _arguments(pointer='source'),
+    'g6_knowledge_revoke': _arguments(pointer='source'),
+    'g6_knowledge_search': _arguments('query top_k routes plan needs', 'sources'),
+    'g6_knowledge_sources': {},
 }
 
 

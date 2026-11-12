@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from g6.knowledge._index import Added, IndexBackend, Removed, Retrieves, Searched, index_backends, ranked
+from g6.knowledge._index import Added, IndexBackend, Removed, Retrieves, Searched, bad_k, index_backends, ranked
 from g6.knowledge._types import Passage
 from g6.knowledge.ctx_colbert.rungs import LADDER, RUNGS, Rungs, finite
 
@@ -96,6 +96,9 @@ class ColbertIndex(Retrieves):
         return Added(added=len(new), known=len(passages) - len(new), evidence={"held": len(self._passages)})
 
     def find(self, query: str, top_k: int = 10) -> Searched:
+        refused = bad_k("colbert", query, self.score_scale, top_k)
+        if refused is not None:
+            return refused
         if not self._passages:
             return Searched(backend="colbert", query=query, outcome="empty", score_scale=self.score_scale, searched=0,
                             reason="this index holds no passages")

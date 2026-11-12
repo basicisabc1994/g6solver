@@ -354,3 +354,54 @@ def test_new_sdk_resource_fails_inventory(tmp_path):
     path = tmp_path / 'new_sdk.py'
     path.write_text('class NewSDK:\n    def send(self):\n        return self.messages.create()\n', encoding='utf-8')
     assert ('new.NewSDK.send', False, False) in sdk_resources(extra=(path,))
+
+
+def test_every_context_engine_tool_has_its_source_contract_and_argument_kinds():
+    """The Context Engine's tools live in g6.mcp.knowledge: each one the server registers is in the closed tables,
+    with exactly the arguments its schema has, and declares the client's request as a source."""
+    import asyncio
+
+    from g6.core.consent_declarations import TOOL_ARGUMENTS, TOOLS
+    from g6.mcp import build_server
+
+    tools = {name: tool for name, tool in asyncio.run(build_server().get_tools()).items()
+             if name.startswith("g6_knowledge_")}
+    assert len(tools) >= 5
+    for name, tool in tools.items():
+        assert name in TOOLS and TOOLS[name].classes == ('client_request',), name
+        assert set(tool.parameters.get('properties', {})) == set(TOOL_ARGUMENTS[name]), name
+        assert set(TOOL_ARGUMENTS[name].values()) <= {'content', 'pointer'}, name
+    declared = {name for name in TOOLS if name.startswith("g6_knowledge_")}
+    assert declared == set(tools), "a declared Context Engine tool is not registered, or the reverse"
+
+
+def knowledge_model_calls(root=ROOT, extra=()):
+    """Every place the Context Engine's shared modules ask a model: (file:function, the receiver is ``guard(...)``,
+    the call lies inside ``with cloud_consent.request_sources(...)``). Read from the folder, so a new module is seen."""
+    rows = []
+    for path in [*sorted((root / 'src/g6/knowledge').glob('_*.py')), *extra]:
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+        for function in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:
+            inside = {id(call) for block in ast.walk(function) if isinstance(block, ast.With) and any(
+                isinstance(i.context_expr, ast.Call) and ast.unparse(i.context_expr.func) == 'cloud_consent.request_sources'
+                for i in block.items) for call in ast.walk(block)}
+            for call in ast.walk(function):
+                if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr in (
+                        'complete', 'complete_with_images'):
+                    receiver = call.func.value
+                    guarded = isinstance(receiver, ast.Call) and ast.unparse(receiver.func) == 'guard'
+                    rows.append((f'{path.name}:{function.name}', guarded, id(call) in inside))
+    return rows
+
+
+def test_every_model_call_of_the_context_engine_is_guarded_and_names_its_sources(tmp_path):
+    rows = knowledge_model_calls()
+    assert {'_relations.py:extract', '_planner.py:run'} <= {name for name, _, _ in rows}
+    assert all(guarded and inside for _, guarded, inside in rows), rows
+    text = (ROOT / 'src/g6/knowledge/_relations.py').read_text(encoding='utf-8')
+    assert 'from g6.core.consent_callers import guard' in text and 'from g6.core import cloud_consent' in text
+    # a new module that asks a model directly, or outside the sources of what it sends, fails the inventory
+    fresh = tmp_path / '_fresh.py'
+    fresh.write_text('def ask(caller, text):\n    return caller.complete("", text)\n\n\n'
+                     'def half(caller, text):\n    return guard(caller).complete("", text)\n', encoding='utf-8')
+    assert knowledge_model_calls(extra=(fresh,))[-2:] == [('_fresh.py:ask', False, False), ('_fresh.py:half', True, False)]

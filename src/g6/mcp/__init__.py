@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """g6-mcp — a stdio MCP server exposing G6's progressive discovery surface.
 
-40 tools: six discovery tools, ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
+51 tools: six discovery tools, ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
 ``g6_allowances`` for both providers' quota windows and advisory pacing (``g6.allowance``);
 ``g6_review_patch``, which assesses a Python patch against stated requirements in confined test runs, as a job;
 ``g6_review_until_clean``, one step of the completion loop for a client the plugin's hook cannot reach (``g6.mcp.review_loop``),
@@ -18,6 +18,11 @@ declared in the file ``G6_METAHARNESS`` names, where confirmation, approval and 
 client, including in the proposing session, and a failed attempt carries its recovery (``g6.metaharness.surface``).
 Four sharing tools (``g6_cloud_grant``, ``g6_cloud_revoke``, ``g6_cloud_grants``, ``g6_disclosures``)
 use client-dialog grants and a source/provider disclosure ledger (``g6.mcp.cloud_consent``).
+Eleven Context Engine tools (``g6_knowledge_add``, ``g6_knowledge_sources``, ``g6_knowledge_search``,
+``g6_knowledge_context``, ``g6_knowledge_passage``, ``g6_knowledge_count``, ``g6_knowledge_refresh``,
+``g6_knowledge_job``, ``g6_knowledge_revoke``, ``g6_knowledge_delete``, ``g6_knowledge_paths``) index folders the person accepts in the client's
+dialog, on their machine, and return cited, re-read passages only from sources shared with the client's provider
+(``g6.mcp.knowledge``).
 Install
 with ``pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"`` and register with ``claude mcp add g6 -- g6-mcp`` (or, for Codex,
 ``codex mcp add g6 -- g6-mcp``). There is no account, key or network service.
@@ -157,6 +162,8 @@ def build_server(surface: Any = None) -> Any:
     from g6.mcp.cloud_consent import install, public_tool, register
     install(server)
     register(server, Context)
+    from g6.mcp import knowledge
+    knowledge.register(server, Context)   # the Context Engine: the person's own folders, searched locally
 
     @server.tool()
     @public_tool

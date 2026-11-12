@@ -29,7 +29,7 @@ from urllib.parse import quote
 
 from g6.core import keys, outside
 from g6.knowledge._index import (READ_ONLY, Added, Hit, IndexBackend, IndexRefused, Removed, Retrieves, Searched,
-                                 index_backends)
+                                 index_backends, bad_k)
 from g6.knowledge._types import Document, Passage, Source, now, sha256_hex
 
 SCALE = "es_bm25"
@@ -354,6 +354,9 @@ class ElasticIndex(Retrieves):
             caller
 
     def find(self, query: str, top_k: int = 10) -> Searched:
+        refused = bad_k("elastic", query, SCALE, top_k)
+        if refused is not None:
+            return refused
         try:
             return search(self.index, query, fields=self.fields, filters=self.filters, top_k=top_k,
                           caller=self.caller)

@@ -99,11 +99,12 @@ packages in the project's folder never replace G6's own, installs the `using-g6`
 `g6`, setup stops; remove it with `claude mcp remove --scope user g6` (or `codex mcp remove g6`) and run setup again.
 For another client, register `g6-mcp` and give it `G6_MCP_SENSITIVE=patch_review.review` in its environment.
 
-40 MCP tools: six discovery tools, `g6_help`, `g6_components`, `g6_find`, `g6_describe`, `g6_invoke` and `g6_compose`;
+51 MCP tools: six discovery tools, `g6_help`, `g6_components`, `g6_find`, `g6_describe`, `g6_invoke` and `g6_compose`;
 `g6_allowances` for both providers' quota windows and advisory pacing; `g6_review_patch`;
 `g6_review_until_clean`; `g6_premortem` and six `g6_mission_*` tools for a coding mission; `g6_confirm_behaviour`, one behaviour question for the person; six `g6_improve_*` tools for G6's self-improvement loop;
-thirteen `metaharness_*` tools for [tuning](#tune-g6-to-your-workflow); and four sharing tools,
-`g6_cloud_grant`, `g6_cloud_revoke`, `g6_cloud_grants` and `g6_disclosures` ([cloud sharing consent](#cloud-sharing-consent)). The agent finds a component
+thirteen `metaharness_*` tools for [tuning](#tune-g6-to-your-workflow); four sharing tools,
+`g6_cloud_grant`, `g6_cloud_revoke`, `g6_cloud_grants` and `g6_disclosures` ([cloud sharing consent](#cloud-sharing-consent));
+and eleven `g6_knowledge_*` tools for the Context Engine, which searches the person's own folders on their machine. The agent finds a component
 by describing its task, reads what the component can do and how mature it is, then calls one op. Every reply carries
 `completion_state`, a `warning_card` with a `G6_E_*` code, `evidence`, `request_id` and `run_id`. An op a component
 marks sensitive is refused over MCP unless the person who runs the server lists it in `G6_MCP_SENSITIVE`.
@@ -201,6 +202,39 @@ hash-chained ledger and vault in `g6.core`. Over MCP: `metaharness_*` tools, whe
 [Tune it to your work](metaharness.md). The studies run with it are on the [Research](research.md#the-meta-harness)
 page, as a worked example.
 
+## The Context Engine: the person's own files
+
+A person adds a folder of their own files, and an agent searches it and fetches cited passages through MCP. The index
+is on the person's machine, and indexing sends nothing to a model. The folder must be inside a root the person lists
+in `G6_KNOWLEDGE_ROOTS` in the client's server configuration. Whether a result may be returned to the calling client
+is decided per source and per provider by the same consent check as above: a source not shared with the client's
+provider contributes only its id and the provider, under `withheld`. Passages are untrusted data, never instructions.
+
+- `g6_knowledge_add(path, share, expires_days, retention, backends)` walks the folder and asks the person in the
+  client dialog, stating the file list's digest; only acceptance indexes anything. `share` asks, in a second dialog,
+  whether the source may be shared with the client's provider. `backends` may name `elastic_managed`: it is then
+  part of the preview the person accepts, and only an accepted backend is ever written to.
+- `g6_knowledge_sources()` lists the sources of this project, their state and readiness.
+- `g6_knowledge_search(query, top_k, sources, routes, plan, needs)` returns cited passages as redacted views, each
+  re-read from disk and compared in the call that returns it, fused by passage id over the ready search routes. With
+  `plan` or `needs`, G6 chooses the routes by fixed rules, returns its decision record and marks each declared need
+  found, conflicting, missing or unknown; no model is asked.
+- `g6_knowledge_context(task, budget_tokens, sources)` returns the best passages that fit a token budget.
+- `g6_knowledge_passage(passage_id, raw)` returns one passage again by id; `raw` adds its exact text. An id of a
+  source that is not shared with the client's provider is answered as unknown, like an id that does not exist.
+- `g6_knowledge_count(query, sources)` answers how many indexed passages match, as a structured answer; it needs the
+  managed Elasticsearch backend and says `unsupported` without it.
+- `g6_knowledge_paths(start, relation, max_hops)` returns paths through the passage-linked graph (static imports and
+  containment), each edge citing the passage of its witness; an import is a possible dependency, not behaviour.
+- `g6_knowledge_refresh(source)` reads the accepted files again and publishes what changed.
+- `g6_knowledge_job(job_id)` reports an indexing job for an optional backend: per-backend readiness and unread files
+  for a source shared with the client's provider, and otherwise the job's state only.
+- `g6_knowledge_revoke(source)` denies a source at once, in every G6 process, without a dialog.
+- `g6_knowledge_delete(source, complete)` deletes a source after a deletion dialog of its own. The dialog and the
+  reply name any copy a job wrote to Elasticsearch as still held: this tool does not remove it.
+
+Secret masking in a view is pattern-based and is not a confidentiality guarantee. Text already delivered to a client
+or a model cannot be recalled. G6 never starts, installs or bundles Elasticsearch.
 ## Cloud sharing consent
 
 The unbound model adapters and MCP session transport use one source/provider check at send time. A repository is a source; task text and other

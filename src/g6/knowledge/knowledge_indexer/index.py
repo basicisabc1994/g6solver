@@ -41,7 +41,7 @@ from pydantic import ValidationError
 
 from g6.core.storage import state_path
 from g6.knowledge._index import (BAD_QUERY, FAILED, OVER_BUDGET, TIMED_OUT, UNAVAILABLE, Added, Hit, IndexBackend,
-                                 IndexRefused, Removed, Retrieves, Searched, index_backends)
+                                 IndexRefused, Removed, Retrieves, Searched, index_backends, bad_k)
 from g6.knowledge._types import Passage, Source, sha256_hex
 
 #: The budget when a caller sets none: 256 MiB for one index on disk.
@@ -279,6 +279,9 @@ class SqliteIndex(Retrieves):
     def find(self, query: str, top_k: int = 10) -> Searched:
         """FTS5's BM25 search; see the module docstring."""
         said = {"backend": self.backend, "query": query, "score_scale": SCALE}
+        refused = bad_k(self.backend, query, SCALE, top_k)
+        if refused is not None:
+            return refused
         try:
             expression = match_expression(query)
         except IndexRefused as exc:

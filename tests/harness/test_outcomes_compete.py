@@ -336,6 +336,7 @@ PLACES: dict[tuple[str, str, str], str] = {
     ("harness/behaviour_question.py", "make", "competition(made.to_dict()['outcomes'])"): THROUGH,
     ("harness/behaviour_question.py", "from_record", "decoded(data)"): THROUGH,
     ("harness/behaviour_question.py", "from_record", "made.data != data"): RECORD,
+    ("harness/behaviour_question.py", "with_support", "made.data == candidate.data"): RECORD,
     ("harness/behaviour_question.py", "from_record", "competition(outcomes)"): THROUGH,
     ("harness/behaviour_question.py", "form", "competition(question.outcomes)"): THROUGH,
     ("harness/behaviour_question.py", "_structural", "sorted(record['outcomes']) != list(LABELS)"): (

@@ -269,9 +269,54 @@ class Candidate:
                 self.question(baseline_sha256, scope=RULE_SCOPE.format(rule=rule)) if rule.strip() else None)
 
 
+KNOWLEDGE = "knowledge:"
+CITED_NOTE = ("Cited passages: each evidence item that starts with knowledge: is a passage found by search in the "
+              "person's indexed files (its passage id, then its file's path). It is cited text from a file: it is "
+              "not G6's own run and not the caller's statement.")
+
+
+def quoted_path(path: str) -> str:
+    """A file's path in the one form an evidence line carries: the form's item separator, the escape character
+    itself and every character outside printable text are written as %XX of their UTF-8 bytes, so a file's name is
+    data on its line and can never end the item or begin another. An ordinary path reads as itself."""
+    return "".join(ch if ch not in "%;" and 32 <= ord(ch) != 127 and ch not in "\u0085\u2028\u2029"
+                   else "".join(f"%{byte:02X}" for byte in ch.encode("utf-8")) for ch in path)
+
+
+def with_support(candidate: Candidate, support: Sequence[Mapping[str, Any]], *, settles: str = "", by: str = "",
+                 rule: str = "") -> Candidate:
+    """``candidate`` with one evidence line per cited passage of the person's own indexed files
+    (``knowledge:<passage id> <path>``, the path in :func:`quoted_path`'s form; the form labels such lines apart from
+    G6's own). A passage is evidence only: the outcomes, the scope and the question stay as
+    they were. ``settles`` (an outcome label, with ``by`` saying which grant) adds a ``settled`` entry, and is given
+    only when a normative source covers this scenario (``g6.knowledge._support.may_suppress``); ``rule`` is offered as
+    the rule line only when the candidate has none. Each support record is one passage id and one path;
+    ``CandidateRefused`` for anything else."""
+    record = candidate.to_dict()
+    lines = list(record["evidence"])
+    for one in support:
+        passage, path = (one.get("passage_id"), one.get("path")) if isinstance(one, Mapping) else (None, None)
+        if not (isinstance(passage, str) and _HEX64.fullmatch(passage) and isinstance(path, str) and path.strip()
+                and len(path) <= 300 and not any(ord(ch) < 32 for ch in path)):
+            raise CandidateRefused("a cited passage is one passage id and one path on one line")
+        line = f"{KNOWLEDGE}{passage} {quoted_path(path)}"
+        if line not in lines:
+            lines.append(line)
+    settled = list(record["settled"])
+    if settles:
+        if settles not in LABELS or not support or not isinstance(by, str) or not by.strip():
+            raise CandidateRefused("a normative source settles one of the two outcomes, for a cited passage, and "
+                                   "names its grant")
+        entry = {"outcome": settles, "by": f"the normative source says so ({by.strip()})"}
+        if entry not in settled:
+            settled.append(entry)
+    offered = record["rule"] if record["rule"].strip() or not isinstance(rule, str) else rule
+    made = Candidate._structural(**{**record, "evidence": lines, "settled": settled, "rule": offered})
+    return candidate if made.data == candidate.data else made   # the same record, in the one encoding: unchanged
+
+
 def _words(text: str) -> set[str]:
     return set(re.findall(r"[A-Za-z0-9_]+", text))
-
 
 def settled_by(task: str, outcomes: Mapping[str, Mapping[str, Any]]) -> list[dict]:
     """Evidence that the task already settles a choice: each outcome the task names literally (the exception's name,
@@ -465,7 +510,8 @@ def caller_text(value: object, *, literal: bool = True) -> str:
     """
     text = str(value)
     labels = ("Input:", "Setup:", "Outcome A:", "Outcome B:", "Scope:", "Cited from the task:",
-              "Requirement:", "Evidence (", "Evidence that", "Rule offered, in full:", "Scope (exact text):",
+              "Requirement:", "Evidence (", "Evidence that", "Cited passages:", "Rule offered, in full:",
+              "Scope (exact text):",
               "Executable scenario:", "Executable scenario SHA-256:", "#", "G6 asks", "Choose ", "<", ">", "&")
     if not literal and all(32 <= ord(char) < 127 for char in text) and not any(label in text for label in labels):
         return text
@@ -543,6 +589,8 @@ def form(question: Question, candidate: Candidate, rule: Question | None = None,
              f"{shown['baseline_sha256']}",
              f"Evidence ({whose}): " + "; ".join(caller_text(one, literal=False)
                                                for one in candidate.to_dict()["evidence"])]
+    if any(str(one).startswith(KNOWLEDGE) for one in candidate.to_dict()["evidence"]):
+        lines.append(CITED_NOTE)   # whose evidence a cited passage is, said apart from G6's own lines
     if scenario is not None:
         lines.extend(["Executable scenario: " + caller_text(scenario.record.decode("ascii"), literal=False),
                       "Executable scenario SHA-256: " + scenario.sha256])
@@ -632,4 +680,4 @@ __all__ = ["ANSWERED", "CALLER_FIELDS", "CASE_SCOPE", "CHOICES", "COVERAGE_NOTE"
            "FIELDS", "IDENTICAL", "INDEPENDENT", "INVALID", "LABELS", "OVERLAP", "PENDING", "PRIORITY", "RULE_SCOPE",
            "Reading", "SETUP", "SOURCES", "UNKNOWN", "caller_candidates", "caller_text", "choose", "competition", "decoded",
            "differential_candidates", "encoded", "form", "observed", "plan", "ranked", "read", "settled_by",
-           "shown_call", "shown_outcome"]
+           "shown_call", "shown_outcome", "with_support"]
