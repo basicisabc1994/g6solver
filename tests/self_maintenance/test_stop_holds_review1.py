@@ -123,6 +123,7 @@ def test_corrupt_lift_records_get_the_shared_unreadable_code(active, monkeypatch
             return type(exc).__name__
 
     handle = SimpleNamespace(root=active.root, log=active.log, mh=None, _beat=lambda *a, **k: None)
+    handle._tick = lambda: ShadowLoop._tick(handle)    # tick's locked body, split from it by the freeze follow-up
     observed = {"decision": stop_in_force(active.root).code,
                 "gate": code(lambda: _gate(active.root, active.settings)[0]),
                 "dialog": code(lambda: improve.asked(str(active.root))["warning_card"]["code"]),

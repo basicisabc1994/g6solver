@@ -180,6 +180,7 @@ def test_unreadable_cutoff_survives_failure_to_note_it_in_records(active, monkey
     loop = loop_module.ShadowLoop.__new__(loop_module.ShadowLoop)
     loop.root, loop.log = active.root, active.log
     loop.cannot_record, loop._records_known, loop.evaluating = "", None, True
+    loop.unreadable = ""    # the stop reader's note of a store it could not read (the refusals follow-up): none here
     loop._now = lambda: datetime(2026, 11, 6, tzinfo=UTC)
     journal = active.root / envelope.STOPS_FILE
     journal.mkdir()  # An actual unreadable stop, while the records and STOP remain writable.

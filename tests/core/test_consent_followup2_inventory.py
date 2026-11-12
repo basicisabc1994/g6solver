@@ -53,7 +53,15 @@ PLACES = {
     "metaharness/api.py": ("_envelope", "reply envelope named env, no child"),
     "model_checking/tlc.py": ("_execute _run_tool", "outside Java/TLC"),
     "prolog/runner.py": ("_environment _execute", "outside SWI-Prolog"),
-    "self_maintenance/usage.py": ("read_limits", "outside codex app-server, not Python"),
+    # the refusals follow-up: codex app-server through _ran, the one place its result is read; and a watched host's one
+    # request (claude or codex) through the host's own environment builder
+    "self_maintenance/usage.py": ("_ran _complete_host", "outside codex app-server and outside host model CLI, not Python"),
+    # the 0.3 merges: the allowance status line (the person's own renderer; G6's observer on an absolute interpreter),
+    # a confined repository behaviour scenario, and evidence records with a field named environment
+    "_allowance/statusline.py": ("run_wrapper hand_over", "outside status-line renderer; G6's own observer, -P, by an "
+                                                          "absolute interpreter, not a loop child"),
+    "harness/behaviour_runner.py": ("run", "repository behaviour scenario, confined, deliberately imports the copy"),
+    "evidence/mapping.py": ("Row About", "evidence record field named environment, no child"),
     "sources/ctx_git/config.py": ("load", "configuration reader, no child"),
     "sources/ctx_git/runner.py": ("clone_session run session", "outside Git"),
     "sources/ctx_vision/ocr.py": ("read", "outside OCR program"),

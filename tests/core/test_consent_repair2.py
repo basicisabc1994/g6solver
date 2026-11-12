@@ -311,6 +311,8 @@ DESTINATION_READS = {
     ("mcp/improve.py", "_cannot_act", "restores"): "nothing is asked when the rule finds nothing to take back",
     ("metaharness/loop.py", "demote", "undoes"): "logs what the harness's reply says it undid",
     ("metaharness/loop.py", "_cycle", "undoes"): "logs what the monitor's reply says it undid",
+    # the freeze follow-up: a generation the cycle made that its row does not say is read from the chain's own row
+    ("metaharness/loop.py", "_made", "undoes"): "logs what a rollback row the cycle made says it undid; decides nothing",
     ("metaharness/store.py", "_resolve", "target_version"): "a person's profile store, another chain with its own rule",
     ("metaharness/store.py", "_store_rules", "target_version"): "a person's profile store, another chain with its own rule",
 }

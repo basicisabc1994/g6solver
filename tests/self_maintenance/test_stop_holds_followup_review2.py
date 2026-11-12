@@ -401,8 +401,9 @@ def test_every_page_and_heartbeat_write_is_the_runner_lock_holders():
         "Runner._note": ["beat"], "Runner.step": ["self._beat"], "Runner._beat": ["self.loop._beat"],
         "Runner._pages": ["digest.write", "digest.write"],
         "_ending": ["digest.write", "beat"], "_folder_page": ["digest.write"], "run": ["beat_holding"]}
+    # a tick's heartbeat is written in its locked body, ``_tick``, since the freeze follow-up split ``tick`` from it
     assert _write_sites(loop_module) == {
-        "_reloaded": ["loop._beat"], "_exclusive.invoke": ["self._beat"], "ShadowLoop.tick": ["self._beat"],
+        "_reloaded": ["loop._beat"], "_exclusive.invoke": ["self._beat"], "ShadowLoop._tick": ["self._beat"],
         "ShadowLoop._beat": ["beat"], "ShadowLoop._run": ["self._beat"]}
     ending = _function(runner, "_ending")              # the one ending writes only as the holder, or with no holder shown
     writes = [node for node in ast.walk(ending) if isinstance(node, ast.Call) and ast.unparse(node.func) in WRITERS]

@@ -141,8 +141,13 @@ CHILDREN = {
     ("mcp/mission.py", "register", "subprocess.run"): PROGRAM,                       # git, in G6's copy
     ("mcp/mission.py", "register", "g6.core.git_env.safe_git"): PROGRAM,             # git's own checks
     ("mcp/__init__.py", "describe_reply", "g6.core.discovery.describe"): PROGRAM,    # outside programs' version probes
-    ("self_maintenance/usage.py", "read_limits", "g6.core.component_process.run_process"): PROGRAM,   # codex app-server
+    # codex app-server: read_limits runs it through _ran, the one place its result is read (the refusals follow-up)
+    ("self_maintenance/usage.py", "_ran", "g6.core.component_process.run_process"): PROGRAM,
     ("self_maintenance/usage.py", "WatchedClaude", "g6.core.host_models.ClaudeCodeCaller"): PROGRAM,  # claude
+    # from the refusals follow-up: the watched hosts the loop sends through, each started by G6's own launch
+    ("self_maintenance/usage.py", "WatchedCodex", "g6.core.host_models.CodexCaller"): PROGRAM,       # codex
+    ("self_maintenance/usage.py", "_complete_host", "g6.core.host_models._run"): PROGRAM,   # claude or codex, one request
+    ("self_maintenance/usage.py", "_launch", "g6.core.host_models._run"): PROGRAM,          # a session's own claude
 }
 #: The packages whose children the inventory reads.
 PACKAGES = ("mcp", "metaharness", "self_maintenance")
@@ -704,7 +709,9 @@ def test_every_act_on_a_loops_folder_is_in_the_inventory():
     pausing = {name for rel in ("metaharness/loop.py", "metaharness/runner.py", "mcp/improve.py")
                for name, node in binding._functions(SRC / rel).items()
                if any(ast.unparse(call.func).endswith("log.pause") for call in ast.walk(node) if isinstance(call, ast.Call))}
-    assert pausing == {"_pause_if_failing"}
+    # the loop's own pause: after failing cycles, and on a raising tick's way out for a safety status its cycle met (the
+    # freeze follow-up's ``_keep``); both are the one act "pause" below
+    assert pausing == {"_pause_if_failing", "_keep"}
     assert tools | {"pause"} == set(WRITING_ACTS) | READS_ONLY
 
 
@@ -1217,16 +1224,17 @@ for _gone in (
         ('mcp/improve.py', 'stop', 'except (OSError, ValueError) around possible_loop = _is_a_loop(root, raise_e'),
 ):
     AROUND.pop(_gone)
+# (the writes' instants are taken through ``utc`` since the week-span follow-up joined: their rows' texts say so)
 AROUND.update({
     ('mcp/improve.py', '_revoke', 'except Exception around ask_to_stop(root, why)'): ("after", HANDED),
-    ('mcp/improve.py', '_revoke', 'except Exception around writer.stop(why, at=datetime.now().astim'): ("after", HANDED),
+    ('mcp/improve.py', '_revoke', 'except Exception around writer.stop(why, at=utc(datetime.now(UTC'): ("after", HANDED),
     ('mcp/improve.py', '_revoke', 'return False'): ("after", HANDED),
     ('mcp/improve.py', '_revoke', 'return True'): ("after", HANDED),
     ('mcp/improve.py', '_start_as_recorded', 'except Exception around found = _start_on_record(root, ident)'): ("after", ITSELF),
     ('mcp/improve.py', '_start_as_recorded', 'return reply'): ("after", ITSELF),
     ('mcp/improve.py', '_start_on_record', "return {'the start': bool(ours) and (not found)}"): ("after", ITSELF),
     ('mcp/improve.py', '_watch', "return _refusal(root, stop_in_force(root), START_FAILED, f'the runner ended a"): ("after", HANDED),
-    ('mcp/improve.py', 'start', 'except BaseException around writer.start(who, record_id=ident, at=da'): ("after", "_start_as_recorded"),
+    ('mcp/improve.py', 'start', 'except BaseException around writer.start(who, record_id=ident, at=ut'): ("after", "_start_as_recorded"),
     ('mcp/improve.py', 'start', 'except Exception around who = utf8_text(who)'): ("after", "_start_as_recorded"),
     ('mcp/improve.py', 'start', 'return _failed(root, exc, lambda reply: _start_as_recorded(root, ident, reply'): ("after", "_start_as_recorded"),
     ('mcp/improve.py', 'start', 'return _refusal(root, held, TERMS_CHANGED, MOVED, ASK_AGAIN, running=False, f'): ("before", ""),
@@ -1234,7 +1242,7 @@ AROUND.update({
     ('mcp/improve.py', 'start', 'return _start_as_recorded(root, ident, _refusal(root, ended if ended or not n'): ("after", "_start_as_recorded"),
     ('mcp/improve.py', 'start', 'return _start_as_recorded(root, ident, _refusal(root, halted, START_STOPPED, '): ("after", "_start_as_recorded"),
     ('mcp/improve.py', 'start', 'return _start_as_recorded(root, ident, {**_watch(root, _spawn(root, settings)'): ("after", "_start_as_recorded"),
-    ('mcp/improve.py', 'stop', 'except BaseException around record_stop(root, why, at=datetime.now()'): ("after", "_stop_read_back"),
+    ('mcp/improve.py', 'stop', 'except BaseException around record_stop(root, why, at=utc(datetime.n'): ("after", "_stop_read_back"),
     ('mcp/improve.py', 'stop', 'except Exception around denial = _begin_stop(folder)'): ("after", NOT_KNOWN),
     ('mcp/improve.py', 'stop', "return _blocked(STOP_FAILED, f'the stop could not be written: {type(exc).__na"): ("after", NOT_KNOWN),
 })
@@ -1894,7 +1902,9 @@ PATH_PLACES = {
     ("workforce/truth.py", "<module>"): (MADE_WHOLE, 8, "a repository's tests (-I) put the repository first, resolved in "
                                                         "the parent"),
     ("workforce/truth.py", "run_isolated"): (WORDS, 1, "says the test's child runs -I"),
-    ("workforce/repo_tests.py", "<module>"): (MADE_WHOLE, 3, "a repository's tests (-I) put the resolved repository's "
+    # 4 since the 0.3 merges: the three in the child's script, and a report field's check that a copy's Python names are
+    # relative (``python_sources``), which is no import path
+    ("workforce/repo_tests.py", "<module>"): (MADE_WHOLE, 4, "a repository's tests (-I) put the resolved repository's "
                                                              "folders first, after dropping '' and their own folder"),
     ("core/promotion_custody.py", "<module>"): (BOUND, 1, "what the evaluator child's extra PYTHONPATH is"),
     ("core/promotion_custody.py", "_service_env"): (BOUND, 1, "the evaluator child's PYTHONPATH keeps every non-empty "
@@ -1948,6 +1958,16 @@ PATH_PLACES = {
                                                                  "sees it"),
     ("workforce/repo_tests.py", "_chosen_python"): (NOT_IMPORT, 1, "the interpreter a repository's tests run on (-I)"),
     ("workforce/repo_tests.py", "_file_here"): (NOT_IMPORT, 1, "a file inside the repository"),
+    # brought by the 0.3 merges (refusals, allowance, pr8 and evidence follow-ups):
+    ("self_maintenance/usage.py", "_host_input"): (NOT_IMPORT, 1, "a host program's argument naming a file it reads"),
+    ("_allowance/programs.py", "absolute"): (NOT_IMPORT, 1, "the program the status line starts, by an absolute path"),
+    ("cognitive_bridge/adaptation.py", "_absolute"): (NOT_IMPORT, 2, "a candidate file an adaptation names, refused "
+                                                                      "when absolute"),
+    ("harness/executable_scenario.py", "__post_init__"): (NOT_IMPORT, 1, "a scenario's entry point, refused when "
+                                                                          "absolute"),
+    ("harness/behaviour_runner.py", "<module>"): (RUN_FOLDER, 2, "a confined behaviour scenario imports the repository "
+                                                                 "copy it runs in (its root and src); its bootstrap says "
+                                                                 "no PYTHONPATH is read"),
 }
 #: Each place that builds a G6 child's import path or names its interpreter, which decides by the rule.
 RULED = (("mcp/improve.py", "_import_path"), ("mcp/improve.py", "_pinned_python"),
