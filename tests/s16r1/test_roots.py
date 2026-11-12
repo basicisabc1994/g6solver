@@ -170,6 +170,10 @@ SOURCE_SITES = {
     'g6.mcp.knowledge.register.g6_knowledge_context',
     'g6.mcp.knowledge.register.g6_knowledge_count',
     'g6.mcp.knowledge.register.g6_knowledge_search',
+    # Section 14 S5: each arm's prompt is its consent source, and the agent's call and the judge's both run under it.
+    # Planted cases: tests/learning/test_paired_receipts.py (a cloud agent with no grant: both arms refused, nothing
+    # sent; both sends inside request_sources).
+    'g6.learning.paired_eval.PairedEvaluator._arm',
 }
 
 

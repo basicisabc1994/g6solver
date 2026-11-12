@@ -15,7 +15,8 @@ Each route is a task and the tools for it. A tool named here that your server do
 and Fit.
 
 - **question.** Where the task may not decide a behaviour, `g6_confirm_behaviour` asks the person in the client's own
-  dialog. Only the person answers.
+  dialog: one question per task by default, and the person may allow more or set none. Only the person answers; you
+  never answer for them, and nothing else stands in for their answer.
 - **mission.** A standard of done, fixed before the work and confirmed by the person: `g6_premortem`, then the
   `g6_mission_*` tools (`references/lifecycle.md`).
 - **consent.** Nothing of the person's reaches a cloud provider without their grant. `g6_cloud_grant` asks them in
@@ -31,6 +32,7 @@ and Fit.
   `graph_reasoning`, through `g6_invoke` (`references/rules.md`).
 - **abstraction.** Only where the person registered the separate server, `python -P -m g6.abstraction.server`: its
   tools search a design space for abstractions that hold up (`references/abstraction.md`).
+
 ## Deliver a coding task with G6
 
 For a Python task, work in this order.
@@ -46,9 +48,12 @@ For a Python task, work in this order.
    with `steps`, grant, share and revoke), `differential.v1` (nothing changes outside the change's scope),
    `forbidden_dependency.v1` (layer rules) or `state_invariant.v1` (critical state). Each template's bindings, with one
    valid instance: `references/templates.md`.
-3. **Hidden constraints.** Ask the person at most 3 questions, each a concrete scenario with the competing outcomes:
-   "for this input the original does A and the change would do B; which do you intend?" Probe the code for the rest.
-   Unanswered questions stay open in the report.
+3. **Hidden constraints.** One question per task by default, kept across calls. Where the task may not decide a
+   behaviour, call `g6_confirm_behaviour` with the concrete scenario and its competing outcomes: "for this input the
+   original does A and the change would do B". The person answers in the client's own dialog and may allow one more
+   question; their own setting can raise the default or set it to none. Only the person answers: no argument answers
+   and you never answer for them. Probe the code for the rest. Never assume an answer: an unanswered question stays
+   open in the report.
 4. **Acceptance first, then test first.** Write acceptance tests for what the person's own users must be able to do,
    through the product's real interface, and for usability and fitness for purpose
    wherever a test can show it. They become the numbered requirements, each with its stated check. Then unit tests,

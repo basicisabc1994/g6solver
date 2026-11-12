@@ -24,6 +24,10 @@ from .snapshot import publish, record_data, _admit_length, bounded, fresh, issue
 CAPABILITIES = frozenset(ENGINE_SPECS)
 #: The splits a trial can come from (``EvaluatedTrial.split``); a selector learns from the ones its ``learn_from`` names.
 SPLITS = ("training", "heldout", "shadow")
+#: A heuristic's kind, and the one method, engine and op a heuristic variant names (0.3 design, 14.2). A heuristic is a
+#: strategy: how to search or decompose. It is never evidence, so no obligation can require it and no selection holds it.
+HEURISTIC = "heuristic"
+STRATEGY_METHOD, STRATEGY_ENGINE, STRATEGY_OP = "strategy", "g6.learning", "apply"
 #: A selection row's fields: what ``MetacognitiveMethodSelector`` writes for a chosen variant, and all a row may carry.
 ROW_FIELDS = ("variant_id", "kind", "representation", "method", "engine", "op", "expected_cost", "training_cases",
               "repeated_trials", "historical_resolutions", "critical_regressions", "smoothed_success_proxy",
@@ -77,6 +81,11 @@ class MethodVariant:
     'tabular-features' etc. Any other kind (``"reviewer"``, ``"arm"`` of a study, ...) is ranked from its trials
     like an engine, but names its own method, engine and op, is never one of ENGINE_SPECS' methods and is never
     executed by the router.
+
+    ``"heuristic"`` is a strategy (how to search or decompose), bound to the bytes that are applied: its
+    ``content_digest`` is the SHA-256 of its strategy artefact, and it joins the definition digest, so two strategies
+    with one name and different bytes share no history. A heuristic names the method ``strategy``, which no other kind
+    may name; it is never an option for an obligation and never a row of a selection.
     """
     id: str
     method: str
@@ -86,10 +95,20 @@ class MethodVariant:
     estimated_cost: float
     expects: tuple[str, ...] = ()
     kind: str = "engine"
+    content_digest: str = ""
 
     def __post_init__(self) -> None:
         if not _is_type(type(self.kind), (str,)) or not self.kind.strip():
             raise ValueError("a variant's kind names what it is: engine, reviewer, arm, ...")
+        if self.kind == HEURISTIC:
+            if len(self.content_digest) != 64 or any(x not in '0123456789abcdef' for x in self.content_digest):
+                raise ValueError("a heuristic variant names its strategy artefact's 64-digit SHA-256 content digest")
+            if (self.method, self.engine, self.op) != (STRATEGY_METHOD, STRATEGY_ENGINE, STRATEGY_OP):
+                raise ValueError("a heuristic variant is the method strategy, applied by g6.learning's op apply")
+        elif self.content_digest:
+            raise ValueError("only a heuristic variant carries a content digest")
+        elif self.method == STRATEGY_METHOD:
+            raise ValueError("only a heuristic variant names the method strategy")
         if self.kind == "engine":
             if self.method not in ENGINE_SPECS:
                 raise ValueError("method not in existing G6 engines")
@@ -107,10 +126,14 @@ class MethodVariant:
 
     @property
     def definition_digest(self) -> str:
-        """The digest of what this variant is (its kind, method, representation, engine and op), not its name: a
-        trial credits a variant only when it names this digest."""
-        return publish(sha256(canonical_json({"kind": self.kind, "method": self.method, "representation": self.representation,
-                                      "engine": self.engine, "op": self.op})), where="MethodVariant.definition_digest")
+        """The digest of what this variant is (its kind, method, representation, engine and op, and for a heuristic the
+        content digest of its strategy's bytes), not its name: a trial credits a variant only when it names this
+        digest. A variant with no content digest has the digest it always had."""
+        definition = {"kind": self.kind, "method": self.method, "representation": self.representation,
+                      "engine": self.engine, "op": self.op}
+        if self.content_digest:
+            definition["content"] = self.content_digest
+        return publish(sha256(canonical_json(definition)), where="MethodVariant.definition_digest")
 
 
 #: The selector's search bounds (how many, and the refusal), declared once: the selector's own admission and every
@@ -321,6 +344,9 @@ class MetacognitiveMethodSelector:
         if not 0 <= number(max_optional, where="max_optional") <= 10:
             raise ValueError("max optional methods invalid")
         required = tuple(dict.fromkeys(required_methods))
+        # A heuristic proposes a strategy, never evidence: it sits beside the evidence plan. It is dropped here, before
+        # anything is ranked, so a selection is the same with and without it, and "strategy" is never a known method.
+        variants = tuple(v for v in variants if v.kind != HEURISTIC)
         # A required method is a G6 solver capability or the method a non-engine variant names (a review, an arm).
         known = CAPABILITIES | {v.method for v in variants if v.kind != "engine"}
         if not required or set(required) - known:

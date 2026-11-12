@@ -192,7 +192,7 @@ REQUESTS = {
     "rank_methods": {"op": "rank_methods", "context": {
         "domain": "d", "uncertainty": "u", "claim_kind": "k", "risk": 1, "budget": 2, "available_evidence": ["e"]},
         "variants": [{"id": "v", "method": "formal", "representation": "SMT", "engine": "formal", "op": "check_validity",
-                      "estimated_cost": 1, "expects": ["e"], "kind": "engine"}],
+                      "estimated_cost": 1, "expects": ["e"], "kind": "engine", "content_digest": ""}],
         "required_methods": ["formal"]},
 }
 

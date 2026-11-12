@@ -46,6 +46,7 @@ from g6.learning.failure_classifier import FAILURE_CODES, DefaultClassifier, Fai
 from g6.learning.observer import CallbackObserver, EventEmitter, JsonlObserver, LearningEvent, LogObserver
 from g6.learning.ooda import ObservationResult
 from g6.learning.paired import ArmComparison, PairedOutcome, sign_test
+from g6.learning.paired_eval import PairedEvaluator, PairReceipt
 from g6.learning.promotion import HeldOutEvidence, PromotionDecision, PromotionPolicy, promote
 from g6.learning.runner import LearningReport, compare_arms, run_learning
 from g6.learning.schema import (AgentReply, AgentTrace, Dataset, FailureAnalysis, PromptAddendum, ReviewRecord,
@@ -54,6 +55,7 @@ from g6.learning.scoring import score_instance, score_output
 from g6.learning.strategies import THEORY_TEMPLATES, LearningStrategy, T3Strategy
 from g6.learning.theory_store import TheoryStore
 from g6.learning.seeds import load_seed_heuristics
+from g6.learning.strategy import NO_STRATEGY, StrategyArtefact, StrategyStore, seed_artefacts
 
 __g6_component__ = True
 __g6_maturity__ = "beta"  # no block: Python API only
@@ -62,11 +64,13 @@ __g6_requires__: tuple[str, ...] = ()
 __g6_mitigates__: tuple[str, ...] = ("repeated_mistake", "unhelpful_lesson", "unranked_heuristics")
 __g6_introduces__: tuple[str, ...] = ()
 
-__all__ = ["FAILURE_CODES", "THEORY_TEMPLATES", "AgentReply", "AgentTrace", "ArmComparison", "CallbackObserver",
+__all__ = ["FAILURE_CODES", "NO_STRATEGY", "THEORY_TEMPLATES", "AgentReply", "AgentTrace", "ArmComparison", "CallbackObserver",
            "CandidateBundle", "Dataset", "DatasetBuilder", "DefaultClassifier", "EventEmitter", "FailureAnalysis",
            "FailureClassifier", "HeldOutEvidence", "JsonlObserver", "LearningEvent", "LearningReport",
-           "LearningStrategy", "LogObserver", "ObservationResult", "PairedOutcome", "PromotionDecision",
-           "PromotionPolicy", "PromptAddendum", "ReviewRecord", "SkillDocument", "T3Strategy", "TaskInstance",
+           "LearningStrategy", "LogObserver", "ObservationResult", "PairReceipt", "PairedEvaluator", "PairedOutcome",
+           "PromotionDecision",
+           "PromotionPolicy", "PromptAddendum", "ReviewRecord", "SkillDocument", "StrategyArtefact", "StrategyStore",
+           "T3Strategy", "TaskInstance",
            "TaskResult", "Theory", "TheoryStore", "build_addendum", "compare_arms", "export_bundle", "import_bundle",
            "leakage_attestation", "load_seed_heuristics", "promote", "render_addendum", "run_learning", "scan_text", "score_instance",
-           "score_output", "sign_test", "trigger_matches"]
+           "score_output", "seed_artefacts", "sign_test", "trigger_matches"]

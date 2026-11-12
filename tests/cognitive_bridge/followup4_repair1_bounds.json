@@ -8522,6 +8522,104 @@
       "metacognition.py",
       "MethodVariant.__post_init__",
       "comparison",
+      "self.kind == HEURISTIC"
+    ],
+    "disposition": "semantic",
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
+    "probes": []
+  },
+  {
+    "source": [
+      "metacognition.py",
+      "MethodVariant.__post_init__",
+      "comparison",
+      "len(self.content_digest) != 64"
+    ],
+    "disposition": "scalar",
+    "reason": "Native scalar/policy relation; bound checks operate on constant-size leaves before external work.",
+    "probes": [
+      "scalar:adaptation.min_cases.upper",
+      "scalar:adaptation.min_cases.lower",
+      "scalar:adaptation.min_discordant.upper",
+      "scalar:adaptation.alpha.upper",
+      "scalar:adaptation.alpha.lower",
+      "scalar:adaptation.max_evaluations.upper",
+      "scalar:adaptation.max_evaluations.lower",
+      "scalar:critic.max_items.upper",
+      "scalar:critic.max_items.lower",
+      "scalar:proposer.max_probes.upper",
+      "scalar:proposer.max_probes.lower",
+      "scalar:ideas.max_ideas.upper",
+      "scalar:ideas.max_ideas.lower",
+      "scalar:compiler.max_claims.upper",
+      "scalar:compiler.max_claims.lower",
+      "scalar:information.novelty.upper",
+      "scalar:information.novelty.lower",
+      "scalar:information.min_gain.lower",
+      "scalar:selector.exploration.upper",
+      "scalar:selector.exploration.lower",
+      "scalar:context.risk.upper",
+      "scalar:context.risk.lower",
+      "scalar:context.budget.lower",
+      "scalar:variant.cost.lower",
+      "scalar:trial.cost.lower",
+      "scalar:belief.probability.upper",
+      "scalar:belief.probability.lower",
+      "scalar:probe.match.upper",
+      "scalar:probe.match.lower",
+      "scalar:probe.cost.lower",
+      "scalar:probe.novelty.upper",
+      "scalar:probe.novelty.lower",
+      "scalar:selector.optional.upper",
+      "scalar:selector.optional.lower",
+      "scalar:agent.max_steps.upper",
+      "scalar:agent.max_steps.lower",
+      "scalar:agent.budget.lower",
+      "scalar:surrogate.max_depth.upper",
+      "scalar:surrogate.max_depth.lower",
+      "scalar:surrogate.min_leaf.upper",
+      "scalar:surrogate.min_leaf.lower",
+      "scalar:number.float.upper"
+    ]
+  },
+  {
+    "source": [
+      "metacognition.py",
+      "MethodVariant.__post_init__",
+      "comparison",
+      "x not in '0123456789abcdef'"
+    ],
+    "disposition": "semantic",
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
+    "probes": []
+  },
+  {
+    "source": [
+      "metacognition.py",
+      "MethodVariant.__post_init__",
+      "comparison",
+      "(self.method, self.engine, self.op) != (STRATEGY_METHOD, STRATEGY_ENGINE, STRATEGY_OP)"
+    ],
+    "disposition": "semantic",
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
+    "probes": []
+  },
+  {
+    "source": [
+      "metacognition.py",
+      "MethodVariant.__post_init__",
+      "comparison",
+      "self.method == STRATEGY_METHOD"
+    ],
+    "disposition": "semantic",
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
+    "probes": []
+  },
+  {
+    "source": [
+      "metacognition.py",
+      "MethodVariant.__post_init__",
+      "comparison",
       "self.kind == 'engine'"
     ],
     "disposition": "semantic",
@@ -9253,6 +9351,17 @@
       "scalar:surrogate.min_leaf.lower",
       "scalar:number.float.upper"
     ]
+  },
+  {
+    "source": [
+      "metacognition.py",
+      "MetacognitiveMethodSelector.select",
+      "comparison",
+      "v.kind != HEURISTIC"
+    ],
+    "disposition": "semantic",
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
+    "probes": []
   },
   {
     "source": [
