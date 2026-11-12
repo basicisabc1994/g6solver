@@ -22,6 +22,7 @@ strategy is credited.
 What this does not close: whoever can write the ledger file and the kept bytes together can make a pair that reads
 again, and the ledger's head is anchored nowhere outside the evaluator's reach. Keeping that head with the
 certificate issuer is a later change (``ChainLedger(expect_head=...)`` is the hook).
+S5 paired credit trusts its ledger's writer and is not reachable from a shipped surface in 0.3.0.
 
 Every model call here passes section 16's consent check: a model caller is guarded (``g6.core.consent_callers.guard``)
 and each prompt is declared as its source. A plain callable agent makes its own sends and is its owner's to guard.
