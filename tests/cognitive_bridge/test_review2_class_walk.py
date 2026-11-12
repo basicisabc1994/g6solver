@@ -70,7 +70,7 @@ def test_public_registration_and_python_skill_example(monkeypatch, tmp_path):
     registry = get_registry()
     assert "cognitive_bridge" in registry.names()
     assert set(discovery.ops("cognitive_bridge")) == {
-        "rank", "update", "plan_methods", "rank_methods", "assurance_schema"}
+        "rank", "update", "plan_methods", "rank_methods", "assurance_schema", "rank_strategies"}
     assert describe_reply("cognitive_bridge")["name"] == "cognitive_bridge"
     assert registry.invoke("cognitive_bridge", "help").unwrap()["help"]
     examples = skills.skill_python_examples(skills.skill_text("cognitive_bridge"))

@@ -25,6 +25,7 @@ from g6.core.ai_block import AIBlock
 from g6.core.contract_decorator import block_contract
 from g6.core.maturity import component_maturity
 from g6.core.result import Result
+from g6.learning.method_kind import rank_seeds
 from .codes import INPUT, STATES, NotPlainData, refusal, settled, unclaimed, _is_type, _type_mro
 from .engine import BayesianUpdater, Hypothesis, InformationGainSelector, Probe, check_beliefs
 from .mixed_methods import ClaimIR, MethodRouter
@@ -129,13 +130,15 @@ _OPS: dict[str, str] = {
     "plan_methods": "plan_methods(claims): the typed G6 solver steps each claim's evidence needs; nothing runs",
     "rank_methods": "rank_methods(context, variants, required_methods): a cold-start ranking of method variants",
     "assurance_schema": "assurance_schema(): the documentary fields an assurance dossier must fill",
+    "rank_strategies": "rank_strategies(): the seed strategies with their measured paired worth, or unmeasured",
 }
 
 
 class CognitiveInput(BaseModel):
     model_config = _STRICT
     _admit_size = model_validator(mode='before')(classmethod(_admit_model_input))
-    op: Literal["ops", "help", "rank", "update", "plan_methods", "rank_methods", "assurance_schema"] = "ops"
+    op: Literal["ops", "help", "rank", "update", "plan_methods", "rank_methods", "assurance_schema",
+                "rank_strategies"] = "ops"
     claims: list[ClaimInput] = Field(default_factory=list, max_length=20)
     context: ProblemSignatureInput | None = None
     variants: list[MethodVariantInput] = Field(default_factory=list, max_length=30)
@@ -315,6 +318,11 @@ class CognitiveBridgeBlock(AIBlock[CognitiveInput, dict, dict]):
                                      required_methods=d.required_methods)
                 return publish(_answered({"component": self.name, "op": d.op, **decision.to_dict(),
                                   "evidence_note": "no past trial data admitted over stateless MCP; cold-start ranking only"}), where="CognitiveBridgeBlock.infer")
+            if d.op == "rank_strategies":
+                return publish(_answered({"component": self.name, "op": d.op, **settled(
+                    None, strategies=plain(list(rank_seeds()), where="rank_strategies"),
+                    note="a strategy proposes how to search or decompose; it is never evidence, and no row enters a selection")}),
+                    where="CognitiveBridgeBlock.infer")
             if d.op == "plan_methods":
                 claims = [ClaimIR(id=c.id, statement=c.statement,
                                   evidence_needs=tuple(c.evidence_needs), models=c.models,

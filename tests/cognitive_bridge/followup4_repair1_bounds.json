@@ -5181,6 +5181,17 @@
       "block.py",
       "CognitiveBridgeBlock.infer",
       "comparison",
+      "d.op == 'rank_strategies'"
+    ],
+    "disposition": "semantic",
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
+    "probes": []
+  },
+  {
+    "source": [
+      "block.py",
+      "CognitiveBridgeBlock.infer",
+      "comparison",
       "d.op == 'plan_methods'"
     ],
     "disposition": "semantic",

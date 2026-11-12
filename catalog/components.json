@@ -907,11 +907,13 @@
       "update",
       "plan_methods",
       "rank_methods",
-      "assurance_schema"
+      "assurance_schema",
+      "rank_strategies"
     ],
     "requires": [
       "epistemic_integrity",
       "invariants",
+      "learning",
       "reasoning"
     ],
     "sensitive_ops": [],

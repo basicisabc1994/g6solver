@@ -1,0 +1,9 @@
+{
+  "format": "g6.strategy_worth/1",
+  "min_complete_cases": 30,
+  "min_discordant": 5,
+  "alpha": 0.003125,
+  "max_regressions": 0,
+  "max_cost_ratio": 1.25,
+  "max_incomplete_share": 0.2
+}
