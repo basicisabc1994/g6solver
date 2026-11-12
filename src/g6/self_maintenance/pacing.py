@@ -350,12 +350,14 @@ class BudgetMeter:
 
     def limit_reached(self, provider: str, until: datetime) -> None:
         """A limit a request ran into, which the account's figure may not show yet: it stands as a reported one does. It
-        is held in memory, and the loop's records hand it back after a restart."""
+        is held in memory, and the loop's records hand it back after a restart. A tick's limits each stand until the furthest
+        of them ends, in whatever order they were met; and no tick is let in while one is held, so the furthest held is
+        that tick's."""
         until = utc(until)
         name = exact_text(provider)
         if name is None:
             raise ValueError(f"a provider is named by text, not a {kind_of(provider)}")
-        self._limits[name] = until
+        self._limits[name] = max(until, self._limits.get(name, until))
 
     def next_room(self, now: datetime) -> datetime:
         """The next time any ceiling can rise: the soonest a tick refused for its budget could be admitted. An account that

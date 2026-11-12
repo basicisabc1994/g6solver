@@ -367,7 +367,6 @@ class ToolSession(host_models.ClaudeCodeCaller):
     disk. It starts in ``cwd``, may write only there and in ``where``, and runs no hook and no MCP server."""
 
     def run(self, prompt: str, cwd: Path, where: Path, seconds: float) -> str:
-        _start_model_call()
         program = self.locate()
         with host_models._folders() as (_, files):
             (files / "no_mcp_servers.json").write_text(host_models.NO_SERVERS, encoding="utf-8")
@@ -379,8 +378,14 @@ class ToolSession(host_models.ClaudeCodeCaller):
                     "--no-session-persistence", "--max-turns", str(SCOUT_TURNS),
                     "--max-budget-usd", f"{SCOUT_CAP_USD:.2f}", *(("--model", self.model) if self.model else ())]
             env = host_models._environment(self.keep_env, files / "tmp") | {CHILD: "1"}
-            code, printed, errors = host_models._run(argv, prompt, cwd, files, env, seconds, self.program.name)
-            return self._reply(code, printed, errors, files, (prompt,))
+            return self._launch(argv, prompt, cwd, files, env, seconds)
+
+    def _launch(self, argv: list[str], stdin: str, cwd: Path, files: Path, env: dict[str, str],
+                seconds: float) -> str:
+        """Launch and read the answer in one scope, before the watched launch releases its admitted send."""
+        _start_model_call()
+        code, printed, errors = host_models._run(argv, stdin, cwd, files, env, seconds, self.program.name)
+        return self._reply(code, printed, errors, files, (stdin,))
 
 
 def scout_host() -> Host | None:

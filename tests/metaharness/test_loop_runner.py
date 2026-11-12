@@ -168,6 +168,19 @@ def test_the_days_page_says_a_classifier_stopped_a_request_and_that_it_will_not_
     assert "A classifier or a permission stopped a request at tick 1" in said and "not sent again" in said
 
 
+def test_the_days_page_says_an_outcome_is_unknown_and_does_not_call_it_a_classifiers_stop(tmp_path):
+    runner, _, domain = _runner(tmp_path)
+
+    def unread(system: str, user: str) -> str:
+        raise LLMError("G6_E_LOOP_HOST_UNKNOWN: host reply could not be read whole; these inputs stay barred")
+
+    domain.llm._responder = unread
+    runner.step()
+    said = latest(runner.loop.root).read_text(encoding="utf-8").split("## Stops and pauses")[1]
+    assert "The outcome of a send at tick 1 is unknown" in said and "held and not sent again" in said
+    assert "A classifier or a permission stopped a request" not in said
+
+
 def test_no_sleep_is_longer_than_a_minute_so_a_stop_is_seen_within_one(tmp_path):
     runner, time, _ = _runner(tmp_path, settings=_windows(("claude", 100)))     # never room: it only waits
     _stopped_after(time, timedelta(minutes=10))

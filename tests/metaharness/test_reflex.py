@@ -190,7 +190,7 @@ def test_a_starved_pool_is_named(row):
 @pytest.mark.parametrize(("code", "named"), [
     ("G6_E_LOOP_HELD_OUT_SPENT", "held_out"), ("G6_E_LOOP_SEALED_BREACH", "held_out"), ("G6_E_LOOP_FROZEN_CHANGED", "envelope"),
     ("G6_E_LOOP_UNMETERED_CALLER", "envelope"), ("G6_E_LOOP_STOPPED", "stop"), ("G6_E_LOOP_PAUSED", "stop"),
-    ("G6_E_LOOP_CLASSIFIER_STOP", "stop"), ("G6_E_LOOP_NO_CONSTRAINT", "person_only")])
+    ("G6_E_LOOP_CLASSIFIER_STOP", "stop"), ("G6_E_LOOP_HOST_UNKNOWN", "stop"), ("G6_E_LOOP_NO_CONSTRAINT", "person_only")])
 def test_what_only_the_owner_can_change_is_named_at_the_owners_level(code, named):
     found = diagnose([_cycle("blocked", code=code, reason="held") for _ in range(2)], (), ())
     assert (found.level, found.constraint) == ("owner", named)
@@ -545,7 +545,8 @@ def test_the_step_cannot_change_under_an_enrolled_folder(tmp_path, name):
 
 
 @pytest.mark.parametrize("name", ["NO_CONSTRAINT", "IDLE", "POOL_TOO_SMALL", "HELD_OUT_SPENT", "SPLIT_REUSED", "SEALED_BREACH", "FROZEN_CHANGED",
-                                  "UNMETERED_CALLER", "STOPPED", "PAUSED", "CLASSIFIER_STOP", "CYCLE_FAILED", "CYCLE"])
+                                  "UNMETERED_CALLER", "STOPPED", "PAUSED", "CLASSIFIER_STOP", "HOST_UNKNOWN", "CYCLE_FAILED",
+                                  "CYCLE"])
 def test_the_loops_codes_written_out_here_are_the_loops_own(name):
     from g6.metaharness import reflex
     assert getattr(reflex, name) == getattr(loop_module, name)

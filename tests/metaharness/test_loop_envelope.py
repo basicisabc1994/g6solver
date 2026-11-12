@@ -1114,7 +1114,8 @@ CODEX_AT_A_LIMIT = "G6_E_LLM_HOST_FAILED: codex exited 1: ERROR: You've hit your
 
 
 def test_the_limit_of_this_a_limit_codex_only_printed_is_a_cycle_with_no_winner_and_pauses_nothing(tmp_path):
-    """Nothing Codex prints is read, so its account reading is what holds the next tick. Until then this is the record."""
+    """Nothing Codex prints as text is read, so its account reading is what holds the next tick. Until then this is the record.
+    The Codex the loop sends through prints its events as JSON, and a limit there is a wait (``test_provider_stops.py``)."""
     loop, domain = _enrolled(tmp_path)
 
     def at_a_limit(system: str, user: str) -> str:

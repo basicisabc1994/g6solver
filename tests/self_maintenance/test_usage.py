@@ -734,7 +734,8 @@ def test_an_ordinary_answer_comes_back_as_it_did():
 
 
 def test_a_codex_refusal_is_not_read_since_it_prints_text():
-    """The limit of this: what Codex prints cannot be told from a reply, as with its limits. It waits for an issuance window."""
+    """What the plain caller's Codex prints is text, which cannot be told from a reply, as with its limits. The loop's own Codex
+    prints its events as JSON (``WatchedCodex``), and those are what is read."""
     assert refused_by(_codex("ERROR: This content may violate our usage policies.")) == ""
 
 

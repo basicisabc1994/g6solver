@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import time
 from collections.abc import Mapping
 from datetime import datetime
@@ -58,6 +59,8 @@ NOTHING_TO_TRY = ("idle", "no_winner", "no_constraint")
 #: What a cycle keeps of what a proposer found, a general research record: a regularity found in the failing cases, what
 #: can be exploited, why it does not hold generally, and the earlier cycles it builds on. Empty when it supplied none.
 FINDINGS = ("structure", "resource", "obstruction", "composed_from")
+
+_REFUSAL_WRITE_LOCK = threading.Lock()  # also the loop's admission lock, whichever thread calls this writer
 
 
 def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dict]) -> list[str]:
@@ -147,12 +150,23 @@ class CycleLog:
     def stop(self, reason: str, **fields: Any) -> dict:
         return self._append("stopped", {"reason": reason, **fields})
 
-    def limit(self, provider: str, until: str) -> dict:
-        return self._append("limited", {"provider": provider, "until": until})
+    def limit(self, provider: str, until: str, tick: str = "") -> dict:
+        """A limit a provider stated, and the tick that met it (``tick``), when one did."""
+        return self._append("limited", {"provider": provider, "until": until, **({"tick": tick} if tick else {})})
 
     def limits(self) -> dict[str, datetime]:
-        """When each provider's latest limit ends, so that a restart waits it out. No cycle: it never counts in a streak."""
-        return {body["provider"]: datetime.fromisoformat(body["until"]) for kind, body in self._rows() if kind == "limited"}
+        """When each provider's latest limit ends, so that a restart waits it out. A tick writes every limit it met, in the
+        order it met them, which need not be the order they end in, and each stands until the furthest of them ends; a later
+        row of another tick, or of none, replaces them. No cycle: it never counts in a streak."""
+        found: dict[str, tuple[str, datetime]] = {}
+        for kind, body in self._rows():
+            if kind == "limited":
+                tick, until = body.get("tick") or "", datetime.fromisoformat(body["until"])
+                held = found.get(body["provider"])
+                if tick and held is not None and held[0] == tick:
+                    until = max(until, held[1])
+                found[body["provider"]] = (tick, until)
+        return {provider: until for provider, (_, until) in found.items()}
 
     def start_in_force(self) -> bool:
         """Whether a person's start stands: of the starts and stops on record, the last is a start."""
@@ -291,27 +305,53 @@ def ask_to_stop(root: str | Path, reason: str = "") -> str:
     return stop_reason(root)
 
 
-def note_refusal(root: str | Path, request: str, said: str) -> None:
-    """Keep what a classifier or a permission refused, first and in a file no lock stands in front of, because a refused
-    request is never sent again whether or not its cycle reaches the log. ``request``: a digest, never its text. One that
-    cannot be written is left: this process still holds it, and the cycle may yet be written."""
+def note_refusal(root: str | Path, request: str, said: str) -> bool:
+    """Keep what a classifier or a permission refused, first and in an append-only file, because a refused
+    request is never sent again whether or not its cycle reaches the log, or a tick is open at all. ``request``: a digest, never
+    its text. It is on the disk before this returns ``True``. What was said is kept as UTF-8 with any lone surrogate kept as it
+    is, so it is written and read back exactly. Each row stands on a line of its own: after a row a crash cut short, the new one
+    begins with a line break, in the same write. One that cannot be written raises nothing and returns ``False``: the caller
+    decides what this process does, since only it still holds the refusal. Every synchronous append and fsync holds the
+    admission lock; path and text conversion, like the hook calling this writer, precede that lock."""
     try:
-        with open(Path(root) / REFUSED_FILE, "a", encoding="utf-8") as kept:
-            kept.write(f"{request} {' '.join(said.split())}\n")
-    except OSError:
-        pass
+        row = f"{request} {' '.join(said.split())}\n".encode("utf-8", "surrogatepass")
+        path = Path(root) / REFUSED_FILE
+        # Admission excludes lock-waiting readers and caller hooks; its own durable write stays locked through fsync.
+        with _REFUSAL_WRITE_LOCK, open(path, "a+b") as kept:
+            kept.seek(0, os.SEEK_END)
+            if kept.tell():
+                kept.seek(-1, os.SEEK_END)
+                row = (b"" if kept.read(1) == b"\n" else b"\n") + row
+            kept.seek(0, os.SEEK_END)
+            kept.write(row)
+            kept.flush()
+            os.fsync(kept.fileno())
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def refused_requests(root: str | Path) -> set[str]:
-    """The digest of each request ``note_refusal`` kept. A line a crash cut short is no digest. A file that cannot be read
-    raises as records that do not check out do, since nothing could then say what must not be sent."""
+    """The digest of each request ``note_refusal`` kept (``refusal_rows``)."""
+    return {request for request, _ in refusal_rows(root)}
+
+
+def refusal_rows(root: str | Path) -> list[tuple[str, str]]:
+    """Each request ``note_refusal`` kept with what was said of it, from every whole row, before and after any row a crash
+    cut short, which is no digest. A file that cannot be read raises as records that do not check out do, since nothing
+    could then say what must not be sent."""
     try:
-        text = (Path(root) / REFUSED_FILE).read_text(encoding="utf-8", errors="replace")
+        held = (Path(root) / REFUSED_FILE).read_bytes()
     except FileNotFoundError:
-        return set()
+        return []
     except OSError as exc:
         raise LedgerError(f"{REFUSED_FILE} cannot be read ({type(exc).__name__})") from exc
-    return {found for found in (line.split(" ", 1)[0] for line in text.splitlines()) if len(found) == DIGEST_LENGTH}
+    try:
+        text = held.decode("utf-8", "surrogatepass")
+    except UnicodeDecodeError:                  # a line a crash cut short mid-character: the digests before it still read
+        text = held.decode("utf-8", "replace")
+    return [(found, said) for found, _, said in (line.partition(" ") for line in text.split("\n"))
+            if len(found) == DIGEST_LENGTH]
 
 
 def record_stop(root: str | Path, reason: str, *, at: str) -> None:
