@@ -357,7 +357,7 @@ def _source_copy(folder: Path) -> Path:
     ("operator/store.py", "charged = float(metered)", "charged = 0.0"),            # the reviewer's edit
     ("operator/gates.py", "if over(used + value, cap):", "if False:"),
     ("core/vault.py", "return any(_inside(real, root) for root in self.roots)", "return False"),
-    ("integrity/__init__.py", "return _sha(manifest_text(manifest).encode(\"utf-8\"))", "return \"\""),
+    ("integrity/__init__.py", "return _sha(manifest_text(manifest).encode(\"utf-8\", \"surrogatepass\"))", "return \"\""),
     ("self_maintenance/constraints.py", "ranked = sorted(", "ranked = list("),
 ])
 def test_4_a_one_line_edit_anywhere_in_the_enforcement_set_stops_the_loop(tmp_path, monkeypatch, name, old, new):
@@ -514,7 +514,8 @@ def test_6_a_log_that_cannot_be_read_is_a_refusal_not_a_raised_error(tmp_path):
     loop.log.path.write_text(text.replace('"outcome"', '"outcome "'), encoding="utf-8")
     calls = len(domain.llm.calls)
     got = loop.tick()
-    assert _code(got) == "G6_E_LOOP_RECORDS_UNREADABLE" and len(domain.llm.calls) == calls
+    # the records hold what the stop decision stands on, so every reader says what that decision says of them
+    assert _code(got) == "G6_E_LOOP_STOP_UNREADABLE" and len(domain.llm.calls) == calls
 
 def test_6_a_sealed_breach_whose_pause_could_not_be_written_still_stops_the_next_tick(tmp_path, monkeypatch):
     domain = domains.WordProblems(tmp_path)
@@ -1944,7 +1945,7 @@ def test_a_refusal_the_log_would_not_take_holds_the_run_and_sends_nothing_more(t
     assert "stopped a request" in stop_reason(loop.root)
     _answers_again(domain, seen)
     calls = len(seen)
-    assert _code(loop.tick()) == "G6_E_LOOP_STOPPED" and len(seen) == calls
+    assert _code(loop.tick()) == "G6_E_LOOP_CANNOT_RECORD" and len(seen) == calls   # this process's own stop, by its code
 
 
 def test_a_refusal_the_log_would_not_take_is_not_sent_after_a_restart_either(tmp_path, monkeypatch):
@@ -1997,7 +1998,7 @@ def test_a_refusal_no_file_would_take_still_holds_this_process(tmp_path, monkeyp
         loop.tick()
     _answers_again(domain, seen)
     calls = len(seen)
-    assert _code(loop.tick()) == "G6_E_LOOP_STOPPED" and len(seen) == calls
+    assert _code(loop.tick()) == "G6_E_LOOP_CANNOT_RECORD" and len(seen) == calls   # this process's own stop, by its code
 
 
 def test_refusals_that_cannot_be_read_stop_the_tick_since_nothing_could_say_what_is_barred(tmp_path):

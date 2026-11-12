@@ -22,6 +22,7 @@ from g6.core.ledger import LedgerError, digest
 from g6.core.llm import LLMError
 from g6.metaharness import Model
 from g6.metaharness.loop import LoopSettings, ShadowLoop
+from g6.metaharness import runner as runner_module
 from g6.metaharness.method import Method
 from g6.metaharness.runner import FIRST_REST, LONGEST_REST, NAP, Runner, _in_job, main, open_loop, run
 from g6.metaharness.shadow import lineage
@@ -529,6 +530,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
+from g6.metaharness import runner as runner_module
 from g6.metaharness.method import Method
 
 _spec = importlib.util.spec_from_file_location("loop_domains", {rig!r})
@@ -637,7 +639,7 @@ def test_run_with_a_stop_file_ends_before_it_opens_anything(tmp_path):
     root = tmp_path / "loop"
     root.mkdir()
     (root / "STOP").write_text("stay down\n", encoding="utf-8")
-    assert run(root) == 0 and heartbeat(root) is None
+    assert run(root) == 0 and heartbeat(root)["code"] == "G6_E_LOOP_STOPPED"     # the stop that ended it (review 3, 3)
 
 
 def test_a_starting_heartbeat_is_on_record_before_the_lock_is_taken(tmp_path, monkeypatch):
@@ -821,7 +823,8 @@ def test_a_stop_counted_since_the_start_closes_the_gate_with_its_file_gone(tmp_p
     assert CycleLog(root / CYCLE_LOG).start_in_force()                   # nothing in the records says it stopped
     assert run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root)) == 1
     assert CycleLog(root / CYCLE_LOG).cycles() == []
-    assert "a stop" in capsys.readouterr().err and heartbeat(root)["code"] == "G6_E_LOOP_NOT_STARTED"
+    assert "a stop" in capsys.readouterr().err and heartbeat(root)["code"] == "G6_E_LOOP_STOPPED"   # its own code
+    assert not CycleLog(root / CYCLE_LOG).start_in_force()               # and the run's end noted it in the records
 
 
 def test_a_start_with_no_stop_count_stands_on_nothing(tmp_path, capsys):
@@ -848,13 +851,14 @@ def test_a_start_with_no_settings_on_record_stands_on_nothing(tmp_path):
 
 def test_a_run_uses_the_settings_it_checked_not_a_later_write(tmp_path, monkeypatch):
     root, _ = _enrolled_folder(tmp_path)
-    real, seen = stops_asked, []
+    real, seen = runner_module._gated, []
 
-    def written_after_the_check(folder):
+    def written_after_the_check(folder, settings):                       # the gate, which checks the settings it was given
+        found = real(folder, settings)
         _grow_allowance(root)
-        return real(folder)
+        return found
 
-    monkeypatch.setattr("g6.metaharness.runner.stops_asked", written_after_the_check)
+    monkeypatch.setattr("g6.metaharness.runner._gated", written_after_the_check)
     assert run(root, now=lambda: START + timedelta(days=2), sleep=lambda seconds: (seen.append(heartbeat(root)),
                                                                                    _then_stop(root)(seconds))) == 0
     assert seen[0]["use"][0]["ceiling"] < 1_000_000

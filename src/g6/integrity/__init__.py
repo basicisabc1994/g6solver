@@ -21,11 +21,15 @@ copy in some workspace.
 """
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import os
-from collections.abc import Mapping
+import re
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath
+
+from g6.core.reading import files_under, sha256_of
 
 
 def _sha(data: bytes) -> str:
@@ -37,13 +41,52 @@ def in_cache(rel: Path) -> bool:
     return any(os.path.normcase(part) == os.path.normcase("__pycache__") for part in rel.parts[:-1])
 
 
-def build_manifest(root: str | os.PathLike[str], *, patterns: tuple[str, ...] = ("**/*.py",)) -> dict[str, str]:
+def build_manifest(root: str | os.PathLike[str], *, patterns: tuple[str, ...] = ("**/*.py",),
+                   listed: Sequence[Path] | None = None) -> dict[str, str]:
     """``relative/posix/path -> sha256`` for every file under ``root`` matching ``patterns`` (``__pycache__`` skipped, read
     below ``root`` only, so a root installed under a folder of that name still has its files, and as the system reads a
-    folder's name: on Windows ``__PYCACHE__`` is the same folder, and a first import writes its cache there)."""
+    folder's name: on Windows ``__PYCACHE__`` is the same folder, and a first import writes its cache there). Listed once
+    and read by the one reader (``g6.core.reading``): the patterns choose among the files that one whole listing found
+    (``_selects``), never by listing again, so a folder under ``root`` that cannot be listed, or a file that cannot be
+    read, raises ``Unreadable`` and never leaves a file out unseen. ``listed``: that listing (``files_under(root)``), for a
+    caller that makes more than one selection from it. A ``root`` that does not exist lists nothing."""
     base = Path(root)
-    found = {p for pattern in patterns for p in base.glob(pattern) if p.is_file() and not in_cache(p.relative_to(base))}
-    return {p.relative_to(base).as_posix(): _sha(p.read_bytes()) for p in sorted(found)}
+    chosen = [_selects(pattern) for pattern in patterns]       # a pattern ``Path.glob`` refuses is refused, listed or not
+    found = files_under(base) if listed is None else listed
+    picked = [p for p in found if not in_cache(rel := p.relative_to(base)) and any(match(rel.parts) for match in chosen)]
+    return {p.relative_to(base).as_posix(): sha256_of(p) for p in sorted(picked)}
+
+
+def _selects(pattern: str) -> Callable[[tuple[str, ...]], bool]:
+    """``pattern`` as ``Path.glob`` reads it on Python 3.12, as a test of a listed file's names below the root, so a
+    selection is made from a listing and never by listing again: split as a path is split (``PurePath``), ``**`` standing
+    for any number of folders, and every other part matched as ``Path.glob`` matches it (``fnmatch.translate``, with case
+    as the system reads names). A pattern ending in a separator or in ``**`` chooses folders, so no file, and one with
+    ``..`` names nothing below the root. A pattern ``Path.glob`` refuses (empty, absolute, ``**`` inside a part) raises
+    as it does."""
+    if not pattern:
+        raise ValueError(f"Unacceptable pattern: {pattern!r}")
+    pure = PurePath(pattern)
+    if pure.drive or pure.root:
+        raise NotImplementedError("Non-relative patterns are unsupported")
+    parts = pure.parts
+    if any("**" in part and part != "**" for part in parts):
+        raise ValueError("Invalid pattern: '**' can only be an entire path component")
+    if pattern[-1] in (os.sep, os.altsep) or not parts or parts[-1] == "**" or ".." in parts:
+        return lambda names: False
+    flags = re.NOFLAG if os.path.normcase("Aa") == "Aa" else re.IGNORECASE
+    rules = [None if part == "**" else re.compile(fnmatch.translate(part), flags).match for part in parts]
+
+    def match(names: tuple[str, ...]) -> bool:
+        at = {0}                              # where among the names each part may start, part by part: linear in both
+        for rule in rules:
+            if rule is None:                  # ``**``: this folder or any folder below it, down to the file's own
+                at = set(range(min(at), len(names))) if at else set()
+            else:
+                at = {name + 1 for name in at if name < len(names) and rule(names[name]) is not None}
+        return len(names) in at
+
+    return match
 
 
 def manifest_text(manifest: Mapping[str, str]) -> str:
@@ -51,8 +94,10 @@ def manifest_text(manifest: Mapping[str, str]) -> str:
 
 
 def manifest_sha256(manifest: Mapping[str, str]) -> str:
-    """The digest to pin: of the manifest's canonical text."""
-    return _sha(manifest_text(manifest).encode("utf-8"))
+    """The digest to pin: of the manifest's canonical text. Every name the file system gives is encoded, one that is no
+    text (a lone surrogate, as Windows allows) included, so no listed file escapes the digest; other names encode as they
+    always did."""
+    return _sha(manifest_text(manifest).encode("utf-8", "surrogatepass"))
 
 
 def write_manifest(manifest: Mapping[str, str], path: str | os.PathLike[str]) -> str:

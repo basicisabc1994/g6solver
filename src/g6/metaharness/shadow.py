@@ -24,13 +24,17 @@ version, as the meta-harness's monitor does.
 rollback, so the lineage shows losses as well as gains. A row's ``version`` is its number and ``base_version`` its parent.
 It carries the profile's digest, the change in plain words, what the proposer found, and what was measured: the held-out
 split's figures before and after, as the gate read them, and for a rollback the same figures the other way with what the
-monitor saw. They are measurements on those splits, nothing stronger. These are the loop's own numbers, which have nothing
-to do with G6's version, its tags or its releases: those stay the owner's.
+monitor saw. They are measurements on those splits, nothing stronger. An adoption also carries ``frozen``: the digests
+of what judges, read before the cycle developed anything, which the harness's own last check found still on disk as it
+was written; an adoption with no such reading, or by a harness built with no such check, is never written. These are the loop's own numbers, which have nothing to do with G6's version, its tags or its releases: those
+stay the owner's.
 """
 from __future__ import annotations
 
+import copy
 import time
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +63,17 @@ DEMOTED = "G6_E_LOOP_DEMOTED"
 NOT_DEMOTABLE = "G6_E_LOOP_NOT_DEMOTABLE"
 AUDITED = "G6_E_LOOP_AUDITED"
 MEASURED = "G6_E_LOOP_MEASURED"
+#: What judges changed, or was never read, so no adoption may stand on what was measured (``g6.metaharness.loop``).
+FROZEN_CHANGED = "G6_E_LOOP_FROZEN_CHANGED"
+
+
+@dataclass(frozen=True)
+class Held:
+    """The one success value of a harness's last check: what judges, as read before the cycle developed anything, is what
+    is on disk now. ``frozen`` is that reading, which an adoption's row carries. Anything else a check returns is a
+    refusal."""
+
+    frozen: Mapping[str, str]
 #: What the harness holds a run for when its executor raised, which a failed model call does.
 RUN_FAILED = "G6_E_HARNESS_EXECUTOR_FAILED"
 
@@ -90,6 +105,17 @@ def _measured(report: EvaluationReport) -> dict[str, Any]:
             "not_gated": {**{name: {"before": report.estimates[name]["base_mean"], "after": report.estimates[name]["candidate_mean"]}
                              for name in ("wall_clock_s", "model_calls")},
                           "cost_usd": {"before": dollars("base"), "after": dollars("candidate")}}}
+
+
+def _refusal_in(said: Any, who: str) -> dict[str, Any]:
+    """What a last check returned, as the refusal it is: a blocked reply as it stands, and anything else, empty or not, as
+    ``FROZEN_CHANGED``. Nothing here is ever read as success."""
+    card = said.get("warning_card") if isinstance(said, Mapping) else None
+    if (isinstance(said, Mapping) and said.get("completion_state") == "blocked-escalated" and isinstance(card, Mapping)
+            and isinstance(card.get("code"), str) and isinstance(said.get("message"), str)):
+        return dict(said)
+    return _blocked(FROZEN_CHANGED, f"{who} gave neither a refusal nor this harness's own success value, so nothing is "
+                    "adopted")
 
 
 def _generation(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -134,11 +160,13 @@ def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dic
 class ShadowHarness(MetaHarness):
     def __init__(self, workflow: Workflow, factory: ExecutorFactory | None, workspace: Path, *,
                  clock: Callable[[], float], problems: list[tuple[str, str]],
-                 before_evaluation: Callable[[], None] = lambda: None) -> None:
+                 before_evaluation: Callable[[], None] = lambda: None,
+                 hold: Callable[[], Any] | None = None) -> None:
         super().__init__(workflow, factory, workspace, theories=None, clock=clock, problems=problems)
         self.adoptions = ChainLedger(workspace / ADOPTIONS, validate=_rules) if not problems else None
         self._measured: tuple[tuple[str, str, int], ProposerView] | None = None
         self._before_evaluation = before_evaluation
+        self._hold = hold                     # this harness's own last check: what judges, read and compared
 
     def refresh(self) -> None:
         """Read every ledger again: another handle may have written them. What it wrote decides the head."""
@@ -167,14 +195,24 @@ class ShadowHarness(MetaHarness):
         return self.workflow.policy.max_evaluations - used
 
     @_serialized
-    def adopt(self, decision: GateDecision, *, findings: Mapping[str, Any] | None = None,
-              last_check: Callable[[], dict[str, Any] | None] = lambda: None) -> dict[str, Any]:
+    def adopt(self, decision: GateDecision, *, frozen: Mapping[str, str] | None = None,
+              last_check: Callable[[], dict[str, Any] | None] | None = None,
+              findings: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """Make ``decision``'s candidate the loop's head and its next generation, with what its proposer ``findings``.
-        Only a recommendation this harness issued, on this head. ``last_check`` runs just before the row is written, and a
-        refusal from it stands in place of the adoption."""
+        Only a recommendation this harness issued, on this head, and only once this harness's own last check, the one it
+        was built with (``hold``), says that what judges, as the cycle read it before it developed anything, is what is on
+        disk now. That check runs last: the row is made first, so nothing but its write comes after the check, under the
+        lock this harness holds for every write. Only its own success value, a ``Held``, lets the write through, and the row
+        carries the reading it holds. Anything else it returns stands in place of the adoption, or is refused as
+        ``FROZEN_CHANGED``. A caller's ``frozen`` must be that same reading, and a caller's ``last_check`` can only add a
+        refusal: anything but ``None`` from it refuses. Neither stands in for the harness's own. A harness built with no
+        check adopts nothing: this is the one function that writes an adoption."""
         refused = self._refusal()
         if refused:
             return refused
+        if self._hold is None:
+            return _blocked(FROZEN_CHANGED, "this harness was built with no check of what judges, so nothing is adopted",
+                            "Adopt through the loop's tick, which reads what judges before it develops anything.")
         if self._decisions.get(decision.digest()) is not decision:
             return _blocked(NOT_ADOPTABLE, "this decision was not issued by this harness")
         if decision.verdict != "recommend":
@@ -188,16 +226,23 @@ class ShadowHarness(MetaHarness):
         report, why = self._recorded("report", decision.report_digest)
         if report is None:
             return _blocked(NOT_ADOPTABLE, why)
-        stopped = last_check()
-        if stopped:
-            return stopped
         number = len(self.adoption_rows()) + 1
-        self.adoptions.append("adopt", str(number), {
-            "kind": "adopt", "version": number, "base_version": version, "by": ADOPTER, "scope": SCOPE, "at": _now(),
-            "decision_digest": decision.digest(), "report_digest": decision.report_digest,
-            "profile_digest": proposal.candidate_digest, "profile": proposal.candidate.model_dump(mode="json"),
-            "proposer": decision.proposer, "diff": dict(proposal.diff), "change": _change(proposal),
-            "measured": _measured(report), **{name: value for name, value in (findings or {}).items() if name in FINDINGS}})
+        row = {"kind": "adopt", "version": number, "base_version": version, "by": ADOPTER, "scope": SCOPE, "at": _now(),
+               "decision_digest": decision.digest(), "report_digest": decision.report_digest,
+               "profile_digest": proposal.candidate_digest, "profile": proposal.candidate.model_dump(mode="json"),
+               "proposer": decision.proposer, "diff": dict(proposal.diff), "change": _change(proposal),
+               "measured": _measured(report), **{name: value for name, value in (findings or {}).items() if name in FINDINGS}}
+        said = last_check() if last_check is not None else None
+        if said is not None:
+            return _refusal_in(said, "the caller's own last check")
+        held = self._hold()                     # last: the row is made, and only its write follows
+        if type(held) is not Held:
+            return _refusal_in(held, "this harness's last check")
+        if frozen is not None and dict(frozen) != dict(held.frozen):
+            return _blocked(FROZEN_CHANGED, "the reading of what judges this adoption was offered is not the one this "
+                            "cycle read before it developed anything, so nothing is adopted")
+        row["frozen"] = dict(held.frozen)
+        self.adoptions.append("adopt", str(number), row)
         return _envelope("qualified-draft", ADOPTED, f"version {number} is the loop's head, in its own workspace only",
                          next_action="Later ticks run on it; the monitor compares it with the version before.",
                          head_version=number, head_profile=proposal.candidate_digest)
@@ -206,16 +251,17 @@ class ShadowHarness(MetaHarness):
         """The head on the tuning cases, run once for each head, case set and budget, so an unchanged head costs nothing
         however many ticks and proposers read it. A run the model failed measured the provider and not the head, so the
         next measurement runs such a view again, and until then the proposers read it. It is held in memory, so a restart
-        measures once more."""
+        measures once more. Each caller reads a copy of its own, so what one proposer, or a domain shown the view, does to
+        it, no later reader sees."""
         _, base = self._head()
         key = (base.digest(), self.workflow.digest(), budget.limit)
         kept = self._measured
         if kept is not None and kept[0] == key and not (measuring and any(f.code == RUN_FAILED for f in kept[1].failures)):
-            return kept[1]
+            return copy.deepcopy(kept[1])
         view = build_view(self.workflow, self.factory, base, theories=self.theories, clock=self._clock, budget=budget,
                           artifacts=self.artifacts)
         self._measured = key, view
-        return view
+        return copy.deepcopy(view)
 
     def evaluate(self, proposal: Proposal, *, budget: int | None = None) -> dict[str, Any]:
         """As ``MetaHarness.evaluate``, once ``before_evaluation`` has said it may run. What that raises ends the tick with
@@ -348,10 +394,13 @@ class ShadowHarness(MetaHarness):
 
 def adapt_shadow(workflow: Workflow, factory: ExecutorFactory | None = None, *, workspace: str | Path,
                  clock: Callable[[], float] = time.monotonic,
-                 before_evaluation: Callable[[], None] = lambda: None) -> ShadowHarness:
+                 before_evaluation: Callable[[], None] = lambda: None,
+                 hold: Callable[[], Any] | None = None) -> ShadowHarness:
+    """A shadow harness on ``workflow``. ``hold`` is its own last check before an adoption is written: it returns a ``Held``
+    when what judges is unchanged, and a refusal otherwise. With none, nothing is ever adopted."""
     return ShadowHarness(workflow, factory, Path(workspace).resolve(), clock=clock, problems=workflow.problems(),
-                         before_evaluation=before_evaluation)
+                         before_evaluation=before_evaluation, hold=hold)
 
 
-__all__ = ["ADOPTED", "ADOPTER", "DEMOTED", "NOT_ADOPTABLE", "NOT_DEMOTABLE", "ROLLED_BACK", "SCOPE", "SHADOW_ONLY",
+__all__ = ["ADOPTED", "ADOPTER", "DEMOTED", "Held", "NOT_ADOPTABLE", "NOT_DEMOTABLE", "ROLLED_BACK", "SCOPE", "SHADOW_ONLY",
            "ShadowHarness", "adapt_shadow", "lineage"]

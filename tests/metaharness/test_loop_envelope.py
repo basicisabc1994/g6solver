@@ -760,7 +760,8 @@ def test_a_new_head_is_measured_once(tmp_path):
     calls = len(domain.llm.calls)
     view = loop.mh.measure(budget=120)["view"]
     assert len(domain.llm.calls) == calls + len(loop.cut.tune) and domains.WORKING in view.base["prompt"]
-    assert loop.mh.measure(budget=120)["view"] is view and len(domain.llm.calls) == calls + len(loop.cut.tune)
+    again = loop.mh.measure(budget=120)["view"]                         # a copy of its own, of the one measurement
+    assert again == view and again is not view and len(domain.llm.calls) == calls + len(loop.cut.tune)
 
 
 def test_the_same_head_on_other_cases_is_measured_anew(tmp_path):
@@ -772,9 +773,11 @@ def test_the_same_head_on_other_cases_is_measured_anew(tmp_path):
 
 
 def test_a_view_short_of_its_budget_is_kept_for_that_budget_only(tmp_path):
-    loop, _ = _enrolled(tmp_path)
+    loop, domain = _enrolled(tmp_path)
     short = loop.mh.measure(budget=5)["view"]
-    assert len(short.ran) == 5 and loop.mh.measure(budget=5)["view"] is short
+    calls = len(domain.llm.calls)
+    again = loop.mh.measure(budget=5)["view"]                           # a copy of its own, of the one measurement
+    assert len(short.ran) == 5 and again == short and again is not short and len(domain.llm.calls) == calls
     assert len(loop.mh.measure(budget=120)["view"].ran) == len(loop.cut.tune)
 
 

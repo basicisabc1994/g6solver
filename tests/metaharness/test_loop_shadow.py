@@ -13,7 +13,7 @@ from g6.core import stop
 from g6.core.ledger import LedgerError
 from g6.metaharness import Profile, adapt
 from g6.metaharness import monitor as drift
-from g6.metaharness.shadow import ADOPTER, SHADOW_ONLY, adapt_shadow
+from g6.metaharness.shadow import ADOPTER, FROZEN_CHANGED, SHADOW_ONLY, Held, adapt_shadow
 
 _spec = importlib.util.spec_from_file_location("metaharness_rig", Path(__file__).with_name("_rig.py"))
 rig = sys.modules.setdefault(_spec.name, importlib.util.module_from_spec(_spec))
@@ -36,9 +36,12 @@ class Collapsing(rig.Stub):
         return super().complete(system, user, max_tokens=max_tokens)
 
 
-def _shadow(tmp_path, *, seed=7, stub=None):
+def _shadow(tmp_path, *, seed=7, stub=None, hold=True):
+    """A harness with no loop, built with a last check of its own that holds the workflow it was given, as the loop builds
+    every harness with ``_still_frozen``; ``hold=False`` builds one with no check."""
     wf, stub = rig.build(seed, stub=stub or Collapsing(seed, 0.5, 0.85))
-    mh = adapt_shadow(wf, workspace=tmp_path / "ws", clock=rig.Clock())
+    mh = adapt_shadow(wf, workspace=tmp_path / "ws", clock=rig.Clock(),
+                      hold=(lambda: Held({"workflow": wf.digest()})) if hold else None)
     assert mh.confirm("Ada")["completion_state"] == "qualified-draft"
     return mh, wf, stub
 
@@ -50,9 +53,14 @@ def _recommended(mh, profile=CAREFUL):
     return decision
 
 
+def _adopt(mh, decision):
+    """An adoption as the loop asks for one: the harness's own check is the only one it stands on."""
+    return mh.adopt(decision)
+
+
 def _adopted(tmp_path, **kw):
     mh, wf, stub = _shadow(tmp_path, **kw)
-    assert mh.adopt(_recommended(mh))["head_version"] == 1
+    assert _adopt(mh, _recommended(mh))["head_version"] == 1
     return mh, wf, stub
 
 
@@ -99,17 +107,17 @@ def test_only_a_recommendation_of_this_harness_can_be_adopted(tmp_path):
     proposal = mh.candidate(Profile(routing={"answer": "local"}, prompt="Be brief."), proposer="auto:test")["proposal"]
     refused = mh.decide(mh.evaluate(proposal)["report"], proposal)["decision"]
     assert refused.verdict != "recommend"
-    assert mh.adopt(refused)["completion_state"] == "blocked-escalated"
+    assert _adopt(mh, refused)["completion_state"] == "blocked-escalated"
     other, _, _ = _shadow(tmp_path / "other")
-    assert mh.adopt(_recommended(other))["completion_state"] == "blocked-escalated"
+    assert _adopt(mh, _recommended(other))["completion_state"] == "blocked-escalated"
     assert mh._head()[0] == 0
 
 
 def test_a_decision_on_an_old_head_cannot_be_adopted(tmp_path):
     mh, _, _ = _shadow(tmp_path)
     first, second = _recommended(mh), _recommended(mh, AGAIN)
-    assert mh.adopt(first)["completion_state"] == "qualified-draft"
-    assert mh.adopt(second)["completion_state"] == "blocked-escalated"
+    assert _adopt(mh, first)["completion_state"] == "qualified-draft"
+    assert _adopt(mh, second)["completion_state"] == "blocked-escalated"
     assert mh._head() == (1, CAREFUL)
 
 
@@ -118,7 +126,7 @@ def test_the_stop_refuses_an_adoption(tmp_path):
     decision = _recommended(mh)
     stop.engage("test")
     try:
-        assert mh.adopt(decision)["warning_card"]["code"] == stop.STOPPED
+        assert _adopt(mh, decision)["warning_card"]["code"] == stop.STOPPED
     finally:
         stop.release()
     assert mh._head()[0] == 0
@@ -137,7 +145,7 @@ def test_a_shadow_harness_activates_rolls_back_and_runs_nothing_for_real(tmp_pat
 def test_held_out_uses_carry_across_adoptions(tmp_path):
     mh, wf, _ = _shadow(tmp_path)
     assert mh.held_out_left() == wf.policy.max_evaluations
-    mh.adopt(_recommended(mh))
+    _adopt(mh, _recommended(mh))
     assert mh.held_out_left() == wf.policy.max_evaluations - 1
     again = adapt_shadow(wf, workspace=tmp_path / "ws", clock=rig.Clock())
     assert again.held_out_left() == wf.policy.max_evaluations - 1
@@ -267,3 +275,33 @@ def test_while_stopped_nothing_is_taken_back(tmp_path):
     finally:
         stop.release()
     assert mh._head() == (1, CAREFUL)
+
+
+@pytest.mark.parametrize("given", [{}, {"frozen": {"workflow": "w"}}, {"last_check": lambda: None},
+                                   {"frozen": {}, "last_check": lambda: None}])
+def test_a_harness_built_with_no_check_of_its_own_adopts_nothing_whatever_a_caller_gives(tmp_path, given):
+    mh, _, _ = _shadow(tmp_path, hold=False)
+    got = mh.adopt(_recommended(mh), **given)
+    assert got["warning_card"]["code"] == FROZEN_CHANGED and mh.adoption_rows() == []
+
+
+@pytest.mark.parametrize("said", [{}, [], "", 0, False, {"completion_state": "blocked-escalated"},
+                                  {"completion_state": "qualified-draft"}, Held({"workflow": "w"})])
+def test_a_callers_check_can_only_refuse_and_the_row_carries_what_the_harness_held(tmp_path, said):
+    mh, wf, _ = _shadow(tmp_path)
+    decision = _recommended(mh)
+    refused = mh.adopt(decision, last_check=lambda: said)
+    assert refused["completion_state"] == "blocked-escalated" and mh.adoption_rows() == []
+    assert refused["warning_card"]["code"] == FROZEN_CHANGED
+    assert mh.adopt(decision, frozen={"workflow": "w"})["warning_card"]["code"] == FROZEN_CHANGED
+    assert mh.adopt(decision, last_check=lambda: None)["head_version"] == 1
+    assert mh.adoption_rows()[-1]["frozen"] == {"workflow": wf.digest()}
+
+
+@pytest.mark.parametrize("held", [None, {}, {"completion_state": "qualified-draft"}, True, "held"])
+def test_only_the_harness_checks_own_success_value_lets_an_adoption_through(tmp_path, held):
+    wf, _ = rig.build(7, stub=Collapsing(7, 0.5, 0.85))
+    mh = adapt_shadow(wf, workspace=tmp_path / "ws", clock=rig.Clock(), hold=lambda: held)
+    assert mh.confirm("Ada")["completion_state"] == "qualified-draft"
+    got = mh.adopt(_recommended(mh))
+    assert got["warning_card"]["code"] == FROZEN_CHANGED and mh.adoption_rows() == []

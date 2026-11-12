@@ -25,10 +25,12 @@ import contextvars
 import dataclasses
 import hashlib
 import importlib.machinery
+import importlib.util
 import inspect
 import math
 import os
 import stat
+import site
 import sys
 import threading
 import time
@@ -39,27 +41,32 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from functools import wraps
+from functools import partial, wraps
 from pathlib import Path
+from types import CodeType
 from typing import Any
 from uuid import uuid4
 
 import g6
 from g6.core import stop
 from g6.core.adaptation_gate import is_automated
-from g6.core.ledger import LedgerError, digest
+from g6.core.ledger import LedgerError, canonical, digest
 from g6.core.llm import _WAITS, DEFAULT_MAX_TOKENS, LLMError
 from g6.core.model_calls import counting
+from g6.core.reading import Unreadable, asked, exact, files_under, linked, said, same, sha256_of, walk
 from g6.integrity import build_manifest, in_cache, manifest_sha256
 from g6.metaharness.api import _blocked, _envelope, judging_sha256
 from g6.metaharness.domain import (
     BARRED,
     FALLBACK_MODEL,
+    SHARES,
     Cut,
     Domain,
     Execution,
     FailureRecord,
     Judge,
+    answer_encoding,
+    answer_from,
     backends,
     caller_problems,
     cut_pool,
@@ -77,7 +84,7 @@ from g6.metaharness.monitor import MIN_PAIRS
 from g6.metaharness.propose import DevRunner, ProposerView
 from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, SuiteCase, Workflow, default_objectives
 from g6.metaharness.select import race_calls
-from g6.metaharness.shadow import SCOPE, adapt_shadow
+from g6.metaharness.shadow import ADOPTED, ADOPTER, FROZEN_CHANGED, ROLLED_BACK, SCOPE, Held, adapt_shadow
 from g6.operator.store import OperatorStore, utc_clock
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
 from g6.self_maintenance.envelope import (
@@ -86,15 +93,19 @@ from g6.self_maintenance.envelope import (
     FINDINGS,
     MAX_FAILED_CYCLES,
     REFUSED_FILE,
+    STOP_UNREADABLE,
+    STOPPED,
     TICK_BUDGET_SPENT,
     CycleLog,
     _REFUSAL_WRITE_LOCK as _LOCK,
+    Stop,
     ask_to_stop,
     beat,
-    file_digest,
+    end_start,
     note_refusal,
     refusal_rows,
-    stop_standing,
+    stop_in_force,
+    writable,
 )
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow, utc
 from g6.self_maintenance.usage import (
@@ -117,15 +128,16 @@ from g6.self_maintenance.usage import (
     telling_stops,
 )
 from g6.workspace._coordination import Coordination
+from g6.workspace._envelope import BUSY as HELD_BY_ANOTHER
 from g6.workspace._envelope import WorkspaceRefused
 
 NOT_ENROLLED = "G6_E_LOOP_NOT_ENROLLED"
 POOL_TOO_SMALL = "G6_E_LOOP_POOL_TOO_SMALL"
 EVALUATOR_IN_REACH = "G6_E_LOOP_EVALUATOR_IN_REACH"
-STOPPED = "G6_E_LOOP_STOPPED"
+#: This folder's stops: one asked for, and one whose record cannot be read (``stop_in_force``).
+FOLDER_STOPS = (STOPPED, STOP_UNREADABLE)
 PAUSED = "G6_E_LOOP_PAUSED"
 RESUMED = "G6_E_LOOP_RESUMED"
-FROZEN_CHANGED = "G6_E_LOOP_FROZEN_CHANGED"
 HELD_OUT_SPENT = "G6_E_LOOP_HELD_OUT_SPENT"
 SEALED_BREACH = "G6_E_LOOP_SEALED_BREACH"
 PERSON_REQUIRED = "G6_E_LOOP_PERSON_REQUIRED"
@@ -148,6 +160,19 @@ UNNAMED_REQUEST = "G6_E_LOOP_UNNAMED_REQUEST"
 #: What holds the loop for a person when a request of a tick meets it: a sender the loop may not send through, or a request
 #: whose sender names nothing it could be known by once refused.
 HOLDS = (*BARRED, UNNAMED_REQUEST)
+#: Judging code in a file no listing pins (``_unpinned``), and an answer no exact encoding identifies (``_answer_problems``):
+#: what cannot be identified exactly is refused at enrolment, never guessed.
+JUDGE_UNPINNED = "G6_E_LOOP_JUDGE_UNPINNED"
+ANSWER_UNIDENTIFIABLE = "G6_E_LOOP_ANSWER_UNIDENTIFIABLE"
+#: A cycle's safety stops: each holds the loop for a person (``_must_stop``), whatever code its row was given.
+SAFETY_STOPS = (SEALED_BREACH, UNMETERED_CALLER, CLASSIFIER_STOP, HOST_UNKNOWN, *HOLDS)
+#: The order the one rule codes a cycle by (``_coded``), first ranking highest; a status not here ranks after them all.
+#: A rollback first: it has happened, the chain went back a generation, and the log counts generations by that outcome.
+#: Then a frozen change, above every safety stop: nothing the cycle measured stands, and the next tick is refused until a
+#: person enrols again. A safety stop it outranks loses nothing: the row keeps every status, ``_must_stop`` reads them all,
+#: so the loop still pauses, and a pause is read before the frozen digests, so enrolling again does not lift it. Then the
+#: tick's own reservation spent.
+RANKED = (ROLLED_BACK, FROZEN_CHANGED, *SAFETY_STOPS, TICK_BUDGET_SPENT)
 #: What enforces the envelope, beside ``JUDGING_PATTERNS``: all of G6. The loop's own files import much of the package and those
 #: files import more, so a list of them leaves out whatever an import reaches next. It is read in a tenth of a second, and a
 #: change to what runs is a person's to enrol again, as it is theirs to merge. Every kind of file Python imports from a
@@ -161,6 +186,11 @@ UNKNOWN = "unknown"
 #: gate's default margin are as they were, so a workflow a person runs still holds all three.
 GATED = ("success",)
 _SOURCE = Path(g6.__file__).resolve().parent
+#: Code another digest pins: G6's own package (``envelope_sha256``) and the Python installation, its prefixes and every
+#: folder packages are installed to, the user's own among them, so a package first imported in the middle of a run (a
+#: provider's SDK at its first request) is not a change to what judges.
+_INSTALLED = tuple(dict.fromkeys((_SOURCE, *(Path(place).resolve() for place in (
+    sys.prefix, sys.base_prefix, sys.exec_prefix, *getattr(site, "getsitepackages", list)(), site.getusersitepackages())))))
 STATUS_LINE = ("Early alpha. Individual capabilities have been tested; general application-level improvements have not "
                "yet been established.")
 
@@ -228,11 +258,12 @@ class _AtLimit(BaseException):
 
 class _Halted(BaseException):
     """A stop, met at a model call, on its way out of the tick as ``_AtLimit`` is, and for the same reason: nothing from the
-    run it cut off is written, so an evaluation it cut off is not one of the split's five."""
+    run it cut off is written, so an evaluation it cut off is not one of the split's five. ``reading``: this folder's
+    reading that halted it (``stop_in_force``), or ``None`` for a stop of another kind."""
 
-    def __init__(self, code: str, said: str) -> None:
+    def __init__(self, code: str, said: str, reading: Stop | None = None) -> None:
         super().__init__(said)
-        self.code, self.said = code, said
+        self.code, self.said, self.reading = code, said, reading
 
 
 class _Refused(BaseException):
@@ -1132,6 +1163,30 @@ def _pool_problems(cut: Cut, policy: EvidencePolicy) -> list[tuple[str, str]]:
             for name, (found, least) in needs.items() if len(found) < least]
 
 
+def _answer_problems(cut: Cut) -> list[tuple[str, str]]:
+    """Cases whose answer the loop cannot give its judge exactly as identified: one outside the admitted set
+    (``answer_encoding``), or one the split's reference cannot render, which the evaluation count is kept by
+    (``SuiteCase.ref``). Either, and anything at all that raises while an answer is read, is refused at enrolment, by case
+    id only: an answer is never shown."""
+    found = []
+    for name, _ in SHARES:
+        for case in getattr(cut, name):
+            try:
+                canonical(answer_from(answer_encoding(case.expected)))
+            except Exception as exc:  # noqa: BLE001 - whatever cannot be read whole is refused, by case id
+                found.append(f"{case.case_id} ({type(exc).__name__})")
+    return [(ANSWER_UNIDENTIFIABLE, f"{len(found)} cases have an answer the loop cannot give its judge exactly, for example "
+             f"{', '.join(found[:3])}: an answer is None, a bool, an int, a finite float, a str, a list or a dict with str "
+             "keys, each of exactly that type, as a tree no deeper than 64")] if found else []
+
+
+def _as_identified(cut: Cut) -> Cut:
+    """``cut`` with each answer replaced by the one decoded from its encoding: a fresh tree that shares nothing with what the
+    domain holds, which is what the judge is given, so what it reads is exactly what was identified."""
+    return Cut(**{name: tuple(dataclasses.replace(case, expected=answer_from(answer_encoding(case.expected)))
+                              for case in getattr(cut, name)) for name, _ in SHARES})
+
+
 def _groups(cases: Sequence[SuiteCase]) -> list[str]:
     """The groups these cases name: a case's group is exposed when any of its members is, whatever its id or text."""
     return sorted({f"group:{c.meta['group']}" for c in cases if c.meta.get("group")})
@@ -1181,13 +1236,117 @@ def _overlap(a: str, b: str) -> bool:
 
 
 def _in_reach(root: Path, domain: Domain) -> list[str]:
-    """What judges that lies in or around the loop's folder, which is the only place it writes."""
-    judge, sealed = domain.judge(), domain.sealed()
-    source = judge_source(judge.verdict) if judge is not None else None
+    """What judges that lies in or around the loop's folder, which is the only place it writes: by path, and by the file
+    system's own identity of each folder on the way, so another spelling of a folder is that folder, and whatever a link
+    under a judge's root points at (a link there is refused all the same, ``_unpinned``). A folder under a judge's root
+    that cannot be listed is in reach too: what it holds is not known to hold no link to the loop's folder."""
+    sealed, roots = domain.sealed(), _roots(domain)
+    links, unlisted = _links_under(roots)
     guarded = {"G6's own source": str(_SOURCE),
-               **({"the judge's folder": str(source.resolve().parent)} if source is not None else {}),
+               **{f"the judge's root {root}": str(root) for root in roots},
+               **{f"a link under the judge's root, to {os.path.realpath(exact(link))}": os.path.realpath(exact(link))
+                  for link in links},
                **{f"sealed root {i}": r for i, r in enumerate(sealed.vault.roots if sealed is not None else ())}}
-    return [name for name, path in guarded.items() if _overlap(str(root), path)]
+    return [name for name, path in guarded.items() if _same_place(root, Path(path))] + [
+        f"a folder under the judge's root that cannot be listed ({name}), which may hold a link to it" for name in unlisted]
+
+
+def _same_place(a: Path, b: Path) -> bool:
+    """Whether ``a`` and ``b`` overlap, one being the other or lying in it: by path, or by the identity the file system
+    gives a folder, compared along every folder above each."""
+    return _overlap(os.path.normcase(str(a)), os.path.normcase(str(b))) or _within(a, b) or _within(b, a)
+
+
+def _within(inner: Path, outer: Path) -> bool:
+    try:
+        held = outer.stat()
+    except OSError:
+        return False
+    for place in (inner, *inner.parents):
+        try:
+            if os.path.samestat(place.stat(), held):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _is_link(path: Path, *, absent: bool = False, was: os.stat_result | None = None) -> bool:
+    """Whether ``path`` is a link or a junction, by the one reader's stat that raises (``asked``): one that cannot be
+    asked raises ``Unreadable``, never a "no", and so does one that is gone, unless ``absent`` allows it (a root, which is
+    compared by its absence), when it is none. ``was``: what the lister's own stat found of this entry (``Listed``); an
+    entry has one answer, so one that is another entry by this ask was changed while its folder was listed, and is
+    ``Unreadable`` too."""
+    info = asked(path, absent=absent)
+    if was is not None and info is not None and not same(was, info):
+        raise Unreadable(f"{said(path)} cannot be read (it was changed while its folder was listed)")
+    return info is not None and linked(info)
+
+
+def _links_under(roots: Sequence[Path], given: Sequence[Path] = ()) -> tuple[list[Path], list[str]]:
+    """Every link or junction that is a root, as ``given`` before anything resolved it or as resolved, or lies under one,
+    since what it points at is no part of the root's listing, and every root, folder or entry under one that could not
+    be listed or asked, named. The walk goes on past what it cannot list or ask, so no link found elsewhere is lost to it,
+    and the caller refuses either (``_in_reach``, ``_unpinned``)."""
+    found: list[Path] = []
+    unlisted: list[str] = []
+
+    def link(path: Path, absent: bool = False, was: os.stat_result | None = None) -> bool | None:
+        """``True`` for a link, ``False`` for none, ``None`` for what could not be asked, which is named."""
+        try:
+            return _is_link(path, absent=absent, was=was)
+        except Exception:  # noqa: BLE001 - what cannot be asked is not known to be no link: named, and refused
+            unlisted.append(said(path))
+            return None
+
+    found += [root for root in given if link(root, absent=True)]
+    for root in roots:
+        at = link(root, absent=True)
+        if at:
+            found.append(root)
+        if at is not False:
+            continue
+        for here, dirs, files in walk(root, skipped=unlisted):
+            kept = []
+            for name in (*dirs, *files):
+                held = link(Path(here) / name, was=getattr(name, "info", None))
+                if held:
+                    found.append(Path(here) / name)
+                elif held is False and name in dirs:
+                    kept.append(name)
+            dirs[:] = kept
+    return found, unlisted
+
+
+#: What judges could not be read whole: a file under a judge's root, a loaded module's source outside them, the domain's
+#: declaration, G6's own code, the sealed split, or a folder under any of them that could not be listed. It is the one
+#: reader's (``g6.core.reading``), which the sealed split and the integrity manifest read through too, and no reading
+#: stands on it: enrolment refuses it (``JUDGE_UNPINNED``), and every cycle and adoption refuses it as a frozen change
+#: while it stands.
+FrozenUnreadable = Unreadable
+
+
+def _frozen_bytes(path: Any) -> str:
+    """The SHA-256 of a file the freeze pins, by the one reader (``sha256_of``): ``FrozenUnreadable`` on any failure at
+    all, never a value that stands in for bytes it could not read."""
+    return sha256_of(str(path))
+
+
+def _whole(read: Callable[[], Any]) -> Any:
+    """The freeze's one boundary: ``read`` made whole, or ``FrozenUnreadable`` whatever kept it from being made, a domain's
+    own code raising while it is read included, so no reading of what judges raises anything else past it."""
+    try:
+        return read()
+    except Exception as exc:  # noqa: BLE001 - whatever keeps the reading from being made, it is unreadable
+        if isinstance(exc, Unreadable):
+            raise
+        raise FrozenUnreadable(f"what judges could not be read whole ({type(exc).__name__}: {said(exc)})"[:400]) from exc
+
+
+def _unpinned_reading(exc: BaseException) -> dict[str, Any]:
+    """Enrolment refused on a reading of what judges that could not be made whole: nothing is enrolled."""
+    return _blocked(JUDGE_UNPINNED, f"what judges could not be read whole ({said(exc)}), so no listing pins it and nothing "
+                    "was enrolled"[:500], "A person makes it readable, then enrols.")
 
 
 def envelope_sha256() -> str:
@@ -1195,28 +1354,32 @@ def envelope_sha256() -> str:
     made is theirs to accept by enrolling again. The place counts, so a run enrolled on a pinned install cannot be swapped
     for a working tree that holds the same bytes today. It is a tripwire, not custody: the code that compares this digest is
     among what it covers, so an edit to that code can skip the comparison. Holding it needs the read-only checkout of design
-    6.5."""
+    6.5. G6's package is listed once, and both its files and its importable caches are chosen from that one listing."""
+    listed = files_under(_SOURCE)
     with _open_input(_SOURCE, follow_directory=True) as stream:
         install = _file_identity(stream)
-    return digest({"code": manifest_sha256({**build_manifest(_SOURCE, patterns=ENVELOPE_PATTERNS), **_importable_caches(_SOURCE)}),
+    return digest({"code": manifest_sha256({**build_manifest(_SOURCE, patterns=ENVELOPE_PATTERNS, listed=listed),
+                                            **_importable_caches(_SOURCE, listed)}),
                    "install": install})
 
 
-def _importable_caches(root: Path) -> dict[str, str]:
+def _importable_caches(root: Path, listed: Sequence[Path] | None = None) -> dict[str, str]:
     """Each file under a ``__pycache__`` folder that Python could import as a module, as ``build_manifest`` gives files. A cache
     folder is a namespace package, so ``g6.x.__pycache__.name`` imports ``name.py``, ``name.pyc`` or an extension there. A cache
     a first import writes is named for its interpreter (``select.cpython-312.pyc``), which no import statement can name, so it is
-    left out and a legitimate import changes nothing."""
-    suffixes = sorted(importlib.machinery.all_suffixes(), key=len, reverse=True)
-    found = {}
-    for path in root.rglob("*"):
-        if not in_cache(path.relative_to(root)) or not path.is_file():
-            continue
-        name = os.path.normcase(path.name)          # Windows imports ``planted.PY`` as it does ``planted.py``
-        suffix = next((s for s in suffixes if name.endswith(os.path.normcase(s))), None)
-        if suffix is not None and name[:-len(suffix)] and "." not in name[:-len(suffix)]:   # importlib checks no names
-            found[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
-    return found
+    left out and a legitimate import changes nothing. Listed and read by the one reader, or chosen from ``listed``, its listing
+    of ``root``: what cannot be listed or read raises ``FrozenUnreadable``."""
+    return {path.relative_to(root).as_posix(): _frozen_bytes(path) for path in (files_under(root) if listed is None else listed)
+            if in_cache(path.relative_to(root)) and _importable(path.name)}
+
+
+def _importable(name: str) -> bool:
+    """Whether an import statement could name a file called ``name``: an importable suffix, and no dot before it, which a
+    cache named for its interpreter (``select.cpython-312.pyc``) has."""
+    name = os.path.normcase(name)                   # Windows imports ``planted.PY`` as it does ``planted.py``
+    suffix = next((s for s in sorted(importlib.machinery.all_suffixes(), key=len, reverse=True)
+                   if name.endswith(os.path.normcase(s))), None)
+    return suffix is not None and bool(name[:-len(suffix)]) and "." not in name[:-len(suffix)]   # importlib checks no names
 
 
 def _profile_space(name: str, run: Execution) -> str:
@@ -1239,37 +1402,266 @@ def _profile_space(name: str, run: Execution) -> str:
                                       for k, step in sorted(run.pipeline_steps.items())}})
 
 
-def _writable(value: Any) -> Any:
-    """``value`` with every string, keys too, made writable as UTF-8: what cannot be (a lone surrogate) is spelled out with
-    a backslash, so a row that repeats a domain's labels or an error's words can always be written."""
-    if isinstance(value, str):
-        return value.encode("utf-8", "backslashreplace").decode("utf-8")
-    if isinstance(value, Mapping):
-        return {_writable(k): _writable(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_writable(v) for v in value]
-    return value
+#: ``value`` with every string, keys too, made writable as UTF-8: the envelope's one rule for text a row repeats
+#: (``g6.self_maintenance.envelope.writable``), so a row that repeats a domain's labels or an error's words can always be
+#: written.
+_writable = writable
 
 
-def _judge_digest(judge: Judge | None) -> str:
-    source = judge_source(judge.verdict) if judge is not None else None
-    return hashlib.sha256(source.read_bytes()).hexdigest() if source is not None else ""
+def _judge_digest(judge: Judge | None, roots: Sequence[Path] | None = None) -> str:
+    """What decides a verdict, pinned by files listed whole and never by following imports: the verdict function the domain
+    selected, by its file and its qualified name, so another function in the same file is another judge, and every file
+    under the roots that hold the domain's judging code, each by its bytes, as the envelope pins G6 (every importable
+    suffix, namespace packages and importable caches included), so a helper it calls, or imports only once it runs, judges
+    too. ``roots``: the folders the enrolment pins (``_roots``), or the verdict's own folder when none are given. G6's own
+    package is the envelope's, and the installation's code its own."""
+    if judge is None:
+        return ""
+    return digest({"verdict": _named(judge.verdict),
+                   "roots": _pinned(roots if roots is not None else _roots_of([_code_file(judge.verdict)]))})
+
+
+def _named(fn: Any) -> list[str]:
+    """A callable as the enrolment names it: its file, its qualified name, and the line its code starts on, so two lambdas
+    of one function are two names."""
+    unwrapped = _unwrapped(fn)
+    named = getattr(unwrapped, "__qualname__", None)
+    where = _code_file(fn)
+    code = getattr(unwrapped, "__code__", None)
+    return [str(where) if where is not None else "", named if isinstance(named, str) else type(unwrapped).__qualname__,
+            str(code.co_firstlineno) if isinstance(code, CodeType) else ""]
+
+
+def _unwrapped(fn: Any) -> Any:
+    while isinstance(fn, partial):
+        fn = fn.func
+    return inspect.unwrap(fn)
+
+
+def _code_file(fn: Any) -> Path | None:
+    """The file a callable's code is in: its source file; for a class or a callable object, its class's; for a built-in,
+    its module's file, or the interpreter's when it is built into it. ``None`` when none is known, as for Python code that
+    is in no file."""
+    unwrapped = _unwrapped(fn)
+    source = judge_source(unwrapped)
+    if source is not None:
+        return source.resolve()
+    if inspect.isfunction(unwrapped) or inspect.ismethod(unwrapped):
+        return None
+    owner = getattr(unwrapped, "__objclass__", None) or (unwrapped if isinstance(unwrapped, type) else None)
+    if owner is None and not inspect.isbuiltin(unwrapped):
+        owner = type(unwrapped)                  # a callable object: its class's code is what runs
+    source = judge_source(owner) if owner is not None else None
+    if source is not None:
+        return source.resolve()
+    name = getattr(owner if owner is not None else unwrapped, "__module__", None)
+    if not isinstance(name, str):
+        return None
+    if name in sys.builtin_module_names:
+        return Path(sys.base_prefix).resolve()
+    where = getattr(sys.modules.get(name), "__file__", None)
+    return Path(where).resolve() if isinstance(where, str) and where else None
+
+
+def _judging_code(domain: Domain) -> list[tuple[str, Any]]:
+    """What decides a verdict, each by the name a person reads: the verdict and every check of the workflow."""
+    judge, run = domain.judge(), domain.execution()
+    return ([("the verdict", judge.verdict)] if judge is not None else []) + [
+        (f"check {check.key}", check.run) for check in (*run.checks, *run.optional_checks.values())]
+
+
+def _roots(domain: Domain) -> tuple[Path, ...]:
+    """The folders that hold a domain's judging code, each pinned whole: those it declares as ``roots``, or else the folders
+    its verdict and checks are in. G6's package and the installation are pinned by their own digests."""
+    declared = getattr(domain, "roots", None)
+    if declared is not None:
+        return tuple(sorted({Path(root).resolve() for root in declared}))
+    return _roots_of([_code_file(fn) for _, fn in _judging_code(domain)])
+
+
+def _roots_of(files: Sequence[Path | None]) -> tuple[Path, ...]:
+    """The folders that hold these files, leaving out G6's package and the installation."""
+    return tuple(sorted({path.parent for path in files if path is not None and not _installed(path)}))
+
+
+def _held_by(path: Path | None, roots: Sequence[Path]) -> bool:
+    return path is not None and (_installed(path) or any(path.is_relative_to(root) for root in roots))
+
+
+def _unpinned(domain: Domain) -> list[tuple[str, str]]:
+    """Judging code whose file no listing pins: refused at enrolment, as what cannot be identified exactly is refused."""
+    roots = _roots(domain)
+    found = [f"{name} lives in {where or 'no file'}" for name, fn in _judging_code(domain)
+             if not _held_by(where := _code_file(fn), roots)]
+    problems = [(JUDGE_UNPINNED, "; ".join(found) + ", outside G6, the Python installation and every root this domain "
+                 "declares, so no listing pins what it does")] if found else []
+    given = [Path(root) for root in getattr(domain, "roots", None) or ()]       # as declared, before anything resolves it
+    links, unlisted = _links_under(roots, given)
+    if unlisted:
+        problems.append((JUDGE_UNPINNED, f"what judges cannot be listed whole ({unlisted[0]} cannot be listed), so no "
+                         "listing pins it"))
+    return problems + ([(JUDGE_UNPINNED, f"a link or junction at or under the judge's roots, at {said(links[0])}, points at "
+                         "what no listing of them pins: a root holds its files itself")] if links else [])
+
+
+def _pinned(roots: Sequence[Path]) -> dict[str, str]:
+    """Each root pinned whole: every regular file under it, of any suffix, by its bytes (data files, archives and any file
+    under ``__pycache__`` as much as source), and any link or junction under it by that name alone, which refuses
+    (``_unpinned``). Only the bytecode cache the interpreter writes for a source file under the root is left out, by the
+    interpreter's own rule (``_interpreter_caches``): an import writes one, and the runner reads none (the freeze's threat
+    model is honest drift). A root that does not exist pins nothing, so its absence is compared. A file that cannot be read,
+    a folder that cannot be listed, an entry that cannot be asked, and a root that is no folder raise ``FrozenUnreadable``."""
+    return {os.path.normcase(str(root)): ("" if (info := asked(root, absent=True)) is None else "a link" if linked(info)
+                                          else manifest_sha256(_listing(root))) for root in roots}
+
+
+def _listing(root: Path) -> dict[str, str]:
+    """Every entry under ``root``, from one listing and each asked once by a stat that raises: a link by that name alone, a
+    file by its bytes, and no interpreter cache."""
+    links, files = [], []
+    for here, dirs, names in walk(root):
+        held = {name for name in (*dirs, *names) if _is_link(Path(here) / name, was=getattr(name, "info", None))}
+        links += [Path(here) / name for name in (*dirs, *names) if name in held]
+        files += [Path(here) / name for name in names if name not in held]
+        dirs[:] = [name for name in dirs if name not in held]
+    caches = _interpreter_caches(files)
+    return {**{path.relative_to(root).as_posix(): "a link" for path in links},
+            **{path.relative_to(root).as_posix(): _frozen_bytes(path) for path in files
+               if os.path.normcase(str(path)) not in caches}}
+
+
+#: The optimisation levels the interpreter writes a cache for: none, ``-O`` and ``-OO``.
+_OPTIMISATIONS = ("", 1, 2)
+
+
+def _interpreter_caches(files: Sequence[Path]) -> set[str]:
+    """The bytecode caches this interpreter writes for the source files among ``files``, by its own rule: each source's
+    cache is named as ``importlib.util.cache_from_source`` names it, at each optimisation level, in the ``__pycache__``
+    folder beside it, where the interpreter writes it with no cache prefix (a runner sets one, and reads none there), so
+    the same files are left out whatever prefix this process has. Normcased paths; no cache at all for an interpreter that
+    writes none. Any other file under ``__pycache__``, a cache with no source or another interpreter's, is pinned."""
+    if sys.implementation.cache_tag is None:
+        return set()
+    sources = tuple(os.path.normcase(suffix) for suffix in importlib.machinery.SOURCE_SUFFIXES)
+    return {os.path.normcase(str(path.parent / "__pycache__" / Path(importlib.util.cache_from_source(str(path),
+                                                                                                  optimization=level)).name))
+            for path in files if os.path.normcase(path.name).endswith(sources) for level in _OPTIMISATIONS}
+
+
+def _loaded_outside(roots: Sequence[Path]) -> list[list[str]]:
+    """Every module loaded in this process whose file is neither G6's, the installation's, nor under a pinned root, each by
+    its file's bytes. Code loaded from anywhere else is code no listing holds, so a module loaded later (a verdict's own
+    import, made as it runs), or a change to any of them, is a change to what judges. A source that cannot be read raises
+    ``FrozenUnreadable``."""
+    held = [os.path.normcase(str(root)) + os.sep for root in (*roots, *_INSTALLED)]
+    found: dict[str, str] = {}
+    for module in list(sys.modules.values()):
+        where = getattr(module, "__file__", None)
+        if not isinstance(where, str) or not where:
+            continue
+        path = os.path.normcase(os.path.abspath(where))
+        if not any(path.startswith(prefix) for prefix in held):
+            found[path] = _frozen_bytes(path)
+    return sorted([path, sealed] for path, sealed in found.items())
+
+
+def _installed(path: Path) -> bool:
+    """Whether ``path`` is G6's own package or lies in the Python installation: code another digest pins."""
+    return any(path.is_relative_to(root) for root in _INSTALLED)
+
+
+def _imported_files(verdict: Any) -> set[Path]:
+    """The person's own files a verdict's module reaches through the modules loaded in this process, for whoever reads what
+    a judge reaches. It pins nothing: ``_judge_digest`` pins files listed whole, and ``_loaded_outside`` every other module
+    loaded."""
+    todo, seen, found = [getattr(verdict, "__module__", None)], set(), set()
+    while todo:
+        name = todo.pop()
+        if not isinstance(name, str) or name in seen:
+            continue
+        seen.add(name)
+        where = getattr(sys.modules.get(name), "__file__", None)
+        if not where:
+            continue
+        path = Path(where).resolve()
+        if _installed(path):
+            continue
+        found.add(path)
+        for value in list(vars(sys.modules[name]).values()):
+            if inspect.ismodule(value):
+                todo.append(value.__name__)
+                continue
+            for owner in (value, type(value)):
+                try:
+                    todo.append(owner.__module__)
+                except Exception:  # noqa: BLE001 - an object that will not say where it came from adds nothing to follow
+                    pass
+    return found
+
+
+def _coded(row: dict[str, Any], statuses: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """The one rule that codes a cycle: of every status that held, the cycle's own end among them, the first in ``RANKED``,
+    or else the last to hold, gives the row its outcome, code and reason. The row keeps every status, so a frozen change or
+    a safety stop is never lost whatever ranks first."""
+    held = [{name: status[name] for name in ("outcome", "code", "reason")} for status in statuses]
+    if held:
+        row |= min(reversed(held), key=lambda status: RANKED.index(status["code"]) if status["code"] in RANKED else len(RANKED))
+    row["statuses"] = held
+    return row
+
+
+def _safety_in(row: Mapping[str, Any]) -> str:
+    """The reason of the safety stop a cycle's row holds, ranked first among its statuses, or ``""``."""
+    held = [status for status in (row, *row.get("statuses", ()))
+            if status.get("code") in SAFETY_STOPS or status.get("outcome") == "sealed_breach"]
+    return str(min(held, key=lambda status: SAFETY_STOPS.index(status["code"]) if status.get("code") in SAFETY_STOPS
+                   else 0)["reason"]) if held else ""
+
+
+def _differs(now: Mapping[str, str], breached: bool, recorded: Mapping[str, str]) -> list[str]:
+    """The frozen things whose digest ``now`` is not the one ``recorded``, and ``sealed`` when its bytes were breached."""
+    return sorted({name for name, value in now.items() if value != recorded.get(name)} | ({"sealed"} if breached else set()))
+
+
+def _reloaded(loop: ShadowLoop) -> dict[str, Any] | None:
+    """The tick's writer read again, or the reply when it cannot be: whatever the reload fails with, the stop reading says
+    what it is, a stop in force (``STOP_UNREADABLE``) when the records do not read, and records that read but do not follow
+    from what this handle held, ``LedgerError``, which ``_exclusive`` answers as records that cannot be trusted. That stop,
+    the tick's guard, ends the start durably (``end_start``), as every ending on a stop does."""
+    try:
+        loop.log.reload()
+    except Exception as exc:  # noqa: BLE001 - any failure of the reload is the reading's to say, never an escape
+        halted = stop_in_force(loop.root)
+        if halted.code != STOP_UNREADABLE:
+            raise LedgerError(f"{type(exc).__name__}: {exc}") from exc
+        end_start(loop.root, halted.code, halted.reason, halted)
+        reply = _blocked(STOP_UNREADABLE, halted.reason[:400], "A person makes the loop's records readable; a new "
+                         "g6_improve_start lets it run again.")
+        loop._beat(reply["completion_state"], STOP_UNREADABLE, reason=reply["message"])
+        return reply
+    return None
 
 
 def _exclusive(method: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
     """One operation at a time per folder, on what is written and not on what this handle last read: a restart can
     overlap a tick that is still running, and a person's process is not the loop's. The lock is the operating system's,
-    so it dies with its process, and a refusal is a reply, never a raised error."""
+    so it dies with its process, and its refusal for another holder is a reply, never a raised error; a lock that cannot be
+    taken for any other reason raises what kept it, never another operation. Records the stop decision stands on that
+    do not read are that decision's to say: a stop in force, ``STOP_UNREADABLE``, as every reader says it."""
 
     @wraps(method)
     def invoke(self: ShadowLoop, *args: Any, **kwargs: Any) -> dict[str, Any]:
         try:
             with Coordination(self.root / ".tick").mutex():
-                self.log.reload()
+                refused = _reloaded(self)
+                if refused is not None:
+                    return refused
                 if self.mh is not None:
                     self.mh.refresh()
                 return method(self, *args, **kwargs)
-        except WorkspaceRefused:
+        except WorkspaceRefused as exc:
+            if exc.code != HELD_BY_ANOTHER:
+                raise              # a lock that could not be taken for what it is, or a refusal of another kind: no holder
             return _blocked(BUSY, "another operation is running on this folder; this one did nothing")
         except LedgerError as exc:
             reply = _blocked(RECORDS_UNREADABLE, f"the loop's records cannot be trusted: {exc}"[:400],
@@ -1290,9 +1682,16 @@ class ShadowLoop:
         self.domain, self.settings, self.domain_file, self._read_now = domain, settings, domain_file, read_now
         self._now = utc_clock(now)                # every instant the loop reads is UTC, where its clock is taken in
         self.beat_fields: dict[str, Any] = {}     # what a runner adds to every heartbeat
+        self.beats = True                         # a person's command sets it false: only the runner lock's holder beats
+        self._records_known: tuple[str, dict | None, str] | None = None   # the records' identity, their start, its revocation
         self.evaluating = False                   # this tick has begun its held-out evaluation
         self.waited = 0                           # ticks a budget wait turned away since the last cycle: a wait leaves no row
         self.tuned: list[dict[str, Any]] = []     # this tick's tuning cycles as they happen, for a row that a raise cut short
+        self._frozen_seen: dict[str, str] | None = None   # the frozen digests this tick read before it developed anything
+        # what its cycle met: breaches, a refusal, a request nobody noted, a stop, and a hold for an unknown outcome
+        self._met: tuple[list[str], dict[str, str] | None, bool, _Halted | None, dict[str, Any] | None] | None = None
+        self._began: int | None = None            # the generations the chain held as this tick's cycle began
+        self._written = False                     # the log holds this tick's row
         # ``lost_cycles`` and ``cannot_record`` are the process's for the folder (``_Folder``), so this handle starts with
         # whatever another of the folder's handles met; what was refused here is read with the store at every admission
         self.requests = _Requests(lambda: self._now(), self._halted, self._barred, self._keep_refusal, self._on_record)
@@ -1312,7 +1711,7 @@ class ShadowLoop:
                                  read_account=read_account)
         for provider, until in self.log.limits().items():
             self.meter.limit_reached(provider, until)
-        self.problems = domain_problems(domain)
+        self.problems = domain_problems(domain) + _unpinned(domain)
         if backends(proposer) > 1:
             self.problems.append((FALLBACK_MODEL, "the proposer can answer from more than one backend, so a limit on one would "
                                   "pass unseen and its calls could go where no window covers"))
@@ -1335,12 +1734,18 @@ class ShadowLoop:
     def _bind(self) -> None:
         """What this handle runs: the domain's cases as they stand, cut, and a harness on them with nothing kept from
         before. An enrolment does this again, so what a person froze is what runs, on this handle as on a new one."""
-        self.cut = cut_pool(self.domain.development(), self.settings.seed)
+        cut = cut_pool(self.domain.development(), self.settings.seed)
+        answers = _answer_problems(cut)
+        self.cut = cut if answers else _as_identified(cut)     # the judge is given each answer as it was identified
         self.workflow = _workflow(self.domain, self.cut, self.settings, self.requests)
-        self.problems = _pool_problems(self.cut, self.workflow.policy) + self.workflow.problems()
+        # a workflow is digested by its answers' rendering, so answers that cannot be held are refused before it is read
+        self.problems = _pool_problems(self.cut, self.workflow.policy) + (answers or self.workflow.problems())
+        # the harness holds its own last check from here: what judges, read and compared by the one function the loop
+        # calls too (``_still_frozen``), never a check a caller of ``adopt`` hands it
         self.mh = None if self.problems else adapt_shadow(self.workflow, self.domain.execution().factory,
                                                           workspace=self.root / "workspace", clock=self._clock,
-                                                          before_evaluation=self._before_evaluation)
+                                                          before_evaluation=self._before_evaluation,
+                                                          hold=lambda: self._still_frozen())
 
     def _before_evaluation(self) -> None:
         """Read the account once more before a held-out evaluation: a limit reads as a failed case, and an evaluation of
@@ -1438,11 +1843,22 @@ class ShadowLoop:
     @lost_cycles.setter
     def lost_cycles(self, count: int) -> None:
         self._here.lost_cycles = count
+    def _stop(self) -> Stop:
+        """This folder's stop, which a tick and the runner read alike: if the runner read less, a tick refused for a stop
+        would leave it going, and asking again. It is ``stop_in_force``'s reading of what is on disk, taken before each
+        request. The start and any stop after it are kept against the digest of the very records' bytes they were parsed
+        from, in that same reading, so a later reading parses again only when its bytes differ; records that cannot be read
+        stop it."""
+        if self.cannot_record:
+            return Stop(CANNOT_RECORD, self.cannot_record)  # this process's own stop: the log took no cycle
+        found = stop_in_force(self.root, known=self._records_known)
+        self._records_known = (None if found.code == STOP_UNREADABLE
+                               else (found.records_sha256, found.start, found.revoked))
+        return found
 
     def stopped_by(self) -> str:
-        """Why this folder is stopped, which a tick and the runner read alike: if the runner read less, a tick refused for a
-        stop would leave it going, and asking again."""
-        return self.cannot_record or stop_standing(self.root, self.log.started())
+        """Why this folder is stopped, or ``""``."""
+        return self._stop().reason
 
     def _refusals_on_record(self) -> tuple[set[str], set[str]]:
         """Every request refused here, and every one held only for an unknown outcome, from ``refused.log`` and from the
@@ -1471,9 +1887,9 @@ class ShadowLoop:
                 self.unreadable = ""
             except LedgerError:
                 return _Halted(RECORDS_UNREADABLE, self.unreadable)
-        why = self.stopped_by()
-        if why:
-            return _Halted(STOPPED, why)
+        found = self._stop()
+        if found:
+            return _Halted(found.code, found.reason, found)
         engaged = stop.engaged()
         return _Halted(stop.STOPPED, f"G6 is stopped: {engaged}") if engaged is not None else None
 
@@ -1524,29 +1940,51 @@ class ShadowLoop:
 
     def _frozen(self) -> dict[str, str]:
         """What must not change, read fresh from the domain: the code that judges, every frozen case, and the sealed
-        split, and the file that declares it all when a runner opened one. The judge's whole file is digested, since a
-        helper it calls judges too. No profile is in it. ``profile_space`` is what a profile may express, which a new version
-        of the domain changes and a change of method in the same file does not (``tick_rca``'s domain part)."""
+        split, and the file that declares it all when a runner opened one. What judges is pinned by files listed whole: the
+        roots that hold the verdict and the checks (``_roots``), each check by its file and name rather than its own
+        ``code_sha``, and every module loaded from outside those, G6 and the installation (``_loaded_outside``). No profile
+        is in it. ``profile_space`` is what a profile may express, which a new version of the domain changes and a change of
+        method in the same file does not (``tick_rca``'s domain part). Read whole or not at all (``_whole``): anything that
+        keeps it from being read raises ``FrozenUnreadable``."""
+        return _whole(self._frozen_reading)
+
+    def _frozen_reading(self) -> dict[str, str]:
         run, sealed, judge = self.domain.execution(), self.domain.sealed(), self.domain.judge()
-        return {"envelope": envelope_sha256(), "domain_file": file_digest(self.domain_file),
+        roots = _roots(self.domain)
+        return {"envelope": envelope_sha256(), "domain_file": _frozen_bytes(self.domain_file) if self.domain_file else "",
                 "profile_space": _profile_space(str(getattr(self.domain, "name", "")), run),
-                "evaluator": digest({"judging": judging_sha256(), "judge": _judge_digest(judge),
+                "evaluator": digest({"judging": judging_sha256(), "judge": _judge_digest(judge, roots),
                                      "independence": [judge.answers_by, judge.is_model] if judge is not None else [],
-                                     "task": run.task, "checks": [c.code_sha() for c in (*run.checks,
-                                                                                         *run.optional_checks.values())]}),
+                                     "task": run.task, "checks": [[c.predicate, c.key, c.kind, *_named(c.run)]
+                                                                  for c in (*run.checks, *run.optional_checks.values())],
+                                     "loaded": _loaded_outside(roots)}),
                 "cases": cut_pool(self.domain.development(), self.settings.seed).digest(),
                 "sealed": digest({"vault": sealed.vault.digest if sealed is not None else "",
                                   "refs": [dict(r) for r in sealed.refs] if sealed is not None else []})}
 
-    def _changed(self) -> list[str]:
-        """Which of the frozen things differ from what a person enrolled. The vault's digest is of the files as sealed,
-        so the sealed bytes are compared as well."""
-        recorded, now = self.log.enrolled()["frozen"], self._frozen()
-        changed = {name for name, value in now.items() if value != recorded.get(name)}
-        sealed = self.domain.sealed()
-        if sealed is not None and sealed.vault.verify_unchanged():
-            changed.add("sealed")
-        return sorted(changed)
+    def _frozen_now(self) -> tuple[dict[str, str], bool]:
+        """The frozen digests as they stand, and whether the sealed bytes changed since they were sealed, in one reading
+        with the slow part first: the sealed bytes are compared before anything is digested, so an edit made while they
+        are read is in the digests that follow, and nothing comes after the digests but what acts on them. The sealed bytes
+        are read by the one reader the rest is (the vault's listing), and the whole reading is made whole or not at all
+        (``_whole``): anything that keeps it from being made raises ``FrozenUnreadable``."""
+        def reading() -> tuple[dict[str, str], bool]:
+            sealed = self.domain.sealed()
+            breached = sealed is not None and bool(sealed.vault.verify_unchanged())
+            return self._frozen(), breached
+
+        return _whole(reading)
+
+    def _changed(self, against: Mapping[str, str] | None = None) -> list[str]:
+        """Which of the frozen things differ from ``against``, the digests a tick read before it developed anything, or
+        from what a person enrolled when none are given. The vault's digest is of the files as sealed, so the sealed bytes
+        are compared as well. A reading that cannot be made whole, however that fails, differs from every reading: it is
+        named as what changed, so nothing stands on it and nothing raises past it."""
+        recorded = self.log.enrolled()["frozen"] if against is None else against
+        try:
+            return _differs(*self._frozen_now(), recorded)
+        except Exception as exc:  # noqa: BLE001 - a reading that cannot be made is a change, never a raise
+            return [f"what judges, which could not be read ({said(exc)})"[:400]]
 
     def _invalid(self) -> dict[str, Any] | None:
         if self.problems:
@@ -1557,12 +1995,19 @@ class ShadowLoop:
         return None
 
     def _refused(self) -> dict[str, Any] | None:
-        """Why this tick is not a cycle. Each is a wait or a refusal: none spends, and none is a failed cycle."""
+        """Why this tick is not a cycle. Each is a wait or a refusal: none spends, and none is a failed cycle. This folder's
+        stop, the tick's guard, ends the start it was run on durably (``end_start``), as its cut-off and the runner's ending
+        do."""
         halted = self._halted()
         if halted is not None:
+            if halted.code in FOLDER_STOPS:
+                end_start(self.root, halted.code, halted.said, halted.reading)
             return _blocked(halted.code, halted.said, "Remove the STOP file to resume." if halted.code == STOPPED else
                             "A person inspects the folder. Nothing runs on records that do not check out."
-                            if halted.code == RECORDS_UNREADABLE else "Whoever engaged the stop releases it.")
+                            if halted.code == RECORDS_UNREADABLE else
+                            "A person makes the stop's files readable; a new g6_improve_start lets it run again."
+                            if halted.code == STOP_UNREADABLE else "A person frees the log, then starts the loop again with "
+                            "g6_improve_start." if halted.code == CANNOT_RECORD else "Whoever engaged the stop releases it.")
         invalid = self._invalid()
         if invalid is not None:
             return invalid
@@ -1573,10 +2018,16 @@ class ShadowLoop:
         paused = self.log.paused() or self._must_stop()
         if paused:
             return _blocked(PAUSED, f"the loop is paused: {paused}", "A person reads why, then loop.resume('<name>').")
-        changed = self._changed()
+        try:                                     # the reading's one boundary (``_whole``) raises nothing else
+            now, breached = self._frozen_now()
+        except Exception as exc:  # noqa: BLE001 - no reading of what judges stands, so none is compared or kept
+            return _blocked(FROZEN_CHANGED, f"what judges could not be read ({said(exc)}), so nothing measured against it "
+                            "would mean what it did", "A person makes it readable; the next tick reads it again.")
+        changed = _differs(now, breached, self.log.enrolled()["frozen"])
         if changed:
             return _blocked(FROZEN_CHANGED, f"changed since a person enrolled this domain: {', '.join(changed)}. Nothing "
                             "measured against it would mean what it did", "A person checks the change and enrols again.")
+        self._frozen_seen = now                  # what this tick's adoption must still find on disk as it is written
         lacking = self._lacking()
         if lacking is not None:
             return lacking
@@ -1600,7 +2051,7 @@ class ShadowLoop:
 
     def _lacking(self) -> dict[str, Any] | None:
         """The domain checked as it is now: a handle's first check says nothing of what has changed since."""
-        problems = domain_problems(self.domain) + provider_problems(self._callers(), self.provider)
+        problems = domain_problems(self.domain) + _unpinned(self.domain) + provider_problems(self._callers(), self.provider)
         if not problems:
             return None
         return _blocked(problems[0][0], "; ".join(why for _, why in problems),
@@ -1608,12 +2059,13 @@ class ShadowLoop:
 
     def _must_stop(self) -> str:
         """Why the durable record of cycles says stop, whether or not a pause was written: the cycles themselves are the
-        fact, and the pause is only its note."""
+        fact, and the pause is only its note. Every status a cycle kept counts, so a safety stop that another status
+        outranked (``_coded``) still stops the loop."""
         cycles = self.log.since_resumed()
         for cycle in reversed(cycles):
-            if cycle["outcome"] == "sealed_breach" or cycle.get("code") in (UNMETERED_CALLER, CLASSIFIER_STOP, HOST_UNKNOWN,
-                                                                            *HOLDS):
-                return cycle["reason"]
+            for held in (cycle, *cycle.get("statuses", ())):
+                if held.get("outcome") == "sealed_breach" or held.get("code") in SAFETY_STOPS:
+                    return held["reason"]
         streak = self.log.failed_run()
         if len(streak) < MAX_FAILED_CYCLES:
             return ""
@@ -1639,10 +2091,16 @@ class ShadowLoop:
             return _blocked(SPLIT_REUSED, f"{len(reused)} held-out cases were already seen by proposers or spent by an "
                             f"earlier split, for example {reused[:3]}: a gain measured on them proves nothing",
                             "Give the gate cases the loop has not used: a split changed by a few cases is not fresh.")
-        confirmed = self.mh.confirm(who, initial=self.domain.execution().initial)
+        try:                                     # read before anything is confirmed: an unreadable freeze enrols nothing
+            frozen = self._frozen()
+        except FrozenUnreadable as exc:
+            return _unpinned_reading(exc)
+        try:                                     # the harness pins its judging code as it confirms, by the same reader
+            confirmed = self.mh.confirm(who, initial=self.domain.execution().initial)
+        except Unreadable as exc:
+            return _unpinned_reading(exc)
         if confirmed["completion_state"] == "blocked-escalated":
             return confirmed
-        frozen = self._frozen()
         exposed = (*self.cut.tune, *self.cut.selection)
         self.log.enrol(who, frozen, domain=self.domain.name, at=self._now().isoformat(),
                        seen=sorted(c.case_id for c in exposed),
@@ -1669,21 +2127,59 @@ class ShadowLoop:
                 seen |= {*row["held_out"], *row["held_out_inputs"], *row.get("held_out_groups", ())}
         return sorted(c.case_id for c in self.cut.held_out if {c.case_id, c.ref()["input_sha256"], *_groups((c,))} & seen)
 
-    @_exclusive
     def tick(self) -> dict[str, Any]:
         """One cycle. A heartbeat follows every tick, so someone watching can tell a loop that is waiting from one that
-        has died."""
-        reply = self._refused() or self._run()
+        has died. What the handle holds of an earlier tick is dropped first, before the lock is asked for: a pass that
+        fails before its tick's body runs (the lock, the reload, the workspace's refresh) reaches ``fault`` holding
+        nothing of a cycle that is not its own."""
+        self._frozen_seen = None                  # no tick adopts on a reading an earlier tick made
+        self._met = None                          # nor carries what an earlier tick's cycle met,
+        self._began, self._written = None, False  # made or wrote
+        return self._tick()
+
+    @_exclusive
+    def _tick(self) -> dict[str, Any]:
+        try:
+            reply = self._refused() or self._run()
+        except BaseException:
+            self._keep()                          # no tick leaves with what its cycle met held nowhere but here
+            raise
         self._beat(reply["completion_state"], reply["warning_card"]["code"], reason=reply["message"])
         return reply
 
     @_exclusive
     def fault(self, exc: BaseException) -> dict[str, Any]:
-        """A tick that raised past its own guard is a failed cycle like any other, so three in a row still pause."""
-        if self.log.paused():
+        """A tick that raised past its own guard is a failed cycle like any other, so three in a row still pause. It ends on
+        the same frozen check and the same rule as every cycle that adopts nothing (``_still_frozen``, ``_coded``), held to
+        what the tick read before it developed anything, or to what a person enrolled when it read nothing, so a frozen
+        change in a failed cycle is kept and ranked, and it carries every safety status the tick's cycle met before it
+        failed that no row carries yet (``_owed``), so a restart pauses on them and no status is said by two rows, and
+        every generation its harness made (``_made``), first,
+        as it came first, so a rollback ranks as it does on any row. A loop already paused takes no failed cycle, unless
+        the pause is the one this tick wrote on its way out for what its own cycle met (``_keep``) and its row is still
+        owed (``_owed``)."""
+        if self.log.paused() and not self._owed():
             return _blocked(PAUSED, f"the loop is paused: {self.log.paused()}", "A person reads why, then lifts it.")
-        return self._record({"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
-                             "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]})
+        row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error", "code": CYCLE_FAILED,
+               "reason": f"{type(exc).__name__}: {exc}"[:500]}
+        statuses: list[Mapping[str, Any]] = [*self._made(row), row, *self._owed(row)]
+        try:
+            held = self._still_frozen() if self._frozen_seen is not None else self._as_enrolled()
+        except Exception as second:  # noqa: BLE001 - a failed cycle is recorded whatever else fails
+            held = None
+            row["reason"] = f"{row['reason']}; what judges could not be read ({type(second).__name__})"[:500]
+        if held is not None and type(held) is not Held:
+            statuses.append({"outcome": "blocked", "code": held["warning_card"]["code"], "reason": held["message"]})
+        return self._record(_coded(row, statuses))
+
+    def _as_enrolled(self) -> Held | dict[str, Any] | None:
+        """What judges held to what a person enrolled, for a failed cycle that read nothing of its own; ``None`` unenrolled."""
+        enrolled = self.log.enrolled()
+        if enrolled is None:
+            return None
+        changed = self._changed()
+        return _blocked(FROZEN_CHANGED, f"changed since a person enrolled this domain: {', '.join(changed)}. Nothing "
+                        "measured against it would mean what it did") if changed else Held(dict(enrolled["frozen"]))
 
     @_exclusive
     def quiet(self) -> dict[str, Any]:
@@ -1694,6 +2190,8 @@ class ShadowLoop:
                          quiet=self.log.quiet_streak(), last_at=cycles[-1].get("at", "") if cycles else "")
 
     def _beat(self, state: str, code: str, **said: Any) -> None:
+        if not self.beats:
+            return
         beat(self.root, **{**self.beat_fields, **said}, domain=self.domain.name, at=self._now().isoformat(),
              tick=len(self.log.cycles()), state=state, code=code)
 
@@ -1726,6 +2224,7 @@ class ShadowLoop:
         self.evaluating = False
         self.tuned = []
         self._rca: TickRecord | str | None = None     # what this tick's analysis reads once it has tuned, or why it could not
+        self._began = len(self.mh.adoption_rows())    # every generation after these is this cycle's (``_made``)
         self.requests.open(spend.amount, spend.ends)
         with sealed_closed(self.domain.sealed().vault) as breaches:
             try:                      # a sealed file already held open: no cycle starts over it
@@ -1733,52 +2232,52 @@ class ShadowLoop:
             except (_AtLimit, _Refused):  # what the tick latched decides how it ends, read as it closes
                 row = self._row()
             except _Halted as reached:
-                row, halted = self._row(), reached
+                halted = reached
+                row = self._row()
             except Exception as exc:  # noqa: BLE001 - an unattended loop records the failure and lives to its next tick
                 row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
                        "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]}
             finally:             # whatever ended it, the tick closes in one step with what it latched, which decides from here
                 self.requests.close()
                 ended = self.requests.closed
+                # what the cycle met, kept before anything else that can fail (``_carried``), and its limits on disk with
+                # it; a tick that leaves by a raise from here on writes what it met on its way out (``tick``, ``_keep``)
+                self._met = (breaches, ended.refusal, ended.unseen, halted, ended.hold)
                 for until, _ in ended.met:          # every limit it met, in the order met, kept before its charges settle
                     self._keep_limit(spend.provider, until)
                 # use nobody could count stays charged at its worst case
                 charged = self.meter.settle(spend, spend.amount if ended.unseen else ended.sent)
-        unseen, stopped, refusal, hold = ended.unseen, ended.stopped, ended.refusal, ended.hold
+        stopped = ended.stopped
         limit = _AtLimit(*ended.limited) if ended.limited is not None else None
         if self.tuned and "tuning" not in row:     # a tick cut short keeps what it had made
             row["tuning"] = reflex.funnel(self.tuned)
-        if breaches:                  # read only now: a strategy that swallowed the refusal adopts nothing either
-            row |= {"outcome": "sealed_breach", "code": SEALED_BREACH,
-                    "reason": f"{len(breaches)} sign(s) that the sealed split was within reach while developing. Nothing "
-                              "is adopted. A read through a handle already open leaves no trace, so a person decides "
-                              "whether it still counts as sealed"}
-        elif unseen:
-            row |= {"outcome": "error", "code": UNMETERED_CALLER,
-                    "reason": "a model caller answered with no request noted, so the loop cannot count what it sends: "
-                              "nothing is adopted, and a person gives it a caller that notes each request"}
-        elif refusal is not None:     # a cycle, so it is on the record, and a pause, so nothing rephrases it on the next tick
-            row |= {"outcome": "blocked", "code": CLASSIFIER_STOP, "classifier_stop": refusal,
-                    "reason": f"{_stopped_by(refusal['said'])}: nothing is adopted, it is not sent again, and a person reads "
-                              "this before the loop goes on", **({"unknown_hold": hold} if hold is not None else {})}
-        elif hold is not None:        # no classifier said anything: its own code and field, and the same pause for a person
-            row |= {"outcome": "blocked", "code": HOST_UNKNOWN, "unknown_hold": hold,
-                    "reason": f"{_stopped_by(hold['said'])}: nothing is adopted, its inputs are held and not sent again, "
-                              "and a person reads this before the loop goes on"}
-        elif limit is not None:       # a wait and no cycle, like any other: what ran is charged, and none of it counts
+        held = self._carried(row)                 # what held over the cycle: a strategy that swallowed a refusal adopts
+        made = self._made(row)                    # nothing either; and a generation made that a raise kept off the row
+        if not held and not made and limit is not None:
+            # a wait and no cycle, like any other: what ran is charged, none of it counts, nothing is adopted, and a frozen
+            # change stays on disk for the next tick's reading to refuse
             self.waited += 1
             return _blocked(BUDGET_WAIT, f"{spend.provider} met a limit after {charged:g} requests, so this tick scored nothing "
                             f"and waits until {limit.until.isoformat()}: {limit.said}",
                             "The loop waits; it runs again when the limit ends.", wait_until=limit.until.isoformat(),
                             charged=charged)
-        elif halted is not None and halted.code in HOLDS:    # a fault that is on the record, and holds the loop for a person
-            row |= {"outcome": "error", "code": halted.code, "reason": f"{halted.said}: nothing was sent, and nothing is adopted"}
-        elif halted is not None:      # also no cycle: what ran is charged, and none of it counts
-            return self._cut_off(halted, charged)
-        elif stopped:                 # runs cut off mid-tick compared nothing: no gate result stands on them
-            row |= {"outcome": "blocked", "code": TICK_BUDGET_SPENT, "reason": f"{stopped}, so nothing is adopted"}
-        elif recommended:
-            row |= self._adopt(recommended[-1]["decision"], row)
+        if not held and not made and halted is not None:   # also no cycle, and as a limit: what ran is charged, none
+            return self._cut_off(halted, charged)          # of it counts; a cycle that made a generation is a row
+        if stopped:                   # runs cut off mid-tick compared nothing: no gate result stands on them
+            held.append({"outcome": "blocked", "code": TICK_BUDGET_SPENT, "reason": f"{stopped}, so nothing is adopted"})
+        statuses = [*made, *([row] if "outcome" in row else [])]   # the cycle's own end is a status like the rest
+        adopted = False
+        if recommended and not held:  # the harness's adoption runs its own frozen check last, under the lock it writes with
+            statuses.append(self._adopt(recommended[-1]["decision"], row))
+            adopted = statuses[-1]["outcome"] == "adopted"
+            if adopted:
+                row["head_version"] = statuses[-1]["head_version"]
+        statuses += held
+        if not adopted and all(status["code"] != FROZEN_CHANGED for status in statuses):
+            frozen = self._still_frozen()        # every other cycle ends on the same check, whatever else held
+            if type(frozen) is not Held:
+                statuses.append({"outcome": "blocked", "code": frozen["warning_card"]["code"], "reason": frozen["message"]})
+        _coded(row, statuses)
         if isinstance(self._rca, str):           # the read for it failed: the row says so
             row["rca"] = _writable({"unreadable": self._rca})
         elif self._rca is not None:               # read once the outcome is known: an adoption is part of what it reads
@@ -1789,6 +2288,106 @@ class ShadowLoop:
         row["reflex"] = opened
         return self._record(row)
 
+    def _carried(self, row: dict[str, Any]) -> list[dict[str, Any]]:
+        """The safety statuses this tick's cycle met, as it kept them the moment its work ended and before settlement
+        (``_met``), so every row the tick writes carries them, a fault's row among them, and a tick that leaves with no
+        row writes them on its way out (``_keep``): a restart pauses on them whatever failed after they were met. A
+        classifier's stop puts the request it refused on the row as well, where ``lost_cycle`` and the next tick read
+        it. The sealed split's breaches are read as they stand, since its guard counts a file still held open on its
+        way out too."""
+        if self._met is None:
+            return []
+        breaches, refusal, unseen, halted, hold = self._met
+        held: list[dict[str, Any]] = []
+        if breaches:
+            held.append({"outcome": "sealed_breach", "code": SEALED_BREACH,
+                         "reason": f"{len(breaches)} sign(s) that the sealed split was within reach while developing. "
+                                   "Nothing is adopted. A read through a handle already open leaves no trace, so a person "
+                                   "decides whether it still counts as sealed"})
+        if unseen:
+            held.append({"outcome": "error", "code": UNMETERED_CALLER,
+                         "reason": "a model caller answered with no request noted, so the loop cannot count what it sends: "
+                                   "nothing is adopted, and a person gives it a caller that notes each request"})
+        if refusal is not None:       # a cycle, so it is on the record, and a pause, so nothing rephrases it on the next tick
+            row["classifier_stop"] = refusal
+            if hold is not None:
+                row["unknown_hold"] = hold
+            held.append({"outcome": "blocked", "code": CLASSIFIER_STOP,
+                         "reason": f"{_stopped_by(refusal['said'])}: nothing is adopted, it is not sent again, and a "
+                                   "person reads this before the loop goes on"})
+        elif hold is not None:        # no classifier said anything: its own code and field, and the same pause for a person
+            row["unknown_hold"] = hold
+            held.append({"outcome": "blocked", "code": HOST_UNKNOWN,
+                         "reason": f"{_stopped_by(hold['said'])}: nothing is adopted, its inputs are held and not sent "
+                                   "again, and a person reads this before the loop goes on"})
+        if halted is not None and halted.code in HOLDS:    # a fault that is on the record, and holds the loop for a person
+            held.append({"outcome": "error", "code": halted.code,
+                         "reason": f"{halted.said}: nothing was sent, and nothing is adopted"})
+        return held
+
+    def _made(self, row: dict[str, Any]) -> list[dict[str, Any]]:
+        """The generations this tick's cycle made that ``row`` does not say, read from the chain of adoptions, where the
+        harness keeps them, and never from what the tick held when something after them raised: each row the loop itself
+        added since the cycle began (``_began``) that the log has not seen. Each is a status, and gives ``row`` its head,
+        a rollback what it undid as well, so the one rule (``_coded``) ranks a rollback first on a failed cycle's row as
+        on any other, and the log counts its generation. A person's own row there, or another handle's cycle's, is not
+        this cycle's."""
+        if self._began is None:
+            return []
+        seen, made = self.log.generation(), []
+        for kept in self.mh.adoption_rows()[self._began:]:
+            outcome = "rolled_back" if kept["kind"] == "rollback" else "adopted"
+            if kept["by"] != ADOPTER or kept["version"] <= seen or (
+                    row.get("outcome") == outcome and row.get("head_version") == kept["version"]):
+                continue
+            made.append({"outcome": outcome, "code": ROLLED_BACK if outcome == "rolled_back" else ADOPTED,
+                         "reason": f"generation {kept['version']} was made before this cycle ended: {kept['change']}"})
+            row |= {"head_version": kept["version"], **({"undoes": kept["undoes"]} if outcome == "rolled_back" else {})}
+        return made
+
+    def _owed(self, row: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """The safety statuses this tick's cycle met that no row in the log carries yet (``_carried``, into ``row``)."""
+        return [] if self._written else self._carried({} if row is None else row)
+
+    def _keep(self) -> None:
+        """Every safety status this tick's cycle met and no row carries, on disk before the tick leaves by a raise: the
+        pause a restart reads (``CycleLog.paused``), for the reason its row would have given. A tick has two ways out:
+        it returns, having written its row or stopped the folder for the row the log would not take (``_record``,
+        ``lost_cycle``), or it raises, through here. So whatever raised, and whoever answers or raises after it (the
+        fault's own reading of the records, the fault, the runner's hand-off, or nobody at all), the loop stays paused
+        for a person, and the fault's row, when one is written, says why as well. A pause the log will not take, for
+        any reason, stops the folder at once (``_closed``), as a row it will not take does: an error of the log's is
+        left there, and an interrupt or an exit that landed inside the pause's write goes on up once the stop is
+        written."""
+        held = self._owed()
+        if not held:
+            return
+        why = _safety_in({"statuses": held})
+        try:
+            self.log.pause(why)
+        except BaseException as exc:  # noqa: BLE001 - whatever keeps the note from the log, an interrupt or an exit that
+            # landed inside its write among them, the stop is written in its place; what is no error then goes on up
+            self._closed(f"{why[:200]}, and the log would not take its pause ({type(exc).__name__}: {exc})"[:400])
+            if not isinstance(exc, Exception):
+                raise
+
+    def _closed(self, why: str) -> None:
+        """This process spends no more, and the folder is stopped: ``STOP`` and ``stops.log`` are other files than the
+        log, so a restart stays closed until a person starts it again, and should those fail too, this process still
+        ends on what it holds here. An interrupt or an exit that lands inside the stop's own write has it asked for
+        once more, since nothing else is left to hold it, and then goes on up."""
+        self.cannot_record = why
+        try:
+            ask_to_stop(self.root, why)
+        except Exception:  # noqa: BLE001 - the run still ends on what is held here, whatever kept the file
+            pass
+        except BaseException:  # an interrupt or an exit landed inside the stop's own write: nothing else is left to
+            try:               # hold it, so it is asked for once more before that goes on up
+                ask_to_stop(self.root, why)
+            except Exception:  # noqa: BLE001 - as above
+                pass
+            raise
+
     def _keep_limit(self, provider: str, until: datetime) -> None:
         """A limit or capacity a provider reported, met in the tick that just closed: this process holds it, and the log keeps
         it for a restart, under that tick, so each of the tick's limits stands until the furthest of them ends. A log that
@@ -1797,67 +2396,86 @@ class ShadowLoop:
         self.meter.limit_reached(provider, until)
         try:
             self.log.limit(provider, until.isoformat(), self.requests.closed.tick)
-        except (OSError, LedgerError):
+        except Exception:  # noqa: BLE001 - the note is left, whatever kept it: this process knows the limit already
             pass
 
     def _cut_off(self, halted: _Halted, charged: float) -> dict[str, Any]:
         """A stop met at a model call: say what it cut off, and note this folder's stop in the records, which this tick
-        holds, so no one else can. The file is what stops the loop, so a note that cannot be written changes nothing."""
+        holds, so no one else can, and through the stop's own writer beside it (``end_start``), so the start it cut off
+        stays ended whatever became of that note or of a file that could not be read."""
         dropped = (", and the held-out evaluation under way was dropped, so none of the split's five was spent"
                    if self.evaluating else "")
-        if halted.code == STOPPED:
+        if halted.code in FOLDER_STOPS:
             try:
                 self.log.stop(halted.said, at=self._now().isoformat(),
                               cut_off={"charged": charged, "evaluation": self.evaluating})
-            except (OSError, LedgerError):
+            except Exception:  # noqa: BLE001 - a note that cannot be written, for any reason: end_start covers what it must
                 pass
+            end_start(self.root, halted.code, halted.said, halted.reading)
         return _blocked(halted.code, f"a stop ended this tick at a model call after {charged:g} requests{dropped}: {halted.said}",
-                        "A new g6_improve_start lets it run again." if halted.code == STOPPED else
+                        "A new g6_improve_start lets it run again." if halted.code in FOLDER_STOPS else
                         "Whoever engaged the stop releases it.", charged=charged)
 
     def _record(self, row: dict[str, Any]) -> dict[str, Any]:
         try:
             reply = self._reply(self.log.cycle(row))
         except (OSError, LedgerError) as exc:
-            return self.lost_cycle(exc, refusal=row.get("classifier_stop") or row.get("unknown_hold"))
+            return self.lost_cycle(exc, refusal=row.get("classifier_stop") or row.get("unknown_hold"),
+                                   safety=_safety_in(row))
+        self._written, self._began = True, None   # the row holds all the tick's cycle met and made: no later row says it again
         self.lost_cycles = self.waited = 0
         self._pause_if_failing()
         return reply
 
-    def lost_cycle(self, exc: BaseException, *, refusal: dict[str, str] | None = None) -> dict[str, Any]:
+    def lost_cycle(self, exc: BaseException, *, refusal: dict[str, str] | None = None, safety: str = "") -> dict[str, Any]:
         """A cycle the log would not take. The streak that pauses the loop is read from the log, so these leave it nothing
         to read and are counted in this process, for the folder, whichever of its handles lost them, for as long as the
         process lives. At ``MAX_FAILED_CYCLES`` in a row the loop stops
         for good: ``STOP`` and ``stops.log`` are other files, so a restart stays closed until a person starts it again, and
         should those fail too, this process still spends no more. A cycle that is written starts the count again. A cycle
-        that holds a ``refusal`` stops the loop at the first, since the pause a person must read would have stood on it."""
+        that holds a safety stop (``safety``, its reason, or a classifier's ``refusal``) stops the loop at the first, since
+        the pause a person must read would have stood on it, so a restarted handle reads it all the same. Whoever hands
+        the cycle over, a fault that never reached its row among them (``Runner._fault``), what the tick's cycle met and
+        no row carries yet is read here (``_owed``), never left to the caller to pass."""
         here = self._here
         with _LOCK:                   # the process's count for the captured folder, with no custody lookup under admission
             here.lost_cycles += 1
             lost = here.lost_cycles
+        if refusal is None and not safety:
+            owed: dict[str, Any] = {}
+            safety = _safety_in({"statuses": self._owed(owed)})
+            refusal = owed.get("classifier_stop") or owed.get("unknown_hold")
         why = (f"{lost} of the {MAX_FAILED_CYCLES} cycles in a row that stop the loop could not be written to "
                f"its log ({type(exc).__name__}: {exc})")[:400]
+        if safety:
+            why = f"{safety[:200]}, and the log would not take that cycle ({type(exc).__name__}: {exc})"[:400]
         if refusal is not None:
             why = _writable(f"{_stopped_by(refusal['said'])} and the log would not take that cycle "
                             f"({type(exc).__name__}: {exc})")[:400]
-        if refusal is not None or lost >= MAX_FAILED_CYCLES:
-            with _LOCK:               # an admission of the folder that read its stop before this reads it again
-                here.cannot_record = why
-                _RECORD.moved += 1
-            try:
-                ask_to_stop(self.root, why)
-            except OSError:
-                pass                  # the run still ends on what is held here
+        if refusal is not None or safety or lost >= MAX_FAILED_CYCLES:
+            self._closed(why)
         return _blocked(CANNOT_RECORD, why, "A person frees the log, then starts the loop again with g6_improve_start.")
 
-    def _adopt(self, decision: Any, row: dict[str, Any]) -> dict[str, Any]:
-        def still_frozen() -> dict[str, Any] | None:      # the tick's first check came before all it measured
-            changed = self._changed()
-            return _blocked(FROZEN_CHANGED, f"changed during this cycle: {', '.join(changed)}. What it measured is not what "
-                            "a person enrolled, so nothing is adopted") if changed else None
+    def _still_frozen(self) -> Held | dict[str, Any]:
+        """The one reading and comparison of what judges at a cycle's end, which the loop and its harness both call: the
+        frozen digests this tick read before it developed anything must be the ones on disk now, and then it returns a
+        ``Held`` of them. Otherwise the cycle is ``FROZEN_CHANGED``, whether or not a candidate won, and a tick with no such
+        reading is refused the same way."""
+        seen = self._frozen_seen
+        if seen is None:                         # nothing to hold the files to, so nothing to stand on
+            return _blocked(FROZEN_CHANGED, "this cycle read no frozen digests before it developed anything, so nothing it "
+                            "measured stands")
+        changed = self._changed(against=seen)
+        return _blocked(FROZEN_CHANGED, f"changed during this cycle: {', '.join(changed)}. What it measured is not what a "
+                        "person enrolled, so nothing is adopted, and the next tick is refused while it stands"
+                        ) if changed else Held(dict(seen))
 
-        adopted = self.mh.adopt(decision, findings={name: row[name] for name in FINDINGS if name in row},
-                                last_check=still_frozen)
+    def _adopt(self, decision: Any, row: dict[str, Any]) -> dict[str, Any]:
+        """Adopt ``decision`` through the harness, whose own last check is ``_still_frozen``: it runs that check last, with
+        the row already made and under the lock it writes with, and the row carries the digests the check held. A change at
+        any moment between is a refusal of its own, written in this cycle's row, and the next tick is refused while it
+        stands."""
+        adopted = self.mh.adopt(decision, findings={name: row[name] for name in FINDINGS if name in row})
         said = {"code": adopted["warning_card"]["code"], "reason": adopted["message"]}
         if adopted["completion_state"] == "blocked-escalated":
             return {**said, "outcome": "blocked"}

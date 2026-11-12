@@ -582,9 +582,107 @@ cognitive work, with programming as the first toy model. So P2 was built first a
 - **The envelope**, in code: a paced week per provider on the operator's ledger, the owner's reserve and the whole
   account counted (`pacing.py`); a `STOP` file, a heartbeat and a pause after three failed cycles (`envelope.py`); one
   tick at a time; refusal when the evaluator, the envelope's own code, a frozen case or a sealed byte changed, as a tick
-  starts and again last thing before an adoption is written, so only a change in the moment between that read and the write
-  gets past it, and the next tick then refuses; a sealed-split guard inside the process (limits below); a loop folder that
-  may not overlap what judges it.
+  starts and again last thing before an adoption is written. The adoption is written only if the digests the tick read
+  before it developed anything are the ones on disk at that last check, which runs with the adoption's row already made
+  and under the lock that writes it, sealed bytes first and digests after; the row carries those digests, and a change is
+  a refusal of its own in the cycle's row, which the next tick refuses again. `ShadowHarness.adopt` is the one function that
+  writes an adoption. That last check is the harness's own, given it when the loop binds it (`_still_frozen`, the one
+  reading and comparison the loop calls too), and only its own success value, a `Held`, lets the write through; a caller's
+  check can only add a refusal, and a harness built with no check adopts nothing. One rule codes a cycle (`_coded`): every
+  status that held, the cycle's own end among them, is kept in the row's `statuses`, and the first in `RANKED` gives its
+  code: a rollback (it has happened, and the log counts generations by it), then a frozen change, then the safety stops
+  (sealed breach, unmetered caller, classifier stop, barred caller), then the tick's reservation spent. A safety stop a
+  frozen change outranks still pauses the loop, since the pause reads every status and is read before the frozen digests.
+  A cycle that adopts nothing ends on the same check, so a change is `G6_E_LOOP_FROZEN_CHANGED` whether or not a candidate
+  won, and whatever else held, a cycle that raised past its own guard included (`fault`, held to the tick's reading, or to
+  the enrolment when it read none); a wait or a stop met at a model call writes no cycle, and the next tick's reading
+  refuses the change. Every safety stop a cycle met is kept on the tick the moment its work ends, before it settles or
+  does anything else that can fail, and no tick leaves with it held there alone. A tick has two ways out: it returns,
+  having written the row that carries the stop, or having stopped the folder for a row the log would not take; or it
+  raises, and on its way out writes the pause a restart reads (`_keep`). So a failure at any step after the stop was
+  met, a row or none, then a restart, still pauses: the fault's own reading of the records refusing or raising, the
+  runner's hand-off of a fault that never reached its row, and a tick nobody hands to a fault among them. The fault's
+  row, when one is written, carries the stop too, and only what no row carries yet, so no status is said by two rows.
+  What the handle holds of a tick is dropped as the next tick begins, before the lock is asked for, so a pass that fails
+  before its tick's body runs says nothing of an earlier tick. Tests built from the code fail each call after the cycle,
+  and each call on the fault's ways out, in turn. A pause the log will not take from a tick on its way out stops the folder at
+  once, as a safety stop in a cycle the log would not take does, as a `STOP` a restarted handle reads, and a lost
+  cycle's hand-off reads what the tick met itself, never what its caller passed. An interrupt or an exit that lands
+  inside a write on the way out is held the same way: inside the row's write, the pause is written; inside the pause's,
+  the stop; inside the stop's own, the stop is asked for once more; then it goes on up. Three in a row, one in each,
+  leave only this process holding it. A pause that cannot be written after a
+  row that was is left, as before: the row pauses as surely. A generation the cycle's harness made, an adoption or the monitor's
+  rollback, is read from the chain of adoptions for every row the tick writes (`_made`), never from what the tick held
+  when something after it raised, so the row of a cycle that failed after one keeps it, a rollback ranked first as on any
+  row; a failed cycle that had adopted stays coded as failed, with the adoption among its statuses. The judge is pinned by files listed whole, never by following imports: the verdict function selected, by
+  its file and qualified name, each check by its file and name, every regular file of any suffix under the roots that
+  hold the verdict and the checks (the folders they are in, or the `roots` a domain declares), data files and archives as
+  much as source, and every module loaded from anywhere outside those, G6 and the installation, by its bytes. A verdict or
+  check in no such place, or a link or junction anywhere under a root, is refused at enrolment
+  (`G6_E_LOOP_JUDGE_UNPINNED`), and one made later is a change at the next reading; no root, nor what a link under one
+  points at, may be the loop's folder or lie around it, by path or by the identity the file system gives a folder. The
+  judge is given exactly what was identified: an answer is admitted only as `None`, a `bool`, an `int`, a finite `float`,
+  a `str`, a `list` or a `dict` with `str` keys, each of exactly that type, as a tree no deeper than 64; its encoding keeps
+  dict order and float bytes, its identity is that encoding's digest, and enrolment builds the answer each judge reads by
+  decoding it, a fresh tree that shares nothing with what the domain holds. Anything else, and anything that raises while
+  it is read, is refused at enrolment by case id (`G6_E_LOOP_ANSWER_UNIDENTIFIABLE`); such a value keeps an identity of
+  its own kind (framed type, value and state, no pickle or `repr`), so a cut's digest still says when it changes.
+
+  **The freeze's threat model is honest drift (the owner's ruling, 2026-11-05).** A candidate cannot write the judge's
+  files: proposers edit a view and candidates run confined. What the freeze guards against is a person or another process
+  editing what judges in ordinary ways during a cycle, not code written to evade the check. So a person declares as a root
+  every folder the judge reads or loads code from. What cannot be read is never a digest: one reader
+  (`g6/core/reading.py`) takes every byte the freeze stands on and lists every folder it stands on, the sealed split's
+  (`g6/core/vault.py`), G6's own code and the judging code the harness pins (`g6.integrity.build_manifest`), and the
+  roots', and any failure, a locked file, a file another process holds without sharing, a folder that cannot be listed, a
+  file gone mid-listing or an error of any other kind, raises. Each root is listed once, by the reader's own lister: it
+  takes names from a folder's listing and asks each entry what it is by a stat that raises, never by a predicate that
+  answers no for an entry it could not ask, the listing's own entries' among them (the standard library's walk reads an
+  entry whose kind it cannot ask as no folder, and is nowhere on this path). A folder the listing goes into is listed
+  whole or raises, and is asked again before it is gone into: one changed meanwhile is unreadable. A junction is a folder
+  to that stat, so the sealed split and the manifest list what it holds under its name, as before, and the loop's own
+  listings name it as a link and stay out. Every stat, open and listing of a listed entry is of the very entry its names
+  spell (`exact`, the one rule for a name the platform rereads): Windows opens a last name `nul` as its null device and
+  drops dots and spaces from the end of a name, so a path can answer for another entry. The rule asks the platform how
+  it reads the path, hands the path back as given where it reads it as itself, and otherwise hands back the form it
+  does not reread, so a folder named `nul` under a judge's root is gone into and a file named `nul` is pinned by its own
+  bytes. A root is a caller's name, read as the platform reads it: a root spelled with a name the platform rereads is
+  unreadable. An entry has one answer: the lister hands on what its stat found with each name, and a later ask that finds
+  another entry (a folder where a file was, another file, a junction where a folder was) is unreadable, for the files
+  the listing takes, for the loop's own link check, and before the walk goes into a folder. A test finds every stat,
+  open and listing on this path from the code and holds each to the rule, and crosses every reader with such names as
+  files and as folders. The manifest's patterns choose among the files of that one listing, as `Path.glob` reads them
+  on Python 3.12, never by listing again; an error of any kind while listing or asking, one that is no `OSError` among
+  them, is unreadable. The freeze's reading has one boundary that makes anything
+  else that keeps it from being made, a domain's own code raising included, unreadable too, and a test built from the code
+  lists every read and listing the freeze reaches and finds none outside the reader, no predicate that answers no, no
+  function that lists twice, and no handler that catches less than every error but two that stand for no pinned byte; a
+  second test counts every folder each digest lists and finds none listed twice; a third finds every function in that
+  code that lists a folder and crosses each with every kind of entry (a folder that cannot be listed or asked, an entry
+  gone since its folder was listed, a folder changed before it was gone into, a listing whose entries answer nothing but
+  their names). G6's own code is listed once for the
+  envelope; the judging code's digest, which the harness reads on its own, lists it once more. An unreadable reading refuses
+  enrolment (`G6_E_LOOP_JUDGE_UNPINNED`) and every tick and adoption as a frozen change naming what could not be read,
+  while it stands; nothing raises past them, so a cycle's last check keeps every status the cycle held, a safety stop
+  among them. A folder under a judge's root that cannot be listed is in reach of the loop's folder as a link there would
+  be, so the loop is not built on it and writes nothing, and the walk keeps every link it found past it. Under
+  `__pycache__` only the cache the interpreter writes for a source file under the root is left out, by its own rule: the
+  name `importlib.util.cache_from_source` gives at each optimisation level, in the `__pycache__` beside the source, the
+  same whatever cache prefix the reading process has; every other file there is pinned, a file shaped like a cache with
+  no source and another interpreter's cache among them. Every name the file system gives is pinned, one that is no text (a
+  lone surrogate, as Windows allows) included. A declared root is checked as given, so one that is
+  itself a link or junction refuses. Left out, as limits and not findings: a module imported from an archive outside the
+  roots, a file run with `runpy` outside them, a plugin loaded with `importlib.util` outside them and kept out of
+  `sys.modules`, a named (alternate data) stream of a file under a root, which ordinary reading never reaches and only
+  code that spells its name does, while Windows and sync tools write named streams on files nobody changes (the owner's
+  freeze threat model, follow-up review 1), a step's source text that `inspect` cannot read, which it cannot tell from
+  none at all (a step's file under a root is pinned by its bytes), and a timestamp-valid bytecode cache replaced by hand (the
+  runner runs with `-B` and a fresh cache prefix, so a cache under a root is not what it loads), as well as an edit in the
+  moment after the last read and before the write, bytes changed and put back between the two reads, and state that lives
+  in no file: a module's globals or a class's attributes changed as it runs, a closure's cells, a callable object's
+  attributes. Each proposer, and the
+  domain shown the measured view, reads a copy of its own; a sealed-split guard inside the process (limits below); a loop
+  folder that may not overlap what judges it.
 - **Adoption with no person, in shadow only** (`g6/metaharness/shadow.py`). What the gate recommends becomes the loop's
   head in a separate ledger, so the loop compounds, and the monitor rolls it back if it gets worse. A person's profile
   store never moves, `activate` and live runs are refused, and each row carries the loop's `auto:` name. Nothing goes
@@ -700,14 +798,116 @@ in that chain that can name a person. An adoption still cannot. The candidate ca
 a person took back from coming back through the gate.
 
 **Only a person's start lets it run.** `run` carries on a start that stands: of the starts and stops on record, the last is
-a start a person agreed to in the client's dialog. With none it is refused, with `G6_E_LOOP_NOT_STARTED`, before any of the
-folder's code runs, so a shell is no way round the dialog. A stop ends the start for good: every stop through the tool is
-counted in `stops.log`, a file no lock stands in front of, before its `STOP` file is written, and a start records the count
-it saw, so a restart or removing the `STOP` file by hand brings nothing back until a person agrees again.
+a start a person agreed to in the client's dialog. With none and no stop in force it is refused, with
+`G6_E_LOOP_NOT_STARTED`, before any of the folder's code runs, so a shell is no way round the dialog; a stop in force refuses
+it with that stop's own code, never in other words. A stop ends the start for good: every stop through the tool is
+first a line in `stops.log`, the journal of stops, a file no lock stands in front of, flushed to disk before its `STOP` file
+is written, and a start records the journal it saw, by count and digest, so a restart or removing the `STOP` file by hand
+brings nothing back until a person agrees again.
 
-An agreement binds what the dialog showed: the settings, the Python file, who enrolled it, any `STOP` file as it stands, the
-count of stops, and any pause. If any of that moves while the dialog is open, nothing starts and the person is asked again. A
-stop that dies between its two writes leaves only the count, so the count is bound too, and the next dialog says a stop stands
+**One answer on whether a stop is in force.** `stop_in_force` gives it, and a start, its dialog, the runner's preflight and
+gate, a tick's guard, status and the digest all take it; nothing else decides, and nothing else opens these files. The
+reading is a value: it opens the `STOP` file, the journal and the records once each, and everything else, the decision, the
+last start with any stop on record after it, the lift fields, who enrolled, any pause and the records themselves, comes from
+those bytes in memory, under one digest of all of them. No argument skips any part of it, and every older reader
+(`stop_standing`, `stop_seen`, `stop_reason`, `stop_to_lift`, `stops_asked`) is a field of that one full reading. A test
+lists, from the code, every place G6 joins a path to these files or opens the records, and each is the reading, a writer,
+or the question of whether a folder is a loop at all. Each file is read from one open handle, and its bytes stand only when
+the file that handle holds, known by the handle itself (on Windows its volume and file index), is the regular file that
+stands at the path once they are read, with as many bytes as were read; a file replaced or changed while it was read is
+read again. A file is absent only when its open fails with not-found and absence is decided from the entries themselves,
+by `lstat`, which follows no link: nothing at all is at the path, and the nearest entry above it is a folder that can be
+listed. So a link, a junction or any other reparse point at the path, broken or not, is unreadable, as is a broken one
+above it, an entry that cannot be looked at, a path under a regular file, which Windows reports as not found, and a file
+that is a link or kept changing while it was read. A stop stands when the `STOP` file is not the one the last start lifted, when the journal's bytes are not the
+ones it bound (bytes decide, never a count of lines, so a line a crash cut short is a stop), when a stop on record follows
+that start, which it revokes until a person starts again, and with no start on record, when the journal holds any bytes at
+all. Anything it cannot read or use, any of the three files, records that do not check out, or a start's lift fields of the
+wrong shape, null included (one check, where the row is written and where it is read), is a stop in force with its own
+code, `G6_E_LOOP_STOP_UNREADABLE`, never a value such as a count of -1 or nothing to lift, and never a raised error: a tick
+ends at its next request, the runner refuses to run and its heartbeat carries that code, status says which file, and a
+dialog or a start starts nothing. That holds for any failure at all, not a list of them: in the reading, in noting a stop,
+in the tick's writer reload and every other stop path, a handler catches every exception, and a test built from the code
+finds none that names a narrower list. Noting a stop decides absence by the reading's own rule, so a directory at the
+records' path is said in the heartbeat as a stop not noted. The stop is honoured before anything else: the runner's
+preflight ends on any stop in force, with its code, before its settings are read, and the dialog and a start give an
+unreadable stop's code before any other refusal. One function makes every refusal of the dialog and the start, from the
+reading it stands on: `G6_E_LOOP_STOP_UNREADABLE` whenever that reading could not be made, otherwise the refusal's own
+code, and either way any stop in force is named (`stop_code`); a test lists every return of the dialog and the start from
+the code and finds no refusal made anywhere else. Every statement of the dialog and the start that touches a file runs
+inside its one handler, which a test also checks from the code, and the settings are read and checked by one function,
+whose failures, however they fail, are settings to fix. The stop is made the same way: one handler, with only the folder
+as given outside it, and a check of whether a folder is a loop's that cannot be made, however it fails, never keeps the
+stop from being written there; a folder that cannot be found, or a stop that cannot be written, says so
+(`G6_E_LOOP_STOP_FAILED`). A tick keeps the start it parsed against the digest of the very bytes it parsed, taken in
+the same reading, and parses again only when the bytes read before a request differ. A dialog's terms carry its reading's
+whole digest and the settings, and the dialog is shown only if all it stands on, checked again once it is made, gives the
+same terms. A start records and runs on the settings it read before its locks, which the terms must match, so a file
+changed after is one the runner's gate refuses; under the tick
+lock and the stop lock it checks everything again on a fresh reading and refuses if its digest is not the one the dialog
+showed, then writes its row; the stop lock is the one a stop's writer holds until its journal line and its `STOP` file are both on disk,
+and a start refused there writes nothing. A stop that waited a second for that lock writes without it (the owner's
+ruling), and its journal line can be read before its own flush is done, so the start flushes the journal to disk itself,
+through a handle of its own, before its row binds it: no start lifts a line the disk may yet lose. It keeps that handle
+open until its row is written and binds the file's identity (its volume and file id) with its bytes: when the reading
+the start's terms stand on found a journal, that reading, the file it flushed and the reading it checks before its row
+must all be that one file, or it writes nothing. A reading that found none binds the empty journal, so a journal made
+after it is a stop that stands, and the start says so. Held open, the file keeps its id, and on Windows it cannot be renamed or removed until the start lets go,
+so a journal renamed away and made again with the same bytes, never flushed, is never bound. Journal lines carry no
+token, so a line a crash took back could be written again, the same bytes, by a later stop that the start's binding would
+then not see. The row goes onto the approved reading itself: once the writer has opened the records and the journal is
+flushed, a reading must be exactly the approved one before anything is appended,
+and the ledger appends only onto the head it opened, so a crash or a failed write after the append can leave a start only
+on approved bytes. A reading once the row is written must find those bytes with that one row after them, and on every way
+out of the append, an exception included, anything else that landed is revoked by a stop row (a `STOP` file when even that
+will not take); nothing is spawned.
+
+**Where a row ends, and in what words.** The records, the journal, the `STOP` file and the log of refusals hold to one rule
+for where a row ends: at its newline, or, for a last row with none, at the end of the file, which is how the ledger reads its
+own file. So every append starts on a fresh line: a last row with no newline, which the ledger accepts and a dialog can show,
+is ended before the next row is added, and a start's check of what landed holds to the same rule, so its row is never
+joined onto the approved last row. The ledger itself is bound and unchanged; its writer ends the last row before each
+append. Every write on a stop path makes bytes of text by one rule that cannot fail, UTF-8 with what it cannot carry (a lone
+surrogate) spelled out with a backslash, so no caller's reason keeps a stop, its row, a refusal or a heartbeat from being
+written, and every reader reads plain UTF-8 back. Tests list, from the code, every write in the envelope and every place
+text becomes bytes on a stop path.
+
+**One ending for the runner.** Every way a run ends goes through one function: a stop at the preflight, the gate, a stop a
+pass reads, this process's own cannot-record stop, a folder that cannot be opened or held, or anything raised before the
+hand-off to the running loop. A stop is noted in the records by a writer that never raises (what it could not note, the
+heartbeat says). A stop in force only because a file cannot be read is gone with the repair of that file, and a row the
+records would not take, or that a tick holding them kept out, was never there, so such a stop is also written through the
+stop's own writer, which needs no tick lock, naming the code that ended the run (what it could not write, the heartbeat
+says: `stop_not_written`). A tick's guard, its cut-off at a model call and a start that a stop met once its row was
+written do the same. So a start ended on a stop stays ended until a person starts again through the dialog, whatever
+became of the stopped row and once the file is repaired. A stop asked for needs nothing more, since it stands in the
+stop's own readable files or on record, nor does the runner's own cannot-record stop, written through the same writer
+when it was made; and records that show the start already ended on record need nothing either, so ending again on a folder
+that stays unreadable adds no line once its start is ended. What this cannot cover: an ending that dies before its first
+write lands, with the file repaired before any restart; an ending whose writes, the row, the journal and the `STOP` file,
+all fail; and a `STOP` file a person wrote, whose row could not be written, removed by hand. A test lists every way a
+start ends on a stop from the code. Then the day's page is written, the running loop's own or one from the reading of the folder; a page that
+cannot be made from the records gives way to a plain one that says how the run ended and its code, never the old page left
+standing, and a page that cannot be written even so is said in the heartbeat (`page_not_written`). Only then comes the
+terminal heartbeat, with the code and reason of the reading that ended the run. A test lists every way `run` and a pass
+return, and that every exception before the hand-off ends there too. Only the runner lock's holder writes the folder's
+page and heartbeat: the preflight's reading comes first, and a stop it finds ends the run once the lock is held; the
+starting heartbeat is written holding the lock for that moment; every ending is made inside the lock, never once it is let
+go; and a person's command at a terminal writes no heartbeat. A test lists every page and heartbeat write from the code.
+Only the lock's own contention is another runner, and that runner writes no page and no heartbeat over the live one's: on
+Windows the lock is taken with LockFileEx, whose ERROR_LOCK_VIOLATION alone is another holder (the C runtime gives a held
+lock and a denied access one errno), and on POSIX flock's EWOULDBLOCK (EAGAIN), or EACCES where Python builds flock on
+fcntl. A lock that cannot be taken for any other reason, an I/O error, a denied access or an error never seen, a link
+among them, raises as it is and is this runner's own ending (`G6_E_LOOP_CANNOT_OPEN`) with its page and heartbeat, since
+no holder can be shown; so is anything that fails once the lock is held, the loop's opening included. Whether a runner is
+alive is never read from a lock that cannot be tried: a start refuses, a stop says it cannot be read, and status says so
+beside the stop. Status takes the one reading first and reports the stop in every reply; everything else it reads runs
+inside its one handler, and what cannot be read or used, a record's field among them, is said beside the stop, never
+raised.
+
+An agreement binds what the dialog showed: the settings, the Python file, who enrolled it, the stop state as that one reading
+saw it, and any pause. If any of that moves while the dialog is open, nothing starts and the person is asked again. A stop that
+dies between its two writes leaves only its journal line, which every reader honours, and the next dialog says a stop stands
 in `stops.log` with no file for it, rather than a start taking in a stop nobody read. A start never moves
 or deletes `STOP`. It records the digest, the length and the modification time of the file the person agreed to lift, the time
 first, and `STOP` stands unless all three still match, since bytes alone cannot say a person wrote again. So a stop has no
@@ -725,8 +925,8 @@ All of this is a check and not a boundary. A process with the owner's rights can
 are hash-chained and not signed.
 
 **A stop lands at the next model call, not the next tick (the owner's ruling, 2026-11-01).** A stop reaching the next call
-matters more than the one evaluation it may cost. Each request of a tick looks at the `STOP` file, the count of stops and G6's own
-stop before it goes out, so a stop that died before its file was written lands too, and a request already sent comes back first, and that can take as long as its caller allows. Nothing here ends one.
+matters more than the one evaluation it may cost. Each request of a tick asks `stop_in_force` and G6's own stop before it
+goes out, so a stop that died before its file was written lands too, and a request already sent comes back first, and that can take as long as its caller allows. Nothing here ends one.
 The tick then ends with no cycle: what ran is charged, nothing is scored or adopted, and the runner ends a second later. The
 candidates it was working on race again after the next start, as after a limit. The reply and the day's digest say how many
 requests it had sent, and a `STOP` file's note in the log carries the same under `cut_off`.
@@ -787,8 +987,10 @@ tick there. On `FakeLLM`, a week of one-call ticks on 86 cases at that allowance
 the rest of its reservation back and replies `G6_E_LOOP_BUDGET_WAIT` with the reset in `wait_until`. It is no cycle, so it
 writes no result and never counts towards the pause, and an evaluation it cut off is not one of the split's five, since
 nothing read it. The next tick waits for the reset, spending nothing. The reset is written to the constraint log as a row of
-its own, no cycle, so a restart waits it out too and sends nothing; only if that row cannot be written does a restart's first
-request find the limit again. The next tick to propose takes up what was left: the candidates proposed since the last
+its own, no cycle, the moment the tick meets it and before it settles, whatever else the cycle met, so a restart waits it out
+too and sends nothing, whatever failed after; only if that row cannot be written does a restart's first request find the
+limit again. This process is told of the limit before that row is written, so whatever the row's write fails with, an
+interrupt among them, the process that met the limit sends nothing more into it. The next tick to propose takes up what was left: the candidates proposed since the last
 tuning run and not beaten in a race race again in its first cycle, and the reservation counts them. They are read from the
 run ledger, so a restart loses none, and they are run again from the start of their race, on the same head only.
 
@@ -926,10 +1128,12 @@ attribute a handle sets with where it is kept, and every place G6 notes a reques
 through each kind of caller the loop accepts.
 
 No failure of the records can undo this. A refused request is kept as it happens, by its identity, in `refused.log`, a file no lock
-stands in front of, flushed to the disk before any other thread can see the refusal and before any record of the tick is written,
-and this process holds it too, for good. A handle reads `refused.log` and the cycles' records as it is built, before its first
+stands in front of, flushed to the disk before any other thread can see the refusal, before any record of the tick is written and before the
+failed request is asked anything else (whether it met a limit, which reads the clock), and this process holds it too, for good. A handle reads `refused.log` and the cycles' records as it is built, before its first
 request. So a crash before its cycle is
-written, or a log that will not take that cycle, cannot send it again. A cycle lost that way cannot carry the pause, so it ends the
+written, or a log that will not take that cycle, cannot send it again. A tick that raises after the refusal, before its row,
+writes the pause a person must lift on its way out, so however it fails and whoever handles that, the loop stays paused. A cycle
+the log will not take cannot carry the pause, so it ends the
 run at the first, as three lost cycles do: `STOP` and `stops.log` hold it, the reason says what was refused, and only a person's
 start goes on. If `refused.log`, the log and `STOP` all refuse a write, this process still sends nothing more, and a restart then
 has nothing to go on. A `refused.log` that cannot be read stops the tick with `G6_E_LOOP_RECORDS_UNREADABLE`, before anything is
@@ -1075,7 +1279,7 @@ boundary, which is P3's mission container, and P5's reports state the limit unde
 | A person enrols and lifts a pause at a terminal, by typing the domain's name back, as in `g6.workforce.decide`. It is a convenience check, not proof, and there is no MCP tool for either | An agent with a console can type. The same is true of `decide`, and of a Python call |
 | Start lifts a `STOP` file by recording its digest, length and modification time, once the person has agreed and been shown its reason, and never moves or deletes it. A reboot lifts nothing | A stop someone else set is lifted by whoever agrees in the dialog, and the log keeps who. A lifted file stays on disk, so each look at it reads the records, and records that do not read leave it standing. Restoring a backup that changes the file's time stands as a stop. A rewrite of the same bytes on a file system too coarse to give it a new time, and a writer that restores the old time on purpose, are not seen |
 | A tick compares the log with the chain of adoptions, and refuses with the records code when the log saw a generation the chain does not hold. Only adoptions and rollbacks count, and a chain ahead of the log is the crash between the two writes | Both files cut together leave nothing to compare. The check keeps a number from being used twice; it does not bring a lost generation back, and a person must inspect the folder |
-| A stop through the tool is counted in `stops.log`, with no lock, before its file is written, and a start records the count it saw. The `STOP` file holds a stop by itself, so the count has two uses: a restart after a person has removed that file with no note of the stop in the records, and a stop that died between its two writes, which leaves only the count. A tick in flight and a waiting runner read that as the stop it is, at the next model call or the next pass, and status says so. A start never reads the count to decide about `STOP`. It refuses a folder whose count cannot be read (`G6_E_LOOP_RECORDS_UNREADABLE`), for that restart. A stop is also noted in the records, best effort | A count that cannot be written leaves only the `STOP` file, so a restart misses that stop if the file is then removed by hand. A stop that cannot change the `STOP` file reports `G6_E_LOOP_STOP_FAILED`, since the file it could not change may be lifted. A `STOP` file written by hand is not counted: it stops while it is there, and is noted when a runner or a restart sees it, so one written and removed with nothing running leaves no trace. Deleting `stops.log` closes the start rather than opening it |
+| A stop through the tool is a line in `stops.log`, with no lock, flushed to disk before its file is written, and a start records that journal by count and digest. The `STOP` file holds a stop by itself, so the journal has two uses: a restart after a person has removed that file with no note of the stop in the records, and a stop that died between its two writes, which leaves only its line. Every reader takes that as the stop it is through `stop_in_force`: a tick in flight and a waiting runner at the next model call or the next pass, status, and the next dialog. A journal or `STOP` file that cannot be read is a stop in force (`G6_E_LOOP_STOP_UNREADABLE`), and a start refuses it. A stop is also noted in the records, best effort | A line that cannot be written leaves only the `STOP` file, so a restart misses that stop if the file is then removed by hand. A stop that cannot change the `STOP` file reports `G6_E_LOOP_STOP_FAILED`, since the file it could not change may be lifted. A `STOP` file written by hand is not counted: it stops while it is there, and is noted when a runner or a restart sees it, so one written and removed with nothing running leaves no trace. Deleting `stops.log` closes the start rather than opening it |
 | Refusals do not rest the runner, since a refusal tried something. No winner, no constraint and idle do | A run of refusals is bounded only by the split's five evaluations |
 | Status shows use from the runner's last heartbeat, with its time, because opening the ledger would write to it | With no runner alive the figures are as old as that heartbeat, and with none ever there are none |
 | Each provider's day is its own, and the runner wakes for the next rise of any ceiling, or the end of a reported limit. It wakes even if the rise is too small for a tick | One refused tick a day, which spends nothing |
