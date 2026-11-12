@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import re
 
+from g6.core.git_name import shown
+
 MAX_LINES = 40
 #: The third part the reports of V9's arm 3 must keep (the registered protocol's amendment A5).
 STANDING_NOTE = ("The task's specification may be incomplete: G6 checked the requirements as they were stated and "
@@ -123,7 +125,7 @@ def _at_base(assessment: dict) -> dict[str, str]:
 def code(value: object, limit: int = 140) -> str:
     """``value`` as one inert code span: on one line, cut at ``limit`` characters, fenced by more backticks than any
     run inside it (padded where it begins or ends with one), so nothing in it is read as Markdown or HTML."""
-    text = " ".join(str(value).split())
+    text = " ".join((shown(value) if isinstance(value, str) else str(value)).split())   # a name git gave, by its rule
     text = "".join(ch if ch.isprintable() else "?" for ch in text) or "(empty)"
     if len(text) > limit:
         text = text[:limit - 3] + "..."

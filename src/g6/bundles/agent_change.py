@@ -33,6 +33,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from g6.bundles import Bundle, BundleResult, Field, weakest
+from g6.core.git_name import shown
 
 MUTATION_BUDGET_S = 180
 _SHOWN = 5
@@ -79,7 +80,7 @@ def _mutations(change, repo, tests: list[str], seconds: float) -> tuple[dict[str
         record = mutation_check.check((repo / rel).read_text(encoding="utf-8", errors="replace"), runner,
                                       budget_s=remaining, base_duration_s=seconds, lines=lines)
         tried, caught = tried + record["tried"], caught + record["rejected"]
-        survived += [f"{rel}: {s}" for s in record["survived"]]
+        survived += [f"{shown(rel)}: {s}" for s in record["survived"]]
         stopped = stopped or record["stopped"]
     if not tried:
         return _row("Small deliberate mistakes on the changed lines", "not run",
@@ -154,12 +155,12 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
                    and rel not in broke}
         if broke:
             rows.append(_row("Original tests on the new code", "failed", "the original version of "
-                             + ", ".join(broke[:_SHOWN]) + " passed before the change and fails now: the change "
+                             + ", ".join(shown(rel) for rel in broke[:_SHOWN]) + " passed before the change and fails now: the change "
                              "broke it, and the edited test hides that", "blocked-escalated"))
         else:
             detail = f"{len(old) - len(skipped)} original test file(s) still pass"
             if skipped:
-                detail += "; not run: " + "; ".join(f"{rel} ({why})" for rel, why in list(skipped.items())[:_SHOWN])
+                detail += "; not run: " + "; ".join(f"{shown(rel)} ({why})" for rel, why in list(skipped.items())[:_SHOWN])
             rows.append(_row("Original tests on the new code", "passed" if len(skipped) < len(old) else "not run",
                              detail, "qualified-draft"))
         before = {change.renamed.get(rel, rel): text for rel, text in change.before.items()}
@@ -176,7 +177,7 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
                      ", ".join(shortcuts) or "no skip marker, '|| true', '--no-verify' or removed assertion added",
                      "blocked-escalated" if shortcuts else "qualified-draft"))
     if change.runner_files:
-        notes.append("The change edits test-runner configuration (" + ", ".join(change.runner_files[:_SHOWN])
+        notes.append("The change edits test-runner configuration (" + ", ".join(shown(rel) for rel in change.runner_files[:_SHOWN])
                      + "); read it yourself: G6 says it, and does not judge it.")
 
     if verdict == rt.PASSED and found["total"]:
@@ -184,9 +185,9 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
         rows.append(row)
         notes += gaps
 
-    evidence = [Evidence("file", rel, observed_by="g6") for rel in change.files[:50]]
+    evidence = [Evidence("file", shown(rel), observed_by="g6") for rel in change.files[:50]]
     if ran:
-        evidence.append(Evidence("test", f"pytest {' '.join(tests[:3])}" + (" ..." if len(tests) > 3 else ""),
+        evidence.append(Evidence("test", f"pytest {' '.join(shown(test) for test in tests[:3])}" + (" ..." if len(tests) > 3 else ""),
                                  exit_code=0 if verdict == rt.PASSED else 1, observed_by="g6"))
     if "@@" in diff:
         evidence.append(Evidence("diff", f"git diff {base}", output=diff, observed_by="g6"))

@@ -86,7 +86,10 @@ def _mutants_killed(repo: Path, tests: Sequence[str], *, timeout_s: int, run: Ca
             return SimpleNamespace(execution_id=uuid.uuid4().hex, passed=int(got.get("passed", ok)),
                                    failed=0 if ok else 1, not_passed=0 if ok else 1, reason="")
 
-        record = mutation_check.check((repo / rel).read_text(encoding="utf-8"), run_mutant,
+        path = repo_tests._disk(repo, rel)      # the one disk rule: a name the system reads as another's has no path
+        if path is None:
+            return False   # a changed file G6 does not open by its name: nothing shows the tests pin what is stored there
+        record = mutation_check.check(path.read_text(encoding="utf-8"), run_mutant,
                                       budget_s=float(timeout_s), base_duration_s=1.0)
         if record.get("survived") or record.get("stopped") or not record.get("tried"):
             return False   # a surviving mutant, a stopped check or nothing tried: the tests do not pin the change
