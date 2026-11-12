@@ -35,6 +35,15 @@ def aware(value: datetime | None) -> bool:
     return isinstance(value, datetime) and value.tzinfo is not None and value.utcoffset() is not None
 
 
+def ahead(at: datetime, present: datetime) -> bool:
+    """The one rule for a date after the present of whoever holds it: it is from a clock that was ahead.
+
+    A reader shows nothing dated so as current. A writer does not order by it, does
+    not let it hold a lease, and keeps a reading dated so as a constraint only.
+    """
+    return at > present
+
+
 def profile_token(value: str) -> str:
     if not isinstance(value, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,80}", value) is None:
         raise ValueError("use an opaque local profile token, never an account identifier")
@@ -84,10 +93,9 @@ class Window:
             return "future window"
         if self.observed_at is None:
             return "missing"
-        age = (now - self.observed_at).total_seconds()
-        if age < 0:
+        if ahead(self.observed_at, now):
             return "future observation"
-        if age > max_age_seconds:
+        if (now - self.observed_at).total_seconds() > max_age_seconds:
             return "stale"
         if self.failure:
             return "failed"

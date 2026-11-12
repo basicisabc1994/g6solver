@@ -20,8 +20,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from g6.allowance import CLAUDE_VERSION, Reading, Window, profile_token, utc_now
+from g6._allowance.programs import program
+from g6.allowance import CLAUDE_VERSION, Reading, Window, ahead, profile_token, utc_now
 from g6._allowance.readers import capture_block, claude_reading, codex_reading
+
+
+# What a window says when its reading was dated after the present of whoever wrote or read it.
+AHEAD = "dated ahead of the clock"
 
 
 def _dump(reading: Reading) -> str:
@@ -120,6 +125,14 @@ class Store:
         row = db.execute("SELECT body FROM readings WHERE provider=? AND profile=?",
                          (reading.provider, reading.profile)).fetchone()
         old = _load(row[0]) if row else None
+        present = utc_now()
+        if old is not None and ahead(old.attempted_at, present):
+            old = None  # from a clock that was ahead: it orders nothing, and is replaced whole
+        if ahead(reading.attempted_at, present):
+            # Its figures still constrain; its date cannot be believed, so it is
+            # never a good reading, also once the clock reaches that date.
+            reading = replace(reading, windows=tuple(replace(w, failure=w.failure or AHEAD, last_good_at=None)
+                                                     for w in reading.windows))
         if old is not None and reading.attempted_at < old.attempted_at:
             return False
         tie = old is not None and reading.attempted_at == old.attempted_at and _dump(reading) != _dump(old)
@@ -164,6 +177,14 @@ class Store:
                 if binding is not None and binding[0] != profile:
                     return Reading(provider, profile, (), now or utc_now(), failure="profile changed")
                 row = db.execute("SELECT body FROM readings WHERE provider=? AND profile=?", (provider, profile)).fetchone()
+                if row:
+                    held = _load(row[0])
+                    if ahead(held.attempted_at, utc_now()) and any(not w.failure for w in held.windows):
+                        # A reader that finds a date after its own present says so once, for good.
+                        current = self._snapshot(db).get(provider)
+                        self._save(db, held, current[1] if current else 0)
+                        row = db.execute("SELECT body FROM readings WHERE provider=? AND profile=?",
+                                         (provider, profile)).fetchone()
             if row:
                 # Neither persistence nor an owner-selected label establishes sign-in
                 # continuity. A cached support claim cannot establish Claude support.
@@ -184,7 +205,9 @@ class Store:
             if not self._matches(db, provider, profile, generation):
                 return False
             row = db.execute("SELECT at FROM refreshes WHERE provider=? AND profile=?", (provider, profile)).fetchone()
-            if row is not None and (now - datetime.fromisoformat(row[0])).total_seconds() < interval:
+            held = datetime.fromisoformat(row[0]) if row is not None else None
+            # A lease dated after this writer's present holds nothing: it is replaced.
+            if held is not None and not ahead(held, utc_now()) and (now - held).total_seconds() < interval:
                 return False
             db.execute("INSERT OR REPLACE INTO refreshes VALUES (?,?,?)", (provider, profile, now.isoformat()))
             return True
@@ -199,8 +222,8 @@ class Store:
         reading = claude_reading(payload, profile, now, version=version)
         block = capture_block(payload) if version == CLAUDE_VERSION else {}
         with self._db() as db:
-            if not self._save(db, reading, generation) or not block:
-                return
+            if not self._save(db, reading, generation) or not block or ahead(now, utc_now()):
+                return  # a reading dated ahead of the clock is kept as a constraint and publishes no capture
         # Commit the observation before publishing its optional capture. A crash
         # after file replacement must not roll back a reading already captured.
         # Publication has a separate bounded writer transaction, with a binding
@@ -209,14 +232,16 @@ class Store:
             row = db.execute("SELECT body FROM readings WHERE provider=? AND profile=?", ("claude", profile)).fetchone()
             if not self._matches(db, "claude", profile, generation) or row is None:
                 return
-            if _load(row[0]).attempted_at > now:
+            present = utc_now()
+            stored = _load(row[0]).attempted_at
+            if stored > now and not ahead(stored, present):
                 return
             path = self.capture_path(profile)
             path.parent.mkdir(parents=True, exist_ok=True)
             if path.exists():
-                saved = json.loads(path.read_text(encoding="utf-8"))
-                if datetime.fromisoformat(saved["read_at"]) >= now:
-                    return
+                saved = datetime.fromisoformat(json.loads(path.read_text(encoding="utf-8"))["read_at"])
+                if saved >= now and not ahead(saved, present):
+                    return  # a newer capture stands, unless it too is dated after this writer's present
             temp = path.with_suffix("." + uuid.uuid4().hex + ".tmp")
             try:
                 with temp.open("x", encoding="utf-8", newline="\n") as out:
@@ -243,9 +268,18 @@ def refresh_codex(store: Store, profile: str, *, now: Callable[[], datetime] = u
                   semantics: Mapping[str, str] | None = None, generation: int | None = None) -> None:
     """Only the existing raw reader; never its weekly meter adapter or ledger."""
     generation = store.generation("codex", profile) if generation is None else generation
-    from g6.self_maintenance.usage import codex_limits
+    from g6.self_maintenance.usage import codex_limits, find_program
 
     try:
+        # The reader finds its own program, by G6's shared finder: that one follows a relative
+        # PATH entry or setting into the working directory. So the reader is asked only when
+        # what it would start is what this feature's own rule would start, an absolute path.
+        named = os.environ.get("G6_CODEX", "").strip() or "codex"
+        found = find_program(named)
+        if found is not None:
+            strict = program(named)  # OSError for a relative setting, or a name in no absolute folder
+            if not os.path.dirname(named) and os.path.normcase(os.path.abspath(found)) != os.path.normcase(strict):
+                raise OSError("the codex program found is not the one on an absolute folder of PATH")
         payload = codex_limits()
         reading = codex_reading(payload, profile, now(), semantics=semantics)
     except Exception:

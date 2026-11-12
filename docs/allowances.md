@@ -63,16 +63,27 @@ The internal database migration retains existing columns and adds the generation
 The normalised observation commits before the optional capture is published. An interrupted publication can leave an
 older or absent capture; it cannot roll back the committed observation or freshen the old capture's time.
 
+One rule holds for a date after the present of whoever holds it: it is from a clock that was ahead. A reader shows
+nothing dated so as available. A writer does not order by it: a stored reading, capture or refresh lease dated after
+the writer's own present is replaced, and holds nothing back. A reading that arrives dated after its writer's present
+is kept as a constraint (the stronger figure stays) and is never a good reading, also once the clock reaches its date;
+it publishes no capture. A reader that finds such a date marks it the same way, once. A late observer with an older
+date is still dropped: only a date after the present is treated so.
+
 ## Status-line installation preview and rollback
 
 Installation is the owner's choice. G6 never edits Claude Code settings. Preview supports an existing `statusLine`
 object of type `command`, preserving its command and additional properties. Other forms, missing renderers and recursive
 G6 wrappers are refused. Choose the same renderer shell the original command uses: `powershell`, `cmd` or `sh`.
-The invocation shell used by Claude Code must also be explicitly matched. Windows `cmd` preview accepts executable paths
-without shell expansion characters; paths with spaces are quoted. PowerShell and POSIX shell previews use their own
-argument quoting. Native Windows CMD and PowerShell forwarding are checked with harmless renderers. POSIX preview quoting
-has structural checks only; POSIX execution has not been established here. This is a bounded set of forms, not a promise
-for every shell or client version.
+The invocation shell used by Claude Code must also be explicitly matched. Every value in the generated command goes
+through one quoting rule for that shell, and a value the form cannot carry is refused at preview: any control character
+on every form, `%!^&|<>"` on `cmd`, and `"` on PowerShell. The PowerShell form doubles each of the five characters
+PowerShell reads as a single quote (U+0027, U+2018, U+2019, U+201A, U+201B); the `cmd` form always quotes the
+interpreter; the POSIX form uses the standard library's own quoting. Native Windows CMD and PowerShell forwarding are
+checked with harmless renderers. POSIX preview quoting has structural checks only; POSIX execution has not been
+established here. This is a bounded set of forms, not a promise for every shell or client version. Preview takes the
+interpreter as the owner gives it: give its full path, since a bare name is looked for by the host's shell, which on
+Windows starts with the folder it runs in.
 
 In Python, with the existing configuration supplied by the owner:
 
@@ -98,8 +109,22 @@ No new G6 CLI command is added.
 The wrapper starts the original command first and hands it the original stdin bytes exactly once. The command keeps
 the caller's own stdout and stderr, so its bytes arrive as it writes them, and its exit code is the wrapper's. Every
 option value in the generated command is attached to its option, so an accepted token such as `--` or `-local` is a
-value on every shell; the PowerShell form passes the exit code on explicitly. A renderer failure does not suppress a
-valid observation. A recursion marker prevents nested wrappers.
+value on every shell. A renderer failure does not suppress a valid observation. A recursion marker prevents nested
+wrappers.
+
+Every program the wrapper starts, the renderer's shell and its own observer, is started by an absolute path that never
+came from the folder the status line renders in. A shell's name is looked for in the absolute folders of `PATH` only:
+an entry that is empty, `.` or relative is passed over, whatever Windows' own search order would do. `COMSPEC` is
+followed when it names its own root, and refused when it is a relative path. When no such program is found the
+wrapper starts nothing, says so in one line on stderr and exits 127. Codex's reader finds its own program, by G6's
+shared finder, which follows a relative `PATH` entry or a relative `G6_CODEX`. The refresh asks the reader only when
+what that finder names is what the rule above would start; otherwise nothing is started and the reading is a failed read.
+
+The renderer's exit code is the wrapper's for every value a process can end with: on Windows all of 0 to 2^32-1, and
+elsewhere a renderer ended by signal N goes out as 128 + N, as a shell reports it (not run on a Unix host here). The
+PowerShell form passes the code on explicitly, and exits 1 when no program could be started at all. One value under
+one host is not exact in what surrounds it: `cmd` writes `^C` on its own stderr whenever a child of its own ends with
+0xC000013A, so a `cmd` host adds that text when the wrapper passes this code on. The code itself arrives whole.
 
 The observer is a detached process of its own, started beside the renderer and never ahead of it. The wrapper's own
 interpreter reads no binding, parses nothing and opens no cache. The observer is told the input's length, reads the

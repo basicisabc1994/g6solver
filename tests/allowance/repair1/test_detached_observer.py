@@ -204,7 +204,7 @@ def observer_child(tmp_path, *more, stdin):
 def test_a_hand_over_cut_short_records_neither_a_reading_nor_a_failure(tmp_path):
     from g6._allowance.store import Store
 
-    at = datetime.now().astimezone()
+    at = datetime.now().astimezone() - timedelta(seconds=60)
     whole = observer_child(tmp_path, f"--length={len(GOOD)}", "--observed-at=" + at.isoformat(), stdin=GOOD)
     assert whole.returncode == 0
     store = Store(tmp_path / "home" / "allowances")
@@ -225,7 +225,7 @@ def test_an_observer_that_ends_after_a_newer_one_changes_nothing(tmp_path):
     """Observers end in any order now; the cache and the capture keep the input that was read last."""
     from g6._allowance.store import Store
 
-    at = datetime.now().astimezone()
+    at = datetime.now().astimezone() - timedelta(seconds=60)
     newer = GOOD.replace(b"50", b"70")
     assert observer_child(tmp_path, f"--length={len(newer)}", "--observed-at=" + (at + timedelta(seconds=10)).isoformat(),
                           stdin=newer).returncode == 0
@@ -256,7 +256,7 @@ def test_an_input_over_the_limit_is_a_failure_and_its_bytes_are_never_handed_ove
         patched.setattr(statusline.subprocess, "Popen", popen)
         assert statusline.observe_in_worker(over, "p", "2.1.319", timeout=30)
     assert received.read_text() == "0" and f"--length={len(over)}" in seen[0]
-    at = datetime.now().astimezone()
+    at = datetime.now().astimezone() - timedelta(seconds=60)
     assert observer_child(tmp_path, f"--length={len(GOOD)}", "--observed-at=" + at.isoformat(), stdin=GOOD).returncode == 0
     child = observer_child(tmp_path, f"--length={len(over)}", "--observed-at=" + (at + timedelta(seconds=5)).isoformat(),
                            stdin=b"")
@@ -300,7 +300,7 @@ def test_only_a_process_of_its_own_bounds_itself(tmp_path, monkeypatch):
     assert statusline.main(["--observe", "--profile=p", f"--length={len(GOOD)}"]) == 0
     assert armed == []
     source = inspect.getsource(statusline)
-    assert source.rstrip().endswith("raise SystemExit(main(own_process=True))")
+    assert source.rstrip().endswith("raise SystemExit(exit_code(main(own_process=True)))")
 
 
 def test_the_wrappers_own_interpreter_does_no_observer_work(tmp_path, monkeypatch):
@@ -350,36 +350,103 @@ def test_the_reading_carries_the_time_the_input_was_read(tmp_path, monkeypatch):
     assert seen and seen[0] >= raw.received_at
 
 
+def _references(source):
+    """A module's tree, and every use of a name it imports, called or passed, as the dotted name it resolves to."""
+    tree = ast.parse(source)
+    bound = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                bound[alias.asname or alias.name.split(".")[0]] = alias.name if alias.asname else alias.name.split(".")[0]
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                bound[alias.asname or alias.name] = (node.module or "") + "." + alias.name
+    inner = {id(node.value) for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+    uses = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Name, ast.Attribute)) and id(node) not in inner:
+            parts, value = [], node
+            while isinstance(value, ast.Attribute):
+                parts.append(value.attr)
+                value = value.value
+            if isinstance(value, ast.Name) and value.id in bound:
+                uses.append((".".join([bound[value.id], *reversed(parts)]), node))
+    return tree, uses
+
+
 def test_no_observer_is_stopped_and_every_observer_is_detached_from_the_code():
-    """From the module's own source: what it starts, and that it has no way to stop one."""
-    tree = ast.parse(inspect.getsource(statusline))
-    starters = {"subprocess.Popen", "subprocess.run", "subprocess.call", "subprocess.check_call",
-                "subprocess.check_output", "os.system", "os.popen", "os.startfile", "os.posix_spawn",
-                *(f"os.spawn{s}" for s in ("l", "le", "lp", "lpe", "v", "ve", "vp", "vpe")),
-                *(f"os.exec{s}" for s in ("l", "le", "lp", "lpe", "v", "ve", "vp", "vpe"))}
-    started = {}
-    for function in (node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)):
-        for node in ast.walk(function):
-            if isinstance(node, ast.Call) and ast.unparse(node.func) in starters:
-                started.setdefault(function.name, []).append(node)
-    # hand_over is observe_in_worker's own thread body; nothing else in the module starts a process.
-    assert {name: [ast.unparse(n.func) for n in calls] for name, calls in started.items()} == {
-        "observe_in_worker": ["subprocess.Popen"], "hand_over": ["subprocess.Popen"], "run_wrapper": ["subprocess.Popen"]}
-    observer, renderer = started["hand_over"][0], started["run_wrapper"][0]
+    """From the module's own source, with every name resolved through its imports.
+
+    What it imports is listed whole, so a new way to start or end a process has to come in by a name that is not
+    here; and of ``os`` and ``subprocess``, the two it holds that can do either, every use is listed, called or not.
+    """
+    tree, uses = _references(inspect.getsource(statusline))
+    imported = {node.module if isinstance(node, ast.ImportFrom) else alias.name for node in ast.walk(tree)
+                if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names}
+    assert imported == {
+        "__future__", "argparse", "base64", "collections.abc", "copy", "datetime", "json", "os", "pathlib", "shlex",
+        "subprocess", "sys", "threading", "typing", "g6.allowance", "g6._allowance.programs",
+        "g6._allowance.readers", "g6._allowance.store"}
+    # Nothing reaches a module by a name made at run time.
+    assert not {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)} & {
+        "getattr", "setattr", "__import__", "eval", "exec", "globals", "locals", "vars", "compile", "importlib"}
+
+    def taken(module):
+        found = {}
+        for name, _ in uses:
+            if name.startswith(module + "."):
+                found[name.split(".")[1]] = found.get(name.split(".")[1], 0) + 1
+        return found
+
+    assert taken("os") == {"environ": 5, "name": 4, "_exit": 1}
+    assert taken("subprocess") == {"Popen": 2, "PIPE": 2, "DEVNULL": 2, "list2cmdline": 2, "CREATE_NEW_PROCESS_GROUP": 1}
+    assert taken("sys") == {"executable": 1, "stdin": 3, "stderr": 1}
+
+    # The two starts: each is a call, one in the observer's thread body and one for the renderer.
+    calls = {id(node.func): node for node in ast.walk(tree) if isinstance(node, ast.Call)}
+    starts = [calls.get(id(node)) for name, node in uses if name == "subprocess.Popen"]
+    assert all(starts), "a starter handed on instead of called"
+    functions = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+
+    def inside(name):
+        return [call for call in starts if any(call is node for node in ast.walk(functions[name]))]
+
+    (observer,), (renderer,) = inside("hand_over"), inside("run_wrapper")
     assert any(k.arg is None and ast.unparse(k.value) == "_DETACHED" for k in observer.keywords)
     assert {k.arg: ast.unparse(k.value) for k in observer.keywords if k.arg in ("stdout", "stderr")} == {
         "stdout": "subprocess.DEVNULL", "stderr": "subprocess.DEVNULL"}, "an observer must not hold the caller's output"
     assert {k.arg for k in renderer.keywords} == {"stdin", "env"}, "the renderer keeps the caller's own output handles"
-    stops = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)} & {
-        "kill", "terminate", "send_signal", "killpg", "TerminateProcess", "CTRL_BREAK_EVENT", "CTRL_C_EVENT"}
-    assert stops == set()
-    # The one exit is the observer's own bound on itself, armed only in a process of its own.
-    exits = [ast.unparse(node) for node in ast.walk(tree) if isinstance(node, ast.Attribute) and node.attr == "_exit"]
-    assert exits == ["os._exit"]
-    if os.name == "nt":
-        assert statusline._DETACHED == {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
-    else:
-        assert statusline._DETACHED == {"start_new_session": True}
+
+    # What is done with a started process: its input, the wait for it and its exit code, and nothing that ends it.
+    started = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(node.value is call for call in starts):
+            started |= {target.id for target in node.targets if isinstance(target, ast.Name)}
+        if isinstance(node, ast.withitem) and any(node.context_expr is call for call in starts):
+            started.add(node.optional_vars.id)
+    assert started == {"process"}
+    assert {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name) and node.value.id in started} == {
+        "stdin", "wait", "communicate", "returncode"}
+    assert not [node for node in ast.walk(tree) if isinstance(node, ast.Name) and node.id in started
+                and not any(isinstance(parent, ast.Attribute) and parent.value is node for parent in ast.walk(tree))
+                and isinstance(node.ctx, ast.Load)], "a started process handed to something else"
+
+    # The one exit is the observer's own bound on itself, handed to a timer that is armed only in a process of its own.
+    timers = [calls[id(node)] for name, node in uses if name == "threading.Timer"]
+    assert [ast.unparse(timer) for timer in timers] == ["threading.Timer(OBSERVER_SECONDS, os._exit, (1,))"]
+    guard = next(node for node in ast.walk(functions["main"]) if isinstance(node, ast.If)
+                 and any(timers[0] is inner for inner in ast.walk(node)) and ast.unparse(node.test) == "own_process")
+    assert guard is not None
+
+    # Both platforms' detachment, read from the source: only one of the two branches runs on any host.
+    detached = next(node for node in ast.walk(tree) if isinstance(node, ast.AnnAssign)
+                    and ast.unparse(node.target) == "_DETACHED").value
+    assert isinstance(detached, ast.IfExp) and ast.unparse(detached.test) == "os.name == 'nt'"
+    assert ast.unparse(detached.body) == "{'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP}"
+    assert ast.unparse(detached.orelse) == "{'start_new_session': True}"
+    assert statusline._DETACHED == ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
+                                    else {"start_new_session": True})
 
 
 def test_a_wrapper_stays_for_less_than_the_bound_its_inventory_allows():

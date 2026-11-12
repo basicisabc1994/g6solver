@@ -26,6 +26,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from g6._allowance.programs import program
 from g6.allowance import CLAUDE_SUPPORT, CLAUDE_VERSION, profile_token, utc_now
 
 MAX_INPUT = 1024 * 1024
@@ -58,15 +59,29 @@ def shell_argv(shell: str, command: str) -> list[str]:
     raise ValueError("supported shells are cmd, powershell and sh")
 
 
+# Each of these ends a PowerShell single-quoted string; doubled inside one, it is itself.
+POWERSHELL_QUOTES = "'\u2018\u2019\u201a\u201b"
+# What each form cannot carry as a literal value. A value holding one is refused at
+# preview, as is any control character. The quoting below and its tests read these.
+REFUSED = {"powershell": '"', "cmd": '%!^&|<>"', "sh": ""}
+
+
 def _quote(args: Sequence[str], shell: str) -> str:
+    """One command line that hands every one of ``args`` to ``shell`` as itself, or ValueError."""
+    if shell not in REFUSED:
+        raise ValueError("unsupported invocation shell")
+    for arg in args:
+        if not arg or any(ord(c) < 32 or c == "\x7f" or 0xD800 <= ord(c) <= 0xDFFF or c in REFUSED[shell] for c in arg):
+            raise ValueError("this value needs a shell-specific installation outside the supported preview")
     if shell == "powershell":
-        # PowerShell reports a native command's exit only when told to.
-        return "& " + " ".join("'" + arg.replace("'", "''") + "'" for arg in args) + "; exit $LASTEXITCODE"
+        quoted = " ".join("'" + "".join(c + c if c in POWERSHELL_QUOTES else c for c in arg) + "'" for arg in args)
+        # PowerShell reports a native program's exit only when told to, and
+        # $LASTEXITCODE is set only by one that ran: with none started, fail.
+        return ("$global:LASTEXITCODE = $null; & " + quoted
+                + "; if ($null -eq $LASTEXITCODE) { exit 1 }; exit $LASTEXITCODE")
     if shell == "sh":
         return shlex.join(args)
     if shell == "cmd":
-        if any(c in args[0] for c in '%!^&|<>"\r\n'):
-            raise ValueError("this executable path needs a shell-specific installation outside the supported preview")
         return '"' + args[0] + '" ' + subprocess.list2cmdline(args[1:])
     raise ValueError("unsupported invocation shell")
 
@@ -173,7 +188,7 @@ def observe_in_worker(payload: bytes, profile: str, version: str, *, timeout: fl
             # The observer is told the length, so it can tell a whole input from
             # one cut short by this process ending. An input over the limit is
             # not sent at all.
-            args = [sys.executable, "-P", "-m", "g6._allowance.statusline", "--observe", "--profile=" + profile,
+            args = [program(sys.executable), "-P", "-m", "g6._allowance.statusline", "--observe", "--profile=" + profile,
                     "--version=" + version, "--observed-at=" + at.isoformat(), "--length=" + str(len(payload))]
             if generation is not None:
                 args.append("--generation=" + str(generation))
@@ -201,14 +216,13 @@ def observe_in_worker(payload: bytes, profile: str, version: str, *, timeout: fl
 
 
 def run_wrapper(payload: bytes, renderer: Sequence[str], *, observer: Callable[[bytes], Any]) -> int:
-    """Run the renderer on the caller's own handles, with the observer beside it, never ahead of it."""
+    """Run the renderer on the caller's own handles, with the observer beside it, never ahead of it.
+
+    The renderer's program is started by an absolute path that never came from
+    the working directory; OSError when there is none, and then nothing is started.
+    """
     env = dict(os.environ)
     env[_ACTIVE] = "1"
-    args: str | list[str] = list(renderer)
-    if os.name == "nt" and len(args) == 5 and args[1:4] == ["/d", "/s", "/c"]:
-        # cmd's /c payload is shell text, not a C-runtime argv element. Let cmd
-        # remove its one outer quote pair without escaping the original quotes.
-        args = subprocess.list2cmdline(args[:4]) + ' "' + args[4] + '"'
 
     def observe() -> None:
         try:
@@ -227,6 +241,11 @@ def run_wrapper(payload: bytes, renderer: Sequence[str], *, observer: Callable[[
 
     started = False
     try:
+        args: str | list[str] = [program(renderer[0]), *renderer[1:]]
+        if os.name == "nt" and len(args) == 5 and args[1:4] == ["/d", "/s", "/c"]:
+            # cmd's /c payload is shell text, not a C-runtime argv element. Let cmd
+            # remove its one outer quote pair without escaping the original quotes.
+            args = subprocess.list2cmdline(args[:4]) + ' "' + args[4] + '"'
         with subprocess.Popen(args, stdin=subprocess.PIPE, env=env) as process:
             started = beside()
             process.communicate(input=payload)
@@ -275,10 +294,29 @@ def main(argv: Sequence[str] | None = None, *, own_process: bool = False) -> int
     if not args.renderer:
         return 2
     command = decode_renderer(args.renderer)
-    return run_wrapper(payload, shell_argv(args.shell, command),
-                       observer=lambda raw: observe_in_worker(raw, args.profile, args.version, observed_at=at,
-                                                             generation=args.generation))
+    try:
+        return run_wrapper(payload, shell_argv(args.shell, command),
+                           observer=lambda raw: observe_in_worker(raw, args.profile, args.version, observed_at=at,
+                                                                 generation=args.generation))
+    except OSError as error:
+        # No renderer was started: say so plainly, and fail as a shell does for a program it cannot find.
+        sys.stderr.write(f"g6 status line: the renderer was not started: {error}\n")
+        return 127
+
+
+def exit_code(ended: int, *, windows: bool = os.name == "nt") -> int:
+    """The one conversion from what a renderer ended with to what this process ends with.
+
+    Windows: a code is an unsigned 32-bit number, and the interpreter takes a
+    signed one, so 2**31 and above go out as the signed number with the same 32
+    bits. Elsewhere a renderer ended by signal N is reported as -N and goes out
+    as 128 + N, as a shell reports it; nothing that failed goes out as 0.
+    """
+    if windows:
+        ended &= 0xFFFFFFFF
+        return ended - 2 ** 32 if ended >= 2 ** 31 else ended
+    return min(128 - ended if ended < 0 else ended, 255)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(own_process=True))
+    raise SystemExit(exit_code(main(own_process=True)))

@@ -27,40 +27,81 @@ def _trees():
             for path in sorted(SRC.rglob("*.py")) if "vendor" not in path.parts]
 
 
-def _calls(names):
-    """Each module under src/g6 that calls one of ``names``, whether as a name or as an attribute."""
+def _dotted(path):
+    """``mcp/__init__.py`` is ``g6.mcp``; ``_allowance/store.py`` is ``g6._allowance.store``."""
+    parts = path[:-3].split("/")
+    return ".".join(["g6", *(parts[:-1] if parts[-1] == "__init__" else parts)])
+
+
+def _references():
+    """Every use, called or handed on, of a name that resolves through a module's imports or its own definitions.
+
+    Returns ``{dotted name: {module path: [the node that uses it]}}``. A name bound by ``import a.b``,
+    ``import a.b as c``, ``from a import b`` or ``from a import b as c`` (relative or not) resolves to what it was
+    imported as; a name a module defines at its top resolves to that module's own.
+    """
     found = {}
-    for module, tree in _trees():
+    for path, tree in _trees():
+        own = _dotted(path)
+        package = own if path.endswith("__init__.py") else own.rpartition(".")[0]
+        bound = {node.name: own + "." + node.name for node in tree.body
+                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
         for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                name = node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", None)
-                if name in names:
-                    found.setdefault(module, set()).add(name)
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    bound[alias.asname or alias.name.split(".")[0]] = (
+                        alias.name if alias.asname else alias.name.split(".")[0])
+            elif isinstance(node, ast.ImportFrom):
+                base = node.module or ""
+                if node.level:
+                    up = package.split(".")
+                    base = ".".join([*up[:len(up) - node.level + 1], *([base] if base else [])])
+                for alias in node.names:
+                    assert alias.name != "*" or not base.startswith(("g6.allowance", "g6._allowance")), (
+                        path, "a star import hides what is used")
+                    bound[alias.asname or alias.name] = base + "." + alias.name
+        inner = {id(node.value) for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Name, ast.Attribute)) and id(node) not in inner:
+                parts, value = [], node
+                while isinstance(value, ast.Attribute):
+                    parts.append(value.attr)
+                    value = value.value
+                if isinstance(value, ast.Name) and isinstance(value.ctx, ast.Load) and value.id in bound:
+                    name = ".".join([bound[value.id], *reversed(parts)])
+                    found.setdefault(name, {}).setdefault(path, []).append(node)
     return found
 
 
-def _imports(source, name):
-    """Each module under src/g6 that imports ``name`` from ``source``."""
-    return {module for module, tree in _trees() for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom) and node.module == source and any(a.name == name for a in node.names)}
+def _users(references, name):
+    """The modules that use ``name`` or anything reached through it."""
+    return {path for found, where in references.items() if found == name or found.startswith(name + ".")
+            for path in where}
 
 
 def test_the_callers_that_render_an_allowance_and_the_observers_they_start_are_these():
+    references = _references()
     # The renderers: the MCP tool and the plugin hook, through the one report; advice is rendered there alone.
-    assert _imports("g6.allowance", "report") == {"mcp/__init__.py", "_allowance/hook.py"}
-    assert _imports("g6._allowance.advice", "advise") == {"allowance.py"}
-    assert _imports("g6.allowance", "display") == {"_allowance/advice.py"}
-    # The observers: Codex's refresh thread, from a report that asks for it, and Claude's status-line process.
-    assert _calls({"start_refresh", "refresh_codex", "observe_in_worker", "observe_payload", "observe_claude"}) == {
-        "allowance.py": {"start_refresh"},
-        "_allowance/statusline.py": {"observe_in_worker", "observe_payload", "observe_claude"}}
-    refresh = next(node for node in ast.walk(dict(_trees())["_allowance/store.py"])
-                   if isinstance(node, ast.FunctionDef) and node.name == "start_refresh")
-    threads = [node for node in ast.walk(refresh) if isinstance(node, ast.Call) and ast.unparse(node.func) == "threading.Thread"]
-    assert [ast.unparse(k.value) for node in threads for k in node.keywords if k.arg == "target"] == ["refresh_codex"]
-    hook_source = dict(_trees())["_allowance/hook.py"]
-    reports = [node for node in ast.walk(hook_source)
-               if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "report"]
+    assert _users(references, "g6.allowance.report") == {"mcp/__init__.py", "_allowance/hook.py"}
+    assert _users(references, "g6._allowance.advice.advise") == {"allowance.py"}
+    assert _users(references, "g6.allowance.display") == {"_allowance/advice.py"}
+    # The observers, whether called or handed to a thread: Codex's refresh, from a report that asks for it, and
+    # Claude's status-line process.
+    assert _users(references, "g6._allowance.store.start_refresh") == {"allowance.py"}
+    assert _users(references, "g6._allowance.store.refresh_codex") == {"_allowance/store.py"}
+    assert _users(references, "g6._allowance.statusline.observe_in_worker") == {"_allowance/statusline.py"}
+    assert _users(references, "g6._allowance.statusline.observe_payload") == {"_allowance/statusline.py"}
+    assert _users(references, "g6._allowance.statusline.run_wrapper") == {"_allowance/statusline.py"}
+    # A method is reached through a value, not an import: any attribute of that name anywhere counts.
+    assert {path for path, tree in _trees() for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute) and node.attr == "observe_claude"} == {"_allowance/statusline.py"}
+    # The one thread an observer runs in is the refresh's, and the hook's one report asks for no refresh.
+    handed = [node for node in references["g6._allowance.store.refresh_codex"]["_allowance/store.py"]]
+    targets = [k for _, tree in _trees() for call in ast.walk(tree) if isinstance(call, ast.Call)
+               for k in call.keywords if k.arg == "target" and any(k.value is node for node in handed)]
+    assert len(handed) == len(targets) == 1
+    calls = {id(node.func): node for _, tree in _trees() for node in ast.walk(tree) if isinstance(node, ast.Call)}
+    reports = [calls[id(node)] for node in references["g6.allowance.report"]["_allowance/hook.py"]]
     assert [ast.unparse(node) for node in reports] == ["report(refresh=False)"], "the hook starts no observer"
 
 
