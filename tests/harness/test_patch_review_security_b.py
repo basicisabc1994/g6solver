@@ -118,12 +118,15 @@ def _ran(kind: str, node: str = NODE) -> dict:
     operating-system error was raised from or during), or timed_out. Printed text that names a refusal is in every
     failed one's output and message, as code under test can print it."""
     printed = "cache: Connection refused, using local value\nE   OSError: [Errno 111] Connection refused\n"
+    fields = {"said": "", "rootdir": "", "failed_ids": [], "setup_errors": {},
+              "collected_ids": [node], "omitted_ids": []}
     if kind == "passed":
-        return {"verdict": "passed", "seconds": 0.1, "output": printed + "1 passed",
+        return {**fields, "verdict": "passed", "seconds": 0.1, "output": printed + "1 passed",
                 "test_outcomes": {node: {"setup": "passed", "call": "passed", "teardown": "passed"}}}
     if kind == "timed_out":
         return {"verdict": "timed_out", "said": "it ran out of time", "seconds": 1.0, "output": ""}
-    found = {"verdict": "failed", "seconds": 0.1, "output": printed + f"FAILED {node} - assert 2 == -2",
+    found = {**fields, "verdict": "failed", "failed_ids": [node], "seconds": 0.1,
+             "output": printed + f"FAILED {node} - assert 2 == -2",
              "test_outcomes": {node: {"setup": "passed", "call": "failed", "teardown": "passed"}},
              "failure_messages": {node: "assert 2 == -2\n" + printed}}
     if kind == "os_error":
@@ -137,6 +140,7 @@ def test_a_refusal_is_read_from_g6s_own_record_of_the_run_never_from_text_the_co
     assert vs.reading(_ran("failed"), NODE)["result"] == "failed"   # the printed words name a refusal: not read
     assert vs.reading(_ran("os_error"), NODE)["result"] == "error"   # the record says so: a refused access, perhaps
     collected = {"verdict": "collection_error", "seconds": 0.1, "test_outcomes": {}, "os_errors": ["g6_check_x/test_keep.py"],
+                 "said": "", "rootdir": "", "failed_ids": [], "setup_errors": {}, "collected_ids": [], "omitted_ids": [],
                  "output": "ERROR collecting g6_check_x/test_keep.py\n",
                  "failure_messages": {"g6_check_x/test_keep.py": "ImportError while importing test module"}}
     assert vs.reading(collected, NODE)["result"] == "error"

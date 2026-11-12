@@ -80,7 +80,10 @@ class Rig:
 
     def _run_check(self, change, placed, source, node, *, at_base, timeout_s, roots=()):
         got = "failed" if self.failing else "passed"
-        return {"verdict": got, "said": "", "rootdir": "", "loaded_outside": {}, "loaded_complete": True, "os_errors": [],
+        observed = f"{placed}::test_critic"
+        return {"verdict": got, "said": "", "output": "", "rootdir": "", "loaded_outside": {}, "loaded_complete": True, "os_errors": [],
+                "collected_ids": [observed], "omitted_ids": [], "setup_errors": {},
+                "failed_ids": [observed] if self.failing else [],
                 "test_outcomes": {f"{placed}::test_critic": {"setup": "passed", "call": got, "teardown": "passed"}},
                 "failure_messages": {f"{placed}::test_critic": "assert False"} if self.failing else {}}
 

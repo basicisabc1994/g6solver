@@ -64,7 +64,7 @@ def result(passed=(), failed=()):
     outcomes = {**{node: {"setup": "passed", "call": "passed", "teardown": "passed"} for node in passed},
                 **{node: {"setup": "passed", "call": "failed", "teardown": "passed"} for node in failed}}
     verdict = "failed" if failed else "passed"
-    return {"verdict": verdict, "said": "", "passed": len(passed), "failed": len(failed), "not_passed": 0,
+    return {"verdict": verdict, "said": "", "rootdir": "", "passed": len(passed), "failed": len(failed), "not_passed": 0,
             "total": len(passed) + len(failed), "deselected": 0, "test_outcomes": outcomes,
             "collected_ids": sorted(outcomes), "omitted_ids": [], "changed": [], "output": "", "seconds": 0.25,
             "python": sys.executable, "interpreter_source": "g6", "command": "pytest",
@@ -79,7 +79,10 @@ def recorded(monkeypatch, in_place, at_base=None, default=None):
         return got
 
     def execute_at_base(change, ids, *, timeout_s, roots=()):
-        return at_base if at_base is not None else {"verdict": "not_run", "said": "no run was recorded"}
+        return at_base if at_base is not None else {"verdict": "not_run", "said": "no run was recorded",
+            'output': '', 'rootdir': '', 'test_outcomes': None,
+            'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+            'omitted_ids': []}
 
     monkeypatch.setattr(patch_review, "_execute", execute)
     monkeypatch.setattr(patch_review, "_execute_at_base", execute_at_base)
@@ -149,13 +152,16 @@ def test_the_adapter_records_what_g6_observed_in_the_order_it_observed_it():
     assert negative.controls == () and negative.positive_seq == 3   # behaviour to keep: the base is the reference
     assert negative.result == "fail" and facts.predicates == ("R1", "K1")
     out = m.issue_records(facts, artefact, records)
-    # the ledger holds what was promoted in the order G6 observed it: the receipt, then the run at the base commit; the
-    # check of the behaviour to keep has no negative control, so the mapping refuses it and it never reaches the issuer
-    assert [e["kind"] for e in out.ledger.entries() if e["kind"] != m.PROVENANCE_KIND] == ["receipt", "control"]
+    # the ledger holds what G6 observed in the order it observed it: the two first runs' receipts, then the run at the
+    # base commit; the check of the behaviour to keep has no negative control, so the mapping refuses it, and (slice 2's
+    # follow-up, review 4's finding 2) its failure still reaches the issuer as a caveat, at its own position
+    assert [e["kind"] for e in out.ledger.entries() if e["kind"] != m.PROVENANCE_KIND] == [
+        "receipt", "receipt", "control"]
     assert [(rid, [code for code, _ in codes]) for rid, codes in out.refused] == [(m.id_of("stated-run", NEGATIVE),
                                                                                   [m.NO_CONTROL])]
     statements = {s.predicate: s for s in out.certificate.predicates}
     assert not statements["R1"].support and not statements["K1"].refute   # never a refutation here
+    assert statements["K1"].caveats and [rid for rid, _ in out.caveats] == [m.id_of("stated-run", NEGATIVE)]
 
 
 def test_a_check_g6_could_not_read_is_refused_with_the_part_it_lacks():

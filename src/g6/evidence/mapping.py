@@ -14,11 +14,26 @@ one row that fixes:
 - how conflicting evidence is kept.
 
 ``promote`` turns one ``SourceRecord`` into the issuer's inputs, or refuses it with a stable ``G6_E_EVIDENCE_*`` code for
-each part it lacks; nothing it refuses reaches the issuer. A kind whose row has no issuer kind (a review, a step that ran,
-a proposed check) is a lead, never a source: it is refused as ``G6_E_EVIDENCE_KIND_NOT_PROMOTED``. ``issue_records``
-promotes a batch, writes what G6 observed into a fresh ``g6.core.ledger.ChainLedger`` with the issuer's own ``record``, and
-asks the issuer for the certificate. The mapping refuses what is missing; the issuer judges what is present (a control
-that was not killed, a check frozen after the artefact, a pass taken before its control), so the two never overlap.
+each part it lacks; nothing it refuses reaches the issuer as evidence. A kind whose row has no issuer kind (a review, a
+step that ran, a proposed check) is a lead, never a source: it is refused as ``G6_E_EVIDENCE_KIND_NOT_PROMOTED``.
+``issue_records`` promotes a batch, writes what G6 observed into a fresh ``g6.core.ledger.ChainLedger`` with the issuer's
+own ``record``, and asks the issuer for the certificate. The mapping refuses what is missing; the issuer judges what is
+present (a control that was not killed, a check frozen after the artefact, a pass taken before its control), so the two
+never overlap.
+
+Refusing a record never drops what it observed (review 4's finding 2). Every refusal ``issue_records`` makes, whatever
+its code, goes through one step: a refused record that observed anything but a pass on the artefact's bytes, for a
+predicate of the standard, reaches the issuer as a caveat (``caveat_of``), the issuer's own input for one: a check with
+no control, so it can neither support nor refute, and its failing or unknown receipt. A requirement with an observed
+failure is then never verified, whatever another check showed. A pass that is refused withholds nothing, and one taken
+on other bytes says nothing of these, as the issuer itself reads one. A caveat's id is checked, once every record is
+read, against every accepted check and receipt id, and made anew from itself and a count where one has it (``_fresh``;
+review 1 of slice 2's follow-up, finding 3): a record may name itself anything, so no id it states stops issuance.
+
+What one receipt of a certificate counts for is the issuer's own reading of that receipt alone (``receipt_roles``;
+review 4's finding 3), which ECHA's audit view shows: no receipt is lent the role of another receipt of its check, at
+any gate of the issuer's rule (``RECEIPT_GATES``), and the gate named for a predicate is the issuer's own reason for that
+predicate, never one it gives for another (``_gate``; review 1 of slice 2's follow-up, finding 4).
 
 ``CheckBinding`` is ECHA custody's binding of one evaluator receipt to its request, task, predicate, artefact, standard,
 fixture and evaluator, graduated here so a receipt keeps that binding when it becomes the issuer's (``from_binding``).
@@ -53,7 +68,7 @@ import json
 import math
 import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 from g6.core.ledger import ChainLedger
 from g6.core.ledger import canonical as _canonical
@@ -71,6 +86,8 @@ from g6.evidence.certificate import (
     issue,
     record,
 )
+from g6.evidence.certificate import _check_of as _issuers_check   # the issuer's own reading of a check it wrote
+from g6.evidence.certificate import _issue as _issuers_decision
 
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _ID = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
@@ -102,11 +119,17 @@ BINDING_STANDARD = "G6_E_EVIDENCE_BINDING_STANDARD"
 BINDING_PREDICATE = "G6_E_EVIDENCE_BINDING_PREDICATE"
 BINDING_CHECK = "G6_E_EVIDENCE_BINDING_CHECK"
 BINDING_UNREADABLE = "G6_E_EVIDENCE_BINDING_UNREADABLE"
+#: A record its source does not believe, whatever it says (the patch review's integrity problem): refused whole.
+NOT_BELIEVED = "G6_E_EVIDENCE_RUN_NOT_BELIEVED"
 CODES = (UNMAPPED, NOT_PROMOTED, NO_ARTEFACT, OTHER_ARTEFACT, OTHER_PRODUCER, OTHER_ORDER, NO_MODEL, NO_STANDARD,
          OTHER_STANDARD, NO_CHECK, NO_ENVIRONMENT, NO_CONTROL, NO_INDEPENDENCE, NO_ORDER, NO_SCOPE, NO_RESULT,
-         CONFLICTING, BINDING_ARTEFACT, BINDING_STANDARD, BINDING_PREDICATE, BINDING_CHECK, BINDING_UNREADABLE)
+         CONFLICTING, BINDING_ARTEFACT, BINDING_STANDARD, BINDING_PREDICATE, BINDING_CHECK, BINDING_UNREADABLE,
+         NOT_BELIEVED)
 #: The ledger kind under which a promoted receipt's environment, model, scope and source are kept beside it.
 PROVENANCE_KIND = "provenance"
+#: The issuer kind a refused record's observation is kept as (``caveat_of``): with no control, a check of this kind can
+#: neither support nor refute, and its failure is a caveat (the issuer's rule, and this table's row for the kind).
+CAVEAT_KIND = "partial_falsifier"
 
 
 @dataclass(frozen=True)
@@ -556,6 +579,35 @@ def promote(rec: SourceRecord, *, facts: MissionFacts, artifact: Artifact) -> tu
     return check, Receipt(rec.record_id, parts.check_id, parts.check_sha, parts.artefact, rec.result, int(rec.seq))
 
 
+def caveat_of(rec: SourceRecord, ident: str, *, facts: MissionFacts,
+              artifact: Artifact) -> tuple[Check, Receipt] | None:
+    """What a record the mapping does not promote observed, as the issuer's own input for a caveat (review 4's finding
+    2), under the id ``ident``. None when it observed a pass (refusing one withholds nothing), or when what it is about
+    (``about``) is not ``artifact``'s bytes or names no predicate of the standard (the issuer counts nothing taken on
+    other bytes, a caveat included). Otherwise a check of its own with no control, so it can neither support nor refute
+    (``CAVEAT_KIND``), for the predicates it names that the standard has, and its receipt on the artefact's bytes:
+    ``fail`` for a failure, ``unknown`` for any other result (an error, or a result that does not read as one).
+
+    What the record could not state is filled only so the issuer reads it, never so it counts: the check names the
+    record's code, or with none the digest of its id and check; its receipt is placed where the record placed it, or at
+    the artefact when that is not a position or comes earlier (an observation of the artefact's bytes comes after them)."""
+    if rec.result == "pass":
+        return None
+    parts, _ = about(rec)
+    if not isinstance(parts.artefact, str) or parts.artefact != artifact.sha256:
+        return None
+    given = parts.predicates if isinstance(parts.predicates, (tuple, list)) else ()
+    named = tuple(p for p in dict.fromkeys(p for p in given if isinstance(p, str)) if p in facts.predicates)
+    if not named:
+        return None
+    sha = parts.check_sha if isinstance(parts.check_sha, str) and _HEX64.match(parts.check_sha) else _digest(
+        [str(rec.record_id), str(parts.check_id)])
+    seq = rec.seq if _position(rec.seq) and rec.seq >= artifact.seq else artifact.seq
+    check = Check(ident, named, rec.author if _text(rec.author) else "unnamed", CAVEAT_KIND, sha,
+                  rec.frozen_seq if _position(rec.frozen_seq) else 0)
+    return check, Receipt(ident, ident, sha, artifact.sha256, "fail" if rec.result == "fail" else "unknown", seq)
+
+
 @dataclass(frozen=True)
 class Issued:
     """What ``issue_records`` gives: the issuer's certificate, the ledger it rests on, and each refused record."""
@@ -566,6 +618,26 @@ class Issued:
     refused: tuple[tuple[str, tuple[tuple[str, str], ...]], ...]
     #: (record id, source kind, issuer kind) for each record promoted.
     promoted: tuple[tuple[str, str, str], ...]
+    #: (record id, the caveat's check and receipt id) for each refused record whose observation reached the issuer as
+    #: a caveat (``caveat_of``).
+    caveats: tuple[tuple[str, str], ...] = ()
+
+
+def _fresh(taken: set[str], ident: str) -> str:
+    """``ident`` when no id in ``taken`` is it, else the first id made of it and a count (``id_of``) that none is; the
+    id given then joins ``taken`` (G6 0.3, review 1 of slice 2's follow-up, finding 3). An id a record states may be any
+    text, so an id the mapping makes is checked against every accepted one, never assumed apart from them."""
+    found, count = ident, 0
+    while found in taken:
+        count += 1
+        found = id_of(ident, count)
+    taken.add(found)
+    return found
+
+
+def _named(check: Check, receipt: Receipt, ident: str) -> tuple[Check, Receipt]:
+    """A caveat's check and receipt (``caveat_of``) under the id ``ident``."""
+    return replace(check, check_id=ident), replace(receipt, receipt_id=ident, check_id=ident)
 
 
 def _merged(old: Check, new: Check) -> Check | None:
@@ -582,53 +654,73 @@ def _merged(old: Check, new: Check) -> Check | None:
 
 
 def issue_records(facts: MissionFacts, artifact: Artifact, records: Iterable[SourceRecord], *,
-                  decisions: Collection[str] = (), extra: Mapping[str, object] | None = None) -> Issued:
+                  decisions: Collection[str] = (), extra: Mapping[str, object] | None = None,
+                  not_believed: str = "") -> Issued:
     """The issuer's certificate for ``artifact`` from the records the mapping promotes. Each promoted control and
     receipt is written to a fresh ledger with the issuer's ``record``, and beside each receipt its provenance (the
     source kind, the environment, the model and the scope), which the issuer does not read; then ``issue`` decides.
-    ``extra`` is added to every provenance entry (what the caller ran, say).
+    ``extra`` is added to every provenance entry (what the caller ran, say). ``not_believed``: why the caller believes
+    none of the records (the patch review's integrity problem): each is refused (``NOT_BELIEVED``), as any other.
 
     One id, one body, wherever the two appear: a record id seen before is refused (``CONFLICTING``) when anything else
     of the record differs, what it is about included (its binding, environment and scope), and is the same record when
     nothing does; a control id is refused the same way when another record (or the same record, ``problems``) gives it
     another body, and a check id when another record gives it another check. Ids from two calls never meet here: each
-    call's ledger is its own, and a ledger they are both written to refuses any id it already holds."""
+    call's ledger is its own, and a ledger they are both written to refuses any id it already holds.
+
+    Every refusal here goes through one step (``refuse``), whatever its code: what the refused record observed, unless
+    it was a pass, reaches the issuer as a caveat (``caveat_of``), written to the ledger beside a provenance entry that
+    names the record and why it was refused."""
     refused: list[tuple[str, tuple[tuple[str, str], ...]]] = []
+    kept: list[tuple[Check, Receipt, SourceRecord, tuple[tuple[str, str], ...]]] = []   # each refusal's caveat
     checks: dict[str, Check] = {}
     receipts: dict[str, tuple[Receipt, SourceRecord]] = {}
     controls: dict[str, Control] = {}   # the controls the promoted checks rest on, written to the ledger
     bodies: dict[str, Control] = {}     # every control a record states, by id: one body each
     seen: dict[str, SourceRecord] = {}
+
+    def refuse(rec: SourceRecord, codes: tuple[tuple[str, str], ...]) -> None:
+        refused.append((rec.record_id, codes))
+        caveat = caveat_of(rec, id_of("caveat", len(kept), str(rec.record_id)), facts=facts, artifact=artifact)
+        if caveat is not None:
+            kept.append((*caveat, rec, codes))
+
     for rec in records:
         if rec.record_id in seen:
             if seen[rec.record_id] != rec:
-                refused.append((rec.record_id, ((CONFLICTING, "another record with this id is about another part, "
-                                                              "or says another thing"),)))
+                refuse(rec, ((CONFLICTING, "another record with this id is about another part, or says another "
+                                           "thing"),))
             continue
         seen[rec.record_id] = rec
+        if not_believed:
+            refuse(rec, ((NOT_BELIEVED, not_believed),))
+            continue
         if any(bodies.get(c.control_id, c) != c for c in _controls(rec)):
-            refused.append((rec.record_id, ((CONFLICTING, "another record gives one of its controls another body"),)))
+            refuse(rec, ((CONFLICTING, "another record gives one of its controls another body"),))
             continue
         for c in _controls(rec):
             bodies.setdefault(c.control_id, c)
         try:
             check, receipt = promote(rec, facts=facts, artifact=artifact)
         except PromotionRefused as exc:
-            refused.append((exc.record_id, exc.codes))
+            refuse(rec, exc.codes)
             continue
         except CertificateRefused as exc:   # a value the issuer's own types refuse (a position, a digest)
-            refused.append((rec.record_id, tuple((NO_ORDER, p) for p in exc.problems)))
+            refuse(rec, tuple((NO_ORDER, p) for p in exc.problems))
             continue
         merged = check if check.check_id not in checks else _merged(checks[check.check_id], check)
         if merged is None:   # one fact, one body: a check another record gives another body is kept out
-            refused.append((rec.record_id, ((CONFLICTING, "another record gives this check another body"),)))
+            refuse(rec, ((CONFLICTING, "another record gives this check another body"),))
             continue
         checks[check.check_id] = merged
         receipts[receipt.receipt_id] = (receipt, rec)
         controls.update({c.control_id: c for c in check.controls})
+    # every record read: each caveat keeps the id refuse() gave it unless an accepted check or receipt has it (_fresh)
+    taken = {*checks, *receipts}
+    kept = [(*_named(check, receipt, _fresh(taken, check.check_id)), rec, codes) for check, receipt, rec, codes in kept]
     ledger = ChainLedger()
     # the ledger's own order is the order G6 observed things in, the one each record's position states
-    record(ledger, *sorted([*controls.values(), *(r for r, _ in receipts.values())],
+    record(ledger, *sorted([*controls.values(), *(r for r, _ in receipts.values()), *(r for _, r, _, _ in kept)],
                            key=lambda item: (item.seq, isinstance(item, Receipt))))
     for receipt, rec in receipts.values():
         parts, _ = about(rec)
@@ -636,11 +728,92 @@ def issue_records(facts: MissionFacts, artifact: Artifact, records: Iterable[Sou
             "source_kind": rec.kind, "issuer_kind": checks[receipt.check_id].kind, "environment_sha256":
             parts.environment, "model_sha256": rec.model_sha256, "scope": parts.scope,
             **({"binding": rec.binding.to_dict()} if rec.binding else {}), **dict(extra or {})})
-    certificate = issue(facts, artifact, list(checks.values()), [r for r, _ in receipts.values()],
+    for _, receipt, rec, codes in kept:   # what a refused record observed, and why it was refused, in words
+        ledger.append(PROVENANCE_KIND, receipt.receipt_id, {
+            "source_kind": str(rec.kind), "issuer_kind": CAVEAT_KIND, "kept_as": "caveat",
+            "record_id": str(rec.record_id), "refused": [[str(code), str(why)] for code, why in codes],
+            **dict(extra or {})})
+    certificate = issue(facts, artifact, [*checks.values(), *(c for c, _, _, _ in kept)],
+                        [*(r for r, _ in receipts.values()), *(r for _, r, _, _ in kept)],
                         decisions=decisions, ledger=ledger)
     promoted = tuple((receipt.receipt_id, rec.kind, checks[receipt.check_id].kind)
                      for receipt, rec in receipts.values())
-    return Issued(certificate, ledger, tuple(refused), promoted)
+    return Issued(certificate, ledger, tuple(refused), promoted,
+                  tuple((str(rec.record_id), check.check_id) for check, _, rec, _ in kept))
+
+
+#: Why the issuer, reading one receipt of a certificate alone, counts it neither for nor against a predicate and keeps it
+#: as no caveat (``receipt_roles``): the gate of its rule the receipt did not meet, in the issuer's own order and named as
+#: it names them in its gaps, or a receipt it cannot read at all. An inventory test lists the gates from the issuer.
+RECEIPT_GATES = ("not_a_receipt", "receipt_for_other_bytes", "check_changed_after_freeze", "receipt_before_artifact",
+                 "not_grounded", "not_in_ledger", "control_after_receipt")
+
+
+def _offline_resolution(body: Mapping[str, object]):
+    """The certificate's unresolved identities, with no invented choice of a control body.
+
+    The issuer's offline reading resolves identities only. Its shared decision
+    function selects backing controls; every supplied body reaches that rule.
+    """
+    missing = {(str(kind), str(ident)) for kind, ident in body.get("unresolved") or []}
+    return lambda kind, ident, _body: (kind, ident) not in missing
+
+
+def _gate(predicate: str, alone: Certificate) -> str:
+    """The gate of the issuer's rule a receipt did not meet for ``predicate`` when the issuer, reading it alone
+    (``alone``: its certificate from that one receipt), neither counts it for or against ``predicate`` nor keeps it as a
+    caveat: the issuer's own reason for that predicate, its gap, which begins with the gate's name (G6 0.3, review 1 of
+    slice 2's follow-up, finding 4). Nothing the certificate says of another predicate, or of all of them, is read, and
+    the rest of the reason (ids, which may hold any text) is never parsed. ``not_a_receipt`` when that reason names no
+    gate (the issuer has no reading this table knows)."""
+    why = dict(alone.gaps).get(f"predicate:{predicate}", "")
+    named = [gate for gate in RECEIPT_GATES if why.startswith(gate + ":")]
+    return named[0] if len(named) == 1 else "not_a_receipt"
+
+
+def receipt_roles(body: Mapping[str, object], *, ledger: ChainLedger | None = None,
+                  ) -> list[dict[str, tuple[str, str]]]:
+    """For each receipt of the certificate ``body`` (``Certificate.as_dict``), in its order, the role the issuer gives
+    that receipt alone for each predicate its check names, with the gate it did not meet (``RECEIPT_GATES``) when it has
+    none: ``supports``, ``refutes`` or ``caveat`` exactly as ``issue`` decides for that one receipt, with the checks and
+    controls the body records and ``ledger`` (without one, the issuer's offline identity resolution),
+    else ``not counted`` (review 4's finding 3). No receipt is lent another's role. A receipt the issuer cannot read (a
+    result, a position or a check it has no word for), or a body that does not record what it was decided from, is not
+    counted for any predicate."""
+    names = tuple(str(statement["predicate"]) for statement in body["predicates"])
+    facts = MissionFacts(str(body["mission_sha"]), str(body["standard_sha"]), str(body["standard_sha"]), names, names)
+    try:
+        artifact = Artifact(body["artifact_sha"], body["producer"], body["artifact_seq"])
+        checks = [_issuers_check(raw) for raw in body["checks"]]
+    except (CertificateRefused, KeyError, TypeError):   # it does not record what it was decided from (an older one)
+        artifact, checks = None, []
+    by_id = {check.check_id: check for check in checks}
+    found: list[dict[str, tuple[str, str]]] = []
+    for raw in body["receipts"]:
+        check = by_id.get(raw.get("check_id")) if isinstance(raw, Mapping) else None
+        try:
+            receipt = Receipt(**raw)
+            if artifact is None or check is None:
+                raise TypeError("no check or artefact to read it with")
+            alone = (issue(facts, artifact, checks, [receipt], ledger=ledger) if ledger is not None else
+                     _issuers_decision(facts, artifact, checks, [receipt], (), None, _offline_resolution(body)))
+        except (CertificateRefused, TypeError, ValueError):
+            found.append(dict.fromkeys(names, ("not counted", "not_a_receipt")))
+            continue
+        roles: dict[str, tuple[str, str]] = {}
+        for statement in alone.predicates:
+            if statement.predicate not in check.predicates:
+                continue
+            if receipt.check_id in statement.supported_by:
+                roles[statement.predicate] = ("supports", "")
+            elif receipt.check_id in statement.refuted_by:
+                roles[statement.predicate] = ("refutes", "")
+            elif receipt.check_id in statement.caveats:
+                roles[statement.predicate] = ("caveat", "")
+            else:
+                roles[statement.predicate] = ("not counted", _gate(statement.predicate, alone))
+        found.append(roles)
+    return found
 
 
 def environment_sha256(environment: Mapping[str, object]) -> str:
@@ -671,10 +844,11 @@ def render_markdown() -> str:
     return f"{PAGE_HEAD}{head}\n{rule}\n" + "\n".join(rows) + f"\n\n## Refusal codes\n\n{codes}\n"
 
 
-__all__ = ["BINDING_ARTEFACT", "BINDING_CHECK", "BINDING_PREDICATE", "BINDING_STANDARD", "BINDING_UNREADABLE", "CODES",
-           "COLUMNS", "CONFLICTING", "ISSUER_SIDE", "MAPPING", "NOT_PROMOTED", "NO_ARTEFACT", "NO_CHECK", "NO_CONTROL",
-           "NO_ENVIRONMENT", "NO_INDEPENDENCE", "NO_MODEL", "NO_ORDER", "NO_RESULT", "NO_SCOPE", "NO_STANDARD",
-           "OTHER_ARTEFACT", "OTHER_ORDER", "OTHER_PRODUCER", "OTHER_STANDARD", "PROVENANCE_KIND", "UNMAPPED", "About",
-           "CheckBinding", "Issued", "PromotionRefused", "Row", "SourceRecord", "UnreadableBinding", "about",
-           "bound_parts", "check_id_of", "environment_sha256", "id_of", "issue_records", "issuer_kind", "problems",
-           "promote", "read_about", "read_binding", "render_markdown", "strict_json"]
+__all__ = ["BINDING_ARTEFACT", "BINDING_CHECK", "BINDING_PREDICATE", "BINDING_STANDARD", "BINDING_UNREADABLE",
+           "CAVEAT_KIND", "CODES", "COLUMNS", "CONFLICTING", "ISSUER_SIDE", "MAPPING", "NOT_BELIEVED", "NOT_PROMOTED",
+           "NO_ARTEFACT", "NO_CHECK", "NO_CONTROL", "NO_ENVIRONMENT", "NO_INDEPENDENCE", "NO_MODEL", "NO_ORDER",
+           "NO_RESULT", "NO_SCOPE", "NO_STANDARD", "OTHER_ARTEFACT", "OTHER_ORDER", "OTHER_PRODUCER", "OTHER_STANDARD",
+           "PROVENANCE_KIND", "RECEIPT_GATES", "UNMAPPED", "About", "CheckBinding", "Issued", "PromotionRefused", "Row",
+           "SourceRecord", "UnreadableBinding", "about", "bound_parts", "caveat_of", "check_id_of",
+           "environment_sha256", "id_of", "issue_records", "issuer_kind", "problems", "promote", "read_about",
+           "read_binding", "receipt_roles", "render_markdown", "strict_json"]

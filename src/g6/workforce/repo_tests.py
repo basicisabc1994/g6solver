@@ -64,6 +64,7 @@ import fnmatch
 import hashlib
 import importlib.machinery
 import json
+import math
 import os
 import re
 import shutil
@@ -73,11 +74,12 @@ import sys
 import tempfile
 import time
 import tomllib
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from types import MappingProxyType
 from xml.etree import ElementTree
 
 from g6.core import component_process, confine, git_env, ledger
@@ -209,6 +211,535 @@ SAID = {
                  "PYTEST_..., G6_..., COV_CORE_..., TMP..., PATH, HOME, USERPROFILE, TEMP) and those G6 sets itself "
                  "(OPENROUTER_API_KEY, the HTTP proxies, NO_PROXY), or unset it"),
 }
+
+
+# The producer owns both the report's wire schema and its immutable reading.
+# Core evidence fields are required. Execution/copy/receipt annotations are
+# optional because early refusals and recorded runs do not carry them; every
+# supplied annotation must still have exactly its declared built-in type.
+@dataclass(frozen=True)
+class ReportField:
+    kind: object
+    example: object
+    purpose: str
+    constraint: str
+    required: bool = False
+    required_members: tuple[str, ...] = ()
+    predicate: Callable[[object], bool] | None = None
+
+    def accepts(self, value: object) -> bool:
+        return (_report_type(value, self.kind)
+                and all(type(value) is dict and name in value for name in self.required_members)
+                and (self.predicate is None or self.predicate(value)))
+
+
+def _report_type(value: object, kind: object) -> bool:
+    """Exact built-in types recursively, including dict keys and list members."""
+    if type(kind) is tuple:
+        return any(_report_type(value, member) for member in kind)
+    if type(kind) is list:
+        return type(value) is list and all(_report_type(item, kind[0]) for item in value)
+    if type(kind) is dict:
+        if type(value) is not dict:
+            return False
+        if len(kind) == 1 and str in kind:
+            return all(type(key) is str and _report_type(item, kind[str]) for key, item in value.items())
+        return (all(type(key) is str and key in kind for key in value)
+                and all(_report_type(item, kind[key]) for key, item in value.items()))
+    return type(value) is kind
+
+
+def _report_object(pairs):
+    """JSON objects with duplicate fields cannot be a report of the declared type."""
+    found = {}
+    for key, value in pairs:
+        if key in found:
+            raise ValueError("duplicate report field")
+        found[key] = value
+    return found
+
+
+_ISOLATION = {"backend": (str, type(None)), "why": str, "network": bool, "container": (str, type(None)),
+              "profile": (str, type(None)), "warning": str, "allowed_by": str, "cleanup": str}
+
+# G6's probe payload is read once by the producer, before it builds the final
+# report. Consumers never recover payloads or outcomes from captured output.
+MAX_OBSERVATIONS, MAX_OBSERVATION_CHARS, MAX_OBSERVATION_DEPTH = 32, 1000, 16
+OBSERVATION = "G6-OBSERVATION"
+_OBSERVED = re.compile(rf"{OBSERVATION} (.*)$", re.MULTILINE)
+_CUT_OBSERVATIONS = re.compile(r"^\.\.\. \[\d+ bytes of output omitted\] \.\.\.$", re.MULTILINE)
+
+
+def _observation_depth(value) -> int:
+    deepest, pending = 0, [(value, 1)]
+    while pending and deepest <= MAX_OBSERVATION_DEPTH:
+        item, level = pending.pop()
+        deepest = max(deepest, level)
+        children = item.values() if type(item) is dict else item if type(item) is list else ()
+        pending.extend((child, level + 1) for child in children)
+    return deepest
+
+
+def probe_observations(output: str) -> list[dict] | None | str:
+    """Ingest G6's own payload protocol while the producer builds a report."""
+    lines = [match.group(1) for match in _OBSERVED.finditer(output)]
+    if not lines:
+        return None
+    if _CUT_OBSERVATIONS.search(output):
+        return "its output was longer than G6 keeps of a run, so its observations cannot be read in full"
+    if len(lines) > MAX_OBSERVATIONS:
+        return f"it recorded {len(lines)} observations; a probe records at most {MAX_OBSERVATIONS}"
+    found = []
+    for line in lines:
+        if len(line) > MAX_OBSERVATION_CHARS:
+            return f"an observation holds more than {MAX_OBSERVATION_CHARS} characters"
+        try:
+            item = json.loads(line, object_pairs_hook=_report_object)
+        except (ValueError, RecursionError):
+            return f"an observation is not JSON: {line[:80]!r}"
+        if not (type(item) is dict and set(item) == {"input", "output"}):
+            return f"an observation is not {{\"input\": ..., \"output\": ...}}: {line[:80]!r}"
+        if _observation_depth(item) > MAX_OBSERVATION_DEPTH:
+            return f"an observation is nested more than {MAX_OBSERVATION_DEPTH} levels deep"
+        found.append(item)
+    return found if _payload_shape(found) else "an observation is not a bounded JSON value"
+
+
+def _payload_shape(value: object) -> bool:
+    if type(value) in (str, type(None)):
+        return True
+    if type(value) is not list or len(value) > MAX_OBSERVATIONS:
+        return False
+    pending = [(item, 1) for item in value]
+    if any(type(item) is not dict or any(type(key) is not str for key in item)
+           or set(item) != {"input", "output"} for item in value):
+        return False
+    while pending:
+        item, depth = pending.pop()
+        if depth > MAX_OBSERVATION_DEPTH:
+            return False
+        if type(item) is dict:
+            if any(type(key) is not str for key in item):
+                return False
+            pending.extend((child, depth + 1) for child in item.values())
+        elif type(item) is list:
+            pending.extend((child, depth + 1) for child in item)
+        elif type(item) not in (str, int, float, bool, type(None)) or (type(item) is float and not math.isfinite(item)):
+            return False
+    # Decoding changes float spelling and Unicode escaping. Bound the decoded
+    # tree directly; the producer already applied the original line budget.
+    for observation in value:
+        remaining, nodes = MAX_OBSERVATION_CHARS, 0
+        pending_values = [observation]
+        while pending_values:
+            item = pending_values.pop()
+            nodes += 1
+            if nodes > MAX_OBSERVATION_CHARS:
+                return False
+            if type(item) is dict:
+                remaining -= sum(len(key) for key in item)
+                pending_values.extend(item.values())
+            elif type(item) is list:
+                pending_values.extend(item)
+            elif type(item) is str:
+                remaining -= len(item)
+            elif type(item) is int and item.bit_length() > MAX_OBSERVATION_CHARS * 4:
+                return False
+            if remaining < 0:
+                return False
+    return True
+
+
+REPORT_FIELDS = {
+    "verdict": ReportField(str, "passed", "runner decision", "known runner verdict", True),
+    "said": ReportField(str, "", "runner explanation", "text only", True),
+    "output": ReportField(str, "", "captured pytest output", "text only", True),
+    "rootdir": ReportField(str, "", "test identity prefix",
+                           "repository-relative text; exactly empty when pytest never supplied a root", True),
+    "test_outcomes": ReportField(({str: {str: str}}, type(None)), {}, "ordered per-test phases",
+                                 "complete ordered phases; null only for a non-ran diagnostic without phase data", True),
+    "failed_ids": ReportField([str], [], "failed tests in producer emission order", "exact failure disposition, unique", True),
+    "setup_errors": ReportField({str: str}, {}, "fixture lookup failures", "setup failed, disjoint failures", True),
+    "collected_ids": ReportField([str], [], "all collected identities", "equals run plus omitted, unique", True),
+    "omitted_ids": ReportField([str], [], "collected but deselected", "disjoint run, unique", True),
+    "not_found_ids": ReportField([str], [], "requested identities pytest did not find", "disjoint collected, unique"),
+    "missing_modules": ReportField([str], [], "names from ModuleNotFoundError objects", "exact text names"),
+    "probe_observations": ReportField((list, str, type(None)), None, "G6 probe payload or its read error",
+                                      "bounded exact JSON input/output pairs, or an error or no payload",
+                                      predicate=_payload_shape),
+    "collection_stopped": ReportField((bool, type(None)), None, "session stopped during collection",
+                                      "true requires a collection failure or missing selection, and nothing is "
+                                      "established when true; null when unrecorded"),
+    "python_sources": ReportField(([str], type(None)), None, "Python names in the copy's pre-run snapshot",
+                                  "unique relative Python paths, or null for a Git source listing",
+                                  predicate=lambda names: names is None or len(names) == len(set(names)) and all(
+                                      name.endswith(".py") and "\\" not in name and ":" not in name
+                                      and not PurePosixPath(name).is_absolute() and ".." not in PurePosixPath(name).parts
+                                      for name in names)),
+}
+for _name in ("passed", "failed", "not_passed", "total", "deselected"):
+    REPORT_FIELDS[_name] = ReportField(int, int(_name in ("passed", "total")), "runner tally",
+                                      "machine count; phase and annotation bounds, aggregate total, omitted count",
+                                      predicate=lambda value: 0 <= value <= sys.maxsize)
+for _name in ("collected", "started", "finished"):
+    REPORT_FIELDS[_name] = ReportField(int, 1, "producer progress tally", "equals the corresponding identity or phase count",
+                                      predicate=lambda value: 0 <= value <= sys.maxsize)
+for _name in ("own_config", "loaded_complete"):
+    REPORT_FIELDS[_name] = ReportField(bool, False, "execution flag", "exact boolean")
+REPORT_FIELDS["degraded"] = ReportField(bool, False, "the run fell short of a whole run",
+                                        "exact boolean; never true beside a pass, and nothing is established when true")
+REPORT_FIELDS["completed"] = ReportField(bool, True, "pytest's exit was 0 or 5 and every expected test finished",
+                                         "exact boolean; true beside every pass, false beside every failure")
+for _name in ("seconds",):
+    REPORT_FIELDS[_name] = ReportField(float, 0.0, "elapsed time", "finite and nonnegative",
+                                      predicate=lambda value: math.isfinite(value) and value >= 0)
+for _name in ("python", "interpreter_source", "command", "source_before", "receipt", "receipt_withheld",
+              "receipt_error", "baseline", "patched"):
+    REPORT_FIELDS[_name] = ReportField(str, "", "execution or receipt annotation", "text only")
+for _name in ("changed", "os_errors", "import_path", "env_set_by_g6", "ignored_loadable"):
+    REPORT_FIELDS[_name] = ReportField([str], [], "execution identity listing", "text members; os_errors annotate recorded failures")
+REPORT_FIELDS["changed"] = ReportField([str], [], "files that changed under the run",
+                                       "text members; named only beside the verdict that says files changed")
+for _name in ("failure_messages", "messages", "repo_env", "loaded_outside", "submodules_not_hashed", "links_left_out",
+              "links_materialised", "generated_copied", "generated_left_out", "ignored_inputs"):
+    REPORT_FIELDS[_name] = ReportField({str: str}, {}, "execution annotation by identity", "text keys and values")
+REPORT_FIELDS["isolation"] = ReportField(_ISOLATION, {"backend": "recorded"}, "execution boundary",
+                                        "known typed fields, backend required", required_members=("backend",))
+for _name in ("failure_messages", "messages"):
+    REPORT_FIELDS[_name] = ReportField({str: str}, {}, "failure annotations by identity",
+                                      "failed phase, or an uncollected collection failure; never omitted")
+
+REPORT_LISTINGS = {"test_outcomes": dict, "failed_ids": list, "setup_errors": dict,
+                   "omitted_ids": list, "collected_ids": list, "not_found_ids": list}
+REPORT_PHASES = ("setup", "call", "teardown")
+REPORT_OUTCOMES = frozenset({"passed", "failed", "skipped"})
+REPORT_VERDICTS = frozenset({*RAN, CHANGED, RUN_INCONSISTENT, CRASHED, "timed_out", "collection_error",
+                             "no_tests_collected", "pytest_not_found", "inconsistent_report", "incomplete",
+                             "could_not_start", "not_run"})
+
+
+#: Every state in which a run establishes nothing: no pass, no failure of a test's body, no replay count and no killed
+#: negative control. ``read_report`` decides each from the whole report (``RunReport.withheld``), and ``established``
+#: decides whose code ran from a listing of the tree's own files. A statement of support is made only where none holds.
+NO_AUTHORITY = {
+    "unreadable": "the report does not read as one the runner writes, or one part of it contradicts another",
+    "no_result": "the run's verdict is neither a pass nor a failure",
+    "changed_source": "the report records source files changed under the run",
+    "degraded": "the report marks the run degraded",
+    "incomplete": "the report records that the run did not complete",
+    "loading_unknown": "the report cannot say which code the run loaded",
+    "foreign_code": "the run loaded the tree's own modules from outside the tree",
+}
+
+
+def report_covers(check: str, node: str) -> bool:
+    """Whether the test ``node`` is in the scope ``check`` names, by pytest's own reading of a selection
+    (``_pytest.main.resolve_collection_argument`` and its match while collecting): after the path, everything from the
+    first "[" is one parameter of the last name, and a selection with a parameter matches the test of exactly that
+    name, so ``test_add[a]`` never covers ``test_add[a][b]``, another parameter of the same function. A folder or file
+    covers what lies under it, whatever its name holds (pytest collects a folder named ``pkg[1]`` under its parent,
+    though it refuses to be asked for it alone); a class covers its tests; a function each of its parameters."""
+    check = check.rstrip("/")
+    if node == check:
+        return True
+    path, named, names = check.partition("::")
+    if not named:
+        return node.startswith((path + "/", path + "::"))
+    if "[" in names:
+        return False
+    return node.startswith(check + "::") or (node.startswith(check + "[") and node.endswith("]"))
+
+
+@dataclass(frozen=True, eq=False)
+class PhaseRecord(Mapping):
+    """An immutable ordered phase record; unknown records never have a body result."""
+    entries: tuple[tuple[str, str], ...]
+    valid: bool
+
+    def __getitem__(self, key):
+        return dict(self.entries)[key]
+
+    def __iter__(self):
+        return (key for key, _ in self.entries)
+
+    def __len__(self):
+        return len(self.entries)
+
+    def body(self) -> str:
+        if not self.valid:
+            return "error" if "failed" in self.values() else "not_run"
+        # A failed call is a positive body match, including an independently
+        # failed teardown. A fixture failure alone is never a body failure.
+        if self.get("setup") == "passed" and self.get("call") == "failed":
+            return "failed"
+        if "failed" in self.values():
+            return "error"
+        return "skipped" if "skipped" in self.values() else "passed"
+
+
+def read_phases(raw: object) -> PhaseRecord:
+    if type(raw) is PhaseRecord:
+        return raw
+    typed = _report_type(raw, {str: str})
+    items = tuple(raw.items()) if typed else ()
+    names = tuple(key for key, _ in items)
+    valid = (typed and set(raw.values()) <= REPORT_OUTCOMES and
+             (items == (("collection", "skipped"),) or
+              (names == (REPORT_PHASES if raw.get("setup") == "passed" else ("setup", "teardown")))))
+    return PhaseRecord(items, bool(valid))
+
+
+@dataclass(frozen=True)
+class RunReport:
+    """A detached reading. Even an unknown report retains typed identity hints.
+
+    Hints only select unknown observations; they never authorize a pass or kill.
+    Diagnostic verdicts keep the released review meaning, independently of body
+    observations. What the run establishes is stated here alone: ``outcome`` and
+    ``body_result``, both unknown in any ``NO_AUTHORITY`` state (``withheld``);
+    ``established`` adds whose code ran. No consumer states it from the fields.
+    """
+    valid: bool
+    phases: Mapping[str, PhaseRecord]
+    nodes: frozenset[str]
+    started: frozenset[str]
+    failed: frozenset[str]  # failed_ids/setup_errors only; collection errors stay distinct
+    omitted: frozenset[str]
+    collection_errors: frozenset[str]
+    rootdir: str
+    verdict: str
+    said: str
+    output: str
+    data: Mapping[str, object]
+    outcome: str
+    loading_known: bool  # diagnostics survive unrelated errors; outcome still needs whole-report validity
+    #: Each ``NO_AUTHORITY`` state the report itself is in, in that order. Non-empty: ``outcome`` and every
+    #: ``body_result`` are unknown, whatever the phases say.
+    withheld: tuple[str, ...] = ("unreadable",)
+
+    @property
+    def has_phase_data(self) -> bool:
+        """Whether this validated shape carries phase data rather than no telemetry."""
+        return self.valid and self.data["test_outcomes"] is not None
+
+    def full(self, node: str) -> str:
+        return f"{self.rootdir}/{node}" if self.rootdir else node
+
+    def collection_errors_for(self, check: str) -> frozenset[str]:
+        """A check's own failed collections, including a parent that could not collect it."""
+        return frozenset(node for node in self.collection_errors
+                         if node == "" or report_covers(check, node) or report_covers(node, check))
+
+    def body_result(self, check: str) -> str:
+        """A positive body match for this requested scope, or unknown. The one statement of what a run shows of a
+        check's tests: a report in any ``NO_AUTHORITY`` state shows nothing, nor does a scope with a test left out or a
+        collection that failed."""
+        if type(check) is not str or self.withheld:
+            return "unknown"
+        records = [record.body() for node, record in self.phases.items() if report_covers(check, node)]
+        if self.collection_errors_for(check) or any(report_covers(check, node) for node in self.omitted):
+            return "unknown"
+        if FAILED in records:
+            return FAILED
+        return PASSED if records and all(value == PASSED for value in records) else "unknown"
+
+    def selected(self, check: str) -> bool:
+        """Whether the producer recorded any identity in this requested scope."""
+        return type(check) is str and any(report_covers(check, node) for node in self.nodes)
+
+    def wire(self) -> dict:
+        """A fresh wire representation for the producer's result builder."""
+        def thaw(value):
+            if type(value) is MappingProxyType:
+                return {key: thaw(item) for key, item in value.items()}
+            if type(value) is tuple:
+                return [thaw(item) for item in value]
+            return value
+        found = thaw(self.data)
+        found.update(verdict=self.verdict, said=self.said, output=self.output)
+        if not self.valid:
+            # A projection must never sanitize an invalid optional field into
+            # readable evidence. Keep unknown explicit, and keep identity hints.
+            prefix = self.rootdir + "/" if self.rootdir else ""
+            # Preserve which tests started, including their partial phases: a
+            # timeout after setup differs from a check never reached. Mark each
+            # record unreadable so projecting cannot authorize any body result.
+            found["test_outcomes"] = {
+                node[len(prefix):]: {**dict(self.phases[node].entries), "report": "unreadable"}
+                for node in self.started
+            } if self.started else []
+            found["collected_ids"] = sorted(node[len(prefix):] for node in self.nodes)
+        return found
+
+
+def read_report(raw: object) -> RunReport:
+    """The only raw per-test report reader: one failure makes the whole unknown."""
+    if type(raw) is RunReport:
+        return raw
+    original = raw.copy() if type(raw) is dict else {}
+    value = {key: item for key, item in original.items() if type(key) is str}
+    typed = (type(raw) is dict and len(value) == len(original) and all(key in REPORT_FIELDS for key in value)
+             and all(not field.required or name in value for name, field in REPORT_FIELDS.items())
+             and all(REPORT_FIELDS[name].accepts(item) for name, item in value.items()
+                     if type(name) is str and name in REPORT_FIELDS))
+    # Recover identities even from an invalid listing, but only exact text keys.
+    named = set()
+    listings = {}
+    for key, container in REPORT_LISTINGS.items():
+        listing = value.get(key)
+        ids = tuple(node for node in listing if type(node) is str) if type(listing) in (dict, list) else ()
+        named.update(ids)
+        listings[key] = ids
+    root = value.get("rootdir")
+    root = root if type(root) is str else ""
+    phases_raw = value.get("test_outcomes")
+    phase_items = {node: item for node, item in phases_raw.copy().items() if type(node) is str} if type(phases_raw) is dict else {}
+    phases = {node: read_phases(item) for node, item in phase_items.items()}
+    failed, setup = set(listings["failed_ids"]), set(listings["setup_errors"])
+    omitted, collected = set(listings["omitted_ids"]), set(listings["collected_ids"])
+    phase_failures = {node for node, record in phases.items() if "failed" in record.values()}
+    consistent = (collected == set(phases) | omitted and not (set(phases) & omitted)
+                  and not (set(listings["not_found_ids"]) & collected)
+                  and not (failed & setup) and failed | setup == phase_failures
+                  and all(phases[node].get("setup") == "failed" for node in setup if node in phases)
+                  and setup <= set(phases)
+                  and all(len(ids) == len(set(ids)) for ids in listings.values())
+                  and all(record.valid for record in phases.values()))
+    verdict = value.get("verdict") if type(value.get("verdict")) is str else ""
+    consistent &= verdict in REPORT_VERDICTS
+    # Loading telemetry is one fact, never two independently optional claims.
+    consistent &= ("loaded_outside" in value) == ("loaded_complete" in value)
+    if phases_raw is None:
+        # A process that never wrote progress has no phase data. This is an
+        # explicit wire shape only for non-ran diagnostics, never a substitute
+        # for missing/corrupt phases of a passed or failed run.
+        consistent &= verdict not in RAN and root == ""
+    if verdict in ("could_not_start", "pytest_not_found", "not_run"):
+        consistent &= root == "" and not named
+    if verdict == PASSED and phase_failures:
+        consistent = False
+    if verdict in ("could_not_start", "pytest_not_found", "not_run") and phases:
+        consistent = False
+    for name in ("passed", "failed", "not_passed", "total", "deselected", "collected", "started", "finished"):
+        item = value.get(name)
+        if name in value and (type(item) is not int or item < 0):
+            consistent = False
+    if all(name in value for name in ("passed", "failed", "total")):
+        consistent &= value["total"] == value["passed"] + value["failed"] if typed else False
+    if "deselected" in value:
+        consistent &= type(value["deselected"]) is int and value["deselected"] == len(omitted)
+    counters = {"collected": len(collected) - sum(record.get("collection") == "skipped" for record in phases.values()),
+                "started": sum("setup" in record for record in phases.values()),
+                "finished": sum("teardown" in record for record in phases.values())}
+    for name, count in counters.items():
+        if name in value:
+            consistent &= type(value[name]) is int and value[name] == count
+    messages = set(value.get("failure_messages", {})) | set(value.get("messages", {})) if typed else set()
+    collection_failures = messages - set(phases)
+    consistent &= not (collection_failures & collected) and not ((messages & set(phases)) - phase_failures)
+    consistent &= not any(parent == "" or report_covers(parent, node)
+                          for parent in collection_failures for node in collected)
+    if verdict == PASSED and collection_failures:
+        consistent = False
+    any_failure = bool(phase_failures or collection_failures)
+    if value.get("collection_stopped") is True:
+        consistent &= bool(collection_failures or listings["not_found_ids"]) and verdict != PASSED
+    passes = sum(record.body() == PASSED for record in phases.values())
+    skips = sum("skipped" in record.values() for record in phases.values())
+    # Process summaries may withhold a result, but cannot contradict a positive
+    # disposition. Progress uses the explicit non-final diagnostic below.
+    if verdict == FAILED:
+        consistent &= any_failure
+    if verdict == PASSED:
+        consistent &= not any_failure
+    if verdict == "no_tests_collected":
+        consistent &= not any_failure and not any("setup" in record for record in phases.values())
+    if verdict == RUN_INCONSISTENT:
+        consistent &= not any_failure
+    if verdict == "collection_error" and phases_raw is not None:
+        consistent &= not phase_failures and (bool(collection_failures) or not phases)
+    if listings["not_found_ids"]:
+        consistent &= verdict not in {*RAN, "no_tests_collected", RUN_INCONSISTENT}
+    if typed and value.get("missing_modules"):
+        consistent &= any_failure
+    # JUnit groups by class/name, not nodeid, and merges multiple failed phases.
+    # Bounds retain that released count meaning while rejecting impossible
+    # tallies; exact identity counts above come from the producer's own lists.
+    max_passes = sum(record.get("call") == PASSED for record in phases.values())
+    max_failures = sum(outcome == FAILED for record in phases.values() for outcome in record.values())
+    max_failures += len(collection_failures)
+    bounds = {"passed": (int(bool(passes) and not any_failure and verdict in RAN), max_passes),
+              "failed": (int(any_failure), max_failures),
+              "not_passed": (int(bool(skips) and not any_failure), skips),
+              "total": (int(any_failure or (bool(passes) and verdict in RAN)), max_passes + max_failures)}
+    for name, (minimum, maximum) in bounds.items():
+        if name in value:
+            consistent &= type(value[name]) is int and minimum <= value[name] <= maximum
+    if "seconds" in value:
+        consistent &= type(value["seconds"]) is float and math.isfinite(value["seconds"]) and value["seconds"] >= 0
+    if "os_errors" in value and type(value["os_errors"]) is list:
+        consistent &= all(type(node) is str and node in phase_failures or
+                          (type(node) is str and node in messages)
+                          for node in value["os_errors"]) if typed else False
+    # The run's own record of what happened to it is one fact with its verdict, read here with the rest of the
+    # report and never left to a consumer. The producer names changed files only under the verdict that says so; it
+    # marks no pass degraded or not completed, and no failure completed (``completed``: pytest's exit was 0 or 5 and
+    # every test it expected finished).
+    changed_source = "changed" in value and value["changed"] != []
+    degraded = "degraded" in value and value["degraded"] is not False
+    if changed_source:
+        consistent &= verdict == CHANGED
+    if verdict == PASSED:
+        consistent &= not degraded and value.get("completed", True) is True
+    if verdict == FAILED:
+        consistent &= value.get("completed", False) is False
+    valid = bool(typed and consistent)
+    if not valid:
+        unknown = {}
+        for node in named:
+            entries = phases[node].entries if node in phases else ()
+            if node in failed | setup and not any(outcome == "failed" for _, outcome in entries):
+                entries += (("unnamed", "failed"),)
+            unknown[node] = PhaseRecord(entries, False)
+        phases = unknown
+    full = (lambda node: f"{root}/{node}") if root else (lambda node: node)
+    def text(key, default=""):
+        return value[key] if type(value.get(key)) is str else default
+    def freeze(item):
+        if type(item) is dict:
+            return MappingProxyType({key: freeze(member) for key, member in item.items()})
+        if type(item) is list:
+            return tuple(freeze(member) for member in item)
+        return item
+    data = {key: freeze(item) for key, item in value.items()
+            if type(key) is str and key in REPORT_FIELDS and REPORT_FIELDS[key].accepts(item)}
+    # Positive body facts are decided here, including execution completeness.
+    # Diagnostics retain their released verdict separately from this evidence.
+    loading_fields = {"loaded_complete", "loaded_outside"} & value.keys()
+    loading_known = not loading_fields or (
+        len(loading_fields) == 2 and value.get("loaded_complete") is True
+        and _report_type(value.get("loaded_outside"), {str: str}))
+    # Every state that establishes nothing, decided once for every consumer (``NO_AUTHORITY``). A failure pytest ran to
+    # is recorded as not completed (its exit was 1), so that mark withholds a pass only; a session that stopped while
+    # collecting completed nothing.
+    incomplete = (verdict == PASSED and value.get("completed", True) is not True) or (
+        "collection_stopped" in value and value["collection_stopped"] not in (False, None))
+    states = {"unreadable": not valid, "no_result": verdict not in RAN, "changed_source": changed_source,
+              "degraded": degraded, "incomplete": incomplete, "loading_unknown": not loading_known}
+    withheld = tuple(name for name in NO_AUTHORITY if states.get(name))
+    outcome = "unknown"
+    if not withheld:
+        if verdict == PASSED and passes:
+            outcome = PASSED
+        elif verdict == FAILED and any(record.body() == FAILED for record in phases.values()):
+            outcome = FAILED
+    return RunReport(valid, MappingProxyType({full(node): record for node, record in phases.items()}),
+                     frozenset(full(node) for node in named | collection_failures),
+                     frozenset(full(node) for node in listings["test_outcomes"]),
+                     frozenset(full(node) for node in failed | setup),
+                     frozenset(full(node) for node in omitted), frozenset(full(node) for node in collection_failures),
+                     root, text("verdict", "not_run"),
+                     text("said"), text("output"), MappingProxyType(data), outcome, loading_known, withheld)
 
 
 class RepoRefused(ValueError):
@@ -1488,10 +2019,17 @@ class _Counted:
         self.rootdir = ""
         self.messages = {}
         self.os_errors = set()
+        self.missing_modules, self.not_found_ids = set(), set()
+        self.session = None
+        self.collection_stopped = None
+    def pytest_sessionstart(self, session):
+        self.session = session
     def pytest_exception_interact(self, node, call, report):
         error, seen = getattr(getattr(call, "excinfo", None), "value", None), set()
         while error is not None and id(error) not in seen:
             seen.add(id(error))
+            if isinstance(error, ModuleNotFoundError) and type(error.name) is str:
+                self.missing_modules.add(error.name)
             if isinstance(error, OSError):
                 self.os_errors.add(report.nodeid)
                 break
@@ -1505,26 +2043,39 @@ class _Counted:
     def pytest_collection_finish(self, session):
         self.rootdir = str(getattr(session.config, "rootpath", None) or session.config.rootdir)
         self.collected = len(session.items) + self.deselected
-        self.omitted_ids.update(self.collected_ids - {item.nodeid for item in session.items})
+        self.omitted_ids.update(self.collected_ids - {item.nodeid for item in session.items} - set(self.test_outcomes))
+        self.deselected = len(self.omitted_ids)
+        self.collected = len(session.items) + self.deselected
         self.write()
     def pytest_collectreport(self, report):
+        # pytest still holds its structured missing selections here; it clears
+        # them before collection_finish. Never parse a printed UsageError.
+        for arg, _ in getattr(self.session, "_notfound", ()):
+            path, separator, selected = arg.partition("::")
+            root = str(self.session.config.rootpath)
+            self.not_found_ids.add(os.path.relpath(path, root).replace(os.sep, "/") + separator + selected)
         if report.skipped:
+            self.collected_ids.add(report.nodeid)
             self.test_outcomes[report.nodeid] = {"collection": "skipped"}
         elif report.failed:
             self.messages[report.nodeid] = str(report.longrepr)[-2000:]
     def pytest_runtest_logreport(self, report):
-        self.test_outcomes.setdefault(report.nodeid, {})[report.when] = report.outcome
+        phases = self.test_outcomes.setdefault(report.nodeid, {})
+        phases[report.when] = report.outcome if report.when not in phases else None
         if report.when in ("setup", "teardown"):
             (self.started if report.when == "setup" else self.finished).add(report.nodeid)
         if report.failed:
             crash = getattr(report.longrepr, "reprcrash", None)
             self.messages.setdefault(report.nodeid, str(getattr(crash, "message", "") or report.longrepr)[-2000:])
-            if type(report.longrepr).__name__ == "FixtureLookupErrorRepr":
+            if report.when == "setup" and type(report.longrepr).__name__ == "FixtureLookupErrorRepr":
                 self.setup_errors[report.nodeid] = str(report.longrepr)
-            elif report.nodeid not in self.failed:
+            elif report.nodeid not in self.failed and report.nodeid not in self.setup_errors:
                 self.failed.append(report.nodeid)
         self.write()
     def pytest_sessionfinish(self, session):
+        status = getattr(session, "exitstatus", None)
+        self.collection_stopped = (status in (2, 4) and bool(self.not_found_ids or
+            set(self.messages) - set(self.test_outcomes))) if status is not None else None
         self.write()
     def write(self):
         if self.collected is not None:
@@ -1534,7 +2085,9 @@ class _Counted:
                            "setup_errors": self.setup_errors, "test_outcomes": self.test_outcomes,
                            "collected_ids": sorted(self.collected_ids), "omitted_ids": sorted(self.omitted_ids),
                            "rootdir": self.rootdir, "messages": self.messages,
-                           "os_errors": sorted(self.os_errors)}, handle)
+                           "os_errors": sorted(self.os_errors), "missing_modules": sorted(self.missing_modules),
+                           "not_found_ids": sorted(self.not_found_ids),
+                           "collection_stopped": self.collection_stopped}, handle)
 class _Capture:
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_load_initial_conftests(self, early_config):
@@ -2084,8 +2637,7 @@ def _judge(exit_code: int | None, counts: dict[str, int] | None, output: str, mo
     complete = "expected" not in counts or (counts["expected"] is not None
                                             and counts["expected"] == counts.get("finished"))
     # the launch review's M1: and G6's own per-test record (``_Counted``) holds no failure and no setup error either
-    if (not bad and counts["passed"] > 0 and complete and not counts.get("failed_ids")
-            and not counts.get("setup_errors")):
+    if (not bad and counts["passed"] > 0 and complete and not read_report(counts).failed):
         return RUN_INCONSISTENT
     return CRASHED if killed else "inconsistent_report"
 
@@ -2169,24 +2721,34 @@ def _config_args(repo: Path, ids: list[str], own: Path) -> list[str]:
     return [f"--confcutdir={repo}", f"--rootdir={repo}", "-c", str(empty)]
 
 
-def _progress(counts: dict[str, int], counted: Path) -> dict[str, int]:
-    """``counts`` with ``_BOOT``'s plugin's own: ``expected``, the tests pytest meant to run (collected, less
-    deselected), and ``finished``, those that ran to their end; ``expected`` None when the plugin wrote nothing that
-    can be read (the session never ended). A test that started and never finished (interrupted part-way) has an empty
-    testcase in the report, which reads as a pass: it is taken off the passes."""
+def _progress(counts: dict[str, int], counted: Path) -> dict:
+    """Read the producer's progress through its one schema, without coercion.
+
+    An interrupted or malformed report stays unknown in the result builder;
+    typed identity hints survive so unknown observations can reach issuance.
+    """
     try:
-        found = json.loads(counted.read_text(encoding="utf-8"))
-        expected, started = int(found["collected"]) - int(found["deselected"]), int(found["started"])
-        finished = int(found["finished"])
-    except (OSError, ValueError, KeyError, TypeError):
-        return {**counts, "expected": None}
+        raw = json.loads(counted.read_text(encoding="utf-8"), object_pairs_hook=_report_object)
+    except (OSError, ValueError, RecursionError):
+        raw = None
+    # Progress has no process verdict yet. An incomplete diagnostic reads its
+    # dispositions without pretending the process has already failed.
+    report = read_report({**raw, "verdict": "incomplete", "said": "", "output": ""} if type(raw) is dict else raw)
+    found = report.wire()
+    counters = ("collected", "deselected", "started", "finished")
+    complete = report.valid and all(type(found.get(key)) is int for key in counters)
+    expected = found["collected"] - found["deselected"] if complete else None
+    started, finished = found.get("started", 0), found.get("finished", 0)
     return {**counts, "expected": expected, "finished": finished,
-            "deselected": int(found["deselected"]),
-            "test_outcomes": found.get("test_outcomes"), "collected_ids": found.get("collected_ids", []),
+            "deselected": found.get("deselected", 0),
+            "test_outcomes": found.get("test_outcomes") if complete or report.started else None,
+            "collected_ids": found.get("collected_ids", sorted(report.nodes)),
             "omitted_ids": found.get("omitted_ids", []),
             "failed_ids": found.get("failed_ids", []), "setup_errors": found.get("setup_errors", {}),
-            "rootdir": found.get("rootdir") or "", "failure_messages": found.get("messages") or {},
-            "os_errors": found.get("os_errors") or [],
+            "rootdir": found.get("rootdir", ""), "failure_messages": found.get("messages", {}),
+            "os_errors": found.get("os_errors", []),
+            "missing_modules": found.get("missing_modules", []), "not_found_ids": found.get("not_found_ids", []),
+            "collection_stopped": found.get("collection_stopped"),
             "passed": max(0, counts.get("passed", 0) - max(0, started - finished))}
 
 
@@ -2209,9 +2771,8 @@ def shadowed(sources: tuple[str, ...] | list[str], ran: dict) -> dict[str, dict[
     recorded run); None when it cannot say (its list was cut at ``LOADED_LIMIT``, or never written). What a run lists
     is the modules its pytest process had loaded when the session ended: a subprocess's, or a forked child's, are not
     seen. A module that was never loaded, or a standard-library module named like a source file, is not one."""
-    if "loaded_outside" not in ran:
-        return {}
-    if not ran.get("loaded_complete"):
+    report = read_report(ran)
+    if not report.loading_known:
         return None
     ends: dict[str, list[str]] = {}   # each source by every tail of its path, for one look-up per module
     for rel in sources:
@@ -2219,13 +2780,65 @@ def shadowed(sources: tuple[str, ...] | list[str], ran: dict) -> dict[str, dict[
         for start in range(len(parts)):
             ends.setdefault("/".join(parts[start:]), []).append(rel)
     found: dict[str, dict[str, str]] = {}
-    for name, file in sorted((ran.get("loaded_outside") or {}).items()):
+    for name, file in sorted(report.data.get("loaded_outside", {}).items()):
         if name.startswith("__"):
             continue
         tail = name.replace(".", "/") + ("/__init__.py" if os.path.basename(file).startswith("__init__.") else ".py")
         for rel in ends.get(tail, ()):
             found.setdefault(rel, {"module": name, "file": file})
     return dict(sorted(found.items()))
+
+
+def loaded_from(repo: Path | None, ran: dict | RunReport) -> dict[str, dict[str, str]] | None:
+    """Shared ownership: the copy's pre-run listing, otherwise the source folder's own listing."""
+    report = read_report(ran)
+    if not report.valid or not report.loading_known:
+        return None
+    if not report.data.get("loaded_outside"):
+        return {}
+    sources = report.data.get("python_sources")
+    if sources is None:
+        if repo is None:
+            return None
+        try:
+            sources = _paths(_git(repo, "ls-files", "-co", "--exclude-standard", "-z"))
+        except (RepoRefused, OSError):
+            try:
+                sources = _copy_snapshot(repo)
+            except (RepoRefused, OSError, CopyNotRun):
+                return None
+        sources = [name for name in sources if name.endswith(".py")]
+    return shadowed(sources, report)
+
+
+@dataclass(frozen=True)
+class Established:
+    """What one run establishes of one tree's code (``established``)."""
+    report: RunReport
+    withheld: str   # the first ``NO_AUTHORITY`` state the run is in, "" when it is in none
+
+    def of(self, check: str | None = None) -> str:
+        """``PASSED``, ``FAILED`` or "unknown": for the tests ``check`` names (``RunReport.body_result``) or, with
+        none, for the run as a whole (``RunReport.outcome``). Unknown in any ``NO_AUTHORITY`` state."""
+        if self.withheld:
+            return "unknown"
+        return self.report.outcome if check is None else self.report.body_result(check)
+
+
+def established(ran: dict | RunReport, *, repo: Path | None = None,
+                sources: tuple[str, ...] | list[str] | None = None) -> Established:
+    """The one statement of what ``ran`` establishes: its report's own reading (``read_report``) and whose code it ran.
+    ``sources``: the files whose modules must have come from the tree it tested (a change's own, the patch review's
+    rule: ``shadowed``); without them, every Python file of the tree (``loaded_from``: the copy's pre-run listing in
+    the report, else ``repo``'s own). A run that loaded one from elsewhere is ``foreign_code``, one that cannot say
+    ``loading_unknown``. Every statement that a run supports something, every count of a replay and every negative
+    control is made through this, or through the reading's own ``body_result`` and ``outcome`` where the caller has
+    settled whose code ran; no consumer puts one together from the report's fields."""
+    report = read_report(ran)
+    if report.withheld:
+        return Established(report, report.withheld[0])
+    found = shadowed(sources, report) if sources is not None else loaded_from(repo, report)
+    return Established(report, "loading_unknown" if found is None else "foreign_code" if found else "")
 
 
 def _root(repo: Path, rootdir: str) -> str:
@@ -2258,6 +2871,21 @@ def _said(verdict: str, *, seconds: int, python: str, output: str = "") -> str:
     if verdict == "pytest_not_found":
         return SAID["pytest_not_found"].format(python=python)
     return SAID[verdict]
+
+
+def _not_run_report(said: str, *, baseline: str | None = None, patched: str | None = None) -> dict:
+    """Replay never started: no root, output or test dispositions were observed.
+
+    Write every required field explicitly. An absent field remains a schema
+    error in a reader; it is never filled in there.
+    """
+    found = {"verdict": "not_run", "said": said, "output": "", "rootdir": "", "test_outcomes": None,
+             "failed_ids": [], "setup_errors": {}, "collected_ids": [], "omitted_ids": []}
+    if baseline is not None:
+        found["baseline"] = baseline
+    if patched is not None:
+        found["patched"] = patched
+    return found
 
 
 def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), timeout_s: int = DEFAULT_TIMEOUT_S,
@@ -2380,6 +3008,11 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 "source_before": ledger.digest(before), "rootdir": _root(repo, tally.get("rootdir") or ""),
                 "failure_messages": tally.get("failure_messages") or {},
                 "os_errors": list(tally.get("os_errors") or []),
+                "missing_modules": list(tally.get("missing_modules") or []),
+                "not_found_ids": list(tally.get("not_found_ids") or []),
+                "probe_observations": probe_observations(output),
+                "collection_stopped": tally.get("collection_stopped"),
+                "python_sources": sorted(name for name in before if name.endswith(".py")) if copied else None,
                 "import_path": [Path(entry).relative_to(repo).as_posix() for entry in entries],
                 "own_config": bool(own_config),
                 "repo_env": _digests(person), "env_set_by_g6": list(set_by_g6),
@@ -3160,9 +3793,11 @@ def _copy_snapshot(repo: Path, *, deadline: float | None = None) -> dict[str, st
     """A copy's own record of its files, read before and after a run in it: each file's SHA-256, and each link the copy
     holds (``_copy_links``) as its own text, never followed."""
     from g6.integrity import in_cache
+    def unreadable(error):
+        raise error
 
     found, size = {}, 0
-    for folder, dirs, files in os.walk(repo):
+    for folder, dirs, files in os.walk(repo, onerror=unreadable):
         _copy_caps(len(found), size, deadline)
         for name in dirs:
             rel = (Path(folder) / name / '_').relative_to(repo)
@@ -3281,10 +3916,10 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
     for index, rel in enumerate(sorted(change.before)):
         remaining = bound - (time.monotonic() - started)
         if index >= MAX_DERIVED:
-            results[rel] = {"verdict": "not_run", "said": OLD_TEST_LIMIT.format(n=MAX_DERIVED)}
+            results[rel] = _not_run_report(OLD_TEST_LIMIT.format(n=MAX_DERIVED))
             continue
         if remaining < 1:
-            results[rel] = {"verdict": "not_run", "said": SAID["timed_out"].format(seconds=bound)}
+            results[rel] = _not_run_report(SAID["timed_out"].format(seconds=bound))
             continue
         try:
             report: dict = {}
@@ -3294,31 +3929,34 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
                     baseline = _run(copy, [old_path.get(rel, rel)], roots=roots, timeout_s=bound, network=network,
                                     copied=True, python=interpreter(change.repo), scratch_dir=copy.parent,
                                     deadline=started + bound, links=report, require_isolation=require_isolation)
-                if (baseline["verdict"] != PASSED or baseline.get("degraded") or baseline.get("not_passed")
-                        or baseline.get("deselected") or not baseline.get("test_outcomes")):
+                base_report = read_report(baseline)
+                baseline = base_report.wire()
+                # the baseline counts only as the one statement gives it: a pass of the base commit's own code
+                if (established(base_report, sources=getattr(change, "sources", None)).of() != PASSED
+                        or baseline.get("not_passed") or baseline.get("deselected") or not base_report.phases):
                     reason = baseline.get("said") or "; ".join(baseline.get("setup_errors", {}).values())
-                    results[rel] = {"verdict": "not_run", "said": reason or OLD_BASELINE_NOT_RUN,
-                                    "baseline": baseline["verdict"]}
+                    results[rel] = _not_run_report(reason or OLD_BASELINE_NOT_RUN, baseline=baseline["verdict"])
                     continue
                 remaining = bound - (time.monotonic() - started)
                 if remaining < 1:
-                    results[rel] = {"verdict": "not_run", "said": SAID["timed_out"].format(seconds=bound)}
+                    results[rel] = _not_run_report(SAID["timed_out"].format(seconds=bound))
                     continue
                 results[rel] = _run(copy, [rel], roots=roots, timeout_s=int(remaining), network=network,
                                     copied=True, python=interpreter(change.repo), scratch_dir=copy.parent,
                                     deadline=started + bound, links=report, require_isolation=require_isolation)
-                if moved(baseline["test_outcomes"], old_path.get(rel, rel), rel) != set(
-                        results[rel].get("test_outcomes") or {}):
+                patch_report = read_report(results[rel])
+                results[rel] = patch_report.wire()
+                if (not patch_report.valid or moved(base_report.phases, old_path.get(rel, rel), rel) != set(
+                        patch_report.phases)):
                     reason = results[rel].get("said") or (SAID["collection_error"] if results[rel]["verdict"] == FAILED
                                                          and not results[rel].get("failed_ids") else OLD_BASELINE_NOT_RUN)
-                    results[rel] = {"verdict": "not_run", "said": reason, "baseline": PASSED,
-                                    "patched": results[rel]["verdict"]}
+                    results[rel] = _not_run_report(reason, baseline=PASSED, patched=results[rel]["verdict"])
         except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
             raise
         except (OSError, RepoRefused, CopyNotRun) as exc:
             if require_isolation and getattr(exc, "code", "") == ISOLATION_UNAVAILABLE:
                 raise
-            results[rel] = {"verdict": "not_run", "said": str(exc)}
+            results[rel] = _not_run_report(str(exc))
     return results
 
 
@@ -3332,7 +3970,7 @@ def run_at_base(change: Change, tests: list[str], *, roots: tuple[str, ...] = ()
     (``repository_copy``, with its caps), every file the change touched is put back as it was at the base commit
     (``_base_revision``) except the files and folders ``tests`` name, which keep their text now. A check that passes
     here does not need the patch to pass (review I8). The repository itself is never written, and the run gets no
-    receipt (it is not the artifact under review). ``{"verdict": "not_run", "said": ...}`` when the copy or the run
+    receipt (it is not the artifact under review). An explicit ``not_run`` report when the copy or the run
     could not be made. ``overlay`` ({path: text}) adds files to the copy only, as ``repository_copy``'s ``before``
     does; ``require_isolation`` refuses a run no backend confines (``_run``), and that refusal is raised, not returned."""
     bound = max(1, min(int(timeout_s), MAX_TIMEOUT_S))
@@ -3351,7 +3989,7 @@ def run_at_base(change: Change, tests: list[str], *, roots: tuple[str, ...] = ()
     except (OSError, RepoRefused, CopyNotRun) as exc:
         if require_isolation and getattr(exc, "code", "") == ISOLATION_UNAVAILABLE:
             raise
-        return {"verdict": "not_run", "said": str(exc)}
+        return _not_run_report(str(exc))
 
 
 def probe_repo(scratch: Path) -> Path:

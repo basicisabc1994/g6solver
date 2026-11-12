@@ -93,7 +93,7 @@ def repo(tmp_path, monkeypatch):
 
 def result(passed: bool) -> dict:
     status = "passed" if passed else "failed"
-    return {"verdict": status, "said": "", "passed": int(passed), "failed": int(not passed), "not_passed": 0,
+    return {"verdict": status, "said": "", "rootdir": "", "passed": int(passed), "failed": int(not passed), "not_passed": 0,
             "total": 1, "deselected": 0,
             "test_outcomes": {NODE: {"setup": "passed", "call": status, "teardown": "passed"}},
             "collected_ids": [NODE], "omitted_ids": [], "changed": [], "output": "", "seconds": 0.1,

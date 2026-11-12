@@ -216,7 +216,10 @@ def product(tmp_path: Path, monkeypatch, reviews: list[dict], sets: list, moves:
         got = left.pop(0) if Path(placed).name == loop.critic_file(max(len(seen) - again, 1)) else PASSES
         if got.exit not in (0, 1):
             return {"verdict": "collection_error", "said": "will not run"}
-        return {"verdict": "failed" if got.exit else "passed", "said": "", "rootdir": "", "loaded_outside": {},
+        observed = f"{placed}::t"
+        return {"verdict": "failed" if got.exit else "passed", "said": "", "output": "", "rootdir": "", "loaded_outside": {},
+                "collected_ids": [observed], "omitted_ids": [], "setup_errors": {},
+                "failed_ids": [observed] if got.results["t"] == "failed" else [],
                 "loaded_complete": True, "os_errors": [], "failure_messages": {},
                 "test_outcomes": {f"{placed}::t": {"setup": "passed", "call": got.results["t"], "teardown": "passed"}}}
 

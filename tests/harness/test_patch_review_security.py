@@ -44,7 +44,7 @@ def result(passed=(), failed=(), *, verdict=None, said="", output=""):
     outcomes = {**{node: {"setup": "passed", "call": "passed", "teardown": "passed"} for node in passed},
                 **{node: {"setup": "passed", "call": "failed", "teardown": "passed"} for node in failed}}
     verdict = verdict or ("failed" if failed else "passed")
-    return {"verdict": verdict, "said": said, "passed": len(passed), "failed": len(failed), "not_passed": 0,
+    return {"verdict": verdict, "said": said, "rootdir": "", "passed": len(passed), "failed": len(failed), "not_passed": 0,
             "total": len(passed) + len(failed), "deselected": 0, "test_outcomes": outcomes,
             "collected_ids": sorted(outcomes), "omitted_ids": [], "changed": [], "output": output, "seconds": 0.25,
             "python": sys.executable, "interpreter_source": "g6", "command": "pytest",
@@ -57,7 +57,10 @@ def _record(monkeypatch, run, *, at_base=None):
     monkeypatch.setattr(patch_review, "_execute", lambda root, ids, *, timeout_s, change=None, **_: run(list(ids))
                         if change is None else {rel: result() for rel in ids})
     monkeypatch.setattr(patch_review, "_execute_at_base", lambda change, ids, *, timeout_s, **_: at_base or {
-        "verdict": "not_run", "said": "no run was recorded"})
+        "verdict": "not_run", "said": "no run was recorded",
+        'output': '', 'rootdir': '', 'test_outcomes': None,
+        'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+        'omitted_ids': []})
 
 
 def _codes(got) -> list[tuple[str, str]]:
@@ -246,7 +249,10 @@ STATED = [{"id": "R1", "text": "add adds", "checks": ["test_calc.py::test_add"]}
 ZERO = "test_more.py::test_zero"
 
 
-def _tier2(monkeypatch, second, replay=lambda rel: {"verdict": "not_run", "said": "not replayed"}, spend=False):
+def _tier2(monkeypatch, second, replay=lambda rel: {"verdict": "not_run", "said": "not replayed",
+    'output': '', 'rootdir': '', 'test_outcomes': None,
+    'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+    'omitted_ids': []}, spend=False):
     """The stated checks pass; the tests that touch the changed module give ``second`` (with ``spend``, after the
     whole time they were given, so the review's time budget is spent whatever the set-up took); each replay at the
     base commit and on the patch gives ``replay(file)``."""
@@ -263,7 +269,10 @@ def _tier2(monkeypatch, second, replay=lambda rel: {"verdict": "not_run", "said"
 
     monkeypatch.setattr(patch_review, "_execute", execute)
     monkeypatch.setattr(patch_review, "_execute_at_base", lambda change, ids, *, timeout_s, **_: {
-        "verdict": "not_run", "said": "no run was recorded"})
+        "verdict": "not_run", "said": "no run was recorded",
+        'output': '', 'rootdir': '', 'test_outcomes': None,
+        'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+        'omitted_ids': []})
 
 
 def _touched(tmp_path) -> Path:
@@ -277,12 +286,18 @@ FAILING = result(failed=[ZERO])
 CASES = {
     "no failing test G6 can name": dict(second={**FAILING, "failed_ids": [], "test_outcomes": {}}),
     "the base never ran (the copy over its cap)": dict(second=FAILING, replay=lambda rel: {
-        "verdict": "not_run", "said": "the repository copy cap of 10000 files was exceeded"}),
+        "verdict": "not_run", "said": "the repository copy cap of 10000 files was exceeded",
+        'output': '', 'rootdir': '', 'test_outcomes': None,
+        'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+        'omitted_ids': []}),
     "the replay is not read": dict(second=FAILING, replay=lambda rel: {
         **result([ZERO]), "loaded_outside": {"calc": "/elsewhere/site-packages/calc.py"}, "loaded_complete": True}),
     "failed in place, passed in the copy": dict(second=FAILING, replay=lambda rel: result([ZERO])),
     "the runs are not comparable": dict(second=FAILING, replay=lambda rel: {
-        "verdict": "not_run", "said": "its tests did not match", "baseline": "passed", "patched": "passed"}),
+        "verdict": "not_run", "said": "its tests did not match", "baseline": "passed", "patched": "passed",
+        'output': '', 'rootdir': '', 'test_outcomes': None,
+        'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+        'omitted_ids': []}),
     "tier 2 did not run to a result": dict(second={**result(), "verdict": "no_tests_collected", "said": "none"}),
     "tier 2 ran out of time": dict(second={**result(), "verdict": "timed_out", "said": "the time ran out"}),
 }
@@ -329,7 +344,10 @@ def test_the_time_budget_spent_before_the_replay_is_insufficient_evidence(tmp_pa
 def test_a_touched_test_that_did_not_pass_at_the_base_either_leaves_the_outcome_as_it_was(tmp_path, monkeypatch):
     root = _touched(tmp_path)
     _tier2(monkeypatch, FAILING, replay=lambda rel: {"verdict": "not_run", "said": "it failed there too",
-                                                     "baseline": "failed"})
+                                                     "baseline": "failed",
+        'output': '', 'rootdir': '', 'test_outcomes': None,
+        'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+        'omitted_ids': []})
     got = review_patch(root, task="Repair add.", requirements=STATED)
     assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
     assert "derived_test_not_compared" not in [code for _, code in _codes(got)]
@@ -515,7 +533,9 @@ def _uncollectable(name: str) -> dict:
 
     return {**result(), "verdict": "collection_error", "said": repo_tests.SAID["collection_error"],
             "output": f"ERROR collecting test_calc.py\nE   ModuleNotFoundError: No module named '{name}'\n"
-                      "ERROR test_calc.py\n", "test_outcomes": {}, "collected_ids": []}
+                      "ERROR test_calc.py\n", "test_outcomes": {}, "collected_ids": [],
+            "failure_messages": {"test_calc.py": f"ModuleNotFoundError: {name}"},
+            "missing_modules": [name], "collection_stopped": True, "failed": 1, "total": 1}
 
 
 def _no_run_text(got: dict) -> None:

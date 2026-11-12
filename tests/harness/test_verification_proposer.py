@@ -61,12 +61,16 @@ def _repo(tmp_path: Path, files: dict[str, str], patch: dict[str, str], name: st
 
 def result(passed=(), failed=(), *, output="", messages=None, digest=""):
     """One recorded ``repo_tests`` run result."""
+    from g6.workforce.repo_tests import probe_observations
+    if messages is None:
+        messages = {node: "AssertionError" for node in failed}
     outcomes = {**{node: {"setup": "passed", "call": "passed", "teardown": "passed"} for node in passed},
                 **{node: {"setup": "passed", "call": "failed", "teardown": "passed"} for node in failed}}
     verdict = "failed" if failed else "passed"
     return {"verdict": verdict, "said": "", "passed": len(passed), "failed": len(failed), "not_passed": 0,
             "total": len(passed) + len(failed), "deselected": 0, "test_outcomes": outcomes,
             "collected_ids": sorted(outcomes), "omitted_ids": [], "changed": [], "output": output, "seconds": 0.25,
+            "probe_observations": probe_observations(output),
             "python": sys.executable, "interpreter_source": "g6", "command": "pytest",
             "isolation": {"backend": "synthetic-unit-fixture", "why": ""}, "failed_ids": list(failed),
             "setup_errors": {}, "degraded": False, "receipt": "", "rootdir": "",

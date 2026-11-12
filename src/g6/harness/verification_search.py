@@ -120,9 +120,7 @@ from g6.harness.patch_review import (
     NOT_ESTABLISHED,
     PASSED_ON_CHECKS,
     Requirement,
-    _collection_errors,
     _covers,
-    _in_repository,
     _loaded_elsewhere,
     _verdicts,
 )
@@ -215,11 +213,11 @@ MAX_SOURCE_BYTES = 64 * 1024
 RUN_S = 60
 MIN_RUN_S = 5
 MAX_QUESTIONS = 3
-MAX_OBSERVATIONS = 32
+MAX_OBSERVATIONS = repo_tests.MAX_OBSERVATIONS
 #: An observation line holds at most this many characters, and its JSON object at most this many levels of nesting
 #: (the object itself is one level, and so is a value inside it); beyond either, the probe is not read.
-MAX_OBSERVATION_CHARS = 1000
-MAX_OBSERVATION_DEPTH = 16
+MAX_OBSERVATION_CHARS = repo_tests.MAX_OBSERVATION_CHARS
+MAX_OBSERVATION_DEPTH = repo_tests.MAX_OBSERVATION_DEPTH
 #: Said with every reproduction: G6 hands back code it did not write.
 CAUTION = ("The check is code the caller wrote: G6 ran it only inside its operating-system boundary, with no network. "
            "Read it before you run it, or run it in a container.")
@@ -270,11 +268,8 @@ _PART = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
 _NOT_A_PLACE = frozenset({"__pycache__", "venv", "site-packages", "dist-packages", "node_modules"})
 _METADATA = (".egg-info", ".dist-info", ".pyc")
 _NODE = re.compile(r"[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*(?:\[[^\]\x00-\x1f\x7f]*\])?")
-_FAILED_LINE = re.compile(r"^FAILED (\S+)(?: - (.*))?$", re.MULTILINE)
 _RAISED_LINE = re.compile(r"^E\s+(\S.*)$", re.MULTILINE)
 #: ``repo_tests._output``'s mark where it cut a run's output.
-_CUT = re.compile(r"^\.\.\. \[\d+ bytes of output omitted\] \.\.\.$", re.MULTILINE)
-_OBSERVED = re.compile(rf"{OBSERVATION} (.*)$", re.MULTILINE)
 #: G6's clock for the stage's deadline (a test replaces it).
 _clock = time.monotonic
 
@@ -558,25 +553,19 @@ def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *
 
 def _messages(ran: dict, node: str) -> list[str]:
     """The failure messages the run recorded in full (``failure_messages``) for the tests of ``node`` or its file."""
-    full, file = _in_repository(ran), node.partition("::")[0]
-    return [text for named, text in (ran.get("failure_messages") or {}).items()
-            if _covers(node, full(named)) or full(named) == file]
+    report, file = repo_tests.read_report(ran), node.partition("::")[0]
+    return [text for named, text in report.data.get("failure_messages", {}).items()
+            if _covers(node, report.full(named)) or report.full(named) == file]
 
 
 def _failure(ran: dict, node: str) -> str:
-    """How a check failed: its recorded message (a collection's: its last ``E`` line), else pytest's summary or its
-    last ``E`` line in the output ("" when none says)."""
+    """How a check failed, from its structured failure annotation (empty when absent)."""
     for text in _messages(ran, node):
         raised = _RAISED_LINE.findall(text)
         line = raised[-1] if raised else next((part for part in text.splitlines() if part.strip()), "")
         if line.strip():
             return line.strip()[:300]
-    output = ran.get("output") or ""
-    for match in _FAILED_LINE.finditer(output):
-        if match.group(2):
-            return match.group(2).strip()[:300]
-    raised = _RAISED_LINE.findall(output)
-    return raised[-1].strip()[:300] if raised else ""
+    return ""
 
 
 def _refused_access(ran: dict, node: str) -> bool:
@@ -585,58 +574,21 @@ def _refused_access(ran: dict, node: str) -> bool:
     G6 cannot tell it from a failure of the code. Read only from G6's own record of the run (``os_errors``, which its
     plugin reads from the exception objects) for the check, a test of it or its file; never from text the check or
     the code under test printed (reviewer B's B2)."""
-    full, file = _in_repository(ran), node.partition("::")[0]
-    return any(_covers(node, full(named)) or full(named) == file for named in ran.get("os_errors") or ())
+    report, file = repo_tests.read_report(ran), node.partition("::")[0]
+    return any(_covers(node, report.full(named)) or report.full(named) == file
+               for named in report.data.get("os_errors", ()))
 
 
 def _uncollected(ran: dict, node: str) -> bool:
     """Whether pytest could not collect the check's own file (a collection error named after it)."""
-    full, file = _in_repository(ran), node.partition("::")[0]
-    return file in {full(rel) for rel in _collection_errors(ran.get("output") or "")} or any(
-        full(named) == file for named in ran.get("failure_messages") or {})
-
-
-def _depth(value) -> int:
-    """Levels of nesting, counted without recursion: a value is one level, and each list or object around it adds one;
-    counting stops past ``MAX_OBSERVATION_DEPTH``."""
-    deepest, pending = 0, [(value, 1)]
-    while pending and deepest <= MAX_OBSERVATION_DEPTH:
-        item, level = pending.pop()
-        deepest = max(deepest, level)
-        children = item.values() if isinstance(item, dict) else item if isinstance(item, list) else ()
-        pending.extend((child, level + 1) for child in children)
-    return deepest
-
-
-def _observations(output: str) -> list[dict] | None | str:
-    """A probe's observations in its output (None when it recorded none), or why they cannot be read."""
-    lines = [match.group(1) for match in _OBSERVED.finditer(output)]
-    if not lines:
-        return None
-    if _CUT.search(output):
-        return "its output was longer than G6 keeps of a run, so its observations cannot be read in full"
-    if len(lines) > MAX_OBSERVATIONS:
-        return f"it recorded {len(lines)} observations; a probe records at most {MAX_OBSERVATIONS}"
-    found = []
-    for line in lines:
-        if len(line) > MAX_OBSERVATION_CHARS:
-            return f"an observation holds more than {MAX_OBSERVATION_CHARS} characters"
-        try:
-            item = json.loads(line)
-        except (ValueError, RecursionError):
-            return f"an observation is not JSON: {line[:80]!r}"
-        if not (isinstance(item, dict) and set(item) == {"input", "output"}):
-            return f"an observation is not {{\"input\": ..., \"output\": ...}}: {line[:80]!r}"
-        if _depth(item) > MAX_OBSERVATION_DEPTH:
-            return f"an observation is nested more than {MAX_OBSERVATION_DEPTH} levels deep"
-        found.append(item)
-    return found
+    report = repo_tests.read_report(ran)
+    return bool(report.collection_errors_for(node))
 
 
 def reading(ran: dict, node: str) -> dict:
     """What one run of a check says: ``result`` ``passed`` (every test of the check passed its call), ``failed`` (one
     failed its call, or the check's own file could not be collected, ``collection`` true; either way not on an
-    operating-system error or a refusal, and its messages or output say how) or ``error`` (anything else: not finished
+    operating-system error or a refusal, and its recorded messages say how) or ``error`` (anything else: not finished
     in time, its copy changed, its report not believed, nothing collected, a setup that failed or a skip, an
     operating-system error, a failure that does not say how); with the run's ``verdict``, ``detail``, ``seconds``,
     ``tree_digest`` (its copy as the run began), what it ran with (``RAN_WITH``) and, for a pass, its ``observations``
@@ -649,7 +601,9 @@ def reading(ran: dict, node: str) -> dict:
                 'execution_artifact': ran.get('execution_artifact'),
                 'bootstrap_sha256': ran.get('bootstrap_sha256', ''),
                 "observations": reading.get("observations"), "owned_probe": reading.get("owned_probe", False)}
-    verdict, output = ran.get("verdict"), ran.get("output") or ""
+    report = repo_tests.read_report(ran)
+    ran = report.wire()
+    verdict = report.verdict
     found = {"verdict": verdict, "seconds": float(ran.get("seconds") or 0.0),
              "tree_digest": ran.get("source_before") or "", **{key: ran[key] for key in RAN_WITH if key in ran}}
 
@@ -665,13 +619,14 @@ def reading(ran: dict, node: str) -> dict:
                          f"outside its copy, the network, a name lookup), or on such a refusal: {how}")
         return {**found, "result": "failed", "detail": how, **extra}
 
+    if not report.valid:
+        return error("the runner report is unknown")
     if verdict == "timed_out":
         return error(f"it did not finish within its time limit ({ran.get('said') or 'timed out'})")
     if verdict == repo_tests.CHANGED:
         return error("it changed files in its copy, so its result is not believed: "
                      + ", ".join((ran.get("changed") or [])[:5]))
-    full = _in_repository(ran)
-    mine = {full(n): phases for n, phases in (ran.get("test_outcomes") or {}).items() if _covers(node, full(n))}
+    mine = {n: phases for n, phases in report.phases.items() if _covers(node, n)}
     if not mine and verdict in (repo_tests.FAILED, "collection_error") and _uncollected(ran, node):
         # review 5, as tier 2 reads a test file: an import the patch broke fails the check where it is collected
         how = _failure(ran, node)
@@ -680,16 +635,24 @@ def reading(ran: dict, node: str) -> dict:
         return error(f"{verdict}: {ran.get('said') or 'no result'}")
     if not mine:
         return error("pytest ran no test of the check: it could not be collected, or names no test")
+    if not report.loading_known:
+        return error("the runner cannot say which code it loaded")
+    if report.collection_errors_for(node):
+        return error("a collection of the check failed beside its reported test bodies")
     if any(phases.get("setup") != "passed" or phases.get("teardown") == "failed" for phases in mine.values()):
         return error("a test of the check could not be set up, was skipped, or failed after its call")
-    calls = {phases.get("call") for phases in mine.values()}
-    if calls == {"passed"} and verdict == repo_tests.PASSED:
-        observed = _observations(output)
+    # A pass or a failure is the report's one reading of the check (``RunReport.body_result``), never a second rule over
+    # its phases here: a test of the check pytest left out, or a report in any ``NO_AUTHORITY`` state, is no result.
+    decided = report.body_result(node)
+    if decided == repo_tests.PASSED and verdict == repo_tests.PASSED:
+        observed = ran.get("probe_observations")
         if isinstance(observed, str):
             return error(observed)
         return {**found, "result": "passed", "detail": f"{len(mine)} test(s) passed", "observations": observed}
-    if "failed" in calls and verdict == repo_tests.FAILED:
+    if decided == repo_tests.FAILED and verdict == repo_tests.FAILED:
         return failed(_failure(ran, node))
+    if any(_covers(node, left) for left in report.omitted):
+        return error("pytest left out a test of the check (deselected), so the check did not run whole")
     return error(f"its tests did not run to a pass or a fail ({verdict})")
 
 
@@ -874,7 +837,7 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
             if ran.get('execution_artifact'):
                 activity.execution_artifacts.append(ran['execution_artifact'])
         if origin.keep_observations and found["result"] == "failed":   # a replay says which traces broke
-            found = {**found, "observations": _observations(ran.get("output") or "")}
+            found = {**found, "observations": repo_tests.read_report(ran).wire().get("probe_observations")}
         return found
 
     for one in checks:

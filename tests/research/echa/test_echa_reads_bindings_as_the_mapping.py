@@ -321,6 +321,9 @@ BINDING_READS = {
     ("view.py", "source_record", "about(rec)"): (
         "what it is about, handed on with its binding as read; the mapping refuses an unreadable one"),
     ("view.py", "source_record", "binding_of(rec)"): THROUGH,
+    # slice 2's follow-up (review 4's finding 3): what one of the issuer's receipts is bound to, for the view
+    ("custody.py", "receipt_about", "read_binding(canonical(held))"): THROUGH + ": a receipt's provenance binding",
+    ("custody.py", "receipt_about", "read_about(binding, artefact=receipt.get('artifact_sha'))"): THROUGH,
 }
 BYTES = "compared by the digest the accessor gives (About, or evaluator_of)"
 #: Every identity comparison in research/echa, with what it compares.
@@ -330,9 +333,8 @@ COMPARISONS = {
     ("claims.py", "evaluate_claim", "subject is not None"): "whether the claim names an artefact digest",
     ("claims.py", "evaluate_claim", "{evaluator_of(r) for r in passing if r.independent}"): BYTES + ": distinct ones",
     ("ledger.py", "_semantic", "evaluator_of(held) != evaluator_of(rec)"): BYTES,
-    ("view.py", "_role", "check_id in status['supported_by']"): "the issuer's own check ids, from its certificate",
-    ("view.py", "_role", "check_id in status['refuted_by']"): "the issuer's own check ids, from its certificate",
-    ("view.py", "_role", "check_id in status['caveats']"): "the issuer's own check ids, from its certificate",
+    ("view.py", "_bound", "parts.artefact == artifact_sha256"): (
+        BYTES + ": the receipt's bound artefact (custody.receipt_about) and the subject's digest"),
     ("view.py", "_view", "{e['check_id'] for e in evidence}"): "the issuer's own check ids, from its certificate",
     ("view.py", "certificate_view", "body.get('artifact_sha') != artifact_sha256"): (
         "the certificate's artefact digest against the subject's digest"),

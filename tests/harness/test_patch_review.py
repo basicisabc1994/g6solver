@@ -54,18 +54,21 @@ def review(repo, requirements=SUM, **kwargs):
 
 
 def result(passed=(), failed=(), skipped=(), *, verdict=None, backend="synthetic-unit-fixture", said="", output="",
-           receipt=""):
+           receipt="", messages=None, collection_stopped=None):
     """One recorded ``repo_tests.run`` result: these node ids passed, failed or were skipped."""
     outcomes = {**{node: {"setup": "passed", "call": "passed", "teardown": "passed"} for node in passed},
                 **{node: {"setup": "passed", "call": "failed", "teardown": "passed"} for node in failed},
                 **{node: {"setup": "skipped", "teardown": "passed"} for node in skipped}}
     verdict = verdict or ("failed" if failed else "passed")
-    return {"verdict": verdict, "said": said, "passed": len(passed), "failed": len(failed),
-            "not_passed": len(skipped), "total": len(passed) + len(failed), "deselected": 0,
+    messages = messages or {}
+    bad = len(failed) + len(set(messages) - set(outcomes))
+    return {"verdict": verdict, "said": said, "rootdir": "", "passed": len(passed), "failed": bad,
+            "not_passed": len(skipped), "total": len(passed) + bad, "deselected": 0,
             "test_outcomes": outcomes, "collected_ids": sorted(outcomes), "omitted_ids": [], "changed": [],
             "output": output, "seconds": 0.25, "python": sys.executable, "interpreter_source": "g6",
             "command": "pytest", "isolation": {"backend": backend, "why": ""}, "failed_ids": list(failed),
-            "setup_errors": {}, "degraded": verdict not in ("passed", "failed"), "receipt": receipt}
+            "setup_errors": {}, "degraded": verdict not in ("passed", "failed"), "receipt": receipt,
+            "failure_messages": messages, "collection_stopped": collection_stopped}
 
 
 class Recorded:
@@ -89,7 +92,10 @@ class Recorded:
 
         def execute_at_base(change, ids, *, timeout_s):
             self.at_base_calls.append(tuple(ids))
-            return at_base if at_base is not None else {"verdict": "not_run", "said": "no run was recorded"}
+            return at_base if at_base is not None else {"verdict": "not_run", "said": "no run was recorded",
+                'output': '', 'rootdir': '', 'test_outcomes': None,
+                'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+                'omitted_ids': []}
 
         monkeypatch.setattr(patch_review, "_execute", execute)
         monkeypatch.setattr(patch_review, "_execute_at_base", execute_at_base)
@@ -161,7 +167,9 @@ def test_a_stated_check_whose_test_file_cannot_load_at_the_base_commit_is_not_sa
     commit's code, so none of its checks ran there. That is no failure at the base, and whether they exercise the
     change is an unknown, never claimed."""
     (repo / "calc.py").write_text(GOOD)
-    unloaded = result(verdict="failed", output="ERROR test_calc.py - ImportError: cannot import name 'sub' from 'calc'\n")
+    unloaded = result(verdict="failed", output="ERROR test_calc.py - ImportError: cannot import name 'sub' from 'calc'\n",
+                      messages={"test_calc.py": "ImportError: cannot import name 'sub' from 'calc'"},
+                      collection_stopped=True)
     Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])},
              at_base=unloaded)
     assessment = review(repo)["assessment"]
@@ -650,8 +658,12 @@ def test_test_ids_are_read_against_the_root_folder_pytest_used(repo, monkeypatch
 
 def test_a_stated_check_the_environment_cannot_collect_is_not_established(repo, monkeypatch):
     (repo / "calc.py").write_text(GOOD)
-    lacking = {"verdict": "not_run", "said": "the tests could not be collected", "baseline": "collection_error"}
-    Recorded(monkeypatch, default=result(verdict="collection_error", output="ERROR test_calc.py\n"),
+    lacking = {"verdict": "not_run", "said": "the tests could not be collected", "baseline": "collection_error",
+        'output': '', 'rootdir': '', 'test_outcomes': None,
+        'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+        'omitted_ids': []}
+    Recorded(monkeypatch, default=result(verdict="collection_error", output="ERROR test_calc.py\n",
+                                        messages={"test_calc.py": "ImportError"}, collection_stopped=True),
              on_base={"test_calc.py": lacking})   # the environment lacks the dependency at the base commit too
     got = review(repo)
     assert got["assessment"]["outcome"] == "insufficient_evidence"
@@ -664,7 +676,8 @@ def test_only_the_check_whose_file_failed_to_collect_is_named(repo, monkeypatch)
     (repo / "test_more.py").write_text("import calc\n\n\ndef test_more():\n    assert calc.add(0, 0) == 0\n")
     (repo / "calc.py").write_text(GOOD)
     more = [*SUM, {"id": "R3", "text": "add sums zeros", "checks": ["test_more.py::test_more"]}]
-    Recorded(monkeypatch, default=result(verdict="failed", output="ERROR collecting test_more.py\nERROR test_more.py"))
+    Recorded(monkeypatch, default=result(verdict="failed", output="ERROR collecting test_more.py\nERROR test_more.py",
+                                        messages={"test_more.py": "ImportError"}, collection_stopped=True))
     got = review(repo, more)
     assert got["assessment"]["outcome"] == "defect_detected"
     assert _requirement(got, "R3")["checks"][0]["verdict"] == "failed"
@@ -721,7 +734,10 @@ def test_a_derived_test_failing_on_base_and_patch_is_pre_existing_not_a_defect(r
     derived = result([ADD, NEGATIVE], ["test_legacy.py::test_legacy"])
     # as repo_tests.run_before gives it: the base run happened and failed (with no baseline it never ran: launch I4)
     not_on_base = {"verdict": "not_run", "said": "old tests not run: the old-code baseline did not pass",
-                   "baseline": "failed"}
+                   "baseline": "failed",
+        'output': '', 'rootdir': '', 'test_outcomes': None,
+        'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+        'omitted_ids': []}
     runs = Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]),
                                   ("test_calc.py", "test_legacy.py"): derived},
                     on_base={"test_legacy.py": not_on_base})
@@ -747,7 +763,10 @@ def test_a_failing_derived_file_g6_could_not_run_at_the_base_commit_is_said_so_n
     (repo / "test_legacy.py").write_text("import calc\n\n\ndef test_legacy():\n    assert calc.add(1, 1) == 2\n")
     _commit(repo, "legacy")
     (repo / "calc.py").write_text(GOOD)
-    never = {"verdict": "not_run", "said": "the repository copy cap of 10000 files was exceeded"}   # no baseline
+    never = {"verdict": "not_run", "said": "the repository copy cap of 10000 files was exceeded",
+        'output': '', 'rootdir': '', 'test_outcomes': None,
+        'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+        'omitted_ids': []}   # no baseline
     Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]),
                            ("test_calc.py", "test_legacy.py"): result([ADD, NEGATIVE], ["test_legacy.py::test_legacy"])},
              on_base={"test_legacy.py": never})
@@ -767,9 +786,13 @@ def test_a_derived_file_that_fails_to_collect_on_the_patch_and_passes_at_the_bas
          "commit", "-qm", "legacy")
     (repo / "calc.py").write_text(GOOD)
     collected_at_base = {"verdict": "not_run", "said": "the tests could not be collected", "baseline": "passed",
-                         "patched": verdict}
+                         "patched": verdict,
+        'output': '', 'rootdir': '', 'test_outcomes': None,
+        'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+        'omitted_ids': []}
     runs = Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]),
-                                  ("test_calc.py", "test_legacy.py"): result(verdict=verdict, output=output)},
+                                  ("test_calc.py", "test_legacy.py"): result(verdict=verdict, output=output,
+                                      messages={"test_legacy.py": "ImportError"}, collection_stopped=True)},
                     on_base={"test_legacy.py": collected_at_base})
     got = review(repo)
     assert got["assessment"]["outcome"] == "defect_detected", got["assessment"]
@@ -778,8 +801,12 @@ def test_a_derived_file_that_fails_to_collect_on_the_patch_and_passes_at_the_bas
     assert runs.calls[-1] == ("base", ("test_legacy.py",))
     # survival: when it did not pass at the base commit either, it stays an unknown
     Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]),
-                           ("test_calc.py", "test_legacy.py"): result(verdict=verdict, output=output)},
-             on_base={"test_legacy.py": {"verdict": "not_run", "said": "no", "baseline": "failed"}})
+                           ("test_calc.py", "test_legacy.py"): result(verdict=verdict, output=output,
+                               messages={"test_legacy.py": "ImportError"}, collection_stopped=True)},
+             on_base={"test_legacy.py": {"verdict": "not_run", "said": "no", "baseline": "failed",
+                 'output': '', 'rootdir': '', 'test_outcomes': None,
+                 'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+                 'omitted_ids': []}})
     unknown = review(repo)
     assert unknown["assessment"]["outcome"] == "supported_within_scope"
     assert any("test_legacy.py" in u for u in unknown["assessment"]["unknowns"])
@@ -1532,7 +1559,10 @@ def _during_the_review(monkeypatch, act) -> None:
 
     monkeypatch.setattr(patch_review, "_execute", execute)
     monkeypatch.setattr(patch_review, "_execute_at_base",
-                        lambda *args, **kwargs: {"verdict": "not_run", "said": "no run was recorded"})
+                        lambda *args, **kwargs: {"verdict": "not_run", "said": "no run was recorded",
+                            'output': '', 'rootdir': '', 'test_outcomes': None,
+                            'failed_ids': [], 'setup_errors': {}, 'collected_ids': [],
+                            'omitted_ids': []})
 
 
 def test_bytecode_written_in_a_submodule_folder_during_the_review_is_no_accusation(repo, monkeypatch):

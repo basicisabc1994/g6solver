@@ -27,6 +27,8 @@ and after, a run that changed tracked files says so, and network connections are
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import time
 import uuid
 from types import SimpleNamespace
@@ -47,14 +49,20 @@ def _row(check: str, result: str, detail: str, state: str) -> dict[str, str]:
     return {"check": check, "result": result, "detail": detail, "label": state}
 
 
-def _as_run(out: dict) -> SimpleNamespace:
+def _as_run(out: dict, tests: list[str] | tuple[str, ...] = (), repo: Path | None = None) -> SimpleNamespace:
     """A ``repo_tests.run`` answer in the shape ``mutation_check`` reads: executed only when the tests ran."""
     from g6.workforce import repo_tests as rt
 
-    ran = out.get("verdict") in rt.RAN
-    return SimpleNamespace(execution_id=uuid.uuid4().hex if ran else "", passed=int(out.get("passed", 0)),
-                           failed=int(out.get("failed", 0)), not_passed=int(out.get("not_passed", 0)),
-                           reason="" if ran else str(out.get("verdict", "")))
+    said = rt.established(out, repo=repo)   # the one statement of what the run shows, of the tree's own code
+    report = said.report
+    results = [said.of(test) for test in tests] if tests else [said.of()]
+    failed = said.of() == rt.FAILED and rt.FAILED in results
+    passed = said.of() == rt.PASSED and all(value == rt.PASSED for value in results)
+    ran = failed or passed
+    return SimpleNamespace(execution_id=uuid.uuid4().hex if ran else "",
+                           passed=report.data.get("passed", int(passed)) if ran else 0,
+                           failed=report.data.get("failed", int(failed)) if ran else 0,
+                           not_passed=0, reason="" if ran else "the runner report has no body result")
 
 
 def _mutations(change, repo, tests: list[str], seconds: float) -> tuple[dict[str, str], list[str]]:
@@ -73,7 +81,7 @@ def _mutations(change, repo, tests: list[str], seconds: float) -> tuple[dict[str
 
         def runner(source: str, timeout_s: int, rel: str = rel) -> SimpleNamespace:
             try:
-                return _as_run(rt.run(repo, tests, mutant=(rel, source), timeout_s=timeout_s))
+                return _as_run(rt.run(repo, tests, mutant=(rel, source), timeout_s=timeout_s), tests, repo)
             except rt.RepoRefused as exc:
                 return SimpleNamespace(execution_id="", passed=0, failed=0, not_passed=0, reason=str(exc))
 
@@ -121,6 +129,9 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
     except rt.RepoRefused as exc:
         return BundleResult("blocked-escalated", str(exc), code=exc.code)
 
+    report = rt.read_report(found)
+    found = {"verdict": report.verdict, "said": report.said, "total": 0, "passed": 0, "failed": 0,
+             "not_passed": 0, "failed_ids": [], "changed": [], **report.wire()}
     rows: list[dict[str, str]] = []
     boundary = (found.get("isolation") or {}).get("backend")
     notes = [(f"G6 ran your repository's tests on this computer inside an operating-system boundary ({boundary})."
@@ -128,9 +139,11 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
               "no operating-system boundary could confine them here.")
              + " Network connections were refused inside the tests.",
              "The best label is qualified-draft: the tests are yours or the agent's, not independent of the change, "
-             "and passing tests do not prove the task is done."]
-    verdict, ran = found["verdict"], found["verdict"] in rt.RAN
-    if verdict == rt.PASSED and found["total"]:
+             "and passing tests do not establish that the task is done."]
+    # the one statement of what the run shows, of the tree's own code
+    verdict, whole = report.verdict, rt.established(report, repo=repo).of()
+    ran = whole in rt.RAN
+    if whole == rt.PASSED and found["total"]:
         detail = f"{found['passed']} passed" + (f", {found['not_passed']} skipped (a skip is not a pass)"
                                                  if found["not_passed"] else "")
         rows.append(_row("Your tests on the change", "passed", detail, "qualified-draft"))
@@ -150,9 +163,12 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
             old = rt.run_before(change)
         except rt.RepoRefused as exc:
             old = {rel: {"verdict": "not_run", "said": str(exc)} for rel in change.before}
-        broke = [rel for rel, out in old.items() if out.get("verdict") == rt.FAILED]
-        skipped = {rel: out.get("said", "") for rel, out in old.items() if out.get("verdict") != rt.PASSED
-                   and rel not in broke}
+        # each replay counts only as the one statement gives it: a replay of code from outside its copy, or in any
+        # other state that establishes nothing, is neither an original test's pass nor a break the change caused
+        replays = {rel: rt.established(out, repo=repo) for rel, out in old.items()}
+        broke = [rel for rel, said in replays.items() if said.of() == rt.FAILED]
+        skipped = {rel: said.report.said or rt.NO_AUTHORITY.get(said.withheld, "")
+                   for rel, said in replays.items() if said.of() != rt.PASSED and rel not in broke}
         if broke:
             rows.append(_row("Original tests on the new code", "failed", "the original version of "
                              + ", ".join(shown(rel) for rel in broke[:_SHOWN]) + " passed before the change and fails now: the change "
@@ -180,7 +196,7 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
         notes.append("The change edits test-runner configuration (" + ", ".join(shown(rel) for rel in change.runner_files[:_SHOWN])
                      + "); read it yourself: G6 says it, and does not judge it.")
 
-    if verdict == rt.PASSED and found["total"]:
+    if whole == rt.PASSED and found["total"]:
         row, gaps = _mutations(change, repo, tests, float(found.get("seconds") or 1))
         rows.append(row)
         notes += gaps
