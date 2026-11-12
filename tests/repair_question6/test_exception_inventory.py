@@ -73,16 +73,17 @@ def test_exception_metadata_never_erases_matching_or_differing_outcome(tmp_path,
     assert isinstance(one['raised_name'], str)
     assert set(one['exception_detail']) == {'str', 'repr', 'arguments', 'metaclass'}
     assert set(one['exception_detail'].values()) == {'<unavailable>'}
-    if name in ('module-none', 'module-number') or (name.startswith('__module__-') and not name.endswith('string-subclass')):
+    if name in ('module-none', 'module-number'):
         assert one['raised_name'] == '<unavailable>.DomainError'
-    if name.startswith('__qualname__-') and not name.endswith('string-subclass'):
-        assert one['raised_name'] == 'calc.<unavailable>'
+    # A metaclass's answer for a name is never asked: the names are read from the class's own namespace and slots.
+    if name.startswith('__') and not name.endswith('string-subclass'):
+        assert one['raised_name'] == 'calc.DomainError'
     if name == '__module__-string-subclass':
         assert one['raised_name'] == 'diagnostic.DomainError'
     if name == '__qualname__-string-subclass':
         assert one['raised_name'] == 'calc.diagnostic'
     if name == 'metaclass':
-        assert one['raised_name'] == '<unavailable>.<unavailable>'
+        assert one['raised_name'] == 'calc.DomainError'
     if name in ('str', 'repr', 'args', 'args-access', 'metaclass'):
         assert one['exception_detail'][{'args': 'arguments', 'args-access': 'arguments'}.get(name, name)] == '<unavailable>'
 

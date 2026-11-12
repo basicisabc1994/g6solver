@@ -54,6 +54,9 @@ def test_every_reply_and_report_text_field_matches_frozen_renderer(tmp_path, mon
     args, kwargs = bound.args, bound.kwargs
     # Compare the request-ID field too, with the same external ID source on both render calls.
     monkeypatch.setattr(patch_review, 'uuid', SimpleNamespace(uuid4=lambda: UUID(int=1)))
+    # The report states the seconds since the review started, to a tenth: both renders read one fixed instant.
+    instant = bound.arguments['started'] + 1.0
+    monkeypatch.setattr(patch_review, 'time', SimpleNamespace(monotonic=lambda: instant))
     reply = original(*args, **kwargs)
     monkeypatch.setattr(patch_review, '_one_line', old_guidance._one_line)
     monkeypatch.setattr(patch_report, 'render', old_report.render)

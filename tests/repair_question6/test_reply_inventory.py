@@ -272,6 +272,10 @@ def test_full_reply_and_report_each_outcome_keep_every_text_leaf(tmp_path, monke
     monkeypatch.setattr(patch_review, '_reply', capture)
     monkeypatch.setattr(patch_review, 'uuid', SimpleNamespace(uuid4=lambda: UUID(int=1)))
     patch_review.review_patch(root, task=TASK, requirements=REQUIREMENTS)
+    # The report states the seconds since the review started, to a tenth: both renders read one fixed instant,
+    # as they share one request-ID source. The seconds text stays compared.
+    instant = captured[-1].arguments['started'] + 1.0
+    monkeypatch.setattr(patch_review, 'time', SimpleNamespace(monotonic=lambda: instant))
     for reason in (None, ('integrity', 'test_weakened'), ('tier_1', 'check_failed'),
                    ('evidence', 'requirement_not_established')):
         bound = copy.deepcopy(captured[-1])

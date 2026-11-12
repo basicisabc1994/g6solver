@@ -17,7 +17,7 @@ import stat
 import struct
 import sys
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from g6.core import component_process, confine
 from g6.core.errors import ISOLATION_UNAVAILABLE
@@ -82,10 +82,13 @@ def _fingerprint(text: str) -> dict:
 def _exception_observation(exc, errors, probe):
     """Record the caught type first; unavailable diagnostics can never erase that observation.
 
-    Instance display hooks are not needed for type matching and are deliberately not invoked. Names are diagnostic;
-    the actual type's ancestry, read through Python's descriptor, retains the existing subtype comparison.
+    Instance display hooks are not needed for type matching and are deliberately not invoked. Names are diagnostic.
+    The type's ancestry, module and qualified name are read through the built-in type's own descriptors, which read
+    the class's own slots and namespace: a metaclass's attribute lookup, name properties, display hooks and instance
+    or subclass checks are never asked.
     """
     kind = type(exc)
+    own = type.__dict__
     unavailable = '<unavailable>'
     one = {'raised': [id(kind)], 'raised_name': unavailable + '.' + unavailable,
            'exception_detail': dict.fromkeys(('str', 'repr', 'arguments', 'metaclass'), unavailable)}
@@ -93,16 +96,20 @@ def _exception_observation(exc, errors, probe):
         one['probe'] = {'raised': one['raised_name']}
     try:
         relevant = set(errors.values())
-        ancestry = type.__dict__['__mro__'].__get__(kind)
+        ancestry = own['__mro__'].__get__(kind)
         one['raised'].extend(id(parent) for parent in ancestry if parent is not kind and id(parent) in relevant)
     except BaseException:
         pass
 
     def name(field):
         try:
-            value = getattr(kind, field)
-            # The base implementation copies a str subclass without calling its display or arithmetic hooks.
-            return str.__str__(value) if isinstance(value, str) else unavailable
+            value = own[field].__get__(kind)
+            if type(value) is not str:
+                if not any(base is str for base in own['__mro__'].__get__(type(value))):
+                    return unavailable
+                # The base implementation copies a str subclass without calling its display or arithmetic hooks.
+                value = str.__str__(value)
+            return value
         except BaseException:
             return unavailable
 
@@ -270,21 +277,59 @@ module = data["function"][1]
 for name in list(sys.modules):
     if name == module or name.startswith(module + ".") or module.startswith(name + "."):
         del sys.modules[name]
-function = load(data["function"])
-errors = {}
+# A built-in outcome type is read now, before any repository code runs. Nothing else an outcome names is imported or
+# initialised before the call: the person confirmed a fresh import of the function's module and the call, no more.
+fixed = {}
 for spec in data["errors"]:
-    error = load(spec)
-    if not observable_exception(error, resolved=True):
-        raise RuntimeError("expected error is not an exception type")
-    errors[dumps(spec, sort_keys=True)] = identity(error)
-outcomes = []
+    if spec[0] == "builtin":
+        error = getattr(builtins, spec[2])
+        if not observable_exception(error, resolved=True):
+            raise RuntimeError("expected error is not an exception type")
+        fixed[dumps(spec, sort_keys=True)] = error
+namespace_of = type(sys).__dict__["__dict__"].__get__
+def held(mapping, name):
+    # What an exact dict holds under an exact str key, compared by str's own equality: no key's own hooks run.
+    if kind_of(mapping) is dict:
+        for key, value in dict.items(mapping):
+            if kind_of(key) is str and key == name:
+                return value
+    return None
+def named(spec):
+    # After a call: the exception type an outcome names, among the modules that call loaded, by qualified name and
+    # from the file G6 resolved. Never an import, and never a lookup that a repository module, class or metaclass
+    # can intercept. None when no such exception type is loaded: that outcome cannot be compared with a raise.
+    try:
+        if len(spec) != 4:
+            return None
+        namespace = namespace_of(held(sys.modules, spec[1]))
+        where = held(namespace, "__file__")
+        wanted = os.path.realpath(os.path.join(root, *spec[3].split("/")))
+        if kind_of(where) is not str or os.path.normcase(os.path.realpath(where)) != os.path.normcase(wanted):
+            return None
+        found = held(namespace, spec[2])
+        return found if observable_exception(found, resolved=True) else None
+    except Exception:
+        return None
+def resolved():
+    found = {}
+    for spec in data["errors"]:
+        key = dumps(spec, sort_keys=True)
+        error = fixed[key] if key in fixed else named(spec)
+        alive.append(error)
+        found[key] = None if error is None else identity(error)
+    return found
+function = load(data["function"])
+errors, outcomes, alive = {}, [], []
 for call in data["calls"]:
     args, kwargs = copy.deepcopy(call["args"]), copy.deepcopy(call.get("kwargs", {}))
     try:
         result = function(*args, **kwargs)
     except BaseException as exc:
+        alive.append(exc)
+        errors = resolved()
         outcomes.append(_exception_observation(exc, errors, data['probe']))
     else:
+        errors = resolved()
         one = {"returned": encode(result), "arguments": [encode(arg) for arg in args]}
         if data["probe"]:
             one["probe"] = ({"raised": None} if data["mode"] == "exceptions" else
@@ -327,7 +372,9 @@ def read_frame(raw: bytes) -> dict | None:
                 or value["version"] not in {"observation.v1", "observation.v2"}
                 or not isinstance(value["outcomes"], list)
                 or not isinstance(value["errors"], dict)
-                or any(type(v) is not int for v in value["errors"].values())):
+                # observation.v2: null says the call loaded no exception type of that name (it is never imported).
+                or any(type(v) is not int and (v is not None or value["version"] != "observation.v2")
+                       for v in value["errors"].values())):
             return None
         for one in value["outcomes"]:
             if not isinstance(one, dict):
@@ -409,9 +456,13 @@ def finish(code: int | None, raw: bytes, data: dict) -> dict:
         expected = case["expect"]
         if expected == "raises":
             token = observed["errors"].get(_encoded(case["error"]))
-            if type(token) is not int:
+            if "raised" not in outcome:
+                matches = False   # the call returned: it raised no exception of any type
+            elif type(token) is not int:
+                # The call raised, and loaded no exception type of the confirmed name to compare it with.
                 return {"result": "error", "detail": "G6_E_OBSERVATION_UNAVAILABLE: unresolved expected error"}
-            matches = token in outcome.get("raised", [])
+            else:
+                matches = token in outcome["raised"]
         elif expected == "returns":
             matches = "returned" in outcome and _matches_encoding(outcome["returned"], case["value"])
         elif expected == "effect":
@@ -482,24 +533,131 @@ def request(data: dict) -> dict:
             "probe": "cases" not in data, "mode": data.get("mode", "outputs")}
 
 
+def _made(tree: Path, copy: Path, files: dict[str, str], deadline: float) -> None:
+    """Write the folder the child runs in from the manifest, never by walking the copy: exactly the files ``files``
+    lists (``_copy_snapshot``'s record of the copy), each a new regular file holding the bytes read from the copy's
+    file of that name and hashed as they are written. Bytes that do not hash to the manifest's value, a record that
+    is not a file's hash (a link the copy holds) and a name that cannot be made new below ``tree`` (another spelling
+    of one already written) refuse the run. Nothing else the copy or its file system holds reaches the child:
+    another stream of a file or a folder, another name for a file, an entry the manifest does not list."""
+    tree.mkdir()
+    size = 0
+    for count, (rel, wanted) in enumerate(sorted(files.items()), 1):
+        parts = PurePosixPath(rel).parts
+        target = tree.joinpath(*parts)
+        if (not isinstance(wanted, str) or len(wanted) != 64 or any(ch not in "0123456789abcdef" for ch in wanted)
+                or not parts or ".." in parts or not target.is_relative_to(tree) or os.name == "nt" and ":" in rel):
+            raise rt.CopyNotRun("G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: not a file G6 can write from its bytes: " + rel)
+        written = hashlib.sha256()
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with copy.joinpath(*parts).open("rb") as source, target.open("xb") as made:
+                while block := source.read(1 << 20):
+                    size += len(block)
+                    rt._copy_caps(count, size, deadline)
+                    written.update(block)
+                    made.write(block)
+        except FileExistsError as exc:
+            raise rt.CopyNotRun("G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: two names of the manifest are one name in the "
+                                "folder the check runs in: " + rel) from exc
+        if written.hexdigest() != wanted:
+            raise rt.CopyNotRun("G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: the copy changed while G6 wrote the folder "
+                                "the check runs in: " + rel)
+
+
+def _beyond(tree: Path) -> dict[str, str]:
+    """What a path in ``tree`` carries beyond the files' names and bytes ``_copy_snapshot`` reads, as entries no
+    manifest holds: a folder that holds nothing (its name is all it carries, and no file's path implies it), a file
+    that has another name (a hard link: its bytes can be written through a path outside the folder), and every
+    stream beyond a file's unnamed one (NTFS: ``name:stream`` on a file or on a folder, the top folder included).
+    Read with the names and bytes after the child ends, so each is a change like any other. A stream listing that
+    fails is an entry too (an unread stream is never read as none). No stream is listed where the volume has no
+    named streams, or off Windows."""
+    found: dict[str, str] = {}
+    for folder, dirs, files in os.walk(tree):
+        component_process.checkpoint()
+        here = Path(folder).relative_to(tree).as_posix()
+        if not dirs and not files:
+            found[here + "/"] = "empty folder"
+        dirs[:] = [name for name in dirs if not rt._linked(Path(folder) / name)]   # a link is the snapshot's entry
+        for name in files:
+            if os.lstat(os.path.join(folder, name)).st_nlink != 1:
+                found[(Path(folder) / name).relative_to(tree).as_posix() + " (another name)"] = "hard link"
+    return {**found, **_streams(tree)}
+
+
+def _streams(tree: Path) -> dict[str, str]:
+    """``_beyond``'s streams: every one beyond a file's unnamed stream, on each file and folder of ``tree``."""
+    if os.name != "nt":
+        return {}
+    import ctypes
+    from ctypes import wintypes
+
+    class Found(ctypes.Structure):   # WIN32_FIND_STREAM_DATA: the name reads ":name:$DATA", the unnamed one "::$DATA"
+        _fields_ = [("size", ctypes.c_longlong), ("name", ctypes.c_wchar * 296)]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.FindFirstStreamW.restype = wintypes.HANDLE
+    kernel.FindFirstStreamW.argtypes = [wintypes.LPCWSTR, ctypes.c_int, ctypes.POINTER(Found), wintypes.DWORD]
+    kernel.FindNextStreamW.argtypes = [wintypes.HANDLE, ctypes.POINTER(Found)]
+    kernel.FindClose.argtypes = [wintypes.HANDLE]
+    kernel.GetVolumePathNameW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+    kernel.GetVolumeInformationW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD, wintypes.LPDWORD,
+                                             wintypes.LPDWORD, wintypes.LPDWORD, wintypes.LPWSTR, wintypes.DWORD]
+    top = os.path.abspath(tree)
+    volume, flags = ctypes.create_unicode_buffer(len(top) + 2), wintypes.DWORD()
+    if (kernel.GetVolumePathNameW(top, volume, len(volume))
+            and kernel.GetVolumeInformationW(volume.value, None, 0, None, None, ctypes.byref(flags), None, 0)
+            and not flags.value & 0x00040000):   # FILE_NAMED_STREAMS: this volume has none to list
+        return {}
+    found: dict[str, str] = {}
+    end, invalid = 38, wintypes.HANDLE(-1).value   # ERROR_HANDLE_EOF: no (further) stream
+    for folder, dirs, files in os.walk(top):
+        component_process.checkpoint()
+        dirs[:] = [name for name in dirs if not rt._linked(Path(folder) / name)]   # a link is the snapshot's entry
+        for path in (folder, *(os.path.join(folder, name) for name in files)):
+            rel = Path(path).relative_to(top).as_posix()
+            one = Found()
+            handle = kernel.FindFirstStreamW(path if path.startswith("\\\\") else "\\\\?\\" + path, 0,
+                                             ctypes.byref(one), 0)
+            if handle in (None, invalid):
+                if ctypes.get_last_error() != end:
+                    found[rel + ":"] = f"streams not read (error {ctypes.get_last_error()})"
+                continue
+            try:
+                while True:
+                    if one.name != "::$DATA":
+                        found[rel + one.name] = "stream"
+                    if not kernel.FindNextStreamW(handle, ctypes.byref(one)):
+                        if ctypes.get_last_error() != end:
+                            found[rel + ":"] = f"streams not read (error {ctypes.get_last_error()})"
+                        break
+            finally:
+                kernel.FindClose(handle)
+    return found
+
+
 def run(copy: Path, data: dict, node: str, *, timeout_s: int, deadline: float) -> dict:
-    """One confined interpreter G6 starts, and one channel G6 creates before starting it."""
+    """One confined interpreter G6 starts, in a folder G6 writes from the copy's manifest (``_made``), and one
+    channel G6 creates before starting it. The folder is read again after the child ends: its names and bytes by the
+    ordinary executor's comparison, and what a path in it carries beyond them (``_beyond``)."""
     started = time.monotonic()
     before = rt._copy_snapshot(copy, deadline=deadline)
     data = located(copy, data)
-    remaining = min(timeout_s, deadline - time.monotonic())
-    if remaining <= 0:
-        return {"verdict": "not_run", "said": "G6_E_OBSERVATION_UNAVAILABLE: timeout before startup"}
     # G6's own Python, never a repository interpreter or repository site packages.
     python = sys.executable
     with confine.run_folder(prefix="g6_observation_", dir=copy.parent, ignore_cleanup_errors=True) as top:
         own = Path(top)
-        channel, boot, log = own / "result.bin", own / "bootstrap.py", own / "output.log"
+        channel, boot, log, tree = own / "result.bin", own / "bootstrap.py", own / "output.log", own / "tree"
+        _made(tree, copy, before, deadline)
+        remaining = min(timeout_s, deadline - time.monotonic())
+        if remaining <= 0:
+            return {"verdict": "not_run", "said": "G6_E_OBSERVATION_UNAVAILABLE: timeout before startup"}
         program = data.get("_program", confine.CHILD_PRELUDE + BOOTSTRAP)
         boot.write_text(program, encoding="utf-8", newline="\n")
         with channel.open("xb"):
             pass
-        plan = confine.plan(confine.Confinement(read_write=(str(own), str(copy)),
+        plan = confine.plan(confine.Confinement(read_write=(str(own),),
                             read_only=confine.interpreter_paths(python), network=False), python)
         isolation = plan.record()
         if confine.refused(plan) or not plan.backend:
@@ -508,8 +666,8 @@ def run(copy: Path, data: dict, node: str, *, timeout_s: int, deadline: float) -
         try:
             # A canonical program already holds its input. Repeating it on argv also hits Windows' command limit.
             payload = '{}' if '_program' in data else _encoded(request(data))
-            command = [python, "-I", "-S", "-B", "-X", "utf8", str(boot), str(copy), str(channel), payload]
-            code = rt._bounded(command, cwd=copy, env=rt.child_env(own, network=False),
+            command = [python, "-I", "-S", "-B", "-X", "utf8", str(boot), str(tree), str(channel), payload]
+            code = rt._bounded(command, cwd=tree, env=rt.child_env(own, network=False),
                                timeout_s=remaining, log=log, confined=plan)
             with channel.open("rb") as handle:
                 raw = handle.read(MAX_FRAME + len(MAGIC) + 5)
@@ -522,7 +680,7 @@ def run(copy: Path, data: dict, node: str, *, timeout_s: int, deadline: float) -
             if cleanup:
                 isolation["cleanup"] = cleanup
         found = finish(code, raw, data)
-    after = rt._copy_snapshot(copy, deadline=deadline)
+        after = {**rt._copy_snapshot(tree, deadline=deadline), **_beyond(tree)}
     moved = rt._moved(before, after)
     if moved:
         return {"verdict": rt.CHANGED, "changed": moved, "source_before": digest(before),

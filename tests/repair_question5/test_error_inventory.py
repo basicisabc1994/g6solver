@@ -51,11 +51,10 @@ def test_executor_error_is_never_evidence_of_changed_bytes(tmp_path, monkeypatch
         monkeypatch.setattr(behaviour_runner, 'located', lambda *a, **k: broken() if failing() else original(*a, **k))
     elif stage == 'after_read':
         original = rt._copy_snapshot
-        counts = {}
         def snapshot(path, **kwargs):
-            key = str(path)
-            counts[key] = counts.get(key, 0) + 1
-            return broken() if counts[key] == (4 if when == 'base' else 3) and failing() else original(path, **kwargs)
+            # The runner's read after the child ends is its one read of the folder it made for the run ("tree" in
+            # its own run folder); it was the third or fourth read of the copy while the child ran in the copy.
+            return broken() if path.name == 'tree' and failing() else original(path, **kwargs)
         monkeypatch.setattr(rt, '_copy_snapshot', snapshot)
     reply = behaviour.reviewed(patch_review.review_patch, str(root), TASK, requirements=REQUIREMENTS)
     assessment = reply['assessment']
