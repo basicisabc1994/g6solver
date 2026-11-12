@@ -75,7 +75,7 @@ def expanded(source: str) -> str:
 
 
 def _fingerprint(text: str) -> dict:
-    raw = text.encode('utf-8')
+    raw = bytes(text, 'utf-8')
     return {'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw), 'prefix': text[:200]}
 
 
@@ -253,7 +253,8 @@ sys.pycache_prefix = os.path.join(os.path.dirname(channel), "pycache")
 def _no_sourceless(self, fullname):
     raise ImportError("G6_E_OBSERVATION_UNAVAILABLE: sourceless bytecode is outside the execution manifest")
 importlib.machinery.SourcelessFileLoader.get_code = _no_sourceless
-sys.path[:0] = [root, os.path.join(root, "src")]
+binding = data["function"][4] if len(data["function"]) == 5 else {}
+sys.path[:0] = [os.path.join(root, part) for part in binding.get("import_roots", [".", "src"])]
 def encode(value):
     try:
         return _fingerprint(dumps(value, sort_keys=True, allow_nan=False))
@@ -263,10 +264,14 @@ def load(spec):
     kind, module, attribute = spec[:3]
     if kind == "builtin":
         return getattr(builtins, attribute)
-    found = importlib.import_module(module)
-    if len(spec) != 4:
+    if len(spec) not in (4, 5):
         raise RuntimeError("entry point has no resolved repository file")
     wanted = os.path.realpath(os.path.join(root, *spec[3].split("/")))
+    if len(spec) == 5:
+        with open(wanted, "rb") as source:
+            if hashlib.sha256(source.read()).hexdigest() != spec[4]["sha256"]:
+                raise RuntimeError("G6_E_SCENARIO_UNAVAILABLE: the confirmed referent's bytes changed")
+    found = importlib.import_module(module)
     where = os.path.realpath(getattr(found, "__file__", ""))
     if os.path.normcase(where) != os.path.normcase(wanted):
         raise RuntimeError("entry point resolved outside its copied file")
@@ -422,7 +427,7 @@ def _valid_encoding(value) -> bool:
             and all(ch in '0123456789abcdef' for ch in value['sha256'])
             and type(value['size']) is int and value['size'] >= 0
             and isinstance(value['prefix'], str) and len(value['prefix']) <= 200
-            and len(value['prefix'].encode('utf-8')) <= value['size'])
+            and len(bytes(value['prefix'], 'utf-8')) <= value['size'])
 
 
 def _matches_encoding(observed, expected) -> bool:
@@ -519,9 +524,9 @@ def located(copy: Path, data: dict) -> dict:
         stem = spec[1].replace(".", "/")
         choices = [prefix + stem + suffix for prefix in ("", "src/") for suffix in ("/__init__.py", ".py")]
         resolved = next((rel for rel in choices if (copy / rel).is_file()), None)
-        if resolved is None or len(spec) == 4 and resolved != spec[3]:
+        if resolved is None or len(spec) >= 4 and resolved != spec[3]:
             raise ValueError("G6_E_OBSERVATION_UNAVAILABLE: the copied entry point does not match")
-        spec[:] = [*spec[:3], resolved]
+        spec[:] = [*spec[:3], resolved, *spec[4:]]
     return data
 
 
@@ -531,6 +536,44 @@ def request(data: dict) -> dict:
     return {"function": data["function"], "calls": [{"args": c["args"], "kwargs": c.get("kwargs", {})} for c in calls],
             "errors": data.get("errors", [case["error"] for case in calls if case.get("expect") == "raises"]),
             "probe": "cases" not in data, "mode": data.get("mode", "outputs")}
+
+
+def example_text(slot: str) -> str:
+    """Portable examples use the same fresh interpreter and comparison as product enforcement.
+
+    Pytest is only a convenience for displaying a reproduction. Product evidence comes from ``run`` and its
+    host-owned result channel, never from collection, plugins or the wrapper's pytest status.
+    """
+    helpers = "\n\n".join(inspect.getsource(one) for one in (
+        _unique, _encoded, _fingerprint, _valid_encoding, _matches_encoding, read_frame, finish, located, request))
+    return ("import hashlib, json, struct, subprocess, tempfile, sys, os\nfrom pathlib import Path\n"
+            "TEMPLATE = 'example.v1'\nBINDINGS = " + slot
+            + "\nMAGIC = b'G6R1\\n'\nMAX_FRAME = 1048576\nBOOTSTRAP = "
+            + ascii(confine.CHILD_PRELUDE + BOOTSTRAP) + "\n" + helpers + '''
+def _check_example():
+    data = located(Path.cwd(), BINDINGS)
+    with tempfile.TemporaryDirectory() as own:
+        channel = os.path.join(own, 'result.bin')
+        boot = os.path.join(own, 'bootstrap.py')
+        with open(boot, 'w', encoding='utf-8', newline='\\n') as handle:
+            handle.write(BOOTSTRAP)
+        with open(channel, 'xb'):
+            pass
+        ran = subprocess.run([sys.executable, '-I', '-S', '-B', '-X', 'utf8', boot,
+                              os.getcwd(), channel, _encoded(request(data))], capture_output=True, timeout=10)
+        with open(channel, 'rb') as handle:
+            raw = handle.read(MAX_FRAME + len(MAGIC) + 5)
+    reading = finish(ran.returncode, raw, data)
+    if reading['result'] != 'passed':
+        raise AssertionError(reading['detail'])
+
+def test_example():
+    import pytest
+    try:
+        _check_example()
+    except (AssertionError, ValueError) as exc:
+        pytest.fail(str(exc), pytrace=False)
+''')
 
 
 def _made(tree: Path, copy: Path, files: dict[str, str], deadline: float) -> None:
