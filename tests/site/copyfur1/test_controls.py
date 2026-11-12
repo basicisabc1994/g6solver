@@ -1,15 +1,8 @@
 import importlib.util
 import json
 from pathlib import Path
-from uuid import uuid4
 import pytest
 import yaml
-
-
-def workspace_folder(honesty, name):
-    folder = honesty.OSS / '.review' / (name + '-' + uuid4().hex)
-    folder.mkdir()
-    return folder
 
 
 def followup_module(honesty):
@@ -39,8 +32,8 @@ def test_matcher_sentence_reader_and_foreign_reader_controls(honesty):
         followup.test_all_structured_strings_are_read_before_their_field_is_registered(honesty, field)
 
 
-def test_yaml_controls_without_pytest_temporary_directory_acl(honesty, monkeypatch):
-    root = workspace_folder(honesty, 'yaml-controls')
+def test_yaml_controls_without_pytest_temporary_directory_acl(honesty, monkeypatch, scratch):
+    root = scratch
     path = root / 'mkdocs.yml'
     for source in ('markdown_extensions: [toc, tables]', 'markdown_extensions:\n  - toc: {permalink: true}\n\n  - tables\n'):
         path.write_text(source, encoding='utf-8')
@@ -62,10 +55,10 @@ def test_yaml_controls_without_pytest_temporary_directory_acl(honesty, monkeypat
         honesty.test_the_docs_site_is_read_with_the_extensions_mkdocs_yml_names()
 
 
-def test_build_and_structured_output(honesty):
+def test_build_and_structured_output(honesty, scratch):
     from pages.management.commands.build_static import build, csp_hash
     from pages.guard import inline_scripts
-    root = workspace_folder(honesty, 'static-controls')
+    root = scratch
     out = root / 'out'
     assert build(out) == []
     for page in honesty.PAGES:

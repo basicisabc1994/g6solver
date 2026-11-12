@@ -1,7 +1,6 @@
 import importlib.util
 import json
 from pathlib import Path
-from uuid import uuid4
 
 import pytest
 import yaml
@@ -55,9 +54,8 @@ def test_foreign_format_and_shown_attribute_controls(honesty):
         honesty.structured_inventory('<script type="application/ld+json">{"newReaderFacingField":"Checked."}</script>')
 
 
-def test_yaml_extension_inventory_is_complete(honesty):
-    root = honesty.OSS / '.review' / ('yaml-' + uuid4().hex)
-    root.mkdir()
+def test_yaml_extension_inventory_is_complete(honesty, scratch):
+    root = scratch
     config = root / 'mkdocs.yml'
     config.write_text('markdown_extensions:\n  - toc: {permalink: true}\n\n  - footnotes\n', encoding='utf-8')
     assert honesty.docs_extensions(config) == {'toc', 'footnotes'}
@@ -75,9 +73,8 @@ def test_status_and_copy_change_controls(honesty, monkeypatch):
     assert graph
 
 
-def test_transitive_local_and_canonical_document_links(honesty):
-    root = honesty.OSS / '.review' / ('links-' + uuid4().hex)
-    root.mkdir()
+def test_transitive_local_and_canonical_document_links(honesty, scratch):
+    root = scratch
     first, second, third = (root / name for name in ('first.md', 'second.md', 'third.txt'))
     first.write_text('[Second](second.md#part)\n', encoding='utf-8')
     address = honesty.views.evidence.REPO + third.relative_to(honesty.OSS).as_posix()
@@ -86,8 +83,8 @@ def test_transitive_local_and_canonical_document_links(honesty):
     assert set(honesty.public_documents([first])) == {first, second, third}
 
 
-def test_real_static_export_copy_structured_data_and_cleanup(honesty, monkeypatch):
-    root = honesty.OSS / '.review' / ('export-' + uuid4().hex)
+def test_real_static_export_copy_structured_data_and_cleanup(honesty, monkeypatch, scratch):
+    root = scratch / 'export'
     monkeypatch.setattr(honesty, 'OSS', root)
     exported = honesty.exported_pages()
     expected = {page.path + 'index.html' for page in honesty.PAGES}

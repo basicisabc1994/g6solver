@@ -6,7 +6,6 @@ import ast
 import html
 import inspect
 import json
-import string
 
 import pytest
 
@@ -27,113 +26,10 @@ def calls(function):
             if isinstance(node, ast.Call)}
 
 
-# Root A: one table of sentence ends, one reading of a unit, a subject that reaches every item under it.
-
-def test_every_listed_abbreviation_keeps_a_subject_with_its_claim(honesty):
-    assert {'mr', 'mrs', 'dr', 'prof', 'revd', 'messrs', 'vs', 'etc'} <= honesty.ABBREVIATIONS
-    for word in sorted(honesty.ABBREVIATIONS):
-        for form in (word, word.capitalize(), word.upper()):
-            text = f'G6 uses {form}. Smith to verify every patch.'
-            assert honesty.sentences(text) == [text], form
-            assert honesty.g6_claims(f'<p>{text}</p>') == [text], form
-            assert honesty.g6_claims(f'<p>G6 uses ({form}. Smith) to verify every patch.</p>'), form
-
-
-@pytest.mark.parametrize('token', [*string.ascii_letters, 'U.S', 'e.g', 'i.e', 'J.R', 'p.m', 'E.G'])
-def test_an_initial_keeps_a_subject_with_its_claim(honesty, token):
-    text = f'G6 uses {token}. Smith to verify every patch.'
-    assert honesty.sentences(text) == [text]
-    assert honesty.g6_claims(f'<p>{text}</p>') == [text]
-
-
-@pytest.mark.parametrize('dots', ['..', '...', '…', '....'])
-def test_an_ellipsis_is_not_a_certain_end(honesty, dots):
-    assert honesty.g6_claims(f'<p>G6 checks it{dots} Other {OTHERS}</p>')
-
-
-FIRSTS = ('G6 checks it', 'G6 is OK', 'G6 checks Xy', 'G6 checks Xyz', 'G6 runs version 1.2', 'G6 runs v0.3.0',
-          "G6 checks what other systems don't", 'G6 checks what other systems don’t', 'G6 uses example.com')
-STARTS = ('Other', '3 other', '(Other', '[Other', '{Other', '"Other', "'Other", '“Other', '‘Other',
-          'eBPF', 'iVerify', '(3 other')
-
-
-def test_a_certain_end_always_ends_a_sentence(honesty):
-    closers = ['', *honesty.CLOSERS, honesty.CLOSERS]
-    for terminal in [*honesty.TERMINALS, '?!', '!!']:
-        for close in closers:
-            for first in FIRSTS:
-                for start in STARTS:
-                    second = f'{start} {OTHERS}'
-                    text = f'{first}{terminal}{close} {second}'
-                    assert honesty.sentences(text) == [f'{first}{terminal}{close}', second], text
-                    assert honesty.g6_claims('<p>' + html.escape(text, quote=False) + '</p>') == [], text
-    # an exclamation or a question mark ends a sentence after a single letter or a listed abbreviation too
-    for first in ('Does G6 check C', 'G6 checks tests etc', 'G6 asked Dr'):
-        for terminal in ('!', '?'):
-            assert honesty.g6_claims(f'<p>{first}{terminal} Other {OTHERS}</p>') == [], first
-
-
-@pytest.mark.parametrize('text', [
-    'G6 uses abbr. tools to verify every patch.',                  # an abbreviation outside the list
-    'G6 uses Yahoo! to verify every patch.',                       # a name that ends in a mark
-    'G6 answers "is it safe?" and verifies every patch.',          # a quoted question inside a sentence
-    'G6 answers (is it safe?) and verifies every patch.',
-    "G6 says 'done.' and verifies every patch.",
-    'G6 checks it. pytest verifies nothing.',                      # the cost: a sentence that starts in lower case
-])
-def test_a_mark_before_a_lower_case_word_keeps_the_sentence_together(honesty, text):
-    assert honesty.sentences(text) == [text]
-    assert honesty.g6_claims(f'<p>{text}</p>') == [text]
-
-
-def test_the_sentence_reader_decides_by_its_table(honesty):
-    assert {'TERMINALS', 'CLOSERS', '_ends_sentence'} <= {
-        node.id for node in ast.walk(ast.parse(inspect.getsource(honesty.sentences))) if isinstance(node, ast.Name)}
-    names = {node.id for node in ast.walk(ast.parse(inspect.getsource(honesty._ends_sentence)))
-             if isinstance(node, ast.Name)}
-    assert {'ABBREVIATIONS', 'OPENERS'} <= names
-    # a word's length or capitals before the mark no longer decide anything
-    assert not {'isupper', 'istitle'} & {node.attr for node in ast.walk(ast.parse(inspect.getsource(honesty._ends_sentence)))
-                                         if isinstance(node, ast.Attribute)}
-
-
-CODE_PAGES = (
-    '<p>G6 calls <code>check</code>. Other tools verify programs.</p>',
-    '<p>G6 calls <code>check</code>! Other tools verify programs.</p>',
-    '<p>G6 calls <code>x</code>. Other tools verify programs.</p>',
-    '<p>G6 calls <code>etc</code>. Other tools verify programs.</p>',
-    '<p>G6 calls "<code>check_patch</code>." Other tools verify programs.</p>',
-    '<p>The word CODE and <code>G6</code> verifies it. CODE and <code>x_y</code> stay.</p>',
-    '<p><code>G6</code> uses Dr. <code>smith</code> to verify it.</p>',
-    '<p>G6 calls <code>verify every patch</code>. Other tools check.</p>',
-    '<p>G6 calls veri<code>fies</code>. Other tools check.</p>',
-)
-
-
-@pytest.mark.parametrize('page', CODE_PAGES)
-def test_both_checkers_read_one_text_and_the_same_sentences(honesty, monkeypatch, page):
-    assert list(inspect.signature(honesty._resolve).parameters) == ['unit', 'exempt']    # no second stand-in
-    assert '_resolve' in calls(honesty.g6_claims) and '_resolve' in calls(honesty._page_copy)
-    seen = []
-    original = honesty.sentences
-
-    def read(text):
-        seen.append(text)
-        return original(text)
-
-    monkeypatch.setattr(honesty, 'sentences', read)
-    monkeypatch.setattr(honesty, 'claims', lambda text: [])
-    honesty.g6_claims(page)
-    assert seen == [honesty._page_copy(page)]      # one unit: the essay check split exactly the ordinary copy
-
-
-def test_an_exempt_code_span_is_restored_by_its_place(honesty):
-    page = CODE_PAGES[5]
-    assert honesty._page_copy(page) == 'The word CODE and CODE verifies it. CODE and CODE stay.'
-    assert honesty.g6_claims(page) == ['The word CODE and G6 verifies it.']
-    assert honesty.g6_claims('<p>G6 calls <code>check</code>. Other tools verify programs.</p>') == []
-    assert honesty.g6_claims(CODE_PAGES[6]) == ['G6 uses Dr. smith to verify it.']
-
+# Root A: a subject that reaches every item under it. Repair 3 removed the rest of this root's inventory on purpose:
+# it walked the table of sentence ends and the stand-in for a code span that let the essay check split sentences. By
+# the integrator's ruling the essay rule's unit is the block and no sentence end is looked for, so that table is
+# deleted; the block rule's own inventory is in copyfur3/test_inventory.py.
 
 def test_the_list_containers_are_html_s(honesty):
     assert honesty._LISTS == {'ul', 'ol', 'menu', 'dl'}      # HTML Living Standard, 4.4 Grouping content
@@ -373,11 +269,11 @@ def test_a_link_to_the_site_reaches_every_exported_page_s_links(honesty, monkeyp
 def test_the_inventory_reaches_the_site_and_holds_what_its_pages_link_to(honesty):
     # the documents this check starts from link to the site, so the closure above runs on the real inventory
     site = honesty.urlsplit(honesty.settings.SITE_URL).netloc
-    reaching = [path for path in honesty.MARKDOWN
+    reaching = [path for path in honesty.MARKDOWN if honesty.DOCUMENT_KINDS[path.suffix.lower()] == 'markdown'
                 if any(honesty.urlsplit(link).netloc.lower() == site for link in honesty._reader(
                     honesty._docs_site_html(path.read_text(encoding='utf-8'))).links)]
     assert reaching, 'No document of the inventory links to the site'
     # and every public document a page of the real export links to is in the inventory the copy test walks
-    linked = {honesty._linked_document(link, None)
-              for page in honesty.exported_pages().values() for link in honesty._reader(page).links} - {None}
+    linked = {honesty._linked_document(link, None) for name, page in honesty.exported_pages().items()
+              if honesty.export_kind(name) == 'page' for link in honesty._reader(page).links} - {None}
     assert linked and linked <= set(honesty.MARKDOWN), sorted(linked - set(honesty.MARKDOWN))

@@ -1,14 +1,12 @@
 import copy
-from uuid import uuid4
 
 from django.conf import settings
 from django.template.loader import render_to_string
 from django.test import RequestFactory, override_settings
 
 
-def test_public_documents_linked_by_a_template_are_inventoried(honesty):
-    root = honesty.OSS / '.review' / ('template-link-' + uuid4().hex)
-    root.mkdir()
+def test_public_documents_linked_by_a_template_are_inventoried(honesty, scratch):
+    root = scratch
     document = root / 'public.md'
     document.write_text('G6 verifies every patch.\n', encoding='utf-8')
     address = honesty.views.evidence.REPO + document.relative_to(honesty.OSS).as_posix()

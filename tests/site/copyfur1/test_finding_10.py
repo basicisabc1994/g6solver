@@ -1,17 +1,15 @@
 import copy
 import importlib.util
 from pathlib import Path
-from uuid import uuid4
 import pytest
 from django.conf import settings
 from django.shortcuts import render
 from django.test import Client, RequestFactory, override_settings
 
 
-def test_json_ld_inventory_includes_the_exported_404_page(honesty):
+def test_json_ld_inventory_includes_the_exported_404_page(honesty, scratch):
     # Override a real public template through Django's own loader. No source file is changed.
-    templates = honesty.OSS / '.review' / ('templates404-' + uuid4().hex)
-    templates.mkdir()
+    templates = scratch
     (templates / '404.html').write_text(
         '{% extends "base.html" %}{% block jsonld %}'
         '<script type="application/ld+json">{"newReaderFacingField": "G6 verifies every patch."}</script>'

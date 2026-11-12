@@ -59,19 +59,21 @@ def test_names_are_inventoried_from_site_identity_sources(honesty):
     assert set(honesty.PRODUCT_NAMES) == identity.names
 
 
-# Repair 2 changed this list on purpose: 'Xy' and 'Xyz' stood for "any capitalised word of up to three letters",
-# a rule the closed abbreviation list replaces (a short word no longer makes a full stop uncertain; see
-# copyfur2/test_inventory.py for the list's own inventory).
-@pytest.mark.parametrize('token', ['A', 'a', 'C', 'Dr', 'Mr', 'Mrs', 'ETC', 'e.g', 'U.S'])
+# Repair 3 changed the next two tests on purpose. They held the sentence reader's table (which tokens keep a
+# sentence whole, which closing marks end one). By the integrator's ruling the essay rule no longer looks for a
+# sentence's end: its unit is the block, so any token keeps the block whole, and independent sentences are apart
+# only when they are in separate blocks.
+@pytest.mark.parametrize('token', ['A', 'a', 'C', 'Dr', 'Mr', 'Mrs', 'ETC', 'Xy', 'Xyz', 'e.g', 'U.S', 'tests'])
 def test_one_sided_boundary_rule_retains_uncertain_tokens(honesty, token):
     text = f'G6 uses {token}. Someone to verify every patch.'
-    assert honesty.sentences(text) == [text]
-    assert honesty.g6_claims(f'<p>{text}</p>')
+    assert honesty.g6_claims(f'<p>{text}</p>') == [text]
 
 
 @pytest.mark.parametrize('close', ['', '"', "'", '”', '’', ')', ']', '}', '”)]'])
 def test_certain_boundaries_include_closing_quotes_and_brackets(honesty, close):
-    assert honesty.g6_claims(f'<p>G6 checks the patch.{close} Other tools verify every patch.</p>') == []
+    first, second = f'G6 checks the patch.{close}', 'Other tools verify every patch.'
+    assert honesty.g6_claims(f'<p>{first} {second}</p>') == [f'{first} {second}']
+    assert honesty.g6_claims(f'<p>{first}</p><p>{second}</p>') == []
 
 
 def test_a_list_lead_in_stops_at_the_end_of_its_list(honesty):
@@ -200,9 +202,12 @@ def test_build_export_list_is_the_inventory(honesty):
                for node in ast.walk(source))
     pages = honesty.exported_pages()
     assert '404.html' in pages
+    # Repair 3 changed this test on purpose: the export holds every file a person reads, by kind, not only *.html
+    # (the web app manifest and a text file are read too), so each file passes its own kind's inventory.
     for name, page in pages.items():
-        assert name.endswith('.html')
-        honesty.structured_inventory(page)
+        honesty.export_inventory(name, page)
+        if honesty.export_kind(name) != 'page':
+            continue
         planted = page + '<script type="application/ld+json">{"newReaderFacingField":"G6 verifies it."}</script>'
         with pytest.raises(AssertionError, match='newReaderFacingField'):
             honesty.structured_inventory(planted)
@@ -239,10 +244,19 @@ def test_link_closure_each_discovered_document_is_scanned(honesty, monkeypatch):
     discovered = honesty.public_documents(honesty.MARKDOWN)
     assert set(discovered) <= set(honesty.MARKDOWN)
     read = honesty.Path.read_text
+    # Repair 3 changed the drift on purpose: the inventory now holds the docs configuration and the package
+    # metadata too, and a claim drifts into each as its own format writes it.
+    def drifted(text, kind):
+        if kind == 'docs configuration':
+            return text + '\nsite_author: G6 verifies every patch.\n'
+        if kind == 'package metadata':
+            return text.replace('\ndescription = "', '\ndescription = "G6 verifies every patch. ', 1)
+        return text + '\n\nG6 verifies every patch.\n'
+
     for target in discovered:
         def drift(path, *args, **kwargs):
             text = read(path, *args, **kwargs)
-            return text + '\n\nG6 verifies every patch.\n' if path == target else text
+            return drifted(text, honesty.DOCUMENT_KINDS[target.suffix.lower()]) if path == target else text
         with monkeypatch.context() as patch:
             patch.setattr(honesty.Path, 'read_text', drift)
             assert honesty.claims(honesty._file_copy(target)), target.relative_to(honesty.OSS)

@@ -1,22 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Copy follow-up: the review reproductions and the reader inventories."""
 import ast
-import importlib.util
 import inspect
 import json
-from pathlib import Path
 
 import pytest
 import yaml
 
-
-@pytest.fixture(scope="module")
-def honesty():
-    path = Path(__file__).with_name("test_honesty.py")
-    spec = importlib.util.spec_from_file_location("followup_honesty", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+# The check itself is the ``honesty`` fixture of tests/site/conftest.py, loaded once for the whole run.
 
 
 def test_reverification_is_still_a_claim_that_g6_verified_work(honesty):
@@ -77,16 +68,20 @@ def test_claim_stems_in_all_copy_readers(honesty, word):
     'E.G. a runner', 'I.E. a runner', 'tools ETC. and a runner', 'VS. another tool',
 ])
 def test_both_checkers_share_abbreviation_boundaries(honesty, middle):
+    """Repair 3 changed this test on purpose (its name is kept: review copies call it). It held the sentence
+    reader to these abbreviations; the essay rule no longer looks for a sentence's end at all, so what is left to
+    hold is that a block with G6 and a claim word around any of them is refused by both checkers."""
     sentence = f'G6 uses {middle} to verify every patch.'
-    assert honesty.sentences(sentence) == [sentence]
     assert honesty.claims(sentence)
     assert honesty.g6_claims(f'<p>{sentence}</p>') == [sentence]
-    assert honesty.g6_claims('<p>G6 checks it. Another tool verifies it.</p>') == []
 
 
 def test_sentence_reader_keeps_real_boundaries(honesty):
-    assert honesty.sentences('G6 checks it! Who verifies it? Another tool.') == [
-        'G6 checks it!', 'Who verifies it?', 'Another tool.']
+    """Repair 3 changed this test on purpose (its name is kept: review copies call it). There is no sentence reader
+    any more: the boundaries the essay rule keeps are the blocks'."""
+    assert not hasattr(honesty, 'sentences')
+    assert honesty.g6_claims('<p>G6 checks it!</p><p>Who verifies it?</p><p>Another tool.</p>') == []
+    assert honesty.g6_claims('<p>G6 checks it! Who verifies it? Another tool.</p>')
 
 
 @pytest.mark.parametrize('field', ['articleBody', 'keywords', 'jobTitle', 'newReaderFacingField'])
@@ -121,6 +116,8 @@ def test_malformed_configuration_is_not_an_empty_inventory(honesty, tmp_path, co
 
 
 def test_one_claim_decision_and_one_sentence_reader_from_the_code(honesty):
+    """Repair 3 changed this test on purpose (its name is kept: review copies call it): one claim decision still,
+    and no sentence reader at all; the essay rule goes through the same decision, block by block."""
     tree = ast.parse(inspect.getsource(honesty))
     decisions = []
     splits = []
@@ -135,12 +132,13 @@ def test_one_claim_decision_and_one_sentence_reader_from_the_code(honesty):
                 decisions.append((function.name, name))
             if name in {'re.split', 're.finditer'}:
                 splits.append(function.name)
-    assert decisions == [('claims', 'CLAIM.finditer')], decisions
-    assert splits == ['sentences'], splits
-    for caller in (honesty.claims, honesty.g6_claims):
-        calls = {ast.unparse(n.func) for n in ast.walk(ast.parse(inspect.getsource(caller)))
-                 if isinstance(n, ast.Call)}
-        assert 'sentences' in calls, caller.__name__
+    assert sorted(decisions) == [('claims', 'CLAIM.finditer'), ('claims', 'CLAIM.search')], decisions
+    assert splits == ['claims', 'claims'], splits            # the paragraph breaks of the two readings, nothing else
+    for gone in ('sentences', '_ends_sentence', 'ABBREVIATIONS', 'TERMINALS', 'CLOSERS', 'OPENERS'):
+        assert not hasattr(honesty, gone), gone
+    calls = {ast.unparse(n.func) for n in ast.walk(ast.parse(inspect.getsource(honesty.g6_claims)))
+             if isinstance(n, ast.Call)}
+    assert 'claims' in calls and '_units' in calls
 
 
 def test_foreign_readers_are_inventoried_from_the_code(honesty):
@@ -157,14 +155,18 @@ def test_foreign_readers_are_inventoried_from_the_code(honesty):
                     reads.append(function.name)
                 if name in {'json.loads', 'yaml.safe_load', 'front_matter', 'reader.feed', 'self.feed',
                             'views.markdown_html', 'markdown.markdown', 'Message', 'media.get_content_type',
-                            'urlsplit', 'render_to_string', 'build', 'html.unescape', 'exported_pages'}:
+                            'urlsplit', 'render_to_string', 'build', 'html.unescape', 'exported_pages',
+                            'tomllib.loads'}:
                     parsers.append((function.name, name))
-    assert sorted(reads) == ['_file_copy', 'docs_extensions', 'exported_pages', 'public_documents'], reads
+    # Repair 3: the docs configuration and the package metadata are documents, each through its format's reader
+    assert sorted(reads) == ['_docs_config', '_file_copy', 'exported_pages', 'package_shown',
+                             'public_documents'], reads
     # Repair 2: no reader decides by what a string looks like (the address test is gone); raw-text elements are
     # decoded by html's own decoder, an open one is closed through the parser, and the link closure reads the
     # site through the static builder's export.
     assert set(parsers) == {
-        ('docs_extensions', 'yaml.safe_load'), ('handle_endtag', 'json.loads'),
+        ('_docs_config', 'yaml.safe_load'), ('package_shown', 'tomllib.loads'), ('handle_endtag', 'json.loads'),
+        ('export_copy', 'json.loads'), ('export_inventory', 'json.loads'),
         ('_markdown_copy', 'front_matter'), ('_reader', 'reader.feed'), ('finish', 'self.feed'),
         ('_markdown_copy', 'views.markdown_html'), ('_docs_site_html', 'markdown.markdown'),
         ('handle_starttag', 'Message'), ('handle_starttag', 'media.get_content_type'),
@@ -177,12 +179,14 @@ def test_foreign_readers_are_inventoried_from_the_code(honesty):
 
 def test_json_ld_inventory_covers_every_routed_page(honesty, client):
     # Keep this callable's signature: earlier independent reviews invoke it directly.
-    # The builder's files, including 404 and auxiliary HTML, are the public export inventory.
+    # The builder's files are the public export inventory: every one is of a classified kind (the export fails on
+    # another), and each one a person reads (a page, the 404 page, the web app manifest, a text file) is read by its
+    # kind and passes its own inventory.
     essay_paths = {page.path + 'index.html' for page in honesty.PAGES if page.namespace == 'blog'}
-    for name, page in honesty.exported_pages().items():
-        honesty.structured_inventory(page)
+    for name, text in honesty.exported_pages().items():
+        honesty.export_inventory(name, text)
         essay = name in essay_paths  # preserve the existing blog policy, including its index
-        refused = honesty.g6_claims(page) if essay else honesty.claims(honesty._page_copy(page))
+        refused = honesty.g6_claims(text) if essay else honesty.claims(honesty.export_copy(name, text))
         assert not refused, (name, refused)
 
 
@@ -202,20 +206,17 @@ def test_unreadable_json_ld_fails_the_inventory(honesty):
 
 
 def test_sentence_and_claim_call_paths_are_observed(honesty, monkeypatch):
+    """Repair 3 changed this test on purpose (its name is kept: review copies call it): the essay rule is observed
+    going through the one claim decision, once for each block that names G6 and for no other."""
     seen = []
-    original = honesty.sentences
 
-    def read(text):
-        seen.append(text)
-        return original(text)
+    def decide(copy):
+        seen.append(str(copy))
+        return ['measured claim']
 
-    monkeypatch.setattr(honesty, 'sentences', read)
-    honesty.claims('G6 verifies it.')
-    assert seen
-    seen.clear()
-    monkeypatch.setattr(honesty, 'claims', lambda text: ['measured claim'])
-    assert honesty.g6_claims('<p>G6 checks it.</p>')
-    assert seen
+    monkeypatch.setattr(honesty, 'claims', decide)
+    assert honesty.g6_claims('<p>G6 checks it.</p><p>Another tool checks it.</p>') == ['G6 checks it.']
+    assert seen == ['G6 checks it.']
 
 
 @pytest.mark.parametrize('config', [
@@ -240,7 +241,7 @@ def test_regex_calls_have_named_roles_from_the_code(honesty):
     compiled = {node.targets[0].id for node in tree.body
                 if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
                 and ast.unparse(node.value.func) == 're.compile'}
-    assert compiled == {'CLAIM', 'STATE_LIST', 'MENTION', '_INVISIBLE'}
+    assert compiled == {'CLAIM', 'STATE_LIST', 'MENTION', '_INVISIBLE', '_RAISED'}     # repair 3: raised marks
     calls = set()
     for function in tree.body:
         if not isinstance(function, ast.FunctionDef) or function.name.startswith('test_'):
@@ -248,11 +249,12 @@ def test_regex_calls_have_named_roles_from_the_code(honesty):
         for node in ast.walk(function):
             if isinstance(node, ast.Call) and ast.unparse(node.func).startswith('re.'):
                 calls.add((function.name, ast.unparse(node.func)))
+    # Repair 3: the sentence pattern is gone; the claim decision splits copy at its paragraph breaks, a block's own
+    # blank lines are folded when copy is put together, and the essay rule compiles the product names once.
     assert calls == {
         ('_all_states', 're.findall'), ('_diagram', 're.sub'), ('_resolve', 're.match'),
-        ('_docs_site_html', 're.sub'), ('claims', 're.sub'), ('claims', 're.escape'),
-        ('g6_claims', 're.search'), ('g6_claims', 're.escape'), ('sentences', 're.finditer'),
-        ('sentences', 're.escape'),                     # repair 2: the pattern is built from the table of sentence ends
+        ('_docs_site_html', 're.sub'), ('claims', 're.sub'), ('claims', 're.escape'), ('claims', 're.split'),
+        ('g6_claims', 're.compile'), ('g6_claims', 're.escape'), ('_copy', 're.sub'),
         ('_normalise', 're.sub'),
     }, calls
 

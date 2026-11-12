@@ -11,7 +11,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.12,<3.14"
 authors = [{ name = "G6 contributors" }]
-keywords = ["agents", "harness-engineering", "metacognition", "verification", "mcp", "llm"]
+keywords = ["agents", "harness-engineering", "metacognition", "reliability", "mcp", "llm"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
