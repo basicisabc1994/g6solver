@@ -30,6 +30,16 @@ PERSON_FILES = (CORRECTIONS,)
 FILES = {RUN_SUFFIX: "events", ANNOTATIONS: "annotations", DECISIONS: "decisions", FEEDBACK: "feedback",
          RECEIPTS: "receipts", INSPECTION: "exports", CORRECTIONS: "person", HEAD: "sidecar", LOCK: "sidecar",
          PART: "sidecar"}
+#: How deleting a run or a task reaches each file. "file": the file is one run's, removed whole (and with its task's
+#: folder). "entries": each entry names the run or task it is about, and those entries are removed wherever the file
+#: is kept. "rebuilt": made from the others on request, removed with any deletion. "kept": kept by design (a receipt
+#: holds a digest, never an entry), and named in the reply. "person": the person's own file, never changed by G6,
+#: removed only with the whole project record, and named in the reply. "sidecar": removed with the file it serves.
+DELETION = {RUN_SUFFIX: "file", ANNOTATIONS: "entries", DECISIONS: "entries", FEEDBACK: "entries", RECEIPTS: "kept",
+            INSPECTION: "rebuilt", CORRECTIONS: "person", HEAD: "sidecar", LOCK: "sidecar", PART: "sidecar"}
+#: Files written whether or not the record is on: each is written at the person's own request (to look at the
+#: record, or to show that something was removed) and holds nothing a tool call carried.
+WRITTEN_WHEN_OFF = (INSPECTION, RECEIPTS)
 
 RECORD_ENV = "G6_WORKFLOW_RECORD"
 #: Ruling (for the owner): the record is kept only after the person turns it on. On from first use is this one line.
@@ -50,6 +60,6 @@ def enabled() -> tuple[bool, str]:
     return False, f"{RECORD_ENV} holds a value G6 cannot read (it takes on or off), so nothing is recorded"
 
 
-__all__ = ["ANNOTATIONS", "CORRECTIONS", "DECISIONS", "FEEDBACK", "FILES", "HEAD", "INSPECTION", "LOCK",
+__all__ = ["ANNOTATIONS", "CORRECTIONS", "DECISIONS", "DELETION", "FEEDBACK", "FILES", "HEAD", "INSPECTION", "LOCK",
            "ON_BY_DEFAULT", "PART", "PERSON_FILES", "POLICY_VERSION", "RECEIPTS", "RECEIPT_FIELDS", "RECORD_ENV",
-           "RETENTION_DAYS", "RUN_SUFFIX", "SIDECARS", "enabled"]
+           "RETENTION_DAYS", "RUN_SUFFIX", "SIDECARS", "WRITTEN_WHEN_OFF", "enabled"]

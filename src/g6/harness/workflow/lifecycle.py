@@ -23,7 +23,7 @@ from pathlib import Path
 from g6.core.cloud_consent import sha256
 from g6.core.ledger import digest
 from g6.harness.workflow import policy
-from g6.harness.workflow._store import RecordUnreadable, plain, write_whole
+from g6.harness.workflow._store import Chain, RecordOff, RecordUnreadable, admit, plain, write_whole
 from g6.harness.workflow.record import (ANNOTATION_KINDS, TIME_FORMAT, Event, EventRefused, ProjectRecord, event_id,
                                 workflow_source)
 from g6.workforce.receipt_store import _locked
@@ -132,9 +132,85 @@ def _run_files(record: ProjectRecord, task: str, run: str) -> tuple[Path, ...]:
     return record.run_chain(task, run).files()
 
 
+def _decision_chains(record: ProjectRecord) -> list[Chain]:
+    from g6.harness.workflow.decisions import Decisions
+
+    store = Decisions(record.project)
+    return [store._chain("", "project"), *(store._chain(task, "task") for task in record.tasks())]
+
+
+def _feedback_chains(record: ProjectRecord) -> list[Chain]:
+    from g6.harness.workflow.feedback import FeedbackStore
+
+    return [FeedbackStore(record.project)._chain]
+
+
+#: Each file whose entries name the run or task they are about (``policy.DELETION`` "entries"): the scopes its entries
+#: can be bound to, and where its chains are.
+BINDINGS: dict[str, tuple[tuple[str, ...], Callable[[ProjectRecord], list[Chain]]]] = {
+    policy.ANNOTATIONS: (("run", "task"), lambda record: [record.annotation_chain(t) for t in record.tasks()]),
+    policy.DECISIONS: (("task",), _decision_chains),
+    policy.FEEDBACK: (("task",), _feedback_chains),
+}
+assert set(BINDINGS) == {name for name, rule in policy.DELETION.items() if rule == "entries"}
+
+
+def _unbound(scope: str, ident: str) -> Callable[[list[dict]], list[dict]]:
+    """The entries not bound to that run or task: an entry is bound when its body names it, or when it closes an
+    entry that is (a feedback invitation's close goes with the invitation)."""
+    def kept(entries: list[dict]) -> list[dict]:
+        gone = {e["id"] for e in entries if isinstance(e["body"], dict) and e["body"].get(scope) == ident}
+        gone |= {e["id"] for e in entries if isinstance(e["body"], dict) and e["body"].get("invitation") in gone}
+        return [e for e in entries if e["id"] not in gone]
+    return kept
+
+
+def _strip(scope: str, ident: str, chains: list[tuple[str, Chain]]) -> tuple[int, int, list[str]]:
+    """Remove the entries bound to the run or task from each chain: (entries removed, files removed, the names of the
+    files that could not be read and so were removed whole, since what they hold cannot be told apart)."""
+    entries = files = 0
+    unreadable: list[str] = []
+    for name, chain in chains:
+        try:
+            gone = chain.keep(_unbound(scope, ident))
+            entries += gone
+            files += bool(gone) and not os.path.lexists(chain.path)       # its last entries went, and the file
+        except RecordUnreadable:
+            files += _remove(chain.files())
+            unreadable.append(name)
+    return entries, files, sorted(set(unreadable))
+
+
+def _bound_chains(record: ProjectRecord, scope: str, targets: list[Path]) -> list[tuple[str, Chain]]:
+    """Every chain of an "entries" file that can hold entries bound to this scope, outside what goes whole."""
+    def inside(path: Path) -> bool:
+        return any(path == t or t in path.parents for t in targets)
+    return [(name, chain) for name, (scopes, chains) in BINDINGS.items() if scope in scopes
+            for chain in chains(record) if not inside(chain.path) and chain.exists()]
+
+
+def _holds(chains: list[tuple[str, Chain]], scope: str, ident: str) -> bool:
+    for _name, chain in chains:
+        try:
+            entries = chain.entries()
+        except RecordUnreadable:
+            continue
+        if len(_unbound(scope, ident)(entries)) != len(entries):
+            return True
+    return False
+
+
+def _kept(scope: str) -> list[str]:
+    """What a deletion of this scope keeps by design, from the policy's table."""
+    return [name for name, rule in policy.DELETION.items() if rule == "kept" or rule == "person" and scope != "project"]
+
+
 def delete(project: str, *, scope: str, ident: str = "", by: str, now: datetime | None = None) -> dict:
     """Remove one run, one task or the whole project record, with the export that depended on it, and leave one
-    receipt. ``by`` is who asked (required, and not kept). Works on a part of the record that cannot be read."""
+    receipt. A run's or task's files go whole, and every entry bound to that run or task in the project's other files
+    (``policy.DELETION``) is removed; what is kept by design is named in the reply (``kept``). ``by`` is who asked
+    (required, and not kept). Works on a part of the record that cannot be read: such a file that could hold entries
+    bound to the run or task is removed whole and named (``unreadable_removed``)."""
     record, moment = ProjectRecord(project), _now(now)
 
     def refused(why: str) -> dict:
@@ -147,23 +223,30 @@ def delete(project: str, *, scope: str, ident: str = "", by: str, now: datetime 
         # the folder's own lock files stay (one may be held by the caller); they hold nothing
         targets = [p for p in record.root.iterdir() if p.name != policy.RECEIPTS and not (
             p.is_file() and p.name.endswith(policy.LOCK))] if record.root.is_dir() else []
-    elif scope == "task" and isinstance(ident, str) and _HEX64.match(ident) and (record.root / "tasks" / ident).is_dir():
-        targets = [record.root / "tasks" / ident]
+        chains: list[tuple[str, Chain]] = []
+    elif scope == "task" and isinstance(ident, str) and _HEX64.match(ident):
+        targets = [record.root / "tasks" / ident] if (record.root / "tasks" / ident).is_dir() else []
+        chains = _bound_chains(record, scope, targets)
+        if not targets and not _holds(chains, scope, ident):
+            return refused("no such task in this project's record")
     elif scope == "run" and isinstance(ident, str) and _HEX32.match(ident):
         tasks = [t for t in record.tasks() if os.path.lexists(record.run_chain(t, ident).path)]
         targets = [path for task in tasks for path in _run_files(record, task, ident)]
-        if not tasks:
+        chains = _bound_chains(record, scope, targets)
+        if not tasks and not _holds(chains, scope, ident):
             return refused("no such run in this project's record")
     else:
         return refused("a deletion names a run, a task of this project, or the project")
     try:
-        removed = _remove(targets) + _drop_export(record)
+        entries, files, unreadable = _strip(scope, ident, chains)
+        removed = _remove(targets) + files + entries + _drop_export(record)
         _prune(record)
         receipt = _receipt(record, scope, ident, removed, moment, "deletion_requested")
     except OSError:
         return {"status": "incomplete", "removed": 0,
                 "why": "a file could not be removed (it may be open elsewhere); nothing is reported as deleted"}
-    return {"status": "deleted", "removed": removed, "receipt": receipt}
+    return {"status": "deleted", "removed": removed, "receipt": receipt, "kept": _kept(scope),
+            **({"unreadable_removed": unreadable} if unreadable else {})}
 
 
 def expire(project: str, *, now: datetime | None = None) -> dict:
@@ -207,8 +290,6 @@ def expire(project: str, *, now: datetime | None = None) -> dict:
 def _expire_chain_files(record: ProjectRecord, name: str, kind: str, moment: datetime) -> int:
     """Chained stores later slices keep (decisions, feedback): each goes whole once its newest entry is past its
     period. Their entries carry ``at`` in the body."""
-    from g6.harness.workflow._store import Chain
-
     removed = 0
     for path in [record.root / name, *sorted((record.root / "tasks").glob("*/" + name))]:
         if not os.path.lexists(path):
@@ -285,6 +366,7 @@ def _annotation(record: ProjectRecord, row: dict, events: dict[str, Event], mome
                       data={"target": target.event_id, "note": note, "by": by.strip()})
     except EventRefused:
         raise ValueError("its note is longer than 200 characters") from None
+    admit(record.annotation_chain(target.task).path)        # before any row is applied: all of the file or none
     return lambda: record.annotate(event)
 
 
@@ -295,10 +377,11 @@ def _deletion(record: ProjectRecord, row: dict, events: dict[str, Event], moment
     scope, ident, by = row["scope"], row.get("id", ""), row["by"]
     if not isinstance(by, str) or not by.strip() or len(by) > MAX_NAME:
         raise ValueError(f"it needs the name of who asked (at most {MAX_NAME} characters)")
-    known = {"project": ident in ("", record.project),
-             "task": isinstance(ident, str) and ident in record.tasks(),
-             "run": isinstance(ident, str) and any(e.run == ident for e in events.values())}
-    if not isinstance(scope, str) or not known.get(scope, False):
+    def held(scope: str) -> bool:     # a run's or task's files, or an entry bound to it in another file
+        return isinstance(ident, str) and (any(e.run == ident for e in events.values()) if scope == "run" else
+                                           ident in record.tasks()) or _holds(_bound_chains(record, scope, []), scope, ident)
+    known = ident in ("", record.project) if scope == "project" else held(scope) if scope in ("task", "run") else False
+    if not known:
         raise ValueError("its scope is run, task or project, and its id is that run's or task's id, as the inspection "
                          "file gives it")
     return lambda: delete(record.project, scope=scope, ident=ident, by=by, now=moment)["status"] == "deleted"
@@ -320,6 +403,7 @@ def _decision(record: ProjectRecord, row: dict, events: dict[str, Event], moment
             or not (days is None or type(days) is int and 0 < days <= policy.RETENTION_DAYS["decisions"]):
         raise ValueError("it names a suggestion G6 showed for that task, adopted, dismissed or reopened, and who decided")
     expires = _stamp(moment + timedelta(days=days)) if days else None
+    admit(record.root / policy.DECISIONS)
 
     def write() -> bool:
         store = decisions.Decisions(record.project)
@@ -339,6 +423,7 @@ def _feedback_choice(record: ProjectRecord, row: dict, events: dict[str, Event],
     if set(row) != {"action", "choice", "by"} or row["choice"] not in ("in", "out") \
             or not isinstance(row["by"], str) or not row["by"].strip() or len(row["by"]) > MAX_NAME:
         raise ValueError("a feedback entry has choice (in or out) and by, and no other field")
+    admit(record.root / policy.FEEDBACK)
 
     def write() -> bool:
         store = FeedbackStore(record.project)
@@ -407,6 +492,8 @@ def apply_corrections(project: str, *, now: datetime | None = None) -> dict:
                     writes.append(check(record, row, events, moment))
                 except ValueError as bad:                    # the checkers' own fixed words, never the row
                     problems.append(f"entry {number}: {bad}")
+                except RecordOff as off:                     # it would add to the record, which is off
+                    problems.append(f"entry {number}: {off.why}; G6 adds nothing to it (a deletion still applies)")
         if problems:
             return {"status": "refused", "applied": 0, "already": 0, "problems": problems[:20]}
         done = [write() for write in writes]
@@ -416,5 +503,5 @@ def apply_corrections(project: str, *, now: datetime | None = None) -> dict:
             "problems": []}
 
 
-__all__ = ["ACTIONS", "CORRECTIONS_SCHEMA", "HOW_TO_CORRECT", "INSPECTION_SCHEMA", "MAX_CORRECTIONS_BYTES", "SCOPES",
+__all__ = ["ACTIONS", "BINDINGS", "CORRECTIONS_SCHEMA", "HOW_TO_CORRECT", "INSPECTION_SCHEMA", "MAX_CORRECTIONS_BYTES", "SCOPES",
            "apply_corrections", "delete", "expire", "export", "receipts"]

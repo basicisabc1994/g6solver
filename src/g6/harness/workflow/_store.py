@@ -22,7 +22,30 @@ from g6.harness.workflow import policy
 from g6.workforce.receipt_store import _locked
 
 CODE = "G6_E_WORKFLOW_RECORD_UNREADABLE"
+OFF_CODE = "G6_E_WORKFLOW_RECORD_OFF"
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+
+
+class RecordOff(Exception):
+    """The workflow record is off, so nothing is added to it. The message is ``policy.enabled``'s fixed reason."""
+
+    code = OFF_CODE
+
+    def __init__(self, why: str) -> None:
+        self.why = why
+        super().__init__(f"[{OFF_CODE}] {why}")
+
+
+def admit(path: Path) -> None:
+    """The record's switch, at the one place a file under ``workflow/<project>/`` is opened for writing: every entry
+    of every store, every head, and a run's folder pass here before anything is created on disk. With the record off
+    it raises ``RecordOff``. The files the person's own requests write (``policy.WRITTEN_WHEN_OFF``: the inspection
+    file and the receipts) are written either way; removing what is held needs no admission."""
+    if path.name in policy.WRITTEN_WHEN_OFF:
+        return
+    on, why = policy.enabled()
+    if not on:
+        raise RecordOff(why)
 
 
 class RecordUnreadable(Exception):
@@ -48,7 +71,12 @@ def plain(path: Path) -> bool:
 
 
 def write_whole(path: Path, text: str) -> None:
-    """``text`` written whole beside ``path``, readable by its owner only, then moved into place."""
+    """``text`` written whole beside ``path``, readable by its owner only, then moved into place; admitted first."""
+    admit(path)
+    _replace(path, text)
+
+
+def _replace(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     part = path.with_name(path.name + policy.PART)
     descriptor = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -62,8 +90,8 @@ def write_whole(path: Path, text: str) -> None:
 class _Open:
     """A chain held open under its lock."""
 
-    def __init__(self, chain: Chain, ledger: ChainLedger) -> None:
-        self._chain, self._ledger = chain, ledger
+    def __init__(self, chain: Chain, ledger: ChainLedger, write: bool) -> None:
+        self._chain, self._ledger, self._write = chain, ledger, write
 
     def entries(self) -> list[dict]:
         return self._ledger.entries()
@@ -73,7 +101,9 @@ class _Open:
 
     def append(self, kind: str, ident: str, body: dict) -> bool:
         """One entry, and its head kept; False when this kind and id are already there (a retry). ``LedgerError``
-        when the chain's own rules refuse it."""
+        when the chain's own rules refuse it. Only a chain opened for writing (and so admitted) takes one."""
+        if not self._write:
+            raise RecordOff("a chain opened to read takes no entry")
         if self.has(kind, ident):
             return False
         self._ledger.append(kind, ident, body)
@@ -101,7 +131,9 @@ class Chain:
             raise RecordUnreadable("its head is not the hash of an entry")
         return text
 
-    def _ledger(self) -> ChainLedger:
+    def _ledger(self) -> tuple[ChainLedger, bool]:
+        """The chain, read and checked, and whether its kept head is one entry behind it (a stop between a write and
+        its head: the next write puts the head right)."""
         kept = self._kept()
         plain(self.path)
         try:
@@ -114,15 +146,21 @@ class Chain:
             before = entries[-2]["entry_sha256"] if len(entries) >= 2 else ""
             if not entries or before != (kept or ""):
                 raise RecordUnreadable("its chain does not end at the head G6 kept after its last write")
-            write_whole(self.head, ledger.head() + "\n")       # a stop between a write and its head
-        return ledger
+            return ledger, True
+        return ledger, False
 
     @contextmanager
-    def open(self) -> Iterator[_Open]:
-        """The chain under its lock, for a read and a write that must not be separated."""
+    def open(self, *, write: bool = True) -> Iterator[_Open]:
+        """The chain under its lock, for a read and a write that must not be separated. Opened for writing it is
+        admitted first (``admit``: with the record off, nothing is created); opened to read, it writes nothing."""
+        if write:
+            admit(self.path)
         try:
             with _locked(self.path):
-                yield _Open(self, self._ledger())
+                ledger, behind = self._ledger()
+                if behind and write:
+                    write_whole(self.head, ledger.head() + "\n")
+                yield _Open(self, ledger, write)
         except OSError:
             raise RecordUnreadable("it cannot be opened or written") from None
 
@@ -130,8 +168,39 @@ class Chain:
         """Every entry, in order; ``[]`` when nothing is stored (and then nothing is created)."""
         if not self.exists():
             return []
-        with self.open() as held:
+        with self.open(write=False) as held:
             return held.entries()
+
+    def keep(self, kept: Callable[[list[dict]], list[dict]]) -> int:
+        """Rewrite the chain with only the entries ``kept`` returns from all of them, in their order: a deletion. It
+        adds no entry, so it is not admitted and works with the record off. The kept entries are chained afresh beside
+        the file and moved into place with their head; when none is kept, the chain's files are removed. Returns how
+        many entries went. ``RecordUnreadable`` when the chain cannot be read or rewritten."""
+        if not self.exists():
+            return 0
+        part = self.path.with_name(self.path.name + policy.PART)
+        try:
+            with _locked(self.path):
+                entries = self._ledger()[0].entries()
+                staying = kept(entries)
+                if len(staying) == len(entries):
+                    return 0
+                if os.path.lexists(part):
+                    part.unlink()
+                if staying:
+                    fresh = ChainLedger(part)          # the entries passed the store's own rules when written
+                    for entry in staying:
+                        fresh.append(entry["kind"], entry["id"], entry["body"])
+                    os.replace(part, self.path)
+                    if self.keeps_head:
+                        _replace(self.head, fresh.head() + "\n")
+                else:
+                    for path in (self.path, self.head):
+                        if os.path.lexists(path):
+                            path.unlink()
+                return len(entries) - len(staying)
+        except (OSError, LedgerError):
+            raise RecordUnreadable("it cannot be rewritten") from None
 
     def append(self, kind: str, ident: str, body: dict) -> bool:
         with self.open() as held:

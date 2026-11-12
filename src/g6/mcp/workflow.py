@@ -23,7 +23,7 @@ from typing import Any
 
 from g6.core import cloud_consent as cloud
 from g6.harness.workflow import adapters, lifecycle, policy, view
-from g6.harness.workflow.record import ProjectRecord, RecordUnreadable, now, project_id, workflow_source
+from g6.harness.workflow.record import ProjectRecord, RecordOff, RecordUnreadable, now, project_id, workflow_source
 
 CODE = "G6_E_WORKFLOW_RECORD"
 TOOLS = ("g6_workflow_export", "g6_workflow_correct", "g6_workflow_delete", "g6_suggestion_decide", "g6_feedback")
@@ -262,9 +262,12 @@ async def delete(repo: str, ctx: Any, scope: str = "task", task: str = "", run: 
         ident = ""
     if not ident:
         return _refused("name the task (its text, as given to the review) or the run (its id in inspection.json)")
-    message = (f"Delete {SCOPE_WORDS[scope]} from G6's local workflow record? G6 removes those files and the "
-               "inspection file made from them, and keeps one receipt that says a deletion happened. Saved reviews, "
-               "questions and answers are not touched. Nothing already shared is recalled. This cannot be undone.")
+    removes = ("the project's whole record, your corrections.json included, and the inspection file"
+               if scope == "project" else "its files, every entry about it in the record's other files (corrections, "
+               "decisions, feedback) and the inspection file made from them; your own corrections.json is not changed")
+    message = (f"Delete {SCOPE_WORDS[scope]} from G6's local workflow record? G6 removes {removes}, and keeps one "
+               "receipt that says a deletion happened. Saved reviews, questions and answers are not touched. Nothing "
+               "already shared is recalled. This cannot be undone.")
     with consent_form():     # fixed words only: the dialog shows nothing from the record
         action, content, _error = await elicit(ctx, message, DELETE_FORM)
     name = content.get("name") if isinstance(content, dict) else None
@@ -402,7 +405,13 @@ async def feedback(repo: str, task: str, ctx: Any, text: str = "") -> dict:
     try:
         store = fb.FeedbackStore(project)
         if text.strip():       # volunteered: kept as relayed, nothing asked, no budget spent
-            store.unsolicited(task_id, text.strip()[:fb.MAX_TEXT], relayed_by="the agent", at=now())
+            try:
+                store.unsolicited(task_id, text.strip()[:fb.MAX_TEXT], relayed_by="the agent", at=now())
+            except RecordOff as off:        # the record's switch, at the store: nothing was written
+                return _feedback_reply(project, {"status": "not_kept", "asked": False, "why": off.why},
+                                       "The feedback was not kept: G6's workflow record is off on this computer.",
+                                       "Nothing further is asked. The person can turn the record on where the G6 "
+                                       "server is registered.")
             return _feedback_reply(project, {"status": "kept", "asked": False, "provenance": "attributed_label",
                                              "note": "relayed by the agent, not authenticated"},
                                    "The feedback was kept on this computer, as relayed.", "Nothing further is asked.",

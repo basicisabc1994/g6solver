@@ -28,7 +28,7 @@ from g6.core.ledger import LedgerError, digest
 from g6.core.storage import state_path
 from g6.harness.confirmed_expectation import TIME_FORMAT
 from g6.harness.workflow import policy
-from g6.harness.workflow._store import CODE, Chain, RecordUnreadable, plain
+from g6.harness.workflow._store import CODE, Chain, RecordOff, RecordUnreadable, admit, plain
 from g6.workforce.receipt_store import _locked
 
 SCHEMA = "workflow.event.v1"
@@ -274,6 +274,7 @@ class ProjectRecord:
             raise EventRefused("a run starts from a loop session, a review job or a task's tool calls, named by its id")
         origin = sha256(origin_id)
         folder = self._task_dir(task) / "runs"
+        admit(folder)                               # with the record off, not even the folder is made
         try:
             with _locked(folder / "runs"):         # one start at a time for a task: two callers get one run
                 for run in self._run_ids(task):
@@ -318,5 +319,5 @@ class ProjectRecord:
 
 
 __all__ = ["ANNOTATION_KINDS", "CODE", "Event", "EventRefused", "ORIGINS", "PROVENANCE", "ProjectRecord",
-           "REF_KINDS", "RUN_STARTED", "RecordUnreadable", "Ref", "SCHEMA", "TIME_FORMAT", "event_id", "now",
+           "REF_KINDS", "RUN_STARTED", "RecordOff", "RecordUnreadable", "Ref", "SCHEMA", "TIME_FORMAT", "event_id", "now",
            "project_id", "workflow_source"]
