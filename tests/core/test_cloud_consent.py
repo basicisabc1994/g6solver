@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from g6.core import llm, host_models
+from tests.host_stand_in import stand_in_hosts
 
 
 def consent_modules():
@@ -69,7 +70,10 @@ def make_caller(kind, monkeypatch, sent):
     def send(self, system, user, **kwargs):
         sent.append(user)
         return 'answer'
-    monkeypatch.setattr(cls, 'complete', send)
+    if kind in ('claude_code', 'codex'):  # at the launcher: a watched host never resolves a patched complete
+        stand_in_hosts(monkeypatch, lambda system, user: send(None, system, user))
+    else:
+        monkeypatch.setattr(cls, 'complete', send)
     if kind in ('local', 'ollama_remote'):
         return cls(base_url='http://127.0.0.1:11434' if kind == 'local' else 'https://models.invalid')
     if kind in ('openai', 'local_openai'):
@@ -210,12 +214,12 @@ def test_send_and_revoke_have_one_locked_order(monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     sent, entered, release = [], threading.Event(), threading.Event()
     raw = make_caller('codex', monkeypatch, sent)
-    def slow(self, system, user, **kwargs):
+    def slow(system, user):
         entered.set()
         assert release.wait(5)
         sent.append(user)
         return 'answer'
-    monkeypatch.setattr(type(raw), 'complete', slow)
+    stand_in_hosts(monkeypatch, slow)
     wrapped = callers.guard(raw)
     grant(c, 'source', 'openai:codex')
     source = c.Source.text('source', 'file', 'secret')

@@ -71,7 +71,9 @@ barred before release, using the existing refusal store and failed-write stop. A
 remains a failed case, including a nonzero exit without a terminal event.
 The owned launch checks its final observation options, admits its immutable snapshot, and supplies that same record to its
 note for idempotent admission. A host note without that module-owned record authorizes no launch. Instance annotations and
-reply dispatch never decide observation on this path.
+reply dispatch never decide observation on this path. Outside every loop tick of this process an owned launch has no loop
+gate, and its sharing check (``cloud_consent.admission``) is its one check; while a tick is open, one with no gate in its
+context escaped that tick's gate and is refused (``_note_launch``).
 """
 from __future__ import annotations
 
@@ -151,6 +153,10 @@ _SENT_LOCK = threading.Lock()
 #: The folders of the sends a watched call made, so the end of that call releases any whose program never answered.
 _OPEN: contextvars.ContextVar[list[tuple[int, int]] | None] = contextvars.ContextVar("g6_open_sends", default=None)
 _LAUNCH_RECORD: contextvars.ContextVar[Send | None] = contextvars.ContextVar("g6_launch_record", default=None)
+#: How many loop ticks of this process are open (``loop_tick``): process-wide, as a launch that escaped a tick's context
+#: carries nothing of it.
+_TICKS = 0
+_TICKS_LOCK = threading.Lock()
 # Construction identity survives replacement of an instance dictionary or class. It selects the owned data path,
 # never grants admission. Weak references retain neither a caller nor its dynamically constructed class.
 _HOSTS: dict[int, tuple[weakref.ReferenceType[Any], str]] = {}
@@ -1231,10 +1237,28 @@ def launch_record() -> Send | None:
     return _LAUNCH_RECORD.get()
 
 
+@contextmanager
+def loop_tick() -> Iterator[None]:
+    """A loop tick of this process is open inside (``ShadowLoop``'s tick), on whatever thread or context."""
+    global _TICKS
+    with _TICKS_LOCK:
+        _TICKS += 1
+    try:
+        yield
+    finally:
+        with _TICKS_LOCK:
+            _TICKS -= 1
+
+
 def _note_launch(owned: _OwnedSend) -> None:
+    """The last step before an owned launch's program starts. Its sharing check has passed (``cloud_consent.admission``).
+    Outside every loop tick of this process that check is all an owned launch passes, as any G6 model call: the loop's
+    gate is set only inside a tick's metered call. While a tick is open, a launch with no gate in its context escaped
+    that tick's gate (a thread started without the tick's context, a caller outside its metered calls): no meter could
+    charge it or hold it to what the tick refused, so it is refused."""
     record, gate = owned.send, owned.gate
-    if gate is None:
-        raise LLMError("G6_E_LOOP_UNWATCHED_HOST: owned host launch has no admission gate")
+    if gate is None and _TICKS:
+        raise LLMError("G6_E_LOOP_UNWATCHED_HOST: owned host launch has no admission gate while a loop tick is open")
     token = _LAUNCH_RECORD.set(record)
     try:
         host_models._start_model_call()

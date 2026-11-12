@@ -6,6 +6,7 @@ import json
 from g6.core import cloud_consent as cloud, host_models
 from g6.core.llm import LLMError
 from g6.harness import completion_loop as loop
+from tests.host_stand_in import stand_in_hosts
 from tests.s16r1.test_roots import grant
 
 
@@ -28,8 +29,7 @@ def test_custom_harness_without_training_is_a_source(tmp_path, monkeypatch):
     monkeypatch.setattr(host_models, '_folders', folders)
     monkeypatch.setattr(host_models, '_environment', lambda *args: {})
     monkeypatch.setattr(loop.ToolSession, 'locate', lambda self: 'fake')
-    monkeypatch.setattr(loop.ToolSession, '_reply', lambda *args: 'fake reply')
-    monkeypatch.setattr(host_models, '_run', lambda argv, text, *args: sent.append(text) or (0, '{}', ''))
+    stand_in_hosts(monkeypatch, lambda system, text: sent.append(text) or 'fake reply')
     with cloud.request_sources(shipped.sources):
         try:
             loop.ToolSession().run(shipped.scout, cwd, where, 1)

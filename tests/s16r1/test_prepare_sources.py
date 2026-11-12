@@ -8,6 +8,7 @@ import pytest
 from g6.core import cloud_consent as cloud, consent_callers, host_models
 from g6.core.llm import LLMError
 from g6.harness import completion_loop as loop
+from tests.host_stand_in import stand_in_hosts
 from tests.s16r1.test_roots import grant
 
 
@@ -40,8 +41,7 @@ def test_prepare_admits_every_origin_before_entering_the_scout(tmp_path, monkeyp
         saved.append(tuple(frame.sources) if frame is not None else None)
     monkeypatch.setattr(loop, '_save', save)
     monkeypatch.setattr(loop, '_told', lambda *args: '')
-    monkeypatch.setattr(host_models.CodexCaller, 'complete',
-                        lambda self, *args, **kwargs: sent.append(marker) or 'fake')
+    stand_in_hosts(monkeypatch, lambda *args: sent.append(marker) or 'fake')
     def scouts(*args):
         consent_callers.guard(host_models.CodexCaller()).complete('', marker)
         cloud.record_sources((observed,))

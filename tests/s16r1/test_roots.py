@@ -14,6 +14,7 @@ from g6.core.llm import LLMError
 from g6.mcp import build_server
 from g6.mcp.cloud_consent import request_grant
 from g6.workforce import repo_tests
+from tests.host_stand_in import stand_in_hosts
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -486,8 +487,7 @@ def test_scout_retry_carries_unknown_child_diagnostics(tmp_path, monkeypatch):
     monkeypatch.setattr(host_models, '_folders', scratch)
     monkeypatch.setattr(host_models, '_environment', lambda *args: {})
     monkeypatch.setattr(loop.ToolSession, 'locate', lambda self: 'fake')
-    monkeypatch.setattr(loop.ToolSession, '_reply', lambda *args: 'fake reply')
-    monkeypatch.setattr(host_models, '_run', lambda argv, text, *args: sent.append(text) or (0, '{}', ''))
+    stand_in_hosts(monkeypatch, lambda system, text: sent.append(text) or 'fake reply')
     loop._scout(SimpleNamespace(repo=cwd), 'task', '{title} {text}', where, loop.ToolSession().run,
                 time.monotonic() + 10000)
     assert len(sent) == 1
