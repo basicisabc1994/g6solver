@@ -15,6 +15,18 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def isolated_proxy_environment(monkeypatch):
+    """Offline fakes have explicit routes; ambient machine proxies are not test inputs.
+
+    Routing tests install their own native proxy settings after this fixture.
+    This changes no production policy and grants no source or recipient.
+    """
+    for name in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY',
+                 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy', 'REQUEST_METHOD'):
+        monkeypatch.delenv(name, raising=False)
+
+
 def accepted_cloud_name(message):
     assert 'cannot be recalled' in message
     return 'Fixture person'

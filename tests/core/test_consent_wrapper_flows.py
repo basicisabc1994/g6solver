@@ -49,12 +49,13 @@ def test_reviewer_retry_sender_without_a_grant_starts_no_http_request(tmp_path, 
 
 def test_opaque_reviewer_retry_sender_cannot_borrow_its_backends_grant(tmp_path, monkeypatch,
                                                                    accepted_cloud_dialog):
-    from types import SimpleNamespace
     from g6.core.model_calls import note_model_call
     monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
     sent = []
-    monkeypatch.setattr(llm.urllib.request, 'build_opener', lambda *a: SimpleNamespace(
-        open=lambda *a, **kw: sent.append(a)))
+    def send(handler, connection, request, **kwargs):
+        sent.append(request)
+        raise AssertionError('opaque caller reached the socket handoff')
+    monkeypatch.setattr(llm.urllib.request.AbstractHTTPHandler, 'do_open', send)
     known = llm.OpenAICompatibleCaller('test', base_url='https://review.invalid', api_key=None)
     accepted_cloud_dialog('model_inputs', callers.destination(known).provider, text='synthetic retry inputs')
 
@@ -257,14 +258,13 @@ def test_followup_rate_limit_flow_withholds_before_its_transport(
     monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
     sent = []
 
-    class Transport:
-        def open(self, request, timeout):
-            sent.append(request)
-            raise urllib.error.HTTPError(request.full_url, 429, 'rate limited', {'Retry-After': '0'}, io.BytesIO(b'limit'))
-
-    monkeypatch.setattr(llm.urllib.request, 'build_opener', lambda *_: Transport())
+    def send(handler, connection, request, **kwargs):
+        sent.append(request)
+        raise urllib.error.HTTPError(request.full_url, 429, 'rate limited', {'Retry-After': '0'}, io.BytesIO(b'limit'))
+    monkeypatch.setattr(llm.urllib.request.AbstractHTTPHandler, 'do_open', send)
     raw = llm.OpenAICompatibleCaller('fake', base_url='https://unused.invalid', api_key=None)
     if opaque:
+        accepted_cloud_dialog('model_inputs', callers.destination(raw).provider, text='PLANTED_RATE_LIMIT')
         accepted_cloud_dialog('fixture:rate-limit', callers.destination(raw).provider, text='PLANTED_RATE_LIMIT')
 
         class Foreign:

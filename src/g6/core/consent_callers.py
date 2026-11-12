@@ -9,7 +9,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from urllib.parse import urlsplit
-from urllib.request import getproxies, proxy_bypass
+import urllib.request
 
 from g6.core import host_models, llm
 from g6.core.cloud_consent import REQUIRED, _refusal, admission, current_sources, sha256
@@ -253,6 +253,51 @@ def loopback(url: str) -> bool:
         return False
 
 
+def urllib_destination(url):
+    """Resolve the first hop with the same native handlers as _post_json.
+
+    A body-free Request observes ProxyHandler's own set_proxy decision, including
+    platform settings and NO_PROXY's host/port rules. No opener is run and no
+    connection is made. A handler that needs an opaque re-dispatch stays unknown.
+    """
+    class Route(urllib.request.Request):
+        hop = None
+
+        def set_proxy(self, host, scheme):
+            self.hop = f'{scheme}://{host}'.rstrip('/')
+            super().set_proxy(host, scheme)
+
+    try:
+        request = Route(url)
+        opener = urllib.request.build_opener(llm._NoRedirects)
+        proxies = [h for h in opener.handlers if isinstance(h, urllib.request.ProxyHandler)]
+        if len(proxies) > 1 or any(type(h) is not urllib.request.ProxyHandler for h in proxies):
+            return Destination('cloud:unknown')
+        if proxies:
+            handler = getattr(proxies[0], request.type + '_open', None)
+            # proxy_open may re-dispatch for a different proxy protocol. That
+            # route is unsupported; do not let its parent open a connection.
+            if handler is not None:
+                class NoOpen:
+                    def open(self, *args, **kwargs):
+                        raise ValueError('opaque proxy re-dispatch')
+                proxies[0].parent = NoOpen()
+                request.timeout = 0
+                handler(request)
+        if request.hop is not None:
+            parsed = urlsplit(request.hop)
+            if parsed.scheme not in ('http', 'https') or not parsed.hostname:
+                return Destination('cloud:unknown')
+            return Destination('endpoint:' + sha256(request.hop))
+        if loopback(url):
+            return Destination('local:loopback', True)
+        canonical = url.rstrip('/')
+        own = {'https://api.openai.com/v1': 'openai:api', 'https://openrouter.ai/api/v1': 'openrouter:api'}
+        return Destination(own.get(canonical, 'endpoint:' + sha256(canonical)))
+    except (AttributeError, OSError, TypeError, ValueError):
+        return Destination('cloud:unknown')
+
+
 def wrapper_slot(caller: object) -> str | None:
     """G6 wrapper identities, never attributes supplied by an opaque wrapper.
 
@@ -300,17 +345,7 @@ def destination(caller: object, _seen: frozenset[int] = frozenset()) -> Destinat
     if caller_kind(caller) in ('process', 'no-send'):
         return Destination('local:process', True)
     if isinstance(caller, llm.OllamaCaller | llm.OpenAICompatibleCaller):
-        url = caller.base_url
-        parsed = urlsplit(url)
-        proxies = getproxies()
-        proxied = parsed.scheme in proxies and not proxy_bypass(parsed.hostname or '')
-        if loopback(url):
-            if proxied or getattr(caller, 'proxy', None):
-                return Destination('cloud:unknown')
-            return Destination('local:loopback', True)
-        canonical = url.rstrip('/')
-        own = {'https://api.openai.com/v1': 'openai:api', 'https://openrouter.ai/api/v1': 'openrouter:api'}
-        return Destination(own.get(canonical, 'endpoint:' + sha256(canonical)))
+        return urllib_destination(caller.base_url)
     if isinstance(caller, llm.AnthropicCaller):
         client = caller._client
         if client is None:

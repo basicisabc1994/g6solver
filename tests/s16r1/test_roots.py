@@ -26,7 +26,7 @@ def source_sites(extra=()):
         tree = ast.parse(path.read_text(encoding='utf-8'))
         aliases = ({name: module + '.' + name for name in (
             'Source', 'boundary_sources', 'request_sources', 'bind_output', 'admission',
-            'current_sources', 'output_sources', 'record_sources')}
+            'current_sources', 'output_sources', 'record_sources', 'freeze_output', 'read_retained', 'write_retained')}
                    if module == 'g6.core.cloud_consent' else {})
         if module == 'g6.harness.completion_loop':
             aliases.update({name: module + '.' + name for name in ('_scouts', '_scout')})
@@ -71,6 +71,7 @@ def source_sites(extra=()):
                     name.startswith('g6.core.cloud_consent.') and name.rsplit('.', 1)[-1] in {
                     'Source', 'text', 'boundary_sources', 'request_sources', 'bind_output',
                     'admission', 'current_sources', 'output_sources', 'record_sources',
+                    'freeze_output', 'read_retained', 'write_retained',
                 }):
                     found.add(module + ('.' + '.'.join(owners) if owners else ''))
             for child in ast.iter_child_nodes(node):
@@ -81,6 +82,10 @@ def source_sites(extra=()):
 
 # A new source builder must get a planted case and an explicit review here.
 SOURCE_SITES = {
+    'g6.harness.completion_hook._again',
+    'g6.harness.completion_hook._record',
+    'g6.harness.completion_hook._task',
+    'g6.harness.completion_hook.on_prompt',
     'g6.agents._runtime.consent.process_admission',
     'g6.core.consent_callers._Consent.complete',
     'g6.core.consent_callers._Consent.complete_with_images',
@@ -93,6 +98,10 @@ SOURCE_SITES = {
     'g6.harness.completion_loop._advance_inner',
     'g6.harness.completion_loop._advance_inner.check',
     'g6.harness.completion_loop._read',
+    'g6.harness.completion_loop._load',
+    'g6.harness.completion_loop._save',
+    'g6.harness.completion_loop._snapshot_probe',
+    'g6.harness.completion_loop.read_report',
     'g6.harness.completion_loop._scout',
     'g6.harness.completion_loop.harness',
     'g6.harness.completion_loop.prepare',
@@ -115,6 +124,10 @@ SOURCE_SITES = {
     'g6.metaharness.jobs.Jobs.start',
     'g6.metaharness.jobs.Jobs.status',
     'g6.mcp.review_loop.step',
+    'g6.mcp.review_loop._asked',
+    'g6.mcp.review_loop._step',
+    'g6.self_maintenance.digest.read',
+    'g6.self_maintenance.digest.write',
     'g6.core.consent_callers.sdk_send',
     'g6.core.consent_callers._sdk_call',
     'g6.core.cloud_consent',

@@ -924,14 +924,13 @@ def test_a_limit_a_resend_was_told_of_ends_the_tick_before_it_is_resent(monkeypa
 
     sent = []
 
-    class Transport:
-        def open(self, request, timeout):
-            sent.append(request)
-            if len(sent) == 1:
-                raise urllib.error.HTTPError(request.full_url, 429, "rate limited", {"Retry-After": "0"}, io.BytesIO(b"limit"))
-            return io.BytesIO(b'{"choices":[{"message":{"content":"resent"}}]}')
+    def send(handler, connection, request, **kwargs):
+        sent.append(request)
+        if len(sent) == 1:
+            raise urllib.error.HTTPError(request.full_url, 429, "rate limited", {"Retry-After": "0"}, io.BytesIO(b"limit"))
+        return io.BytesIO(b'{"choices":[{"message":{"content":"resent"}}]}')
 
-    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *_: Transport())
+    monkeypatch.setattr(llm.urllib.request.AbstractHTTPHandler, "do_open", send)
     requests = _Requests()
     requests.open(10)
     caller = _Counted(llm.OpenAICompatibleCaller("local", base_url="https://unused.invalid", api_key=None), requests)

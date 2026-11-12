@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from g6.core.storage import state_path
+from g6.core import cloud_consent as cloud
 
 #: Set in a scout's session.
 CHILD = "G6_COMPLETION_LOOP_CHILD"
@@ -87,8 +88,21 @@ def _record(session: Path, cwd: str, task: str) -> dict | None:
         return None
     session.mkdir(parents=True, exist_ok=True, mode=0o700)
     asked = {"repo": str(here[0]), "task": task, "base": here[1]}
-    (session / "task.json").write_text(json.dumps(asked), encoding="utf-8")
+    cloud.write_retained(session / 'task.json', json.dumps(asked).encode('utf-8'))
     return asked
+
+
+def _task(session: Path) -> dict:
+    """Read the task binding from exactly the bytes its producer completed."""
+    try:
+        expected = (session / 'task.sha256').read_text(encoding='ascii')
+        asked = json.loads(cloud.read_retained(session / 'task.json', expected))
+        if not isinstance(asked, dict) or not {'repo', 'task', 'base'} <= asked.keys():
+            raise ValueError('malformed retained task')
+        return asked
+    except (OSError, TypeError, ValueError):
+        cloud.record_sources((cloud.UNKNOWN,))
+        raise ValueError(f'{cloud.REQUIRED}: {cloud.WITHHELD}') from None
 
 
 def _again(event: dict, asked: dict, ended: dict, task: str) -> None:
@@ -115,9 +129,12 @@ def _again(event: dict, asked: dict, ended: dict, task: str) -> None:
     run = current(session_id, fresh)
     run.mkdir(parents=True, exist_ok=True, mode=0o700)
     read = {"reviewed": read_last} if same and read_last and not ended.get("code") else {}
-    (run / "state.json").write_text(json.dumps(read), encoding="utf-8")
-    (session / "task.json.new").write_text(json.dumps(fresh), encoding="utf-8")
-    os.replace(session / "task.json.new", session / "task.json")
+    from g6.harness import completion_loop as loop
+    refs = cloud.boundary_sources(carried=(*loop.source_refs(ended),
+        cloud.Source.text(cloud.input_source(asked['task']), 'prior-task', asked['task']),
+        cloud.Source.text(cloud.input_source(task), 'task', task)))
+    loop._save(run, read, sources=refs)
+    cloud.write_retained(session / 'task.json', json.dumps(fresh).encode('utf-8'))
 
 
 def _moved(event: dict, asked: dict) -> bool:
@@ -185,14 +202,15 @@ def on_prompt(event: dict) -> dict:
         return {}
     with _one_prompt(session):
         if known.exists():
-            asked = json.loads(known.read_text(encoding="utf-8"))
+            from g6.harness import completion_loop as loop
+            asked = _task(session)
             run = current(event["session_id"], asked)
-            state = json.loads((run / "state.json").read_text(encoding="utf-8")) if (run / "state.json").exists() else {}
+            state = loop._load(run)
             idle = "started" not in state and (run / TURN_ENDED).exists() and _moved(event, asked)
             if state.get("done") or idle:
                 _again(event, asked, state, task)
             elif "started" not in state:
-                known.write_text(json.dumps({**asked, "task": f"{asked['task']}\n\n{task}"}), encoding="utf-8")
+                cloud.write_retained(known, json.dumps({**asked, "task": f"{asked['task']}\n\n{task}"}).encode('utf-8'))
             return {}
         asked = _record(session, event["cwd"], task)
     if asked is None:
@@ -209,7 +227,7 @@ def on_stop(event: dict) -> dict:
         return {"systemMessage": NO_REPOSITORY}
     from g6.harness import completion_loop as loop
 
-    asked = json.loads((session / "task.json").read_text(encoding="utf-8"))
+    asked = _task(session)
     run = current(event["session_id"], asked)
     step = loop.advance(asked["repo"], asked["task"], asked["base"], run, said=_said(event), agent=_model(event))
     if step.action == loop.CONTINUE:

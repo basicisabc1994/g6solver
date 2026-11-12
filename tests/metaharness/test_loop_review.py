@@ -688,10 +688,21 @@ class Busy:
         return io.BytesIO(json.dumps(reply).encode())
 
 
+def _socket_transport(monkeypatch, transport):
+    import urllib.response
+
+    def send(handler, connection, request, **kwargs):
+        response = urllib.response.addinfourl(transport.open(request, request.timeout), {}, request.full_url, 200)
+        response.msg = "OK"
+        return response
+
+    monkeypatch.setattr(llm.urllib.request.AbstractHTTPHandler, "do_open", send)
+
+
 def _on_a_busy_endpoint(tmp_path, monkeypatch, kind=llm.OpenAICompatibleCaller):
     domain = domains.WordProblems(tmp_path, pool=86, weak=0.0)
     busy = Busy(domain.tutor)
-    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: busy)
+    _socket_transport(monkeypatch, busy)
     caller = kind("local", base_url="https://unused.invalid", api_key=None)
     run = domain.execution()
     domain.execution = lambda: dataclasses.replace(run, models={"local": Model(caller, max_calls_per_run=1)})
@@ -722,7 +733,7 @@ def _http_caller() -> llm.OpenAICompatibleCaller:
 
 def test_a_resend_goes_out_only_while_what_was_reserved_has_room_for_it(monkeypatch):
     busy = Busy(lambda system, user: "an answer")
-    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: busy)
+    _socket_transport(monkeypatch, busy)
     requests = _Requests()
     requests.open(3)
     resending = _Counted(_http_caller(), requests)
@@ -746,7 +757,7 @@ class Own(CallerWrapper):
 
 def test_a_resend_is_held_whatever_holds_the_caller_that_sends_it(monkeypatch):
     busy = Busy(lambda system, user: "an answer")
-    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: busy)
+    _socket_transport(monkeypatch, busy)
     requests = _Requests()
     requests.open(2)
     with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
@@ -763,7 +774,7 @@ def test_no_resend_goes_out_at_or_past_the_end_of_the_week_it_reserved_in(monkey
             now[0] = RESET    # a 503, which is resent; a 429 is never resent (test_loop_followup)
             raise urllib.error.HTTPError(request.full_url, 503, "busy", {"Retry-After": "0"}, io.BytesIO(b"busy"))
 
-    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: Slow())
+    _socket_transport(monkeypatch, Slow())
     requests = _Requests(lambda: now[0])
     requests.open(10, RESET)
     with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
@@ -779,7 +790,7 @@ def test_a_wait_that_would_reach_the_end_of_the_week_is_not_taken(monkeypatch):
             sent.append(request)    # a 503, which is resent; a 429 is never resent (test_loop_followup)
             raise urllib.error.HTTPError(request.full_url, 503, "busy", {"Retry-After": "10"}, io.BytesIO(b"busy"))
 
-    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: AsksForTen())
+    _socket_transport(monkeypatch, AsksForTen())
     monkeypatch.setattr(llm, "_sleep", slept.append)
     requests = _Requests(lambda: RESET - timedelta(seconds=5))
     requests.open(10, RESET)

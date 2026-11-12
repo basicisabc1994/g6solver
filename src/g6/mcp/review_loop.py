@@ -16,7 +16,6 @@ wait, for the person's answer.
 from __future__ import annotations
 
 import json
-import os
 import re
 import uuid
 from pathlib import Path
@@ -39,10 +38,18 @@ def _asked(repo: str, task: str, base: str, session: Path) -> dict:
     Called with the session held, so one first call binds it. A call for another repository or task is refused, as its
     reply would be about what the first asked. A later base is not compared: it may be HEAD, which the agent's commits move."""
     from g6.workforce import repo_tests
+    from g6.core import cloud_consent as cloud
 
     root, known = repo_tests.checked_repo(repo), session / "task.json"
     if known.is_file():
-        asked = json.loads(known.read_text(encoding="utf-8"))
+        try:
+            expected = (session / 'task.sha256').read_text(encoding='ascii')
+            asked = json.loads(cloud.read_retained(known, expected))
+            if not isinstance(asked, dict) or set(asked) != {'repo', 'task', 'base'}:
+                raise ValueError('malformed retained task')
+        except (OSError, TypeError, ValueError):
+            cloud.record_sources((cloud.UNKNOWN,))
+            raise repo_tests.RepoRefused(cloud.REQUIRED, cloud.WITHHELD) from None
         if asked["repo"] != str(root):
             raise repo_tests.RepoRefused("G6_E_INPUT_VALIDATION", "this session belongs to another repository")
         if asked["task"] != task:
@@ -50,9 +57,7 @@ def _asked(repo: str, task: str, base: str, session: Path) -> dict:
                                                                   "call's task as it was, or name a new session")
         return asked
     asked = {"repo": str(root), "task": task, "base": repo_tests.change(root, base).base_commit}
-    fresh = session / "task.json.new"
-    fresh.write_text(json.dumps(asked), encoding="utf-8")
-    os.replace(fresh, known)
+    cloud.write_retained(known, json.dumps(asked).encode('utf-8'))
     return asked
 
 
@@ -89,8 +94,8 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
         return {**blocked_reply(f"[{done.code}] {done.text}", request_id=request_id), "run_id": folder.name,
                 "action": done.action}
     state = loop._load(folder)
-    evidence, saved = _evidence(state, asked["base"]), folder / "report.md"
-    text = done.text or (saved.read_text(encoding="utf-8") if saved.is_file() else "")
+    evidence = _evidence(state, asked["base"])
+    text = done.text or loop.read_report(folder, state)
     code, ending, why, note = done.code, done.ending, state.get("stop") or text or NOTHING, done.note
     if note == loop.ALREADY_ENDED:     # a repeat ran nothing: its report is of the patch as the session's loop ended
         reviews = state.get("reviews") or []    # a stop with a code keeps it, as it says why the session's loop ended
@@ -101,17 +106,20 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
         "action": done.action, "report": text, "ending": ending, **({"note": note} if note else {})}
     if code:
         refused = blocked_reply(f"[{code}] {why}"[:600], request_id=request_id)
-        return {**refused, "run_id": folder.name, "evidence": evidence, **said}
-    card = SENDS_BACK if done.action == loop.CONTINUE else ENDED
-    return {"ok": True, **said, **envelope_fields(
-        reliability_label="qualified-draft", warning_card=warning_card(CODE, *card), evidence=evidence, request_id=request_id,
-        run_id=folder.name, degradation_reason=card[0][:300])}
+        result = {**refused, "run_id": folder.name, "evidence": evidence, **said}
+    else:
+        card = SENDS_BACK if done.action == loop.CONTINUE else ENDED
+        result = {"ok": True, **said, **envelope_fields(
+            reliability_label="qualified-draft", warning_card=warning_card(CODE, *card), evidence=evidence, request_id=request_id,
+            run_id=folder.name, degradation_reason=card[0][:300])}
+    from g6.core.cloud_consent import bind_output
+    return bind_output(result, loop.source_refs(state))
 
 
 def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
     """Retain the run's saved origins; never rebind old report content to the current request."""
-    from g6.core.cloud_consent import Source, bind_output, repository_source
-    from g6.harness import completion_hook, completion_loop
+    from g6.core.cloud_consent import Source, bind_output, repository_source, freeze_output
+    from g6.harness import completion_loop
     result = _step(repo, task, session, base, reason)
     if result.get('action') == completion_loop.WAIT:
         # The running step owns the state. This reply contains only fresh host
@@ -123,7 +131,8 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
     if capture is not None:
         capture.review_unsent = (result.get('ending') == 'untested' and
             str(result.get('error', '')).startswith(f'[{REQUIRED}]'))
-    saved = completion_loop._load(completion_hook.folder(f'mcp:{session}')) if 'action' in result else {}
+    body, refs, _ = freeze_output(result)
+    result = json.loads(body)
     metadata = {key: result[key] for key in ('action', 'ending', 'request_id', 'run_id') if key in result}
     metadata.update(has_report='report' in result, has_text='text' in result)
     if capture is not None and capture.review_unsent and capture.refused_provider:
@@ -131,8 +140,9 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
     code = re.match(r'\[(G6_E_[A-Z0-9_]+)\]', result.get('error', ''))
     if code:
         metadata['error_code'] = code[1]
-    return bind_output(result, (Source.text(repository_source(repo), "completion-report", json.dumps(result)),
-                                Source.text(input_source(task), "task", task), *completion_loop.source_refs(saved)),
+    return bind_output(result, (Source.text(repository_source(repo), "completion-report", body),
+                                Source.text(input_source(task), "task", task), *(refs or ()),
+                                *(capture.sources if capture is not None else ())),
                        metadata=metadata)
 
 

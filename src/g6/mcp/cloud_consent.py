@@ -51,21 +51,22 @@ def _source_function(fn):
                     value = await value
             if root:
                 from g6.core.ledger import digest
-                refs = policy.output_sources(value)
                 try:
+                    body, refs, metadata = policy.freeze_output(value)
+                    value = json.loads(body)
                     content_hash = digest(value)
-                except ValueError:
-                    content_hash = ''
+                except (TypeError, ValueError):
+                    # Unsupported serialization cannot establish source authority.
+                    refs, metadata, content_hash, body = (policy.UNKNOWN,), {}, '', ''
                 if declaration is not None and refs != ():
                     producer = declaration.sources(arguments, payload=content_hash)
                     carried = (*(refs if refs is not None else ()), *capture.sources)
                     refs = policy.boundary_sources(producer, carried=carried,
                                                    inherit=bool(producer or carried))
-                metadata = policy.output_metadata(value)
                 return_type = hints.get('return')
                 if return_type is list or get_origin(return_type) is list:
                     metadata['empty_result'] = []
-                capture.returned = value, content_hash, refs, public and refs is None, metadata
+                capture.returned = body, content_hash, refs, public and refs is None, metadata
             return value
         finally:
             _INSIDE.reset(token)
@@ -153,26 +154,38 @@ def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unkn
 def protect_reply(ctx: Any, result: dict, sources, *, supplied=(), job=None, record=True) -> dict:
 
     try:
-        payload = policy.sha256(json.dumps(result, sort_keys=True, default=str))
+        body, known, metadata = policy.freeze_output(result)
+        result = json.loads(body)
+        sources = policy.boundary_sources(sources, carried=known or ())
+        payload = policy.sha256(body)
         with policy.admission(client_provider(ctx), sources, payload, supplied=supplied, disclose=record):
             return result
     except LLMError:
-        return withheld_reply(result, job=job, metadata=policy.output_metadata(result),
+        return withheld_reply(result, job=job, metadata=metadata,
                               provider=client_provider(ctx), sources=sources)
 
 
-def _matches_return(returned, result):
+def _matches_return(returned, result, wire=None):
+    """Whether the rendered reply is the frozen return, read through one serialisation of that reply.
+
+    ``wire`` is the serialisation the caller also cuts the ticket from. Matching the live ``result`` and then
+    serialising it again for the ticket would let a change between the two go out under the matched sources.
+    """
     from fastmcp.tools.tool import ToolResult
     from g6.core.ledger import digest
-    if returned is None or not returned[1] or result.meta is not None:
+    from g6.mcp.consent_transport import call_body
+    if returned is None or not returned[1]:
         return False
-    value = returned[0]
     try:
-        if digest(value) != returned[1] or ToolResult(content=value).content != result.content:
+        wire = call_body(result) if wire is None else wire
+        value = json.loads(returned[0])
+        if '_meta' in wire or digest(value) != returned[1]:
+            return False
+        if call_body(ToolResult(content=value))['content'] != wire['content']:
             return False
         expected = value if isinstance(value, dict) else {'result': value}
-        return result.structured_content is None or digest(expected) == digest(result.structured_content)
-    except (TypeError, ValueError):
+        return 'structuredContent' not in wire or digest(expected) == digest(wire['structuredContent'])
+    except (KeyError, TypeError, ValueError):
         return False
 
 
@@ -191,7 +204,7 @@ def install(server) -> None:
 
     class ConsentEgress(Middleware):
         async def on_call_tool(self, context, call_next):
-            from g6.mcp.consent_transport import install as install_transport, prepare
+            from g6.mcp.consent_transport import call_body, install as install_transport, prepare
             ctx = context.fastmcp_context
             try:
                 session = ctx.session
@@ -225,15 +238,20 @@ def install(server) -> None:
                 inputs(args)
                 result = await call_next(context)
                 returned = capture.returned
-                matches = _matches_return(returned, result)
+                # The rendered reply is serialised once, here. The frozen return is
+                # matched against that serialisation and the ticket is cut from it,
+                # so a reply changed at any later moment no longer has its ticket's
+                # digest when the transport takes it, and goes as an unknown source.
+                wire = call_body(result)
+                matches = _matches_return(returned, result, wire)
                 public = matches and returned[3]
                 refs = (() if public else returned[2]) if matches else None
                 if refs == ():
-                    prepare(session, ctx.request_context.request_id, result, ())
+                    prepare(session, ctx.request_context.request_id, result, (), body=wire)
                     return result
                 sources = refs if refs is not None else (policy.UNKNOWN,)
                 prepare(session, ctx.request_context.request_id, result, sources, capture.supplied, capture.job,
-                        metadata=returned[4] if matches else None)
+                        metadata=returned[4] if matches else None, body=wire)
                 return result
     server.add_middleware(ConsentEgress())
 

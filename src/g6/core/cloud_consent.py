@@ -137,6 +137,7 @@ class Capture:
     returned: tuple[object, str, tuple[Source, ...] | None, bool, dict] | None = None
     review_unsent: bool = False
     refused_provider: str = ''
+    parent: Capture | None = field(default=None, repr=False, compare=False)
 
 
 def record_sources(sources: Sequence[Source]) -> None:
@@ -240,9 +241,42 @@ def freeze_output(value, *, snapshot=...):
     # Receipts use canonical JSON; compare only the already-frozen bytes.
     if stored[1] != digest(json.loads(body)):
         refs = boundary_sources(carried=(*stored[2], UNKNOWN), inherit=False)
+        capture.outputs[id(value)] = (stored[0], stored[1], refs, stored[3])
         record_sources(refs)
         return body, refs, {}
-    return body, stored[2], stored[3]
+    return body, stored[2], deepcopy(stored[3])
+
+
+def read_retained(path: Path, expected: str) -> bytes:
+    """One read supplies both the completion-digest check and the returned bytes."""
+    body = path.read_bytes()
+    if not isinstance(expected, str) or not _HASH.fullmatch(expected) or sha256(body) != expected:
+        raise ValueError('retained content has no matching completion digest')
+    return body
+
+
+def write_retained(path: Path, body: bytes) -> None:
+    """Publish serialized completion bytes and their digest, failing closed on interruption.
+
+    Replacing the content first can leave a stale digest after a crash. Readers
+    then withhold it; they never infer a new receipt from the replacement bytes.
+    The producer owns synchronization and supplies bytes serialized once.
+    """
+    content_spare = path.with_name(path.name + '.new')
+    receipt = path.with_suffix('.sha256')
+    receipt_spare = receipt.with_name(receipt.name + '.new')
+    content_spare.write_bytes(body)
+    receipt_spare.write_bytes(sha256(body).encode('ascii'))
+    os.replace(content_spare, path)
+    os.replace(receipt_spare, receipt)
+
+
+def _observed_sources(capture):
+    refs = []
+    while capture is not None:
+        refs.extend(capture.sources)
+        capture = capture.parent
+    return tuple(dict.fromkeys(refs))
 
 
 def prompt_sources() -> tuple[Source, ...]:
@@ -255,7 +289,7 @@ def prompt_sources() -> tuple[Source, ...]:
     host producer before a non-local send.
     """
     capture = _CAPTURE.get()
-    refs = [*(capture.sources if capture is not None else ()), *_PROMPT_STATE.get()]
+    refs = [*_observed_sources(capture), *_PROMPT_STATE.get()]
     return boundary_sources(carried=refs)
 
 
@@ -300,7 +334,8 @@ def request_sources(sources: Sequence[Source]) -> Iterator[None]:
 @contextmanager
 def collect_sources() -> Iterator[Capture]:
     parent = _CAPTURE.get()
-    capture = Capture(outputs=dict(parent.outputs) if parent is not None else {})
+    capture = Capture(sources=list(_observed_sources(parent)),
+                      outputs=dict(parent.outputs) if parent is not None else {}, parent=parent)
     token = _CAPTURE.set(capture)
     try:
         yield capture

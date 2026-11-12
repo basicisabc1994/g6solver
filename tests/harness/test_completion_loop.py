@@ -29,6 +29,7 @@ from g6.harness import verification_search as vs
 from g6.metaharness.domain import FailureRecord
 from g6.workforce import repo_tests
 from g6.workspace import _coordination
+from tests.s16r3.test_retained_files import write_completed_state
 
 BASE = "def double(x):\n    return x + 2\n"
 FIXED = "def double(x):\n    return x * 2\n"
@@ -243,7 +244,7 @@ def test_the_loops_time_is_held_across_hooks(world, monkeypatch):
     world.advance()
     state = world.state()
     state["started"] = time.time() - loop.LOOP_S - 1
-    (world.session / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    write_completed_state(world.session / 'state.json', state)
     world.edit(FIXED + "# late\n")
     step = world.advance()
     assert step.action == loop.STOP
@@ -1083,7 +1084,7 @@ def test_the_loops_time_is_held_across_hooks_and_running_out_is_no_clean_review(
     world.advance(critic=critic)
     state = world.state()
     state["started"] = time.time() - loop.LOOP_S - 1
-    (world.session / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    write_completed_state(world.session / 'state.json', state)
     world.edit(FIXED + "# late\n")
     step = world.advance(critic=critic)
     assert step.action == loop.STOP and "time ran out" in step.text and step.code == loop.NO_CLEAN_REVIEW
@@ -2843,7 +2844,7 @@ def test_the_loops_time_is_the_cause(world, monkeypatch):
     world.advance(critic=critic)
     state = world.state()
     state["started"] = time.time() - loop.LOOP_S - 1
-    (world.session / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    write_completed_state(world.session / 'state.json', state)
     world.edit(FIXED + "# late\n")
     world.advance(critic=critic)
     assert the_row(world)["cause"] == "loop_time_ran_out"

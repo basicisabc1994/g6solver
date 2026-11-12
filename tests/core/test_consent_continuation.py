@@ -107,10 +107,11 @@ def test_a_proxy_cannot_borrow_the_named_endpoints_grant(tmp_path, monkeypatch, 
     monkeypatch.setattr(llm, '_post_json', lambda *a: sent.append(a) or {})
     endpoint = 'http://127.0.0.1:11434'
     accepted_cloud_dialog('fixture:proxy', 'endpoint:' + cloud.sha256(endpoint), text='PLANTED_PROXY')
-    monkeypatch.setattr(callers, 'getproxies', lambda: {'http': 'http://proxy.invalid'})
-    monkeypatch.setattr(callers, 'proxy_bypass', lambda host: False)
+    import urllib.request
+    monkeypatch.setattr(urllib.request, 'getproxies', lambda: {'http': 'http://proxy.invalid'})
+    monkeypatch.setattr(urllib.request, 'proxy_bypass', lambda host: False)
     raw = llm.OpenAICompatibleCaller('fake', base_url=endpoint, api_key=None)
-    assert callers.destination(raw).provider == 'cloud:unknown'
+    assert callers.destination(raw).provider == 'endpoint:' + cloud.sha256('http://proxy.invalid')
     with pytest.raises(llm.LLMError, match=cloud.REQUIRED):
         callers.guard(raw).complete('', 'PLANTED_PROXY')
     assert sent == []
@@ -266,7 +267,7 @@ def test_compact_review_keeps_sources_and_requires_its_storage_grant(
         denied = protect_reply(context, shown, sources)
         assert 'PLANTED' not in str(denied)
         accepted_cloud_dialog(store, 'openai:codex', text='PLANTED_UNSHARED_STORAGE_PATH')
-        assert protect_reply(context, shown, sources) is shown
+        assert protect_reply(context, shown, sources) == shown
 
 
 def test_withheld_k_reply_keeps_host_envelope_fields_and_earlier_code(tmp_path, monkeypatch):

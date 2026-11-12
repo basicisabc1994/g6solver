@@ -353,7 +353,7 @@ def status(folder: str) -> dict:
                      last_cycle=_shown(cycles[-1]) if cycles else None, cycles=len(cycles), pause=pause,
                      stop=stop_standing(root, started), started=started, generation=generations["current"],
                      lineage=generations["recent"],
-                     digest={"path": str(page), "text": page.read_text(encoding="utf-8")} if page else None,
+                     digest={"path": str(page), "text": digest.read(page)} if page else None,
                      g6_status=STATUS_LINE)
 
 

@@ -62,12 +62,17 @@ def _request_key(request_id):
     return (type(request_id), request_id) if type(request_id) in (str, int) else None
 
 
-def prepare(session, request_id, result, sources, supplied=(), job=None, *, metadata=None):
+def prepare(session, request_id, result, sources, supplied=(), job=None, *, metadata=None, body=None):
+    """Cut the ticket for this reply. ``body`` is the caller's one serialisation of ``result``, when it has matched
+    the sources against one: the ticket then names those bytes, never a second reading of the live reply."""
     key = _request_key(request_id)
     if key is None:
         return
+    body = call_body(result) if body is None else body
+    # Refusal controls and retained-job metadata must not retain live aliases.
+    controls = json.loads(json.dumps({'job': job, 'metadata': metadata}))
     session._g6_tickets[key] = Ticket(tuple(sources), provider(session), frozenset(supplied),
-                                             digest(call_body(result)), job, metadata)
+                                    digest(body), controls['job'], controls['metadata'])
 
 
 def _refused(message, ticket, recipient='cloud:unknown'):

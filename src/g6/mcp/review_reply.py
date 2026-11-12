@@ -139,7 +139,8 @@ def finish(reply: Any, job_id: str) -> Any:
         return reply
     from g6.core import cloud_consent as cloud
     from g6.core.storage import g6_home
-    refs = cloud.output_sources(reply)
+    body, refs, _ = cloud.freeze_output(reply)
+    reply = json.loads(body)
     # A job entered through a declared producer already carries that contract.
     # Absence of a value receipt is distinct from an explicitly unknown origin;
     # the latter stays in refs and cannot be replaced by the declaration.

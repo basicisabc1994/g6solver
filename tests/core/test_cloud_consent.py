@@ -335,8 +335,9 @@ def test_loopback_proxy_is_cloud(monkeypatch):
     c, callers = consent_modules()
     sent = []
     raw = make_caller('local', monkeypatch, sent)
-    monkeypatch.setattr(callers, 'getproxies', lambda: {'http': 'http://proxy.invalid'})
-    monkeypatch.setattr(callers, 'proxy_bypass', lambda host: False)
+    import urllib.request
+    monkeypatch.setattr(urllib.request, 'getproxies', lambda: {'http': 'http://proxy.invalid'})
+    monkeypatch.setattr(urllib.request, 'proxy_bypass', lambda host: False)
     with pytest.raises(llm.LLMError):
         callers.guard(raw).complete('', 'PLANTED_PROXY')
     assert not sent

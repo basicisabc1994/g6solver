@@ -20,6 +20,7 @@ Every reply carries the library envelope. A mission's own ``verified`` is held a
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import subprocess
 from collections.abc import Callable
@@ -117,7 +118,8 @@ def _here(value: Any) -> Any:
 
 def reply(found: dict, *, control_id: str | None = None) -> dict:
     """``found`` in the library envelope: the state a closed mission reached, a ``qualified-draft`` while it is open."""
-    sources = cloud.output_sources(found)
+    body, sources, _ = cloud.freeze_output(found)
+    found = json.loads(body)
     said = said_state(found) if found.get("completion_state") else "qualified-draft"
     if said == "blocked-escalated":
         shown = card(None, "G6_E_BLOCKED", f"{WHO} reported blocked-escalated: {found.get('result')}"[:500])

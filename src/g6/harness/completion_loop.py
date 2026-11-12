@@ -448,7 +448,9 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
     origins = []
     results, texts, tail, boundary = {}, {}, [], ""
     for ran in runs:
-        origins.extend(cloud.output_sources(ran) or (cloud.UNKNOWN,))
+        body, refs, _ = cloud.freeze_output(ran)
+        ran = json.loads(body)
+        origins.extend(refs or (cloud.UNKNOWN,))
         boundary = (ran.get("isolation") or {}).get("backend") or boundary
         elsewhere, verdict = _loaded_elsewhere(change, ran), ran.get("verdict")
         if elsewhere or verdict not in repo_tests.RAN:
@@ -463,6 +465,12 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
         texts.update({_PLACE.sub("", full(named)): text for named, text in (ran.get("failure_messages") or {}).items()})
     return cloud.bind_output(ProbeRun(code, results, texts, "\n".join(tail), boundary),
                              cloud.boundary_sources(carried=origins))
+
+
+def _snapshot_probe(value):
+    body, refs, _ = cloud.freeze_output(value)
+    refs = refs or (cloud.UNKNOWN,)
+    return cloud.bind_output(ProbeRun(**json.loads(body)), refs), refs
 
 
 def run_set(change: repo_tests.Change, probes: Path, *, at_base: bool, deadline: float, only: str = "") -> ProbeRun:
@@ -510,7 +518,7 @@ def _scout(change: repo_tests.Change, task: str, text: str, where: Path, host: H
     (where / "probes").mkdir(parents=True, exist_ok=True)
     asked = located(text.format(number=1, title=task.splitlines()[0][:200], text=task), where)
     failed, again = "", ""
-    got = None
+    got, origins = None, ()
     for _ in range(2):
         left = min(SCOUT_SECONDS, deadline - _clock() - RUN_S)      # its run at the base commit still has to fit
         if left < MIN_SCOUT_S:
@@ -518,12 +526,12 @@ def _scout(change: repo_tests.Change, task: str, text: str, where: Path, host: H
             break
         try:
             with _base_copy(change, left) as copy:
-                with cloud.request_sources((cloud.output_sources(got) or (cloud.UNKNOWN,)) if again else ()):
+                with cloud.request_sources(origins if again else ()):
                     host(asked + again, copy, where, left)
         except (LLMError, repo_tests.CopyNotRun, OSError) as exc:
             failed = f"{type(exc).__name__}: {exc}"[:400]
-        got = run_set(change, where / "probes", at_base=True, deadline=deadline)
-        cloud.record_sources(cloud.output_sources(got) or (cloud.UNKNOWN,))
+        got, origins = _snapshot_probe(run_set(change, where / "probes", at_base=True, deadline=deadline))
+        cloud.record_sources(origins)
         wrong = _gate(where / "tree.json", got)
         if failed or not wrong:
             break
@@ -755,8 +763,7 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
             {"verdict": "failed", "rule": "", "why": "", "test": "", "error": TOO_LONG})
 
     def run(name: str) -> None:
-        got = run_set(change, where, at_base=False, deadline=deadline, only=name)
-        diagnostics[name] = cloud.output_sources(got) or (cloud.UNKNOWN,)
+        got, diagnostics[name] = _snapshot_probe(run_set(change, where, at_base=False, deadline=deadline, only=name))
         cloud.record_sources(diagnostics[name])
         found = failures_of([("critic", got, None)])[0] if got.usable else set()    # one that will not run says nothing
         failing.update(found)
@@ -857,7 +864,31 @@ class Step:
 
 def _load(session: Path) -> dict:
     path = session / "state.json"
-    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    if not path.is_file():
+        return {}
+    try:
+        expected = (session / 'state.sha256').read_text(encoding='ascii')
+        state = json.loads(cloud.read_retained(path, expected))
+        if not isinstance(state, dict):
+            raise ValueError('retained state is not an object')
+    except (OSError, TypeError, ValueError):
+        # Neither content nor control fields from unbound state are reusable.
+        state = {'done': True, 'code': cloud.REQUIRED, 'ending': 'untested', 'stop': cloud.WITHHELD,
+                 'consent_sources': [asdict(cloud.UNKNOWN)]}
+    cloud.record_sources(source_refs(state))
+    return state
+
+
+def read_report(session: Path, state: dict) -> str:
+    """Read a completed report only against the digest in its checked state."""
+    path = session / 'report.md'
+    if not path.is_file() and not state.get('done'):
+        return ''
+    try:
+        return cloud.read_retained(path, state.get('report_sha256')).decode('utf-8')
+    except (OSError, TypeError, ValueError):
+        cloud.record_sources((cloud.UNKNOWN,))
+        return cloud.WITHHELD
 
 
 def source_refs(state: dict) -> tuple[cloud.Source, ...]:
@@ -876,13 +907,16 @@ def source_refs(state: dict) -> tuple[cloud.Source, ...]:
     return refs
 
 
-def _save(session: Path, state: dict) -> None:
+def _save(session: Path, state: dict, *, sources=None) -> None:
     capture = _SOURCE_STATE.get()
-    refs = tuple(capture.sources) if capture is not None else (*source_refs(state), cloud.UNKNOWN)
+    if sources is None:
+        refs = tuple(capture.sources) if capture is not None else (*source_refs(state), cloud.UNKNOWN)
+    else:
+        refs = cloud.boundary_sources(sources, carried=cloud.prompt_sources())
     state['consent_sources'] = [asdict(source) for source in dict.fromkeys(refs)]
     session.mkdir(parents=True, exist_ok=True, mode=0o700)
-    (session / "state.json.new").write_text(json.dumps(state), encoding="utf-8")
-    os.replace(session / "state.json.new", session / "state.json")
+    body = json.dumps(state).encode('utf-8')
+    cloud.write_retained(session / 'state.json', body)
 
 
 def _finish(session: Path, state: dict, report: str, code: str = "", ending: str = "", *, patch: str = "") -> Step:
@@ -890,8 +924,9 @@ def _finish(session: Path, state: dict, report: str, code: str = "", ending: str
     the code and the ending a later call repeats, and ``patch``, the digest of the patch as the loop ended, which a repeat
     compares with whatever ended it. A hook cut short between them ends the loop again, so no session ends with no report."""
     session.mkdir(parents=True, exist_ok=True, mode=0o700)
-    (session / "report.md").write_text(report, encoding="utf-8")
-    state.update(done=True, code=code, ending=ending, ended_patch=patch)
+    body = report.encode('utf-8')
+    (session / "report.md").write_bytes(body)
+    state.update(done=True, code=code, ending=ending, ended_patch=patch, report_sha256=cloud.sha256(body))
     _save(session, state)
     if state.get("visible"):
         shutil.rmtree(state["visible"], ignore_errors=True)
@@ -1297,13 +1332,13 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         state["ran"] = {}
         for label, one in state["sets"].items():
             if not one["left_out"]:
-                got = run_set(change, Path(one["where"]) / "probes", at_base=False, deadline=ends)
-                cloud.record_sources(cloud.output_sources(got) or (cloud.UNKNOWN,))
+                got, origins = _snapshot_probe(run_set(change, Path(one["where"]) / "probes", at_base=False, deadline=ends))
+                cloud.record_sources(origins)
                 state["ran"][label], state["boundary"] = got.ran, got.boundary or state.get("boundary", "")
                 seen.append((label, got, ProbeRun(**one["at_base"])))
         if (state.get("critic") or {}).get("test"):
-            got = run_set(change, session / "sets" / "critic", at_base=False, deadline=ends)
-            cloud.record_sources(cloud.output_sources(got) or (cloud.UNKNOWN,))
+            got, origins = _snapshot_probe(run_set(change, session / "sets" / "critic", at_base=False, deadline=ends))
+            cloud.record_sources(origins)
             if got.usable:     # a critic's test that will not run says nothing of the patch
                 state["ran"]["critic"] = got.ran
                 seen.append(("critic", got, None))
