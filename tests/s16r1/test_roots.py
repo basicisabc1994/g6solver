@@ -100,6 +100,8 @@ SOURCE_SITES = {
     'g6.harness.completion_loop.source_refs',
     'g6.harness.completion_loop.review_round.run',
     'g6.harness.completion_loop._scouts',
+    'g6.harness.formalisation.draft._one',
+    'g6.harness.formalisation.draft.sources_of',
     'g6.harness.verification_proposer.Proposer._ask',
     'g6.harness.verification_proposer.context',
     'g6.mcp.cloud_consent._source_function.invoke',

@@ -45,6 +45,7 @@ CALLER_KINDS = {
     'g6.metaharness.measurement.TraceCaller': 'wrapper:inner',
     'g6.metaharness.loop._Counted': 'wrapper:inner',
     'g6.harness.verification_proposer._Limits': 'wrapper:metered',
+    'g6.harness.formalisation.draft._Capped': 'wrapper:metered',
     'g6.harness.verification_proposer.StudyCaller': 'wrapper:_caller',
     'g6.harness.completion_loop.ToolSession': 'cloud-tools',
     'g6.self_maintenance.usage.WatchedClaude': 'cloud-host',

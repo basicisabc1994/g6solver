@@ -165,6 +165,7 @@ MODELS = {name: MODEL_INPUTS for name in (
     'g6.core.consent_callers.ConsentCodex', 'g6.reasoning.budget.MeteredCaller',
     'g6.metaharness.measurement.TraceCaller', 'g6.metaharness.loop._Counted',
     'g6.harness.verification_proposer._Limits', 'g6.harness.verification_proposer.StudyCaller',
+    'g6.harness.formalisation.draft._Capped',
     'g6.harness.completion_loop.ToolSession', 'g6.self_maintenance.usage.WatchedClaude',
     'g6.grounding.judges.nli.LocalNLICaller', 'g6.metaharness.lora.AdapterCaller',
 )}
