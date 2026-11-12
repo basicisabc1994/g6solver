@@ -572,13 +572,30 @@ def test_all_path_comparisons_and_state_maps_have_an_identity_or_layout_role(tmp
             "_sending": {"Path", "_file_identity", "_open_input"},
         },
         "loop": {
-            "": {"Path", "Path(g6.__file__).resolve"},
+            # G6's own package, and (the freeze follow-up) the installation's prefixes, as places to read and pin
+            "": {"Path", "Path(g6.__file__).resolve", "Path(place).resolve"},
             "ShadowLoop.__init__": {"Path", "Path(root).resolve"},
             "_Record.folder": {"Path", "_file_identity", "_open_input"},
             "_folder_place": {"Path", "_file_identity", "_final_path", "_open_input", "os.path.normcase"},
             "_overlap": set(),
-            "_importable_caches": {"os.path.normcase", "path.relative_to"},
-            "_in_reach": {"_overlap", "source.resolve"},
+            "_importable_caches": {"path.relative_to"},
+            # The freeze follow-up's reading of what judges: files to read and digest, and a link's target to compare;
+            # whether two folders are one is decided by _same_place, through _overlap (identity, _folder_place) and
+            # _within (os.path.samestat), never by a spelling.
+            "_importable": {"os.path.normcase"},
+            "_in_reach": {"Path", "os.path.realpath"},
+            "_same_place": {"_overlap", "os.path.normcase"},
+            "_code_file": {"Path", "Path(sys.base_prefix).resolve", "Path(where).resolve", "source.resolve"},
+            "_imported_files": {"Path", "Path(where).resolve"},
+            "_interpreter_caches": {"Path", "os.path.normcase"},
+            "_links_under": {"Path"},
+            "_listing": {"Path", "os.path.normcase", "path.relative_to"},
+            "_loaded_outside": {"os.path.abspath", "os.path.normcase"},
+            "_pinned": {"os.path.normcase"},
+            "_roots": {"Path", "Path(root).resolve"},
+            "_unpinned": {"Path"},
+            # the folder's lock, keyed by the folder a handle was made with (resolved once, as ShadowLoop.__init__ does)
+            "folder_lock": {"Path", "Path(root).resolve"},
             "envelope_sha256": {"_file_identity", "_open_input"},
         },
     }

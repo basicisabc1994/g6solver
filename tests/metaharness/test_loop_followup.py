@@ -1146,7 +1146,9 @@ def test_tick_recovery_cannot_close_a_live_reservation_made_outside_the_tick_loc
         worker.start()
         assert entered.wait(5)
         clock[0] = reset - timedelta(minutes=1)
-        tick = SimpleNamespace(meter=tick_meter, provider="codex", _now=lambda: clock[0], worst_case=lambda: 200)
+        # ``_reserve`` reads the limits on the folder's record first (the refusals follow-up): this folder has none
+        tick = SimpleNamespace(meter=tick_meter, provider="codex", _now=lambda: clock[0], worst_case=lambda: 200,
+                               log=CycleLog(tmp_path / CYCLE_LOG))
         with Coordination(tmp_path / ".tick").mutex():
             _, waiting = ShadowLoop._reserve(tick)
         assert waiting is not None

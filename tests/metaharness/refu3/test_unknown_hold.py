@@ -17,6 +17,7 @@ from g6.core.llm import FakeLLM, LLMError
 from g6.metaharness import loop as loop_module
 from g6.metaharness import reflex
 from g6.metaharness.loop import CLASSIFIER_STOP, ShadowLoop, _Counted, _Refused, _Requests
+from g6.metaharness.shadow import Held
 from g6.self_maintenance import usage
 from g6.self_maintenance.envelope import CYCLE_LOG, CycleLog, note_refusal, refusal_rows, refused_requests
 from g6.self_maintenance.usage import HOST_UNKNOWN, MODEL_REFUSED, limit_ends, refused_by
@@ -96,6 +97,11 @@ def _tick(root, monkeypatch, results):
                                                       estimated=False))
     loop._row = lambda: {"at": NOW.isoformat(), "domain": "fake", "outcome": "idle", "code": loop_module.CYCLE,
                          "reason": ""}
+    # what ``_run`` reads of a handle since the freeze follow-up joined it: no chain of adoptions and no row written yet,
+    # and nothing judges a bare loop, so the cycle's last check holds the reading it was given
+    loop.mh = SimpleNamespace(adoption_rows=lambda: [])
+    loop._written, loop._met, loop._began = False, None, None
+    loop._still_frozen = lambda: Held({})
 
     def cycle(recommended):
         caught = None
@@ -141,10 +147,14 @@ def test_a_tick_that_met_both_is_a_classifiers_stop_and_keeps_the_hold_beside_it
             meter.at_a_refusal(said, request)
     meter.close()
     assert meter.closed.refusal == {"said": REFUSED, "request": "two"} and meter.closed.hold == {"said": UNREAD, "request": "one"}
-    run = ast.unparse(next(n for n in ast.walk(ast.parse(inspect.getsource(loop_module)))
-                           if isinstance(n, ast.FunctionDef) and n.name == "_run"))
-    assert run.index("elif refusal is not None") < run.index("elif hold is not None"), "a stated refusal outranks a hold"
-    assert "**({'unknown_hold': hold} if hold is not None else {})" in run
+    # what a tick met is put on its row by ``_carried`` since the freeze follow-up joined the refusals one
+    carried = next(n for n in ast.walk(ast.parse(inspect.getsource(loop_module)))
+                   if isinstance(n, ast.FunctionDef) and n.name == "_carried")
+    stated = next(n for n in ast.walk(carried) if isinstance(n, ast.If) and ast.unparse(n.test) == "refusal is not None")
+    assert [ast.unparse(n.test) for n in stated.orelse if isinstance(n, ast.If)] == ["hold is not None"], (
+        "a stated refusal outranks a hold")
+    assert any(ast.unparse(n) == "row['unknown_hold'] = hold" for n in ast.walk(ast.Module(stated.body, []))), (
+        "a classifier's stop keeps the hold beside it on the row")
 
 
 def test_a_cycle_the_log_would_not_take_stops_the_folder_for_a_hold_as_for_a_refusal(tmp_path, monkeypatch):

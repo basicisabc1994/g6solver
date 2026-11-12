@@ -591,13 +591,28 @@ class _Requests:
                                  self.hold)
             self._reset(math.inf, None)
 
+    def latched(self) -> _Ended:
+        """What the tick has latched, read in one step under the lock without ending it: what a tick whose ``close`` raised
+        before it ended leaves by (``ShadowLoop._run``), so a refusal or a hold it met is kept on its way out all the
+        same. It names no closing (``tick``) and decides nothing of how the tick ends."""
+        with self._lock:
+            return _Ended(self.sent, self.unseen, self.stopped, self.refusal, self.limited, self.met, "", self.hold)
+
     def ends_by(self, moment: datetime) -> None:
         """A provider has said the tick's week ends at ``moment``, which can come to light only once it is under way. What it
-        reserved covers nothing after that. A later end buys it nothing, and outside a tick there is no week to end."""
+        reserved covers nothing after that. A later end buys it nothing, and outside a tick there is no week to end. The
+        two ends are compared outside the lock, which calls nothing; the lock finds the very end compared still held, or
+        compares again."""
         moment = utc(moment)
-        with self._lock:
-            if self.ends is not None and moment < utc(self.ends):
-                self.ends = moment
+        while True:
+            held = self.ends
+            earlier = held is not None and moment < utc(held)
+            with self._lock:
+                if self.ends is not held:
+                    continue
+                if earlier:
+                    self.ends = moment
+                return
 
     def _around(self, generation: int | None) -> tuple[tuple[Any, int | None], ...]:
         """The meters around a request made here: those of the metered calls open in this context, and this one, with the
@@ -613,13 +628,14 @@ class _Requests:
         return any(held.thread != thread and not any(held is mine for mine in around)
                    and (held.watched or held.owner is not owner) for held in _RECORD.out.get(identity, ()))
 
-    def _full(self, places: int, wait: float, moment: datetime | None) -> bool:
-        """Whether this tick has no room for ``places`` more, or its week ends before a send that waits ``wait`` seconds could
-        leave; ``stopped`` then says which. Called under the lock."""
+    def _full(self, places: int, ended: bool) -> bool:
+        """Whether this tick has no room for ``places`` more, or its week ends before the send could leave (``ended``, as
+        admission compared it outside the lock with the end still held); ``stopped`` then says which. Called under the
+        lock."""
         if self.unseen or self.sent + places > self.limit or (places == 0 and self.sent >= self.limit):
             self.stopped = f"this tick has sent {self.sent} of the {self.limit:g} it reserved"
             return True
-        if self.ends is not None and utc(moment) + timedelta(seconds=wait) >= utc(self.ends):
+        if ended:
             self.stopped = f"this tick's week ended at {self.ends.isoformat()} and nothing is reserved in the new one"
             return True
         return False
@@ -659,7 +675,10 @@ class _Requests:
             if identify is not None and not any(stop for _, stop in stops):
                 stops += tuple((meter, meter.halted()) for meter in meters)
             living = all(call.live() for call in calls)
-            moments = [meter.now() if meter.ends is not None else None for meter in meters]
+            # each meter's week end, and whether a send that waits ``wait`` seconds leaves at or after it, by the clock read
+            # here and both instants through ``utc``; the protected step finds each end compared still held, or reads again
+            ends = [(meter, meter.ends) for meter in meters]
+            ended = [end is not None and utc(meter.now()) + timedelta(seconds=wait) >= utc(end) for meter, end in ends]
             registering = None
             try:
                 with self._lock:
@@ -703,10 +722,9 @@ class _Requests:
                     if known is not None and self._out_elsewhere(known, owner, here):
                         self._settled.wait(1.0)
                         continue
-                    if any(meter.ends is not None and moment is None for meter, moment in zip(meters, moments)):
-                        continue
-                    full = next((meter for meter, moment in zip(meters, moments)
-                                 if meter._full(places, wait, moment)), None)
+                    if any(meter.ends is not end for meter, end in ends):
+                        continue                  # a week's end moved since it was compared: compare it again
+                    full = next((meter for meter, over in zip(meters, ended) if meter._full(places, over)), None)
                     if full is not None:
                         break
                     for meter in meters:
@@ -1954,7 +1972,7 @@ class ShadowLoop:
             try:
                 self._hold_what_is_on_record()
                 self.unreadable = ""
-            except LedgerError:
+            except Exception:  # noqa: BLE001 - what was refused here still cannot be read, however it fails: a stop
                 return _Halted(RECORDS_UNREADABLE, self.unreadable)
         found = self._stop()
         if found:
@@ -2294,6 +2312,7 @@ class ShadowLoop:
         self._rca: TickRecord | str | None = None     # what this tick's analysis reads once it has tuned, or why it could not
         self._began = len(self.mh.adoption_rows())    # every generation after these is this cycle's (``_made``)
         self.requests.open(spend.amount, spend.ends)
+        tick_generation = self.requests.generation   # a close that ends this tick moves it on (``_Requests._reset``)
         with sealed_closed(self.domain.sealed().vault) as breaches:
             try:                      # a sealed file already held open: no cycle starts over it
                 row = self._row() if breaches else self._cycle(recommended)
@@ -2306,13 +2325,16 @@ class ShadowLoop:
                 row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
                        "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]}
             finally:             # whatever ended it, the tick closes in one step with what it latched, which decides from here
-                self.requests.close()
-                ended = self.requests.closed
-                # what the cycle met, kept before anything else that can fail (``_carried``), and its limits on disk with
-                # it; a tick that leaves by a raise from here on writes what it met on its way out (``tick``, ``_keep``)
-                self._met = (breaches, ended.refusal, ended.unseen, halted, ended.hold)
-                for until, _ in ended.met:          # every limit it met, in the order met, kept before its charges settle
-                    self._keep_limit(spend.provider, until)
+                try:
+                    self.requests.close()
+                finally:         # a close that raised before it ended the tick: what it latched, read in one step
+                    ended = self.requests.closed if self.requests.generation != tick_generation else self.requests.latched()
+                    # what the cycle met, kept before anything else that can fail (``_carried``), and its limits on disk
+                    # with it; a tick that leaves by a raise from here on writes what it met on its way out (``tick``,
+                    # ``_keep``)
+                    self._met = (breaches, ended.refusal, ended.unseen, halted, ended.hold)
+                    for until, _ in ended.met:      # every limit it met, in the order met, kept before its charges settle
+                        self._keep_limit(spend.provider, until)
                 # use nobody could count stays charged at its worst case
                 charged = self.meter.settle(spend, spend.amount if ended.unseen else ended.sent)
         stopped = ended.stopped
@@ -2439,22 +2461,30 @@ class ShadowLoop:
             if not isinstance(exc, Exception):
                 raise
 
-    def _closed(self, why: str) -> None:
+    def _closed(self, why: str, here: _Folder | None = None) -> None:
         """This process spends no more, and the folder is stopped: ``STOP`` and ``stops.log`` are other files than the
         log, so a restart stays closed until a person starts it again, and should those fail too, this process still
-        ends on what it holds here. An interrupt or an exit that lands inside the stop's own write has it asked for
-        once more, since nothing else is left to hold it, and then goes on up."""
-        self.cannot_record = why
+        ends on what it holds here. The stop is held on the folder's record a caller already found (``here``), or on the
+        one found now, and never waits on a second lookup; a lookup that fails takes nothing from the ``STOP`` file. An
+        interrupt or an exit that lands inside the stop's own write has it asked for once more, since nothing else is
+        left to hold it, and then goes on up."""
         try:
-            ask_to_stop(self.root, why)
-        except Exception:  # noqa: BLE001 - the run still ends on what is held here, whatever kept the file
-            pass
-        except BaseException:  # an interrupt or an exit landed inside the stop's own write: nothing else is left to
-            try:               # hold it, so it is asked for once more before that goes on up
+            here = here if here is not None else self._found()
+            if here is not None:
+                with _LOCK:           # every admission of the folder that read its stop before this reads it again
+                    here.cannot_record = why
+                    _RECORD.moved += 1
+        finally:
+            try:
                 ask_to_stop(self.root, why)
-            except Exception:  # noqa: BLE001 - as above
+            except Exception:  # noqa: BLE001 - the run still ends on what is held here, whatever kept the file
                 pass
-            raise
+            except BaseException:  # an interrupt or an exit landed inside the stop's own write: nothing else is left to
+                try:               # hold it, so it is asked for once more before that goes on up
+                    ask_to_stop(self.root, why)
+                except Exception:  # noqa: BLE001 - as above
+                    pass
+                raise
 
     def _keep_limit(self, provider: str, until: datetime) -> None:
         """A limit or capacity a provider reported, met in the tick that just closed: this process holds it, and the log keeps
@@ -2521,7 +2551,7 @@ class ShadowLoop:
             why = _writable(f"{_stopped_by(refusal['said'])} and the log would not take that cycle "
                             f"({type(exc).__name__}: {exc})")[:400]
         if refusal is not None or safety or lost >= MAX_FAILED_CYCLES:
-            self._closed(why)
+            self._closed(why, here)
         return _blocked(CANNOT_RECORD, why, "A person frees the log, then starts the loop again with g6_improve_start.")
 
     def _still_frozen(self) -> Held | dict[str, Any]:

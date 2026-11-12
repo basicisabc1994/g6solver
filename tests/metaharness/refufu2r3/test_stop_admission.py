@@ -124,6 +124,7 @@ def test_shared_folder_refusal_is_published_after_durable_write(tmp_path, monkey
 def test_lost_cycle_resolves_folder_custody_before_taking_admission(tmp_path, monkeypatch):
     shadow = object.__new__(loop.ShadowLoop)
     shadow.root = tmp_path
+    shadow._written, shadow._met = False, None     # a handle with no tick under way, as ``__init__`` makes one
     original_folder = loop._RECORD.folder
     reads = []
 
@@ -163,7 +164,9 @@ def test_every_call_under_admission_is_an_internal_helper_or_a_named_primitive()
     # Constructors below hold plain module-owned data; the other external names are standard-library primitives.
     primitives = {
         "_ACTIVE.get", "_AROUND.get", "_AROUND.set", "any", "tuple", "zip", "next", "list", "max", "isinstance",
-        "_Call", "_Ended", "_Book", "Send", "LLMError", "_Refused", "_AtLimit", "uuid4", "timedelta",
+        # No instant is converted or added to under the lock (``utc`` asks a zone its offset): a week's end is compared
+        # outside it, and the protected step only finds that very end still held (``admit``, ``ends_by``).
+        "_Call", "_Ended", "_Book", "Send", "LLMError", "_Refused", "_AtLimit", "uuid4",
         "_RECORD.books.get", "_RECORD.books.pop", "_RECORD.out.get", "_RECORD.out.items",
         "_RECORD.out.setdefault", "_RECORD.out.setdefault(known, []).append", "_RECORD.taken.get",
         "_RECORD.taken.get(self, {}).get", "_RECORD.writing.add", "_RECORD.writing.discard",
@@ -680,6 +683,10 @@ def test_every_change_this_process_makes_to_what_admission_reads_unlocked_moves_
         node = pending.pop()
         reached.append(node)
         for n in ast.walk(node):
+            if (isinstance(n, ast.Call) and ast.unparse(n.func) == "getattr" and n.args
+                    and ast.unparse(n.args[0]) == "self" and isinstance(n.args[1], ast.Constant)):
+                handle.add(n.args[1].value)       # ``getattr(self, "<name>", ...)`` reads the handle as ``self.<name>`` does
+                continue
             if isinstance(n, ast.Call) and not ast.unparse(n.func).startswith("self."):
                 calls.add(ast.unparse(n.func))
             if not isinstance(n, ast.Attribute):
@@ -728,19 +735,24 @@ def test_every_change_this_process_makes_to_what_admission_reads_unlocked_moves_
         "requests": "__init__",    # the handle's meter: set once; its sets are read again under the lock (below)
         "_now": "__init__",        # the clock a handle was given: set once
         "unreadable": "__init__ _halted",    # the stop reader's own note of a store it could not read, set as it reads
+        # the stop reader's own parse of the folder's records, set as it reads: ``stop_in_force`` takes it only when the
+        # records' bytes it reads again now have the very digest it was parsed from, so the decision is the files' each time
+        "_records_known": "__init__ _stop",
     }
     assert handle == set(given), f"classify what a reader reads of its handle: {handle ^ set(given)}"
     for name, where in given.items():
         stores = {m.name for m in members for n in ast.walk(m) if isinstance(n, ast.Attribute) and n.attr == name
                   and isinstance(n.ctx, ast.Store) and ast.unparse(n.value) == "self"}
         assert stores <= set(where.split()), f"{name} is stored outside {where}: {stores}"
-    # What a reader writes: its own note, and the meter's two sets, which the protected step reads again itself.
-    assert written == {"self.unreadable", "self.requests.refused", "self.requests.unknown"}, written
+    # What a reader writes: its own note, its own parse of the records (which decides nothing on bytes it did not read
+    # again), and the meter's two sets, which the protected step reads again itself.
+    assert written == {"self.unreadable", "self._records_known", "self.requests.refused", "self.requests.unknown"}, written
     assert "barred |= meter.refused | meter.unknown" in ast.unparse(decision)
     # What a reader reads that is no attribute of the handle: files, which another process or a person changes and no
     # counter of this process can follow; the folder's record, made once under its own lock and never replaced; and
     # helpers that read nothing.
-    files = {"refusal_rows", "stop_standing", "stop.engaged"}
+    # ``stop_in_force`` reads the stop's files and the records, and ``admission`` asks for the stop lock beside them.
+    files = {"refusal_rows", "stop_in_force", "admission", "stop.engaged"}
     record = {"_RECORD.folder"}
-    helpers = {"_Halted", "_kinds", "_marked", "str", "kept.get", "c.get"}
+    helpers = {"_Halted", "_Stopped", "Stop", "_kinds", "_marked", "str", "kept.get", "c.get"}
     assert calls == files | record | helpers, f"classify what a reader calls: {calls ^ (files | record | helpers)}"

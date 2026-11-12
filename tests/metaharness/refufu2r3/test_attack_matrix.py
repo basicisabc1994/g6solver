@@ -188,7 +188,7 @@ def test_failed_refusal_write_latches_every_folder_handle(review_host, monkeypat
         loop._Counted(backend, first.requests).complete("system", "refused")
     assert first.cannot_record and first.cannot_record == other.cannot_record
     before = len(backend.calls)
-    with pytest.raises(LLMError, match="G6_E_LOOP_STOPPED"):
+    with pytest.raises(LLMError, match=loop.CANNOT_RECORD):   # this process's own stop for the folder, by its own code
         loop._Counted(backend, other.requests).complete("system", "another request")
     assert len(backend.calls) == before
 

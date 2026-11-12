@@ -316,7 +316,10 @@ def test_stop_entry_inventory_is_derived_from_code():
                      # cannot be read, write a stop through the same writer.
                      ('mcp/improve.py', '_revoke', 'ask_to_stop'),
                      ('self_maintenance/envelope.py', 'end_start', 'ask_to_stop'),
-                     ('metaharness/loop.py', 'lost_cycle', 'ask_to_stop'),
+                     # the loop's own stops since the refusals and freeze follow-ups joined: a lost cycle's and a
+                     # raising tick's pause the log refused go through _closed; a refusal no file kept, _stop_folder
+                     ('metaharness/loop.py', '_closed', 'ask_to_stop'),
+                     ('metaharness/loop.py', '_stop_folder', 'ask_to_stop'),
                      ('self_maintenance/envelope.py', 'ask_to_stop', '_ask_to_stop'),
                      ('self_maintenance/envelope.py', 'ask_to_stop_receipt', '_ask_to_stop')}
     assert list(inspect.signature(improve.stop).parameters) == ['folder', 'reason']

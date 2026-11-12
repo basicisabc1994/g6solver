@@ -711,6 +711,10 @@ _CONVERSIONS = {
     ("g6.operator.store", "_append_evidence", "int(cur.lastrowid)"), ("g6.operator.store", "_settle", "float(metered)"),
     ("g6.operator.store", "_kept_times", "int(newest)"),
     ("g6.self_maintenance.usage", "limit_ends", "float(limit['seconds'] or 0)"),
+    # A host program's time limit, taken as a plain number once, before the program starts, so nothing of a caller's own
+    # class answers for it later; it bounds how long a launch waits and reaches no budget check (the refusals follow-up).
+    ("g6.self_maintenance.usage", "_complete_host", "float(caller.timeout)"),
+    ("g6.self_maintenance.usage", "_launch", "float(seconds)"),
 }
 
 
@@ -814,6 +818,12 @@ _OF_INSTANTS_AND_COUNTS = {
     ("g6.self_maintenance.usage", "limits_reading", "reset <= now"),
     ("g6.self_maintenance.usage", "refresh", "now - self._asked < REFRESH"),
     ("g6.self_maintenance.usage", "_no_reading", "kept.limited_until > now"),
+    # positions and lengths in a host program's arguments, a path's buffer and a reply's hidden inputs (the refusals
+    # follow-up): counts, no amounts
+    ("g6.self_maintenance.usage", "_check_observation", "argv.index(option) >= end"),
+    ("g6.self_maintenance.usage", "_check_observation", "at + 1 >= end"),
+    ("g6.self_maintenance.usage", "_final_path", "size >= len(buffer)"),
+    ("g6.self_maintenance.usage", "_received", "len(hide) > 1"),
 }
 
 
@@ -1013,7 +1023,7 @@ def test_every_sum_of_amounts_is_the_one_sum():
     Listed from the code, in the four modules, every way amounts could be added up: a call of ``sum``, ``fsum``,
     ``reduce``, ``accumulate`` or ``prod`` by any spelling; an augmented assignment; an assignment that adds to what it
     assigns. The only ``fsum`` is inside ``total``; ``total`` is called where amounts are summed and nowhere is one summed
-    another way; the two augmented assignments left join text."""
+    another way; the augmented assignments left join text, bytes or names."""
     adders, running = set(), set()
     for name, tree in _TREES.items():
         for node in ast.walk(tree):
@@ -1028,8 +1038,12 @@ def test_every_sum_of_amounts_is_the_one_sum():
     assert adders == {("g6.operator.gates", "total", "fsum"), ("g6.operator.store", "week_held", "total"),
                       ("g6.operator.store", "settle_open", "total"), ("g6.operator.store", "_month", "total"),
                       ("g6.self_maintenance.pacing", "_used", "total")}, adders
-    assert running == {("g6.operator.store", "evidence", "sql"), ("g6.self_maintenance.usage", "refresh", "self.said[provider]")}, \
-        running
+    # The rest join text, bytes or a set of names, never an amount: the store's SQL and a provider's words, and from the
+    # refusals follow-up a framed byte string, a path's name and the set of a host class's methods.
+    assert running == {("g6.operator.store", "evidence", "sql"), ("g6.self_maintenance.usage", "refresh", "self.said[provider]"),
+                       ("g6.self_maintenance.usage", "_text_bytes", "framed"),
+                       ("g6.self_maintenance.usage", "_final_path", "name"),
+                       ("g6.self_maintenance.usage", "_check_seam", "methods")}, running
     assert gates.total([0.1, 0.2, 0.3]) == 0.6 and gates.total([]) == 0.0 and gates.total(iter([2.0 ** 60, 1.0] + [1.0] * 299)) \
         == 2.0 ** 60 + 256
     assert gates.total([1e308, 1e308]) == math.inf and gates.total([1e308, 1e308, -1e308]) == math.inf

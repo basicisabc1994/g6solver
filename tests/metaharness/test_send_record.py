@@ -34,6 +34,7 @@ from g6.metaharness.domain import caller_problems, sender_problems
 from g6.metaharness.loop import (BUDGET_WAIT, CLASSIFIER_STOP, LoopSettings, ShadowLoop, _AtLimit, _Counted, _Halted,
                                  _Refused, _request_digest, _Requests)
 from g6.metaharness.method import Method
+from g6.metaharness.shadow import Held
 from g6.operator.store import OperatorStore
 from g6.self_maintenance import usage
 from g6.self_maintenance.envelope import (CYCLE_LOG, MAX_FAILED_CYCLES, REFUSED_FILE, CycleLog, note_refusal,
@@ -93,7 +94,18 @@ def _bare_loop(root, *, keeping=None, on_record=None):
     loop._now, loop._beat = lambda: NOW, lambda *args, **kwargs: None
     loop.domain = SimpleNamespace(name="fake", sealed=lambda: SimpleNamespace(vault=None))
     loop._reserve = lambda: (SimpleNamespace(provider="codex", amount=10, ends=NOW + timedelta(days=1)), None)
+    # what ``_run`` reads of a handle since the freeze follow-up joined it: no chain of adoptions and no row written yet,
+    # and nothing judges a bare loop, so the cycle's last check holds the reading it was given
+    loop.mh = SimpleNamespace(adoption_rows=lambda: [])
+    loop._written, loop._met, loop._began = False, None, None
+    loop._still_frozen = lambda: Held({})
     return loop
+
+
+def _idle_row():
+    """A cycle's own end as every cycle states one, with its code: the joined ``_run`` codes a row by the one rule
+    (``_coded``), which reads each status's code."""
+    return {"outcome": "idle", "code": loop_module.IDLE, "reason": ""}
 
 
 def _limit_rows(loop):
@@ -293,7 +305,7 @@ def test_ref4_6_a_rejected_note_offsets_no_imported_child_usage():
 def test_ref4_7_a_limit_met_while_the_tick_closes_is_kept_before_settlement(tmp_path, monkeypatch):
     first, second = NOW + timedelta(minutes=15), NOW + timedelta(hours=2)
     loop = _bare_loop(tmp_path)
-    loop._row = lambda: {"outcome": "idle"}
+    loop._row = lambda: _idle_row()
     monkeypatch.setattr(loop_module, "sealed_closed", lambda vault: nullcontext([]))
     deliver, received = threading.Event(), threading.Event()
     observed_generation = []
@@ -376,7 +388,7 @@ def test_ref4_8_a_refusal_latched_before_the_tick_closes_decides_its_outcome(tmp
 
     def cycle(recommended):
         thread.start()
-        return {"outcome": "idle"}
+        return _idle_row()
 
     loop._cycle, loop._record = cycle, lambda row: row
     loop.meter = SimpleNamespace(settle=lambda admission, charged: charged,
@@ -542,7 +554,17 @@ def test_every_path_that_ends_a_tick_reads_what_it_latched_as_it_closes():
     run = _function(tree, "ShadowLoop._run")
     tried = next(node for node in ast.walk(run) if isinstance(node, ast.Try) and node.finalbody)
     final = [ast.unparse(statement) for statement in tried.finalbody]
-    assert final[0] == "self.requests.close()" and final[1] == "ended = self.requests.closed"
+    # The close comes first, and what it kept is read in the step after it, whatever the close raised (the freeze
+    # follow-up keeps what a cycle met before anything that can fail): a close that raised before it ended the tick (its
+    # generation unmoved) leaves the tick's latches, read in one step under the lock (``_Requests.latched``).
+    closing = tried.finalbody[0]
+    assert isinstance(closing, ast.Try) and not closing.handlers and [ast.unparse(s) for s in closing.body] == [
+        "self.requests.close()"]
+    assert ast.unparse(closing.finalbody[0]) == (
+        "ended = self.requests.closed if self.requests.generation != tick_generation else self.requests.latched()")
+    body = [ast.unparse(s) for s in run.body]
+    opening = body.index("self.requests.open(spend.amount, spend.ends)")
+    assert body[opening + 1] == "tick_generation = self.requests.generation", "the tick's generation is read as it opens"
     assert any("ended.met" in statement and "_keep_limit" in statement for statement in final)
     assert final.index(next(s for s in final if "_keep_limit" in s)) < final.index(next(s for s in final if "settle" in s))
     assert all(handler.name in (None, "reached", "exc") for handler in tried.handlers)
@@ -797,7 +819,7 @@ def test_a_limit_and_a_refusal_at_each_step_from_admission_to_close(tmp_path, mo
             assert _Counted(AnswersThenHearsLate(), loop.requests).complete("system", "asked") == "an answer"
             heard.set()                                   # the call has returned, and the tick is still open
             late[0].join(10)
-        return {"outcome": "idle"}
+        return _idle_row()
 
     real_close = loop.requests.close
 
@@ -815,7 +837,7 @@ def test_a_limit_and_a_refusal_at_each_step_from_admission_to_close(tmp_path, mo
         rows_at_settlement.extend(_limit_rows(loop))
         return charged
 
-    loop._cycle, loop._record, loop._row = cycle, (lambda row: row), (lambda: {"outcome": "idle"})
+    loop._cycle, loop._record, loop._row = cycle, (lambda row: row), (lambda: _idle_row())
     loop.meter = SimpleNamespace(settle=settle, limit_reached=lambda provider, until: None,
                                  reading=lambda provider, when: SimpleNamespace(provider=provider, day=1, used=0,
                                                                                target=10, ceiling=10, estimated=False))
@@ -963,7 +985,7 @@ def test_the_rows_a_tick_writes_are_its_own_and_in_the_order_it_met_them(tmp_pat
             except _AtLimit:
                 pass
 
-    loop._cycle, loop._row = cycle, (lambda: {"outcome": "idle"})
+    loop._cycle, loop._row = cycle, (lambda: _idle_row())
     loop.meter = SimpleNamespace(settle=lambda admission, charged: charged, limit_reached=lambda provider, until: None)
     for _ in range(2):
         assert loop._run()["warning_card"]["code"] == BUDGET_WAIT
@@ -1077,7 +1099,9 @@ def test_the_cannot_record_stop_is_the_processs_on_every_handle_of_the_folder(tm
     calls = len(domain.llm.calls)
     for handle in (first, open_before, made_after):
         assert handle.stopped_by() == first.cannot_record
-        with pytest.raises(LLMError, match="G6_E_LOOP_STOPPED"):
+        # this process's own stop for the folder, by its own code (``ShadowLoop._stop``), as the freeze and stop
+        # follow-ups rule
+        with pytest.raises(LLMError, match="G6_E_LOOP_CANNOT_RECORD"):
             handle.workflow.models["local"].caller.complete("system", "another request")
     assert len(domain.llm.calls) == calls
     assert elsewhere.stopped_by() == "" and elsewhere.workflow.models["local"].caller.complete("system", "another request")
@@ -1137,7 +1161,7 @@ def test_the_process_knows_a_folder_however_its_path_is_spelled(tmp_path, monkey
         spellings.append(tmp_path / "link")
     for spelled in spellings:
         backend = FakeLLM(default="sent again")
-        with pytest.raises(LLMError, match="G6_E_LOOP_STOPPED"):
+        with pytest.raises(LLMError, match="G6_E_LOOP_CANNOT_RECORD"):     # this process's own stop, by its own code
             _Counted(backend, _review_handle(spelled).requests).complete("system", "another request")
         assert backend.calls == []
 
@@ -1217,10 +1241,16 @@ HANDLE_STATE = {
     "domain": "given", "settings": "given", "_now": "given", "domain_file": "given", "_read_now": "given", "_clock": "given",
     "root": "given", "beat_fields": "given", "requests": "given", "_proposer": "given", "provider": "given",
     "problems": "given", "cut": "given", "workflow": "given",
+    # whether this handle beats: set as it is made, and false only where a person's command made it
+    "beats": "given",
     # the folder's files, read again before each operation (``_exclusive``), each reservation (``_reserve``) or each admission
     "log": "files", "mh": "files", "meter": "files", "unreadable": "files",
+    # the stop reader's parse of the folder's records, which stands only for the very bytes it reads again at every
+    # admission (``stop_in_force``'s ``known``): what decides is the files
+    "_records_known": "files",
     # one tick's working state, which ends with the tick
     "evaluating": "tick", "tuned": "tick", "_rca": "tick", "_tuning_failed": "tick",
+    "_began": "tick", "_met": "tick", "_written": "tick", "_frozen_seen": "tick",
     # a count a row reports, which stops nothing
     "waited": "reported",
 }
@@ -1243,9 +1273,15 @@ def test_every_fact_a_handle_holds_is_the_processs_the_folders_files_or_its_own(
         held = inspect.getattr_static(ShadowLoop, name)
         assert isinstance(held, property) and "self._here." in inspect.getsource(held.fget)
     assert "_RECORD.folder(self.root)" in inspect.getsource(inspect.getattr_static(ShadowLoop, "_here").fget)
-    read = {node.attr for qualified in ("ShadowLoop._halted", "ShadowLoop.stopped_by")
-            for node in ast.walk(_function(tree, qualified)) if isinstance(node, ast.Attribute)
+    # What stops a send is read in ``_halted``, ``stopped_by`` and the stop reader both call (``_stop``); a read through
+    # ``getattr(self, "<name>", ...)`` is a read of that attribute as surely as ``self.<name>`` is.
+    readers = [_function(tree, qualified) for qualified in ("ShadowLoop._halted", "ShadowLoop.stopped_by", "ShadowLoop._stop")]
+    read = {node.attr for reader in readers for node in ast.walk(reader) if isinstance(node, ast.Attribute)
             and ast.unparse(node.value) == "self" and node.attr in HANDLE_STATE}
+    read |= {node.args[1].value for reader in readers for node in ast.walk(reader) if isinstance(node, ast.Call)
+             and ast.unparse(node.func) == "getattr" and ast.unparse(node.args[0]) == "self"
+             and isinstance(node.args[1], ast.Constant)}
+    assert read <= set(HANDLE_STATE), f"a stop reader reads what the handle list does not classify: {read - set(HANDLE_STATE)}"
     assert read and {HANDLE_STATE[name] for name in read} <= {"process", "files", "given"}
     init = ast.unparse(_function(tree, "ShadowLoop.__init__"))
     assert "self._keep_refusal, self._on_record)" in init

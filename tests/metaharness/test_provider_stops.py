@@ -18,8 +18,9 @@ from g6.core import host_models
 from g6.core.host_models import ClaudeCodeCaller, CodexCaller
 from g6.core.llm import RATE_LIMITED, FakeLLM, LLMError
 from g6.metaharness import Model
-from g6.metaharness.loop import LoopSettings, ShadowLoop, _AtLimit, _Counted, _Refused, _request_digest, _Requests
+from g6.metaharness.loop import IDLE, LoopSettings, ShadowLoop, _AtLimit, _Counted, _Refused, _request_digest, _Requests
 from g6.metaharness.method import Method
+from g6.metaharness.shadow import Held
 from g6.self_maintenance.envelope import REFUSED_FILE, note_refusal, refused_requests, stop_reason
 from g6.self_maintenance import usage                      # its new names are read in each test, so each fails on its own
 from g6.self_maintenance.pacing import ProviderWindow
@@ -514,7 +515,10 @@ def test_a_refusal_no_file_would_keep_stops_this_process_and_asks_a_person(tmp_p
         caller.complete("system", "same request")
     assert REFUSED_FILE in loop.cannot_record and "would not keep it" in stop_reason(loop.root)
     calls = len(domain.llm.calls)
-    assert _code(loop.tick()) == "G6_E_LOOP_STOPPED" and len(domain.llm.calls) == calls
+    # this process's own stop says so by its own code (``ShadowLoop._stop``, the freeze and stop follow-ups' rule); a
+    # restart, a process with none of this one's record of the folder, reads the STOP file a person must lift
+    assert _code(loop.tick()) == "G6_E_LOOP_CANNOT_RECORD" and len(domain.llm.calls) == calls
+    monkeypatch.setattr(loop_module, "_RECORD", loop_module._Record())
     assert _code(_restarted(tmp_path, domain).tick()) == "G6_E_LOOP_STOPPED" and len(domain.llm.calls) == calls
 
 
@@ -653,7 +657,7 @@ def test_ref1_4_a_refusal_no_file_would_keep_stops_the_next_request_between_tick
     with pytest.raises(LLMError, match=MODEL_REFUSED):
         caller.complete("system", "same request")
     before = len(domain.llm.calls)
-    with pytest.raises(LLMError, match="G6_E_LOOP_STOPPED"):
+    with pytest.raises(LLMError, match="G6_E_LOOP_CANNOT_RECORD"):     # this process's own stop, by its own code
         caller.complete("system", "a different request")
     assert len(domain.llm.calls) == before
 
@@ -1217,9 +1221,16 @@ def _bare_loop(root, now, keeping=None):
     loop = ShadowLoop.__new__(ShadowLoop)
     loop.root, loop.log, loop.cannot_record = root, CycleLog(root / CYCLE_LOG), ""
     loop.requests = _Requests(now=lambda: now, keeping=keeping or (lambda identity, said: note_refusal(root, identity, said)))
-    loop._now, loop._beat, loop._row = (lambda: now), (lambda *args, **kwargs: None), (lambda: {"outcome": "idle"})
+    loop._now, loop._beat = (lambda: now), (lambda *args, **kwargs: None)
+    # a cycle's own end as every cycle states one, with its code, which the joined ``_run`` codes by (``_coded``)
+    loop._row = lambda: {"outcome": "idle", "code": IDLE, "reason": ""}
     loop.domain = SimpleNamespace(sealed=lambda: SimpleNamespace(vault=None))
     loop._reserve = lambda: (SimpleNamespace(provider="codex", amount=10, ends=now + timedelta(days=1)), None)
+    # what ``_run`` reads of a handle since the freeze follow-up joined it: no chain of adoptions and no row written yet,
+    # and nothing judges a bare loop, so the cycle's last check holds the reading it was given
+    loop.mh = SimpleNamespace(adoption_rows=lambda: [])
+    loop._written, loop._met, loop._began = False, None, None
+    loop._still_frozen = lambda: Held({})
     return loop, nullcontext
 
 
@@ -1296,7 +1307,9 @@ def test_ref2_11_the_log_reads_back_what_was_said_exactly_and_a_write_it_cannot_
     from g6.metaharness import loop as loop_module
 
     assert note_refusal(tmp_path, "a" * 64, "said \ud800 here")
-    assert (tmp_path / REFUSED_FILE).read_bytes().decode("utf-8", "surrogatepass").split(" ", 1)[1].startswith("said \ud800")
+    # what was said is kept by the one rule every stop path's text is (``envelope.utf8``, the stop follow-up's): plain
+    # UTF-8, read back exactly as it was written, a lone surrogate spelled out where UTF-8 cannot carry it
+    assert (tmp_path / REFUSED_FILE).read_bytes().decode("utf-8").split(" ", 1)[1] == "said \\ud800 here\n"
     loop = ShadowLoop.__new__(ShadowLoop)
     loop.root, loop.cannot_record = tmp_path, ""
     monkeypatch.setattr(loop_module, "note_refusal", lambda *args: (_ for _ in ()).throw(ValueError("cannot encode")))

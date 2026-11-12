@@ -19,6 +19,7 @@ from g6.core import host_models
 from g6.core.llm import LLMError
 from g6.metaharness import loop as loop_module
 from g6.metaharness.loop import CLASSIFIER_STOP, ShadowLoop, _Counted, _Requests
+from g6.metaharness.shadow import Held
 from g6.self_maintenance import usage
 from g6.self_maintenance.envelope import CYCLE_LOG, CycleLog
 
@@ -65,6 +66,11 @@ def _tick(root, monkeypatch, result):
                                                       estimated=False))
     loop._row = lambda: {"at": NOW.isoformat(), "domain": "fake", "outcome": "idle", "code": loop_module.CYCLE,
                          "reason": ""}
+    # what ``_run`` reads of a handle since the freeze follow-up joined it: no chain of adoptions and no row written yet,
+    # and nothing judges a bare loop, so the cycle's last check holds the reading it was given
+    loop.mh = SimpleNamespace(adoption_rows=lambda: [])
+    loop._written, loop._met, loop._began = False, None, None
+    loop._still_frozen = lambda: Held({})
     answers = []
 
     def cycle(recommended):

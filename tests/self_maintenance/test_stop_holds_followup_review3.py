@@ -180,6 +180,7 @@ def test_unreadable_cutoff_survives_failure_to_note_it_in_records(active, monkey
     loop = loop_module.ShadowLoop.__new__(loop_module.ShadowLoop)
     loop.root, loop.log = active.root, active.log
     loop.cannot_record, loop._records_known, loop.evaluating = "", None, True
+    loop.unreadable = ""    # the stop reader's note of a store it could not read (the refusals follow-up): none here
     loop._now = lambda: datetime(2026, 11, 6, tzinfo=UTC)
     journal = active.root / envelope.STOPS_FILE
     journal.mkdir()  # An actual unreadable stop, while the records and STOP remain writable.
@@ -363,7 +364,7 @@ def test_a_refusal_after_a_line_cut_short_is_still_known(active):
 #: Every write in the envelope, which alone writes the records, the journal and the STOP file (``test_stop_holds``'s
 #: ``OPENS``): what it writes, and how.
 WRITES = {
-    ("_durably", "open"): "every row of the journal, the STOP file and the refusals, and the end of the records' last row: "
+    ("_durably", "open"): "every row of the journal and the STOP file, and the end of the records' last row: "
                           "on a fresh line (fresh_line), as utf8 writes it",
     ("CycleLog._append", "_chain.append"): "every row of the records, after _durably ends the last one",
     # The merge with the consent follow-up: rows written with an identity of their own, and the stop's canonical record.
@@ -373,6 +374,10 @@ WRITES = {
     ("_parsed", "os.fdopen"): "a copy of the bytes a reading took, whole, for the ledger to read",
     ("flush_journal", "os.open"): "the journal flushed, writing no byte",
     ("beat", "write_bytes"): "a whole heartbeat, swapped in, as utf8 writes it",
+    # The merge with the refusals follow-up: a refusal's row is appended under the admission lock through its fsync
+    # (refufu2r3/test_stop_admission pins that write's exact calls), on a fresh line it makes itself, as utf8 writes it.
+    ("note_refusal", "open"): "a refusal's row, under the admission lock through its fsync, on a fresh line, as utf8 "
+                              "writes it",
 }
 
 

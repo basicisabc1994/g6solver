@@ -54,6 +54,7 @@ def _load(path: Path, name: str):
 fu2 = _load(Path(__file__).with_name("test_freeze_holds_followup_review2.py"), "frzfu3_review2")
 rig, domains, enrolled, SETTINGS, NOW, restarted = fu2.rig, fu2.domains, fu2.enrolled, fu2.SETTINGS, fu2.NOW, fu2.restarted
 _NeverSeen = fu2._NeverSeen
+_process_record = fu2._process_record      # each restart's new process record is set aside after the test
 WINDOWS = pytest.mark.skipif(os.name != "nt", reason="a junction is Windows's")
 
 
@@ -628,7 +629,8 @@ def test_every_way_out_of_a_tick_that_raised_leaves_a_safety_stop_held_after_a_r
     reached, wrong = set(), []
     probe, _, _ = _raised_after(status, tmp_path / "probe")      # a handle the names are read against
     names = _ways_out(probe)
-    assert {"self.mh.refresh", "_reloaded", "Coordination", "self.loop.fault", "self.loop.lost_cycle", "self._now",
+    # the folder's lock is taken through ``folder_lock`` (its ``Coordination`` mutex) since the merges joined this follow-up
+    assert {"self.mh.refresh", "_reloaded", "folder_lock", "self.loop.fault", "self.loop.lost_cycle", "self._now",
             "self._record", "self.log.cycle"} <= set(names), names
     for failure, error in FAILURES.items():
         for name in names:
@@ -658,6 +660,8 @@ def test_a_tick_that_raises_at_any_step_after_its_cycle_is_held_with_no_fault_at
     nobody calling ``fault``: a caller that is no runner, or a runner that died there."""
     reached, wrong = [], []
     for step in fu2.STEPS:
+        if step in fu2.OWN_WRITES["a classifier's refusal"]:
+            continue                                  # the refusal's own write, which has its own rule (review 2's)
         folder = tmp_path / re.sub(r"\W", "_", step)
         folder.mkdir()
         domain, met, holder = domains.WordProblems(folder), [], {}

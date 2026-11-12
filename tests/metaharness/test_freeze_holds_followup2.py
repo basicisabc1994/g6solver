@@ -40,7 +40,7 @@ from g6.core.llm import FakeLLM
 from g6.core.reading import Unreadable
 from g6.core.vault import Vault
 from g6.metaharness import loop as loop_module
-from g6.metaharness.loop import BUDGET_WAIT, CLASSIFIER_STOP, CYCLE_FAILED, PAUSED, ShadowLoop, _AtLimit
+from g6.metaharness.loop import BUDGET_WAIT, CLASSIFIER_STOP, CYCLE_FAILED, PAUSED, ShadowLoop
 from g6.metaharness.runner import Runner
 from g6.self_maintenance.envelope import STOPPED, CycleLog
 
@@ -58,6 +58,7 @@ fu3 = _load("test_freeze_holds_followup_review3.py", "frzfu2a_review3")
 holds = _load("test_freeze_holds.py", "frzfu2a_holds")
 fu2, enrolled, NOW = fu3.fu2, fu3.enrolled, fu3.NOW
 _NeverSeen = fu3._NeverSeen
+_process_record = fu2._process_record      # each restart's new process record is set aside after the test
 WINDOWS = pytest.mark.skipif(os.name != "nt", reason="names the platform rereads, and junctions, are Windows's")
 
 
@@ -491,11 +492,12 @@ def test_everything_a_fault_reads_that_a_ticks_body_sets_is_dropped_before_the_l
         inspect.getsource(ShadowLoop.fault)))) if isinstance(node, ast.Call)}
 
 
-#: The calls a pass makes before its tick's body, from the code of the lock every operation takes.
-BEFORE_THE_BODY = [name for name in fu3._calls(loop_module._exclusive) if name in ("Coordination", "_reloaded", "self.mh.refresh")]
+#: The calls a pass makes before its tick's body, from the code of the lock every operation takes: the folder's lock is
+#: taken through ``folder_lock`` (its ``Coordination`` mutex) since the merges joined this follow-up.
+BEFORE_THE_BODY = [name for name in fu3._calls(loop_module._exclusive) if name in ("folder_lock", "_reloaded", "self.mh.refresh")]
 
 
-@pytest.mark.parametrize("step", ["Coordination", "_reloaded", "self.mh.refresh"])
+@pytest.mark.parametrize("step", ["folder_lock", "_reloaded", "self.mh.refresh"])
 def test_a_pass_that_fails_before_its_ticks_body_says_nothing_of_an_earlier_tick(tmp_path, step):
     assert step in BEFORE_THE_BODY, BEFORE_THE_BODY
     met = []
@@ -551,7 +553,8 @@ def test_a_limit_is_waited_out_by_this_process_whatever_its_note_fails_with(tmp_
 
     def at_the_limit(system, user):
         met.append(True)
-        raise _AtLimit(NOW + timedelta(hours=5), "HTTP 429: the provider's limit was met")
+        # as a provider's limit reaches a tick since the refusals follow-up: latched on the meter, which decides the end
+        loop.requests.met_a_limit(NOW + timedelta(hours=5), "HTTP 429: the provider's limit was met")
 
     loop, _ = enrolled(tmp_path, proposer=FakeLLM(at_the_limit))
     with monkeypatch.context() as patch:
@@ -566,7 +569,8 @@ def test_a_limit_is_waited_out_by_this_process_whatever_its_note_fails_with(tmp_
 
 
 def test_the_meter_is_told_of_a_limit_before_its_note_and_no_error_of_the_notes_is_named():
-    tree = ast.parse(textwrap.dedent(inspect.getsource(ShadowLoop._limited)))
+    # the limit's own note is ``_keep_limit`` since the refusals follow-up joined this one (its ``_limited`` gone)
+    tree = ast.parse(textwrap.dedent(inspect.getsource(ShadowLoop._keep_limit)))
     calls = [(node.lineno, ast.unparse(node.func)) for node in ast.walk(tree) if isinstance(node, ast.Call)]
     told = min(line for line, name in calls if name == "self.meter.limit_reached")
     noted = min(line for line, name in calls if name == "self.log.limit")
@@ -578,9 +582,10 @@ def test_the_meter_is_told_of_a_limit_before_its_note_and_no_error_of_the_notes_
 
 # Finding 4: an interrupt or an exit inside any write a tick makes on its way out -------------------------------------------
 
-#: The records' own writers, from their code: every method that appends a row.
-WRITERS = {name for name, member in vars(CycleLog).items()
-           if inspect.isfunction(member) and "self._append(" in inspect.getsource(member)}
+#: The records' own writers, from their code: every method that appends a row, by the log's own appender or by the one
+#: that writes a row with its identity (``_write_record``, which a stop's row is written by since the stop follow-up).
+WRITERS = {name for name, member in vars(CycleLog).items() if inspect.isfunction(member) and name != "_write_record"
+           and any(writer in inspect.getsource(member) for writer in ("self._append(", "self._write_record("))}
 #: The stop's own writers, which the loop calls by name.
 STOP_WRITERS = {"ask_to_stop", "end_start"}
 
