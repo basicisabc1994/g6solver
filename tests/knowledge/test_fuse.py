@@ -6,11 +6,11 @@ from __future__ import annotations
 
 import pytest
 
-from g6.knowledge._envelope import BackendReport, Checked, PassageItem
-from g6.knowledge._fuse import MAX_CANDIDATES, OVER_BUDGET, RRF_K, TOO_MANY, fuse, tokens_of
+from g6._context_engine._envelope import BackendReport, Checked, PassageItem
+from g6._context_engine._fuse import MAX_CANDIDATES, OVER_BUDGET, RRF_K, TOO_MANY, fuse, tokens_of
 from g6.knowledge._index import Hit
 from g6.knowledge._types import Document, Source
-from g6.knowledge._view import view_of
+from g6._context_engine._view import view_of
 
 
 def passage(text: str, name: str = "a"):

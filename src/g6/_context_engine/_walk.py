@@ -24,7 +24,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from g6.knowledge._scope import NOT_INDEXABLE, Binding, ScopeDenied, inside
+from g6._context_engine._scope import NOT_INDEXABLE, Binding, ScopeDenied, inside
 
 MAX_FILES = 5_000
 MAX_FILE_BYTES = 2_000_000

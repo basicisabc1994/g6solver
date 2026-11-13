@@ -12,9 +12,9 @@ from datetime import timedelta
 
 import pytest
 
-from g6.knowledge import _engine as engine
-from g6.knowledge._registry import NOT_PUBLISHED, PREVIEW_USED, Member, ProjectStore, Refused
-from g6.knowledge._scope import ROOTS_ENV
+from g6._context_engine import _engine as engine
+from g6._context_engine._registry import NOT_PUBLISHED, PREVIEW_USED, Member, ProjectStore, Refused
+from g6._context_engine._scope import ROOTS_ENV
 from g6.knowledge._types import instant
 from tests.knowledge.corpus import SUBJECTS
 from tests.knowledge.corpus.rig import NOW, make
@@ -212,9 +212,9 @@ def test_crash_between_stage_and_publish_leaves_previous_generation(tmp_path, mo
 _SEARCHER = """
 import json, sys, time
 from pathlib import Path
-from g6.knowledge import _engine as engine
-from g6.knowledge._envelope import SearchRequest
-from g6.knowledge._scope import ROOTS_ENV, access, host_binding
+from g6._context_engine import _engine as engine
+from g6._context_engine._envelope import SearchRequest
+from g6._context_engine._scope import ROOTS_ENV, access, host_binding
 project, word, stop = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
 binding = host_binding(environ={ROOTS_ENV: str(project)}, start=project)
 while not stop.exists():

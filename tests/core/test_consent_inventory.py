@@ -500,7 +500,8 @@ def knowledge_model_calls(root=ROOT, extra=()):
     """Every place the Context Engine's shared modules ask a model: (file:function, the receiver is ``guard(...)``,
     the call lies inside ``with cloud_consent.request_sources(...)``). Read from the folder, so a new module is seen."""
     rows = []
-    for path in [*sorted((root / 'src/g6/knowledge').glob('_*.py')), *extra]:
+    for path in [*sorted((root / 'src/g6/knowledge').glob('_*.py')), *sorted((root / 'src/g6/_context_engine').glob('_*.py')),
+                 *extra]:
         tree = ast.parse(path.read_text(encoding='utf-8'))
         for function in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:
             inside = {id(call) for block in ast.walk(function) if isinstance(block, ast.With) and any(
@@ -519,7 +520,7 @@ def test_every_model_call_of_the_context_engine_is_guarded_and_names_its_sources
     rows = knowledge_model_calls()
     assert {'_relations.py:extract', '_planner.py:run'} <= {name for name, _, _ in rows}
     assert all(guarded and inside for _, guarded, inside in rows), rows
-    text = (ROOT / 'src/g6/knowledge/_relations.py').read_text(encoding='utf-8')
+    text = (ROOT / 'src/g6/_context_engine/_relations.py').read_text(encoding='utf-8')
     assert 'from g6.core.consent_callers import guard' in text and 'from g6.core import cloud_consent' in text
     # a new module that asks a model directly, or outside the sources of what it sends, fails the inventory
     fresh = tmp_path / '_fresh.py'

@@ -6,9 +6,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from g6.knowledge import _engine as engine
-from g6.knowledge._registry import ProjectStore
-from g6.knowledge._view import label_view, view_of
+from g6._context_engine import _engine as engine
+from g6._context_engine._registry import ProjectStore
+from g6._context_engine._view import label_view, view_of
 from tests.knowledge.corpus import INSTRUCTION_SUBJECT, SECRET, SECRET_SUBJECT, SUBJECTS
 from tests.knowledge.corpus.rig import NOW, make
 

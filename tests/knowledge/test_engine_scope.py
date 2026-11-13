@@ -13,10 +13,10 @@ from pydantic import BaseModel
 
 from g6.core.registry import get_registry
 from g6.core.storage import state_path
-from g6.knowledge import _engine as engine
-from g6.knowledge._envelope import SearchRequest
-from g6.knowledge._registry import ProjectStore
-from g6.knowledge._scope import (ROOTS_ENV, SCOPE_DENIED, START_IS_A_ROOT, Access, ScopeDenied, access, host_binding,
+from g6._context_engine import _engine as engine
+from g6._context_engine._envelope import SearchRequest
+from g6._context_engine._registry import ProjectStore
+from g6._context_engine._scope import (ROOTS_ENV, SCOPE_DENIED, START_IS_A_ROOT, Access, ScopeDenied, access, host_binding,
                                  inside)
 from tests.knowledge.corpus import SUBJECTS
 from tests.knowledge.corpus.rig import NOW, link_out, make

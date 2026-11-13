@@ -67,9 +67,9 @@ def test_every_arm_has_equal_information_and_budget_and_the_scores_repeat(tmp_pa
 def test_the_comparison_is_refused_when_an_arm_saw_other_information(tmp_path, monkeypatch):
     labels = json.loads(LABELS.read_text(encoding="utf-8"))
     labels = {**labels, "queries": labels["queries"][:2]}
-    from g6.knowledge import _engine as engine
-    from g6.knowledge import _planner
-    from g6.knowledge._scope import access
+    from g6._context_engine import _engine as engine
+    from g6._context_engine import _planner
+    from g6._context_engine._scope import access
 
     real = _planner.run
 

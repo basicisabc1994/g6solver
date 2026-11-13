@@ -5,10 +5,10 @@ from __future__ import annotations
 
 import pytest
 
-from g6.knowledge import _engine as engine
-from g6.knowledge import _graph
-from g6.knowledge._registry import ProjectStore, Refused
-from g6.knowledge._scope import access
+from g6._context_engine import _engine as engine
+from g6._context_engine import _graph
+from g6._context_engine._registry import ProjectStore, Refused
+from g6._context_engine._scope import access
 from tests.knowledge.corpus import MODULES, SUBJECTS
 from tests.knowledge.corpus.rig import NOW, make
 
@@ -150,7 +150,7 @@ def test_hop_and_path_limits_refuse_rather_than_truncate_silently(tmp_path, monk
 
 
 def test_the_relations_route_is_ready_only_when_a_graph_is_kept_for_the_generation(tmp_path, monkeypatch):
-    from g6.knowledge import _dispatch
+    from g6._context_engine import _dispatch
 
     rig = make(tmp_path, monkeypatch)
     rig.add()

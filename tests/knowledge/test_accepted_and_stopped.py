@@ -12,9 +12,9 @@ from pathlib import Path
 import pytest
 
 import g6
-from g6.knowledge import _engine as engine
-from g6.knowledge import _graph, _jobs
-from g6.knowledge._registry import ProjectStore, Refused
+from g6._context_engine import _engine as engine
+from g6._context_engine import _graph, _jobs
+from g6._context_engine._registry import ProjectStore, Refused
 from g6.knowledge.ctx_colbert import readiness
 from g6.knowledge.ctx_colbert.persistent import PersistentColbertIndex
 from g6.knowledge.ctx_elastic import writer
@@ -96,7 +96,7 @@ def test_an_agents_argument_reaches_a_write_only_through_the_accepted_preview():
             if isinstance(call, ast.Call) and ast.unparse(call.func) in ("_jobs.start", "writer.write", "writer.pin"):
                 starts.append((path.relative_to(SRC).as_posix(), ast.unparse(call.func), ast.unparse(call)))
     assert {(where, what) for where, what, _ in starts} == {
-        ("mcp/knowledge.py", "_jobs.start"), ("knowledge/_jobs.py", "writer.write"), ("knowledge/_jobs.py", "writer.pin")}
+        ("mcp/knowledge.py", "_jobs.start"), ("_context_engine/_jobs.py", "writer.write"), ("_context_engine/_jobs.py", "writer.pin")}
     start, = [text for _, what, text in starts if what == "_jobs.start"]
     assert start.startswith("_jobs.start(binding, done['source'], accepted,")
     assert "accepted = ProjectStore(binding).registration(done['source']).backends" in source

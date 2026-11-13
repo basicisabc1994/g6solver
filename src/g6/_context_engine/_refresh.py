@@ -23,14 +23,14 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from g6.core.storage import PathRefused, contained
-from g6.knowledge import _engine as engine
+from g6._context_engine import _engine as engine
 from g6.knowledge._index import IndexRefused
-from g6.knowledge._registry import (SUPERSEDED, Member, ProjectStore, Receipt, Refused, Registration, is_kept,
+from g6._context_engine._registry import (SUPERSEDED, Member, ProjectStore, Receipt, Refused, Registration, is_kept,
                                     may_use, source_uri)
-from g6.knowledge._scope import Access, ScopeDenied, inside
+from g6._context_engine._scope import Access, ScopeDenied, inside
 from g6.knowledge._types import now, sha256_hex
-from g6.knowledge._view import label_view
-from g6.knowledge._walk import MAX_FILE_BYTES, Excluded, read_file, walk
+from g6._context_engine._view import label_view
+from g6._context_engine._walk import MAX_FILE_BYTES, Excluded, read_file, walk
 
 REFRESH_FAILED = "G6_E_KNOWLEDGE_REFRESH"
 

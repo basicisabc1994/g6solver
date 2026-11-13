@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-import g6.knowledge
-from g6.knowledge import _engine as engine
-from g6.knowledge._registry import ProjectStore, Refused
+import g6._context_engine
+from g6._context_engine import _engine as engine
+from g6._context_engine._registry import ProjectStore, Refused
 from tests.knowledge.corpus import SUBJECTS
 from tests.knowledge.corpus.rig import NOW, make
 
@@ -78,7 +78,7 @@ def test_a_holder_that_cannot_be_removed_keeps_the_deletion_from_reporting_done_
 
 def _steps() -> list[str]:
     """The registry and engine steps a complete deletion takes, read from the code."""
-    path = Path(g6.knowledge.__file__).parent / "_engine.py"
+    path = Path(g6._context_engine.__file__).parent / "_engine.py"
     function = next(n for n in ast.parse(path.read_text(encoding="utf-8")).body
                     if isinstance(n, ast.FunctionDef) and n.name == "delete")
     return sorted({c.func.attr for c in ast.walk(function) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)

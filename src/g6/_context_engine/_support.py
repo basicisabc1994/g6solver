@@ -26,12 +26,12 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from g6.core import cloud_consent
-from g6.knowledge import _engine as engine
-from g6.knowledge._envelope import Checked, SearchRequest
-from g6.knowledge._registry import Dependent, ProjectStore, Refused
-from g6.knowledge._scope import Access
+from g6._context_engine import _engine as engine
+from g6._context_engine._envelope import Checked, SearchRequest
+from g6._context_engine._registry import Dependent, ProjectStore, Refused
+from g6._context_engine._scope import Access
 from g6.knowledge._types import now
-from g6.knowledge._view import View
+from g6._context_engine._view import View
 
 DESIGNATION = "Treat the cited passage knowledge:"
 NOT_DESIGNATED = "G6_E_KNOWLEDGE_DESIGNATION"

@@ -56,7 +56,7 @@ def _tokens(text: str) -> tuple[str, ...]:
 def _quoted(phrase: str) -> str:
     return '"' + phrase.replace('"', '""') + '"'
 
-#: The address prefix of one registration's files (``g6.knowledge._registry.source_uri``).
+#: The address prefix of one registration's files (``g6._context_engine._registry.source_uri``).
 _PREFIX = "g6-knowledge://{}/"
 
 

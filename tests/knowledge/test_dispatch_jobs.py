@@ -10,11 +10,12 @@ from pathlib import Path
 
 import pytest
 
+import g6._context_engine
 import g6.knowledge
-from g6.knowledge import _dispatch, _jobs
-from g6.knowledge import _engine as engine
-from g6.knowledge._envelope import SearchRequest
-from g6.knowledge._registry import ProjectStore, Refused
+from g6._context_engine import _dispatch, _jobs
+from g6._context_engine import _engine as engine
+from g6._context_engine._envelope import SearchRequest
+from g6._context_engine._registry import ProjectStore, Refused
 from tests.knowledge.corpus import SUBJECTS, fake_elastic
 from tests.knowledge.corpus.rig import NOW, make
 
@@ -91,7 +92,7 @@ def test_count_is_a_structured_answer_and_unsupported_on_sqlite(tmp_path, monkey
     assert everything["sources_counted"] == [source] and "items" not in everything
     assert 0 < _dispatch.count(rig.local("count"), query=DOCS)["answer"]["count"] < total
     assert _dispatch.count(rig.local("count", sources=[]))["answer"] == {"count": 0}
-    from g6.knowledge._scope import access
+    from g6._context_engine._scope import access
 
     cloud = _dispatch.count(access(rig.binding, "count", "anthropic:claude_code"))
     assert cloud["answer"] == {"count": 0} and cloud["sources_counted"] == [], "an ungranted source is not counted"
@@ -128,7 +129,7 @@ def test_indexer_block_still_refuses_network_backends(tmp_path, monkeypatch):
     for backend in ("elastic", "elastic_managed"):
         reply = invoke_reply("knowledge_indexer", "search", json.dumps({"backend": backend, "query": "quokka"}))
         assert reply["ok"] is False or reply.get("completion_state") == "blocked-escalated", backend
-    opened = [p.name for p in Path(g6.knowledge.__file__).parent.rglob("*.py")
+    opened = [p.name for package in (g6.knowledge, g6._context_engine) for p in Path(package.__file__).parent.rglob("*.py")
               if "ManagedElasticIndex(" in p.read_text(encoding="utf-8") and p.name not in ("managed.py",)]
     assert opened == ["_dispatch.py"], "the scoped dispatcher is the only place the managed backend is opened"
 
@@ -195,10 +196,11 @@ def test_install_alone_is_not_searchable(tmp_path, monkeypatch, es):
 
 
 def test_no_jvm_or_network_in_tests():
-    """No file under tests/ or src/g6/knowledge/ starts java or elasticsearch, or names a non-loopback address."""
+    """No file under tests/, src/g6/knowledge/ or src/g6/_context_engine/ starts java or elasticsearch, or names a
+    non-loopback address."""
     spawn = re.compile(r"""(?:Popen|run|call|check_output|system|spawn\w*)\(\s*\[?\s*["'](?:java|elasticsearch|bin[\\/]elasticsearch)""")
     address = re.compile(r"https?://(?!127\.0\.0\.1|localhost|\[::1\])[A-Za-z0-9.-]+\.[a-z]{2,}(?::\d+)?/?_(?:bulk|search|mget|count)")
-    for folder in (ROOT / "tests" / "knowledge", ROOT / "src" / "g6" / "knowledge"):
+    for folder in (ROOT / "tests" / "knowledge", ROOT / "src" / "g6" / "knowledge", ROOT / "src" / "g6" / "_context_engine"):
         for path in folder.rglob("*.py"):
             text = path.read_text(encoding="utf-8")
             assert not spawn.search(text), path

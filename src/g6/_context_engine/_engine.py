@@ -40,16 +40,16 @@ from pydantic import BaseModel, ConfigDict
 
 from g6.core import cloud_consent
 from g6.core.storage import PathRefused, contained, state_path
-from g6.knowledge._envelope import (MAX_TOP_K, BackendReport, Checked, Contribution, Denied, PassageItem,
+from g6._context_engine._envelope import (MAX_TOP_K, BackendReport, Checked, Contribution, Denied, PassageItem,
                                     SearchRequest, SearchResponse)
 from g6.knowledge._index import IndexRefused
-from g6.knowledge._lexical import ScopedLexical
-from g6.knowledge._registry import (Dependent, Member, ProjectStore, Refused, Registration, is_kept, may_use,
+from g6._context_engine._lexical import ScopedLexical
+from g6._context_engine._registry import (Dependent, Member, ProjectStore, Refused, Registration, is_kept, may_use,
                                     source_uri)
-from g6.knowledge._scope import Access, Binding, ScopeDenied, bound, consent_scope, inside
+from g6._context_engine._scope import Access, Binding, ScopeDenied, bound, consent_scope, inside
 from g6.knowledge._types import Document, Passage, now, sha256_hex
-from g6.knowledge._view import label_view, view_of
-from g6.knowledge._walk import (MAX_FILE_BYTES, Excluded, FileEntry, Walked, is_placeholder, read_file, shown_name,
+from g6._context_engine._view import label_view, view_of
+from g6._context_engine._walk import (MAX_FILE_BYTES, Excluded, FileEntry, Walked, is_placeholder, read_file, shown_name,
                                 walk)
 
 PREVIEW_CHANGED = "G6_E_KNOWLEDGE_PREVIEW_CHANGED"
@@ -476,7 +476,7 @@ def _route_hits(store: ProjectStore, request: SearchRequest, generation: Any, re
     """Each requested route's report and hits on the pinned generation, inside ``readable`` only. A route that is
     not ready is reported ``unavailable`` with why and is not asked; a route name G6 does not know is
     ``unsupported``."""
-    from g6.knowledge import _dispatch
+    from g6._context_engine import _dispatch
 
     ready = {r.name: (r, why) for r, why in _dispatch.routes_for(store, readable, local=local)}
     wanted = request.routes if request.routes is not None else tuple(
@@ -511,7 +511,7 @@ def _route_hits(store: ProjectStore, request: SearchRequest, generation: Any, re
 def _fused(acc: Access, request: SearchRequest, *, clock: Clock, budget_tokens: int | None = None):
     """The steps every passage search takes (the module docstring), over one or several routes; returns the store,
     the narrowed access, the generation, the fusion, each item's consent source and what was denied or withheld."""
-    from g6.knowledge._fuse import fuse
+    from g6._context_engine._fuse import fuse
 
     store = ProjectStore(acc.binding)
     if request.routes is not None and not request.routes:
@@ -616,7 +616,7 @@ def search(acc: Access, request: SearchRequest, *, clock: Clock = _utc) -> tuple
                               authorisation_revisions={r: v for r, v in meta["revisions"].items()
                                                        if r in {i.source for i in items}},
                               payload=payload, withheld=meta["withheld"], denied=denied)
-    from g6.knowledge import _snapshots
+    from g6._context_engine import _snapshots
 
     kept_as = _snapshots.write(store, response, meta["members"])   # only for sources that retain audit copies
     if kept_as:
@@ -641,7 +641,7 @@ def context(acc: Access, task: str, *, budget_tokens: int = 4000, routes: Sequen
     gone = {d.passage_id for d in late}
     items = [i for i in fused.items if i.passage_id not in gone]
     shown = {i.passage_id for i in items}
-    from g6.knowledge._fuse import tokens_of
+    from g6._context_engine._fuse import tokens_of
 
     body = {"task_sha256": sha256_hex(task), "generation": generation.number, "budget_tokens": budget_tokens,
             "items": [i.model_dump(mode="json") for i in items], "tokens": sum(tokens_of(i) for i in items),
@@ -764,8 +764,8 @@ def revoke(acc: Access, registration_id: str) -> dict[str, Any]:
 
 
 def refresh(acc: Access, registration_id: str | None = None, *, clock: Clock = _utc) -> dict[str, Any]:
-    """Re-read the accepted files and publish what changed as a new generation (``g6.knowledge._refresh``)."""
-    from g6.knowledge import _refresh
+    """Re-read the accepted files and publish what changed as a new generation (``g6._context_engine._refresh``)."""
+    from g6._context_engine import _refresh
 
     return _refresh.refresh(acc, registration_id, clock=clock)
 
@@ -819,7 +819,7 @@ def delete(acc: Access, registration_id: str, *, complete: bool = False, attribu
                                             "step(s) that hold its bytes could not be removed yet (another program "
                                             "has a file open); run the deletion again")
         receipt["audit_copies"] = "removed"
-    from g6.knowledge import _jobs
+    from g6._context_engine import _jobs
 
     still_held = _jobs.held(store, registration_id)   # read from the job records, which a deletion keeps
     if still_held:

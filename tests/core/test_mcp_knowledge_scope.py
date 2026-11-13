@@ -16,10 +16,10 @@ from fastmcp.client.elicitation import ElicitResult
 from mcp.types import Implementation
 
 from g6.core import cloud_consent as cloud
-from g6.knowledge import _engine as engine
-from g6.knowledge import _graph, _jobs, _planner, _relations
-from g6.knowledge._registry import ProjectStore
-from g6.knowledge._scope import consent_scope
+from g6._context_engine import _engine as engine
+from g6._context_engine import _graph, _jobs, _planner, _relations
+from g6._context_engine._registry import ProjectStore
+from g6._context_engine._scope import consent_scope
 from g6.mcp import build_server
 from tests.knowledge.corpus import SUBJECTS, fake_elastic
 from tests.knowledge.corpus.rig import NOW, make, serve

@@ -23,7 +23,7 @@ from collections.abc import Callable, Sequence
 
 from pydantic import BaseModel, ConfigDict
 
-from g6.knowledge._envelope import BackendReport, Contribution, PassageItem
+from g6._context_engine._envelope import BackendReport, Contribution, PassageItem
 from g6.knowledge._index import Hit
 
 RRF_K = 60
@@ -32,7 +32,7 @@ TOO_MANY = "G6_E_KNOWLEDGE_FUSION_CANDIDATES"
 OVER_BUDGET = "G6_E_KNOWLEDGE_FUSION_BUDGET"
 #: Backends whose ranking is lexical (BM25 over words).
 LEXICAL = frozenset({"sqlite", "elastic_managed"})
-LEADS = "leads"   # the route name of model-proposed relations (g6.knowledge._relations)
+LEADS = "leads"   # the route name of model-proposed relations (g6._context_engine._relations)
 #: Word-set overlap above which two passages are shown as one presentation group. A declared heuristic.
 GROUP_OVERLAP = 0.7
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)*")

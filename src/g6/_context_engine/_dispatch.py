@@ -24,8 +24,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from g6.knowledge._index import Index
-from g6.knowledge._registry import ProjectStore, Refused
-from g6.knowledge._scope import Access, Operation
+from g6._context_engine._registry import ProjectStore, Refused
+from g6._context_engine._scope import Access, Operation
 
 UNSUPPORTED = "G6_E_KNOWLEDGE_UNSUPPORTED"
 RouteName = Literal["exact", "structure", "meaning", "relations"]
@@ -109,7 +109,7 @@ def answered(generation: Any, backend: str) -> list[str]:
 def usable_registrations(store: ProjectStore, acc: Access, *, at: datetime) -> list[str]:
     """The source registrations ``acc`` may read at ``at``: the engine's scope (usable by the registry's one
     predicate, inside the caller's narrowing and, for a destination other than local, granted to that provider)."""
-    from g6.knowledge import _engine as engine
+    from g6._context_engine import _engine as engine
 
     return engine.scope_of(store, acc, at)[0]
 
@@ -118,9 +118,9 @@ def open_route(store: ProjectStore, one: Route, generation: int, *, registration
                caller: Any = None) -> Index:
     """The index behind ``one`` for ``generation``. The only place the managed Elasticsearch backend is opened."""
     if one.backend == "sqlite":
-        from g6.knowledge._lexical import ScopedLexical
+        from g6._context_engine._lexical import ScopedLexical
 
-        from g6.knowledge import _engine as engine
+        from g6._context_engine import _engine as engine
 
         stale = {uri for _, uri in engine._still_changed(store, generation)}   # denied files take no place in the hits
         return ScopedLexical(store.index_path("sqlite", generation),

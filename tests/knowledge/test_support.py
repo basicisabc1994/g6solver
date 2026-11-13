@@ -9,13 +9,13 @@ from pathlib import Path
 
 import pytest
 
-import g6.knowledge
+import g6._context_engine
 from g6.harness import behaviour_question as bq
 from g6.harness import question_store as qs
 from g6.harness.confirmed_expectation import Answer
-from g6.knowledge import _engine as engine
-from g6.knowledge import _support
-from g6.knowledge._registry import ProjectStore, Refused
+from g6._context_engine import _engine as engine
+from g6._context_engine import _support
+from g6._context_engine._registry import ProjectStore, Refused
 from tests.knowledge.corpus import SUBJECTS
 from tests.knowledge.corpus.rig import NOW, make
 
@@ -142,7 +142,7 @@ def test_conflicting_passages_block_suppression_and_are_both_cited(tmp_path, mon
 
 
 def test_support_never_becomes_an_issuer_receipt():
-    tree = ast.parse((Path(g6.knowledge.__file__).parent / "_support.py").read_text(encoding="utf-8"))
+    tree = ast.parse((Path(g6._context_engine.__file__).parent / "_support.py").read_text(encoding="utf-8"))
     imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names} | {
         n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
     assert not any(name.startswith(("g6.evidence", "g6.core.ledger", "g6.core.evidence", "g6.action_logic"))
@@ -188,7 +188,7 @@ def test_designation_spends_the_one_question_budget(tmp_path, monkeypatch):
 
 
 def test_support_respects_scope_revocation_and_disclosure(tmp_path, monkeypatch):
-    from g6.knowledge._scope import ScopeDenied, access
+    from g6._context_engine._scope import ScopeDenied, access
 
     rig = make(tmp_path, monkeypatch)
     source = rig.add()["source"]

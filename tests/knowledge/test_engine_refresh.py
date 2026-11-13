@@ -10,9 +10,9 @@ import time
 
 import pytest
 
-from g6.knowledge import _engine as engine
+from g6._context_engine import _engine as engine
 from g6.knowledge._index import IndexRefused
-from g6.knowledge._registry import ProjectStore
+from g6._context_engine._registry import ProjectStore
 from tests.knowledge.corpus import SUBJECTS
 from tests.knowledge.corpus.rig import NOW, make
 

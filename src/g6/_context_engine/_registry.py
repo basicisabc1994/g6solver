@@ -33,8 +33,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from g6.core.storage import state_path
-from g6.knowledge._envelope import BackendState, Denied
-from g6.knowledge._scope import Access, Binding, ScopeDenied, bound
+from g6._context_engine._envelope import BackendState, Denied
+from g6._context_engine._scope import Access, Binding, ScopeDenied, bound
 from g6.knowledge._types import instant, now, sha256_hex
 
 SOURCE_UNKNOWN = "G6_E_KNOWLEDGE_SOURCE"
@@ -573,7 +573,7 @@ class ProjectStore:
                          (receipt.registration_id, generation, receipt.model_dump_json()))
 
     def rereads(self, registration_id: str) -> list[Any]:
-        from g6.knowledge._refresh import Reread
+        from g6._context_engine._refresh import Reread
 
         with self._reading() as conn:
             if not self._has(conn, "rereads"):
@@ -653,7 +653,7 @@ class ProjectStore:
             return (nodes or None), edges
 
     def propose_edge(self, ident: str, body: str, registration_id: str) -> None:
-        """Keep a model-proposed relation (``g6.knowledge._relations``): a lead, never evidence. Its writer registers
+        """Keep a model-proposed relation (``g6._context_engine._relations``): a lead, never evidence. Its writer registers
         it as a stored consumer, and :meth:`erase` removes it with its registration."""
         with self._writing() as conn:
             conn.execute("INSERT OR IGNORE INTO proposed_edges VALUES (?, ?, ?)", (ident, registration_id, body))
@@ -710,7 +710,7 @@ class ProjectStore:
                          (json.dumps(backends, sort_keys=True), generation))
 
     def grant_normative(self, ident: str, body: str, registration_id: str = "") -> None:
-        """Keep a normative grant's record (``g6.knowledge._support``): made from a person's confirmed rule answer."""
+        """Keep a normative grant's record (``g6._context_engine._support``): made from a person's confirmed rule answer."""
         with self._writing() as conn:
             conn.execute("INSERT OR IGNORE INTO normative_grants VALUES (?, ?, ?)", (ident, registration_id, body))
 

@@ -14,8 +14,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from g6.knowledge._scope import Operation
-from g6.knowledge._view import View
+from g6._context_engine._scope import Operation
+from g6._context_engine._view import View
 
 VERSION = "g6.knowledge.search.v1"
 BackendState = Literal["answered", "empty", "unavailable", "failed", "partial", "unsupported", "refused"]

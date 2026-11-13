@@ -4,7 +4,7 @@
 ``_``-prefixed, so it never registers as a component. A model reads the redacted views of some passages and proposes
 relations between two things one passage names. Every such edge is ``proposed`` and ``possible``, for good: nothing
 here or elsewhere turns one into evidence. A lead is a way to find a passage; the passage, re-read and cited, is the
-evidence, and it carries no weight from the lead that found it (``g6.knowledge._fuse`` gives the ``leads`` route none;
+evidence, and it carries no weight from the lead that found it (``g6._context_engine._fuse`` gives the ``leads`` route none;
 context packs and the behaviour question's support never read a lead).
 
 :func:`extract` is where G6 itself sends source text to a model. It is off unless a caller and a model-call budget
@@ -31,14 +31,14 @@ from pydantic import BaseModel, ConfigDict
 
 from g6.core import cloud_consent
 from g6.core.consent_callers import guard
-from g6.knowledge import _engine as engine
-from g6.knowledge import _graph
-from g6.knowledge._envelope import BackendReport, SearchRequest, SearchResponse
-from g6.knowledge._fuse import LEADS
-from g6.knowledge._registry import Dependent, ProjectStore, Refused
-from g6.knowledge._scope import Access
+from g6._context_engine import _engine as engine
+from g6._context_engine import _graph
+from g6._context_engine._envelope import BackendReport, SearchRequest, SearchResponse
+from g6._context_engine._fuse import LEADS
+from g6._context_engine._registry import Dependent, ProjectStore, Refused
+from g6._context_engine._scope import Access
 from g6.knowledge._types import sha256_hex
-from g6.knowledge._view import label_view
+from g6._context_engine._view import label_view
 
 EXTRACTOR = "g6.knowledge._relations/1"
 NOT_SENT = "G6_E_KNOWLEDGE_EXTRACTION_NOT_SENT"

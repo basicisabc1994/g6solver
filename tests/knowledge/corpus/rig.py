@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from g6.knowledge import _engine as engine
-from g6.knowledge._envelope import SearchRequest
-from g6.knowledge._scope import ROOTS_ENV, Access, Binding, access, host_binding
+from g6._context_engine import _engine as engine
+from g6._context_engine._envelope import SearchRequest
+from g6._context_engine._scope import ROOTS_ENV, Access, Binding, access, host_binding
 from tests.knowledge import corpus
 
 NOW = datetime(2026, 11, 11, 12, 0, 0, tzinfo=UTC)

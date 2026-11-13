@@ -25,12 +25,12 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from g6.core import cloud_consent
-from g6.knowledge import _engine as engine
-from g6.knowledge._envelope import BackendReport, SearchRequest, SearchResponse
-from g6.knowledge._registry import Dependent, ProjectStore, Refused, may_use
-from g6.knowledge._scope import Access, consent_scope
+from g6._context_engine import _engine as engine
+from g6._context_engine._envelope import BackendReport, SearchRequest, SearchResponse
+from g6._context_engine._registry import Dependent, ProjectStore, Refused, may_use
+from g6._context_engine._scope import Access, consent_scope
 from g6.knowledge._types import sha256_hex
-from g6.knowledge._view import label_view
+from g6._context_engine._view import label_view
 
 EXTRACTOR = "g6.knowledge._graph/1"
 GRAPH = "G6_E_KNOWLEDGE_GRAPH"

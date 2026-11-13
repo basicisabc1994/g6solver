@@ -10,8 +10,8 @@ import sys
 
 import pytest
 
-from g6.knowledge import _walk
-from g6.knowledge._walk import MAX_FILE_BYTES, walk
+from g6._context_engine import _walk
+from g6._context_engine._walk import MAX_FILE_BYTES, walk
 from tests.knowledge.corpus.rig import link_out, make
 
 

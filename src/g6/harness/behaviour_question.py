@@ -289,7 +289,7 @@ def with_support(candidate: Candidate, support: Sequence[Mapping[str, Any]], *, 
     (``knowledge:<passage id> <path>``, the path in :func:`quoted_path`'s form; the form labels such lines apart from
     G6's own). A passage is evidence only: the outcomes, the scope and the question stay as
     they were. ``settles`` (an outcome label, with ``by`` saying which grant) adds a ``settled`` entry, and is given
-    only when a normative source covers this scenario (``g6.knowledge._support.may_suppress``); ``rule`` is offered as
+    only when a normative source covers this scenario (``g6._context_engine._support.may_suppress``); ``rule`` is offered as
     the rule line only when the candidate has none. Each support record is one passage id and one path;
     ``CandidateRefused`` for anything else."""
     record = candidate.to_dict()

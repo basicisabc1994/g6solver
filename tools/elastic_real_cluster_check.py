@@ -58,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
     sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
     from g6.knowledge._types import Document, Source
     from g6.knowledge.ctx_elastic import elastic, managed, writer
-    from g6.knowledge import _jobs
+    from g6._context_engine import _jobs
 
     project = "real-cluster-check-" + str(int(time.time()))
     result: dict = {"protocol": "03-retrieval", "kind": "real cluster", "passages": args.passages, "features": {},

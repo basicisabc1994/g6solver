@@ -21,11 +21,11 @@ import anyio
 from pydantic import ValidationError
 
 from g6.core import cloud_consent as cloud
-from g6.knowledge import _engine as engine
-from g6.knowledge._envelope import MAX_TOP_K, SearchRequest
-from g6.knowledge._registry import ProjectStore, Refused
-from g6.knowledge._scope import ROOTS_ENV, UNKNOWN_DESTINATION, ScopeDenied, access, consent_scope, host_binding
-from g6.knowledge._view import label_view
+from g6._context_engine import _engine as engine
+from g6._context_engine._envelope import MAX_TOP_K, SearchRequest
+from g6._context_engine._registry import ProjectStore, Refused
+from g6._context_engine._scope import ROOTS_ENV, UNKNOWN_DESTINATION, ScopeDenied, access, consent_scope, host_binding
+from g6._context_engine._view import label_view
 
 _PASSAGE = re.compile(r"[0-9a-f]{64}\Z")
 _SUMMARY = cloud.sha256("registration-summary")
@@ -162,7 +162,7 @@ def register(server: Any, context_type: Any) -> None:
         accepted = ProjectStore(binding).registration(done["source"]).backends   # what the accepted preview lists
         if accepted:
             try:
-                from g6.knowledge import _jobs
+                from g6._context_engine import _jobs
 
                 job = _jobs.start(binding, done["source"], accepted, gate=_jobs.elastic_gate())
                 result["job"] = {"id": job.id, "state": job.state, "backends": sorted(job.backends)}
@@ -211,7 +211,7 @@ def register(server: Any, context_type: Any) -> None:
         words, not that the sources hold nothing more. No model is asked."""
         if plan or needs:
             try:
-                from g6.knowledge import _planner
+                from g6._context_engine import _planner
 
                 if routes is not None or not isinstance(query, str) or len(query) > 4000 or not all(
                         isinstance(n, str) for n in needs or []) or len(needs or []) > 20:
@@ -301,7 +301,7 @@ def register(server: Any, context_type: Any) -> None:
         counts and the files that could not be read again are told only for a source shared with your provider;
         otherwise the reply is the job's id and state. A job a stopped server left unfinished is started again."""
         try:
-            from g6.knowledge import _jobs
+            from g6._context_engine import _jobs
 
             binding = host_binding()
             acc = access(binding, "list", _destination())
@@ -327,7 +327,7 @@ def register(server: Any, context_type: Any) -> None:
         your provider only. It needs the managed Elasticsearch backend: without a complete copy there the answer is
         unsupported, and a count some shards did not answer is refused, not estimated."""
         try:
-            from g6.knowledge import _dispatch
+            from g6._context_engine import _dispatch
 
             acc = access(host_binding(), "count", _destination(), sources)
             found = _dispatch.count(acc, query=str(query)[:4000])
@@ -346,7 +346,7 @@ def register(server: Any, context_type: Any) -> None:
         cites the passage its witness lies in and was re-read in this call; a path through anything you may not use is
         not returned, and hop and path limits refuse rather than truncate."""
         try:
-            from g6.knowledge import _graph
+            from g6._context_engine import _graph
 
             acc = access(host_binding(), "traverse", _destination())
             _graph.ensure(ProjectStore(acc.binding))
@@ -386,7 +386,7 @@ def register(server: Any, context_type: Any) -> None:
         returning. A copy a job wrote to Elasticsearch is not removed by this tool: the dialog and the reply name
         it as still held. Text already delivered to a client or a model cannot be recalled."""
         try:
-            from g6.knowledge import _jobs
+            from g6._context_engine import _jobs
 
             binding = host_binding()
             acc = access(binding, "delete", _destination())

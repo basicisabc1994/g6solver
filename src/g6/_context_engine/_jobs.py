@@ -27,12 +27,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from g6.knowledge import _engine as engine
+from g6._context_engine import _engine as engine
 from g6.knowledge._index import IndexRefused
-from g6.knowledge._registry import ProjectStore, Refused, may_use
-from g6.knowledge._scope import Binding
+from g6._context_engine._registry import ProjectStore, Refused, may_use
+from g6._context_engine._scope import Binding
 from g6.knowledge._types import now
-from g6.knowledge._walk import Excluded
+from g6._context_engine._walk import Excluded
 
 BACKENDS = tuple(engine.OPTIONAL_BACKENDS)
 JOB_UNKNOWN = "G6_E_KNOWLEDGE_JOB"

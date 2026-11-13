@@ -34,12 +34,12 @@ from pydantic import BaseModel, ConfigDict
 
 from g6.core import cloud_consent
 from g6.core.consent_callers import guard
-from g6.knowledge import _engine as engine
-from g6.knowledge._envelope import MAX_TOP_K, PassageItem, SearchRequest, SearchResponse
-from g6.knowledge._fuse import tokens_of
-from g6.knowledge._registry import ProjectStore
-from g6.knowledge._relations import Limits
-from g6.knowledge._scope import Access
+from g6._context_engine import _engine as engine
+from g6._context_engine._envelope import MAX_TOP_K, PassageItem, SearchRequest, SearchResponse
+from g6._context_engine._fuse import tokens_of
+from g6._context_engine._registry import ProjectStore
+from g6._context_engine._relations import Limits
+from g6._context_engine._scope import Access
 from g6.knowledge._types import now, sha256_hex
 
 LOG = "search_decisions.jsonl"
@@ -187,7 +187,7 @@ def run(acc: Access, query: str, needs: Sequence[str], *, limits: Limits = DEFAU
     """Plan and run a search for ``query`` against the evidence ``needs`` declared now, inside ``limits`` fixed
     before the run. ``reformulate`` is a model caller, used only when ``limits.model_calls`` allows; see the module
     docstring."""
-    from g6.knowledge import _dispatch, _graph
+    from g6._context_engine import _dispatch, _graph
 
     started = time.monotonic()
     store = ProjectStore(acc.binding)

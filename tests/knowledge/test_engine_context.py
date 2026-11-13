@@ -7,9 +7,9 @@ import json
 
 import pytest
 
-from g6.knowledge import _engine as engine
-from g6.knowledge._registry import ProjectStore, Refused
-from g6.knowledge._scope import access
+from g6._context_engine import _engine as engine
+from g6._context_engine._registry import ProjectStore, Refused
+from g6._context_engine._scope import access
 from tests.knowledge.corpus import SECRET, SECRET_SUBJECT, SUBJECTS
 from tests.knowledge.corpus.rig import NOW, make
 
@@ -39,8 +39,8 @@ def test_context_fits_the_budget_and_counts_what_it_left_out(tmp_path, monkeypat
 
 
 def engine_tokens(item):
-    from g6.knowledge._envelope import PassageItem
-    from g6.knowledge._fuse import tokens_of
+    from g6._context_engine._envelope import PassageItem
+    from g6._context_engine._fuse import tokens_of
 
     return tokens_of(PassageItem(**item))
 

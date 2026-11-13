@@ -155,8 +155,8 @@ def test_bm25_fallback_is_named_and_not_called_semantic(tmp_path):
     assert fallback.backend == "colbert_persistent" and fallback.score_scale == "bm25"
     assert fallback.evidence["rung"] == "bm25" and fallback.evidence["fallback"] is True and fallback.evidence["semantic"] is False
     assert fallback.hits[0].passage == items[3]
-    from g6.knowledge._envelope import BackendReport
-    from g6.knowledge._fuse import fuse
+    from g6._context_engine._envelope import BackendReport
+    from g6._context_engine._fuse import fuse
 
     report = BackendReport(backend=fallback.backend, route="meaning", state="answered", rung=fallback.evidence["rung"])
     fused = fuse([(report, fallback.hits, 1)], top_k=3)

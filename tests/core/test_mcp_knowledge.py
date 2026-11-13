@@ -13,8 +13,8 @@ from mcp.types import Implementation
 
 from g6.core import cloud_consent as cloud
 from g6.core.consent_declarations import TOOL_ARGUMENTS, TOOLS
-from g6.knowledge import _engine as engine
-from g6.knowledge._registry import ProjectStore
+from g6._context_engine import _engine as engine
+from g6._context_engine._registry import ProjectStore
 from g6.mcp import build_server
 from tests.knowledge.corpus import SUBJECTS
 from tests.knowledge.corpus.rig import make, serve
@@ -415,7 +415,7 @@ def test_backends_job_and_count_over_mcp(rig, monkeypatch):
 
     from tests.knowledge.corpus import fake_elastic
 
-    from g6.knowledge import _jobs
+    from g6._context_engine import _jobs
 
     es, stop = fake_elastic.serve(monkeypatch)
     # the action gate's own decision is exercised in tests/knowledge/test_dispatch_jobs.py; here the person's key

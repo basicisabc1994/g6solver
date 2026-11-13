@@ -58,10 +58,10 @@ def _recall(returned: list[str], eligible: list[str], k: int) -> float | None:
 def run(labels: dict, workdir: Path) -> dict:
     """Both arms over the corpus built under ``workdir``; the result is plain data."""
     sys.path[:0] = [p for p in (str(ROOT / "src"), str(ROOT)) if p not in sys.path]
-    from g6.knowledge import _engine as engine
-    from g6.knowledge._envelope import SearchRequest
-    from g6.knowledge._scope import ROOTS_ENV, access, host_binding
-    from g6.knowledge._walk import walk
+    from g6._context_engine import _engine as engine
+    from g6._context_engine._envelope import SearchRequest
+    from g6._context_engine._scope import ROOTS_ENV, access, host_binding
+    from g6._context_engine._walk import walk
     from tests.knowledge import corpus
 
     project = workdir / "project"

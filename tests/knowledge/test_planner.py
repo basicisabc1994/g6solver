@@ -12,10 +12,10 @@ from pydantic import ValidationError
 
 from g6.core import host_models
 from g6.core.llm import FakeLLM
-from g6.knowledge import _dispatch, _planner
-from g6.knowledge import _engine as engine
-from g6.knowledge._planner import Features, Limits
-from g6.knowledge._registry import ProjectStore
+from g6._context_engine import _dispatch, _planner
+from g6._context_engine import _engine as engine
+from g6._context_engine._planner import Features, Limits
+from g6._context_engine._registry import ProjectStore
 from tests.host_stand_in import stand_in_hosts
 from tests.knowledge.corpus import MODULES, SECRET, SUBJECTS
 from tests.knowledge.corpus.rig import NOW, make
@@ -173,8 +173,8 @@ def test_budget_exhaustion_leaves_needs_unknown(tmp_path, monkeypatch):
 
 
 def event_tokens(item: dict) -> int:
-    from g6.knowledge._envelope import PassageItem
-    from g6.knowledge._fuse import tokens_of
+    from g6._context_engine._envelope import PassageItem
+    from g6._context_engine._fuse import tokens_of
 
     return tokens_of(PassageItem(**item))
 

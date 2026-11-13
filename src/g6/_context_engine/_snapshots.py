@@ -21,11 +21,11 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from g6.knowledge._envelope import SearchRequest, SearchResponse
-from g6.knowledge._registry import Dependent, ProjectStore
-from g6.knowledge._scope import Access
+from g6._context_engine._envelope import SearchRequest, SearchResponse
+from g6._context_engine._registry import Dependent, ProjectStore
+from g6._context_engine._scope import Access
 from g6.knowledge._types import sha256_hex
-from g6.knowledge._view import view_of
+from g6._context_engine._view import view_of
 
 INDEX_SCHEMA = "sqlite-fts5-v1"
 
@@ -104,7 +104,7 @@ def reconstruct(acc: Access, snapshot_id: str, *, clock: Callable[[], datetime] 
                            + ", ".join(sorted({d.why for d in denied})))
     if not acc.local:
         return unavailable("a snapshot is reconstructed for the person on this machine only")
-    from g6.knowledge import _engine as engine
+    from g6._context_engine import _engine as engine
 
     items = []
     for item in made.items:

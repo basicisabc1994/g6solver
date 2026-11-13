@@ -8,10 +8,10 @@ import json
 
 import pytest
 
-from g6.knowledge import _engine as engine
-from g6.knowledge import _snapshots
-from g6.knowledge._registry import Dependent, ProjectStore, Refused
-from g6.knowledge._scope import ScopeDenied
+from g6._context_engine import _engine as engine
+from g6._context_engine import _snapshots
+from g6._context_engine._registry import Dependent, ProjectStore, Refused
+from g6._context_engine._scope import ScopeDenied
 from tests.knowledge.corpus import SECRET, SECRET_SUBJECT, SUBJECTS
 from tests.knowledge.corpus.rig import NOW, make
 

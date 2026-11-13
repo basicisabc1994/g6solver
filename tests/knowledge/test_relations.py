@@ -11,11 +11,11 @@ from pydantic import ValidationError
 
 from g6.core import cloud_consent, host_models
 from g6.core.llm import FakeLLM
-from g6.knowledge import _engine as engine
-from g6.knowledge import _graph, _relations, _support
-from g6.knowledge._envelope import BackendReport
-from g6.knowledge._fuse import fuse
-from g6.knowledge._registry import Dependent, ProjectStore, Refused
+from g6._context_engine import _engine as engine
+from g6._context_engine import _graph, _relations, _support
+from g6._context_engine._envelope import BackendReport
+from g6._context_engine._fuse import fuse
+from g6._context_engine._registry import Dependent, ProjectStore, Refused
 from tests.host_stand_in import stand_in_hosts
 from tests.knowledge.corpus import INSTRUCTION, INSTRUCTION_SUBJECT, SECRET, SECRET_SUBJECT, SUBJECTS
 from tests.knowledge.corpus.rig import NOW, make

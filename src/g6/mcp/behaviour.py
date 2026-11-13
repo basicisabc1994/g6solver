@@ -129,7 +129,7 @@ def _review_candidates(task: str, review_job: str, template_instances: Any, *, i
 
 
 def _with_knowledge(candidates: list[bq.Candidate]) -> list[bq.Candidate]:
-    """Each candidate with the cited passages the Context Engine finds for it (``g6.knowledge._support``), under the
+    """Each candidate with the cited passages the Context Engine finds for it (``g6._context_engine._support``), under the
     calling client's access: a source not shared with the client's provider contributes nothing. A passage is
     evidence beside the candidate. It settles the candidate only under a normative grant for this repository, this
     source version and this scenario; otherwise the best passage is offered as the form's rule line, so that
@@ -138,9 +138,9 @@ def _with_knowledge(candidates: list[bq.Candidate]) -> list[bq.Candidate]:
     if not candidates:
         return candidates
     try:
-        from g6.knowledge import _support
-        from g6.knowledge._registry import Refused
-        from g6.knowledge._scope import ScopeDenied, access, host_binding
+        from g6._context_engine import _support
+        from g6._context_engine._registry import Refused
+        from g6._context_engine._scope import ScopeDenied, access, host_binding
         from g6.mcp.knowledge import _destination
 
         acc = access(host_binding(), "search", _destination())
@@ -164,9 +164,9 @@ def _designated(state: qs.State, answer: Any) -> None:
     """Record the normative grant a confirmed rule answer gives, when the rule designates a passage; anything else
     records nothing. The grant is kept on this machine; nothing is returned from it."""
     try:
-        from g6.knowledge import _support
-        from g6.knowledge._registry import Refused
-        from g6.knowledge._scope import ScopeDenied, access, host_binding
+        from g6._context_engine import _support
+        from g6._context_engine._registry import Refused
+        from g6._context_engine._scope import ScopeDenied, access, host_binding
 
         _support.designate(access(host_binding(), "fetch", "local"), state, answer)
     except (ScopeDenied, Refused, StopIteration, OSError, ValueError):

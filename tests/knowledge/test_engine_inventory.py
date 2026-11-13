@@ -7,10 +7,15 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import g6._context_engine
 import g6.knowledge
 import g6.mcp
 
 KNOWLEDGE = Path(g6.knowledge.__file__).parent
+#: The Context Engine's modules, moved out of the family (conformance D4): the inventories walk both folders.
+ENGINE = Path(g6._context_engine.__file__).parent
+#: Each shared module of the family and of the engine, by file name.
+MODULES = {p.name: p for folder in (KNOWLEDGE, ENGINE) for p in sorted(folder.glob("_*.py")) if p.name != "__init__.py"}
 #: Names that build what a model may read of a source: an item, a view of its text, the passage itself, or the view
 #: of a name taken from it (a path, a heading, a label).
 BUILDERS = frozenset({"PassageItem", "View", "view_of", "label_view"})
@@ -54,7 +59,7 @@ def test_every_function_that_opens_a_source_file_asks_with_the_time_or_is_called
 
     found, missing = [], []
     for module in SHARED_MODULES:
-        functions = _functions(ast.parse((KNOWLEDGE / module).read_text(encoding="utf-8")))
+        functions = _functions(ast.parse((MODULES[module]).read_text(encoding="utf-8")))
         for name, node in functions.items():
             called = {(c.func.id if isinstance(c.func, ast.Name) else c.func.attr) for c in ast.walk(node)
                       if isinstance(c, ast.Call) and isinstance(c.func, ast.Name | ast.Attribute)
@@ -74,7 +79,7 @@ def test_every_function_that_opens_a_source_file_asks_with_the_time_or_is_called
 #: Modules of the engine whose public functions are inventoried.
 ENGINE_MODULES = ("_engine.py",)
 #: Every shared module of the family, read from the folder: the inventories below walk all of them.
-SHARED_MODULES = tuple(sorted(p.name for p in KNOWLEDGE.glob("_*.py") if p.name != "__init__.py"))
+SHARED_MODULES = tuple(sorted(MODULES))
 
 
 def _functions(tree: ast.Module) -> dict[str, ast.FunctionDef]:
@@ -108,7 +113,7 @@ def _returns_passages(functions: dict[str, ast.FunctionDef], name: str) -> bool:
 def passage_functions() -> dict[str, tuple[ast.FunctionDef, dict[str, ast.FunctionDef]]]:
     out = {}
     for module in ENGINE_MODULES:
-        functions = _functions(ast.parse((KNOWLEDGE / module).read_text(encoding="utf-8")))
+        functions = _functions(ast.parse((MODULES[module]).read_text(encoding="utf-8")))
         for name, node in functions.items():
             if not name.startswith("_") and _returns_passages(functions, name):
                 out[f"{module}:{name}"] = (node, functions)
@@ -137,7 +142,7 @@ def test_every_engine_function_that_returns_passages_takes_an_access():
 
 
 def test_the_item_builder_holds_a_view_and_never_the_raw_text():
-    functions = _functions(ast.parse((KNOWLEDGE / "_engine.py").read_text(encoding="utf-8")))
+    functions = _functions(ast.parse((ENGINE / "_engine.py").read_text(encoding="utf-8")))
     built = ast.unparse(functions["_item"])
     assert "view_of(passage.text" in built and "label_view(member.relative)" in built
     assert "text=passage.text" not in built.replace("view_of(passage.text", "")
@@ -145,7 +150,7 @@ def test_the_item_builder_holds_a_view_and_never_the_raw_text():
 
 def test_every_mcp_tool_that_reaches_the_engine_builds_its_access_from_the_host_binding():
     tree = ast.parse((Path(g6.mcp.__file__).parent / "knowledge.py").read_text(encoding="utf-8"))
-    engine_functions = set(_functions(ast.parse((KNOWLEDGE / "_engine.py").read_text(encoding="utf-8"))))
+    engine_functions = set(_functions(ast.parse((ENGINE / "_engine.py").read_text(encoding="utf-8"))))
     tools = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
              and n.name.startswith("g6_")]
     assert len(tools) >= 8
@@ -179,7 +184,7 @@ def stored_consumers() -> dict[str, str]:
     """Every function of the knowledge family's shared modules and of the MCP module that writes passage ids
     somewhere a later call can read them back, outside the index's own membership: its name to its source."""
     found = {}
-    files = [*sorted(KNOWLEDGE.glob("_*.py")), Path(g6.mcp.__file__).parent / "knowledge.py"]
+    files = [*sorted(KNOWLEDGE.glob("_*.py")), *sorted(ENGINE.glob("_*.py")), Path(g6.mcp.__file__).parent / "knowledge.py"]
     for path in files:
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
@@ -204,7 +209,7 @@ def test_every_stored_consumer_registers_a_dependent():
             continue
         assert ".depend(" in source, f"{name} stores passage ids without registering a dependent"
     # and every stored consumer that is read back asks whether it was invalidated first
-    snapshots = ast.unparse(_functions(ast.parse((KNOWLEDGE / "_snapshots.py").read_text(encoding="utf-8")))["reconstruct"])
+    snapshots = ast.unparse(_functions(ast.parse((ENGINE / "_snapshots.py").read_text(encoding="utf-8")))["reconstruct"])
     assert snapshots.index(".invalidated(") < snapshots.index(".retained(")
 
 #: The registry's tables that hold a stored consumer's content, each with the registry method that writes it.
@@ -214,10 +219,10 @@ CONSUMER_TABLES = {"snapshots": "keep_snapshot", "normative_grants": "grant_norm
 def test_every_registry_table_is_membership_or_a_consumer_whose_writer_registers_a_dependent():
     import re
 
-    registry = (KNOWLEDGE / "_registry.py").read_text(encoding="utf-8")
+    registry = (ENGINE / "_registry.py").read_text(encoding="utf-8")
     tables = set(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", registry))
     assert tables == MEMBERSHIP_TABLES | set(CONSUMER_TABLES), "a new table: is it membership, or a stored consumer?"
-    files = [*sorted(KNOWLEDGE.glob("_*.py")), Path(g6.mcp.__file__).parent / "knowledge.py"]
+    files = [*sorted(KNOWLEDGE.glob("_*.py")), *sorted(ENGINE.glob("_*.py")), Path(g6.mcp.__file__).parent / "knowledge.py"]
     for table, writer in CONSUMER_TABLES.items():
         assert f"INSERT OR IGNORE INTO {table}" in ast.unparse(_functions_of_class(registry)[writer])
         callers = []
@@ -237,7 +242,7 @@ def _functions_of_class(source: str) -> dict[str, ast.FunctionDef]:
             if isinstance(n, ast.FunctionDef)}
 
 def test_a_saved_pack_is_checked_again_at_every_use():
-    functions = _functions(ast.parse((KNOWLEDGE / "_engine.py").read_text(encoding="utf-8")))
+    functions = _functions(ast.parse((ENGINE / "_engine.py").read_text(encoding="utf-8")))
     source = ast.unparse(functions["pack"])
     assert "Access" in ast.unparse(functions["pack"].args)
     assert ".invalidated(" in source and ".use(" in source and "_granted(" in source
@@ -251,7 +256,7 @@ def test_every_function_that_reads_a_store_and_builds_a_view_asks_with_the_time(
     (``at=``): expiry is checked against a clock at every use, not in one function."""
     missing, seen = [], []
     for module in SHARED_MODULES:
-        functions = _functions(ast.parse((KNOWLEDGE / module).read_text(encoding="utf-8")))
+        functions = _functions(ast.parse((MODULES[module]).read_text(encoding="utf-8")))
         for name, node in functions.items():
             reached = _reach(functions, name)
             if name.startswith("_") or not reached & BUILDERS or "ProjectStore" not in reached:
@@ -275,7 +280,7 @@ def test_no_module_reads_a_registrations_state_alone_or_checks_use_without_the_t
     ``is_kept`` do), and every ``use``, ``invalidated`` and ``usable`` call anywhere gives the time."""
     import re
 
-    modules = [KNOWLEDGE / m for m in SHARED_MODULES if m != "_registry.py"] + [Path(g6.mcp.__file__).parent / "knowledge.py"]
+    modules = [MODULES[m] for m in SHARED_MODULES if m != "_registry.py"] + [Path(g6.mcp.__file__).parent / "knowledge.py"]
     for path in modules:
         text = path.read_text(encoding="utf-8")
         assert not re.search(r"""\.state\s*[!=]=\s*["'](?:active|revoked|deleted)["']""", text), path.name
@@ -285,7 +290,7 @@ def test_no_module_reads_a_registrations_state_alone_or_checks_use_without_the_t
                     isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "use"
                     and isinstance(call.func.value, ast.Name) and call.func.value.id == "store"):
                 assert any(k.arg == "at" for k in call.keywords), f"{path.name}:{call.lineno}"
-    registry = _functions_of_class((KNOWLEDGE / "_registry.py").read_text(encoding="utf-8"))
+    registry = _functions_of_class((ENGINE / "_registry.py").read_text(encoding="utf-8"))
     body = ast.unparse(registry["invalidated"])
     assert "datetime.now(UTC)" in body and "may_use(registration, at)" in body, (
         "a call that gives no time is answered for this moment: the expiry check is never skipped")
@@ -297,7 +302,7 @@ def test_every_file_removal_goes_through_the_checked_removal():
     (``ProjectStore.remove_file``, which keeps a durable list of what it could not remove) or the removal of a
     preview listing before any registry exists (``discard_preview``, which says whether the file is gone)."""
     found = {}
-    for path in [*(KNOWLEDGE / m for m in SHARED_MODULES), Path(g6.mcp.__file__).parent / "knowledge.py"]:
+    for path in [*(MODULES[m] for m in SHARED_MODULES), Path(g6.mcp.__file__).parent / "knowledge.py"]:
         tree = ast.parse(path.read_text(encoding="utf-8"))
         parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
         for call in ast.walk(tree):

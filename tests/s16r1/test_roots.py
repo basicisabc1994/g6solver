@@ -159,15 +159,15 @@ SOURCE_SITES = {
     # The Context Engine (section 12). Planted cases: tests/core/test_mcp_knowledge.py (an ungranted source, an
     # unknown client, a revoked grant, mixed sources) and tests/knowledge/test_engine_scope.py. _scope.access is here
     # for its `sources` argument, which narrows source registrations and builds no consent source.
-    'g6.knowledge._engine._source',
-    'g6.knowledge._graph.traverse',
+    'g6._context_engine._engine._source',
+    'g6._context_engine._graph.traverse',
     # G6's own model calls over indexed passages run under the sources of what they send. Planted cases:
     # tests/knowledge/test_relations.py (an extraction without a grant sends nothing) and tests/knowledge/test_planner.py
     # (a reformulation by a model the sources are not shared with is refused).
-    'g6.knowledge._planner.run',
-    'g6.knowledge._relations.extract',
-    'g6.knowledge._scope.access',
-    'g6.knowledge._support.support_for',
+    'g6._context_engine._planner.run',
+    'g6._context_engine._relations.extract',
+    'g6._context_engine._scope.access',
+    'g6._context_engine._support.support_for',
     'g6.mcp.knowledge._declined',
     'g6.mcp.knowledge._ok',
     'g6.mcp.knowledge._refused',
