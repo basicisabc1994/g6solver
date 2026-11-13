@@ -963,7 +963,8 @@ class Send:
     ``owner``: the innermost metered call it was made in, and ``thread`` where; ``generation``: the tick; ``sender``: the
     caller that sent it; ``places``: what it was charged on each meter as it was let out, set once, so no call charges it
     again; ``charged``: each meter it took those places on, with the tick it took them under, which is where what the
-    provider says of it goes."""
+    provider says of it goes; ``note``: where it was let out as it was noted, the note's own record of the send's boundary
+    (``model_calls.Note``), by which a failure is read back to it."""
 
     identity: str | None
     watched: bool
@@ -974,6 +975,7 @@ class Send:
     places: int = 0
     charged: tuple[tuple[Any, int], ...] = ()
     request: Request | None = None
+    note: Any = None
 
 
 @contextmanager

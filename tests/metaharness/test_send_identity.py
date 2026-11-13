@@ -17,8 +17,9 @@ from g6.self_maintenance import usage
 from g6.self_maintenance.usage import MODEL_REFUSED, request_digest
 
 
-@pytest.mark.xfail(strict=True, reason="review refu2 finding 1, offered: a refused error re-raised by a sender G6 does not own keeps no record of its send until core/model_calls hands the request over, a bound file changed only in an issuance window")
 def test_rethrowing_the_original_error_keeps_the_identity_of_its_send():
+    """Review refu2 finding 1, closed in the 0.3.0 issuance window: ``core/model_calls`` records the boundary of each send
+    as it is noted, and the error is read back to its own send by that record."""
     sent, transport_errors, observed = [], [], []
 
     # This transport names its input as one pair; the sender's frame names
@@ -32,7 +33,9 @@ def test_rethrowing_the_original_error_keeps_the_identity_of_its_send():
             raise error
         return "answer"
 
-    class Batch(FakeLLM):
+    # a wrapper by the published contract (``CallerWrapper``) over a local fake, as this file's other batch is: a subclass
+    # of ``FakeLLM`` that replaces its completion is of no kind the sharing check knows, and is refused before it sends
+    class Batch(CallerWrapper):
         def complete(self, system, user, *, max_tokens=1024):
             errors = []
             for user in ("refused request", "successful request"):
@@ -46,7 +49,7 @@ def test_rethrowing_the_original_error_keeps_the_identity_of_its_send():
             return "answer"
 
     meter = _Requests()
-    counted = _Counted(Batch(), meter)
+    counted = _Counted(Batch(FakeLLM()), meter)
     for _ in range(2):
         try:
             counted.complete("system", "outer request")

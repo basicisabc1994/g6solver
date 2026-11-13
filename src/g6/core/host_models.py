@@ -27,7 +27,9 @@ Each call:
    when G6's stop is engaged (``G6_E_STOPPED``), or when what it prints passes
    :data:`~g6.core.llm.MAX_REPLY_BYTES` (``G6_E_LLM_REPLY_TOO_LARGE``: refused, not cut);
 7. reads a non-zero exit or an error result as an ``LLMError`` (``G6_E_LLM_HOST_FAILED``) with the end of what the
-   program printed, the prompt's lines and the key file's values taken out of it.
+   program printed, the prompt's lines and the key file's values taken out of it. A Claude Code error result's own
+   status fields (``api_error_status``, ``api_error``) are said whole before that end, so a long message cannot cut
+   a limit of the account out of what the failure says.
 
 Neither program can be given ``max_tokens``: it is accepted and not passed, so the program's own limits apply.
 Neither caller takes images (``accepts_images`` is false).
@@ -117,6 +119,8 @@ CODEX = OutsideProgram(
                           "account", install=INSTALL_CODEX, licence="Apache-2.0", command="codex", env="G6_CODEX",
     paid=True, online=True)
 _SAID = 300
+#: The name an error result gives its status (``api_error``): said whole only when it is a plain name.
+_STATUS_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
 #: The characters a path G6 itself puts on a command line may hold: a Windows ``.cmd`` shim parses its arguments again.
 _PLAIN_PATH = re.compile(r"[A-Za-z0-9 _\-.:\\/~()]+")
 
@@ -285,6 +289,20 @@ def _result(printed: str) -> dict[str, Any] | None:
     return None
 
 
+def _status_fields(result: dict[str, Any]) -> str:
+    """An error result's own status fields as JSON, to be said whole before the end of what the program printed:
+    ``api_error_status`` when it is a whole number and ``api_error`` when it is a plain name. They are read from the
+    parsed result, where no text of a reply can stand in for them, and a long message cannot push them out of the 300
+    characters kept, so a reader of the failure still finds a limit of the account (429, ``usage_limit_reached``)."""
+    fields: dict[str, Any] = {}
+    status, name = result.get("api_error_status"), result.get("api_error")
+    if isinstance(status, int) and not isinstance(status, bool):
+        fields["api_error_status"] = status
+    if isinstance(name, str) and _STATUS_NAME.fullmatch(name):
+        fields["api_error"] = name
+    return json.dumps(fields) + " " if fields else ""
+
+
 class ClaudeCodeCaller(_HostCaller):
     """Claude Code, signed in as the person, as an ``LLMCaller``; see the module docstring."""
 
@@ -312,8 +330,9 @@ class ClaudeCodeCaller(_HostCaller):
             return result["result"]
         why = ("printed no result" if result is None else "gave an error result" if result.get("is_error")
                else "gave a result with no text")
+        status = _status_fields(result) if result is not None and result.get("is_error") else ""
         said = _tail(errors + "\n" + printed, hide)
-        raise LLMError(f"{HOST_FAILED}: claude exited {code} and {why}: {said}")
+        raise LLMError(f"{HOST_FAILED}: claude exited {code} and {why}: {status}{said}")
 
 
 def _prompt(system: str, user: str) -> str:

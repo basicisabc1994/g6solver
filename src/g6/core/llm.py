@@ -42,10 +42,12 @@ timeout. Loopback servers (Ollama) are called as before: these calls do not go t
 A 429 or 503 that carries ``Retry-After`` (seconds or a date) is waited on and sent again, at most
 :data:`MAX_RATE_LIMIT_WAITS` times and :data:`RETRY_AFTER_CAP_S` seconds in all for one call; a longer wait is refused
 with ``G6_E_LLM_RATE_LIMITED``, and a refusal with no hint, or any other status, is not retried. Each wait taken is
-recorded where :func:`waits` is open, for a component's evidence. The Anthropic SDK keeps its own retry policy, whose
-waits are not recorded here. A model's reply that calls its own answer verified, proved, certified or safe has checked
-nothing: :func:`cap_model_label` is the rule for reading a label out of one. It gives ``qualified-draft`` at best,
-whatever ceiling is passed, and can only lower a label.
+recorded where :func:`waits` is open, for a component's evidence, before it is taken. A record that has a ``woke``
+method is told of the wait again once it is over, right before the request is sent again, so whatever admits a resend
+can look again by the clock as it is then; what ``woke`` raises is raised to the caller and nothing is sent again. The
+Anthropic SDK keeps its own retry policy, whose waits are not recorded here. A model's reply that calls its own answer
+verified, proved, certified or safe has checked nothing: :func:`cap_model_label` is the rule for reading a label out of
+one. It gives ``qualified-draft`` at best, whatever ceiling is passed, and can only lower a label.
 
 A caller that can send images also has ``complete_with_images(system, user, images, *, max_tokens)``, taking a list
 of :class:`Image` (PNG, JPEG, GIF or WebP, checked against the bytes themselves); ``supports_images(caller)`` says
@@ -202,7 +204,9 @@ def supports_images(caller: object) -> bool:
 def _start_model_call() -> None:
     if os.environ.get("G6_DISABLE_LLM"):
         raise LLMError("G6_E_LLM_DISABLED: model calls are disabled by G6_DISABLE_LLM")
-    note_model_call()   # counted before the request: a failed request may still have reached the model
+    # counted before the request: a failed request may still have reached the model. The send's boundary is the caller
+    # of this function, which hands the request to its backend.
+    note_model_call(boundary=1)
 
 
 def authorized_completion_tokens(max_tokens: int) -> int:
@@ -426,6 +430,10 @@ def _post_json(url: str, body: dict, headers: dict[str, str], timeout: float) ->
                 found.append(dict(record))
             _sleep(hint)
             waited += hint
+            for found in _WAITS.get():   # the wait is over, however long it really took: a record that asks is told
+                woke = getattr(found, "woke", None)
+                if callable(woke):
+                    woke(dict(record))   # what it raises keeps the resend in: nothing is sent again
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise LLMError(f"request to {url} failed: {exc}") from exc
     raise LLMError(f"{RATE_LIMITED}: no answer from {url}")  # not reached: the last attempt raises above
