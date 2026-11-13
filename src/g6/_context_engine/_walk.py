@@ -71,7 +71,7 @@ class Walked(BaseModel):
     enumerated: int
     read: int
     read_bytes: int
-    ignored_by: Literal["git", "builtin"] = "builtin"
+    ignored_by: Literal["builtin", "git"] = "builtin"
     note: str = ""
 
 

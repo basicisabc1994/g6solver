@@ -36,6 +36,7 @@ def test_ungranted_k_patch_is_not_sent(tmp_path, monkeypatch):
     monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
     sent = []
     monkeypatch.setattr(host_models.CodexCaller, 'complete', lambda self, system, user, **kw: sent.append(user) or 'VERDICT: none')
+    monkeypatch.setattr(loop, '_shown', lambda *a: loop.Shown('PLANTED_PATCH', 'PLANTED_PATCH', False))
     monkeypatch.setattr(loop, '_pack', lambda *a: 'PLANTED_PATCH')
     monkeypatch.setattr(loop, '_masked_pack', lambda *a: ('PLANTED_PATCH', False))
     change = SimpleNamespace(repo=tmp_path, sources=('code.py',))
@@ -63,6 +64,7 @@ def test_k_without_repository_grant_ends_untested(tmp_path, monkeypatch):
     dispatched = []
     monkeypatch.setattr(host_models.CodexCaller, 'complete',
                         lambda self, system, user, **kw: dispatched.append(user) or 'none')
+    monkeypatch.setattr(loop, '_shown', lambda *a: loop.Shown('PLANTED_PATCH', 'PLANTED_PATCH', False))
     monkeypatch.setattr(loop, '_pack', lambda *a: 'PLANTED_PATCH')
     monkeypatch.setattr(loop, '_masked_pack', lambda *a: ('PLANTED_PATCH', False))
     monkeypatch.setattr(loop.repo_tests, 'diff_text', lambda *a: 'PLANTED_PATCH')
@@ -93,6 +95,7 @@ def test_repository_grant_cannot_launder_ungranted_task_input(tmp_path, monkeypa
     asyncio.run(request_grant(ctx, cloud.repository_source(tmp_path), 'openai:codex'))
     sent = []
     monkeypatch.setattr(host_models.CodexCaller, 'complete', lambda self, system, user, **kw: sent.append(user) or 'none')
+    monkeypatch.setattr(loop, '_shown', lambda *a: loop.Shown('PLANTED_OTHER_SOURCE', 'PLANTED_OTHER_SOURCE', False))
     monkeypatch.setattr(loop, '_pack', lambda *a: 'PLANTED_OTHER_SOURCE')
     monkeypatch.setattr(loop, '_masked_pack', lambda *a: ('PLANTED_OTHER_SOURCE', False))
     found = loop.run_critic(SimpleNamespace(repo=tmp_path, sources=('code.py',)), 'PLANTED_OTHER_SOURCE',
@@ -113,6 +116,7 @@ def test_critic_retry_with_opaque_child_diagnostics_is_withheld(tmp_path, monkey
         asyncio.run(request_grant(ctx, source, 'openai:codex'))
     sent = []
     monkeypatch.setattr(host_models.CodexCaller, 'complete', lambda self, system, user, **kw: sent.append(user) or 'none')
+    monkeypatch.setattr(loop, '_shown', lambda *a: loop.Shown('repository patch', 'repository patch', False))
     monkeypatch.setattr(loop, '_pack', lambda *a: 'repository patch')
     monkeypatch.setattr(loop, '_masked_pack', lambda *a: ('repository patch', False))
     found = loop.run_critic(SimpleNamespace(repo=tmp_path, sources=('code.py',)), 'task',
