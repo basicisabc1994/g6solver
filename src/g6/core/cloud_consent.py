@@ -34,6 +34,9 @@ WITHHELD = ('Results were withheld from a source not shared with this provider. 
 _ID = re.compile(r'[A-Za-z0-9_.:-]{1,200}\Z')
 _HASH = re.compile(r'[0-9a-f]{64}\Z')
 _LOCK = threading.RLock()
+#: The short lock on the ledger's bytes: each append holds it (inside ``_LOCK``) while it writes, and the read ahead of
+#: a send (``refuse_unshared``) holds it alone, so that read never waits for a send that is out.
+_WRITE = threading.RLock()
 _SOURCES: contextvars.ContextVar[tuple[Source, ...]] = contextvars.ContextVar('g6_request_sources', default=())
 _CAPTURE: contextvars.ContextVar[Capture | None] = contextvars.ContextVar('g6_source_capture', default=None)
 _POLICY: contextvars.ContextVar[bool] = contextvars.ContextVar('g6_consent_io', default=False)
@@ -397,6 +400,61 @@ def _validate(kind, ident, body, seen):
     return []
 
 
+def _folder() -> Path:
+    folder = contained(g6_home(), 'cloud_consent', refuse_links=True)
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+@contextmanager
+def _mutex(folder: Path, name: str) -> Iterator[None]:
+    """The OS lock on ``folder/name``, across processes; the caller holds the matching process lock."""
+    mutex = contained(folder, name, refuse_links=True)
+    descriptor = os.open(mutex, os.O_CREAT | os.O_RDWR, 0o600)
+    locked = False
+    try:
+        opened = os.fstat(descriptor)
+        checked = plain_file(mutex)
+        if (opened.st_dev, opened.st_ino) != (checked.st_dev, checked.st_ino):
+            raise OSError('consent mutex changed')
+        if os.name == 'nt':
+            import msvcrt
+            # LK_LOCK retries for up to ten seconds, then refuses rather than bypassing the lock.
+            msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+        locked = True
+        yield
+    finally:
+        if locked:
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            if os.name == 'nt':
+                import msvcrt
+                msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def _open(folder: Path) -> ChainLedger:
+    path = contained(folder, 'events.jsonl', refuse_links=True)
+    head = contained(folder, 'head', refuse_links=True)
+    if head.exists():
+        plain_file(head)
+        expected = head.read_text(encoding='ascii')
+        if expected and not _HASH.fullmatch(expected):
+            raise OSError('consent checkpoint is malformed')
+    elif path.exists():
+        raise OSError('consent checkpoint is missing')
+    else:
+        expected = ''
+    if path.exists():
+        plain_file(path)
+    return ChainLedger(path, expect_head=expected, validate=_validate)
+
+
 @contextmanager
 def _locked() -> Iterator[ChainLedger]:
     held = getattr(_HELD, 'ledger', None)
@@ -404,75 +462,56 @@ def _locked() -> Iterator[ChainLedger]:
         yield held
         return
     token = _POLICY.set(True)
-    descriptor = None
-    locked = False
     yielded = False
     try:
         with _LOCK:
-            folder = contained(g6_home(), 'cloud_consent', refuse_links=True)
-            folder.mkdir(parents=True, exist_ok=True)
-            mutex = contained(folder, 'mutex', refuse_links=True)
-            descriptor = os.open(mutex, os.O_CREAT | os.O_RDWR, 0o600)
-            opened = os.fstat(descriptor)
-            checked = plain_file(mutex)
-            if (opened.st_dev, opened.st_ino) != (checked.st_dev, checked.st_ino):
-                raise OSError('consent mutex changed')
-            if os.name == 'nt':
-                import msvcrt
-                # LK_LOCK retries for up to ten seconds, then refuses rather than bypassing the lock.
-                msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(descriptor, fcntl.LOCK_EX)
-            locked = True
-            path = contained(folder, 'events.jsonl', refuse_links=True)
-            head = contained(folder, 'head', refuse_links=True)
-            if head.exists():
-                plain_file(head)
-                expected = head.read_text(encoding='ascii')
-                if expected and not _HASH.fullmatch(expected):
-                    raise OSError('consent checkpoint is malformed')
-            elif path.exists():
-                raise OSError('consent checkpoint is missing')
-            else:
-                expected = ''
-            if path.exists():
-                plain_file(path)
-            ledger = ChainLedger(path, expect_head=expected, validate=_validate)
-            yielded = True
-            _HELD.ledger = ledger
-            try:
-                yield ledger
-            finally:
-                _HELD.ledger = None
+            folder = _folder()
+            with _mutex(folder, 'mutex'):
+                ledger = _open(folder)
+                yielded = True
+                _HELD.ledger = ledger
+                try:
+                    yield ledger
+                finally:
+                    _HELD.ledger = None
     except (OSError, ValueError) as exc:
         if yielded:
             raise
         raise _refusal(LLMError(f'{STATE_UNAVAILABLE}: sharing state could not be read or written; nothing was sent')) from exc
     finally:
-        if descriptor is not None:
-            if locked:
-                os.lseek(descriptor, 0, os.SEEK_SET)
-                if os.name == 'nt':
-                    import msvcrt
-                    msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(descriptor, fcntl.LOCK_UN)
-            os.close(descriptor)
+        _POLICY.reset(token)
+
+
+def _written() -> ChainLedger:
+    """The sharing state as last written, read under the write lock alone (``_WRITE`` and its file mutex, which every
+    append holds while it writes): unlike ``_locked`` it never waits for an admitted send that is out. It decides
+    nothing by itself; a send is still let go only under ``_locked``."""
+    held = getattr(_HELD, 'ledger', None)
+    if held is not None:
+        return held
+    token = _POLICY.set(True)
+    try:
+        with _WRITE:
+            folder = _folder()
+            with _mutex(folder, 'write.mutex'):
+                return _open(folder)
+    except (OSError, ValueError) as exc:
+        raise _refusal(LLMError(f'{STATE_UNAVAILABLE}: sharing state could not be read or written; nothing was sent')) from exc
+    finally:
         _POLICY.reset(token)
 
 
 def _append(ledger: ChainLedger, kind: str, body: dict) -> None:
     try:
-        ledger.append(kind, uuid.uuid4().hex, body)
-        head = ledger.path.with_name('head')
-        fresh = contained(head.parent, 'head.new', refuse_links=True)
-        with fresh.open('w', encoding='ascii', newline='\n') as stream:
-            stream.write(ledger.head())
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(fresh, head)
+        with _WRITE, _mutex(ledger.path.parent, 'write.mutex'):
+            ledger.append(kind, uuid.uuid4().hex, body)
+            head = ledger.path.with_name('head')
+            fresh = contained(head.parent, 'head.new', refuse_links=True)
+            with fresh.open('w', encoding='ascii', newline='\n') as stream:
+                stream.write(ledger.head())
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(fresh, head)
     except (OSError, ValueError) as exc:
         raise _refusal(LLMError(f'{STATE_UNAVAILABLE}: sharing state could not be written; nothing was sent')) from exc
 
@@ -554,13 +593,14 @@ def refuse_unshared(provider: str, sources: Sequence[Source], *, local: bool = F
                     supplied: Sequence[str] = ()) -> None:
     """Admission's decision taken ahead of a send's preparation, so a send its sources are not shared for is refused as
     admission would refuse it before anything else about the send is looked at (its program, its command). It holds
-    nothing past its return and discloses nothing; passing it admits nothing: the send still takes ``admission``."""
+    nothing past its return and discloses nothing; passing it admits nothing: the send still takes ``admission``. It
+    reads the grants as last written and does not wait for a send that is out; a grant revoked after it reads is
+    refused by ``admission``."""
     refs = boundary_sources(sources, carried=prompt_sources()) or (UNKNOWN,)
     record_sources(refs)
     if local:
         return
-    with _locked() as ledger:
-        _refuse_unshared(_decisions(ledger), provider, refs, supplied)
+    _refuse_unshared(_decisions(_written()), provider, refs, supplied)
 
 
 @contextmanager

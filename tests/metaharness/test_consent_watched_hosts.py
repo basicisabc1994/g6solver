@@ -6,6 +6,7 @@ grant must start no program and leave the consent refusal on the loop's record; 
 disclosure ledger holds one attempted disclosure. The programs here are fakes: nothing real is started.
 """
 import json
+import threading
 from contextlib import contextmanager
 from uuid import uuid4
 
@@ -163,6 +164,57 @@ def test_a_session_with_no_grant_is_refused_for_consent_before_its_program_is_lo
     with pytest.raises(loop._Refused, match=cloud.REQUIRED):
         loop._Counted(Scout(tmp_path), meter).complete("system", "user")
     assert lookups == [] and meter.refusal["code"] == cloud.REQUIRED and cloud.disclosures() == []
+
+
+def test_a_send_with_no_grant_is_refused_while_another_send_is_out(programs, accepted_cloud_dialog, monkeypatch):
+    """The check before the program is looked for reads the grants; it does not wait for a send that is out (which holds
+    the sharing lock until its program answers)."""
+    accepted_cloud_dialog("model_inputs", "anthropic:claude_code", text="synthetic host request")
+    out, release, answers = threading.Event(), threading.Event(), {}
+    answer = host_models._run
+
+    def held(*args):
+        out.set()
+        assert release.wait(10)
+        return answer(*args)
+    monkeypatch.setattr(host_models, "_run", held)
+
+    def call(name, host, user):
+        try:
+            answers[name] = host.complete("system", user)
+        except Exception as exc:                     # noqa: BLE001 - the refusal is the result looked at
+            answers[name] = exc
+    first = threading.Thread(target=call, args=("first", usage.WatchedClaude(), "request"), daemon=True)
+    first.start()
+    try:
+        assert out.wait(10), "the granted send never started its program"
+        second = threading.Thread(target=call, args=("second", usage.WatchedCodex(), "PLANTED_UNGRANTED"), daemon=True)
+        second.start()
+        second.join(5)
+        assert not second.is_alive(), "the send with no grant waited for the send that was out"
+    finally:
+        release.set()
+        first.join(10)
+    assert isinstance(answers["second"], host_models.LLMError) and cloud.REQUIRED in str(answers["second"])
+    assert answers["first"] == "answer" and programs == ["request"]
+    assert [row["provider"] for row in cloud.disclosures()] == ["anthropic:claude_code"]
+
+
+@pytest.mark.parametrize("base,provider", HOSTS)
+def test_a_grant_revoked_after_the_early_check_is_refused_at_admission(programs, accepted_cloud_dialog, monkeypatch,
+                                                                         base, provider):
+    """Passing the early check admits nothing: a grant revoked while the program is looked for is refused at admission,
+    and nothing starts or is disclosed."""
+    accepted_cloud_dialog("model_inputs", provider, text="synthetic host request")
+    kind = host_models.ClaudeCodeCaller if base is usage.WatchedClaude else host_models.CodexCaller
+
+    def locate(self):
+        cloud.revoke("model_inputs", provider)
+        return "fake-host"
+    monkeypatch.setattr(kind, "locate", locate)
+    with pytest.raises(host_models.LLMError, match=cloud.REQUIRED):
+        base().complete("system", "request")
+    assert programs == [] and cloud.disclosures() == [] and not usage._SENT
 
 
 @pytest.mark.parametrize("base,provider", HOSTS)
