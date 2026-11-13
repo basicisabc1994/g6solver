@@ -657,12 +657,22 @@ def _merged(old: Check, new: Check) -> Check | None:
                  old.certificate, old.positive_seq)
 
 
+def _name(key: object) -> object:
+    """A caller's key as the text a reader of the entry gets. A ``str`` subclass is read as exactly its text
+    (``str.__str__``): it equals that text and may hash elsewhere, so only the text itself is compared with G6's
+    names and written. A key that is no ``str`` is left as it is: the ledger takes text keys only, so it is never a
+    G6 field's text."""
+    return str.__str__(key) if isinstance(key, str) and type(key) is not str else key
+
+
 def _provenance(own: Mapping[str, object], extra: Mapping[str, object] | None) -> dict:
     """The one writer of a provenance entry's body: what the caller adds (``extra``), then what G6 states (``own``).
     A name G6 writes in any provenance entry (``PROVENANCE_OWN``) is never taken from the caller, in this entry or
     one that leaves it out, and G6's fields are written last, so no caller value replaces one (review-efu3,
-    finding 4)."""
-    return {**{key: value for key, value in dict(extra or {}).items() if key not in PROVENANCE_OWN}, **own}
+    finding 4). A caller's name is compared, and written, as its exact text (``_name``), whatever class of ``str``
+    states it (issuance review, finding 1)."""
+    stated = {_name(key): value for key, value in dict(extra or {}).items()}
+    return {**{key: value for key, value in stated.items() if key not in PROVENANCE_OWN}, **own}
 
 
 def issue_records(facts: MissionFacts, artifact: Artifact, records: Iterable[SourceRecord], *,

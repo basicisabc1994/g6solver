@@ -9,8 +9,19 @@ door counts what the copy would reach under an object it had already reached, an
 (``door.ANSWER_VISITS``) nothing is copied. The checked door then replies ``blocked-escalated`` with
 ``G6_E_RESOURCE_LIMIT`` and no result, so nothing expands the answer after it either. An answer that reaches nothing
 twice, however large, and one that shares a little, are copied exactly as before.
+
+The count trusts nothing the answer says of itself (issuance review of that change, findings 2 and 3). It counted only
+containers met a second time by identity, and took each one's word for its length, so three answers were outside it:
+many read-only views of one dict (each view a new object), a mapping that makes its values when they are read (every
+child new, so the count itself never ended), and a list that reports another length than it yields. Now every value is
+counted as the count reads it, and the read stops at the first value past a budget. A mapping that is not a ``dict``
+holds no entries of its own, so everything under one counts as reached again; and the whole of what a copy would
+reach has its own, larger budget (``door.ANSWER_TOTAL``), which the largest ordinary answers stay far inside.
 """
 from __future__ import annotations
+
+from collections.abc import Mapping
+from types import MappingProxyType
 
 import pytest
 from returns.result import Success
@@ -154,3 +165,119 @@ def test_an_answer_that_shares_a_little_is_copied_as_before():
     assert held["unit"] == {"unit": "kg", "checked": "qualified-draft"}
     assert all(row == {"n": index, "unit": held["unit"]} for index, row in enumerate(held["rows"]))
     assert unit["checked"] == "verified"
+
+
+# --- the count trusts nothing the answer says of itself (issuance review, findings 2 and 3) ---------------------------
+
+
+class Made(Mapping):
+    """A mapping that makes four new children every time its values are read; it counts every child it makes."""
+
+    made = 0
+
+    def __iter__(self):
+        return iter("abcd")
+
+    def __len__(self) -> int:
+        return 0   # and says it holds none
+
+    def __getitem__(self, key):
+        Made.made += 1
+        if Made.made > 4 * LIMIT:
+            raise Stop
+        return Made()
+
+
+class Unending(list):
+    """A list whose iteration never ends, each item a new value; it counts what it hands over."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.read = 0
+
+    def __iter__(self):
+        while True:
+            self.read += 1
+            if self.read > 4 * door.ANSWER_TOTAL:
+                raise Stop
+            yield self.read
+
+
+def _refused(reply, budget: int) -> bool:
+    return (reply["ok"] is False and reply["warning_card"]["code"] == RESOURCE_LIMIT
+            and f"more than {budget} values" in reply["error"]
+            and reply["result"] == {"completion_state": "blocked-escalated", "error": reply["error"]})
+
+
+def test_the_whole_of_an_answer_has_a_budget_ten_times_the_repeat_budget():
+    assert door.ANSWER_TOTAL == 1_000_000 == 10 * door.ANSWER_VISITS
+
+
+def test_views_of_one_dict_are_counted_as_what_the_copy_reaches_through_them(copies):
+    """Each ``MappingProxyType`` is a new object over the same storage: the copy reaches every entry once for each."""
+    shared = {f"k{index}": index for index in range(1000)}
+    within = _reply({"rows": [MappingProxyType(shared) for _ in range(LIMIT // 1000)]})
+    assert within["ok"] is True and within["result"]["rows"] == [shared] * (LIMIT // 1000)
+    copies[0] = 0
+    past = _reply({"rows": [MappingProxyType(shared) for _ in range(LIMIT // 1000 + 1)]})
+    assert _refused(past, LIMIT) and copies[0] == 1, "the copy is entered once, and refuses before it copies anything"
+    with pytest.raises(door.AnswerNotRead, match=RESOURCE_LIMIT):
+        door.corrected_result({"rows": [MappingProxyType(shared)] * 2, "more": [MappingProxyType(shared)] * 100},
+                              "qualified-draft")
+
+
+def test_a_mapping_that_makes_its_values_when_read_stops_the_count_at_the_budget(copies):
+    Made.made = 0
+    with pytest.raises(door.AnswerNotRead, match=RESOURCE_LIMIT):
+        door.held_copy({"completion_state": "qualified-draft", "tree": Made()}, "qualified-draft")
+    assert Made.made == LIMIT + 1, "the count reads one value past the budget, and no more"
+    Made.made, copies[0] = 0, 0
+    assert _refused(_reply({"tree": Made()}), LIMIT) and Made.made == LIMIT + 1 and copies[0] == 1
+
+
+def test_a_small_mapping_that_is_no_dict_is_copied_as_before():
+    class Small(Mapping):
+        def __iter__(self):
+            return iter("ab")
+
+        def __len__(self) -> int:
+            return 2
+
+        def __getitem__(self, key):
+            return {"word": "verified", "key": key}
+
+    held = door.held_copy({"m": Small(), "view": MappingProxyType({"state": "verified"})}, "qualified-draft")
+    assert held == {"m": {"a": {"word": "qualified-draft", "key": "a"}, "b": {"word": "qualified-draft", "key": "b"}},
+                    "view": {"state": "qualified-draft"}}
+
+
+def test_a_container_is_counted_by_what_it_yields_never_by_the_length_it_reports():
+    class Short(list):
+        def __len__(self) -> int:
+            return 0
+
+    inner = Short([0] * (LIMIT + 1))
+    with pytest.raises(door.AnswerNotRead):
+        door.held_copy([inner, inner], "qualified-draft")
+    inner = Short([0] * LIMIT)
+    assert door.held_copy([inner, inner], "qualified-draft") == [[0] * LIMIT] * 2
+
+
+def test_the_whole_of_what_a_copy_reaches_is_counted_and_the_count_stops_there():
+    """Exactly the budget is read and copied; one value more is not, though nothing in it is reached twice."""
+    flat = ["verified"] * door.ANSWER_TOTAL
+    assert door.held_copy(flat, "qualified-draft") == ["qualified-draft"] * door.ANSWER_TOTAL
+    flat.append("verified")
+    with pytest.raises(door.AnswerNotRead, match=f"more than {door.ANSWER_TOTAL} values"):
+        door.held_copy(flat, "qualified-draft")
+    assert _refused(_reply({"rows": flat}), door.ANSWER_TOTAL)
+    unending = Unending()
+    with pytest.raises(door.AnswerNotRead, match=RESOURCE_LIMIT):
+        door.held_copy({"rows": unending}, "qualified-draft")
+    assert unending.read == door.ANSWER_TOTAL, "the count stops reading at the first value past the budget"
+
+
+def test_the_two_refusals_say_which_budget_the_answer_is_past(copies):
+    assert _refused(_reply({"answer": doubled()}), LIMIT)
+    assert _refused(_reply({"rows": [0] * (door.ANSWER_TOTAL + 1)}), door.ANSWER_TOTAL)
+    assert copies[0] == 2, "each copy is entered once, and refuses before it copies anything"

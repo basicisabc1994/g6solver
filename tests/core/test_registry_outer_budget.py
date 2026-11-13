@@ -202,3 +202,81 @@ def test_parameters_that_are_no_mapping_are_refused_as_before(component):
             registry.invoke(name, "run", [1])
     assert module.SEEN == []
     assert registry.invoke(name, "run", None).unwrap() == {"keys": ["op"]}
+
+
+# --- every other way to a component reads a caller's mapping through the same reader (issuance review, finding 5) ----
+# ``GatedCalls.call`` (how an agent framework's adapter calls a tool or a component's op) expanded its arguments with
+# ``dict(...)`` before anything counted them, and a composition's stage did the same with its parameters and its
+# input links. Each now reads the mapping through ``outer_copy`` first.
+
+
+class NeverAsked:
+    """A gate that must not be reached: the arguments are read, and refused, before any decision is asked for."""
+
+    def decide(self, call, changes=False):   # pragma: no cover - reaching it is the failure
+        raise AssertionError("the gate was asked")
+
+
+class Allows:
+    def decide(self, call, changes=False):
+        from types import SimpleNamespace
+
+        self.call = call
+        return SimpleNamespace(runs=True, verdict="run", code="", reason="")
+
+
+@pytest.mark.parametrize("mapping", [Endless, EndlessMapping], ids=["protocol", "Mapping"])
+@pytest.mark.parametrize("name", ["plain_outer.run", "a_tool"])
+def test_an_agents_tool_call_stops_reading_its_arguments_at_the_budget_before_the_gate_is_asked(mapping, name):
+    from g6.agents._runtime.tools import GatedCalls
+
+    ran: list = []
+    arguments = mapping()
+    try:
+        reply = GatedCalls(NeverAsked(), {"a_tool": lambda **given: ran.append(given)}).call(name, arguments)
+    except Stop:
+        reply = None
+    assert arguments.keys_read == MOST + 1 and arguments.looked_up == MOST, (
+        f"the call read {arguments.keys_read} keys of its arguments: the visit budget is {snapshot.MAX_ITEMS}")
+    assert reply["verdict"] == "refused" and reply["code"] == "G6_E_INPUT_VALIDATION" and ran == []
+    assert str(snapshot.MAX_ITEMS) in reply["reason"]
+
+
+def test_an_agents_tool_call_refuses_a_dict_past_the_budget_and_reads_one_inside_it_as_before():
+    from g6.agents._runtime import codes
+    from g6.agents._runtime.tools import GatedCalls
+
+    gate, given = Allows(), {"text": "hello", "times": 2}
+    calls = GatedCalls(gate, {"a_tool": lambda **kwargs: kwargs})
+    assert calls.call("a_tool", given) == {"verdict": "run", "code": codes.TOOL_ALLOWED, "result": given}
+    assert gate.call.arguments == given and gate.call.arguments is not given
+    assert calls.call("a_tool", Counted(3))["result"] == {"k0": "K0", "k1": "K1", "k2": "K2"}
+    assert calls.call("a_tool", None)["result"] == {} and calls.call("a_tool")["result"] == {}
+    past = GatedCalls(NeverAsked(), {"a_tool": lambda **kwargs: kwargs}).call(
+        "a_tool", dict.fromkeys((f"k{index}" for index in range(MOST + 1)), 0))
+    assert past["verdict"] == "refused" and past["code"] == "G6_E_INPUT_VALIDATION"
+
+
+@pytest.mark.parametrize("field", ["params", "inputs"])
+def test_a_compositions_stage_stops_reading_its_parameters_and_its_links_at_the_budget(field):
+    from g6.core.ai_block import AIBlock
+    from g6.core.block_contract import BlockContract
+    from g6.core.compose import CompositionError, Stage, compose
+
+    class Contracted(AIBlock):
+        __g6_block_contract__ = BlockContract(name="contracted", verification_method="unit_tests_only",
+                                              outputs_per_op={"run": ("keys",)})
+
+        def __init__(self) -> None:
+            super().__init__("contracted")
+
+    given = EndlessMapping()
+    try:
+        with pytest.raises(CompositionError, match=r"\[G6_E_INPUT_VALIDATION\] stage 0: "):
+            compose(Stage(Contracted(), "run", **{field: given}), caller_inputs=())
+    except Stop:
+        pass
+    assert given.keys_read == MOST + 1 and given.looked_up == MOST, (
+        f"the composition read {given.keys_read} keys of a stage's {field}: the visit budget is {snapshot.MAX_ITEMS}")
+    built = compose(Stage(Contracted(), "run", params=Counted(2)), caller_inputs=())
+    assert built.manifest[0]["params"] == {"k0": "K0", "k1": "K1"}

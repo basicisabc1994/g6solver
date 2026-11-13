@@ -54,8 +54,15 @@ class GatedCalls:
     def call(self, name: str, arguments: Mapping[str, Any] | None = None, paths: Sequence[str] = (),
              fn: Callable[..., Any] | None = None) -> dict[str, Any]:
         """Decide, then run, one call; see the module docstring. ``fn`` is the tool itself, when the framework holds
-        it rather than G6."""
-        arguments = dict(arguments or {})
+        it rather than G6. The arguments are read first, within the registry's visit budget
+        (``g6.core.registry.outer_copy``): with more entries than it reads, the call is refused
+        ``G6_E_INPUT_VALIDATION`` before the gate is asked or anything runs."""
+        from g6.core.registry import OuterBudgetExceeded, outer_copy
+
+        try:
+            arguments = outer_copy(arguments or {})
+        except OuterBudgetExceeded as exc:
+            return {"verdict": "refused", "code": "G6_E_INPUT_VALIDATION", "reason": f"{name}: {exc}"}
         call = ToolCall(tool=name, arguments=arguments, paths=tuple(str(p) for p in paths))
         tool = fn or self.tools.get(name)
         component, _, op = name.partition(".")

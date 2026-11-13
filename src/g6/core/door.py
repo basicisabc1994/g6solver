@@ -37,50 +37,67 @@ HELD_NEXT_STEP = "Treat it as a qualified draft: check it yourself, or use a com
 _CODE = re.compile(r"^\[(G6_E_[A-Z0-9_]+)\]\s*")
 #: How deep the result copy is corrected; anything nested deeper is replaced by a note, never handed on unread.
 _MAX_DEPTH = 32
-#: The visit budget for what a result copy reaches again: every value under an object the copy had already reached.
-#: It is the cognitive bridge's own budget (its ``snapshot.MAX_ITEMS``; a test keeps the two equal). What a copy reaches
-#: once is bounded by what its producer built, and is not counted.
+#: The visit budget for what a result copy reaches again: every value under an object the copy had already reached,
+#: and every value under a mapping that is not a ``dict``, which holds no entries of its own (a read-only view of
+#: another's, or values it makes when it is read). It is the cognitive bridge's own budget (its ``snapshot.MAX_ITEMS``;
+#: a test keeps the two equal).
 ANSWER_VISITS = 100_000
+#: The visit budget for the whole of what a result copy reaches, each value counted once for each time it is reached.
+ANSWER_TOTAL = 1_000_000
 
 
 class AnswerNotRead(ValueError):
-    """A result the door did not copy: copying it would reach more than ``ANSWER_VISITS`` values again, under objects
-    it holds more than once (``G6_E_RESOURCE_LIMIT``). Nothing of it is handed on."""
+    """A result the door did not copy (``G6_E_RESOURCE_LIMIT``): copying it would reach more than ``ANSWER_VISITS``
+    values again (``AGAIN``), or more than ``ANSWER_TOTAL`` values in all (``TOTAL``). Nothing of it is handed on.
+    ``why`` says which, for a caller that refuses in its own name (``AnswerNotRead(who, exc.why)``)."""
 
-    why = ("the answer holds the same objects again and again, so a copy of it would reach more than "
-           f"{ANSWER_VISITS} values a second time; G6's door did not read it, and hands nothing of it on")
+    AGAIN = ("the answer holds the same objects again and again, or mappings that hold no entries of their own, so a "
+             f"copy of it would reach more than {ANSWER_VISITS} values a second time; G6's door did not read it, and "
+             "hands nothing of it on")
+    TOTAL = (f"a copy of the answer would reach more than {ANSWER_TOTAL} values in all; G6's door did not read it, "
+             "and hands nothing of it on")
 
-    def __init__(self, who: str = "") -> None:
+    def __init__(self, who: str = "", why: str = "") -> None:
+        self.why = why or self.AGAIN
         super().__init__(f"[{RESOURCE_LIMIT}] {who + ': ' if who else ''}{self.why}")
 
 
-def _reaches_again(value: Any) -> bool:
-    """Whether :func:`held_copy` of ``value`` would reach more than ``ANSWER_VISITS`` values under an object it had
-    reached before (review-pr8fu3r4, finding 3). It follows what the copy follows (the values of a mapping, the items
-    of a list or tuple, no deeper than the copy goes) and counts before it follows: an object met a second time has
-    its length added before its items are, so the count stops the walk within the budget, however far the repeats
-    would expand."""
+def _past_budget(value: Any) -> str:
+    """Why :func:`held_copy` does not copy ``value`` (``AnswerNotRead.AGAIN`` or ``TOTAL``), or ``""`` when it does
+    (review-pr8fu3r4, finding 3; its issuance review, findings 2 and 3). It follows what the copy follows (the values
+    of a mapping, the items of a list or tuple, no deeper than the copy goes) and trusts nothing the answer says of
+    itself: each value is counted as it is read, never by a length its holder reports, and the read stops at the first
+    value past a budget, so the count itself reads at most one value more than ``ANSWER_TOTAL``.
+
+    Every value read counts towards ``ANSWER_TOTAL``. Towards ``ANSWER_VISITS`` count the values under an object met
+    before, and those under a mapping that is not a ``dict``: such a mapping holds no entries of its own (many views
+    show one dict's storage, and a mapping may make its values when read), so nothing bounds what a copy reaches
+    through it by what its producer built."""
     met: dict[int, Any] = {}   # by id, each kept so that no id is given to another object while this runs
-    again, todo = 0, [(value, 0, False)]
+    again, total, todo = 0, 0, [(value, 0, False)]
     while todo:
         item, depth, repeated = todo.pop()
         if depth > _MAX_DEPTH:
             continue
         if isinstance(item, Mapping):
             inside: Any = item.values()
+            holds = isinstance(item, dict)
         elif isinstance(item, (list, tuple)):
-            inside = item
+            inside, holds = item, True
         else:
             continue
         if not repeated:
-            repeated = id(item) in met
+            repeated = not holds or id(item) in met
             met[id(item)] = item
-        if repeated:
-            again += len(inside)
+        for each in inside:
+            total += 1
+            again += repeated
             if again > ANSWER_VISITS:
-                return True
-        todo.extend((each, depth + 1, repeated) for each in inside)
-    return False
+                return AnswerNotRead.AGAIN
+            if total > ANSWER_TOTAL:
+                return AnswerNotRead.TOTAL
+            todo.append((each, depth + 1, repeated))
+    return ""
 
 
 def card(found: Any, code: str, message: str) -> dict[str, Any]:
@@ -125,12 +142,15 @@ def held_copy(value: Any, state: str, *, _depth: int = 0) -> Any:
     when ``state`` is ``verified``.
 
     The copy follows every reference, so a value that holds one object many times is copied once for each time. Before
-    anything is copied, what the copy would reach again is counted (:func:`_reaches_again`); past the budget
-    (``ANSWER_VISITS``) nothing is copied and :class:`AnswerNotRead` is raised, for every caller."""
+    anything is copied, what the copy would reach is counted (:func:`_past_budget`); past a budget (``ANSWER_VISITS``
+    for what it would reach again, ``ANSWER_TOTAL`` for all of it) nothing is copied and :class:`AnswerNotRead` is
+    raised, for every caller: each answers it with its own refusal."""
     if state == "verified":
         return value
-    if _depth == 0 and _reaches_again(value):
-        raise AnswerNotRead
+    if _depth == 0:
+        why = _past_budget(value)
+        if why:
+            raise AnswerNotRead(why=why)
     if _depth > _MAX_DEPTH:
         return "(nested too deep for the door to read)"
     if isinstance(value, Mapping):
@@ -261,8 +281,8 @@ def door_reply(component: str, op: str, outcome: Any, *, caller: Mapping[str, An
     state = envelope["completion_state"]
     try:
         result = corrected_result(value, state)
-    except AnswerNotRead:
-        refused = blocked_reply(str(AnswerNotRead(who)), request_id=request_id)
+    except AnswerNotRead as exc:
+        refused = blocked_reply(str(AnswerNotRead(who, exc.why)), request_id=request_id)
         # a reply to an answer always has a result: here it is the door's own word that the answer was not read
         return {**refused, "result": {"completion_state": "blocked-escalated", "error": refused["error"]}}
     return {"ok": state != "blocked-escalated", "result": result, **envelope}
@@ -333,7 +353,7 @@ def invoke_checked(component: str, op: str, params: Any, *, allow: frozenset[str
     return door_reply(component, op, result, caller=params, registry=registry, request_id=request_id)
 
 
-__all__ = ["ANSWER_VISITS", "HELD_NEXT_STEP", "SENSITIVE_ENV", "THREAT_STATEMENT", "AnswerNotRead",
+__all__ = ["ANSWER_TOTAL", "ANSWER_VISITS", "HELD_NEXT_STEP", "SENSITIVE_ENV", "THREAT_STATEMENT", "AnswerNotRead",
            "allowed_sensitive", "blocked_reply", "card",
            "corrected_result", "door_envelope", "door_reply", "held_copy", "invoke_checked", "is_allowed",
            "person_model", "producer_of", "said_state", "state_of"]

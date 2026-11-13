@@ -116,13 +116,16 @@ def encode_with(features: list[str], kinds: dict[str, str], rows: list[dict[str,
 
 def job(kind: str, prepared: Prepared, encoded: Encoded, **fields: Any) -> dict[str, Any]:
     """A job for the child: the training rows with their targets, the held-out rows without theirs. A caller's
-    ``fields`` add to the job and never replace what G6 writes in it (the task, its seed, the rows)."""
+    ``fields`` add to the job and never replace what G6 writes in it (the task, its seed, the rows). A field's name
+    is compared, and written, as its exact text (``str.__str__``), the text the child reads from the job file: a
+    ``str`` subclass equals that text and may hash elsewhere."""
     train, held = prepared.split.train, prepared.split.held_out
     own = {"kind": kind, "task": prepared.spec.task, "seed": prepared.spec.seed, "numeric": encoded.numeric,
            "categorical": encoded.categorical, "max_categories": MAX_CATEGORIES,
            "X_train": [encoded.X[i] for i in train], "y_train": [encoded.y[i] for i in train],
            "groups_train": [encoded.groups[i] for i in train], "X_held_out": [encoded.X[i] for i in held]}
-    return {**own, **{name: value for name, value in fields.items() if name not in own}}
+    stated = {str.__str__(name): value for name, value in fields.items()}
+    return {**own, **{name: value for name, value in stated.items() if name not in own}}
 
 
 def folds_for(prepared: Prepared, encoded: Encoded, asked: int) -> tuple[int, str]:
