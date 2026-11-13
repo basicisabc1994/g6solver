@@ -32,7 +32,10 @@ def test_all_receipt_consumers_render_snapshots_and_no_live_receipt_checks_remai
         'cloud_consent.py:prompt_state', 'cloud_consent.py:_source_function.invoke',
         'cloud_consent.py:protect_reply', 'completion_loop.py:_read', 'completion_loop.py:_snapshot_probe',
         'consent_controls.py:host_controls', 'jobs.py:Jobs._run', 'mission.py:reply',
-        'review_loop.py:step', 'review_reply.py:finish'}
+        'review_loop.py:step', 'review_reply.py:finish',
+        # the workflow record's note and view (mcp/workflow.py), converted from live receipt checks to a checked
+        # snapshot as 54ddcb9 converted consent_controls.host_controls: each freezes the reply once and edits a detached copy
+        'workflow.py:_noted', 'workflow.py:attach'}
     assert {site for site, calls in found.items() if 'read_retained' in calls} == {
         'completion_loop.py:_load', 'completion_loop.py:read_report', 'review_loop.py:_asked', 'digest.py:read',
         'completion_hook.py:_task'}

@@ -169,6 +169,41 @@ def test_endpoint_change_cannot_reuse_local_admission(monkeypatch):
     assert sent == ['local']
 
 
+@pytest.mark.parametrize('kind', ['local', 'ollama_remote', 'openai', 'anthropic', 'claude_code', 'codex'])
+def test_guarding_a_caller_never_changes_its_class(kind, monkeypatch):
+    """The check belongs to the caller the guard returns, whose class is chosen as that caller is made; the caller it
+    was given keeps the class it was constructed with (the rule test_send_custody's inventory holds the code to)."""
+    c, callers = consent_modules()
+    sent = []
+    raw = make_caller(kind, monkeypatch, sent)
+    constructed = type(raw)
+    wrapped = callers.guard(raw)
+    assert type(raw) is constructed, 'the guard replaced a live caller\'s class'
+    assert isinstance(wrapped, constructed) and callers.guard(wrapped) is wrapped
+    if kind == 'local':
+        assert wrapped.complete('', 'PLANTED_LOCAL') == 'answer'
+    else:
+        with pytest.raises(llm.LLMError, match='G6_E_CLOUD_CONSENT_REQUIRED'):
+            wrapped.complete('', 'PLANTED_UNGRANTED')
+    assert sent == (['PLANTED_LOCAL'] if kind == 'local' else [])
+    assert type(raw) is constructed
+
+
+def test_guarding_a_wrapper_never_changes_its_backends_class_and_the_backend_given_is_what_sends(monkeypatch):
+    c, callers = consent_modules()
+    senders = []
+    monkeypatch.setattr(llm.OllamaCaller, 'complete', lambda self, system, user, **kw: senders.append(self) or 'answer')
+    raw = llm.OllamaCaller(base_url='https://models.invalid')
+    retry = callers.guard(llm.EmptyRetry(raw))
+    assert type(raw) is llm.OllamaCaller, 'the guard replaced a live backend\'s class'
+    with pytest.raises(llm.LLMError, match='G6_E_CLOUD_CONSENT_REQUIRED'):
+        retry.complete('', 'PLANTED_UNGRANTED')
+    assert senders == []
+    raw.base_url = 'http://127.0.0.1:11434'             # the check reads the backend as it is at each send
+    assert retry.complete('', 'PLANTED_LOCAL') == 'answer'
+    assert senders == [raw] and type(raw) is llm.OllamaCaller      # the caller that sends is the one given
+
+
 def test_pending_dialog_cannot_undo_revocation():
     c, _ = consent_modules()
     class Session:

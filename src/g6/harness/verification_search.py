@@ -104,7 +104,7 @@ import re
 import shlex
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Callable, Literal
 
@@ -457,7 +457,7 @@ def _copy_manifest(change: repo_tests.Change, *, deadline: float,
         if not isinstance(artefact, ExecutionSnapshot) or artefact.execution["artifact_digest"] != digest(artefact):
             raise OSError("G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: no execution-artifact.v1 captured before execution")
         return artefact.execution["files"]
-    root = change.repo
+    root, top = change.repo, change.repo.resolve()
     stage = repo_tests._git(root, "ls-files", "--stage", "-z")
     if repo_tests._gitlinks(root, stage) or any(one.startswith("120000 ") for one in repo_tests._paths(stage)):
         raise OSError("G6_E_EXECUTION_ARTIFACT_UNAVAILABLE: links need a materialised-byte adapter")
@@ -466,13 +466,18 @@ def _copy_manifest(change: repo_tests.Change, *, deadline: float,
     found = {}
     size = 0
     for rel in sorted(set(known) | set(generated)):
-        parts = Path(rel).parts
+        parts = PurePosixPath(repo_tests._in(rel)).parts     # the folders looked at, where git looks (``_on_disk``)
         if any(part in repo_tests._copy_ignored(str(root.joinpath(*parts[:i])), [part])
                for i, part in enumerate(parts)):
             continue
-        path = root / repo_tests.inside(root, rel, "file")
-        if not path.is_file():
+        # the one disk rule, as the copy reads the tree (``repository_copy``): a name the system reads as another
+        # file's has no path, so the copy holds no file under it and none is recorded under it here
+        path = repo_tests._disk(root, rel)
+        if path is None or not path.is_file():
             continue
+        if not repo_tests._within(top, path.resolve()):
+            raise repo_tests.RepoRefused("G6_E_INPUT_VALIDATION", repo_tests.SAID["outside"].format(
+                what="file", value=repo_tests.shown_name(rel)))
         size += path.stat().st_size
         repo_tests._copy_caps(len(found) + 1, size, deadline)
         value = hashlib.sha256(generated[rel]).hexdigest() if rel in generated else repo_tests._digest(path)

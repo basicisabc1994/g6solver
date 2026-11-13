@@ -406,23 +406,31 @@ def destination(caller: object, _seen: frozenset[int] = frozenset()) -> Destinat
 
 
 class _Consent:
+    #: The caller a guarded form made by ``guard`` checks and sends through: the one ``guard`` was given, of the class
+    #: it was constructed with. None where the object is its own backend (``ConsentClaude``, ``ConsentCodex``, a
+    #: watched host). The recipient checked is always that of the object that sends.
+    _guards = None
+
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         if {'complete', 'complete_with_images'} & cls.__dict__.keys():
             raise llm.LLMError('G6_E_CLOUD_CALLER_UNSUPPORTED: guarded completion methods cannot be overridden')
 
     def complete(self, system: str, user: str, *, max_tokens: int = llm.DEFAULT_MAX_TOKENS) -> str:
-        to = destination(self)
+        backend = self if self._guards is None else self._guards
+        to = destination(backend)
         with (admission(to.provider, model_sources(), digest({'system': system, 'user': user}), local=to.local),
-              _sdk_call(getattr(self, '_client', None), to.provider)):
-            return super().complete(system, user, max_tokens=max_tokens)
+              _sdk_call(getattr(backend, '_client', None), to.provider)):
+            return (super() if backend is self else backend).complete(system, user, max_tokens=max_tokens)
 
     def complete_with_images(self, system, user, images, *, max_tokens=llm.DEFAULT_MAX_TOKENS):
-        to = destination(self)
+        backend = self if self._guards is None else self._guards
+        to = destination(backend)
         hashes = [sha256(image.data) for image in images]
         with (admission(to.provider, model_sources(), digest({'system': system, 'user': user, 'images': hashes}), local=to.local),
-              _sdk_call(getattr(self, '_client', None), to.provider)):
-            return super().complete_with_images(system, user, images, max_tokens=max_tokens)
+              _sdk_call(getattr(backend, '_client', None), to.provider)):
+            return (super() if backend is self else backend).complete_with_images(system, user, images,
+                                                                                  max_tokens=max_tokens)
 
 
 class ConsentClaude(_Consent, _CLAUDE):
@@ -452,8 +460,13 @@ class _Unknown:
 def guard(caller, _seen: frozenset[int] = frozenset()):
     """Preserve backend identity and retry/fallback behavior; guard each actual backend.
 
-    As with WatchedClaude, an instance gets an additive subclass. Bound code and
-    global classes are never patched. Unknown implementations fail closed.
+    The check belongs to the caller this returns: use that one. A native backend's
+    guarded form is a caller of its own, made here with an additive subclass chosen
+    as it is made (as WatchedClaude's is at construction). It holds the backend's
+    own state, takes the check on the backend as it is at each send (its endpoint,
+    its client), and then sends through it, so the caller that sends is the one
+    given, with the class and the send methods it was constructed with. Bound code
+    and global classes are never patched. Unknown implementations fail closed.
     """
     if id(caller) in _seen:
         return _Unknown(caller)
@@ -477,7 +490,9 @@ def guard(caller, _seen: frozenset[int] = frozenset()):
         if not backend_supported(caller):
             return _Unknown(caller)
         kind = type(caller)
-        caller.__class__ = type('Consent' + kind.__name__, (_Consent, kind), {})
+        guarded = object.__new__(type('Consent' + kind.__name__, (_Consent, kind), {'_guards': caller}))
+        guarded.__dict__ = caller.__dict__      # one state: what the backend is told later is what its guarded form reads
+        return guarded
     else:
         return _Unknown(caller)
     return caller
