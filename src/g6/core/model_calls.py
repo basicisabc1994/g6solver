@@ -22,14 +22,34 @@ though it is still counted process-wide: the scoped count can under-report a
 request's own calls and never counts another request's.
 
 A scope opened with an observer (``counting(before_call=...)``) is a boundary
-every one of its request's notes must pass, so it reaches further: a
-``threading.Thread`` started while such a scope is open in the starting
-context runs in a copy of that context, as a thread handed the context by its
-request does. What a caller's backend sends from a thread it starts itself is
-then noted in the scope and passes the observer before it goes. A thread that
-was already running is not reached, nor one started through ``_thread``
-directly. A thread keeps the context it started in: what it notes once the
-scope has closed still passes that scope's observer, as a copied context does.
+every one of its request's notes must pass, so it reaches further. From the
+first observer on, the context such a scope is open in is carried to the work
+its request starts, and a context belongs to a unit of work, never to a
+thread's lifetime:
+
+* A ``threading.Thread``'s run is one unit of work. A thread started where an
+  observer is open runs in a copy of the starting context, as a thread handed
+  the context by its request does.
+* A task given to a ``concurrent.futures.ThreadPoolExecutor`` (``submit``, and
+  what submits through it: ``map``, an event loop's ``run_in_executor``) is one
+  unit of work. A task submitted where an observer is open runs in a copy of
+  its submitter's context, whenever its worker was started. The worker is no
+  unit of work: a pool starts it with nothing of the scope a task was
+  submitted in, so it carries no closed request's context to a later task.
+
+What a caller's backend sends from a thread it starts, or from a pool task it
+submits, is then noted in the scope and passes the observer before it goes.
+The unit keeps its context while it runs: what it notes once the scope has
+closed still passes that scope's observer, as a copied context does. A thread
+started, or a task submitted, where no observer is open runs as it always did.
+
+Not carried: a thread started through ``_thread.start_new_thread`` directly; a
+plain thread that was already running; a pool's own work outside a task (a
+worker's ``initializer``, a future's done-callbacks); and the tasks of any
+other kind of executor or pool. A pool of another kind that starts its worker
+threads where an observer is open has them carried as plain threads, for the
+whole of each worker's run. A ``start`` or ``submit`` taken from its class
+before the first observer was used is the one Python defines.
 
 Each note that passes an observer has a record (:class:`Note`), which the
 observer reads with :func:`noting`: the frame at the send's boundary, where the
@@ -46,6 +66,7 @@ import threading
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from types import FrameType
+from typing import Any
 
 _lock = threading.Lock()
 _count = 0
@@ -82,8 +103,10 @@ class _Scope:
 _scopes: contextvars.ContextVar[tuple[_Scope, ...]] = contextvars.ContextVar("g6_model_call_scopes", default=())
 #: The record of the note the observers of this context are being run for.
 _noting: contextvars.ContextVar[Note | None] = contextvars.ContextVar("g6_model_call_noting", default=None)
-#: ``threading.Thread.start`` as it was before the first observer was set (``_carry_into_threads``).
+#: ``threading.Thread.start`` and ``ThreadPoolExecutor.submit`` as they were before the first observer was set
+#: (``_carry_into_threads``).
 _thread_start: Callable[[threading.Thread], None] | None = None
+_pool_submit: Callable[..., Any] | None = None
 
 
 def _observed() -> bool:
@@ -91,16 +114,28 @@ def _observed() -> bool:
 
 
 def _carry_into_threads() -> None:
-    """From the first observer on, a thread started where one is open runs in a copy of the starting context, so the
-    observer, and whatever else the request keeps in its context, reaches what the thread notes. Set once for the
-    process. A thread started where no observer is open starts as it always did."""
-    global _thread_start
+    """From the first observer on, a unit of work started where one is open runs in a copy of the starting context, so
+    the observer, and whatever else the request keeps in its context, reaches what the unit notes: a thread's run, and
+    a ``ThreadPoolExecutor``'s task (see the module docstring). Set once for the process. What is started where no
+    observer is open starts as it always did."""
+    global _thread_start, _pool_submit
     if _thread_start is not None:
         return
+    from concurrent.futures import ThreadPoolExecutor
+
     with _kept:
         if _thread_start is not None:
             return
-        _thread_start = started = threading.Thread.start
+        started, submitted = threading.Thread.start, ThreadPoolExecutor.submit
+
+        def submit(pool: ThreadPoolExecutor, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+            if not _observed():
+                return submitted(pool, fn, *args, **kwargs)
+            # The task is the unit of work, in a copy of this context of its own. The pool may start a worker as it
+            # takes the task, and a worker outlives the task: it is started from an empty context, where ``start``
+            # below finds no observer and carries nothing, so no later task meets this request's context in it.
+            task = contextvars.copy_context()
+            return contextvars.Context().run(submitted, pool, task.run, fn, *args, **kwargs)
 
         def start(thread: threading.Thread) -> None:
             if not _observed():
@@ -126,7 +161,9 @@ def _carry_into_threads() -> None:
                     vars(thread).pop("run", None)
                 raise
 
+        ThreadPoolExecutor.submit = submit
         threading.Thread.start = start
+        _pool_submit, _thread_start = submitted, started      # last: both are in place before anyone reads this as done
 
 
 def note_model_call(*, boundary: int = 0) -> None:
@@ -147,7 +184,7 @@ def note_model_call(*, boundary: int = 0) -> None:
             kept = not outermost.closed
             if kept:
                 outermost.notes.append(note)
-        if not kept:    # noted after the scope closed (a thread that kept its context): nothing reads it back
+        if not kept:    # noted after the scope closed (a thread or task still running in its context): nothing reads it
             note.frame = None
         token = _noting.set(note)
         try:
@@ -214,7 +251,8 @@ def counting(*, before_call: Callable[[], None] | None = None) -> Iterator[Calla
     """Count calls in this context; optionally observe each boundary before the backend overwrites its receipt.
     Child totals have no individual boundary. An observer must not call a model. It may raise: what it raises goes to
     the caller that noted the request, before the request is counted or sent, which is how an admission check refuses
-    one. With an observer, a thread started inside starts in a copy of this context (see the module docstring).
+    one. With an observer, a thread started inside, and a ``ThreadPoolExecutor`` task submitted inside, runs in a copy
+    of this context (see the module docstring).
     """
     if before_call is not None:
         _carry_into_threads()

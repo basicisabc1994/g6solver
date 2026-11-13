@@ -62,12 +62,25 @@ class AnswerNotRead(ValueError):
         super().__init__(f"[{RESOURCE_LIMIT}] {who + ': ' if who else ''}{self.why}")
 
 
+def _read(value: Any) -> tuple[bool, Any] | None:
+    """How the door reads what a container holds, the one read the count (:func:`_past_budget`) and the copy
+    (:func:`held_copy`) both make, so that no container is read one way by the count and another by the copy: a
+    mapping's ``items()`` (``True``, and its key and value pairs), a list's or tuple's own iteration (``False``, and its
+    items). ``None`` for anything else, which neither follows."""
+    if isinstance(value, Mapping):
+        return True, value.items()
+    if isinstance(value, (list, tuple)):
+        return False, value
+    return None
+
+
 def _past_budget(value: Any) -> str:
     """Why :func:`held_copy` does not copy ``value`` (``AnswerNotRead.AGAIN`` or ``TOTAL``), or ``""`` when it does
-    (review-pr8fu3r4, finding 3; its issuance review, findings 2 and 3). It follows what the copy follows (the values
-    of a mapping, the items of a list or tuple, no deeper than the copy goes) and trusts nothing the answer says of
-    itself: each value is counted as it is read, never by a length its holder reports, and the read stops at the first
-    value past a budget, so the count itself reads at most one value more than ``ANSWER_TOTAL``.
+    (review-pr8fu3r4, finding 3; its issuance reviews). It follows what the copy follows, by the copy's own read
+    (:func:`_read`: the entries of a mapping, the items of a list or tuple, no deeper than the copy goes) and trusts
+    nothing the answer says of itself: each value is counted as it is read, never by a length its holder reports, and
+    the read stops at the first value past a budget, so the count itself reads at most one value more than
+    ``ANSWER_TOTAL``.
 
     Every value read counts towards ``ANSWER_TOTAL``. Towards ``ANSWER_VISITS`` count the values under an object met
     before, and those under a mapping that is not a ``dict``: such a mapping holds no entries of its own (many views
@@ -79,17 +92,16 @@ def _past_budget(value: Any) -> str:
         item, depth, repeated = todo.pop()
         if depth > _MAX_DEPTH:
             continue
-        if isinstance(item, Mapping):
-            inside: Any = item.values()
-            holds = isinstance(item, dict)
-        elif isinstance(item, (list, tuple)):
-            inside, holds = item, True
-        else:
+        read = _read(item)
+        if read is None:
             continue
+        keyed, inside = read
         if not repeated:
-            repeated = not holds or id(item) in met
+            repeated = (keyed and not isinstance(item, dict)) or id(item) in met
             met[id(item)] = item
         for each in inside:
+            if keyed:
+                _, each = each
             total += 1
             again += repeated
             if again > ANSWER_VISITS:
@@ -153,19 +165,19 @@ def held_copy(value: Any, state: str, *, _depth: int = 0) -> Any:
             raise AnswerNotRead(why=why)
     if _depth > _MAX_DEPTH:
         return "(nested too deep for the door to read)"
-    if isinstance(value, Mapping):
-        out = {}
-        for key, item in value.items():
-            if key == "verified" and item is True:
-                out[key] = False
-            else:
-                out[key] = held_copy(item, state, _depth=_depth + 1)
-        return out
-    if isinstance(value, (list, tuple)):
-        return [held_copy(item, state, _depth=_depth + 1) for item in value]
-    if state_of(value) == "verified":
-        return state
-    return value
+    read = _read(value)
+    if read is None:
+        return state if state_of(value) == "verified" else value
+    keyed, inside = read
+    if not keyed:
+        return [held_copy(item, state, _depth=_depth + 1) for item in inside]
+    out = {}
+    for key, item in inside:
+        if key == "verified" and item is True:
+            out[key] = False
+        else:
+            out[key] = held_copy(item, state, _depth=_depth + 1)
+    return out
 
 
 def corrected_result(value: Any, state: str) -> Any:

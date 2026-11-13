@@ -281,3 +281,111 @@ def test_the_two_refusals_say_which_budget_the_answer_is_past(copies):
     assert _refused(_reply({"answer": doubled()}), LIMIT)
     assert _refused(_reply({"rows": [0] * (door.ANSWER_TOTAL + 1)}), door.ANSWER_TOTAL)
     assert copies[0] == 2, "each copy is entered once, and refuses before it copies anything"
+
+
+# --- the count reads a container as the copy reads it (issuance review of the count, finding 2) -----------------------
+# The count read a mapping through ``values()`` and the copy read it through ``items()``. A mapping whose two reads
+# differ (a ``dict`` subclass, or any ``Mapping``, with a ``values`` of its own) was counted as holding nothing while
+# the copy expanded everything under it. The count and the copy now read each container through one reader
+# (``door._read``), so there is no second access path for a container to answer differently on.
+
+
+def _shows_nothing(accessor: str):
+    answers = {"__len__": lambda self: 0, "__contains__": lambda self, key: False,
+               "get": lambda self, key, default=None: default}
+
+    def raises(self, key):
+        raise KeyError(key)
+
+    return answers.get(accessor) or (raises if accessor == "__getitem__" else lambda self: iter(()))
+
+
+class Entries(Mapping):
+    """A ``Mapping`` of its keyword arguments, read as the abstract class reads one."""
+
+    def __init__(self, **entries) -> None:
+        self._entries = entries
+
+    def __getitem__(self, key):
+        return self._entries[key]
+
+    def __iter__(self):
+        return iter(self._entries)
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+
+#: Each accessor a mapping could show nothing through while ``items()``, which the copy reads, still shows every entry.
+QUIET = [(dict, name) for name in ("values", "keys", "__iter__", "__len__", "__getitem__", "__contains__", "get")] + [
+    (Entries, name) for name in ("values", "keys", "__contains__", "get")]
+
+
+@pytest.mark.parametrize(("base", "accessor"), QUIET, ids=[f"{base.__name__}.{name}" for base, name in QUIET])
+def test_a_mapping_that_shows_nothing_through_another_accessor_is_counted_as_the_copy_reads_it(base, accessor):
+    quiet = type("Quiet", (base,), {accessor: _shows_nothing(accessor)})
+    rows = list(range(60_000))
+    answer = quiet(a=rows, b=rows, c=rows)             # the copy reaches ``rows`` three times: 120,000 values again
+    assert sum(len(held) for _, held in answer.items()) == 180_000
+    assert door._past_budget(answer) == door.AnswerNotRead.AGAIN
+    with pytest.raises(door.AnswerNotRead, match=RESOURCE_LIMIT):
+        door.held_copy(answer, "qualified-draft")
+    assert _refused(door.door_reply("demo", "op", Success(answer)), LIMIT)
+    assert _refused(_reply({"rows": [answer]}), LIMIT)
+    within = quiet(a=rows[:10], b=rows[:10])
+    assert door._past_budget(within) == "" and door.held_copy(within, "qualified-draft") == {"a": rows[:10],
+                                                                                           "b": rows[:10]}
+
+
+def test_a_chain_of_such_mappings_each_holding_the_next_twice_is_refused():
+    quiet = type("Quiet", (dict,), {"values": _shows_nothing("values")})
+    level: object = list(range(10))
+    for _ in range(14):
+        level = quiet(a=level, b=level)                # 2 ** 14 lists of ten to a copy
+    with pytest.raises(door.AnswerNotRead, match=f"more than {LIMIT} values"):
+        door.held_copy(level, "qualified-draft")
+
+
+@pytest.mark.parametrize("base", [dict, Entries])
+def test_a_mapping_that_shows_nothing_through_items_is_copied_as_holding_nothing(base):
+    """The other direction: what ``items()`` does not show, the copy does not reach, whatever ``values()`` says."""
+    quiet = type("Quiet", (base,), {"items": lambda self: iter(())})
+    rows = list(range(60_000))
+    answer = quiet(a=rows, b=rows, c=rows)
+    assert door._past_budget(answer) == "" and door.held_copy(answer, "qualified-draft") == {}
+
+
+class _Spied:
+    """Records each read made of the container, by name, then answers as its own class does."""
+
+    READS = ("items", "values", "keys", "get", "__iter__", "__getitem__", "__len__", "__contains__")
+
+    @classmethod
+    def of(cls, base, *args, **kwargs):
+        read: list[str] = []
+
+        def spy(name):
+            def reads(self, *given):
+                read.append(name)
+                return getattr(base, name)(self, *given)
+            return reads
+
+        spied = type("Spied", (base,), {name: spy(name) for name in cls.READS if hasattr(base, name)})
+        return spied(*args, **kwargs), read
+
+
+@pytest.mark.parametrize("made", [lambda: _Spied.of(dict, a=[1, 2], b={"c": "verified"}),
+                                  lambda: _Spied.of(Entries, a=[1, 2], b={"c": "verified"}),
+                                  lambda: _Spied.of(list, [[1, 2], {"c": "verified"}]),
+                                  lambda: _Spied.of(tuple, ([1, 2], {"c": "verified"}))],
+                         ids=["dict", "Mapping", "list", "tuple"])
+def test_the_count_and_the_copy_make_the_same_reads_of_a_container(made, monkeypatch):
+    """The class, not the one accessor: whatever a container is asked by the count, it is asked by the copy."""
+    container, read = made()
+    assert door._past_budget(container) == ""
+    counted = list(read)
+    read.clear()
+    monkeypatch.setattr(door, "_past_budget", lambda value: "")     # the copy alone, with no count before it
+    held = door.held_copy(container, "qualified-draft")
+    assert counted == list(read) and counted, f"the count read {counted}, the copy read {list(read)}"
+    assert held in ({"a": [1, 2], "b": {"c": "qualified-draft"}}, [[1, 2], {"c": "qualified-draft"}])

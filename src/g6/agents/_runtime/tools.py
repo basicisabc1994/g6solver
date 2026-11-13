@@ -54,16 +54,22 @@ class GatedCalls:
     def call(self, name: str, arguments: Mapping[str, Any] | None = None, paths: Sequence[str] = (),
              fn: Callable[..., Any] | None = None) -> dict[str, Any]:
         """Decide, then run, one call; see the module docstring. ``fn`` is the tool itself, when the framework holds
-        it rather than G6. The arguments are read first, within the registry's visit budget
-        (``g6.core.registry.outer_copy``): with more entries than it reads, the call is refused
-        ``G6_E_INPUT_VALIDATION`` before the gate is asked or anything runs."""
+        it rather than G6. The call is read first, its arguments within the registry's visit budget
+        (``g6.core.registry.outer_copy``). A call that cannot be read as one is refused ``G6_E_INPUT_VALIDATION``
+        before the gate is asked or anything runs, and nothing is raised: arguments with more entries than the budget
+        reads; arguments that are not a mapping (a list of pairs is not converted to one; only ``None`` stands for no
+        arguments); a key, a name or a path that a call does not hold."""
         from g6.core.registry import OuterBudgetExceeded, outer_copy
 
         try:
-            arguments = outer_copy(arguments or {})
+            arguments = outer_copy({} if arguments is None else arguments)
+            call = ToolCall(tool=name, arguments=arguments, paths=tuple(str(p) for p in paths))
         except OuterBudgetExceeded as exc:
             return {"verdict": "refused", "code": "G6_E_INPUT_VALIDATION", "reason": f"{name}: {exc}"}
-        call = ToolCall(tool=name, arguments=arguments, paths=tuple(str(p) for p in paths))
+        except Exception as exc:  # noqa: BLE001 - what was written for a call is refused, never raised to the framework
+            return {"verdict": "refused", "code": "G6_E_INPUT_VALIDATION",
+                    "reason": (f"{name}: G6 could not read this as a tool call; its arguments must be a mapping of "
+                               f"names to values (a JSON object): {type(exc).__name__}: {exc}")[:500]}
         tool = fn or self.tools.get(name)
         component, _, op = name.partition(".")
         changes = False
