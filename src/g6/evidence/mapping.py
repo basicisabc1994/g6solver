@@ -127,6 +127,10 @@ CODES = (UNMAPPED, NOT_PROMOTED, NO_ARTEFACT, OTHER_ARTEFACT, OTHER_PRODUCER, OT
          NOT_BELIEVED)
 #: The ledger kind under which a promoted receipt's environment, model, scope and source are kept beside it.
 PROVENANCE_KIND = "provenance"
+#: Every field G6 itself writes in a provenance entry, a promoted receipt's or a caveat's (``_provenance``). None is a
+#: caller's to state, in either entry and whether or not the entry has it: a test reads the fields from the code.
+PROVENANCE_OWN = frozenset({"source_kind", "issuer_kind", "environment_sha256", "model_sha256", "scope", "binding",
+                            "kept_as", "record_id", "refused"})
 #: The issuer kind a refused record's observation is kept as (``caveat_of``): with no control, a check of this kind can
 #: neither support nor refute, and its failure is a caveat (the issuer's rule, and this table's row for the kind).
 CAVEAT_KIND = "partial_falsifier"
@@ -653,14 +657,24 @@ def _merged(old: Check, new: Check) -> Check | None:
                  old.certificate, old.positive_seq)
 
 
+def _provenance(own: Mapping[str, object], extra: Mapping[str, object] | None) -> dict:
+    """The one writer of a provenance entry's body: what the caller adds (``extra``), then what G6 states (``own``).
+    A name G6 writes in any provenance entry (``PROVENANCE_OWN``) is never taken from the caller, in this entry or
+    one that leaves it out, and G6's fields are written last, so no caller value replaces one (review-efu3,
+    finding 4)."""
+    return {**{key: value for key, value in dict(extra or {}).items() if key not in PROVENANCE_OWN}, **own}
+
+
 def issue_records(facts: MissionFacts, artifact: Artifact, records: Iterable[SourceRecord], *,
                   decisions: Collection[str] = (), extra: Mapping[str, object] | None = None,
                   not_believed: str = "") -> Issued:
     """The issuer's certificate for ``artifact`` from the records the mapping promotes. Each promoted control and
     receipt is written to a fresh ledger with the issuer's ``record``, and beside each receipt its provenance (the
     source kind, the environment, the model and the scope), which the issuer does not read; then ``issue`` decides.
-    ``extra`` is added to every provenance entry (what the caller ran, say). ``not_believed``: why the caller believes
-    none of the records (the patch review's integrity problem): each is refused (``NOT_BELIEVED``), as any other.
+    ``extra`` is added to every provenance entry (what the caller ran, say), under its own names only: a name G6
+    itself writes there (``PROVENANCE_OWN``) is G6's, and the caller's value for it is left out. ``not_believed``: why
+    the caller believes none of the records (the patch review's integrity problem): each is refused
+    (``NOT_BELIEVED``), as any other.
 
     One id, one body, wherever the two appear: a record id seen before is refused (``CONFLICTING``) when anything else
     of the record differs, what it is about included (its binding, environment and scope), and is the same record when
@@ -724,15 +738,14 @@ def issue_records(facts: MissionFacts, artifact: Artifact, records: Iterable[Sou
                            key=lambda item: (item.seq, isinstance(item, Receipt))))
     for receipt, rec in receipts.values():
         parts, _ = about(rec)
-        ledger.append(PROVENANCE_KIND, receipt.receipt_id, {
+        ledger.append(PROVENANCE_KIND, receipt.receipt_id, _provenance({
             "source_kind": rec.kind, "issuer_kind": checks[receipt.check_id].kind, "environment_sha256":
             parts.environment, "model_sha256": rec.model_sha256, "scope": parts.scope,
-            **({"binding": rec.binding.to_dict()} if rec.binding else {}), **dict(extra or {})})
+            **({"binding": rec.binding.to_dict()} if rec.binding else {})}, extra))
     for _, receipt, rec, codes in kept:   # what a refused record observed, and why it was refused, in words
-        ledger.append(PROVENANCE_KIND, receipt.receipt_id, {
+        ledger.append(PROVENANCE_KIND, receipt.receipt_id, _provenance({
             "source_kind": str(rec.kind), "issuer_kind": CAVEAT_KIND, "kept_as": "caveat",
-            "record_id": str(rec.record_id), "refused": [[str(code), str(why)] for code, why in codes],
-            **dict(extra or {})})
+            "record_id": str(rec.record_id), "refused": [[str(code), str(why)] for code, why in codes]}, extra))
     certificate = issue(facts, artifact, [*checks.values(), *(c for c, _, _, _ in kept)],
                         [*(r for r, _ in receipts.values()), *(r for _, r, _, _ in kept)],
                         decisions=decisions, ledger=ledger)
@@ -848,7 +861,7 @@ __all__ = ["BINDING_ARTEFACT", "BINDING_CHECK", "BINDING_PREDICATE", "BINDING_ST
            "CAVEAT_KIND", "CODES", "COLUMNS", "CONFLICTING", "ISSUER_SIDE", "MAPPING", "NOT_BELIEVED", "NOT_PROMOTED",
            "NO_ARTEFACT", "NO_CHECK", "NO_CONTROL", "NO_ENVIRONMENT", "NO_INDEPENDENCE", "NO_MODEL", "NO_ORDER",
            "NO_RESULT", "NO_SCOPE", "NO_STANDARD", "OTHER_ARTEFACT", "OTHER_ORDER", "OTHER_PRODUCER", "OTHER_STANDARD",
-           "PROVENANCE_KIND", "RECEIPT_GATES", "UNMAPPED", "About", "CheckBinding", "Issued", "PromotionRefused", "Row",
-           "SourceRecord", "UnreadableBinding", "about", "bound_parts", "caveat_of", "check_id_of",
-           "environment_sha256", "id_of", "issue_records", "issuer_kind", "problems", "promote", "read_about",
-           "read_binding", "receipt_roles", "render_markdown", "strict_json"]
+           "PROVENANCE_KIND", "PROVENANCE_OWN", "RECEIPT_GATES", "UNMAPPED", "About", "CheckBinding", "Issued",
+           "PromotionRefused", "Row", "SourceRecord", "UnreadableBinding", "about", "bound_parts", "caveat_of",
+           "check_id_of", "environment_sha256", "id_of", "issue_records", "issuer_kind", "problems", "promote",
+           "read_about", "read_binding", "receipt_roles", "render_markdown", "strict_json"]

@@ -26,6 +26,7 @@ from typing import Any
 
 from g6.core.reliability_envelope import PROMOTION_LAW, door_witness, envelope_fields, recheck_evidence
 from g6.core.reliability_envelope import warning_card as new_card
+from g6.core.resources import RESOURCE_LIMIT
 
 _RANK = {"verified": 0, "qualified-draft": 1, "blocked-escalated": 2}
 #: What G6 does and does not defend against, said wherever the door rule is read (plan A1).
@@ -36,6 +37,50 @@ HELD_NEXT_STEP = "Treat it as a qualified draft: check it yourself, or use a com
 _CODE = re.compile(r"^\[(G6_E_[A-Z0-9_]+)\]\s*")
 #: How deep the result copy is corrected; anything nested deeper is replaced by a note, never handed on unread.
 _MAX_DEPTH = 32
+#: The visit budget for what a result copy reaches again: every value under an object the copy had already reached.
+#: It is the cognitive bridge's own budget (its ``snapshot.MAX_ITEMS``; a test keeps the two equal). What a copy reaches
+#: once is bounded by what its producer built, and is not counted.
+ANSWER_VISITS = 100_000
+
+
+class AnswerNotRead(ValueError):
+    """A result the door did not copy: copying it would reach more than ``ANSWER_VISITS`` values again, under objects
+    it holds more than once (``G6_E_RESOURCE_LIMIT``). Nothing of it is handed on."""
+
+    why = ("the answer holds the same objects again and again, so a copy of it would reach more than "
+           f"{ANSWER_VISITS} values a second time; G6's door did not read it, and hands nothing of it on")
+
+    def __init__(self, who: str = "") -> None:
+        super().__init__(f"[{RESOURCE_LIMIT}] {who + ': ' if who else ''}{self.why}")
+
+
+def _reaches_again(value: Any) -> bool:
+    """Whether :func:`held_copy` of ``value`` would reach more than ``ANSWER_VISITS`` values under an object it had
+    reached before (review-pr8fu3r4, finding 3). It follows what the copy follows (the values of a mapping, the items
+    of a list or tuple, no deeper than the copy goes) and counts before it follows: an object met a second time has
+    its length added before its items are, so the count stops the walk within the budget, however far the repeats
+    would expand."""
+    met: dict[int, Any] = {}   # by id, each kept so that no id is given to another object while this runs
+    again, todo = 0, [(value, 0, False)]
+    while todo:
+        item, depth, repeated = todo.pop()
+        if depth > _MAX_DEPTH:
+            continue
+        if isinstance(item, Mapping):
+            inside: Any = item.values()
+        elif isinstance(item, (list, tuple)):
+            inside = item
+        else:
+            continue
+        if not repeated:
+            repeated = id(item) in met
+            met[id(item)] = item
+        if repeated:
+            again += len(inside)
+            if again > ANSWER_VISITS:
+                return True
+        todo.extend((each, depth + 1, repeated) for each in inside)
+    return False
 
 
 def card(found: Any, code: str, message: str) -> dict[str, Any]:
@@ -77,9 +122,15 @@ def said_state(value: Any) -> str | None:
 def held_copy(value: Any, state: str, *, _depth: int = 0) -> Any:
     """A copy of ``value`` that claims no more than ``state``: every string anywhere in it that reads as
     ``verified`` (:func:`state_of`) becomes ``state``, and a ``verified: true`` flag becomes false. Nothing changes
-    when ``state`` is ``verified``."""
+    when ``state`` is ``verified``.
+
+    The copy follows every reference, so a value that holds one object many times is copied once for each time. Before
+    anything is copied, what the copy would reach again is counted (:func:`_reaches_again`); past the budget
+    (``ANSWER_VISITS``) nothing is copied and :class:`AnswerNotRead` is raised, for every caller."""
     if state == "verified":
         return value
+    if _depth == 0 and _reaches_again(value):
+        raise AnswerNotRead
     if _depth > _MAX_DEPTH:
         return "(nested too deep for the door to read)"
     if isinstance(value, Mapping):
@@ -182,7 +233,10 @@ def door_reply(component: str, op: str, outcome: Any, *, caller: Mapping[str, An
     is the caller's own input to the op (what a re-check compares against); ``registry`` says which code answered.
 
     ``ok`` says whether the reply may be used: it is false when there is no result (``error`` says why) and when the
-    door's state for the result is ``blocked-escalated`` (the card says why, and ``result`` keeps the answer)."""
+    door's state for the result is ``blocked-escalated`` (the card says why, and ``result`` keeps the answer). An
+    answer the door's copy does not read (:class:`AnswerNotRead`) is not handed on: the reply is
+    ``blocked-escalated`` with ``G6_E_RESOURCE_LIMIT``, ``error`` says why, and ``result`` holds only the door's own
+    word for it (``completion_state`` and that ``error``), nothing of the answer."""
     request_id = request_id or uuid.uuid4().hex[:12]
     if outcome.__class__.__name__ != "Success":
         return blocked_reply(str(outcome.failure()), request_id=request_id)
@@ -205,7 +259,13 @@ def door_reply(component: str, op: str, outcome: Any, *, caller: Mapping[str, An
     envelope = door_envelope(said, who=who, producer=producer, value=value, caller=caller, evidence=evidence,
                              warning_card=found, request_id=request_id, run_id=run_id)
     state = envelope["completion_state"]
-    return {"ok": state != "blocked-escalated", "result": corrected_result(value, state), **envelope}
+    try:
+        result = corrected_result(value, state)
+    except AnswerNotRead:
+        refused = blocked_reply(str(AnswerNotRead(who)), request_id=request_id)
+        # a reply to an answer always has a result: here it is the door's own word that the answer was not read
+        return {**refused, "result": {"completion_state": "blocked-escalated", "error": refused["error"]}}
+    return {"ok": state != "blocked-escalated", "result": result, **envelope}
 
 
 #: The person's own setting: the sensitive components or ops (``component.op``) they allow, comma-separated, no
@@ -244,15 +304,20 @@ def invoke_checked(component: str, op: str, params: Any, *, allow: frozenset[str
     """The one checked call the MCP server, ``g6 invoke`` and ``g6.invoke`` share: ``component.op`` on ``params``
     (a mapping), replied through :func:`door_reply`. A sensitive op runs only when ``allow`` (what the person granted
     on that surface) lists it or its component; the refusal ends with ``how_to_allow``. A component whose block takes
-    a model (``__g6_model__``) is given the one the person configured, built once for the call."""
+    a model (``__g6_model__``) is given the one the person configured, built once for the call. The parameters are
+    copied within the registry's visit budget (``g6.core.registry.outer_copy``): with more entries than it reads,
+    the call is refused ``G6_E_INPUT_VALIDATION`` before anything is copied or run."""
     request_id = request_id or uuid.uuid4().hex[:12]
     if not isinstance(params, Mapping):
         return blocked_reply("[G6_E_INPUT_VALIDATION] the op's parameters must be a JSON object (a mapping)",
                              request_id=request_id)
-    params = dict(params)
-    if registry is None:
-        from g6.core.registry import get_registry
+    from g6.core.registry import OuterBudgetExceeded, get_registry, outer_copy
 
+    try:
+        params = outer_copy(params)   # the door's own copy, read within the registry's visit budget
+    except OuterBudgetExceeded as exc:
+        return blocked_reply(f"[G6_E_INPUT_VALIDATION] {exc}", request_id=request_id)
+    if registry is None:
         registry = get_registry()
     model = person_model()
     result = registry.invoke(component, op, params, block_sensitive=not is_allowed(component, op, allow),
@@ -268,6 +333,7 @@ def invoke_checked(component: str, op: str, params: Any, *, allow: frozenset[str
     return door_reply(component, op, result, caller=params, registry=registry, request_id=request_id)
 
 
-__all__ = ["HELD_NEXT_STEP", "SENSITIVE_ENV", "THREAT_STATEMENT", "allowed_sensitive", "blocked_reply", "card",
+__all__ = ["ANSWER_VISITS", "HELD_NEXT_STEP", "SENSITIVE_ENV", "THREAT_STATEMENT", "AnswerNotRead",
+           "allowed_sensitive", "blocked_reply", "card",
            "corrected_result", "door_envelope", "door_reply", "held_copy", "invoke_checked", "is_allowed",
            "person_model", "producer_of", "said_state", "state_of"]

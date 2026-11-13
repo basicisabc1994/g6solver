@@ -115,12 +115,14 @@ def encode_with(features: list[str], kinds: dict[str, str], rows: list[dict[str,
 
 
 def job(kind: str, prepared: Prepared, encoded: Encoded, **fields: Any) -> dict[str, Any]:
-    """A job for the child: the training rows with their targets, the held-out rows without theirs."""
+    """A job for the child: the training rows with their targets, the held-out rows without theirs. A caller's
+    ``fields`` add to the job and never replace what G6 writes in it (the task, its seed, the rows)."""
     train, held = prepared.split.train, prepared.split.held_out
-    return {"kind": kind, "task": prepared.spec.task, "seed": prepared.spec.seed, "numeric": encoded.numeric,
-            "categorical": encoded.categorical, "max_categories": MAX_CATEGORIES,
-            "X_train": [encoded.X[i] for i in train], "y_train": [encoded.y[i] for i in train],
-            "groups_train": [encoded.groups[i] for i in train], "X_held_out": [encoded.X[i] for i in held], **fields}
+    own = {"kind": kind, "task": prepared.spec.task, "seed": prepared.spec.seed, "numeric": encoded.numeric,
+           "categorical": encoded.categorical, "max_categories": MAX_CATEGORIES,
+           "X_train": [encoded.X[i] for i in train], "y_train": [encoded.y[i] for i in train],
+           "groups_train": [encoded.groups[i] for i in train], "X_held_out": [encoded.X[i] for i in held]}
+    return {**own, **{name: value for name, value in fields.items() if name not in own}}
 
 
 def folds_for(prepared: Prepared, encoded: Encoded, asked: int) -> tuple[int, str]:
