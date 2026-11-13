@@ -26,6 +26,7 @@ import pytest
 
 import g6
 from g6.core import host_models, llm, model_calls, stop
+from g6.core.consent_callers import CallerWrapper
 from g6.core.host_models import ClaudeCodeCaller, CodexCaller
 from g6.core.llm import RATE_LIMITED, FakeLLM, LLMError
 from g6.core.model_calls import note_model_call
@@ -80,9 +81,27 @@ def _busy_once(monkeypatch):
             raise urllib.error.HTTPError(request.full_url, 503, "busy", {"Retry-After": "0"}, io.BytesIO(b"busy"))
         return io.BytesIO(b'{"choices":[{"message":{"content":"answer"}}]}')
 
-    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: SimpleNamespace(open=open_request))
+    # no proxy handler, so the sharing check reads the first hop as the endpoint itself (``UNUSED``)
+    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: SimpleNamespace(open=open_request, handlers=[]))
     monkeypatch.setattr(llm, "_sleep", lambda seconds: None)
     return sent
+
+
+#: the unused endpoint ``consented_provider_fakes`` grants the tests' synthetic inputs to
+UNUSED = "https://unused.invalid"
+
+
+class _OverFake(CallerWrapper):
+    """A wrapper by the published contract (``CallerWrapper``) over a local fake made with the arguments given, which its
+    ``complete`` sends through; its ``calls`` are the fake's. A subclass of ``FakeLLM`` that replaces its completion is of no
+    known kind to the sharing check, a recipient no grant covers, refused before it is reached."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(FakeLLM(*args, **kwargs))
+
+    @property
+    def calls(self):
+        return self.inner.calls
 
 
 def _bare_loop(root, *, keeping=None, on_record=None):
@@ -114,30 +133,29 @@ def _limit_rows(loop):
 
 # Review 4's nine findings, as reported (review-ref4, tests/_review/test_finding_1.py to test_finding_9.py) -----------------
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref4_1_a_nested_calls_retry_after_resend_takes_one_place(monkeypatch):
     sent = _busy_once(monkeypatch)
     requests = _Requests()
     requests.open(2)
-    child = _Counted(llm.OpenAICompatibleCaller("fake", base_url="http://fake.invalid", api_key=None), requests)
+    child = _Counted(llm.OpenAICompatibleCaller("fake", base_url=UNUSED, api_key=None), requests)
 
-    class Parent:
-        _inner = child.inner
-
+    class Parent(CallerWrapper):     # holds the child's caller as its inner, by the published contract
         def complete(self, system, user, *, max_tokens=1024):
             return child.complete(system, user, max_tokens=max_tokens)
 
     outcome = None
     try:
-        outcome = _Counted(Parent(), requests).complete("system", "request")
+        outcome = _Counted(Parent(child.inner), requests).complete("system", "request")
     except llm.LLMError as error:
         outcome = str(error)
     assert (len(sent), requests.sent, outcome) == (2, 2, "answer")
 
 
 def test_ref4_2_a_nested_call_does_not_charge_child_totals_twice():
-    class Child(FakeLLM):
+    class Child(_OverFake):
         def complete(self, system, user, *, max_tokens=1024):
-            answer = super().complete(system, user, max_tokens=max_tokens)
+            answer = self.inner.complete(system, user, max_tokens=max_tokens)
             model_calls.note_child_model_calls(scoped=2, process=2)
             return answer
 
@@ -146,8 +164,9 @@ def test_ref4_2_a_nested_call_does_not_charge_child_totals_twice():
     backend = Child(default="answer")
     child = _Counted(backend, requests)
 
-    class Parent:
-        _inner = backend
+    class Parent(CallerWrapper):     # holds the backend as its inner, by the published contract
+        def __init__(self) -> None:
+            super().__init__(backend)
 
         def complete(self, system, user, *, max_tokens=1024):
             return child.complete(system, user, max_tokens=max_tokens)
@@ -186,6 +205,7 @@ def test_ref4_3_every_limit_is_on_the_record_in_the_order_met_before_settlement(
     assert before_settlement == [until.isoformat() for until in encounters]
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref4_4_identical_sends_on_two_threads_of_one_call_wait_for_the_first(monkeypatch, host_folders):
     requests = _Requests()
     first_out, second_checked, release_first = threading.Event(), threading.Event(), threading.Event()
@@ -218,9 +238,7 @@ def test_ref4_4_identical_sends_on_two_threads_of_one_call_wait_for_the_first(mo
         except BaseException as error:
             outcomes.append(error)
 
-    class Parent:
-        _inner = backend
-
+    class Parent(CallerWrapper):     # holds the backend as its inner, by the published contract
         def complete(self, system, user, *, max_tokens=1024):
             try:
                 for name, ready in (("first-send", first_out), ("second-send", second_checked)):
@@ -235,13 +253,14 @@ def test_ref4_4_identical_sends_on_two_threads_of_one_call_wait_for_the_first(mo
                     thread.join(5)
             return "wrapper answer"
 
-    _Counted(Parent(), requests).complete("outer system", "outer request")
+    _Counted(Parent(backend), requests).complete("outer system", "outer request")
     assert all(not thread.is_alive() for thread in threads)
     assert len(outcomes) == 2 and len(requests.refused) == 1
     assert len(sent) == 1, "the identical second send must wait, then be barred when the first is refused"
 
 
 @pytest.mark.parametrize("stop", [None, "refusal", "limit", "capacity"])
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref4_5_a_nested_host_caller_on_another_meter_holds_to_the_outer_tick(monkeypatch, host_folders, stop):
     outer, inner = _Requests(), _Requests()
     outer.open(1 if stop is None else 10)
@@ -258,9 +277,7 @@ def test_ref4_5_a_nested_host_caller_on_another_meter_holds_to_the_outer_tick(mo
     monkeypatch.setattr(host_models, "_run", run)
     child = _Counted(ClaudeCodeCaller(), inner)
 
-    class Parent:
-        _inner = child.inner
-
+    class Parent(CallerWrapper):     # holds the child's caller as its inner, by the published contract
         def complete(self, system, user, *, max_tokens=1024):
             for number in range(3):
                 try:
@@ -273,7 +290,7 @@ def test_ref4_5_a_nested_host_caller_on_another_meter_holds_to_the_outer_tick(mo
 
     outcome = None
     try:
-        outcome = _Counted(Parent(), outer).complete("system", "parent request")
+        outcome = _Counted(Parent(child.inner), outer).complete("system", "parent request")
     except (LLMError, _AtLimit, _Refused) as error:
         outcome = error
     if stop is None:
@@ -284,12 +301,12 @@ def test_ref4_5_a_nested_host_caller_on_another_meter_holds_to_the_outer_tick(mo
 
 
 def test_ref4_6_a_rejected_note_offsets_no_imported_child_usage():
-    class Child(FakeLLM):
+    class Child(_OverFake):
         def complete(self, system, user, *, max_tokens=1024):
-            answer = super().complete(system, user, max_tokens=max_tokens)
+            answer = self.inner.complete(system, user, max_tokens=max_tokens)
             model_calls.note_child_model_calls(scoped=2, process=2)
             try:
-                super().complete(system, "one request beyond the reservation", max_tokens=max_tokens)
+                self.inner.complete(system, "one request beyond the reservation", max_tokens=max_tokens)
             except LLMError:
                 pass
             return answer
@@ -576,8 +593,10 @@ def test_every_path_that_ends_a_tick_reads_what_it_latched_as_it_closes():
     assert read == []
 
 
-class Delegates:
-    """A wrapper of a domain's own that hands each request on."""
+class Delegates(CallerWrapper):
+    """A wrapper of a domain's own that hands each request on. It is a wrapper by the published contract
+    (``CallerWrapper``), as a domain's wrapper must be for the sharing check to know where it sends: a class of no known
+    kind is a recipient no grant covers, refused before it is reached."""
 
     def __init__(self, inner) -> None:
         self._inner = inner
@@ -594,11 +613,11 @@ def _nested(backend, meters):
     return caller
 
 
-class _Imports(FakeLLM):
+class _Imports(_OverFake):
     """A caller that answers, then imports two calls a child of its own made, which pass no boundary."""
 
     def complete(self, system, user, *, max_tokens=1024):
-        answer = super().complete(system, user, max_tokens=max_tokens)
+        answer = self.inner.complete(system, user, max_tokens=max_tokens)
         model_calls.note_child_model_calls(scoped=2, process=2)
         return answer
 
@@ -616,6 +635,7 @@ def _answers_as_claude(monkeypatch, sent):
 @pytest.mark.parametrize("depth", [0, 1, 2])
 @pytest.mark.parametrize("shared", [True, False])
 @pytest.mark.parametrize("kind,places,out", [("note", 1, 1), ("host", 1, 1), ("resend", 2, 2), ("imported", 3, 1)])
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_a_send_takes_one_place_on_each_meter_around_it_at_any_depth(monkeypatch, host_folders, depth, shared, kind,
                                                                       places, out):
     """Nesting depth 0, 1 and 2, on one meter or one each: a note, a host program, a resend after Retry-After, and a child's
@@ -623,7 +643,7 @@ def test_a_send_takes_one_place_on_each_meter_around_it_at_any_depth(monkeypatch
     sent = []
     if kind == "resend":
         sent = _busy_once(monkeypatch)
-        backend = llm.OpenAICompatibleCaller("fake", base_url="http://fake.invalid", api_key=None)
+        backend = llm.OpenAICompatibleCaller("fake", base_url=UNUSED, api_key=None)
     elif kind == "host":
         _answers_as_claude(monkeypatch, sent)
         backend = ClaudeCodeCaller()
@@ -639,12 +659,12 @@ def test_a_send_takes_one_place_on_each_meter_around_it_at_any_depth(monkeypatch
 
 @pytest.mark.parametrize("depth", [0, 1, 2])
 def test_a_rejected_note_offsets_nothing_at_any_depth(depth):
-    class Child(FakeLLM):
+    class Child(_OverFake):
         def complete(self, system, user, *, max_tokens=1024):
-            answer = super().complete(system, user, max_tokens=max_tokens)
+            answer = self.inner.complete(system, user, max_tokens=max_tokens)
             model_calls.note_child_model_calls(scoped=2, process=2)
             try:
-                super().complete(system, "one request beyond the reservation", max_tokens=max_tokens)
+                self.inner.complete(system, "one request beyond the reservation", max_tokens=max_tokens)
             except LLMError:
                 pass
             return answer
@@ -679,6 +699,7 @@ def test_two_threads_of_nested_calls_take_no_more_than_was_reserved():
     assert all("TICK_BUDGET_SPENT" in outcome for outcome in outcomes if outcome != "answer")
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_a_send_made_inside_a_watched_send_on_a_thread_of_its_own_never_waits_for_it(monkeypatch, host_folders):
     """The identical request, sent from a thread the program's own step started with the call's context, while the send it
     is made inside is still out: waiting for that send would wait for itself."""
@@ -707,7 +728,10 @@ def test_unwatched_identical_sends_of_one_call_on_two_threads_go_out_and_are_eac
     meter.open(5)
     backend = FakeLLM(lambda system, user: both.wait(5) and "answer" or "answer")
 
-    class FansOut:
+    class FansOut(CallerWrapper):     # holds the backend as its inner, by the published contract
+        def __init__(self) -> None:
+            super().__init__(backend)
+
         def complete(self, system, user, *, max_tokens=1024):
             answers, threads = [], []
             for _ in range(2):

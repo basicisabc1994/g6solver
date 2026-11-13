@@ -1214,7 +1214,9 @@ def test_retry_after_is_elapsed_time_in_both_folds():
     from g6.core.llm import _WAITS
     from g6.metaharness.loop import _AtLimit
 
-    class FakeLimitedCaller:
+    # a wrapper by the published contract over a local fake, as this file's other stand-ins are: a class of no known kind
+    # is a recipient no grant covers, refused before it is reached
+    class FakeLimitedCaller(CallerWrapper):
         def complete(self, *args, **kwargs):
             _WAITS.get()[-1].append({"status": 429, "retry_after_s": 30})
 
@@ -1226,6 +1228,6 @@ def test_retry_after_is_elapsed_time_in_both_folds():
             requests = _Requests(now=lambda instant=instant, zone=zone: instant.astimezone(zone))
             requests.open(10, instant + timedelta(hours=3))
             with pytest.raises(_AtLimit) as caught:
-                _Counted(FakeLimitedCaller(), requests).complete("system", "user")
+                _Counted(FakeLimitedCaller(FakeLLM()), requests).complete("system", "user")
             results[name].append(caught.value.until.astimezone(UTC))
     assert results["new_york"] == results["utc"] == results["fixed"], results

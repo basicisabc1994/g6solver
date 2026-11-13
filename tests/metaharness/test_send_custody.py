@@ -16,6 +16,7 @@ from g6.self_maintenance.usage import MODEL_REFUSED
 
 
 @pytest.mark.parametrize("kind", [host_models.CodexCaller, host_models.ClaudeCodeCaller])
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_first_host_failure_releases_its_reply_record(monkeypatch, kind):
     tmp_path = Path(__file__).resolve().parents[2] / ".build" / "custody" / uuid4().hex
     tmp_path.mkdir(parents=True)
@@ -49,6 +50,7 @@ def test_first_host_failure_releases_its_reply_record(monkeypatch, kind):
     assert not meter.in_flight
     assert not usage._SENT, "ended first host calls retain their send records and gates"
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_rendering_does_not_give_the_same_refused_bytes_a_new_identity(monkeypatch):
     class RenderedText(str):
         def __format__(self, spec):
@@ -62,8 +64,11 @@ def test_rendering_does_not_give_the_same_refused_bytes_a_new_identity(monkeypat
         sent.append(request.data)
         raise LLMError(f"{MODEL_REFUSED}: policy")
 
-    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: SimpleNamespace(open=open_request))
-    backend = llm.OpenAICompatibleCaller("fake", base_url="http://fake.invalid", api_key=None)
+    # the opener has no proxy handler, so the sharing check reads the first hop as the endpoint itself: the fixture's
+    # unused endpoint, which the test's synthetic inputs are granted to
+    monkeypatch.setattr(llm.urllib.request, "build_opener",
+                        lambda *args: SimpleNamespace(open=open_request, handlers=[]))
+    backend = llm.OpenAICompatibleCaller("fake", base_url="https://unused.invalid", api_key=None)
     caller = _Counted(backend, _Requests())
     for user in (RenderedText("same refused input"), "same refused input"):
         with pytest.raises(LLMError):
@@ -241,6 +246,7 @@ def test_every_class_or_send_replacement_is_at_construction_and_every_capture_us
 @pytest.mark.parametrize("kind", [host_models.CodexCaller, host_models.ClaudeCodeCaller])
 @pytest.mark.parametrize("outcome", [None, LLMError("timeout"), TimeoutError("deadline"),
                                     ValueError("bad reply"), KeyboardInterrupt("stop"), SystemExit("end")])
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_each_host_outcome_releases_the_record_and_private_copies(tmp_path, monkeypatch, kind, outcome):
     monkeypatch.setattr(usage, "_SENT", {})
     monkeypatch.setattr(host_models.key_file, "read", lambda: {})

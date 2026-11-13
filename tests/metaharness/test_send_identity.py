@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 
 from g6.core import host_models
+from g6.core.consent_callers import CallerWrapper
 from g6.core.llm import FakeLLM, LLMError
 from g6.core.model_calls import note_model_call
 from g6.metaharness.loop import _Counted, _Requests
@@ -56,6 +57,7 @@ def test_rethrowing_the_original_error_keeps_the_identity_of_its_send():
     assert sent.count(("system", "refused request")) == 1, "the original refused send left again"
     assert meter.refused == {request_digest("system", "refused request")}
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_a_host_file_changed_during_the_stop_read_is_the_request_recorded(monkeypatch, tmp_path):
     pending, sent, worker_errors = [], [], []
     change_now, changed = threading.Event(), threading.Event()
@@ -157,18 +159,20 @@ def test_a_batch_rethrowing_an_owned_transport_error_cannot_bar_its_successful_s
 
     transport = _Counted(FakeLLM(respond), meter)
 
-    class Batch(FakeLLM):
+    # a wrapper by the published contract (``CallerWrapper``), so the sharing check knows it sends only through its
+    # transport, a local fake; a class of no known kind is a recipient no grant covers
+    class Batch(CallerWrapper):
         def complete(self, system, user, *, max_tokens=1024):
             errors = []
             for user in ("refused request", "successful request"):
                 try:
-                    transport.complete(system, user)
+                    self.inner.complete(system, user)
                 except LLMError as error:
                     errors.append(error)
             errors[0].__traceback__ = None
             raise errors[0]
 
-    caller = _Counted(Batch(), meter)
+    caller = _Counted(Batch(transport), meter)
     for _ in range(2):
         with pytest.raises(LLMError):
             caller.complete("system", "outer request")
@@ -223,6 +227,7 @@ def test_a_wait_discards_the_candidate_and_admits_one_final_snapshot(monkeypatch
 
 
 @pytest.mark.parametrize("kind", [host_models.ClaudeCodeCaller, host_models.CodexCaller])
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_each_owned_host_raises_the_snapshot_record_without_reading_a_traceback(kind, tmp_path, monkeypatch):
     @contextmanager
     def folders():

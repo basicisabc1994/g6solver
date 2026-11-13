@@ -16,6 +16,7 @@ import pytest
 
 from g6.core import host_models
 from g6.core.host_models import ClaudeCodeCaller, CodexCaller
+from g6.core.consent_callers import CallerWrapper
 from g6.core.llm import RATE_LIMITED, FakeLLM, LLMError
 from g6.metaharness import Model
 from g6.metaharness.loop import IDLE, LoopSettings, ShadowLoop, _AtLimit, _Counted, _Refused, _request_digest, _Requests
@@ -212,6 +213,7 @@ def test_the_loops_codex_prints_its_events_as_json_and_the_plain_caller_does_not
 
 @pytest.mark.parametrize("stop", [_failed(LIMIT), _failed("You\u2019ve hit your usage limit.", "usage_limit_exceeded"),
                                   _failed("Quota exceeded. Check your plan and billing details.")])
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_review_l4_3_a_codex_limit_during_confirmation_leaves_the_split_unspent(tmp_path, monkeypatch, stop):
     """review-l4 finding 3, on the reviewer's settings, through the Codex the loop really calls: a limit in its own events is a
     wait, and spends none of the five."""
@@ -231,6 +233,7 @@ def test_review_l4_3_a_codex_limit_during_confirmation_leaves_the_split_unspent(
 
 @pytest.mark.parametrize("stop", [_failed(CAPACITY, "server_overloaded"), _failed(CAPACITY),
                                   _failed("Flex capacity unavailable.", "flex_unavailable")])
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_a_codex_capacity_error_scores_no_case_for_either_arm_and_waits(tmp_path, monkeypatch, stop):
     loop, _, program = _on_codex(tmp_path, monkeypatch)
     program.stop = _on_the_held_out_split(loop, stop)
@@ -239,6 +242,7 @@ def test_a_codex_capacity_error_scores_no_case_for_either_arm_and_waits(tmp_path
     _nothing_scored(loop)
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_a_capacity_error_while_tuning_is_no_failed_case_either(tmp_path, monkeypatch):
     loop, _, _ = _on_codex(tmp_path, monkeypatch, lambda problem: _failed(CAPACITY, "server_overloaded"))
     got = loop.tick()
@@ -248,6 +252,7 @@ def test_a_capacity_error_while_tuning_is_no_failed_case_either(tmp_path, monkey
 
 @pytest.mark.parametrize("stop", [_failed(CYBER, "cyber_policy"), _failed(CYBER),
                                   _failed("blocked", "bio_policy"), _failed("blocked", "too_many_denials")])
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_a_codex_refusal_ends_the_tick_is_kept_and_is_never_sent_again(tmp_path, monkeypatch, stop):
     """The Codex refusal gap: it was a failed case, and the same request went out on a later tick."""
     refused = []
@@ -275,8 +280,10 @@ def _enrolled_again(tmp_path, domain, settings=CODEX_LOOP):
                       clock=domains.Clock()), domain
 
 
-class TriesAgain:
-    """A wrapper of a domain's own that sends any failed request again."""
+class TriesAgain(CallerWrapper):
+    """A wrapper of a domain's own that sends any failed request again. It is a wrapper by the published contract
+    (``CallerWrapper``), as a domain's wrapper must be for the sharing check to know where it sends: a class of no known
+    kind is a recipient no grant covers, refused before it is reached."""
 
     def __init__(self, inner) -> None:
         self._inner = inner
@@ -304,11 +311,13 @@ class Swallows(TriesAgain):
 @pytest.mark.parametrize("stop,code", [(_failed(CYBER, "cyber_policy"), "G6_E_LOOP_CLASSIFIER_STOP"),
                                        (_failed(LIMIT), "G6_E_LOOP_BUDGET_WAIT"),
                                        (_failed(CAPACITY, "server_overloaded"), "G6_E_LOOP_BUDGET_WAIT")])
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_a_wrapper_that_catches_failures_cannot_resend_or_hide_what_codex_said(tmp_path, monkeypatch, wrap, stop, code):
     loop, _, program = _on_codex(tmp_path, monkeypatch, lambda problem: stop, caller=wrap(CodexCaller()))
     assert _code(loop.tick()) == code and len(program.sent) == 1
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_review_l4b_3_through_the_claude_code_the_loop_calls(tmp_path, monkeypatch):
     """review-l4b finding 3, through the Claude Code the loop really calls: its fields are read before the 300 characters
     the bound caller keeps."""
@@ -324,6 +333,7 @@ def test_review_l4b_3_through_the_claude_code_the_loop_calls(tmp_path, monkeypat
     _nothing_scored(loop)
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_claude_codes_model_overloaded_is_a_wait_and_scores_nothing(tmp_path, monkeypatch):
     overloaded = {"type": "result", "is_error": True, "api_error_status": 529, "result": "API Error: overloaded " * 30}
     loop, _, program = _on_claude(tmp_path, monkeypatch)
@@ -375,6 +385,7 @@ def test_codexs_own_classification_decides_whatever_its_message_says(info, said)
     assert got.startswith(said) if said else got == ""
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_a_codex_run_that_failed_with_no_event_of_its_own_is_a_failed_case_not_a_wait(tmp_path, monkeypatch):
     """What Codex writes to its error stream is never read, whatever it says."""
     loop, _, program = _on_codex(tmp_path, monkeypatch, lambda problem: ())
@@ -402,6 +413,7 @@ class Killed(BaseException):
     """The process dying at that instant."""
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_a_codex_refusal_survives_a_death_before_its_cycle_is_written(tmp_path, monkeypatch):
     loop, domain, program = _on_codex(tmp_path, monkeypatch, lambda problem: _failed(CYBER, "cyber_policy"))
     with monkeypatch.context() as dying:
@@ -415,6 +427,7 @@ def test_a_codex_refusal_survives_a_death_before_its_cycle_is_written(tmp_path, 
     assert program.sent.count(it) == 1
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_a_refusal_kept_and_then_a_death_before_it_reaches_the_tick_is_still_never_sent_again(tmp_path, monkeypatch):
     """Between keeping it and anything else: the note is on the disk, then the process dies."""
     from g6.metaharness import loop as loop_module
@@ -438,6 +451,7 @@ def test_a_refusal_kept_and_then_a_death_before_it_reaches_the_tick_is_still_nev
     assert program.sent.count(it) == 1
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_a_limit_is_kept_before_the_ticks_charges_are_settled(tmp_path, monkeypatch):
     """A death at the settling of what the tick spent: the limit is already in the records, so a restart waits it out."""
     loop, domain, program = _on_codex(tmp_path, monkeypatch, lambda problem: _failed(LIMIT))
@@ -582,6 +596,7 @@ def test_ref1_2_what_a_watched_caller_printed_on_its_error_stream_makes_no_limit
     assert _code(loop.tick()) != "G6_E_LOOP_BUDGET_WAIT"
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref1_2_the_text_pattern_never_reads_a_watched_callers_error_and_still_reads_any_other(tmp_path, monkeypatch):
     """The two rules cannot both apply to one request: a watched caller's request is read only from its structured fields."""
     from g6.metaharness import loop as loop_module
@@ -673,8 +688,9 @@ def test_ref1_4_a_stop_refuses_a_request_between_ticks_too(tmp_path):
     assert len(domain.llm.calls) == before
 
 
-class CatchesAll:
-    """A wrapper of a domain's own that catches anything at all, a limit included, and answers itself."""
+class CatchesAll(CallerWrapper):
+    """A wrapper of a domain's own that catches anything at all, a limit included, and answers itself. A wrapper by the
+    published contract, as ``TriesAgain`` is."""
 
     def __init__(self, inner, tutor) -> None:
         self._inner, self.tutor, self.caught = inner, tutor, []
@@ -687,6 +703,7 @@ class CatchesAll:
             return self.tutor(system, user)
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref1_5_a_limit_a_wrapper_swallowed_on_the_last_call_still_spends_nothing(tmp_path, monkeypatch):
     domain = domains.WordProblems(tmp_path)
     wrapper = CatchesAll(CodexCaller(), domain.tutor)
@@ -707,6 +724,7 @@ def test_ref1_5_a_limit_a_wrapper_swallowed_on_the_last_call_still_spends_nothin
     assert loop.mh.held_out_left() == 5
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref1_5_a_refusal_a_wrapper_swallowed_leaves_its_call_as_a_refusal(tmp_path, monkeypatch):
     """What the tick latched decides: the watched caller told the tick, and the wrapper's answer is not taken for one."""
     _program_that_refuses(monkeypatch, json.dumps({"type": "turn.failed", "error": {"message": "x", "codex_error_info": "cyber_policy"}}))
@@ -718,8 +736,9 @@ def test_ref1_5_a_refusal_a_wrapper_swallowed_leaves_its_call_as_a_refusal(tmp_p
     assert len(wrapper.caught) == 1 and isinstance(wrapper.caught[0], _Refused) and requests.refusal is not None
 
 
-class ScoutWrapper:
-    """A domain's own caller that sends one fixed scout prompt through a session, whatever it is asked."""
+class ScoutWrapper(CallerWrapper):
+    """A domain's own caller that sends one fixed scout prompt through a session, whatever it is asked. A wrapper by the
+    published contract, as ``TriesAgain`` is."""
 
     def __init__(self, root) -> None:
         from g6.harness.completion_loop import ToolSession
@@ -742,9 +761,15 @@ def _program_that_refuses(monkeypatch, printed: str, kind=CodexCaller):
     return sent
 
 
-def test_ref1_6_a_session_prompt_is_known_by_what_is_sent_whatever_the_outer_request(tmp_path, monkeypatch):
+@pytest.mark.usefixtures("consented_provider_fakes")
+def test_ref1_6_a_session_prompt_is_known_by_what_is_sent_whatever_the_outer_request(tmp_path, monkeypatch,
+                                                                                    accepted_cloud_dialog):
+    from g6.core import cloud_consent
     from g6.harness.completion_loop import ToolSession
 
+    # a session also sends its folder and its environment, each granted as ``test_consent_watched_hosts`` grants them
+    for scope in (cloud_consent.repository_source(tmp_path), "agent_environment"):
+        accepted_cloud_dialog(scope, "anthropic:claude_code", text="synthetic scout request")
     sent = _program_that_refuses(monkeypatch, json.dumps({"type": "result", "is_error": True, "stop_reason": "refusal",
                                                           "result": ""}), ToolSession)
     requests = _Requests(keeping=lambda request, said: note_refusal(tmp_path, request, said))
@@ -757,6 +782,7 @@ def test_ref1_6_a_session_prompt_is_known_by_what_is_sent_whatever_the_outer_req
     assert sent == ["the same fixed scout prompt"]
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref1_7_the_same_codex_input_is_one_request_however_its_parts_were_split(tmp_path, monkeypatch):
     boundary = "\nG6_INSTRUCTIONS>>>\n<<<G6_REQUEST\n"
     pairs = (("first" + boundary + "second", "third"), ("first", "second" + boundary + "third"))
@@ -773,7 +799,9 @@ def test_ref1_7_the_same_codex_input_is_one_request_however_its_parts_were_split
     assert len(sent) == 1
 
 
-class Rewrites:
+class Rewrites(CallerWrapper):
+    """A wrapper by the published contract, as ``TriesAgain`` is."""
+
     def __init__(self, inner) -> None:
         self._inner = inner
 
@@ -781,6 +809,7 @@ class Rewrites:
         return self._inner.complete(system, "actual refused request", max_tokens=max_tokens)
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref1_8_one_identity_is_kept_so_a_death_after_keeping_it_loses_nothing(tmp_path, monkeypatch):
     class ProcessDied(BaseException):
         pass
@@ -809,6 +838,7 @@ def test_ref1_8_one_identity_is_kept_so_a_death_after_keeping_it_loses_nothing(t
     assert len(sent) == 1
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref1_9_a_request_let_in_before_a_refusal_of_the_same_bytes_cannot_leave_after_it(tmp_path, monkeypatch):
     first_sent, release_first, second_checked, release_second = (threading.Event() for _ in range(4))
     sent, failures = [], []
@@ -857,6 +887,7 @@ def test_ref1_9_a_request_let_in_before_a_refusal_of_the_same_bytes_cannot_leave
     assert len(sent) == 1 and len(failures) == 2
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref1_9_an_identical_request_waits_while_one_is_out_and_then_goes_if_that_one_answered(tmp_path, monkeypatch):
     first_out, release = threading.Event(), threading.Event()
     sent, answers = [], []
@@ -886,6 +917,7 @@ def test_ref1_9_an_identical_request_waits_while_one_is_out_and_then_goes_if_tha
     assert sent == ["first", "second"] and answers == ["an answer", "an answer"]
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref1_10_a_failed_turn_of_no_known_kind_is_a_failed_request_whatever_else_says(tmp_path, monkeypatch):
     monkeypatch.setattr(CodexCaller, "locate", lambda self: "fake-codex")
 
@@ -926,6 +958,7 @@ def test_ref1_11_distinct_requests_never_share_an_identity_and_old_ones_keep_the
     assert caller.complete("a", "b\0c") == "allowed answer"
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref1_on_the_loops_own_requests_one_identity_is_one_input_and_one_input_one_identity(tmp_path, monkeypatch):
     """Every request a tick sent through Codex and through Claude Code, with what its program read: an identity never stands for
     two inputs, nor an input for two identities."""
@@ -1008,6 +1041,7 @@ def _answers(argv, files, text="an answer"):
     return 0, _jsonl(COMPLETED), ""
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref2_1_a_line_separator_inside_codexs_message_is_no_line_break(monkeypatch):
     event = {"type": "error", "message": "Request refused:\u2028policy stop", "codex_error_info": "cyber_policy"}
     printed = json.dumps(event, ensure_ascii=False) + "\n" + json.dumps(COMPLETED)
@@ -1031,6 +1065,7 @@ def _stop_file_halt(root):
     return halted
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref2_2_a_stop_written_while_a_send_waits_is_read_when_it_wakes(tmp_path, monkeypatch):
     from g6.self_maintenance.envelope import ask_to_stop
 
@@ -1069,6 +1104,7 @@ def _quietly(call, *args):
         return exc
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref2_3_a_nested_identical_send_leaves_its_parents_entry_where_it_was(monkeypatch):
     monkeypatch.setattr(CodexCaller, "locate", lambda self: "fake-codex")
     nested_done, release = threading.Event(), threading.Event()
@@ -1098,6 +1134,7 @@ def test_ref2_3_a_nested_identical_send_leaves_its_parents_entry_where_it_was(mo
     assert len(sent) == 2 and not requests.in_flight
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref2_4_no_number_of_failed_sends_evicts_a_pending_sends_record(monkeypatch):
     monkeypatch.setattr(CodexCaller, "locate", lambda self: "fake-codex")
     requests = _Requests()
@@ -1121,6 +1158,7 @@ def test_ref2_4_no_number_of_failed_sends_evicts_a_pending_sends_record(monkeypa
     assert len(parent) == 1 and requests.refused == {parent[0]} and not usage._SENT and not requests.in_flight
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref2_5_an_unknown_classification_with_a_status_is_a_failure_whatever_follows(monkeypatch):
     monkeypatch.setattr(CodexCaller, "locate", lambda self: "fake-codex")
     events = [{"type": "error", "message": "?", "codex_error_info": {"future_kind": {"http_status_code": 429}}}, COMPLETED]
@@ -1134,8 +1172,9 @@ def test_ref2_5_an_unknown_classification_with_a_status_is_a_failure_whatever_fo
         _Counted(CodexCaller(), _Requests()).complete("system", "request")
 
 
-class FollowsUp:
-    """A wrapper of a domain's own that, when its host caller fails, asks another model before it raises the failure."""
+class FollowsUp(CallerWrapper):
+    """A wrapper of a domain's own that, when its host caller fails, asks another model before it raises the failure. A
+    wrapper by the published contract, as ``TriesAgain`` is."""
 
     def __init__(self, inner, followup) -> None:
         self._inner, self.followup = inner, followup
@@ -1148,6 +1187,7 @@ class FollowsUp:
             raise
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref2_6_a_watched_send_is_read_by_its_own_record_whatever_was_sent_after_it(monkeypatch):
     monkeypatch.setattr(ClaudeCodeCaller, "locate", lambda self: "fake-claude")
     printed = json.dumps({"type": "result", "is_error": True, "api_error_status": 500, "result": "ordinary failure"})
@@ -1193,6 +1233,7 @@ def test_ref2_8_a_nested_host_send_does_not_change_how_the_outer_send_is_read(mo
 
 @pytest.mark.parametrize("reserved,calls,out", [(0, 1, 0), (1, 1, 1), (3, 3, 3), (3, 4, 3)])
 @pytest.mark.parametrize("host", [True, False])
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref2_9_a_reserved_place_is_one_send_at_every_boundary(monkeypatch, reserved, calls, out, host):
     sent = []
     monkeypatch.setattr(CodexCaller, "locate", lambda self: "fake-codex")
@@ -1333,6 +1374,7 @@ def test_ref2_12_a_surrogate_pair_and_the_character_it_stands_for_are_two_reques
                                                     ("system", "\U00010000"), ("", "\0"), ("\0", "")]}) == 6
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref2_13_a_send_is_known_by_its_bytes_as_they_are_once_it_has_waited(monkeypatch):
     monkeypatch.setattr(ClaudeCodeCaller, "locate", lambda self: "fake-claude")
     requests = _Requests()
@@ -1537,6 +1579,7 @@ def test_ref3_2_a_stop_written_while_admission_reads_the_bytes_keeps_the_send_in
     assert sent == []
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref3_2_a_file_changed_as_admission_takes_its_lock_is_the_send_it_records(monkeypatch):
     """The first send's system file is changed just as its admission takes the lock: what it records, what was refused and
     what left are those changed bytes, so the second send, of the same bytes, never leaves."""
@@ -1622,16 +1665,19 @@ class _BusyOnce:
                 raise urllib.error.HTTPError(request.full_url, 503, "busy", {"Retry-After": "0"}, io.BytesIO(b"busy"))
             return io.BytesIO(b'{"choices":[{"message":{"content":"an answer"}}]}')
 
-        monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: SimpleNamespace(open=open_request))
+        # no proxy handler, so the sharing check reads the first hop as the endpoint itself
+        monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: SimpleNamespace(open=open_request, handlers=[]))
         monkeypatch.setattr(llm, "_sleep", lambda seconds: None)
 
 
 def _http_caller():
     from g6.core.llm import OpenAICompatibleCaller
 
-    return OpenAICompatibleCaller("fake-model", base_url="http://fake.invalid", api_key=None)
+    # the unused endpoint ``consented_provider_fakes`` grants the test's synthetic inputs to
+    return OpenAICompatibleCaller("fake-model", base_url="https://unused.invalid", api_key=None)
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref3_3_a_resend_is_checked_against_what_was_refused_as_any_send_is(monkeypatch):
     requests = _Requests()
 
@@ -1645,6 +1691,7 @@ def test_ref3_3_a_resend_is_checked_against_what_was_refused_as_any_send_is(monk
     assert len(endpoint.sent) == 1
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref3_3_a_resend_is_a_send_with_its_own_record_and_place(monkeypatch):
     endpoint = _BusyOnce(monkeypatch)
     requests = _Requests()
@@ -1673,6 +1720,7 @@ def test_ref3_4_a_nested_child_on_other_requests_is_counted_by_each(tmp_path):
     assert outer.sent == 2 and inner.sent == 1
 
 
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_ref3_6_a_parent_charges_nothing_again_for_a_nested_host_send_and_each_send_once(monkeypatch):
     requests = _Requests()
     requests.open(2)
@@ -1694,9 +1742,14 @@ def test_ref3_6_a_parent_charges_nothing_again_for_a_nested_host_send_and_each_s
 def test_ref3_6_a_childs_totals_with_no_boundary_are_still_charged_once():
     from g6.core import model_calls
 
-    class Child(FakeLLM):
+    # a wrapper by the published contract over the local fake, as ``TriesAgain`` is; a subclass of FakeLLM that replaces
+    # its completion is of no known kind, a recipient no grant covers
+    class Child(CallerWrapper):
+        def __init__(self, **kwargs) -> None:
+            super().__init__(FakeLLM(**kwargs))
+
         def complete(self, system, user, *, max_tokens=1024):
-            text = super().complete(system, user, max_tokens=max_tokens)
+            text = self.inner.complete(system, user, max_tokens=max_tokens)
             model_calls.note_child_model_calls(scoped=2, process=2)
             return text
 
@@ -1728,8 +1781,9 @@ def test_ref3_2_what_happens_while_a_request_waits_for_the_admission_lock_decide
     requests._lock = Held()
     kept = {}
 
-    class Later:
-        """Answers, and sends once more on a thread of its own with the call's context, as a wrapper may."""
+    class Later(CallerWrapper):
+        """Answers, and sends once more on a thread of its own with the call's context, as a wrapper may. A wrapper by the
+        published contract over the local fake, as ``TriesAgain`` is."""
 
         def complete(self, system, user, *, max_tokens=1024):
             answer, context = backend.complete(system, user), __import__("contextvars").copy_context()
@@ -1747,7 +1801,7 @@ def test_ref3_2_what_happens_while_a_request_waits_for_the_admission_lock_decide
                 requests.close()
             return answer
 
-    _quietly(_Counted(Later(), requests).complete, "system", "asked")
+    _quietly(_Counted(Later(backend), requests).complete, "system", "asked")
     go.set()
     kept["thread"].join(5)
     assert backend.calls == [("system", "asked")] and isinstance(outcome[0], BaseException)

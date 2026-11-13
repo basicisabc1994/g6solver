@@ -326,6 +326,7 @@ def test_every_path_decision_uses_handle_containment_or_an_owned_destination():
 
 @pytest.mark.parametrize("base", [usage.WatchedClaude, usage.WatchedCodex])
 @pytest.mark.parametrize("method", ["_command", "argv", "locate"])
+@pytest.mark.usefixtures("consented_provider_fakes")
 def test_each_customizable_host_hook_finishes_before_admission(tmp_path, monkeypatch, base, method):
     from contextlib import contextmanager
     import json
